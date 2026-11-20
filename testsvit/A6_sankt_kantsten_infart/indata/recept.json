@@ -1,0 +1,39 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150500_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "d68fa4b6e74146c2e357cd35bcdea775cf50406ecae4f9ff88c2d85a6a92eb7f"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "f2af532c3b740ccfe76353b8b22bb47614aefa6158fe6b465eac5c80503f0243"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "1252d27b86c616c79d784de87b0531e8eeee354eb6aceb9f20227f57808ea3b5"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "027405c2d30f2ee48d52f94088796b720f3d74f42135895f1951b3fea0a01fef"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "660766c6aed4be4524e1204f4574fdc33c11dc7035775f3578411c4ab5cc3d3f"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "363ceb6bcee1ce57044ee8d2c7bb80a9e11048e034f61ba709dacd58013f46c9"
+    }
+  },
+  "parametrar": {
+    "fall": "A6",
+    "infart_bredd_m": 3.0,
+    "infart_kantsten_m": 0.02
+  }
+}

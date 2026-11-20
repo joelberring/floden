@@ -1,0 +1,6 @@
+id = "A9"
+namn = "Brus i terrängen"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Sluttande plan med 0,50 m verklig sänka och +-0,02 m deterministiskt brus."
+status = "redo"

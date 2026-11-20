@@ -1,0 +1,13 @@
+{
+  "fall_id": "A8",
+  "typ": "oppningsfall",
+  "byggnad_hinderhojd_m": 10.0,
+  "port_bredd_m": 3.0,
+  "port_botten_rh2000": 10.52,
+  "forvantat_beteende": "Vatten passerar genom byggnadens port i stället för att dämmas.",
+  "falsk_uppdamning_med_port": false,
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

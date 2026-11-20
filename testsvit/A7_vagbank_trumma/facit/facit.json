@@ -1,0 +1,19 @@
+{
+  "fall_id": "A7",
+  "typ": "oppningsfall",
+  "vagbank_kron_rh2000": 11.8,
+  "trumma_botten_rh2000": 10.6,
+  "trumma_bredd_m": 1.0,
+  "med_trumma": {
+    "falsk_damm": false,
+    "max_uppstroms_vattenniva_rh2000": 10.7
+  },
+  "utan_trumma": {
+    "falsk_damm": true,
+    "uppdamd_niva_rh2000": 11.8
+  },
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

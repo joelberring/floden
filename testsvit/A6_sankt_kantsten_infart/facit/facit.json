@@ -1,0 +1,17 @@
+{
+  "fall_id": "A6",
+  "typ": "kantstensfall",
+  "infart_x_intervall": [
+    150508.5,
+    150511.5
+  ],
+  "infart_bredd_m": 3.0,
+  "kantsten_normal_hojd_m": 0.12,
+  "kantsten_infart_hojd_m": 0.02,
+  "utlopp_rh2000": 10.02,
+  "forvantat_beteende": "Vatten lämnar gatan exakt genom den 3 m breda sänkta infarten.",
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

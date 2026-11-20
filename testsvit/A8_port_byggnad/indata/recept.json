@@ -1,0 +1,39 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150700_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "c929eb81ebb957b703418a23c818dad8f5dcaa6468b130eadfd45a8bc6325666"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "71324ea838b906d0fbfb553fde662e3c98aa4c02381c767d8ea8248f80bfbe36"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "dec6dc80871e6abf7366f99a123278630744232986caed6da4a62a5aa86c9e78"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "77073e9d6f13530d47fc5bc1a96cab46f85bc2b4af2ecc81e9bd346e96836448"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "1d01ae717923044256bb3eab2e5337f5437223f83cb9c87b97434e9455e62184"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "edaad4d238eea4dfb99e0fc92639775fb57b458be42cf124cf9246bdfef3d4c0"
+    }
+  },
+  "parametrar": {
+    "fall": "A8",
+    "port_bredd_m": 3.0,
+    "byggnad_hinderhojd_m": 10.0
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "fall_id": "A4",
+  "typ": "analytisk",
+  "antal_sankor": 0,
+  "lutning": 0.02,
+  "flodesriktning_deg": 90.0,
+  "flodeslangd_m": 30.0,
+  "manning_n": 0.015,
+  "referensdjup_m": 0.05,
+  "hastighet_m_s": 1.279589,
+  "gangtid_s": 23.445,
+  "slutvolym_m3": 0.0,
+  "max_djup_m": 0.0,
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

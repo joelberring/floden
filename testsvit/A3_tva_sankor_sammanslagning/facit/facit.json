@@ -1,0 +1,18 @@
+{
+  "fall_id": "A3",
+  "typ": "analytisk",
+  "inre_sadel_rh2000": 10.3,
+  "gemensam_slutniva_rh2000": 10.6,
+  "vanster_botten_rh2000": 10.0,
+  "hoger_botten_rh2000": 10.1,
+  "t_hoger_nar_sadel_s": 2577.181,
+  "t_sammanslagning_s": 3221.477,
+  "t_yttre_overfall_s": 11275.168,
+  "slutvolym_m3": 84.0,
+  "max_djup_m": 0.6,
+  "intensitet_mm_h": 72.0,
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

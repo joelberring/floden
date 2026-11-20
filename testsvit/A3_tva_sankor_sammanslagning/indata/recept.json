@@ -1,0 +1,39 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150200_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "08ee6a4e0f33a5a70c1ca08514e64205c6bac5153dcab8afab038dce59bae614"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "8baf4f4df18d83b49d600c39f679e2334f8fb5b5f74fc24803de1df11205f1df"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "0959a8fe3b181ceb0b8f3e2a765e802c7cb35ea1aa2fdd777239a4f229cdcfe0"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "6b7a98185002f1e215000c802545b5189b3eeb858511f3a6cc6745a6b88a604e"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "8c3ccd8ae40880e1eae855d6e897039b8066b9add2181dec7554a5a811d1c7f3"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "4befe3559004f11e83c7c9ff13117f6c38c8f9de68319aa309a360fe34193006"
+    }
+  },
+  "parametrar": {
+    "fall": "A3",
+    "inre_sadel_rh2000": 10.3,
+    "yttre_overfall_rh2000": 10.6
+  }
+}

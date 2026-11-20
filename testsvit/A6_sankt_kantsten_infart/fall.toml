@@ -1,0 +1,6 @@
+id = "A6"
+namn = "Sänkt kantsten vid infart"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Gata med 3 m sänkt kantsten (2 cm) vid infart; utflöde sker enbart där."
+status = "redo"
