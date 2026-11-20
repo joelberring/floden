@@ -348,7 +348,7 @@ def _skala_till_rgb_terrain(
     r = np.interp(norm, [0.0, 0.35, 0.70, 1.0], [45.0, 115.0, 210.0, 240.0])
     g = np.interp(norm, [0.0, 0.35, 0.70, 1.0], [110.0, 175.0, 185.0, 240.0])
     b = np.interp(norm, [0.0, 0.35, 0.70, 1.0], [160.0, 95.0, 125.0, 245.0])
-    return np.stack([r, g, b], axis=-1).astype(np.uint8)
+    return np.asarray(np.stack([r, g, b], axis=-1), dtype=np.uint8)
 
 
 def _skala_till_rgb_diff(
@@ -361,7 +361,7 @@ def _skala_till_rgb_diff(
     r = np.where(norm >= 0.0, 255.0, 255.0 * (1.0 + norm))
     g = 255.0 * (1.0 - np.abs(norm))
     b = np.where(norm <= 0.0, 255.0, 255.0 * (1.0 - norm))
-    return np.stack([r, g, b], axis=-1).astype(np.uint8)
+    return np.asarray(np.stack([r, g, b], axis=-1), dtype=np.uint8)
 
 
 def skapa_jamforelsebild(
@@ -390,10 +390,11 @@ def skapa_jamforelsebild(
     if not (0 <= rad < rader):
         raise PipelineFel(f"tvarsnitt_rad {rad} ligger utanför [0, {rader - 1}].")
 
-    giltig_min = float(min(np.nanmin(mark_z), np.nanmin(referens_z)))
+    giltig_min = min(float(np.nanmin(mark_z)), float(np.nanmin(referens_z)))
     # Använd 98:e percentilen så enstaka 10 m-byggnader inte trycker ihop gatans nyanser
-    giltig_max = float(
-        max(np.nanpercentile(mark_z, 98.0), np.nanpercentile(referens_z, 98.0))
+    giltig_max = max(
+        float(np.nanpercentile(mark_z, 98.0)),
+        float(np.nanpercentile(referens_z, 98.0)),
     )
     if giltig_max <= giltig_min:
         giltig_max = giltig_min + 1.0
@@ -456,8 +457,8 @@ def skapa_jamforelsebild(
 
     profil_mark = mark_z[rad, :].astype(np.float64)
     profil_ref = referens_z[rad, :].astype(np.float64)
-    p_min = float(min(np.nanmin(profil_mark), np.nanmin(profil_ref)))
-    p_max = float(max(np.nanmax(profil_mark), np.nanmax(profil_ref)))
+    p_min = min(float(np.nanmin(profil_mark)), float(np.nanmin(profil_ref)))
+    p_max = max(float(np.nanmax(profil_mark)), float(np.nanmax(profil_ref)))
     if p_max <= p_min:
         p_max = p_min + 1.0
     p_span = p_max - p_min
