@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="sv">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Floden – Skyfallsmodell på gatunivå</title>
+  </head>
+  <body>
+    <div id="app" class="app-skal">
+      <aside class="sidopanel" aria-label="Styrpanel">
+        <header class="panel-huvud">
+          <div class="varumarke">
+            <h1>Floden</h1>
+            <span class="badge">EPSG:3011 · RH 2000</span>
+          </div>
+          <p class="undertitel">Dynamisk skyfallsmodell på gatunivå</p>
+        </header>
+
+        <section class="panel-sektion">
+          <h2>1. Område &amp; regn</h2>
+          <label class="falt-etikett" for="omrade-valjare">Område (K1)</label>
+          <select id="omrade-valjare" class="kontroll"></select>
+
+          <div class="grid-tva">
+            <div>
+              <label class="falt-etikett" for="regn-intensitet">Intensitet (mm/h)</label>
+              <input id="regn-intensitet" class="kontroll" type="number" min="0" step="1" value="72" />
+            </div>
+            <div>
+              <label class="falt-etikett" for="regn-varaktighet">Varaktighet (s)</label>
+              <input id="regn-varaktighet" class="kontroll" type="number" min="60" step="60" value="3600" />
+            </div>
+          </div>
+        </section>
+
+        <section class="panel-sektion">
+          <h2>2. Kartlager &amp; opacitet</h2>
+          <div id="lager-lista" class="lager-lista"></div>
+        </section>
+
+        <section class="panel-sektion">
+          <h2>3. Före / efter</h2>
+          <div class="knapp-rad" role="group" aria-label="Visningsläge före/efter">
+            <button type="button" class="flik-knapp aktiv" data-jamfor="svep">Svep</button>
+            <button type="button" class="flik-knapp" data-jamfor="fore">Före</button>
+            <button type="button" class="flik-knapp" data-jamfor="efter">Efter</button>
+            <button type="button" class="flik-knapp" data-jamfor="differens">Differens</button>
+            <button type="button" class="flik-knapp" data-jamfor="sidavid">Sida vid sida</button>
+          </div>
+          <div id="svep-kontroll" class="svep-kontroll">
+            <label class="falt-etikett" for="svep-reglage">
+              Svepgräns: <strong id="svep-procent">50 %</strong>
+            </label>
+            <input id="svep-reglage" type="range" min="0" max="100" value="50" />
+          </div>
+        </section>
+
+        <section class="panel-sektion">
+          <h2>4. Projektlapp (K3/v1)</h2>
+          <label class="falt-etikett" for="lapp-id">Lapp-ID</label>
+          <input id="lapp-id" class="kontroll" type="text" value="webb-alternativ-a" />
+
+          <label class="falt-etikett" for="landxml-fil">LandXML-yta (.xml)</label>
+          <input id="landxml-fil" class="kontroll-fil" type="file" accept=".xml,text/xml" />
+          <p id="landxml-status" class="hjalptext">Ingen LandXML-fil laddad.</p>
+
+          <div class="rit-grupp">
+            <div class="rit-rad">
+              <label class="falt-etikett" for="gata-sektion">Gatusektion</label>
+              <select id="gata-sektion" class="kontroll"></select>
+            </div>
+            <div class="knapp-rad">
+              <button type="button" id="rita-gata-knapp" class="sekundar-knapp">Rita gata</button>
+              <button type="button" id="rita-byggnad-knapp" class="sekundar-knapp">Rita byggnad</button>
+              <button type="button" id="rita-magasin-knapp" class="sekundar-knapp">Rita magasin</button>
+            </div>
+            <div class="grid-tva">
+              <div>
+                <label class="falt-etikett" for="byggnad-entre">Entréhöjd (RH 2000)</label>
+                <input id="byggnad-entre" class="kontroll" type="number" step="0.05" value="10.40" />
+              </div>
+              <div>
+                <label class="falt-etikett" for="magasin-volym">Magasin (m³)</label>
+                <input id="magasin-volym" class="kontroll" type="number" min="0" step="1" value="8" />
+              </div>
+            </div>
+            <div id="rit-status" class="rit-status" hidden>
+              <span id="rit-text">Klicka på kartan för att lägga till punkter…</span>
+              <div class="knapp-rad">
+                <button type="button" id="sluta-rita-knapp" class="primar-knapp liten">Slutför</button>
+                <button type="button" id="avbryt-rita-knapp" class="sekundar-knapp liten">Avbryt</button>
+              </div>
+            </div>
+            <ul id="lapp-objekt-lista" class="objekt-lista"></ul>
+            <button type="button" id="rensa-lapp-knapp" class="sekundar-knapp fullbredd">Rensa lapp</button>
+          </div>
+        </section>
+
+        <section class="panel-sektion">
+          <button type="button" id="kor-knapp" class="primar-knapp fullbredd">
+            Kör simulering (före/efter + ensemble)
+          </button>
+          <p id="kor-status" class="status-text" role="status"></p>
+          <div id="resultat-kort" class="resultat-kort"></div>
+        </section>
+
+        <section class="panel-sektion osakerhet-panel" aria-label="Osäkerhet och källor">
+          <h2>Osäkerhet (P10 / P50 / P90) &amp; källor</h2>
+          <div class="knapp-rad" role="group" aria-label="Välj osäkerhetspercentil">
+            <button type="button" class="pct-knapp" data-pct="p10">P10</button>
+            <button type="button" class="pct-knapp aktiv" data-pct="p50">P50</button>
+            <button type="button" class="pct-knapp" data-pct="p90">P90</button>
+          </div>
+          <div id="osakerhet-varden" class="osakerhet-varden"></div>
+          <div id="manifest-info" class="manifest-info"></div>
+          <p id="kallor-rad" class="kallor-rad"></p>
+        </section>
+      </aside>
+
+      <main class="karta-yta">
+        <div class="karta-huvud">
+          <span id="aktivt-omrade-titel">Laddar område…</span>
+          <span id="koord-indikator" class="koord-indikator">EPSG:3011</span>
+        </div>
+        <div class="karta-scen" id="karta-scen">
+          <div id="maplibre-karta" class="maplibre-karta" aria-label="Kartvy"></div>
+          <div id="jamfor-svep-behallare" class="jamfor-svep-behallare" hidden>
+            <div class="svep-etikett vanster">Före</div>
+            <div class="svep-etikett hoger">Efter</div>
+          </div>
+          <div id="sidavid-behallare" class="sidavid-behallare" hidden>
+            <figure class="sidavid-ruta">
+              <figcaption>Före lapp</figcaption>
+              <img id="sidavid-fore-img" alt="Maxdjup före lapp" />
+            </figure>
+            <figure class="sidavid-ruta">
+              <figcaption>Efter lapp</figcaption>
+              <img id="sidavid-efter-img" alt="Maxdjup efter lapp" />
+            </figure>
+            <figure class="sidavid-ruta">
+              <figcaption>Differens (efter − före)</figcaption>
+              <img id="sidavid-diff-img" alt="Djupdifferens" />
+            </figure>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -47,7 +47,7 @@ stämmer med de syntetiska fallen i testsviten.
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
 | T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | pågår |
-| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | redo |
+| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | pågår |
 
 **Klar när:** Joel kan lägga in ett påhittat projekt i provområdet och se förändringen för grannarna på under en minut.
 
@@ -55,8 +55,8 @@ stämmer med de syntetiska fallen i testsviten.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | redo |
-| T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | väntar |
+| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | pågår |
+| T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | redo |
 
 ## M6 – Ruttanalys och rapporter
 

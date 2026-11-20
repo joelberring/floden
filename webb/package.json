@@ -1,0 +1,19 @@
+{
+  "name": "floden-webb",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Webbklient för Floden – öppen dynamisk skyfallsmodell på gatunivå",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "maplibre-gl": "^4.7.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

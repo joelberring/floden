@@ -50,3 +50,27 @@ jobs:
 
       - name: Kör testsvit grupp A
         run: floden testsvit --grupp A
+
+  webb-klient:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: webb
+
+    steps:
+      - name: Hämta kod
+        uses: actions/checkout@v4
+
+      - name: Installera Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Installera npm-paket
+        run: npm install --no-audit --no-fund
+
+      - name: Typkontrollera TypeScript
+        run: npm run typecheck
+
+      - name: Bygg webbklient
+        run: npm run build

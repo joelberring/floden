@@ -1,0 +1,868 @@
+"""Lokalt HTTP/JSON-API för Flodens webbklient (T10)."""
+
+from __future__ import annotations
+
+import json
+import math
+import time
+import urllib.parse
+from collections.abc import Mapping
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+
+from dynamik.ensemble import EnsembleResultat, EnsembleScenario, kor_ensemble
+from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
+from dynamik.nodmodell import DynamikFel, DynamikResultat, EntrePunkt
+from gemensamt.hash import sha256_bytes, sha256_fil
+from gemensamt.koordinater import EPSG_INTERN, HOJDSYSTEM
+from gemensamt.manifest import KONTRAKT_K0, FilPost, RunManifest, skapa_manifest
+from lapp.fore_efter import ForeEfterResultat, kor_fore_efter
+from lapp.kontrakt import (
+    KONTRAKT_K3,
+    Gatusektion,
+    HojdYta,
+    LappByggnad,
+    LappFel,
+    LappGata,
+    LappMagasin,
+    LappMarkslag,
+    ProjektLapp,
+    las_gatusektioner_fran_konfig,
+)
+from sankgraf.hierarki import bygg_sankgraf
+from sankgraf.typer import (
+    SankGraf,
+    SankGrafFel,
+    las_brytlinjer_fran_gpkg,
+    las_oppningar_fran_gpkg,
+)
+from testsvit.k1_io import (
+    BrytlinjePost,
+    GeoTransformInfo,
+    K1FormatFel,
+    OppningPost,
+    las_geotiff,
+    las_regn_csv,
+)
+from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
+from webb.rendering import (
+    DEFAULT_KALLOR,
+    RenderingFel,
+    bbox_3011_till_wgs84,
+    brytlinjer_till_geojson,
+    byggnader_till_geojson,
+    rendera_diff_png_base64,
+    rendera_djup_png_base64,
+    rendera_hillshade_png_base64,
+    sankgraf_flodesvagar_till_geojson,
+    sankgraf_noder_till_geojson,
+)
+
+API_VERSION = "0.1.0"
+_ENSEMBLE_FAKTORER: tuple[tuple[str, float, float], ...] = (
+    ("p10-låg", 0.85, 2.0),
+    ("p25-måttlig", 0.925, 1.0),
+    ("p50-median", 1.0, 0.0),
+    ("p75-hög", 1.075, 0.0),
+    ("p90-extrem", 1.15, 0.0),
+)
+
+
+class FlodenWebbFel(Exception):
+    """Fel i webb-API:ts indata, routing eller exekvering."""
+
+    def __init__(self, meddelande: str, *, status_kod: int = 400) -> None:
+        super().__init__(meddelande)
+        self.status_kod = status_kod
+
+
+@dataclass(frozen=True)
+class LaddatOmrade:
+    """Inläst K1-område redo för lagervisning och simulering."""
+
+    omrade_id: str
+    fall: Testfall
+    mark_z: NDArray[np.float32]
+    osakerhet_z: NDArray[np.float32]
+    markslag: NDArray[np.uint8]
+    geo: GeoTransformInfo
+    brytlinjer: tuple[BrytlinjePost, ...]
+    oppningar: tuple[OppningPost, ...]
+    regn_tid_s: tuple[float, ...]
+    regn_intensitet_mm_h: tuple[float, ...]
+    bas_recept_sha256: str
+    kallor: tuple[str, ...]
+    bas_graf: SankGraf
+
+
+def _json_svar(status_kod: int, payload: Mapping[str, Any]) -> tuple[int, dict[str, str], bytes]:
+    kropp = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Length": str(len(kropp)),
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+    }
+    return status_kod, headers, kropp
+
+
+def _skapa_ensemble_scenarier(
+    regn_tid_s: tuple[float, ...],
+    regn_intensitet_mm_h: tuple[float, ...],
+) -> list[EnsembleScenario]:
+    scenarier: list[EnsembleScenario] = []
+    for namn, faktor, initial_mm in _ENSEMBLE_FAKTORER:
+        skalad = [float(v) * faktor for v in regn_intensitet_mm_h]
+        scenarier.append(
+            EnsembleScenario(
+                scenario_id=namn,
+                regn_tid_s=regn_tid_s,
+                regn_intensitet_mm_h=skalad,
+                avrinning_faktor=1.0,
+                initial_forlust_mm=initial_mm,
+            )
+        )
+    return scenarier
+
+
+def _raster_statistik(djup_m: NDArray[np.floating[Any]], geo: GeoTransformInfo) -> dict[str, float]:
+    arr = np.asarray(djup_m, dtype=np.float64)
+    giltig = np.isfinite(arr)
+    if not np.any(giltig):
+        return {"max_djup_m": 0.0, "medel_djup_m": 0.0, "oversvammad_area_m2": 0.0}
+    cell_area = float(geo.pixelstorlek_x) * float(geo.pixelstorlek_y)
+    oversvammade = int(np.sum(giltig & (arr > 0.01)))
+    return {
+        "max_djup_m": float(np.max(arr[giltig])),
+        "medel_djup_m": float(np.mean(arr[giltig])),
+        "oversvammad_area_m2": float(oversvammade) * cell_area,
+    }
+
+
+def _tolka_regnserie(
+    kropp: Mapping[str, Any],
+    standard_tid: tuple[float, ...],
+    standard_intensitet: tuple[float, ...],
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Tolkar regn från `intensitet_mm_h`/`varaktighet_s` eller fallback till områdets K4."""
+    if "regn_tid_s" in kropp or "regn_intensitet_mm_h" in kropp:
+        raw_t = kropp.get("regn_tid_s")
+        raw_i = kropp.get("regn_intensitet_mm_h")
+        if not isinstance(raw_t, list) or not isinstance(raw_i, list):
+            raise FlodenWebbFel("'regn_tid_s' och 'regn_intensitet_mm_h' måste vara listor.")
+        if len(raw_t) != len(raw_i) or len(raw_t) < 2:
+            raise FlodenWebbFel("Regntidsserien måste ha minst 2 tidpunkter och lika längd.")
+        tider = tuple(float(x) for x in raw_t)
+        intensiteter = tuple(float(x) for x in raw_i)
+        return tider, intensiteter
+
+    has_i = "intensitet_mm_h" in kropp and kropp["intensitet_mm_h"] is not None
+    has_d = "varaktighet_s" in kropp and kropp["varaktighet_s"] is not None
+    if not has_i and not has_d:
+        return standard_tid, standard_intensitet
+
+    intensitet = (
+        float(kropp["intensitet_mm_h"]) if has_i else float(standard_intensitet[0])
+    )
+    varaktighet = (
+        float(kropp["varaktighet_s"])
+        if has_d
+        else float(standard_tid[-1] - standard_tid[0])
+    )
+    if not math.isfinite(intensitet) or intensitet < 0.0:
+        raise FlodenWebbFel(f"Ogiltig intensitet_mm_h: {intensitet!r} (måste vara >= 0).")
+    if not math.isfinite(varaktighet) or varaktighet <= 0.0:
+        raise FlodenWebbFel(f"Ogiltig varaktighet_s: {varaktighet!r} (måste vara > 0).")
+    return (0.0, varaktighet), (intensitet, intensitet)
+
+
+def _bygg_projektlapp_fran_payload(
+    kropp: Mapping[str, Any],
+    bas_recept_sha256: str,
+) -> ProjektLapp | None:
+    """Bygger en K3/v1 `ProjektLapp` från JSON-kropp, eller `None` om ingen lapp skickats."""
+    raw_lapp = kropp.get("lapp")
+    lapp_data: Mapping[str, Any] = raw_lapp if isinstance(raw_lapp, Mapping) else kropp
+
+    hojdytor: list[HojdYta] = []
+    landxml_raw = lapp_data.get("landxml")
+    if isinstance(landxml_raw, str) and landxml_raw.strip():
+        ordning = str(lapp_data.get("koordinat_ordning", "NEZ"))
+        hojdytor.append(
+            HojdYta(
+                yta_id="webb-landxml-1",
+                landxml=landxml_raw,
+                koordinat_ordning=ordning,
+            )
+        )
+
+    for idx, item in enumerate(lapp_data.get("hojdytor", []) or []):
+        if isinstance(item, Mapping):
+            kopia = dict(item)
+            kopia.setdefault("yta_id", f"yta-{idx + 1}")
+            hojdytor.append(HojdYta.fran_dict(kopia))
+        else:
+            raise FlodenWebbFel("Poster i 'hojdytor' måste vara JSON-objekt.")
+
+    gator: list[LappGata] = []
+    for idx, item in enumerate(lapp_data.get("gator", []) or []):
+        if not isinstance(item, Mapping):
+            raise FlodenWebbFel("Poster i 'gator' måste vara JSON-objekt.")
+        kopia = dict(item)
+        kopia.setdefault("gata_id", f"gata-{idx + 1}")
+        kopia.setdefault("sektion", "standard-12m")
+        gator.append(LappGata.fran_dict(kopia))
+
+    byggnader: list[LappByggnad] = []
+    for idx, item in enumerate(lapp_data.get("byggnader", []) or []):
+        if not isinstance(item, Mapping):
+            raise FlodenWebbFel("Poster i 'byggnader' måste vara JSON-objekt.")
+        kopia = dict(item)
+        kopia.setdefault("byggnad_id", f"byggnad-{idx + 1}")
+        if (
+            "entre_punkt" not in kopia
+            and isinstance(kopia.get("polygon"), list)
+            and kopia["polygon"]
+        ):
+            pts = kopia["polygon"]
+            mean_e = sum(float(p[0]) for p in pts) / len(pts)
+            mean_n = sum(float(p[1]) for p in pts) / len(pts)
+            kopia["entre_punkt"] = [mean_e, mean_n]
+        byggnader.append(LappByggnad.fran_dict(kopia))
+
+    magasin: list[LappMagasin] = []
+    for idx, item in enumerate(lapp_data.get("magasin", []) or []):
+        if not isinstance(item, Mapping):
+            raise FlodenWebbFel("Poster i 'magasin' måste vara JSON-objekt.")
+        kopia = dict(item)
+        kopia.setdefault("magasin_id", f"magasin-{idx + 1}")
+        magasin.append(LappMagasin.fran_dict(kopia))
+
+    markslag_andringar: list[LappMarkslag] = []
+    for idx, item in enumerate(lapp_data.get("markslag", []) or []):
+        if not isinstance(item, Mapping):
+            raise FlodenWebbFel("Poster i 'markslag' måste vara JSON-objekt.")
+        kopia = dict(item)
+        kopia.setdefault("omrade_id", f"markslag-{idx + 1}")
+        markslag_andringar.append(LappMarkslag.fran_dict(kopia))
+
+    if not (hojdytor or gator or byggnader or magasin or markslag_andringar):
+        return None
+
+    lapp_id = str(lapp_data.get("lapp_id") or "webb-lapp-1")
+    return ProjektLapp(
+        lapp_id=lapp_id,
+        bas_recept=(bas_recept_sha256,),
+        hojdytor=tuple(hojdytor),
+        byggnader=tuple(byggnader),
+        gator=tuple(gator),
+        magasin=tuple(magasin),
+        markslag_andringar=tuple(markslag_andringar),
+        beskrivning=str(lapp_data.get("beskrivning", "Skapad via Flodens webbklient")),
+    )
+
+
+def _kopiera_entreer_fran_payload(kropp: Mapping[str, Any]) -> list[EntrePunkt]:
+    raw = kropp.get("grann_entreer")
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        raise FlodenWebbFel("'grann_entreer' måste vara en lista.")
+    ut: list[EntrePunkt] = []
+    for idx, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise FlodenWebbFel("Varje post i 'grann_entreer' måste vara ett JSON-objekt.")
+        for falt in ("e_m", "n_m"):
+            if falt not in item:
+                raise FlodenWebbFel(f"grann_entreer[{idx}] saknar '{falt}'.")
+        ut.append(
+            EntrePunkt(
+                entre_id=str(item.get("entre_id", f"grann-entre-{idx + 1}")),
+                e_m=float(item["e_m"]),
+                n_m=float(item["n_m"]),
+                gransdjup_m=float(item.get("gransdjup_m", 0.10)),
+            )
+        )
+    return ut
+
+
+def _ensemble_payload(
+    ens: EnsembleResultat,
+    geo: GeoTransformInfo,
+    *,
+    max_skala_m: float = 0.5,
+) -> dict[str, Any]:
+    p10 = ens.max_djup_percentiler_m[10.0]
+    p50 = ens.max_djup_percentiler_m[50.0]
+    p90 = ens.max_djup_percentiler_m[90.0]
+    return {
+        "percentiler": [10, 50, 90],
+        "antal_scenarier": len(ens.scenarier),
+        "max_volymfel_rel": float(ens.max_volymfel_rel),
+        "total_kortid_s": float(ens.total_kortid_s),
+        "p10": {
+            **rendera_djup_png_base64(p10, max_skala_m=max_skala_m),
+            **_raster_statistik(p10, geo),
+        },
+        "p50": {
+            **rendera_djup_png_base64(p50, max_skala_m=max_skala_m),
+            **_raster_statistik(p50, geo),
+        },
+        "p90": {
+            **rendera_djup_png_base64(p90, max_skala_m=max_skala_m),
+            **_raster_statistik(p90, geo),
+        },
+    }
+
+
+class FlodenApiApp:
+    """Testbar applikationsrouter för Flodens lokala webb-API (T10)."""
+
+    def __init__(
+        self,
+        *,
+        testsvit_rot: str | Path = "testsvit",
+        konfig_fil: str | Path = "config.toml",
+    ) -> None:
+        self.testsvit_rot = Path(testsvit_rot)
+        self.konfig_fil = Path(konfig_fil)
+        self._omrade_cache: dict[str, LaddatOmrade] = {}
+        self._sektioner_cache: dict[str, Gatusektion] | None = None
+
+    def hamta_sektioner(self) -> dict[str, Gatusektion]:
+        """Läser gatusektioner från `config.toml` med säker cache."""
+        if self._sektioner_cache is None:
+            if self.konfig_fil.is_file():
+                self._sektioner_cache = las_gatusektioner_fran_konfig(self.konfig_fil)
+            else:
+                self._sektioner_cache = {}
+        return self._sektioner_cache
+
+    def _upptack_omraden(self) -> dict[str, Testfall]:
+        try:
+            fall_lista = hitta_testfall(self.testsvit_rot)
+        except TestsvitFel as exc:
+            raise FlodenWebbFel(f"Kunde inte läsa testsviten: {exc}", status_kod=500) from exc
+
+        tillgangliga: dict[str, Testfall] = {}
+        for fall in fall_lista:
+            mark_fil = fall.mapp / "indata" / "mark.tif"
+            if mark_fil.is_file():
+                tillgangliga[fall.mapp.name] = fall
+        return tillgangliga
+
+    def ladda_omrade(self, omrade_id: str) -> LaddatOmrade:
+        """Läser in och cachar K1-markmodell och sänkgraf för ett område."""
+        if omrade_id in self._omrade_cache:
+            return self._omrade_cache[omrade_id]
+
+        katalog = self._upptack_omraden()
+        fall = katalog.get(omrade_id)
+        if fall is None:
+            for kandidat in katalog.values():
+                if kandidat.id.upper() == omrade_id.upper():
+                    fall = kandidat
+                    omrade_id = kandidat.mapp.name
+                    break
+        if fall is None:
+            raise FlodenWebbFel(
+                f"Okänt område '{omrade_id}'. Tillgängliga: {', '.join(sorted(katalog))}.",
+                status_kod=404,
+            )
+
+        indata = fall.mapp / "indata"
+        try:
+            mark_raw, geo = las_geotiff(indata / "mark.tif")
+            osak_raw, _ = las_geotiff(indata / "osakerhet.tif")
+            slag_raw, _ = las_geotiff(indata / "markslag.tif")
+            mark_z = np.asarray(mark_raw, dtype=np.float32)
+            osak_z = np.asarray(osak_raw, dtype=np.float32)
+            markslag = np.asarray(slag_raw, dtype=np.uint8)
+
+            bryt_fil = indata / "brytlinjer.gpkg"
+            brytlinjer = tuple(las_brytlinjer_fran_gpkg(bryt_fil)) if bryt_fil.is_file() else ()
+
+            opp_fil = indata / "oppningar.gpkg"
+            oppningar = tuple(las_oppningar_fran_gpkg(opp_fil)) if opp_fil.is_file() else ()
+
+            regn_fil = indata / "regn.csv"
+            regn_rader = las_regn_csv(regn_fil)
+            regn_tid = tuple(float(r[0]) for r in regn_rader)
+            regn_int = tuple(float(r[1]) for r in regn_rader)
+
+            recept_fil = indata / "recept.json"
+            if recept_fil.is_file():
+                bas_sha = sha256_fil(recept_fil)
+            else:
+                bas_sha = sha256_bytes(omrade_id.encode("utf-8"))
+
+            bas_graf = bygg_sankgraf(
+                mark_z,
+                osak_z,
+                markslag,
+                geo,
+                brytlinjer=brytlinjer,
+                oppningar=oppningar,
+            )
+        except (K1FormatFel, SankGrafFel, OSError) as exc:
+            raise FlodenWebbFel(
+                f"Kunde inte ladda område '{omrade_id}': {exc}",
+                status_kod=500,
+            ) from exc
+
+        laddat = LaddatOmrade(
+            omrade_id=omrade_id,
+            fall=fall,
+            mark_z=mark_z,
+            osakerhet_z=osak_z,
+            markslag=markslag,
+            geo=geo,
+            brytlinjer=brytlinjer,
+            oppningar=oppningar,
+            regn_tid_s=regn_tid,
+            regn_intensitet_mm_h=regn_int,
+            bas_recept_sha256=bas_sha,
+            kallor=DEFAULT_KALLOR,
+            bas_graf=bas_graf,
+        )
+        self._omrade_cache[omrade_id] = laddat
+        return laddat
+
+    def halsa(self) -> dict[str, Any]:
+        """Svar för `GET /api/halsa`."""
+        return {
+            "status": "ok",
+            "version": API_VERSION,
+            "kontrakt": {
+                "manifest": KONTRAKT_K0,
+                "lapp": KONTRAKT_K3,
+                "resultat": "K6/v1",
+            },
+            "epsg": EPSG_INTERN,
+            "hojdsystem": HOJDSYSTEM,
+            "kallor": list(DEFAULT_KALLOR),
+            "gatusektioner": [
+                sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())
+            ],
+        }
+
+    def lista_omraden(self) -> dict[str, Any]:
+        """Svar för `GET /api/omraden`."""
+        katalog = self._upptack_omraden()
+        poster: list[dict[str, Any]] = []
+        for omrade_id, fall in sorted(katalog.items()):
+            indata = fall.mapp / "indata"
+            _, geo = las_geotiff(indata / "mark.tif")
+            regn = las_regn_csv(indata / "regn.csv")
+            bbox_3011 = [
+                float(geo.x_min),
+                float(geo.y_min),
+                float(geo.x_max),
+                float(geo.y_max),
+            ]
+            bbox_wgs84 = list(
+                bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max)
+            )
+            poster.append(
+                {
+                    "omrade_id": omrade_id,
+                    "kod": fall.id,
+                    "namn": fall.namn,
+                    "grupp": fall.grupp,
+                    "beskrivning": fall.beskrivning,
+                    "bredd_px": int(geo.bredd),
+                    "hojd_px": int(geo.hojd),
+                    "upplosning_m": float(geo.pixelstorlek_x),
+                    "bbox_3011": bbox_3011,
+                    "bbox_wgs84": bbox_wgs84,
+                    "standard_regn": {
+                        "intensitet_mm_h": float(regn[0][1]),
+                        "varaktighet_s": float(regn[-1][0] - regn[0][0]),
+                    },
+                    "kallor": list(DEFAULT_KALLOR),
+                }
+            )
+        return {
+            "epsg": EPSG_INTERN,
+            "hojdsystem": HOJDSYSTEM,
+            "omraden": poster,
+        }
+
+    def hamta_omrade_lager(self, omrade_id: str) -> dict[str, Any]:
+        """Svar för `GET /api/omraden/<omrade_id>/lager`."""
+        omrade = self.ladda_omrade(omrade_id)
+        geo = omrade.geo
+
+        hillshade = rendera_hillshade_png_base64(
+            omrade.mark_z,
+            omrade.markslag,
+            pixelstorlek_m=geo.pixelstorlek_x,
+        )
+        bas_dyn = kor_dynamik_handelsestyrd(
+            omrade.bas_graf,
+            omrade.regn_tid_s,
+            omrade.regn_intensitet_mm_h,
+        )
+        scenarier = _skapa_ensemble_scenarier(omrade.regn_tid_s, omrade.regn_intensitet_mm_h)
+        bas_ens = kor_ensemble(omrade.bas_graf, scenarier, percentiler=(10.0, 50.0, 90.0))
+
+        osak_giltig = omrade.osakerhet_z[np.isfinite(omrade.osakerhet_z)]
+        osak_medel = float(np.mean(osak_giltig)) if osak_giltig.size > 0 else 0.0
+        osak_max = float(np.max(osak_giltig)) if osak_giltig.size > 0 else 0.0
+
+        bbox_3011 = [float(geo.x_min), float(geo.y_min), float(geo.x_max), float(geo.y_max)]
+        bbox_wgs84 = list(bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max))
+        max_skala = max(0.35, float(np.max(bas_ens.max_djup_percentiler_m[90.0])))
+
+        return {
+            "omrade_id": omrade.omrade_id,
+            "kod": omrade.fall.id,
+            "namn": omrade.fall.namn,
+            "beskrivning": omrade.fall.beskrivning,
+            "epsg": EPSG_INTERN,
+            "hojdsystem": HOJDSYSTEM,
+            "bas_recept_sha256": omrade.bas_recept_sha256,
+            "upplosning_m": float(geo.pixelstorlek_x),
+            "bredd_px": int(geo.bredd),
+            "hojd_px": int(geo.hojd),
+            "bbox_3011": bbox_3011,
+            "bbox_wgs84": bbox_wgs84,
+            "standard_regn": {
+                "tid_s": list(omrade.regn_tid_s),
+                "intensitet_mm_h": list(omrade.regn_intensitet_mm_h),
+                "intensitet_mm_h_medel": float(omrade.regn_intensitet_mm_h[0]),
+                "varaktighet_s": float(omrade.regn_tid_s[-1] - omrade.regn_tid_s[0]),
+            },
+            "hillshade": hillshade,
+            "bas_max_djup": {
+                **rendera_djup_png_base64(bas_dyn.max_djup_m, max_skala_m=max_skala),
+                **_raster_statistik(bas_dyn.max_djup_m, geo),
+            },
+            "sankor": sankgraf_noder_till_geojson(omrade.bas_graf),
+            "flodesvagar": sankgraf_flodesvagar_till_geojson(omrade.bas_graf),
+            "brytlinjer": brytlinjer_till_geojson(omrade.brytlinjer),
+            "byggnader": byggnader_till_geojson(omrade.markslag, geo),
+            "osakerhet": {
+                "mark_osakerhet_medel_m": osak_medel,
+                "mark_osakerhet_max_m": osak_max,
+                **_ensemble_payload(bas_ens, geo, max_skala_m=max_skala),
+            },
+            "gatusektioner": [
+                sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())
+            ],
+            "kallor": list(omrade.kallor),
+        }
+
+    def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/kor`: kör före/efter + ensemble och returnerar manifest."""
+        t_start = time.perf_counter()
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        omrade = self.ladda_omrade(omrade_id)
+        regn_tid, regn_int = _tolka_regnserie(
+            payload, omrade.regn_tid_s, omrade.regn_intensitet_mm_h
+        )
+        grann_entreer = _kopiera_entreer_fran_payload(payload)
+
+        try:
+            lapp = _bygg_projektlapp_fran_payload(payload, omrade.bas_recept_sha256)
+            sektioner = self.hamta_sektioner()
+
+            fore_dyn: DynamikResultat = kor_dynamik_handelsestyrd(
+                omrade.bas_graf,
+                regn_tid,
+                regn_int,
+            )
+
+            fe_res: ForeEfterResultat | None = None
+            if lapp is not None:
+                fe_res = kor_fore_efter(
+                    omrade.bas_graf,
+                    omrade.mark_z,
+                    omrade.osakerhet_z,
+                    omrade.markslag,
+                    lapp,
+                    regn_tid,
+                    regn_int,
+                    bas_recept_sha256=omrade.bas_recept_sha256,
+                    grann_entreer=grann_entreer,
+                    bas_brytlinjer=omrade.brytlinjer,
+                    bas_oppningar=omrade.oppningar,
+                    sektioner=sektioner if sektioner else None,
+                    lokal=True,
+                    fore_resultat=fore_dyn,
+                )
+                efter_dyn = fe_res.efter
+                efter_graf = fe_res.efter_graf
+                diff_arr = fe_res.diff_max_djup_m
+                efter_mark_z = fe_res.tillampning.mark_z
+                efter_markslag = fe_res.tillampning.markslag
+                efter_brytlinjer = fe_res.tillampning.alla_brytlinjer
+                fordrojningsvolym = float(fe_res.fordrojningsvolym_m3)
+                grann_forsamring = float(fe_res.grann_forsamring_volym_m3)
+                max_okning_granne = float(fe_res.max_okning_djup_granne_m)
+                nya_drabbade = [
+                    {
+                        "entre_id": e.entre_id,
+                        "fore_max_djup_m": float(e.fore_max_djup_m),
+                        "efter_max_djup_m": float(e.efter_max_djup_m),
+                        "diff_max_djup_m": float(e.diff_max_djup_m),
+                    }
+                    for e in fe_res.nya_drabbade_entreer
+                ]
+                projekt_entreer = [
+                    {
+                        "byggnad_id": p.byggnad_id,
+                        "entre_rh2000": float(p.entre_rh2000),
+                        "max_vattenniva_rh2000": float(p.max_vattenniva_rh2000),
+                        "marginal_m": float(p.marginal_m),
+                        "overstiger_entre": bool(p.overstiger_entre),
+                    }
+                    for p in fe_res.projekt_entreer
+                ]
+            else:
+                efter_dyn = fore_dyn
+                efter_graf = omrade.bas_graf
+                diff_arr = np.zeros_like(fore_dyn.max_djup_m, dtype=np.float32)
+                efter_mark_z = omrade.mark_z
+                efter_markslag = omrade.markslag
+                efter_brytlinjer = omrade.brytlinjer
+                fordrojningsvolym = 0.0
+                grann_forsamring = 0.0
+                max_okning_granne = 0.0
+                nya_drabbade = []
+                projekt_entreer = []
+
+            scenarier = _skapa_ensemble_scenarier(regn_tid, regn_int)
+            ens_res = kor_ensemble(efter_graf, scenarier, percentiler=(10.0, 50.0, 90.0))
+        except (LappFel, DynamikFel, SankGrafFel, RenderingFel, ValueError) as exc:
+            raise FlodenWebbFel(f"Simuleringsfel: {exc}", status_kod=400) from exc
+
+        kortid_s = time.perf_counter() - t_start
+        max_skala = max(
+            0.35,
+            float(np.max(fore_dyn.max_djup_m)),
+            float(np.max(efter_dyn.max_djup_m)),
+            float(np.max(ens_res.max_djup_percentiler_m[90.0])),
+        )
+        max_diff_abs = max(0.15, float(np.max(np.abs(diff_arr))))
+
+        manifest: RunManifest
+        if fe_res is not None:
+            manifest = fe_res.manifest
+        else:
+            manifest = skapa_manifest(
+                modul="webb",
+                indata=[
+                    FilPost(
+                        roll="bas_recept",
+                        fil=f"{omrade.omrade_id}/indata/recept.json",
+                        sha256=omrade.bas_recept_sha256,
+                    )
+                ],
+                parametrar={
+                    "omrade_id": omrade.omrade_id,
+                    "regn_tid_s": list(regn_tid),
+                    "regn_intensitet_mm_h": list(regn_int),
+                    "epsg": EPSG_INTERN,
+                },
+                utdata=[],
+                matvarden={
+                    "kortid_s": float(kortid_s),
+                    "fore_volymfel_rel": float(fore_dyn.volymfel_rel),
+                    "efter_volymfel_rel": float(efter_dyn.volymfel_rel),
+                },
+            )
+
+        geo = omrade.geo
+        bbox_3011 = [float(geo.x_min), float(geo.y_min), float(geo.x_max), float(geo.y_max)]
+        bbox_wgs84 = list(bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max))
+
+        return {
+            "omrade_id": omrade.omrade_id,
+            "lapp_id": lapp.lapp_id if lapp is not None else None,
+            "har_lapp": lapp is not None,
+            "epsg": EPSG_INTERN,
+            "hojdsystem": HOJDSYSTEM,
+            "bbox_3011": bbox_3011,
+            "bbox_wgs84": bbox_wgs84,
+            "regn": {
+                "tid_s": list(regn_tid),
+                "intensitet_mm_h": list(regn_int),
+            },
+            "fore": {
+                **rendera_djup_png_base64(fore_dyn.max_djup_m, max_skala_m=max_skala),
+                **_raster_statistik(fore_dyn.max_djup_m, geo),
+                "in_m3": float(fore_dyn.in_m3),
+                "lagrat_m3": float(fore_dyn.lagrat_m3),
+                "ut_m3": float(fore_dyn.ut_m3),
+                "volymfel_rel": float(fore_dyn.volymfel_rel),
+            },
+            "efter": {
+                **rendera_djup_png_base64(efter_dyn.max_djup_m, max_skala_m=max_skala),
+                **_raster_statistik(efter_dyn.max_djup_m, geo),
+                "in_m3": float(efter_dyn.in_m3),
+                "lagrat_m3": float(efter_dyn.lagrat_m3),
+                "ut_m3": float(efter_dyn.ut_m3),
+                "volymfel_rel": float(efter_dyn.volymfel_rel),
+            },
+            "differens": {
+                **rendera_diff_png_base64(diff_arr, max_abs_m=max_diff_abs),
+                "max_okning_djup_granne_m": max_okning_granne,
+            },
+            "efter_hillshade": rendera_hillshade_png_base64(
+                efter_mark_z,
+                efter_markslag,
+                pixelstorlek_m=geo.pixelstorlek_x,
+            ),
+            "efter_lager": {
+                "sankor": sankgraf_noder_till_geojson(efter_graf),
+                "flodesvagar": sankgraf_flodesvagar_till_geojson(efter_graf),
+                "brytlinjer": brytlinjer_till_geojson(efter_brytlinjer),
+                "byggnader": byggnader_till_geojson(efter_markslag, geo),
+            },
+            "osakerhet": _ensemble_payload(ens_res, geo, max_skala_m=max_skala),
+            "fordrojningsvolym_m3": fordrojningsvolym,
+            "grann_forsamring_volym_m3": grann_forsamring,
+            "max_okning_djup_granne_m": max_okning_granne,
+            "nya_drabbade_entreer": nya_drabbade,
+            "projekt_entreer": projekt_entreer,
+            "kortid_s": float(kortid_s),
+            "manifest": manifest.till_dict(),
+            "kallor": list(omrade.kallor),
+        }
+
+    def hantera_forfragan(
+        self,
+        metod: str,
+        sokvag: str,
+        kropp: bytes = b"",
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Hanterar en HTTP-förfrågan och returnerar `(status, headers, json_bytes)`."""
+        verb = metod.upper().strip()
+        if verb == "OPTIONS":
+            return _json_svar(200, {"status": "ok"})
+
+        parsed = urllib.parse.urlsplit(sokvag)
+        ren_sokvag = parsed.path.rstrip("/") or "/"
+
+        try:
+            if verb == "GET" and ren_sokvag == "/api/halsa":
+                return _json_svar(200, self.halsa())
+
+            if verb == "GET" and ren_sokvag == "/api/omraden":
+                return _json_svar(200, self.lista_omraden())
+
+            if verb == "GET" and ren_sokvag.startswith("/api/omraden/"):
+                delar = [d for d in ren_sokvag.split("/") if d]
+                if (
+                    len(delar) == 4
+                    and delar[0] == "api"
+                    and delar[1] == "omraden"
+                    and delar[3] == "lager"
+                ):
+                    omrade_id = urllib.parse.unquote(delar[2])
+                    return _json_svar(200, self.hamta_omrade_lager(omrade_id))
+
+            if verb == "POST" and ren_sokvag == "/api/kor":
+                return _json_svar(200, self.kor_simulering(kropp))
+
+            return _json_svar(
+                404,
+                {
+                    "fel": f"Okänd endpoint: {verb} {ren_sokvag}",
+                    "status": 404,
+                },
+            )
+        except FlodenWebbFel as exc:
+            return _json_svar(
+                exc.status_kod,
+                {
+                    "fel": str(exc),
+                    "status": exc.status_kod,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - returnera tydligt API-fel utan tyst krasch
+            return _json_svar(
+                500,
+                {
+                    "fel": f"Internt serverfel: {exc}",
+                    "status": 500,
+                },
+            )
+
+
+def skapa_http_server(
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    *,
+    testsvit_rot: str | Path = "testsvit",
+    konfig_fil: str | Path = "config.toml",
+) -> ThreadingHTTPServer:
+    """Skapar en lokal `ThreadingHTTPServer` kopplad till `FlodenApiApp`."""
+    app = FlodenApiApp(testsvit_rot=testsvit_rot, konfig_fil=konfig_fil)
+
+    class _FlodenHandler(BaseHTTPRequestHandler):
+        def _skicka(self, status: int, headers: Mapping[str, str], kropp: bytes) -> None:
+            self.send_response(status)
+            for nyckel, varde in headers.items():
+                self.send_header(nyckel, varde)
+            self.end_headers()
+            self.wfile.write(kropp)
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            status, headers, kropp = app.hantera_forfragan("OPTIONS", self.path)
+            self._skicka(status, headers, kropp)
+
+        def do_GET(self) -> None:  # noqa: N802
+            status, headers, kropp = app.hantera_forfragan("GET", self.path)
+            self._skicka(status, headers, kropp)
+
+        def do_POST(self) -> None:  # noqa: N802
+            langd = int(self.headers.get("Content-Length", "0") or "0")
+            kropp_in = self.rfile.read(langd) if langd > 0 else b""
+            status, headers, kropp = app.hantera_forfragan("POST", self.path, kropp_in)
+            self._skicka(status, headers, kropp)
+
+        def log_message(self, format: str, *args: Any) -> None:
+            return
+
+    return ThreadingHTTPServer((host, port), _FlodenHandler)
+
+
+def main() -> None:
+    """Startar Flodens lokala webb-API-server på http://127.0.0.1:8765."""
+    server = skapa_http_server()
+    raw_host = server.server_address[0]
+    host = raw_host.decode("utf-8") if isinstance(raw_host, bytes | bytearray) else str(raw_host)
+    port = server.server_address[1]
+    print(f"Floden API lyssnar på http://{host}:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
