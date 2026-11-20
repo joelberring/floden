@@ -37,10 +37,14 @@ def _finns_lag_passage(
             return True
         for dr, dk in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             nr, nk = r + dr, k + dk
-            if 0 <= nr < rader and 0 <= nk < kolumner and (nr, nk) not in besokt:
-                if mark_z[nr, nk] <= max_z:
-                    besokt.add((nr, nk))
-                    ko.append((nr, nk))
+            if (
+                0 <= nr < rader
+                and 0 <= nk < kolumner
+                and (nr, nk) not in besokt
+                and mark_z[nr, nk] <= max_z
+            ):
+                besokt.add((nr, nk))
+                ko.append((nr, nk))
     return False
 
 

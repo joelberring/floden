@@ -35,10 +35,14 @@ def _ar_nåbar_med_4_grannar(
             return True
         for dr, dk in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             nr, nk = r + dr, k + dk
-            if 0 <= nr < rader and 0 <= nk < kolumner and (nr, nk) not in besokt:
-                if mark_z[nr, nk] <= max_z:
-                    besokt.add((nr, nk))
-                    ko.append((nr, nk))
+            if (
+                0 <= nr < rader
+                and 0 <= nk < kolumner
+                and (nr, nk) not in besokt
+                and mark_z[nr, nk] <= max_z
+            ):
+                besokt.add((nr, nk))
+                ko.append((nr, nk))
     return False
 
 
@@ -111,10 +115,14 @@ class TestBrytlinjer(unittest.TestCase):
                     if dr == 0 and dk == 0:
                         continue
                     nr, nk = r + dr, k + dk
-                    if 0 <= nr < rader and 0 <= nk < kolumner and (nr, nk) not in besokt:
-                        if med_kant[nr, nk] <= 10.05:
-                            besokt.add((nr, nk))
-                            ko.append((nr, nk))
+                    if (
+                        0 <= nr < rader
+                        and 0 <= nk < kolumner
+                        and (nr, nk) not in besokt
+                        and med_kant[nr, nk] <= 10.05
+                    ):
+                        besokt.add((nr, nk))
+                        ko.append((nr, nk))
         self.assertFalse(nådde_andra_sidan)
 
         # Höjs vattnet över kantstenen (10.15 m) passerar det

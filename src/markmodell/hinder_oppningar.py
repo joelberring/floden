@@ -106,10 +106,7 @@ def _punkter_i_polygon(
     innanfor = np.zeros(e_rutnat.shape, dtype=bool)
     antal = len(polygon)
     # Stödjer både sluten och öppen ring
-    if polygon[0] == polygon[-1] and antal > 3:
-        horn = polygon[:-1]
-    else:
-        horn = polygon
+    horn = polygon[:-1] if polygon[0] == polygon[-1] and antal > 3 else polygon
     m = len(horn)
     for i in range(m):
         e1, n1 = horn[i]

@@ -601,10 +601,11 @@ def skriv_oppningar_gpkg(
             ("oppningar", "geom", "LINESTRING", EPSG_SWEREF99_1800, 0, 0),
         )
         for post in poster:
-            if len(post.koordinater) == 1:
-                wkb = _packa_gp_wkb_point(post.koordinater[0], EPSG_SWEREF99_1800)
-            else:
-                wkb = _packa_gp_wkb_linestring(post.koordinater, EPSG_SWEREF99_1800)
+            wkb = (
+                _packa_gp_wkb_point(post.koordinater[0], EPSG_SWEREF99_1800)
+                if len(post.koordinater) == 1
+                else _packa_gp_wkb_linestring(post.koordinater, EPSG_SWEREF99_1800)
+            )
             conn.execute(
                 """
                 INSERT INTO oppningar (geom, typ, bredd_m, botten_rh2000, kalla)

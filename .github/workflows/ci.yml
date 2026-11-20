@@ -25,7 +25,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint med ruff
-        run: ruff check src tests testsvit
+        run: ruff check --output-format=github src tests testsvit
 
       - name: Typkontroll med mypy
         run: mypy src
