@@ -10,6 +10,7 @@ import type {
   LappMagasinPayload,
   OmradeLagerSvar,
   PercentilNyckel,
+  RiskSvar,
 } from "./types";
 
 const REF_E_M = 150000.0;
@@ -37,6 +38,7 @@ export const STANDARD_LAGER: LagerTillstand[] = [
   { id: "maxdjup", namn: "Maxdjup", synlig: true, opacitet: 0.85 },
   { id: "osakerhet", namn: "Osäkerhet (P10/P50/P90)", synlig: false, opacitet: 0.8 },
   { id: "differens", namn: "Differens (efter − före)", synlig: false, opacitet: 0.85 },
+  { id: "risk", namn: "Kumulativ risk", synlig: false, opacitet: 0.85 },
 ];
 
 export function wgs84Till3011(lon: number, lat: number): [number, number] {
@@ -81,6 +83,7 @@ export class FlodenKartaKontroll {
   private lagerStatus: Map<LagerId, LagerTillstand> = new Map();
   private aktuelltOmrade: OmradeLagerSvar | null = null;
   private aktuelltResultat: KorSvar | null = null;
+  private aktuellRisk: RiskSvar | null = null;
   private jamforLage: JamforLage = "svep";
   private svepAndel = 0.5;
   private aktivPercentil: PercentilNyckel = "p50";
@@ -131,6 +134,9 @@ export class FlodenKartaKontroll {
       if (this.aktuelltResultat) {
         this.uppdateraResultatData(this.aktuelltResultat);
       }
+      if (this.aktuellRisk) {
+        this.uppdateraRiskData(this.aktuellRisk);
+      }
       this.appliceraSynlighetOchOpacitet();
     });
 
@@ -176,6 +182,11 @@ export class FlodenKartaKontroll {
       url: TOM_PNG,
       coordinates: STANDARD_COORDS,
     });
+    this.karta.addSource("src-risk", {
+      type: "image",
+      url: TOM_PNG,
+      coordinates: STANDARD_COORDS,
+    });
 
     this.karta.addSource("src-byggnader", { type: "geojson", data: TOM_FC as never });
     this.karta.addSource("src-brytlinjer", { type: "geojson", data: TOM_FC as never });
@@ -211,6 +222,12 @@ export class FlodenKartaKontroll {
       id: "lyr-diff",
       type: "raster",
       source: "src-diff",
+      paint: { "raster-resampling": "nearest", "raster-opacity": 0.85 },
+    });
+    this.karta.addLayer({
+      id: "lyr-risk",
+      type: "raster",
+      source: "src-risk",
       paint: { "raster-resampling": "nearest", "raster-opacity": 0.85 },
     });
     this.karta.addLayer({
@@ -270,6 +287,11 @@ export class FlodenKartaKontroll {
   public visaOmrade(omrade: OmradeLagerSvar): void {
     this.aktuelltOmrade = omrade;
     this.aktuelltResultat = null;
+    this.aktuellRisk = null;
+    const riskStatus = this.lagerStatus.get("risk");
+    if (riskStatus) {
+      this.lagerStatus.set("risk", { ...riskStatus, synlig: false });
+    }
     if (this.laddad) {
       this.uppdateraOmradeData(omrade);
       this.appliceraSynlighetOchOpacitet();
@@ -284,12 +306,25 @@ export class FlodenKartaKontroll {
     }
   }
 
+  public visaRisk(risk: RiskSvar): void {
+    this.aktuellRisk = risk;
+    const nu = this.lagerStatus.get("risk");
+    if (nu) {
+      this.lagerStatus.set("risk", { ...nu, synlig: true });
+    }
+    if (this.laddad) {
+      this.uppdateraRiskData(risk);
+      this.appliceraSynlighetOchOpacitet();
+    }
+  }
+
   private uppdateraOmradeData(omrade: OmradeLagerSvar): void {
     const coords = bboxWgs84TillImageCoordinates(omrade.bbox_wgs84);
     this.uppdateraBildKalla("src-hillshade", omrade.hillshade.data_uri, coords);
     this.uppdateraBildKalla("src-djup-fore", omrade.bas_max_djup.data_uri, coords);
     this.uppdateraBildKalla("src-djup-efter", omrade.bas_max_djup.data_uri, coords);
     this.uppdateraBildKalla("src-diff", TOM_PNG, coords);
+    this.uppdateraBildKalla("src-risk", TOM_PNG, coords);
     this.uppdateraBildKalla(
       "src-osakerhet",
       omrade.osakerhet[this.aktivPercentil].data_uri,
@@ -327,6 +362,11 @@ export class FlodenKartaKontroll {
     this.uppdateraGeoJsonKalla("src-brytlinjer", res.efter_lager.brytlinjer);
     this.uppdateraGeoJsonKalla("src-flodesvagar", res.efter_lager.flodesvagar);
     this.uppdateraGeoJsonKalla("src-sankor", res.efter_lager.sankor);
+  }
+
+  private uppdateraRiskData(risk: RiskSvar): void {
+    const coords = bboxWgs84TillImageCoordinates(risk.bbox_wgs84);
+    this.uppdateraBildKalla("src-risk", risk.kumulativ_risk_karta.data_uri, coords);
   }
 
   private uppdateraBildKalla(
@@ -398,6 +438,10 @@ export class FlodenKartaKontroll {
     const osak = get("osakerhet");
     this.setLayerVis("lyr-osakerhet", osak.synlig);
     this.karta.setPaintProperty("lyr-osakerhet", "raster-opacity", osak.opacitet);
+
+    const risk = get("risk");
+    this.setLayerVis("lyr-risk", risk.synlig);
+    this.karta.setPaintProperty("lyr-risk", "raster-opacity", risk.opacitet);
 
     const djup = get("maxdjup");
     const diff = get("differens");

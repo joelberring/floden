@@ -192,6 +192,89 @@ class TestWebbApiOchKlient(unittest.TestCase):
         self.assertEqual(status_saknas, 400)
         self.assertIn("omrade_id", json.loads(kropp_saknas.decode("utf-8"))["fel"])
 
+    def test_get_regn_listar_sverige_och_stockholmsregn(self) -> None:
+        status, _, kropp = self.app.hantera_forfragan("GET", "/api/regn")
+        self.assertEqual(status, 200)
+        data = json.loads(kropp.decode("utf-8"))
+        self.assertEqual(data["kontrakt"], "K4/v1")
+        self.assertIn(20.0, data["standard_aterkomsttider_ar"])
+        self.assertIn(50.0, data["standard_aterkomsttider_ar"])
+        self.assertIn(500.0, data["standard_aterkomsttider_ar"])
+        self.assertIn(1.24, data["standard_klimatfaktorer"])
+        self.assertIn(1.4, data["standard_klimatfaktorer"])
+
+        ids = {f["regn_id"] for f in data["forval"]}
+        self.assertIn("stockholm_cds_6h_100ar_kf124", ids)
+        self.assertIn("stockholm_cds_6h_100ar_kf140", ids)
+        self.assertIn("stockholm_cds_6h_500ar_kf140", ids)
+        self.assertIn("sverige_cds_6h_20ar_kf125", ids)
+
+        status_sthlm, _, kropp_sthlm = self.app.hantera_forfragan(
+            "GET", "/api/regn?region=Stockholm"
+        )
+        self.assertEqual(status_sthlm, 200)
+        sthlm = json.loads(kropp_sthlm.decode("utf-8"))
+        self.assertTrue(all(f["region"] == "Stockholm" for f in sthlm["forval"]))
+
+    def test_post_kor_med_stockholmsregn_forval(self) -> None:
+        payload = {
+            "omrade_id": "A3_tva_sankor_sammanslagning",
+            "regn_id": "stockholm_cds_6h_100ar_kf140",
+        }
+        status, _, kropp = self.app.hantera_forfragan(
+            "POST",
+            "/api/kor",
+            json.dumps(payload).encode("utf-8"),
+        )
+        self.assertEqual(status, 200)
+        res = json.loads(kropp.decode("utf-8"))
+        self.assertEqual(res["regn"]["regn_id"], "stockholm_cds_6h_100ar_kf140")
+        self.assertAlmostEqual(res["regn"]["klimatfaktor"], 1.4, places=6)
+        self.assertGreater(res["regn"]["total_djup_mm"], 115.0)
+        self.assertGreater(res["fore"]["max_djup_m"], 0.1)
+
+    def test_post_risk_beraknar_kumulativ_oversvamningsrisk(self) -> None:
+        payload_100 = {
+            "omrade_id": "A3_tva_sankor_sammanslagning",
+            "gransdjup_m": 0.20,
+            "max_aterkomsttid_ar": 100.0,
+            "klimatfaktor": 1.24,
+            "tidshorisont_ar": 50.0,
+        }
+        status, _, kropp = self.app.hantera_forfragan(
+            "POST",
+            "/api/risk",
+            json.dumps(payload_100).encode("utf-8"),
+        )
+        self.assertEqual(status, 200)
+        res = json.loads(kropp.decode("utf-8"))
+        self.assertEqual(res["epsg"], 3011)
+        self.assertEqual(res["gransdjup_m"], 0.20)
+        self.assertEqual(res["max_aterkomsttid_ar"], 100.0)
+        self.assertEqual(res["klimatfaktor"], 1.24)
+        self.assertEqual(res["aterkomsttider_ar"], [2.0, 5.0, 10.0, 20.0, 50.0, 100.0])
+        self.assertGreater(res["sammanfattning"]["area_over_grans_m2"], 0.0)
+        self.assertGreater(res["sammanfattning"]["max_kumulativ_sannolikhet"], 0.0)
+        self.assertLessEqual(res["sammanfattning"]["max_kumulativ_sannolikhet"], 1.0)
+        self.assertEqual(len(res["steg"]), 6)
+
+        risk_img = _avkoda_png_base64(res["kumulativ_risk_karta"]["png_base64"]).convert("RGBA")
+        self.assertEqual(risk_img.format, None)
+        self.assertGreater(risk_img.size[0], 0)
+        self.assertEqual(risk_img.getpixel((0, 0))[3], 0)
+
+        manifest = RunManifest.fran_dict(res["manifest"])
+        self.assertEqual(manifest.kontrakt, KONTRAKT_K0)
+
+        # Saknat gransdjup_m måste ge tydligt 400-fel
+        status_fel, _, kropp_fel = self.app.hantera_forfragan(
+            "POST",
+            "/api/risk",
+            json.dumps({"omrade_id": "A3_tva_sankor_sammanslagning"}).encode("utf-8"),
+        )
+        self.assertEqual(status_fel, 400)
+        self.assertIn("gransdjup_m", json.loads(kropp_fel.decode("utf-8"))["fel"])
+
     def test_webbklientens_filer_finns_och_har_giltig_struktur(self) -> None:
         webb_rot = _REPO_ROT / "webb"
         pkg = json.loads((webb_rot / "package.json").read_text(encoding="utf-8"))
@@ -207,6 +290,8 @@ class TestWebbApiOchKlient(unittest.TestCase):
         index_html = (webb_rot / "index.html").read_text(encoding="utf-8")
         self.assertIn("/src/main.ts", index_html)
         self.assertIn("maplibre-karta", index_html)
+        self.assertIn("regn-forval", index_html)
+        self.assertIn("risk-knapp", index_html)
 
         for filnamn in ("types.ts", "api.ts", "karta.ts", "main.ts", "style.css"):
             sokvag = webb_rot / "src" / filnamn

@@ -12,6 +12,7 @@ from webb.rendering import (
     rendera_diff_png_base64,
     rendera_djup_png_base64,
     rendera_hillshade_png_base64,
+    rendera_risk_png_base64,
     sankgraf_flodesvagar_till_geojson,
     sankgraf_noder_till_geojson,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "rendera_diff_png_base64",
     "rendera_djup_png_base64",
     "rendera_hillshade_png_base64",
+    "rendera_risk_png_base64",
     "sankgraf_flodesvagar_till_geojson",
     "sankgraf_noder_till_geojson",
     "skapa_http_server",

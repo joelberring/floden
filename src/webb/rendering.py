@@ -264,6 +264,48 @@ def rendera_diff_png_base64(
     }
 
 
+def rendera_risk_png_base64(
+    sannolikhet: NDArray[np.floating[Any]],
+    *,
+    min_synlig_sannolikhet: float = 1e-4,
+) -> dict[str, Any]:
+    """Renderar kumulativ översvämningssannolikhet `[0, 1]` till transparent RGBA-PNG.
+
+    Celler med sannolikhet <= `min_synlig_sannolikhet` är helt transparenta.
+    Färgramp: bärnsten (låg risk) -> orange (medel) -> mörkröd (hög risk).
+    """
+    arr = _validera_2d_raster(sannolikhet, "sannolikhet")
+    hojd, bredd = arr.shape
+
+    giltig = np.isfinite(arr)
+    synlig = giltig & (arr > float(min_synlig_sannolikhet))
+    norm = np.zeros_like(arr)
+    norm[synlig] = np.clip(arr[synlig], 0.0, 1.0)
+
+    # Bärnsten (#f59e0b) -> orange (#ea580c) -> mörkröd (#991b1b)
+    r = np.round(245.0 - 92.0 * np.power(norm, 1.35))
+    g = np.round(178.0 - 152.0 * np.power(norm, 0.85))
+    b = np.round(32.0 - 12.0 * norm)
+    a = np.where(synlig, np.round(115.0 + 130.0 * np.power(norm, 0.5)), 0.0)
+
+    rgba = np.zeros((hojd, bredd, 4), dtype=np.uint8)
+    rgba[:, :, 0] = np.clip(r, 0, 255).astype(np.uint8)
+    rgba[:, :, 1] = np.clip(g, 0, 255).astype(np.uint8)
+    rgba[:, :, 2] = np.clip(b, 0, 255).astype(np.uint8)
+    rgba[:, :, 3] = np.clip(a, 0, 255).astype(np.uint8)
+
+    b64, data_uri = _array_till_png_base64(rgba)
+    varden = arr[giltig]
+    max_p = float(np.max(varden)) if varden.size > 0 else 0.0
+    return {
+        "png_base64": b64,
+        "data_uri": data_uri,
+        "bredd_px": int(bredd),
+        "hojd_px": int(hojd),
+        "max_sannolikhet": max_p,
+    }
+
+
 def _linje_till_geojson_feature(
     koordinater_3011: Sequence[tuple[float, float]],
     egenskaper: dict[str, Any],

@@ -113,6 +113,13 @@ body {
   gap: 8px;
 }
 
+.grid-tre {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 4px;
+}
+
 .lager-lista {
   display: flex;
   flex-direction: column;
@@ -221,6 +228,35 @@ body {
   justify-content: space-between;
   border-bottom: 1px dashed var(--border);
   padding: 3px 0;
+}
+
+.risk-panel {
+  background: #fdf7f5;
+  border-color: #e6c9c0;
+}
+
+.risk-tabell {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 6px;
+  font-size: 0.76rem;
+}
+
+.risk-tabell th,
+.risk-tabell td {
+  text-align: right;
+  padding: 3px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.risk-tabell th:first-child,
+.risk-tabell td:first-child {
+  text-align: left;
+}
+
+.risk-tabell th {
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .osakerhet-panel {

@@ -4,6 +4,9 @@ import type {
   KorSvar,
   OmradenSvar,
   OmradeLagerSvar,
+  RegnKatalogSvar,
+  RiskBegaran,
+  RiskSvar,
 } from "./types";
 
 const API_BAS = "/api";
@@ -39,8 +42,20 @@ export function hamtaOmradeLager(omradeId: string): Promise<OmradeLagerSvar> {
   );
 }
 
+export function hamtaRegnKatalog(): Promise<RegnKatalogSvar> {
+  return lasJson<RegnKatalogSvar>(`${API_BAS}/regn`);
+}
+
 export function korSimulering(begaran: KorBegaran): Promise<KorSvar> {
   return lasJson<KorSvar>(`${API_BAS}/kor`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(begaran),
+  });
+}
+
+export function beraknaRisk(begaran: RiskBegaran): Promise<RiskSvar> {
+  return lasJson<RiskSvar>(`${API_BAS}/risk`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(begaran),
