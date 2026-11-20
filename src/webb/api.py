@@ -188,7 +188,8 @@ def _bygg_projektlapp_fran_payload(
     bas_recept_sha256: str,
 ) -> ProjektLapp | None:
     """Bygger en K3/v1 `ProjektLapp` från JSON-kropp, eller `None` om ingen lapp skickats."""
-    lapp_data = kropp.get("lapp") if isinstance(kropp.get("lapp"), Mapping) else kropp
+    raw_lapp = kropp.get("lapp")
+    lapp_data: Mapping[str, Any] = raw_lapp if isinstance(raw_lapp, Mapping) else kropp
 
     hojdytor: list[HojdYta] = []
     landxml_raw = lapp_data.get("landxml")
@@ -851,7 +852,8 @@ def skapa_http_server(
 def main() -> None:
     """Startar Flodens lokala webb-API-server på http://127.0.0.1:8765."""
     server = skapa_http_server()
-    host = server.server_address[0]
+    raw_host = server.server_address[0]
+    host = raw_host.decode("utf-8") if isinstance(raw_host, bytes | bytearray) else str(raw_host)
     port = server.server_address[1]
     print(f"Floden API lyssnar på http://{host}:{port}")
     try:
