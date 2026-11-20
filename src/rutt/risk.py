@@ -329,10 +329,10 @@ def berakna_vag_kumulativ_risk(
         eff_djup_serie: list[float] = []
         for t_ar in valda_tider:
             mark_d = float(normaliserat_djup[t_ar].get(kant_id, 0.0))
-            niva_karta = (
+            niva_for_t: Mapping[str, float] | None = (
                 normaliserad_niva.get(t_ar) if normaliserad_niva is not None else None
             )
-            niva = niva_karta.get(kant_id) if niva_karta is not None else None
+            niva = niva_for_t.get(kant_id) if niva_for_t is not None else None
             eff_djup_serie.append(effektivt_vagdjup_m(kant, mark_d, niva))
 
         kritisk_t, overskriden_min = interpolera_kritisk_aterkomsttid_ar(
@@ -378,11 +378,11 @@ def berakna_vag_kumulativ_risk(
         ankomster_per_t: dict[float, dict[str, dict[str, float]]] = {}
         for t_ar in valda_tider:
             djup_serie: dict[float, Mapping[str, float]] = {start_tid_s: normaliserat_djup[t_ar]}
-            niva_karta = (
+            niva_vid_t: Mapping[str, float] | None = (
                 normaliserad_niva.get(t_ar) if normaliserad_niva is not None else None
             )
             niva_serie: dict[float, Mapping[str, float]] | None = (
-                {start_tid_s: niva_karta} if niva_karta is not None else None
+                {start_tid_s: niva_vid_t} if niva_vid_t is not None else None
             )
             ankomster_per_t[t_ar] = {
                 station_id: tidsberoende_dijkstra(
