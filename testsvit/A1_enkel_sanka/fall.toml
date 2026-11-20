@@ -1,0 +1,6 @@
+id = "A1"
+namn = "Enkel sänka, konstant regn"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Skålformad bassäng med känd area (100 m²) och överfallsnivå (10,50 m)."
+status = "redo"

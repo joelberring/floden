@@ -1,0 +1,29 @@
+{
+  "fall_id": "A2",
+  "typ": "analytisk",
+  "overfallsordning": [
+    "ovre",
+    "nedre"
+  ],
+  "ovre": {
+    "botten_rh2000": 11.0,
+    "overfall_rh2000": 11.3,
+    "area_m2": 36.0,
+    "slutvolym_m3": 10.8,
+    "max_djup_m": 0.3,
+    "t_overfall_s": 3354.037
+  },
+  "nedre": {
+    "botten_rh2000": 10.0,
+    "overfall_rh2000": 10.4,
+    "area_m2": 56.0,
+    "slutvolym_m3": 22.4,
+    "max_djup_m": 0.4,
+    "t_overfall_s": 5099.846
+  },
+  "intensitet_mm_h": 72.0,
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

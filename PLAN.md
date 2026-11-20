@@ -16,9 +16,9 @@ Exakt avgränsning väljs av Joel och läggs i `data/omraden/prov1.gpkg`.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T01 | Markmodellen: laser, byggnader, brytlinjer, trummor, osäkerhet per cell | T00 | redo |
+| T01 | Markmodellen: laser, byggnader, brytlinjer, trummor, osäkerhet per cell | T00 | pågår |
 | T01b | Gatuprofiler: parametrisk rekonstruktion av körbana, kantsten och gångbana | T01 (grundraster) | väntar |
-| T09a | Testsvit del 1: syntetiska terränger med känt svar | T00 | redo |
+| T09a | Testsvit del 1: syntetiska terränger med känt svar | T00 | klar |
 
 **Klar när:** markmodellen för provområdet kan visas bredvid Lantmäteriets höjdmodell, och skillnaden i kantstenar
 och trummor syns och är dokumenterad.

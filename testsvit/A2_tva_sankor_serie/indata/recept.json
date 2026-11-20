@@ -1,0 +1,41 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150100_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "9262a10edab725bbb35ed57b5e1c8953a11db1bd1388a6af75f23ef2041c5e34"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "4c4bd11ea30f6aa874d49a9981497c1b1d4bdbac8ebde2dc05292f066560ff24"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "377b4a060b5a82de1405ba44ae03c265c0e2031686de51af281040e7c0a006c1"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "a2c900e005ac365ccdb9e99690855d77f3b8b964b12ab4ac22bd547ce15df310"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "a285863108b5d2032b792e50ff022ac208525b483552747d9f365c1ed9c7ad50"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "4befe3559004f11e83c7c9ff13117f6c38c8f9de68319aa309a360fe34193006"
+    }
+  },
+  "parametrar": {
+    "fall": "A2",
+    "overfallsordning": [
+      "ovre",
+      "nedre"
+    ]
+  }
+}

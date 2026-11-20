@@ -1,0 +1,6 @@
+id = "A2"
+namn = "Två sänkor i serie"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Övre sänka (11,00->11,30 m) rinner över sadel ned i nedre sänka (10,00->10,40 m)."
+status = "redo"

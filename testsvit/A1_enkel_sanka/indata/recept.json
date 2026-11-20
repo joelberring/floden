@@ -1,0 +1,39 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150000_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "de1f3972a24e1e5be3137b0f06e0320fd16f3e5be1fbe6610cf21ba21145d7af"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "6cb6440373217765447233f1666c48709dc786cd4a55ebb3c6b96d2f18238eff"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "3467fe6eed8bae6a6d49104f9ceab0998cb51640930b5a0fd36dc85318e4758d"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "feb6bfd2ce61c2454474ad2f9506e3b3db2b7f4bd20ff0fe86a0acd73044a371"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "166346a4451d84948a6a291be546f4c8de2416f93956bfc53424abdc766c0df2"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "4befe3559004f11e83c7c9ff13117f6c38c8f9de68319aa309a360fe34193006"
+    }
+  },
+  "parametrar": {
+    "fall": "A1",
+    "sanka_area_m2": 100.0,
+    "max_djup_m": 0.5
+  }
+}

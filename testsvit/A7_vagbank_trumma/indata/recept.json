@@ -1,0 +1,39 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150600_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "03b6fa4716b91b538d5d1366a7087465adf130a6db09455d160bc3c23ceff9e9"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "a5c5f795d544a5980e2ee0637da1b3bc70a18bf2b315ee0d4347a849f788f7bb"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "51396a21097028124061532a0eedc4e4d4f3c55d4913e541a39d4c7468b59d88"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "bc345b0903ecdfaa230cae45490e6767e1a6bd7d8922d07c08165878fb39954e"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "76722f9665c03d3f87187e4eb08e250455ec079a9ec7a8f4af4bf3fe1beb3347"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "edaad4d238eea4dfb99e0fc92639775fb57b458be42cf124cf9246bdfef3d4c0"
+    }
+  },
+  "parametrar": {
+    "fall": "A7",
+    "vagbank_kron_rh2000": 11.8,
+    "trumma_bredd_m": 1.0
+  }
+}

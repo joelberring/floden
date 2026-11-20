@@ -1,0 +1,38 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150400_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "d424ed3051c1e22b7cac89989999085da148bbfb2ed2679a945cb2cccf45cd26"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "d3b1a0f1629c7a4a11d5ee9119bb38a0d2f55448aee0216f3c950026b924ca65"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "d5dcda216a978235062889c63f405ea0ad713e311a44e25b789b37983582330c"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "1df0d572177514cd0903f6bf2469d0c84663084bccc635be38b67092dc67d553"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "32118d17a592b2f19548c32a6ee8d452bfa1f3668559e7ae50b9fe06e3e186b3"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "b799ee61b0dbeb5cbd7fbc2e21d10712c83f6f5112a194cf2faa4ce0d7fbfac1"
+    }
+  },
+  "parametrar": {
+    "fall": "A5",
+    "kantsten_hojd_m": 0.12
+  }
+}

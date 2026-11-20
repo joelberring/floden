@@ -1,0 +1,14 @@
+{
+  "fall_id": "A5",
+  "typ": "kantstensfall",
+  "rannsten_botten_rh2000": 10.0,
+  "kantsten_hojd_m": 0.12,
+  "kantsten_overfall_rh2000": 10.12,
+  "forvantat_beteende": "Vatten stannar i rännstenen norr om södra kantstenen (djup < 0,12 m).",
+  "vatten_pa_sodra_gard_m3": 0.0,
+  "max_djup_rannsten_m": 0.06,
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

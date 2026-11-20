@@ -1,0 +1,6 @@
+id = "A3"
+namn = "Två sänkor som slås ihop"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Syskonsänkor fylls först separat och slås ihop över sadel vid 10,30 m."
+status = "redo"

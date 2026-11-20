@@ -19,6 +19,7 @@ dependencies = [
     "shapely==2.0.6",
     "geopandas==1.0.1",
     "pyarrow==18.1.0",
+    "pillow==11.0.0",
 ]
 
 [project.optional-dependencies]
@@ -58,7 +59,18 @@ mypy_path = "src"
 explicit_package_bases = true
 
 [[tool.mypy.overrides]]
-module = ["pyproj", "pyproj.*"]
+module = [
+    "pyproj",
+    "pyproj.*",
+    "rasterio",
+    "rasterio.*",
+    "geopandas",
+    "geopandas.*",
+    "shapely",
+    "shapely.*",
+    "PIL",
+    "PIL.*",
+]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

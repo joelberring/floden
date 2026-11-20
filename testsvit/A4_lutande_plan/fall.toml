@@ -1,0 +1,6 @@
+id = "A4"
+namn = "Lutande plan"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Likformigt 2 % lutande asfaltplan (30 m) utan sänkor, Manning n=0,015."
+status = "redo"

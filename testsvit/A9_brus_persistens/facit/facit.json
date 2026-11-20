@@ -1,0 +1,15 @@
+{
+  "fall_id": "A9",
+  "typ": "persistensfall",
+  "antal_verkliga_sankor": 1,
+  "verklig_sanka_djup_m": 0.5,
+  "verklig_sanka_botten_rh2000": 10.001,
+  "brus_amplitud_m": 0.02,
+  "osakerhet_m": 0.03,
+  "slumpfro": 42,
+  "forvantat_beteende": "Persistensfiltret behåller exakt 1 verklig sänka och rensar brus.",
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

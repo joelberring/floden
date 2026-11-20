@@ -1,5 +1,21 @@
 """Testsvit och valideringskörare för Floden (`docs/VALIDERING.md`, uppdrag T09)."""
 
+from testsvit.k1_io import (
+    EPSG_SWEREF99_1800,
+    PIXELSTORLEK_M,
+    BrytlinjePost,
+    GeoTransformInfo,
+    K1FormatFel,
+    OppningPost,
+    las_geotiff,
+    las_gpkg_tabell,
+    las_regn_csv,
+    skriv_brytlinjer_gpkg,
+    skriv_geotiff,
+    skriv_k1_recept,
+    skriv_oppningar_gpkg,
+    skriv_regn_csv,
+)
 from testsvit.korare import (
     FallResultat,
     Testfall,
@@ -10,14 +26,38 @@ from testsvit.korare import (
     kor_testsvit,
     las_testfall,
 )
+from testsvit.syntetiska import (
+    SyntetisktFallSpec,
+    alla_syntetiska_specifikationer,
+    generera_alla_syntetiska_fall,
+    skriv_syntetiskt_fall,
+)
 
 __all__ = [
+    "BrytlinjePost",
+    "EPSG_SWEREF99_1800",
     "FallResultat",
+    "GeoTransformInfo",
+    "K1FormatFel",
+    "OppningPost",
+    "PIXELSTORLEK_M",
+    "SyntetisktFallSpec",
     "Testfall",
     "TestsvitFel",
+    "alla_syntetiska_specifikationer",
     "formatera_tabell",
+    "generera_alla_syntetiska_fall",
     "hitta_testfall",
     "kor_fall",
     "kor_testsvit",
+    "las_geotiff",
+    "las_gpkg_tabell",
+    "las_regn_csv",
     "las_testfall",
+    "skriv_brytlinjer_gpkg",
+    "skriv_geotiff",
+    "skriv_k1_recept",
+    "skriv_oppningar_gpkg",
+    "skriv_regn_csv",
+    "skriv_syntetiskt_fall",
 ]

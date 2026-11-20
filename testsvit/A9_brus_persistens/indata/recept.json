@@ -1,0 +1,39 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_150800_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "25e3ff31117e25e3fdd2b55ed561f427c10f75aee5eb28086f445f13792e291e"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "948a964db05a74e923dee1172e3395041f5be47928b6645f6542fd2ebc94f1c7"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "ee7fe6d26c43d2e9f52b29060f42876fa1d42a7d914640a81a3227a6af4c841c"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "7e3c832cc4558d1a8b52dd75671a4592759cadb43a66aa568d20ea20f17a2b72"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "63f3b4cf7e19ae1030c2990fa0ab155f4d7d9af1523df7378bcdd511eccde1db"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "edaad4d238eea4dfb99e0fc92639775fb57b458be42cf124cf9246bdfef3d4c0"
+    }
+  },
+  "parametrar": {
+    "fall": "A9",
+    "brus_amplitud_m": 0.02,
+    "slumpfro": 42
+  }
+}
