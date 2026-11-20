@@ -107,8 +107,97 @@ def _mapp_storlek_bytes(mapp: Path) -> int:
     return sum(p.stat().st_size for p in mapp.rglob("*") if p.is_file())
 
 
-def _validera_syntetiskt_fall(fall: Testfall) -> str:
-    """Validerar K1-indata, K4-regn, recept-sha256, storlek < 1 MB och facit."""
+def _berakna_statiskt_maxdjupsfel(
+    fall_id: str,
+    indata_mapp: Path,
+    facit: dict[str, Any],
+) -> tuple[float, float | None, str]:
+    """Kör T02 statisk fyllning och beräknar volymfel och maxdjupsfel mot facit."""
+    from sankgraf.fyllning import kor_statisk_k1_mapp, statisk_fyllning
+
+    persistens_faktor = 2.0 if fall_id == "A9" else None
+    graf, res_regn = kor_statisk_k1_mapp(indata_mapp, persistens_faktor=persistens_faktor)
+    volymfel_rel = res_regn.volymfel_rel
+
+    if volymfel_rel >= 0.001:
+        raise TestsvitFel(
+            f"Volymfel {volymfel_rel:.4%} överskrider valideringsgränsen 0,1 %"
+        )
+
+    maxdjupsfel_m: float | None = None
+    detalj = f"T02 statisk: {len(graf.noder)} noder"
+
+    if fall_id == "A1":
+        res_full = statisk_fyllning(graf, 0.30)
+        volymfel_rel = max(volymfel_rel, res_full.volymfel_rel)
+        maxdjupsfel_m = abs(float(np.max(res_full.djup_m)) - float(facit["max_djup_m"]))
+        detalj = f"T02: V={res_full.lagrat_m3:.2f}/{float(facit['slutvolym_m3']):.2f} m³"
+    elif fall_id == "A2":
+        res_full = statisk_fyllning(graf, 0.20)
+        volymfel_rel = max(volymfel_rel, res_full.volymfel_rel)
+        lov = sorted(graf.lovnoder(), key=lambda n: n.botten_rh2000)
+        if len(lov) != 2:
+            raise TestsvitFel(f"A2 förväntade 2 lövnoder, fick {len(lov)}")
+        nedre, ovre = lov[0], lov[1]
+        fel_ovre = abs(
+            res_full.nod_niva_rh2000[ovre.nod_id] - float(facit["ovre"]["overfall_rh2000"])
+        )
+        fel_nedre = abs(
+            res_full.nod_niva_rh2000[nedre.nod_id] - float(facit["nedre"]["overfall_rh2000"])
+        )
+        maxdjupsfel_m = max(fel_ovre, fel_nedre)
+        detalj = f"T02: 2 sänkor i serie, V={res_full.lagrat_m3:.2f} m³"
+    elif fall_id == "A3":
+        res_full = statisk_fyllning(graf, 0.30)
+        volymfel_rel = max(volymfel_rel, res_full.volymfel_rel)
+        maxdjupsfel_m = abs(float(np.max(res_full.djup_m)) - float(facit["max_djup_m"]))
+        slut_v = float(facit["slutvolym_m3"])
+        detalj = f"T02: sammanslagning, V={res_full.lagrat_m3:.2f}/{slut_v:.2f} m³"
+    elif fall_id in {"A4", "A7", "A8"}:
+        maxdjupsfel_m = abs(float(np.max(res_regn.djup_m)) - 0.0)
+        detalj = f"T02: fri avrinning (max_djup={float(np.max(res_regn.djup_m)):.4f} m)"
+    elif fall_id == "A5":
+        max_syd = float(np.max(res_regn.djup_m[44:, :]))
+        max_rannsten = float(np.max(res_regn.djup_m[16:44, :]))
+        maxdjupsfel_m = max_syd
+        detalj = f"T02: rännsten={max_rannsten:.3f} m, gård={max_syd:.4f} m"
+    elif fall_id == "A6":
+        res_over = statisk_fyllning(graf, 0.08)
+        volymfel_rel = max(volymfel_rel, res_over.volymfel_rel)
+        if not res_over.utflodes_celler:
+            raise TestsvitFel("A6 gav inget utflöde vid regn över infartsnivå")
+        maxdjupsfel_m = 0.0
+        detalj = f"T02: {len(res_over.utflodes_celler)} utflödesceller vid infart"
+    elif fall_id == "A9":
+        graf_ofilt, _ = kor_statisk_k1_mapp(indata_mapp, persistens_faktor=None)
+        if len(graf_ofilt.lovnoder()) <= 5:
+            raise TestsvitFel(
+                f"A9 ofiltrerad graf hade bara {len(graf_ofilt.lovnoder())} löv (förväntade > 5)"
+            )
+        res_full = statisk_fyllning(graf, 0.25)
+        volymfel_rel = max(volymfel_rel, res_full.volymfel_rel)
+        if len(graf.noder) != int(facit["antal_verkliga_sankor"]):
+            raise TestsvitFel(
+                f"A9 persistensfilter gav {len(graf.noder)} noder, "
+                f"förväntade {facit['antal_verkliga_sankor']}"
+            )
+        verklig = graf.lovnoder()[0]
+        maxdjupsfel_m = abs(verklig.botten_rh2000 - float(facit["verklig_sanka_botten_rh2000"]))
+        detalj = (
+            f"T02: {len(graf_ofilt.noder)} -> 1 sänka "
+            f"(djup={float(np.max(res_full.djup_m)):.3f} m)"
+        )
+
+    if maxdjupsfel_m is not None and maxdjupsfel_m >= 0.01:
+        raise TestsvitFel(
+            f"Maxdjupsfel {maxdjupsfel_m:.4f} m överskrider A-gränsen 0,01 m"
+        )
+
+    return volymfel_rel, maxdjupsfel_m, detalj
+
+
+def _validera_syntetiskt_fall(fall: Testfall) -> tuple[float, float | None, str]:
+    """Validerar K1-indata, K4-regn, recept-sha256, storlek < 1 MB och kör T02 statisk fysik."""
     indata_mapp = fall.mapp / "indata"
     facit_mapp = fall.mapp / "facit"
 
@@ -168,15 +257,16 @@ def _validera_syntetiskt_fall(fall: Testfall) -> str:
     if bryt_srs != EPSG_SWEREF99_1800 or opp_srs != EPSG_SWEREF99_1800:
         raise TestsvitFel("GeoPackage saknar EPSG:3011")
 
-    regn = las_regn_csv(indata_mapp / "regn.csv")
+    las_regn_csv(indata_mapp / "regn.csv")
     facit = json.loads((facit_mapp / "facit.json").read_text(encoding="utf-8"))
-    facit_typ = str(facit.get("typ", "analytisk"))
+    if not isinstance(facit, dict):
+        raise TestsvitFel("facit.json måste vara ett JSON-objekt")
 
-    # Kopplingspunkt för T02/T03: här anropas sänkgraf + hydraulik när modulerna är klara.
-    return (
-        f"K1+facit OK ({mark.shape[1]}x{mark.shape[0]}, {total_bytes // 1024} KB, "
-        f"{len(regn)} regnpunkter, facit={facit_typ}; väntar på T02/T03)"
+    volymfel_rel, maxdjupsfel_m, detalj = _berakna_statiskt_maxdjupsfel(
+        fall.id, indata_mapp, facit
     )
+    kommentar = f"K1 OK ({mark.shape[1]}x{mark.shape[0]}, {total_bytes // 1024} KB); {detalj}"
+    return volymfel_rel, maxdjupsfel_m, kommentar
 
 
 def kor_fall(fall: Testfall) -> FallResultat:
@@ -206,14 +296,14 @@ def kor_fall(fall: Testfall) -> FallResultat:
 
     if fall.typ == "syntetisk":
         try:
-            kommentar = _validera_syntetiskt_fall(fall)
+            volymfel_rel, maxdjupsfel_m, kommentar = _validera_syntetiskt_fall(fall)
             kortid_s = time.perf_counter() - start
             return FallResultat(
                 fall=fall,
                 utfall="GODKAND",
                 kortid_s=kortid_s,
-                volymfel_rel=None,
-                maxdjupsfel_m=None,
+                volymfel_rel=volymfel_rel,
+                maxdjupsfel_m=maxdjupsfel_m,
                 kommentar=kommentar,
             )
         except TestsvitFel as exc:

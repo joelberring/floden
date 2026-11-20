@@ -29,4 +29,8 @@ Vilka datastrukturer gör att en lapp bara kräver omräkning av ett delträd oc
 
 ## Observationer från data
 
-(Agenter fyller på här med datum, uppdrag och vad som setts.)
+### 2026-11-20 – T03 – Händelsestyrd fyllning, skibord och enhetssvar (Q1)
+- **Exakthet vid styckvis konstant/linjärt regn:** I den kinematiska överfallsgränsen (omedelbart överfall vid `overfall_rh2000`, utan fördröjning) blir volymutvecklingen mellan händelser exakt styckvis linjär (konstant regn) resp. styckvis kvadratisk (linjärt regn). På A1–A3 ger detta maskinprecision (`< 1e-12` relativt fel) mot grafens analytiska tider och `0,00 m` avvikelse mot `statisk_fyllning` på A9 (282 noder). Antalet diskreta händelser växer högst som `O(|V| + |I|)` (på A3 krävs endast 3 händelsehopp över 13 000 s).
+- **Var exaktheten bryter (skibord Q ∝ Δh^1,5):** Med bredskronsöverfall (`B = 2,0 m`, `C_d = 1,7`) på A2 och A3 uppstår en transient överhöjd (`Δh ≈ 1,0–1,7 cm` vid 72 mm/h) som lagrar vatten ovanför tröskeln. Det fördröjer nedströms överfall i A2 med `+51,8 s` (`+1,1 %`) och syskonsammanslagningen i A3 med `+66,8 s` (`+2,1 %`). Lösningen konvergerar monotont mot den händelsestyrda gränsen när `B → ∞`. Fråga till Q1: kan en enkel effektiv tidsfördröjning eller övre/undre gräns från bredskronsöverfall ges analytiskt?
+- **Enhetssvar före första överfall:** Före första överfall är varje lövnod linjär och tidsinvariant; diskret faltning med exakt linjär-reservoar-impulssvar stämmer till `1,26e-14` relativt fel mot tidsstegning och gav `2,7×` snabbare beräkning för 20 regnserier (A3).
+- **Känslighet för vattendelare på platta vallar (DEM):** I A2 och A3 dränerar inre celler på 2 celler breda flata vallar fysiskt in i bassängerna, vilket skiftar avrinningsytan ~1–8 % jämfört med en naiv handformel som exkluderar vallcellerna. Öppen fråga för Q2: hur påverkas fyllnadstider av osäker vattendelare på flata ytor?
