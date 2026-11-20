@@ -18,9 +18,19 @@ from numpy.typing import NDArray
 from dynamik.ensemble import EnsembleResultat, EnsembleScenario, kor_ensemble
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from dynamik.nodmodell import DynamikFel, DynamikResultat, EntrePunkt
+from dynamik.risk import berakna_kumulativ_oversvamningsrisk
 from gemensamt.hash import sha256_bytes, sha256_fil
 from gemensamt.koordinater import EPSG_INTERN, HOJDSYSTEM
 from gemensamt.manifest import KONTRAKT_K0, FilPost, RunManifest, skapa_manifest
+from gemensamt.regn import (
+    KONTRAKT_K4,
+    STANDARD_ATERKOMSTTIDER_AR,
+    STANDARD_KLIMATFAKTORER,
+    STANDARD_VARAKTIGHET_MIN,
+    RegnFel,
+    lista_regnforval,
+    skapa_regn_fran_spec,
+)
 from lapp.fore_efter import ForeEfterResultat, kor_fore_efter
 from lapp.kontrakt import (
     KONTRAKT_K3,
@@ -59,6 +69,7 @@ from webb.rendering import (
     rendera_diff_png_base64,
     rendera_djup_png_base64,
     rendera_hillshade_png_base64,
+    rendera_risk_png_base64,
     sankgraf_flodesvagar_till_geojson,
     sankgraf_noder_till_geojson,
 )
@@ -150,8 +161,46 @@ def _tolka_regnserie(
     kropp: Mapping[str, Any],
     standard_tid: tuple[float, ...],
     standard_intensitet: tuple[float, ...],
-) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Tolkar regn från `intensitet_mm_h`/`varaktighet_s` eller fallback till områdets K4."""
+) -> tuple[tuple[float, ...], tuple[float, ...], dict[str, Any]]:
+    """Tolkar regn från förval (`regn_id`), återkomsttid, explicit serie eller blockregn."""
+    raw_regn_id = kropp.get("regn_id")
+    raw_aterkomst = kropp.get("aterkomsttid_ar")
+    if (isinstance(raw_regn_id, str) and raw_regn_id.strip()) or raw_aterkomst is not None:
+        regn_id_val = (
+            raw_regn_id.strip() if isinstance(raw_regn_id, str) and raw_regn_id.strip() else None
+        )
+        aterkomst_val = float(raw_aterkomst) if raw_aterkomst is not None else None
+        raw_kf = kropp.get("klimatfaktor")
+        kf_val = float(raw_kf) if raw_kf is not None else 1.0
+        raw_var_min = kropp.get("varaktighet_min")
+        var_min_val = (
+            float(raw_var_min) if raw_var_min is not None else STANDARD_VARAKTIGHET_MIN
+        )
+        raw_typ = kropp.get("regntyp") or kropp.get("typ")
+        typ_val = str(raw_typ).strip().lower() if raw_typ is not None else "cds"
+        try:
+            serie = skapa_regn_fran_spec(
+                regn_id=regn_id_val,
+                aterkomsttid_ar=aterkomst_val,
+                klimatfaktor=kf_val,
+                varaktighet_min=var_min_val,
+                typ=typ_val,
+            )
+        except RegnFel as exc:
+            raise FlodenWebbFel(f"Ogiltig regnspecifikation: {exc}") from exc
+        meta: dict[str, Any] = {
+            "regn_id": serie.regn_id,
+            "namn": serie.namn,
+            "total_djup_mm": float(serie.total_djup_mm),
+            "max_intensitet_mm_h": float(serie.max_intensitet_mm_h),
+            "klimatfaktor": float(serie.klimatfaktor),
+            "aterkomsttid_ar": (
+                float(serie.aterkomsttid_ar) if serie.aterkomsttid_ar is not None else None
+            ),
+            "statistikkalla": serie.statistikkalla,
+        }
+        return serie.tid_s, serie.intensitet_mm_h, meta
+
     if "regn_tid_s" in kropp or "regn_intensitet_mm_h" in kropp:
         raw_t = kropp.get("regn_tid_s")
         raw_i = kropp.get("regn_intensitet_mm_h")
@@ -161,12 +210,12 @@ def _tolka_regnserie(
             raise FlodenWebbFel("Regntidsserien måste ha minst 2 tidpunkter och lika längd.")
         tider = tuple(float(x) for x in raw_t)
         intensiteter = tuple(float(x) for x in raw_i)
-        return tider, intensiteter
+        return tider, intensiteter, {}
 
     has_i = "intensitet_mm_h" in kropp and kropp["intensitet_mm_h"] is not None
     has_d = "varaktighet_s" in kropp and kropp["varaktighet_s"] is not None
     if not has_i and not has_d:
-        return standard_tid, standard_intensitet
+        return standard_tid, standard_intensitet, {}
 
     intensitet = (
         float(kropp["intensitet_mm_h"]) if has_i else float(standard_intensitet[0])
@@ -180,7 +229,7 @@ def _tolka_regnserie(
         raise FlodenWebbFel(f"Ogiltig intensitet_mm_h: {intensitet!r} (måste vara >= 0).")
     if not math.isfinite(varaktighet) or varaktighet <= 0.0:
         raise FlodenWebbFel(f"Ogiltig varaktighet_s: {varaktighet!r} (måste vara > 0).")
-    return (0.0, varaktighet), (intensitet, intensitet)
+    return (0.0, varaktighet), (intensitet, intensitet), {}
 
 
 def _bygg_projektlapp_fran_payload(
@@ -578,7 +627,7 @@ class FlodenApiApp:
             raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
 
         omrade = self.ladda_omrade(omrade_id)
-        regn_tid, regn_int = _tolka_regnserie(
+        regn_tid, regn_int, regn_meta = _tolka_regnserie(
             payload, omrade.regn_tid_s, omrade.regn_intensitet_mm_h
         )
         grann_entreer = _kopiera_entreer_fran_payload(payload)
@@ -708,6 +757,7 @@ class FlodenApiApp:
             "regn": {
                 "tid_s": list(regn_tid),
                 "intensitet_mm_h": list(regn_int),
+                **regn_meta,
             },
             "fore": {
                 **rendera_djup_png_base64(fore_dyn.max_djup_m, max_skala_m=max_skala),
@@ -751,6 +801,131 @@ class FlodenApiApp:
             "kallor": list(omrade.kallor),
         }
 
+    def lista_regn(self, *, region: str | None = None) -> dict[str, Any]:
+        """Svar för `GET /api/regn`: listar svenska och stockholmska regnförval (K4/v1)."""
+        try:
+            forval = lista_regnforval(region=region)
+        except RegnFel as exc:
+            raise FlodenWebbFel(str(exc), status_kod=400) from exc
+        return {
+            "kontrakt": KONTRAKT_K4,
+            "standard_aterkomsttider_ar": list(STANDARD_ATERKOMSTTIDER_AR),
+            "standard_klimatfaktorer": list(STANDARD_KLIMATFAKTORER),
+            "forval": [item.till_dict() for item in forval],
+        }
+
+    def kor_kumulativ_risk(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/risk`: beräknar kumulativ översvämningsrisk upp till T_max."""
+        t_start = time.perf_counter()
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        if "gransdjup_m" not in payload or payload["gransdjup_m"] is None:
+            raise FlodenWebbFel("Obligatoriskt fält 'gransdjup_m' saknas.")
+
+        omrade = self.ladda_omrade(omrade_id)
+        try:
+            gransdjup_m = float(payload["gransdjup_m"])
+            max_aterkomsttid_ar = float(payload.get("max_aterkomsttid_ar", 100.0))
+            klimatfaktor = float(payload.get("klimatfaktor", 1.24))
+            tidshorisont_ar = float(payload.get("tidshorisont_ar", 50.0))
+            varaktighet_min = float(payload.get("varaktighet_min", STANDARD_VARAKTIGHET_MIN))
+            regntyp = str(payload.get("regntyp", "cds")).strip().lower()
+            raw_tider = payload.get("aterkomsttider_ar")
+            aterkomsttider: list[float] | None = None
+            if raw_tider is not None:
+                if not isinstance(raw_tider, list):
+                    raise FlodenWebbFel("'aterkomsttider_ar' måste vara en lista av tal.")
+                aterkomsttider = [float(x) for x in raw_tider]
+        except (TypeError, ValueError) as exc:
+            raise FlodenWebbFel(f"Ogiltig riskparameter: {exc}") from exc
+
+        try:
+            risk = berakna_kumulativ_oversvamningsrisk(
+                omrade.bas_graf,
+                gransdjup_m=gransdjup_m,
+                max_aterkomsttid_ar=max_aterkomsttid_ar,
+                aterkomsttider_ar=aterkomsttider,
+                klimatfaktor=klimatfaktor,
+                varaktighet_min=varaktighet_min,
+                regntyp=regntyp,
+                tidshorisont_ar=tidshorisont_ar,
+                indata=[
+                    FilPost(
+                        roll="bas_recept",
+                        fil=f"{omrade.omrade_id}/indata/recept.json",
+                        sha256=omrade.bas_recept_sha256,
+                    )
+                ],
+            )
+        except (DynamikFel, RegnFel, ValueError) as exc:
+            raise FlodenWebbFel(f"Riskberäkningsfel: {exc}", status_kod=400) from exc
+
+        kortid_s = time.perf_counter() - t_start
+        geo = omrade.geo
+        bbox_3011 = [float(geo.x_min), float(geo.y_min), float(geo.x_max), float(geo.y_max)]
+        bbox_wgs84 = list(bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max))
+        max_skala = max(0.35, float(np.max(risk.max_djup_vid_tmax_m)))
+        min_t_json = (
+            float(risk.min_kritisk_aterkomsttid_ar)
+            if math.isfinite(risk.min_kritisk_aterkomsttid_ar)
+            else None
+        )
+
+        return {
+            "omrade_id": omrade.omrade_id,
+            "epsg": EPSG_INTERN,
+            "hojdsystem": HOJDSYSTEM,
+            "bbox_3011": bbox_3011,
+            "bbox_wgs84": bbox_wgs84,
+            "gransdjup_m": float(risk.gransdjup_m),
+            "max_aterkomsttid_ar": float(risk.max_aterkomsttid_ar),
+            "aterkomsttider_ar": [float(t) for t in risk.aterkomsttider_ar],
+            "klimatfaktor": float(risk.klimatfaktor),
+            "tidshorisont_ar": float(risk.tidshorisont_ar),
+            "varaktighet_min": float(risk.varaktighet_min),
+            "regntyp": risk.regntyp,
+            "statistikkalla": risk.statistikkalla,
+            "kumulativ_risk_karta": rendera_risk_png_base64(risk.kumulativ_sannolikhet),
+            "max_djup_vid_tmax": {
+                **rendera_djup_png_base64(risk.max_djup_vid_tmax_m, max_skala_m=max_skala),
+                **_raster_statistik(risk.max_djup_vid_tmax_m, geo),
+            },
+            "sammanfattning": {
+                "area_over_grans_m2": float(risk.area_over_grans_m2),
+                "andel_over_grans": float(risk.andel_over_grans),
+                "max_arlig_sannolikhet": float(risk.max_arlig_sannolikhet),
+                "max_kumulativ_sannolikhet": float(risk.max_kumulativ_sannolikhet),
+                "min_kritisk_aterkomsttid_ar": min_t_json,
+                "max_forvantat_arligt_djup_m": float(risk.max_forvantat_arligt_djup_m),
+                "max_volymfel_rel": float(risk.max_volymfel_rel),
+                "antal_aterkomsttider": len(risk.steg),
+            },
+            "steg": [
+                {
+                    "aterkomsttid_ar": float(s.aterkomsttid_ar),
+                    "total_djup_mm": float(s.regn.total_djup_mm),
+                    "max_djup_m": float(s.max_djup_m),
+                    "area_over_grans_m2": float(s.area_over_grans_m2),
+                }
+                for s in risk.steg
+            ],
+            "kortid_s": float(kortid_s),
+            "manifest": risk.manifest.till_dict(),
+            "kallor": list(omrade.kallor),
+        }
+
     def hantera_forfragan(
         self,
         metod: str,
@@ -764,10 +939,15 @@ class FlodenApiApp:
 
         parsed = urllib.parse.urlsplit(sokvag)
         ren_sokvag = parsed.path.rstrip("/") or "/"
+        query = urllib.parse.parse_qs(parsed.query)
 
         try:
             if verb == "GET" and ren_sokvag == "/api/halsa":
                 return _json_svar(200, self.halsa())
+
+            if verb == "GET" and ren_sokvag == "/api/regn":
+                region_param = query.get("region", [None])[0]
+                return _json_svar(200, self.lista_regn(region=region_param))
 
             if verb == "GET" and ren_sokvag == "/api/omraden":
                 return _json_svar(200, self.lista_omraden())
@@ -785,6 +965,9 @@ class FlodenApiApp:
 
             if verb == "POST" and ren_sokvag == "/api/kor":
                 return _json_svar(200, self.kor_simulering(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/risk":
+                return _json_svar(200, self.kor_kumulativ_risk(kropp))
 
             return _json_svar(
                 404,

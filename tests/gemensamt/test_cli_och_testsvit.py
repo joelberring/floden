@@ -53,6 +53,51 @@ class TestCliOchTestsvit(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, self.assertRaises(TestsvitFel):
             kor_testsvit(rot=Path(tmp) / "finns_ej")
 
+    def test_cli_regn_lista_och_export(self) -> None:
+        ut_lista = io.StringIO()
+        with redirect_stdout(ut_lista):
+            kod_lista = main(["regn", "--lista", "--region", "Stockholm"])
+        self.assertEqual(kod_lista, 0)
+        text = ut_lista.getvalue()
+        self.assertIn("stockholm_cds_6h_100ar_kf124", text)
+        self.assertIn("stockholm_cds_6h_100ar_kf140", text)
+        self.assertIn("stockholm_cds_6h_500ar_kf140", text)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ut_fil = Path(tmp) / "sthlm100.csv"
+            ut_exp = io.StringIO()
+            with redirect_stdout(ut_exp):
+                kod_exp = main(
+                    ["regn", "--id", "stockholm_cds_6h_100ar_kf140", "--ut", str(ut_fil)]
+                )
+            self.assertEqual(kod_exp, 0)
+            self.assertTrue(ut_fil.is_file())
+            self.assertIn("tid_s,intensitet_mm_h", ut_fil.read_text(encoding="utf-8"))
+
+    def test_cli_risk_a3(self) -> None:
+        ut = io.StringIO()
+        with redirect_stdout(ut):
+            kod = main(
+                [
+                    "risk",
+                    "--omrade",
+                    "A3",
+                    "--gransdjup-m",
+                    "0.20",
+                    "--max-aterkomsttid-ar",
+                    "100",
+                    "--klimatfaktor",
+                    "1.24",
+                    "--tidshorisont-ar",
+                    "50",
+                ]
+            )
+        self.assertEqual(kod, 0)
+        text = ut.getvalue()
+        self.assertIn("Kumulativ översvämningsrisk", text)
+        self.assertIn("Yta över gränsdjup", text)
+        self.assertIn("| 100 |", text)
+
 
 if __name__ == "__main__":
     unittest.main()

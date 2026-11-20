@@ -42,6 +42,13 @@ from dynamik.nodmodell import (
     skriv_dynamik_resultat_k6,
     utvardera_entreer,
 )
+from dynamik.risk import (
+    AterkomstStegResultat,
+    EntreKumulativRisk,
+    KumulativRiskResultat,
+    NodKumulativRisk,
+    berakna_kumulativ_oversvamningsrisk,
+)
 from dynamik.tidsstegning import kor_dynamik_tidssteg
 
 __all__ = [
@@ -49,21 +56,26 @@ __all__ = [
     "KONTRAKT_K6",
     "STANDARD_CD",
     "STANDARD_OVERFALL_BREDD_M",
+    "AterkomstStegResultat",
     "DynamikFel",
     "DynamikResultat",
     "EnhetssvarTabell",
     "EnsembleResultat",
     "EnsembleScenario",
+    "EntreKumulativRisk",
     "EntrePunkt",
     "EntreResultat",
     "FaltningResultat",
     "FaltningVinstResultat",
     "GrafStrukturCache",
     "HandelseKardinalResultat",
+    "KumulativRiskResultat",
+    "NodKumulativRisk",
     "NodTidsserie",
     "RegnIntervall",
     "ScenarioSammanfattning",
     "applicera_initial_forlust",
+    "berakna_kumulativ_oversvamningsrisk",
     "bygg_enhetssvar",
     "bygg_graf_struktur_cache",
     "faltning_fore_overfall",

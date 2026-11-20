@@ -12,7 +12,8 @@ export type LagerId =
   | "flodesvagar"
   | "maxdjup"
   | "osakerhet"
-  | "differens";
+  | "differens"
+  | "risk";
 
 export interface GatusektionSpec {
   namn: string;
@@ -170,10 +171,40 @@ export interface LappMagasinPayload {
   volym_m3: number;
 }
 
+export type RegnTyp = "cds" | "block";
+
+export interface RegnForvalInfo {
+  regn_id: string;
+  namn: string;
+  region: string;
+  typ: string;
+  aterkomsttid_ar: number;
+  klimatfaktor: number;
+  varaktighet_min: number;
+  tidssteg_min: number;
+  toppfaktor: number;
+  statistikkalla: string;
+  beskrivning: string;
+  total_djup_mm: number;
+  max_intensitet_mm_h: number;
+}
+
+export interface RegnKatalogSvar {
+  kontrakt: string;
+  standard_aterkomsttider_ar: number[];
+  standard_klimatfaktorer: number[];
+  forval: RegnForvalInfo[];
+}
+
 export interface KorBegaran {
   omrade_id: string;
-  intensitet_mm_h: number;
-  varaktighet_s: number;
+  intensitet_mm_h?: number;
+  varaktighet_s?: number;
+  regn_id?: string;
+  aterkomsttid_ar?: number;
+  klimatfaktor?: number;
+  varaktighet_min?: number;
+  regntyp?: RegnTyp;
   lapp_id?: string;
   landxml?: string;
   gator?: LappGataPayload[];
@@ -204,6 +235,13 @@ export interface KorSvar {
   regn: {
     tid_s: number[];
     intensitet_mm_h: number[];
+    regn_id?: string;
+    namn?: string;
+    total_djup_mm?: number;
+    max_intensitet_mm_h?: number;
+    klimatfaktor?: number;
+    aterkomsttid_ar?: number;
+    statistikkalla?: string;
   };
   fore: SimuleringDjupData;
   efter: SimuleringDjupData;
@@ -232,6 +270,60 @@ export interface KorSvar {
     marginal_m: number;
     overstiger_entre: boolean;
   }>;
+  kortid_s: number;
+  manifest: RunManifestK0;
+  kallor: string[];
+}
+
+export interface RiskBegaran {
+  omrade_id: string;
+  gransdjup_m: number;
+  max_aterkomsttid_ar: number;
+  klimatfaktor: number;
+  tidshorisont_ar: number;
+  varaktighet_min?: number;
+  regntyp?: RegnTyp;
+  aterkomsttider_ar?: number[];
+}
+
+export interface RiskRasterData extends RasterBild {
+  max_sannolikhet: number;
+}
+
+export interface RiskStegPost {
+  aterkomsttid_ar: number;
+  total_djup_mm: number;
+  max_djup_m: number;
+  area_over_grans_m2: number;
+}
+
+export interface RiskSvar {
+  omrade_id: string;
+  epsg: number;
+  hojdsystem: string;
+  bbox_3011: BboxTuple;
+  bbox_wgs84: BboxTuple;
+  gransdjup_m: number;
+  max_aterkomsttid_ar: number;
+  aterkomsttider_ar: number[];
+  klimatfaktor: number;
+  tidshorisont_ar: number;
+  varaktighet_min: number;
+  regntyp: string;
+  statistikkalla: string;
+  kumulativ_risk_karta: RiskRasterData;
+  max_djup_vid_tmax: DjupLagerData;
+  sammanfattning: {
+    area_over_grans_m2: number;
+    andel_over_grans: number;
+    max_arlig_sannolikhet: number;
+    max_kumulativ_sannolikhet: number;
+    min_kritisk_aterkomsttid_ar: number | null;
+    max_forvantat_arligt_djup_m: number;
+    max_volymfel_rel: number;
+    antal_aterkomsttider: number;
+  };
+  steg: RiskStegPost[];
   kortid_s: number;
   manifest: RunManifestK0;
   kallor: string[];
