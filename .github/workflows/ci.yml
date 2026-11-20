@@ -28,7 +28,19 @@ jobs:
         run: ruff check --output-format=github src tests testsvit
 
       - name: Typkontroll med mypy
-        run: mypy src
+        run: |
+          python -c '
+          import re, subprocess, sys
+          p = subprocess.run(["mypy", "src"], text=True, capture_output=True)
+          out = p.stdout + p.stderr
+          print(out, end="")
+          for line in out.splitlines():
+              m = re.match(r"^([^:]+):(\d+): (error|warning): (.*)$", line)
+              if m:
+                  f, ln, lvl, msg = m.groups()
+                  print(f"::{lvl} file={f},line={ln}::{msg}")
+          sys.exit(p.returncode)
+          '
 
       - name: Enhetstester med pytest
         run: pytest
