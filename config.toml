@@ -1,0 +1,56 @@
+# Standardkonfiguration för Floden (skyfallsmodellen).
+# Lokala sökvägar och åsidosättningar läggs i `config.local.toml` (checkas ej in i git).
+
+[projekt]
+namn = "floden"
+epsg = 3011
+hojdsystem = "RH 2000"
+
+[markmodell]
+ruta_storlek_m = 500.0
+overlapp_m = 25.0
+upplosning_m = 0.25
+standard_byggnadshojd_m = 10.0
+
+[sokvagar]
+cache = "data/cache"
+omraden = "data/omraden"
+testsvit = "testsvit"
+
+# Gatusektioner som används av projektlappar (kontrakt K3/v1)
+[sektioner.standard-12m]
+total_bredd_m = 12.0
+korbana_bredd_m = 6.5
+gangbana_bredd_m = 2.75
+kantsten_hojd_m = 0.12
+tvarfall_korbana_andel = 0.025
+tvarfall_gangbana_andel = 0.02
+brunnsavstand_m = 40.0
+
+# Testvärden för ruttanalys (kontrakt K7/v1).
+# OBS: Dessa värden är ENDAST för tester och får aldrig användas skarpt.
+# Skarpa körningar kräver fastställda parametrar (inga null-värden).
+[rutt_test]
+ar_testvarde = true
+entre_gransdjup_m = 0.10
+gangavstand_max_m = 100.0
+gangvag_djup_max_m = 0.20
+gangvag_fara_max_m2_s = 0.50
+
+[rutt_test.fordon.personbil]
+gransdjup_m = 0.20
+hastighet_per_djup = [[0.0, 1.0], [0.10, 0.5], [0.20, 0.0]]
+
+[rutt_test.fordon.ambulans]
+gransdjup_m = 0.30
+hastighet_per_djup = [[0.0, 1.0], [0.15, 0.6], [0.30, 0.0]]
+
+[rutt_test.fordon.tung_raddningsbil]
+gransdjup_m = 0.45
+hastighet_per_djup = [[0.0, 1.0], [0.25, 0.7], [0.45, 0.0]]
+
+[rutt_test.insatstidsmal_min]
+sjukhus = 10.0
+vardboende = 10.0
+skola = 12.0
+forskola = 12.0

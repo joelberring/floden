@@ -1,0 +1,12 @@
+# Kopiera denna fil till `config.local.toml` och fyll i lokala sökvägar.
+# `config.local.toml` är ignorerad i git och får innehålla sökvägar till
+# stadens icke-öppna eller skyddsklassade datakällor.
+
+[lokal_data]
+baskarta_mapp = ""
+tat_laser_mapp = ""
+ledningar_mapp = ""
+
+[sokvagar]
+# Exempel på att lägga cache utanför repot:
+# cache = "/data/floden/cache"

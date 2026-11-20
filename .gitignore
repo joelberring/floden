@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtuella miljöer
+.venv/
+venv/
+env/
+
+# Lokal konfiguration och skyddad / cachad data
+config.local.toml
+*.local.toml
+data/cache/
+data/intern/
+data/ledningar/
+
+# Temporära körfiler
+runs/
+tmp/
+.DS_Store
+Thumbs.db

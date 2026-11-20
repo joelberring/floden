@@ -1,0 +1,6 @@
+id = "A0"
+namn = "Skelettfall"
+grupp = "A"
+typ = "skelett"
+beskrivning = "Tomt skelettfall för verifiering av testsvitens struktur och CI."
+status = "skelett"

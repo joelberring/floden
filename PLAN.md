@@ -1,0 +1,79 @@
+# Plan
+
+Milstolparna byggs i ordning. Inom en milstolpe kan uppdrag med uppfyllda beroenden köras parallellt av olika agenter.
+Status: `redo` · `pågår` · `klar` · `blockerad` · `väntar` (väntar på något utanför projektet).
+
+## M0 – Grund (vecka 1)
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T00 | Repo, mappstruktur, CI, `run.json`-manifest, konfiguration, testsvitens skelett | – | klar |
+
+## M1 – Markmodell för provområdet
+
+Provområde: ca 1 km² i Hägersten-Älvsjö med gator, kantstenar, en vägbank med trumma och lite grönyta.
+Exakt avgränsning väljs av Joel och läggs i `data/omraden/prov1.gpkg`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T01 | Markmodellen: laser, byggnader, brytlinjer, trummor, osäkerhet per cell | T00 | redo |
+| T01b | Gatuprofiler: parametrisk rekonstruktion av körbana, kantsten och gångbana | T01 (grundraster) | väntar |
+| T09a | Testsvit del 1: syntetiska terränger med känt svar | T00 | redo |
+
+**Klar när:** markmodellen för provområdet kan visas bredvid Lantmäteriets höjdmodell, och skillnaden i kantstenar
+och trummor syns och är dokumenterad.
+
+## M2 – Sänkgraf och statisk nivå
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T02 | Sänkhierarki, volymkurvor, flödesvägar, statisk fyllning | T01 | väntar |
+| T09b | Jämförelse med Scalgo och SMHI för provområdet | T02 | väntar |
+
+**Klar när:** var vattnet hamnar vid ett givet regn kan jämföras med Scalgo, och skillnaderna är förklarade.
+
+## M3 – Dynamik i grafen
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | väntar |
+| T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | väntar |
+
+**Klar när:** djup över tid i sänkorna går att räkna för hundratals regn på några sekunder, och resultatet
+stämmer med de syntetiska fallen i testsviten.
+
+## M4 – Projektlapp och före/efter (första användbara versionen)
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | väntar |
+| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | väntar |
+
+**Klar när:** Joel kan lägga in ett påhittat projekt i provområdet och se förändringen för grannarna på under en minut.
+
+## M5 – 2D och hybrid
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | väntar |
+| T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | väntar |
+
+## M6 – Ruttanalys och rapporter
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T07 | Ruttanalys: vägnät, fordon, entréer, kritiska avsnitt, vädervarning | T03 (räcker för första versionen) | väntar |
+| T08 | Rapporter: mallar, textgenerering med kontroll av tal, export | T04, T07 | väntar |
+
+## M7 – Ledningsnät och realtid (senare)
+
+Ledningsnät kopplat i 1D (SWMM) och radarnederbörd. Kräver data från Stockholm Vatten och Avfall och beslut om
+driftmiljö. Planeras när M4 är klar.
+
+## Rekommenderad fördelning på agenter
+
+- **En agent per uppdrag**, aldrig två i samma uppdrag samtidigt.
+- Uppdrag som bara rör kontrakt och tester (T00, T09) passar en snabbare, billigare modell.
+- Uppdrag med numerik eller geometrisk robusthet (T01b, T02, T03, T05) behöver den starkaste modellen och en
+  människa som granskar mätvärdena.
+- T03 innehåller frågor till Samuel. De samlas i `docs/MATEMATIK.md` i stället för att lösas av agenten.
