@@ -36,7 +36,7 @@ och trummor syns och är dokumenterad.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | redo |
+| T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | klar |
 | T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | pågår |
 
 **Klar när:** djup över tid i sänkorna går att räkna för hundratals regn på några sekunder, och resultatet
@@ -46,8 +46,8 @@ stämmer med de syntetiska fallen i testsviten.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | väntar |
-| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | väntar |
+| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | redo |
+| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | redo |
 
 **Klar när:** Joel kan lägga in ett påhittat projekt i provområdet och se förändringen för grannarna på under en minut.
 
@@ -55,14 +55,14 @@ stämmer med de syntetiska fallen i testsviten.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | väntar |
+| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | redo |
 | T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | väntar |
 
 ## M6 – Ruttanalys och rapporter
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T07 | Ruttanalys: vägnät, fordon, entréer, kritiska avsnitt, vädervarning | T03 (räcker för första versionen) | väntar |
+| T07 | Ruttanalys: vägnät, fordon, entréer, kritiska avsnitt, vädervarning | T03 (räcker för första versionen) | pågår |
 | T08 | Rapporter: mallar, textgenerering med kontroll av tal, export | T04, T07 | väntar |
 
 ## M7 – Ledningsnät och realtid (senare)
