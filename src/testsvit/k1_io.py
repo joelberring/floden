@@ -651,7 +651,7 @@ def las_gpkg_tabell(sokvag: str | Path, lager: str) -> tuple[int, list[dict[str,
         for row in cur.fetchall():
             post = dict(zip(kolumner, row, strict=True))
             geom_blob = post.get("geom")
-            if isinstance(geom_blob, (bytes, bytearray)) and len(geom_blob) >= 8:
+            if isinstance(geom_blob, bytes | bytearray) and len(geom_blob) >= 8:
                 if geom_blob[:2] != b"GP":
                     raise K1FormatFel(f"Ogiltig GeoPackage-geometriheader i {fil}")
                 geom_srs = struct.unpack("<i", geom_blob[4:8])[0]
