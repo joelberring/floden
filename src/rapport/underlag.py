@@ -221,7 +221,7 @@ def berakna_korning_id(underlag: RapportUnderlag) -> str:
         manifest=underlag.manifest,
         metod=underlag.metod,
         osakerhet_text=underlag.osakerhet_text,
-        kalla_angivelser=underlag.kalla_angivelser,
+        kalla_angivelser=tuple(underlag.kalla_angivelser),
         tal=underlag.tal,
         tabeller=underlag.tabeller,
         kartor=underlag.kartor,

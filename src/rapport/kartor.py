@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -19,7 +20,7 @@ class RapportKartaFel(Exception):
     """Fel vid validering eller rendering av rapportkarta."""
 
 
-def _validera_raster(raster: NDArray[np.floating], namn: str) -> NDArray[np.float64]:
+def _validera_raster(raster: NDArray[np.floating[Any]], namn: str) -> NDArray[np.float64]:
     arr = np.asarray(raster, dtype=np.float64)
     if arr.ndim != 2:
         raise RapportKartaFel(f"{namn} måste vara ett 2D-raster, fick {arr.ndim}D.")
@@ -132,7 +133,7 @@ def _komponera_karta_med_legend(
 
 
 def rendera_djupkarta_png(
-    djup_m: NDArray[np.floating],
+    djup_m: NDArray[np.floating[Any]],
     ut_fil: str | Path,
     *,
     titel: str,
@@ -161,7 +162,7 @@ def rendera_djupkarta_png(
 
 
 def rendera_diffkarta_png(
-    diff_m: NDArray[np.floating],
+    diff_m: NDArray[np.floating[Any]],
     ut_fil: str | Path,
     *,
     titel: str,
