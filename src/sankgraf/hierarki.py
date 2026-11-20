@@ -352,9 +352,7 @@ def _berakna_avrinningsomraden(
         while ko:
             curr = ko.popleft()
             komponent.append(curr)
-            if har_lagre[curr]:
-                utlopp.append(curr)
-            elif _ar_rand(curr):
+            if har_lagre[curr] or _ar_rand(curr):
                 utlopp.append(curr)
 
             cr, cc = divmod(curr, bredd)
@@ -543,9 +541,7 @@ def bygg_sankgraf(
     def _registrera_kant(u: int, v: int, cu: int, cv: int, w: float) -> None:
         nyckel = (cu, cv) if cu < cv else (cv, cu)
         bef = par_kanter.get(nyckel)
-        if bef is None:
-            par_kanter[nyckel] = (w, [(u, v, cu, cv)])
-        elif w < bef[0] - _SADEL_TIE_TOL_M:
+        if bef is None or w < bef[0] - _SADEL_TIE_TOL_M:
             par_kanter[nyckel] = (w, [(u, v, cu, cv)])
         elif abs(w - bef[0]) <= _SADEL_TIE_TOL_M:
             bef[1].append((u, v, cu, cv))

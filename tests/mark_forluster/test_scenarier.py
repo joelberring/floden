@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from mark_forluster.brunnar import Brunn
-from mark_forluster.parametrar import ForlustFel, GRAS, HARDGJORT
+from mark_forluster.parametrar import GRAS, HARDGJORT, ForlustFel
 from mark_forluster.scenarier import (
     KONTRAKT_K5,
     ForlustInstallningar,
