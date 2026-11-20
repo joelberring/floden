@@ -17,7 +17,7 @@ Exakt avgränsning väljs av Joel och läggs i `data/omraden/prov1.gpkg`.
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
 | T01 | Markmodellen: laser, byggnader, brytlinjer, trummor, osäkerhet per cell | T00 | pågår |
-| T01b | Gatuprofiler: parametrisk rekonstruktion av körbana, kantsten och gångbana | T01 (grundraster) | väntar |
+| T01b | Gatuprofiler: parametrisk rekonstruktion av körbana, kantsten och gångbana | T01 (grundraster) | pågår |
 | T09a | Testsvit del 1: syntetiska terränger med känt svar | T00 | klar |
 
 **Klar när:** markmodellen för provområdet kan visas bredvid Lantmäteriets höjdmodell, och skillnaden i kantstenar
@@ -46,7 +46,7 @@ stämmer med de syntetiska fallen i testsviten.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | redo |
+| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | pågår |
 | T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | redo |
 
 **Klar när:** Joel kan lägga in ett påhittat projekt i provområdet och se förändringen för grannarna på under en minut.
@@ -63,7 +63,7 @@ stämmer med de syntetiska fallen i testsviten.
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
 | T07 | Ruttanalys: vägnät, fordon, entréer, kritiska avsnitt, vädervarning | T03 (räcker för första versionen) | pågår |
-| T08 | Rapporter: mallar, textgenerering med kontroll av tal, export | T04, T07 | väntar |
+| T08 | Rapporter: mallar, textgenerering med kontroll av tal, export | T04, T07 | pågår |
 
 ## M7 – Ledningsnät och realtid (senare)
 
