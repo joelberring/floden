@@ -48,8 +48,10 @@ def manning_hastighet_m_s(
     if referensdjup_m <= 0.0 or not math.isfinite(referensdjup_m):
         raise SankGrafFel(f"Ogiltigt referensdjup: {referensdjup_m}")
     eff_lutning = max(float(lutning), float(min_lutning))
-    return (1.0 / float(manning_n)) * (float(referensdjup_m) ** (2.0 / 3.0)) * math.sqrt(
-        eff_lutning
+    return (
+        (1.0 / float(manning_n))
+        * math.pow(float(referensdjup_m), 2.0 / 3.0)
+        * math.sqrt(eff_lutning)
     )
 
 

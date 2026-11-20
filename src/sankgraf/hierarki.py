@@ -327,7 +327,7 @@ def _berakna_avrinningsomraden(
 
     def _ar_rand(u_idx: int) -> bool:
         r, c = divmod(u_idx, bredd)
-        return r == 0 or r == hojd - 1 or c == 0 or c == bredd - 1
+        return bool(r == 0 or r == hojd - 1 or c == 0 or c == bredd - 1)
 
     def _tillganglig_platt_kant(u_idx: int, v_idx: int, z_niv: float) -> bool:
         if not kantbarriarer:
