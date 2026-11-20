@@ -27,7 +27,7 @@ och trummor syns och är dokumenterad.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T02 | Sänkhierarki, volymkurvor, flödesvägar, statisk fyllning | T01 | väntar |
+| T02 | Sänkhierarki, volymkurvor, flödesvägar, statisk fyllning | T01 | pågår |
 | T09b | Jämförelse med Scalgo och SMHI för provområdet | T02 | väntar |
 
 **Klar när:** var vattnet hamnar vid ett givet regn kan jämföras med Scalgo, och skillnaderna är förklarade.
@@ -36,8 +36,8 @@ och trummor syns och är dokumenterad.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | väntar |
-| T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | väntar |
+| T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | redo |
+| T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | pågår |
 
 **Klar när:** djup över tid i sänkorna går att räkna för hundratals regn på några sekunder, och resultatet
 stämmer med de syntetiska fallen i testsviten.

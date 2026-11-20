@@ -210,8 +210,12 @@ class TestSyntetiskaFall(unittest.TestCase):
         for r in resultat:
             if r.fall.id != "A0":
                 self.assertEqual(r.utfall, "GODKAND")
-                self.assertIsNone(r.volymfel_rel)
-                self.assertIsNone(r.maxdjupsfel_m)
+                self.assertIsNotNone(r.volymfel_rel)
+                self.assertIsNotNone(r.maxdjupsfel_m)
+                assert r.volymfel_rel is not None
+                assert r.maxdjupsfel_m is not None
+                self.assertLess(r.volymfel_rel, 0.001)
+                self.assertLess(r.maxdjupsfel_m, 0.01)
 
     @unittest.skipUnless(HAR_RASTERIO, "rasterio saknas i denna miljö (körs i CI)")
     def test_rasterio_validerar_alla_geotiff(self) -> None:
