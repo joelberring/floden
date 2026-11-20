@@ -627,20 +627,36 @@ def uppdatera_sankgraf_lokalt(
         bevarat_lov_till_ext: dict[int, int] = {}
         ext_till_bevarat_lov: dict[int, int] = {}
 
-        def _ext_id_for_bevarat_lov(bevarat_lov: int) -> int:
-            bef = bevarat_lov_till_ext.get(bevarat_lov)
+        def _ext_id_for_bevarat_lov(
+            bevarat_lov: int,
+            *,
+            _antal_lokala: int = antal_lokala_lov,
+            _b_till_ext: dict[int, int] = bevarat_lov_till_ext,
+            _ext_till_b: dict[int, int] = ext_till_bevarat_lov,
+        ) -> int:
+            bef = _b_till_ext.get(bevarat_lov)
             if bef is not None:
                 return bef
-            ny_ext = antal_lokala_lov + len(bevarat_lov_till_ext)
-            bevarat_lov_till_ext[bevarat_lov] = ny_ext
-            ext_till_bevarat_lov[ny_ext] = bevarat_lov
+            ny_ext = _antal_lokala + len(_b_till_ext)
+            _b_till_ext[bevarat_lov] = ny_ext
+            _ext_till_b[ny_ext] = bevarat_lov
             return ny_ext
 
-        def _registrera_kant(u: int, v: int, cu: int, cv: int, w: float) -> None:
+        def _registrera_kant(
+            u: int,
+            v: int,
+            cu: int,
+            cv: int,
+            w: float,
+            *,
+            _kanter: dict[tuple[int, int], tuple[float, list[tuple[int, int, int, int]]]] = (
+                par_kanter
+            ),
+        ) -> None:
             nyckel = (cu, cv) if cu < cv else (cv, cu)
-            bef = par_kanter.get(nyckel)
+            bef = _kanter.get(nyckel)
             if bef is None or w < bef[0] - _SADEL_TIE_TOL_M:
-                par_kanter[nyckel] = (w, [(u, v, cu, cv)])
+                _kanter[nyckel] = (w, [(u, v, cu, cv)])
             elif abs(w - bef[0]) <= _SADEL_TIE_TOL_M:
                 bef[1].append((u, v, cu, cv))
 

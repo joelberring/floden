@@ -545,7 +545,7 @@ class TestGatuprofiler(unittest.TestCase):
         fyll_kb = statisk_fyllning(graf_kb, 0.030)
         self.assertLess(fyll_kb.volymfel_rel, 0.001)
         self.assertGreater(len(fyll_kb.utflodes_celler), 0)
-        for rad, kol in fyll_kb.utflodes_celler:
+        for _rad, kol in fyll_kb.utflodes_celler:
             cell_e = geo.x_min + (kol + 0.5) * geo.pixelstorlek_x
             self.assertGreaterEqual(cell_e, infart_e0 - 0.25)
             self.assertLessEqual(cell_e, infart_e1 + 0.25)

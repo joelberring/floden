@@ -150,9 +150,9 @@ class TestRapportOchKontroll(unittest.TestCase):
 
             def _hallucinerad_text(u: RapportUnderlag) -> str:
                 return (
-                    f"# {{{{meta:titel}}}}\n\n"
-                    f"Körnings-id: `{{{{meta:korning_id}}}}`\n\n"
-                    f"Maximalt djup är {{{{tal:max_djup_m:.2f}}}} m, "
+                    "# {{meta:titel}}\n\n"
+                    "Körnings-id: `{{meta:korning_id}}`\n\n"
+                    "Maximalt djup är {{tal:max_djup_m:.2f}} m, "
                     "men vid korsningen blir djupet 0,87 m.\n\n"
                     "{{karta:djupkarta}}\n"
                 )

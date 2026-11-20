@@ -149,10 +149,7 @@ def _matchar_godkant_tal(taltext: str, godkanda_tal: list[float]) -> bool:
     except ValueError:
         return False
     tol = _tolerans_for_taltext(taltext)
-    for godkant in godkanda_tal:
-        if abs(varde - godkant) <= tol:
-            return True
-    return False
+    return any(abs(varde - godkant) <= tol for godkant in godkanda_tal)
 
 
 def _kontrollera_tal(text: str, underlag: RapportUnderlag) -> tuple[list[str], list[str]]:
