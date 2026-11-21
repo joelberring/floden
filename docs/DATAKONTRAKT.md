@@ -62,6 +62,12 @@ Markslagskoder: 1 hårdgjort, 2 tak, 3 grönt tak, 4 gräs, 5 skog, 6 berg i dag
 `flodesvagar.gpkg`, lager `flodesvagar`: linjer från varje cellgrupp till sin nod, med `gangtid_s` vid referensdjup.
 `cell_till_nod.tif`: COG int64 med nod-id per cell.
 
+Tilläggsfiler (bakåtkompatibla, 2026-11-21) som `skriv_sankgraf_k2` skriver så att grafen kan läsas
+tillbaka exakt med `sankgraf.k2_las.las_sankgraf_k2`: `sankgraf_topologi.json` (`ut_lov_id`,
+`overfall_celler`), `mark_bearbetad.tif` (markhöjd med brytlinjer och öppningar inbrända, float32)
+och `markslag.tif`. Läsare som bara behöver kontraktets filer kan bortse från dem. Negativa värden i
+`cell_till_nod.tif` är markörer, inte nod-id.
+
 ## K3 – Projektlapp (v1)
 
 `lapp.json` + `lapp.gpkg`.

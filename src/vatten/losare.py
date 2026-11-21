@@ -2,8 +2,8 @@
 
 Lösare (höj `version` när koden ändras så att resultatet kan ändras):
 
-- `vatten.sankgraf` – K1-filer → sänkgraf. Skriver K2 (`skriv_sankgraf_k2`) och `sankgraf.pickle`,
-  en **intern cachefil** (inte ett kontrakt) så att nästa nod kan läsa grafen: K2 saknar läsare.
+- `vatten.sankgraf` (v2) – K1-filer → sänkgraf, skriven som K2 i `k2/` och läst tillbaka av nästa
+  nod med `sankgraf.k2_las.las_sankgraf_k2` (v1 använde en intern pickle-fil).
 - `vatten.blaytor` – sänkgraf + regn_mm → `max_djup.tif`, `blaytor.json`.
 - `vatten.blaytor_scenario` – bas-sänkgraf + K1 + planscenario (K9, utplattat i parametrarna) →
   scenariot tillämpat med lokal omräkning, sedan blåytor.
@@ -11,14 +11,13 @@ Lösare (höj `version` när koden ändras så att resultatet kan ändras):
 Analystyp `blaytor_mm` (modul "vatten") med parametrarna `regn_mm`, valfritt
 `initialforlust_mm` (markslagskod → mm), `persistens_faktor` och `ignorera_typer`.
 
-Basens K1-filer hittas via `registrera_bas(bas_recept_sha256, k1_mapp)`; ett scenario med
-förälder kräver att föräldrarna anmälts med `registrera_scenarier`, eftersom kärnans nodbyggare
-bara får det aktuella scenariot.
+Basens K1-filer hittas via `registrera_bas(bas_recept_sha256, k1_mapp)`. Kärnan ger
+nodbyggaren scenariot utplattat; `registrera_scenarier` behövs bara när en nod byggs direkt
+med ett scenario som har förälder.
 """
 
 from __future__ import annotations
 
-import pickle
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ import numpy as np
 from karna.fraga import AnalysSteg, registrera_analystyp
 from karna.graf import Losare, Nod
 from karna.scenario import Andring, Planscenario, platta_ut
+from sankgraf.k2_las import las_sankgraf_k2
 from sankgraf.typer import SankGraf, skriv_sankgraf_k2
 from vatten.blaytor import (
     BlaytorFel,
@@ -41,7 +41,7 @@ from vatten.scenario_lapp import tillampa_scenario
 
 MODUL = "vatten"
 K1_ROLLER = ("mark", "osakerhet", "markslag", "brytlinjer", "oppningar")
-GRAF_FIL = "sankgraf.pickle"
+K2_MAPP = "k2"
 
 _BASER: dict[str, dict[str, Path]] = {}
 _SCENARIER: dict[str, Planscenario] = {}
@@ -71,19 +71,14 @@ def _k1_ur_indata(indata: Mapping[str, Path]) -> dict[str, Path]:
 
 
 def _las_graf(katalog: Path) -> SankGraf:
-    with (katalog / GRAF_FIL).open("rb") as fh:
-        graf = pickle.load(fh)  # noqa: S301 – egen cache, skriven av vatten.sankgraf
-    if not isinstance(graf, SankGraf):
-        raise BlaytorFel(f"{katalog / GRAF_FIL} innehåller ingen sänkgraf.")
-    return graf
+    """Grafen ur föregående nods K2-mapp (K2/v1 med tilläggsfiler, `sankgraf.k2_las`)."""
+    return las_sankgraf_k2(katalog / K2_MAPP)
 
 
 def _kor_sankgraf(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[str, Any]:
     k1 = las_k1(_k1_ur_indata(indata))
     graf = bygg_graf(k1, p.get("persistens_faktor"))
-    skriv_sankgraf_k2(graf, ut / "k2")
-    with (ut / GRAF_FIL).open("wb") as fh:
-        pickle.dump(graf, fh, protocol=pickle.HIGHEST_PROTOCOL)
+    skriv_sankgraf_k2(graf, ut / K2_MAPP)
     return {
         "antal_noder": len(graf.noder),
         "antal_lovnoder": len(graf.lovnoder()),
@@ -124,7 +119,7 @@ def _kor_blaytor_scenario(
     return m
 
 
-LOSARE_SANKGRAF = Losare("vatten.sankgraf", "1", _kor_sankgraf, modul=MODUL)
+LOSARE_SANKGRAF = Losare("vatten.sankgraf", "2", _kor_sankgraf, modul=MODUL)
 LOSARE_BLAYTOR = Losare("vatten.blaytor", "1", _kor_blaytor, modul=MODUL)
 LOSARE_BLAYTOR_SCENARIO = Losare("vatten.blaytor_scenario", "1", _kor_blaytor_scenario, modul=MODUL)
 
