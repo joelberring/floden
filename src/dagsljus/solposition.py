@@ -123,9 +123,7 @@ def lat_lon_fran_3011(e_m: float, n_m: float) -> tuple[float, float]:
     return float(lat), float(lon)
 
 
-def dygnsfonster_utc(
-    datum: str, lon_grader: float, steg_min: float
-) -> NDArray[np.datetime64]:
+def dygnsfonster_utc(datum: str, lon_grader: float, steg_min: float) -> NDArray[np.datetime64]:
     """Tidpunkter (mittpunkter av steg) för ett lokalt medelsoltidsdygn på `datum` (ÅÅÅÅ-MM-DD).
 
     Dygnet börjar vid lokal medelsolmidnatt (00:00 UTC minus lon/15 h), så att inget
@@ -142,4 +140,5 @@ def dygnsfonster_utc(
         raise SolFel(f"Ogiltigt datum '{datum}', förväntade ÅÅÅÅ-MM-DD.") from exc
     start_s = start.astype(np.int64) - int(round(lon_grader / 15.0 * 3600.0))
     offs = (np.arange(int(round(antal))) + 0.5) * steg_min * 60.0
-    return (np.datetime64(0, "s") + (start_s + np.round(offs)).astype(np.int64).astype("timedelta64[s]"))
+    sek = (start_s + np.round(offs)).astype(np.int64)
+    return np.asarray(np.datetime64(0, "s") + sek.astype("timedelta64[s]"))

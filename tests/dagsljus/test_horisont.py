@@ -69,8 +69,9 @@ class TestVagg(unittest.TestCase):
         z = np.zeros((n, n))
         z[:, 120:] = 20.0
         f = Hojdfalt(z, 1.0, 0.0, float(n))
-        r = horisont_referens(f, np.array([100.5]), np.array([100.5]), np.zeros(1),
-                              np.array([3 * math.pi / 2]), 90.0)
+        r = horisont_referens(
+            f, np.array([100.5]), np.array([100.5]), np.zeros(1), np.array([3 * math.pi / 2]), 90.0
+        )
         self.assertEqual(float(r.h_rad[0]), 0.0)
 
     def test_hojd_over_z0_raknas_fran_z0(self) -> None:
@@ -78,8 +79,9 @@ class TestVagg(unittest.TestCase):
         z = np.zeros((n, n))
         z[:, 60:] = 20.0
         f = Hojdfalt(z, 1.0, 0.0, float(n))
-        r = horisont_referens(f, np.array([40.5]), np.array([50.5]), np.array([10.0]),
-                              np.array([math.pi / 2]), 50.0)
+        r = horisont_referens(
+            f, np.array([40.5]), np.array([50.5]), np.array([10.0]), np.array([math.pi / 2]), 50.0
+        )
         self.assertAlmostEqual(float(r.h_rad[0]), math.atan(10.0 / 19.5), places=12)
 
 
@@ -134,7 +136,7 @@ class TestReferensMotSnabba(unittest.TestCase):
 
     def test_stralsekvens_diagonal_hoppar_over_hornceller(self) -> None:
         dj, di, t = stralsekvens(math.pi / 4, 4.0)
-        # Diagonalen NO från en cellmittpunkt: (1,-1), (2,-2), ...; ingångsavstånd 0,5*sqrt(2) + n*sqrt(2).
+        # Diagonalen NO från en cellmittpunkt: (1,-1), (2,-2), ...; ingång 0,5*sqrt(2) + n*sqrt(2).
         np.testing.assert_array_equal(dj[:3], [1, 2, 3])
         np.testing.assert_array_equal(di[:3], [-1, -2, -3])
         self.assertAlmostEqual(float(t[0]), 0.5 * math.sqrt(2), places=9)
@@ -165,19 +167,27 @@ class TestFelhantering(unittest.TestCase):
 
     def test_trunkering_flaggas(self) -> None:
         f = plan(50, 1.0)
-        r = horisont_referens(f, np.array([25.5, 25.5]), np.array([25.5, 25.5]), np.zeros(2),
-                              np.array([math.pi / 2, math.pi / 2]), 30.0)
+        r = horisont_referens(
+            f,
+            np.array([25.5, 25.5]),
+            np.array([25.5, 25.5]),
+            np.zeros(2),
+            np.array([math.pi / 2, math.pi / 2]),
+            30.0,
+        )
         self.assertTrue(r.trunkerad.all())  # 24,5 m till kanten < 30 m
-        r2 = horisont_referens(f, np.array([25.5]), np.array([25.5]), np.zeros(1),
-                               np.array([math.pi / 2]), 20.0)
+        r2 = horisont_referens(
+            f, np.array([25.5]), np.array([25.5]), np.zeros(1), np.array([math.pi / 2]), 20.0
+        )
         self.assertFalse(r2.trunkerad.any())
 
     def test_punkt_inuti_hinder_flaggas(self) -> None:
         z = np.zeros((20, 20))
         z[5:15, 5:15] = 10.0
         f = Hojdfalt(z, 1.0, 0.0, 20.0)
-        r = horisont_referens(f, np.array([10.5, 2.5]), np.array([10.5, 2.5]), np.zeros(2),
-                              np.zeros(2), 10.0)
+        r = horisont_referens(
+            f, np.array([10.5, 2.5]), np.array([10.5, 2.5]), np.zeros(2), np.zeros(2), 10.0
+        )
         self.assertEqual(list(r.inuti_hinder), [True, False])
 
 

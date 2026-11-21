@@ -6,6 +6,7 @@ Härledningarna står i `docs/DAGSLJUS.md`. Alla vinklar i radianer, azimut norr
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -22,7 +23,7 @@ class MattFel(Exception):
     """Ogiltig indata till ett dagsljusmått."""
 
 
-def svf_fran_horisont(h_rad: NDArray[np.floating], axel: int = 0) -> Falt:
+def svf_fran_horisont(h_rad: NDArray[Any], axel: int = 0) -> Falt:
     """SVF för en horisontell yta: 1 - (1/2pi) Int sin^2 h dphi, som medelvärde över K lika
     fördelade riktningar längs `axel`. Fri yta (h = 0) ger exakt 1."""
     h = np.asarray(h_rad, dtype=np.float64)
@@ -31,7 +32,7 @@ def svf_fran_horisont(h_rad: NDArray[np.floating], axel: int = 0) -> Falt:
     return np.asarray(1.0 - np.mean(np.sin(h) ** 2, axis=axel), dtype=np.float64)
 
 
-def himmelsintegral(h_rad: NDArray[np.floating]) -> Falt:
+def himmelsintegral(h_rad: NDArray[Any]) -> Falt:
     """Inre integralen I(h) = Int_h^{pi/2} (1 + 2 sin g)/3 cos^2 g dg i sluten form:
 
         I(h) = (1/3) [ pi/4 - h/2 - sin(2h)/4 + (2/3) cos^3 h ]
@@ -45,7 +46,7 @@ def himmelsintegral(h_rad: NDArray[np.floating]) -> Falt:
     )
 
 
-def vsc_fran_halvplansprofil(h_rad: NDArray[np.floating]) -> Falt:
+def vsc_fran_halvplansprofil(h_rad: NDArray[Any]) -> Falt:
     """VSC (andel, 0–0,396) ur horisontvinklar i `K` mittpunktsriktningar över fasadens halvplan.
 
     `h_rad` har formen (..., K) där riktning j ligger i psi_j = -pi/2 + (j + 1/2) pi / K
@@ -70,9 +71,7 @@ def halvplansriktningar(normal_azimut_rad: Falt, antal: int) -> Falt:
     return np.asarray((n[:, None] + psi[None, :]) % (2.0 * math.pi), dtype=np.float64)
 
 
-def interpolera_horisont(
-    h_k: NDArray[np.floating], azimut_rad: Falt
-) -> Falt:
+def interpolera_horisont(h_k: NDArray[Any], azimut_rad: Falt) -> Falt:
     """Linjär interpolation (cirkulär) av en horisontprofil h_k (K riktningar, phi_k = 2pi k/K)
     till godtyckliga azimuter. Returnerar vinklar med samma form som `azimut_rad`."""
     k = len(h_k)
@@ -127,7 +126,7 @@ class SoltimmarAckumulator:
             hh = h_a * (1.0 - f) + h_b * f
             self._antal += (self._hojd[m] > hh).astype(np.int32)
 
-    def mata(self, k: int, h_rad: NDArray[np.floating]) -> None:
+    def mata(self, k: int, h_rad: NDArray[Any]) -> None:
         if k != self._nasta:
             raise MattFel(f"Riktningarna måste matas i ordning, väntade {self._nasta}, fick {k}.")
         h = np.asarray(h_rad, dtype=np.float64)
@@ -152,7 +151,7 @@ class SoltimmarAckumulator:
 
 
 def soltimmar_fran_profiler(
-    h_k: NDArray[np.floating],
+    h_k: NDArray[Any],
     sol_hojd_rad: Falt,
     sol_azimut_rad: Falt,
     steg_h: float,

@@ -39,6 +39,9 @@ Falt = NDArray[np.float64]
 # Två skärningar i cellkoordinater (cellenheter) närmare än så räknas som träff i hörnet,
 # och strålen går diagonalt utan att räkna den mellanliggande cellen (noll genomskärningslängd).
 TIE_TOL = 1e-9
+_T_MIN = (
+    1e-9  # minsta ingångsavstånd (cellenheter): punkt exakt på cellkant, hinder på noll avstånd
+)
 _AXEL_NOLL = 1e-12  # |riktningskomponent| under detta räknas som 0 (strålen parallell med axeln)
 
 
@@ -113,9 +116,9 @@ def _validera_avstand(max_avstand_m: float) -> None:
         raise HorisontFel(f"max_avstand_m måste vara > 0, fick {max_avstand_m}.")
 
 
-def stralsekvens(phi_rad: float, rmax_celler: float) -> tuple[
-    NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]
-]:
+def stralsekvens(
+    phi_rad: float, rmax_celler: float
+) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]:
     """Cellföljden (dj, di) och ingångsavstånd (cellenheter) för en stråle från en cellmittpunkt.
 
     Samma följd gäller för alla cellmittpunkter. Startcellen ingår inte.
@@ -177,7 +180,7 @@ def _kontrollera_start(falt: Hojdfalt, ox: Falt, oy: Falt) -> None:
     ute = ~((ox >= 0) & (ox < falt.bredd) & (oy >= 0) & (oy < falt.hojd))
     if ute.any():
         raise HorisontFel(
-            f"{int(ute.sum())} punkter ligger utanför höjdfältet (förbjudet; ingen extrapolering)."
+            f"{int(ute.sum())} punkter ligger utanför höjdfältet (ingen extrapolering)."
         )
 
 
@@ -189,17 +192,23 @@ def _starttillstand(
     ci = np.floor(oy).astype(np.int64)
     with np.errstate(divide="ignore", invalid="ignore"):
         tmx = np.where(
-            ex > 0, (cj + 1 - ox) / ex, np.where(ex < 0, (ox - cj) / -np.where(ex < 0, ex, 1), np.inf)
+            ex > 0,
+            (cj + 1 - ox) / ex,
+            np.where(ex < 0, (ox - cj) / -np.where(ex < 0, ex, 1), np.inf),
         )
         tmy = np.where(
-            ey > 0, (ci + 1 - oy) / ey, np.where(ey < 0, (oy - ci) / -np.where(ey < 0, ey, 1), np.inf)
+            ey > 0,
+            (ci + 1 - oy) / ey,
+            np.where(ey < 0, (oy - ci) / -np.where(ey < 0, ey, 1), np.inf),
         )
     return ci, cj, np.asarray(tmx, dtype=np.float64), np.asarray(tmy, dtype=np.float64)
 
 
 def _tdelta(e: Falt) -> Falt:
     with np.errstate(divide="ignore"):
-        return np.asarray(np.where(e == 0.0, np.inf, 1.0 / np.abs(np.where(e == 0.0, 1, e))), dtype=np.float64)
+        return np.asarray(
+            np.where(e == 0.0, np.inf, 1.0 / np.abs(np.where(e == 0.0, 1, e))), dtype=np.float64
+        )
 
 
 def horisont_referens(
@@ -212,8 +221,9 @@ def horisont_referens(
 ) -> StralHorisont:
     """Referensimplementation: en stråle per element i `x_m, y_m, z0_m, phi_rad` (lika långa)."""
     _validera_avstand(max_avstand_m)
-    x_m, y_m, z0_m, phi_rad = (np.atleast_1d(np.asarray(a, dtype=np.float64)) for a in
-                               (x_m, y_m, z0_m, phi_rad))
+    x_m, y_m, z0_m, phi_rad = (
+        np.atleast_1d(np.asarray(a, dtype=np.float64)) for a in (x_m, y_m, z0_m, phi_rad)
+    )
     if not (x_m.shape == y_m.shape == z0_m.shape == phi_rad.shape) or x_m.ndim != 1:
         raise HorisontFel("x, y, z0 och phi måste vara endimensionella och lika långa.")
     n = x_m.size
@@ -246,7 +256,7 @@ def horisont_referens(
             idx, ci, cj, tmx, tmy, t = (a[ok] for a in (idx, ci, cj, tmx, tmy, t))
             if idx.size == 0:
                 break
-        slope = (falt.z_m[ci, cj] - z0_m[idx]) / (t * falt.cell_m)
+        slope = (falt.z_m[ci, cj] - z0_m[idx]) / (np.maximum(t, _T_MIN) * falt.cell_m)
         best[idx] = np.maximum(best[idx], slope)
     else:
         if idx.size:
@@ -265,7 +275,7 @@ def horisont_riktning_ruta(
     *,
     fonster: tuple[int, int, int, int] | None = None,
     radblock: int = 64,
-    dtyp: type[np.floating] = np.float32,
+    dtyp: type[np.float32] | type[np.float64] = np.float32,
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_]]:
     """Horisontvinkel (rad) och trunkeringsflagga för cellmittpunkter i en riktning.
 
@@ -330,8 +340,12 @@ class MaxPyramid:
             ph, pw = a.shape[0] % 2, a.shape[1] % 2
             if ph or pw:
                 a = np.pad(a, ((0, ph), (0, pw)), constant_values=-np.inf)
-            niv.append(np.maximum(np.maximum(a[0::2, 0::2], a[1::2, 0::2]),
-                                  np.maximum(a[0::2, 1::2], a[1::2, 1::2])))
+            niv.append(
+                np.maximum(
+                    np.maximum(a[0::2, 0::2], a[1::2, 0::2]),
+                    np.maximum(a[0::2, 1::2], a[1::2, 1::2]),
+                )
+            )
         return cls(tuple(niv))
 
 
@@ -352,8 +366,9 @@ def horisont_mipmap(
     och lägre höjd) förbättra den. Annars delas blocket. Cellnivån (0) utvärderas exakt.
     """
     _validera_avstand(max_avstand_m)
-    x_m, y_m, z0_m, phi_rad = (np.atleast_1d(np.asarray(a, dtype=np.float64)) for a in
-                               (x_m, y_m, z0_m, phi_rad))
+    x_m, y_m, z0_m, phi_rad = (
+        np.atleast_1d(np.asarray(a, dtype=np.float64)) for a in (x_m, y_m, z0_m, phi_rad)
+    )
     if not (x_m.shape == y_m.shape == z0_m.shape == phi_rad.shape) or x_m.ndim != 1:
         raise HorisontFel("x, y, z0 och phi måste vara endimensionella och lika långa.")
     pyr = pyramid or MaxPyramid.bygg(falt)
@@ -396,12 +411,18 @@ def horisont_mipmap(
             m[sel] = pyr.nivaer[int(niva)][by[sel], bx[sel]]
         b = (1 << lev).astype(np.float64)
         with np.errstate(divide="ignore", invalid="ignore"):
-            tx = np.where(a_ex > 0, ((bx + 1) * b - a_ox) / a_ex,
-                          np.where(a_ex < 0, (bx * b - a_ox) / np.where(a_ex < 0, a_ex, 1), np.inf))
-            ty = np.where(a_ey > 0, ((by + 1) * b - a_oy) / a_ey,
-                          np.where(a_ey < 0, (by * b - a_oy) / np.where(a_ey < 0, a_ey, 1), np.inf))
+            tx = np.where(
+                a_ex > 0,
+                ((bx + 1) * b - a_ox) / a_ex,
+                np.where(a_ex < 0, (bx * b - a_ox) / np.where(a_ex < 0, a_ex, 1), np.inf),
+            )
+            ty = np.where(
+                a_ey > 0,
+                ((by + 1) * b - a_oy) / a_ey,
+                np.where(a_ey < 0, (by * b - a_oy) / np.where(a_ey < 0, a_ey, 1), np.inf),
+            )
         t_ut = np.maximum(np.minimum(tx, ty), tn)
-        slope = (m - a_z0) / (t * falt.cell_m)
+        slope = (m - a_z0) / (np.maximum(t, _T_MIN) * falt.cell_m)
         cell = lev == 0
         # Cellnivå: utvärdera och gå vidare. Högre nivå: hoppa över eller dela.
         upd = cell | (slope > best[idx])

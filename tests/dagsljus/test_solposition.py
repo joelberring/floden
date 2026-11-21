@@ -84,16 +84,19 @@ class TestSolposition(unittest.TestCase):
         e2 = f * (2.0 - f)
         p = np.linspace(0.0, math.radians(LAT), 200001)
         integrand = (1.0 - e2 * np.sin(p) ** 2) ** -1.5
-        bage = a_grs80 * (1.0 - e2) * float(
-            np.sum((integrand[1:] + integrand[:-1]) / 2.0 * np.diff(p))
+        bage = (
+            a_grs80
+            * (1.0 - e2)
+            * float(np.sum((integrand[1:] + integrand[:-1]) / 2.0 * np.diff(p)))
         )
         lat, lon = lat_lon_fran_3011(150_000.0, bage)
         self.assertAlmostEqual(lat, LAT, delta=1e-6)
         self.assertAlmostEqual(lon, 18.0, delta=1e-9)
-        # 1 km öster om centralmeridianen ligger ca 0,0176 grader öster (1000 m / (111,3 km cos 59,33)).
+        # 1 km öster om centralmeridianen: ca 0,0176 grader (1000 m / (111,3 km cos 59,33)).
         _, lon2 = lat_lon_fran_3011(151_000.0, bage)
-        self.assertAlmostEqual(lon2 - 18.0, 1000.0 / (111_320.0 * math.cos(math.radians(LAT))),
-                               delta=1e-4)
+        self.assertAlmostEqual(
+            lon2 - 18.0, 1000.0 / (111_320.0 * math.cos(math.radians(LAT))), delta=1e-4
+        )
 
     def test_ogiltig_indata_ger_fel(self) -> None:
         with self.assertRaises(SolFel):
