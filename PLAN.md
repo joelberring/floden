@@ -16,8 +16,8 @@ Exakt avgränsning väljs av Joel och läggs i `data/omraden/prov1.gpkg`.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T01 | Markmodellen: laser, byggnader, brytlinjer, trummor, osäkerhet per cell | T00 | pågår |
-| T01b | Gatuprofiler: parametrisk rekonstruktion av körbana, kantsten och gångbana | T01 (grundraster) | pågår |
+| T01 | Markmodellen: laser, byggnader, brytlinjer, trummor, osäkerhet per cell | T00 | klar (syntetiskt; verkligt provområde väntar) |
+| T01b | Gatuprofiler: parametrisk rekonstruktion av körbana, kantsten och gångbana | T01 (grundraster) | klar (syntetiskt; verkligt provområde väntar) |
 | T09a | Testsvit del 1: syntetiska terränger med känt svar | T00 | klar |
 
 **Klar när:** markmodellen för provområdet kan visas bredvid Lantmäteriets höjdmodell, och skillnaden i kantstenar
@@ -27,7 +27,7 @@ och trummor syns och är dokumenterad.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T02 | Sänkhierarki, volymkurvor, flödesvägar, statisk fyllning | T01 | pågår |
+| T02 | Sänkhierarki, volymkurvor, flödesvägar, statisk fyllning | T01 | klar (syntetiskt; verkligt provområde väntar) |
 | T09b | Jämförelse med Scalgo och SMHI för provområdet | T02 | väntar |
 
 **Klar när:** var vattnet hamnar vid ett givet regn kan jämföras med Scalgo, och skillnaderna är förklarade.
@@ -37,7 +37,7 @@ och trummor syns och är dokumenterad.
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
 | T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | klar |
-| T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | pågår |
+| T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | klar (syntetiskt; verkligt provområde väntar) |
 
 **Klar när:** djup över tid i sänkorna går att räkna för hundratals regn på några sekunder, och resultatet
 stämmer med de syntetiska fallen i testsviten.
@@ -46,8 +46,8 @@ stämmer med de syntetiska fallen i testsviten.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | pågår |
-| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | pågår |
+| T04 | Lappar: import (LandXML), parametriska gator, lokal omräkning, före/efter | T02, T03 | klar (syntetiskt; verkligt provområde väntar) |
+| T10 | Webbklient: karta, lager, lappar, före/efter-vy | T02 | klar (syntetiskt; verkligt provområde väntar) |
 
 **Klar när:** Joel kan lägga in ett påhittat projekt i provområdet och se förändringen för grannarna på under en minut.
 
@@ -55,15 +55,15 @@ stämmer med de syntetiska fallen i testsviten.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | pågår |
+| T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | klar (syntetiskt; verkligt provområde väntar) |
 | T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | klar |
 
 ## M6 – Ruttanalys och rapporter
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| T07 | Ruttanalys: vägnät, fordon, entréer, kritiska avsnitt, vädervarning | T03 (räcker för första versionen) | pågår |
-| T08 | Rapporter: mallar, textgenerering med kontroll av tal, export | T04, T07 | pågår |
+| T07 | Ruttanalys: vägnät, fordon, entréer, kritiska avsnitt, vädervarning | T03 (räcker för första versionen) | klar (syntetiskt; verkligt provområde väntar) |
+| T08 | Rapporter: mallar, textgenerering med kontroll av tal, export | T04, T07 | klar (syntetiskt; verkligt provområde väntar) |
 
 ## M7 – Ledningsnät och realtid (senare)
 
