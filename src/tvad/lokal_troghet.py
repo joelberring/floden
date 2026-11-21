@@ -27,6 +27,7 @@ from gemensamt.manifest import FilPost, skapa_manifest, skriv_manifest
 from sankgraf.flodesvagar import MANNING_N_PER_MARKSLAG
 from sankgraf.typer import MARKSLAG_BYGGNAD
 from testsvit.k1_io import GeoTransformInfo, skriv_geotiff
+from tvad.kalltermer import Kalltermer, SanktermTillstand
 from tvad.subgrid import (
     SubgridTabell,
     bygg_subgrid_tabell,
@@ -66,6 +67,13 @@ class TvadResultat:
     kortid_s: float
     niva: str
     aktiv_cell_andel: float
+    avtappat_m3: float = 0.0
+    infiltrerat_m3: float = 0.0
+    initial_forlust_m3: float = 0.0
+    infiltration_m: NDArray[np.float32] | None = None
+    """Kumulativ infiltration per cell (lösarens rutnät) när infiltration är påslagen."""
+    sanktermer: dict[str, Any] | None = None
+    """Vilka käll-/sänktermer som användes (`Kalltermer.beskrivning`); None = inga."""
 
 
 @dataclass(frozen=True)
@@ -511,6 +519,7 @@ def kor_2d_lokal_troghet(
     dt_max_s: float = 5.0,
     z_nivaer: int = 24,
     theta: float = 0.9,
+    kalltermer: Kalltermer | None = None,
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -530,6 +539,9 @@ def kor_2d_lokal_troghet(
         dt_max_s: Övre gräns för tidssteget (s).
         z_nivaer: Antal nivåer per cell i subgrid-tabellen när `subgrid_faktor > 1`.
         theta: de Almeida (2012) / SFINCS dämpningsfaktor i (0, 1], standard 0,9.
+        kalltermer: Valfria käll-/sänktermer per cell (`tvad.kalltermer`): initial förlust,
+            Green–Ampt-infiltration, avtappning och tvingat djup. `None` ger exakt samma
+            beräkning som utan termerna.
 
     Returns:
         `TvadResultat` med K6-raster, massbalans, tidssteg och gles frontstatistik.
@@ -624,6 +636,20 @@ def kor_2d_lokal_troghet(
     tid_02_fin = np.full((hojd_fin, bredd_fin), np.nan, dtype=np.float32)
     subgrid_ankomst = _SubgridAnkomstSparare(subgrid) if subgrid is not None else None
 
+    sank: SanktermTillstand | None = None
+    if kalltermer is not None:
+        fin_area = np.where(
+            (markslag != MARKSLAG_BYGGNAD) & np.isfinite(mark_z),
+            float(geo.pixelstorlek_x) * float(geo.pixelstorlek_y),
+            0.0,
+        )
+        sank = SanktermTillstand.bygg(
+            kalltermer, (hojd, bredd), aktiv_area_fin=fin_area, subgrid_faktor=subgrid_faktor
+        )
+    tvingat = kalltermer.tvingat_djup if kalltermer is not None else None
+    if tvingat is not None and tvingat.mask.shape != (hojd, bredd):
+        raise TvadFel(f"tvingat_djup.mask har form {tvingat.mask.shape}, lösaren {(hojd, bredd)}.")
+
     in_m3 = 0.0
     ut_m3 = 0.0
     antal_steg = 0
@@ -654,6 +680,12 @@ def kor_2d_lokal_troghet(
             else:
                 h_eff = np.where(aktiv, volym / safe_area, 0.0)
                 zs = z_bed + h_eff
+
+        # 1b. Sänktermer per cell (initial förlust, infiltration, avtappning)
+        if sank is not None:
+            sank.tillampa(volym, aktiv_area, dt)
+            h_eff = np.where(aktiv, volym / safe_area, 0.0)
+            zs = vattenniva_fran_volym(volym, subgrid) if subgrid is not None else z_bed + h_eff
 
         # 2. Gles aktiv front
         vat = aktiv & (h_eff > min_djup_m)
@@ -829,6 +861,14 @@ def kor_2d_lokal_troghet(
         np.maximum(volym, 0.0, out=volym)
         volym[~aktiv] = 0.0
 
+        # 6b. Tvingat djup (randvillkor): skillnaden räknas som in- eller utflöde
+        if tvingat is not None:
+            mal_v = np.where(tvingat.mask & aktiv, tvingat.djup_m(t_nu + dt) * aktiv_area, 0.0)
+            diff = np.where(tvingat.mask & aktiv, mal_v - volym, 0.0)
+            in_m3 += float(np.sum(np.maximum(diff, 0.0)))
+            ut_m3 += float(np.sum(np.maximum(-diff, 0.0)))
+            volym = np.where(tvingat.mask & aktiv, mal_v, volym)
+
         # 7. Uppdatera vattenyta och effektivt djup
         if subgrid is not None:
             zs = vattenniva_fran_volym(volym, subgrid)
@@ -877,7 +917,15 @@ def kor_2d_lokal_troghet(
                 tid_02_fin[ny_02] = np.float32(t_nu)
 
     lagrat_m3 = float(np.sum(volym))
-    volymfel_rel = abs(in_m3 - ut_m3 - lagrat_m3) / in_m3 if in_m3 > 0.0 else 0.0
+    sankt_m3 = (
+        sank.avtappat_m3 + sank.infiltrerat_m3 + sank.initial_m3 if sank is not None else 0.0
+    )
+    if sank is None:
+        volymfel_rel = abs(in_m3 - ut_m3 - lagrat_m3) / in_m3 if in_m3 > 0.0 else 0.0
+    else:
+        volymfel_rel = (
+            abs(in_m3 - ut_m3 - lagrat_m3 - sankt_m3) / in_m3 if in_m3 > 0.0 else 0.0
+        )
     aktiv_cell_andel = sum_aktiv_andel / float(antal_steg) if antal_steg > 0 else 0.0
 
     if subgrid is not None:
@@ -912,6 +960,15 @@ def kor_2d_lokal_troghet(
         kortid_s=kortid_s,
         niva="full2d",
         aktiv_cell_andel=aktiv_cell_andel,
+        avtappat_m3=sank.avtappat_m3 if sank is not None else 0.0,
+        infiltrerat_m3=sank.infiltrerat_m3 if sank is not None else 0.0,
+        initial_forlust_m3=sank.initial_m3 if sank is not None else 0.0,
+        infiltration_m=(
+            np.asarray(sank.infiltrerat_m, dtype=np.float32)
+            if sank is not None and sank.ksat_m_s is not None
+            else None
+        ),
+        sanktermer=kalltermer.beskrivning() if kalltermer is not None else None,
     )
 
 
@@ -969,6 +1026,8 @@ def skriv_tvad_resultat_k6(
         "niva": resultat.niva,
         "epsg": geo.epsg,
     }
+    if resultat.sanktermer is not None:
+        param_dict["sanktermer"] = resultat.sanktermer
     if parametrar is not None:
         param_dict.update(parametrar)
 
@@ -998,6 +1057,15 @@ def skriv_tvad_resultat_k6(
             "max_djup_m": max_djup_val,
             "max_hastighet_m_s": max_hast_val,
             "max_fara_m2_s": max_fara_val,
+            **(
+                {
+                    "avtappat_m3": float(resultat.avtappat_m3),
+                    "infiltrerat_m3": float(resultat.infiltrerat_m3),
+                    "initial_forlust_m3": float(resultat.initial_forlust_m3),
+                }
+                if resultat.sanktermer is not None
+                else {}
+            ),
         },
         kodversion=kodversion,
         start=start,

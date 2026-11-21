@@ -144,7 +144,7 @@ export class FlodenKartaKontroll {
           {
             id: "bakgrund",
             type: "background",
-            paint: { "background-color": "#eef1ee" },
+            paint: { "background-color": "#efefef" },
           },
         ],
       },
@@ -269,9 +269,9 @@ export class FlodenKartaKontroll {
       type: "fill",
       source: "src-byggnader",
       paint: {
-        "fill-color": "#4f5966",
-        "fill-opacity": 0.75,
-        "fill-outline-color": "#262e38",
+        "fill-color": "#c8c8c8",
+        "fill-opacity": 0.9,
+        "fill-outline-color": "#111111",
       },
     });
     this.karta.addLayer({
@@ -279,8 +279,8 @@ export class FlodenKartaKontroll {
       type: "line",
       source: "src-flodesvagar",
       paint: {
-        "line-color": "#16779a",
-        "line-width": 1.6,
+        "line-color": "#2b5d8c",
+        "line-width": 1.4,
         "line-opacity": 0.8,
       },
     });
@@ -289,8 +289,8 @@ export class FlodenKartaKontroll {
       type: "line",
       source: "src-brytlinjer",
       paint: {
-        "line-color": "#b45309",
-        "line-width": 2.4,
+        "line-color": "#111111",
+        "line-width": 1.6,
         "line-opacity": 0.9,
       },
     });
@@ -302,10 +302,10 @@ export class FlodenKartaKontroll {
         "line-color": [
           "case",
           [">=", ["coalesce", ["get", "kumulativ_sannolikhet"], 0], 0.25],
-          "#b91c1c",
+          "#b4462b",
           [">", ["coalesce", ["get", "kumulativ_sannolikhet"], 0], 0],
-          "#d97706",
-          "#15803d",
+          "#d9895f",
+          "#6b6b6b",
         ],
         "line-width": 4,
         "line-opacity": 0.95,
@@ -317,7 +317,7 @@ export class FlodenKartaKontroll {
       source: "src-sankor",
       paint: {
         "circle-radius": 5,
-        "circle-color": "#0e7490",
+        "circle-color": "#2b5d8c",
         "circle-stroke-color": "#ffffff",
         "circle-stroke-width": 1.5,
         "circle-opacity": 0.9,
@@ -328,8 +328,8 @@ export class FlodenKartaKontroll {
       type: "line",
       source: "src-lapp-skiss",
       paint: {
-        "line-color": "#c026d3",
-        "line-width": 3,
+        "line-color": "#111111",
+        "line-width": 2,
         "line-dasharray": [2, 1],
       },
     });
@@ -352,6 +352,22 @@ export class FlodenKartaKontroll {
       this.uppdateraOmradeData(omrade);
       this.appliceraSynlighetOchOpacitet();
     }
+  }
+
+  /** Mäter om kartan och zoomar till området, t.ex. när kartsidan blir synlig första gången. */
+  public anpassaVy(): void {
+    this.karta.resize();
+    if (!this.aktuelltOmrade) {
+      return;
+    }
+    const [minLon, minLat, maxLon, maxLat] = this.aktuelltOmrade.bbox_wgs84;
+    this.karta.fitBounds(
+      [
+        [minLon, minLat],
+        [maxLon, maxLat],
+      ],
+      { padding: 36, duration: 0 },
+    );
   }
 
   public visaResultat(resultat: KorSvar): void {
