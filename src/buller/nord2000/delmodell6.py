@@ -20,10 +20,12 @@ Vad som räknas:
 * **Skärmarnas verkan i fritt fält**, |p̂_SCR| = |p̂_1,ff|·R_SR (ekv. 225–229), med räta eller
   krökta strålar, och gångvägsskillnaden Δℓ för var och en av kanterna (ekv. 307) till kroken
   i `terrang_skarmar.tolka_terrang`.
-* **Markens verkan utöver skärmarna**, |p̂_G| (ekv. 230–260, 268–269) och ΔL₆ (ekv. 270),
-  **bara i homogen atmosfär utan fluktuerande refraktion**. Med refraktion kräver
-  ekv. (233)–(245) och skuggzonsfallen (261)–(267) CalcEqSSPGround, FresnelZoneW med
-  ekv. (346)–(348) och ShadowZoneShielding: `BullerFel`.
+* **Markens verkan utöver skärmarna**, |p̂_G| (ekv. 230–260, 268–269) och ΔL₆ (ekv. 270).
+  I homogen atmosfär utan fluktuerande refraktion med räta strålar; annars (P-S2) med krökta
+  strålar i de tre områdena som i delmodell 4 (`delmodell4.marksidor_refraktion`), Δθ i
+  spegelvinklarna (ekv. 231–232), F_Δτ (ekv. 249–258) och skuggzonsfallen (ekv. 261–267).
+  Refraktion när en skärmtopp ligger under linjen från den andra ger `BullerFel`
+  (`skarmstralar_tva`).
 
 Val som avviker från eller fyller ut den tryckta texten står under "Tolkningar" i loggen.
 """
@@ -36,21 +38,22 @@ from typing import Literal
 
 import numpy as np
 
+from buller.nord2000.delmodell1 import Ct2Form
 from buller.nord2000.delmodell4 import (
     Marksida,
     Segmentvariabler,
     Viktregel,
-    _kontrollera_frekvenser,
-    _marksida,
-    _neutral_sida,
-    _per_frekvens,
-    _vinkel_fran_lodlinjen_rad,
     bildpunkt,
     ekvivalent_skarmhojd_m,
     gangvagsskillnad_refraktion_m,
     hojdmodifierare,
+    kontrollera_frekvenser,
+    marksidor,
+    neutral_sida,
+    per_frekvens,
     segmentvariabler,
     storsta_hojd_m,
+    vinkel_fran_lodlinjen_rad,
 )
 from buller.nord2000.delmodell6_kilben import (
     KilytorTvaSkarmar,
@@ -64,8 +67,9 @@ from buller.nord2000.kildiffraktion_dubbel import (
     tva_kanter_rata_stralar,
     tva_kilar_tryck_reflektionskoefficienter,
 )
-from buller.nord2000.koherens import koherens_bandmedelvarde
+from buller.nord2000.koherens import koherens_bandmedelvarde, koherens_fluktuerande_refraktion
 from buller.nord2000.refraktion import Atmosfar, calc_eq_ssp
+from buller.nord2000.refraktion_mark import Skuggzonslasning
 from buller.nord2000.stralar_krokta import Uppatmetod, direkt_strale
 from buller.nord2000.terrang import Terranggeometri, terranggeometri
 from buller.nord2000.terrang_skarmar import Skarmform, Terrangtolkning, vertikalt_avstand_m
@@ -106,7 +110,7 @@ def _vinkel_kallsida_rad(
     Formen i AV 1106/07 ekv. (227), (228), (231) och (232): θ = arctan((z − z_T)/(x_T − x)) + π/2
     är riktningens vinkel från lodlinjen nedåt och β_x2 kilens vinkel på mottagarsidan.
     """
-    return 2.0 * math.pi - _vinkel_fran_lodlinjen_rad(z - z_t, x_t - x) - beta_mottagarsida
+    return 2.0 * math.pi - vinkel_fran_lodlinjen_rad(z - z_t, x_t - x) - beta_mottagarsida
 
 
 def _vinkel_mottagarsida_rad(
@@ -117,7 +121,7 @@ def _vinkel_mottagarsida_rad(
     Formen i AV 1106/07 ekv. (227), (228), (231) och (232) med
     θ = arctan((z − z_T)/(x − x_T)) + π/2.
     """
-    return _vinkel_fran_lodlinjen_rad(z - z_t, x - x_t) - beta_mottagarsida
+    return vinkel_fran_lodlinjen_rad(z - z_t, x - x_t) - beta_mottagarsida
 
 
 @dataclass(frozen=True)
@@ -132,10 +136,10 @@ class Kilvinklar:
 def kilvinklar(geo: Terranggeometri, form: Skarmform) -> Kilvinklar:
     """β_x1, β_x2 och β för en skärm reducerad till W₁, T, W₂, AV 1106/07 ekv. (227)–(228)."""
     x_t, z_t = float(geo.x_m[form.index_kant]), float(geo.z_m[form.index_kant])
-    beta_k = _vinkel_fran_lodlinjen_rad(
+    beta_k = vinkel_fran_lodlinjen_rad(
         float(geo.z_m[form.index_w1]) - z_t, x_t - float(geo.x_m[form.index_w1])
     )
-    beta_m = _vinkel_fran_lodlinjen_rad(
+    beta_m = vinkel_fran_lodlinjen_rad(
         float(geo.z_m[form.index_w2]) - z_t, float(geo.x_m[form.index_w2]) - x_t
     )
     return Kilvinklar(beta_k, beta_m, 2.0 * math.pi - beta_k - beta_m)
@@ -352,7 +356,7 @@ def skarmeffekt_fritt_falt_db(
     hör till den sekundära skärmen går till kroken `gangvagsskillnad_t2_m` i
     `terrang_skarmar.tolka_terrang`.
     """
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     stralar = skarmstralar_tva(
         profil, forsta, andra, atmosfar, vinkelregel=vinkelregel, uppat=uppat
     )
@@ -515,6 +519,37 @@ class Delmodell6Resultat:
     stralar: SkarmstralarTva  # geometri, indata till p2wedge och Δℓ (ekv. 307)
 
 
+def _bildyta(
+    omrade: int,
+    segment: _Segment,
+    sida: Marksida,
+    direkta: tuple[float, float],
+    rata: bool,
+) -> _Yta:
+    """Spegelpunkternas diffraktionsvinklar för ett verksamt segment, ekv. (231)–(232).
+
+    `omrade` är 0 (före första skärmen), 1 (mellan skärmarna) eller 2 (efter andra skärmen)
+    och `direkta` den direkta strålens vinklar i samma läge. Med räta strålar är vinklarna
+    segmentets geometriska. Med krökta läggs den reflekterade strålens vinkeländring till:
+    θ_Si − Δθ (område 0, i T₁), θ_M1i + Δθ (i T₁) och θ_M2i − Δθ (i T₂) i område 1, θ_Ri + Δθ
+    (område 2, i T₂). En vinkel som då hamnar på fel sida om den direkta strålens ersätts av
+    den, liksom när den reflekterade strålen saknas (skuggzon).
+    """
+    if rata:
+        return _Yta(sida, segment.vinkel_1_rad, segment.vinkel_2_rad)
+    if sida.bildvinkel_som_direkt:
+        return _Yta(sida, direkta[0], direkta[1])
+    if omrade == 0:
+        vinkel = segment.vinkel_1_rad - sida.vinkelandring_mottagare_rad
+        return _Yta(sida, max(vinkel, direkta[0]), 0.0)
+    if omrade == 1:
+        vinkel_t1 = segment.vinkel_1_rad + sida.vinkelandring_kalla_rad
+        vinkel_t2 = segment.vinkel_2_rad - sida.vinkelandring_mottagare_rad
+        return _Yta(sida, min(vinkel_t1, direkta[0]), max(vinkel_t2, direkta[1]))
+    vinkel = segment.vinkel_1_rad + sida.vinkelandring_kalla_rad
+    return _Yta(sida, min(vinkel, direkta[0]), 0.0)
+
+
 def _segment_i_omrade(
     geo: Terranggeometri,
     index: range,
@@ -559,6 +594,9 @@ def tva_skarmar(
     fullt_koherent: bool = False,
     viktregel: Viktregel = "av1849",
     vinkelregel: Vinkelregel = "avsnitt_5_7_3",
+    uppat: Uppatmetod = "exakt",
+    ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
 ) -> Delmodell6Resultat:
     """Delmodell 6: ΔL₆(f) för terräng med två skärmar, AV 1106/07 avsnitt 5.15.
 
@@ -581,24 +619,31 @@ def tva_skarmar(
     (ekv. 224 utan medelvärdesbildning) och finns för prövning mot spegelkällemetoden.
     `viktregel` som i delmodell 4 (`normerade_vikter_tre`); `vinkelregel` se `Vinkelregel`.
 
-    Gäller homogen atmosfär utan fluktuerande refraktion (A = B = s_A = s_B = 0): strålarna är
-    räta och F_Δτ = 1. Annat ger `BullerFel`; skärmarnas verkan i fritt fält och Δℓ med
-    refraktion finns i `skarmeffekt_fritt_falt_db`.
+    I homogen atmosfär utan fluktuerande refraktion är strålarna räta och F_Δτ = 1. Annars
+    (P-S2, formlerna avlästa från sidbild s. 99–110) räknas markdelen i de tre områdena med
+    krökta strålar på samma sätt som i delmodell 4 (`delmodell4.marksidor_refraktion`;
+    ekv. 233–245 har samma form som ekv. 166–174): spegelvinklarna får den reflekterade strålens
+    vinkeländring i respektive skärmtopp (ekv. 231–232), F₂–F₈ får F_Δτ med summan av Δτ och
+    Δτ₊ över de områden där strålen reflekteras (ekv. 249–258), och ett område i skuggzon
+    räknas enligt ekv. (261)–(267): den reflekterade strålen ersätts av den direkta,
+    Q̂ = Q̂(f, τ₁, 0, Ẑ) och |p̂_G| multipliceras med 10^(ΔL_SZ/20) för området. `uppat`,
+    `ct2_form` och `skuggzon` läses som i delmodell 1. En spegelvinkel som med refraktion
+    hamnar på fel sida om den direkta strålens vinkel ersätts av den (texten efter ekv. 230
+    och 231).
+
+    I mittområdet är ekv. (231)–(232) tryckta med samma Δθ_Mi i båda skärmtopparna. Här används
+    den reflekterade strålens vinkeländring i den topp vinkeln hör till (Δθ_S i T₁, Δθ_R i T₂),
+    som i områdena utanför skärmarna; se loggen P-S2, Tolkningar.
     """
-    if atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion:
-        raise BullerFel(
-            "Delmodell 6 täcker ännu bara homogen atmosfär utan fluktuerande refraktion: "
-            "markdelen med krökta strålar (AV 1106/07 ekv. 233–245, 261–267) kräver "
-            "CalcEqSSPGround, FresnelZoneW med ekv. (346)–(348) och ShadowZoneShielding, som inte "
-            "är inkopplade här. Skärmarnas verkan i fritt fält och Δℓ (ekv. 307) med refraktion "
-            "ges av skarmeffekt_fritt_falt_db."
-        )
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     antal = frekvenser.shape[0]
-    f_s_lista = _per_frekvens(koherens_spridningszon, antal, "koherens_spridningszon")
+    f_s_lista = per_frekvens(koherens_spridningszon, antal, "koherens_spridningszon")
     geo = terranggeometri(profil)
-    stralar = skarmstralar_tva(profil, forsta, andra, atmosfar, vinkelregel=vinkelregel)
+    stralar = skarmstralar_tva(
+        profil, forsta, andra, atmosfar, vinkelregel=vinkelregel, uppat=uppat
+    )
     c = atmosfar.c_m_s
+    rata = not (atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion)
     n = geo.x_m.shape[0]
     t1 = _topp(geo, forsta)
     t2 = _topp(geo, andra)
@@ -677,11 +722,42 @@ def tva_skarmar(
         )
     omraden = (omrade_1, omrade_2, omrade_3)
     k0 = stralar.kanter
-    # Neutrala områden (ingen verksam markreflex): raka sträckor och den direkta strålens vinklar.
+    # Neutrala områden (ingen verksam markreflex): den direkta strålens sträckor och vinklar.
     neutrala = (
-        _Yta(_neutral_sida(k0.vag_kalla_m, 0.0), k0.theta_1s_rad, 0.0, neutral=True),
-        _Yta(_neutral_sida(k0.vag_mitten_m, 0.0), k0.theta_1r_rad, k0.theta_2s_rad, neutral=True),
-        _Yta(_neutral_sida(k0.vag_mottagare_m, 0.0), k0.theta_2r_rad, 0.0, neutral=True),
+        _Yta(
+            neutral_sida(k0.vag_kalla_m, 0.0, k0.gangtid_kalla_s),
+            k0.theta_1s_rad,
+            0.0,
+            neutral=True,
+        ),
+        _Yta(
+            neutral_sida(k0.vag_mitten_m, 0.0, k0.gangtid_mitten_s),
+            k0.theta_1r_rad,
+            k0.theta_2s_rad,
+            neutral=True,
+        ),
+        _Yta(
+            neutral_sida(k0.vag_mottagare_m, 0.0, k0.gangtid_mottagare_s),
+            k0.theta_2r_rad,
+            0.0,
+            neutral=True,
+        ),
+    )
+    # Ekv. (233)–(245): varje segment vid alla frekvenser (räta eller krökta strålar).
+    alla_sidor = [
+        [
+            marksidor(
+                frekvenser, seg.variabler, seg.hojdfaktor, seg.sigma, seg.rahet_m, 0.0, atmosfar,
+                uppat=uppat, ct2_form=ct2_form, skuggzon=skuggzon,
+            )
+            for seg in omrade
+        ]
+        for omrade in omraden
+    ]  # fmt: skip
+    direkta_vinklar = (
+        (k0.theta_1s_rad, 0.0),
+        (k0.theta_1r_rad, k0.theta_2s_rad),
+        (k0.theta_2r_rad, 0.0),
     )
 
     delta_l = np.empty(antal, dtype=np.float64)
@@ -703,17 +779,32 @@ def tva_skarmar(
             theta_1r: float,
             theta_2s: float,
             theta_2r: float,
-            vag_s: float,
-            vag_m: float,
-            vag_r: float,
+            vag: tuple[float, float, float],
+            tid: tuple[float, float, float],
             f: float = f,
             q_ytor: tuple[complex, complex, complex, complex] = q_ytor,
         ) -> complex:
-            """p̂ = p2wedge(…) med räta strålar, ekv. (225), för ett av trycken p̂₁–p̂₈."""
-            kanter = tva_kanter_rata_stralar(
-                k0.beta_1_rad, theta_1s, theta_1r, k0.beta_2_rad, theta_2s, theta_2r,
-                vag_s, vag_m, vag_r, c,
-            )  # fmt: skip
+            """p̂ = p2wedge(…), ekv. (225), för ett av trycken p̂₁–p̂₈ (räta strålar: τ = R/c)."""
+            if rata:
+                kanter = tva_kanter_rata_stralar(
+                    k0.beta_1_rad, theta_1s, theta_1r, k0.beta_2_rad, theta_2s, theta_2r,
+                    vag[0], vag[1], vag[2], c,
+                )  # fmt: skip
+            else:
+                kanter = TvaKanter(
+                    beta_1_rad=k0.beta_1_rad,
+                    theta_1s_rad=theta_1s,
+                    theta_1r_rad=theta_1r,
+                    beta_2_rad=k0.beta_2_rad,
+                    theta_2s_rad=theta_2s,
+                    theta_2r_rad=theta_2r,
+                    gangtid_kalla_s=tid[0],
+                    gangtid_mitten_s=tid[1],
+                    gangtid_mottagare_s=tid[2],
+                    vag_kalla_m=vag[0],
+                    vag_mitten_m=vag[1],
+                    vag_mottagare_m=vag[2],
+                )
             return tva_kilar_tryck_reflektionskoefficienter(f, kanter, *q_ytor, viktigast)
 
         p_ff = tva_kilar_tryck_reflektionskoefficienter(f, k0, *q_ytor, viktigast)  # ekv. (225)
@@ -722,13 +813,14 @@ def tva_skarmar(
             raise BullerFel("Skärmarnas tryck |p_SCR| blev 0: ΔL₆ är inte definierad.")
 
         sidor: list[list[_Yta | None]] = []
-        for omrade in omraden:
+        for omr, omrade in enumerate(omraden):
             rad: list[_Yta | None] = []
-            for seg in omrade:
-                sida = _marksida(
-                    f, seg.variabler, seg.hojdfaktor, seg.sigma, seg.rahet_m, 0.0, atmosfar
-                )  # ekv. (234)–(245) med ξ = 0
-                rad.append(None if sida is None else _Yta(sida, seg.vinkel_1_rad, seg.vinkel_2_rad))
+            for seg, per_band in zip(omrade, alla_sidor[omr], strict=True):
+                sida = per_band[nr]
+                if sida is None:
+                    rad.append(None)
+                    continue
+                rad.append(_bildyta(omr, seg, sida, direkta_vinklar[omr], rata))
             sidor.append(rad)
         vikter_bis = (
             [0.0 if y is None else y.sida.vikt_bis for y in sidor[0]],
@@ -753,10 +845,18 @@ def tva_skarmar(
             for y2, w2 in par[1]:
                 for y3, w3 in par[2]:
                     yt = (y1, y2, y3)
+                    direkt_vag = (
+                        y1.sida.vag_direkt_m, y2.sida.vag_direkt_m, y3.sida.vag_direkt_m
+                    )  # fmt: skip
+                    direkt_tid = (
+                        y1.sida.gangtid_direkt_s,
+                        y2.sida.gangtid_direkt_s,
+                        y3.sida.gangtid_direkt_s,
+                    )
                     p_alla: list[complex] = [
                         tryck(
                             k0.theta_1s_rad, k0.theta_1r_rad, k0.theta_2s_rad, k0.theta_2r_rad,
-                            y1.sida.vag_direkt_m, y2.sida.vag_direkt_m, y3.sida.vag_direkt_m,
+                            direkt_vag, direkt_tid,
                         )
                     ]  # fmt: skip
                     koherens: list[float] = []
@@ -773,22 +873,36 @@ def tva_skarmar(
                                 y2.vinkel_1_rad if med_2 else k0.theta_1r_rad,
                                 y2.vinkel_2_rad if med_2 else k0.theta_2s_rad,
                                 y3.vinkel_1_rad if med_3 else k0.theta_2r_rad,
-                                y1.sida.vag_reflekterad_m if med_1 else y1.sida.vag_direkt_m,
-                                y2.sida.vag_reflekterad_m if med_2 else y2.sida.vag_direkt_m,
-                                y3.sida.vag_reflekterad_m if med_3 else y3.sida.vag_direkt_m,
+                                (
+                                    y1.sida.vag_reflekterad_m if med_1 else direkt_vag[0],
+                                    y2.sida.vag_reflekterad_m if med_2 else direkt_vag[1],
+                                    y3.sida.vag_reflekterad_m if med_3 else direkt_vag[2],
+                                ),
+                                (
+                                    y1.sida.gangtid_reflekterad_s if med_1 else direkt_tid[0],
+                                    y2.sida.gangtid_reflekterad_s if med_2 else direkt_tid[1],
+                                    y3.sida.gangtid_reflekterad_s if med_3 else direkt_tid[2],
+                                ),
                             )
                         )
                         if fullt_koherent:
                             koherens.append(1.0)
                             continue
-                        # Ekv. (249)–(258); F_Δτ = 1 utan fluktuerande refraktion.
+                        # Ekv. (249)–(258): F_f(ΣΔτ)·F_Δτ(ΣΔτ, ΣΔτ₊)·∏F_c·∏F_r·F_s över de
+                        # områden där strålen reflekteras.
                         dtau = 0.0
+                        dtau_ovre = 0.0
                         f_n = f_s
                         for m, y in zip(med, yt, strict=True):
                             if m:
                                 dtau += y.sida.gangtidsskillnad_s
+                                dtau_ovre += y.sida.gangtidsskillnad_ovre_s
                                 f_n *= y.sida.koherens_turbulens * y.sida.koherens_rahet
-                        koherens.append(koherens_bandmedelvarde(f, dtau) * f_n)
+                        koherens.append(
+                            koherens_bandmedelvarde(f, dtau)
+                            * f_n
+                            * koherens_fluktuerande_refraktion(f, dtau, dtau_ovre)
+                        )
                     p_g = markfaktor_tre_ytor(
                         (
                             p_alla[0], p_alla[1], p_alla[2], p_alla[3],
@@ -802,6 +916,9 @@ def tva_skarmar(
                         ),
                         (y1.sida.inkoherent, y2.sida.inkoherent, y3.sida.inkoherent),
                     )  # fmt: skip
+                    skuggzon_db = y1.sida.skuggzon_db + y2.sida.skuggzon_db + y3.sida.skuggzon_db
+                    if skuggzon_db != 0.0:  # ekv. (261)–(267)
+                        p_g *= 10.0 ** (skuggzon_db / 20.0)
                     if not p_g > 0.0:
                         raise BullerFel(
                             "Markfaktorn |p_G| blev 0 för en segmentkombination: ΔL₆ är inte "

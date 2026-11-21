@@ -1,4 +1,4 @@
-"""Delmodell 3 i Nord2000: icke-plan terräng utan skärm (homogen atmosfär).
+"""Delmodell 3 i Nord2000: icke-plan terräng utan skärm.
 
 Källa: DELTA AV 1106/07 (rev. 2014), avsnitt 5.12 (ekv. 134–156), 5.21.4 (ekv. 318–319) och
 hjälpfunktionerna MinConcaveHeight (5.23.12, ekv. 373–375), SegmentVariables (5.23.15,
@@ -11,13 +11,23 @@ Varje terrängsegment får en markeffekt ΔL_i(f) och en Fresnelzonsvikt w_i(f).
 konkavt (delmodell 1 över segmentets förlängning), konvext (kildiffraktion över en
 ekvivalent kil) eller ett övergångssegment (båda, sammanvägda). Summan vägs enligt ekv. (156).
 
-Täckning: räta strålar (ξ = 0). Då är de refraktionskorrigerade storheterna i ekv. (134)
-lika med de okorrigerade, Δθ_S = Δθ_R = 0 i ekv. (146), och R_S, R_R i ekv. (148) och (150)
-är de räta sträckorna S–T och T–R med τ = R/c. Krökta strålar ger `BullerFel`: de kräver
-delmodell 1 med refraktion och FresnelZoneW enligt ekv. (346)–(348), som inte finns ännu.
+Räta strålar (homogen atmosfär utan fluktuerande refraktion) räknas som tidigare: de
+refraktionskorrigerade storheterna i ekv. (134) är då lika med de okorrigerade, Δθ_S = Δθ_R = 0
+i ekv. (146), och R_S, R_R i ekv. (148) och (150) är de räta sträckorna med τ = R/c.
+
+Med refraktion eller fluktuerande refraktion (P-S2, formlerna avlästa från sidbild s. 61–66):
+
+* ekv. (134)–(135): Fresnelzonsvikten med krökta strålar (FresnelZoneW, ekv. 346–351) i
+  profilen CalcEqSSP(h′_S, h′_R), och de modifierade storheterna d̆′, h̆′_S, h̆′_R, d̆_refl
+  (ekv. 348) i segmentklassningen (ekv. 136–139);
+* ekv. (140): delmodell 1 med refraktion för konkava segment (`delmodell1`);
+* ekv. (147)–(150): strålarna till den ekvivalenta kilens topp med CalcEqSSP mot h″_SCR
+  (ekv. 22, TC-101327 avsnitt 2.7) och DirectRay, och Δθ_S, Δθ_R i ekv. (146);
+* ekv. (153)–(154): det konvexa segmentets Fresnelzonsvikt i profilen CalcEqSSP(h′_S, h′_R)
+  med höjderna ur ekv. (152).
 
 Val som avviker från eller fyller ut den tryckta texten står under "Tolkningar" i
-`docs/buller/logg/P-3.md`.
+`docs/buller/logg/P-3.md` och, för refraktionen, i `docs/buller/logg/P-S2.md`.
 """
 
 from __future__ import annotations
@@ -29,12 +39,20 @@ from typing import Literal
 import numpy as np
 
 from buller.nord2000.atmosfar import HomogenAtmosfar
-from buller.nord2000.delmodell1 import markeffekt_plan_mark_db
-from buller.nord2000.fresnel import fresnelzon_langs_mark
+from buller.nord2000.delmodell1 import Ct2Form, markeffekt_plan_mark_db
+from buller.nord2000.delmodell4 import ekvivalent_skarmhojd_m
+from buller.nord2000.fresnel import (
+    Reflexgeometri,
+    fresnelzon_langs_mark,
+    fresnelzon_langs_mark_refraktion,
+    reflexgeometri,
+)
 from buller.nord2000.geometri import MINSTA_HOJD_M, langd, normlinje
-from buller.nord2000.kildiffraktion import kil_rata_stralar, kiltryck_impedans
+from buller.nord2000.kildiffraktion import Kil, kil_rata_stralar, kiltryck_impedans
 from buller.nord2000.mark import markimpedans
-from buller.nord2000.refraktion import Atmosfar
+from buller.nord2000.refraktion import Atmosfar, calc_eq_ssp
+from buller.nord2000.refraktion_mark import Skuggzonslasning
+from buller.nord2000.stralar_krokta import Uppatmetod, direkt_strale
 from buller.nord2000.terrang import (
     Terranggeometri,
     ekvivalent_plan_mark,
@@ -53,6 +71,10 @@ RELATIV_TOLERANS = 1.0e-9
 
 Segmenttyp = Literal["konkavt", "konvext", "övergång"]
 Fresnelzonsregel = Literal["klippt", "oklippt"]
+# Höjderna i delmodell 1 för den konkava delen av ett övergångssegment (ekv. 140): "prim" är
+# h′_S, h′_R som AV 1106/07 är tryckt (förval), "bis" ersätter en höjd under h″ med h″
+# (AV 1849/00 avsnitt 4.4.2). Se tolkning 9 i loggen P-3 och utfallet i loggen P-S2.
+Overgangshojd = Literal["prim", "bis"]
 
 KONKAVT: Segmenttyp = "konkavt"
 KONVEXT: Segmenttyp = "konvext"
@@ -136,9 +158,11 @@ def minsta_konkava_hojd_m(
     hojd = (-b - math.sqrt(diskriminant)) / (2.0 * a) if diskriminant >= 0.0 else math.nan
     if hojd >= 0.0 and _pa_zongransen(hojd, h_r, d1_m, d_m, f_lambda_m):
         return hojd
-    if d1_m < 0.0:
-        # Ändpunkten ligger bakom fotpunkten (figur 40 förutsätter d₁ ≥ 0) och utanför zonen
-        # för varje höjd: ekv. (375) har då ingen giltig rot. Se tolkning 4 i loggen.
+    if d1_m < 0.0 or d1_m > d_m:
+        # Ändpunkten ligger bakom källans fotpunkt eller bortom mottagarens (figur 40
+        # förutsätter 0 ≤ d₁ ≤ d) och utanför zonen för varje höjd: ekv. (375) har då ingen
+        # giltig rot. Se tolkning 4 i loggen P-3; fallet d₁ > d (branta segment, t.ex. en
+        # skärms sidor, och starkt krökta strålar) är tillagt i P-S2 med samma skäl.
         return 0.0
     raise BullerFel(
         "MinConcaveHeight saknar giltig lösning (ekv. 375) för "
@@ -216,6 +240,29 @@ def relativ_hojd(hojd_over_segment_m: float, minsta_konkava_hojd_m: float) -> fl
     return hojd_over_segment_m / minsta_konkava_hojd_m
 
 
+def _zonandel(
+    d1_m: float, d2_m: float, start: float, slut: float, avstand_m: float, regel: Fresnelzonsregel
+) -> float:
+    """Andelen av Fresnelzonen [start, slut] som segmentet [d₁, d₂] täcker, ekv. (351).
+
+    Med `regel="klippt"` begränsas zonen först till [0, d] (avsnitt 5.8).
+    """
+    if regel == "klippt":
+        start, slut = max(start, 0.0), min(slut, avstand_m)
+    elif regel != "oklippt":
+        raise BullerFel(f"Okänd Fresnelzonsregel: {regel!r}.")
+    # Fallindelningen i ekv. (351).
+    if d1_m >= slut or d2_m <= start:
+        return 0.0
+    if d1_m <= start and d2_m >= slut:
+        return 1.0
+    if d1_m > start and d2_m < slut:
+        return (d2_m - d1_m) / (slut - start)
+    if d1_m <= start:
+        return (d2_m - start) / (slut - start)
+    return (slut - d1_m) / (slut - start)
+
+
 def fresnelzonsvikt_delmodell3(
     avstand_m: float,
     kallhojd_m: float,
@@ -233,21 +280,25 @@ def fresnelzonsvikt_delmodell3(
     begränsningen (det `fresnel.fresnelzonsvikt` räknar). Se tolkning 1 i loggen.
     """
     zon = fresnelzon_langs_mark(avstand_m, kallhojd_m, mottagarhojd_m, f_lambda_m)
-    start, slut = zon.d1_fz_m, zon.d2_fz_m
-    if regel == "klippt":
-        start, slut = max(start, 0.0), min(slut, avstand_m)
-    elif regel != "oklippt":
-        raise BullerFel(f"Okänd Fresnelzonsregel: {regel!r}.")
-    # Fallindelningen i ekv. (351).
-    if d1_m >= slut or d2_m <= start:
-        return 0.0
-    if d1_m <= start and d2_m >= slut:
-        return 1.0
-    if d1_m > start and d2_m < slut:
-        return (d2_m - d1_m) / (slut - start)
-    if d1_m <= start:
-        return (d2_m - start) / (slut - start)
-    return (slut - d1_m) / (slut - start)
+    return _zonandel(d1_m, d2_m, zon.d1_fz_m, zon.d2_fz_m, avstand_m, regel)
+
+
+def fresnelzonsvikt_delmodell3_refraktion(
+    avstand_m: float,
+    geometri: Reflexgeometri,
+    d1_m: float,
+    d2_m: float,
+    f_lambda_m: float,
+    regel: Fresnelzonsregel = "klippt",
+) -> float:
+    """FresnelZoneW med krökta strålar, AV 1106/07 avsnitt 5.23.6, ekv. (346)–(351).
+
+    `geometri` är första steget i FresnelZoneW (`fresnel.reflexgeometri`) för segmentets
+    förlängning. Zonens gränser läggs kring den verkliga reflexpunkten (ekv. 350) och klipps
+    med `regel="klippt"` till sträckan [0, d] som i `fresnelzonsvikt_delmodell3`.
+    """
+    zon = fresnelzon_langs_mark_refraktion(geometri, f_lambda_m)
+    return _zonandel(d1_m, d2_m, zon.d1_fz_m, zon.d2_fz_m, avstand_m, regel)
 
 
 # ------------------------------------------------------------------------- segmentklassning
@@ -316,6 +367,70 @@ def klassa_segment(geo: Terranggeometri, index: int, vaglangd_m: float) -> Segme
     return Segmentklass(
         h_s_rel=relativ_hojd(v.h_s_m, min(geo.h_s_m, h_s_fz)),
         h_r_rel=relativ_hojd(v.h_r_m, min(geo.h_r_m, h_r_fz)),
+        h_s_fz_m=h_s_fz,
+        h_r_fz_m=h_r_fz,
+    )
+
+
+def segmentrefraktion(
+    variabler: Segmentvariabler,
+    atmosfar: Atmosfar,
+    uppat: Uppatmetod = "exakt",
+    skuggzon: Skuggzonslasning | None = None,
+) -> Reflexgeometri | None:
+    """Reflexgeometrin med krökta strålar över ett segment, AV 1106/07 ekv. (134)–(135).
+
+    (ξ, c₀) = CalcEqSSP(h′_S, h′_R, z₀, A, B, C) (ekv. 135) och första steget i FresnelZoneW
+    (ekv. 346–347): R_S, R_R, ψ_G och d_refl, ur vilka d̆′, h̆′_S, h̆′_R och d̆_refl följer
+    (ekv. 348). Returnerar `None` när ξ = 0 (räta strålar: de modifierade storheterna är lika
+    med de omodifierade) och när källan eller mottagaren ligger på eller under segmentets
+    förlängning: FresnelZoneW är då inte definierad, och avsnitt 5.12 sätter h̆′ = h′ för
+    konvexa segment.
+    """
+    if not (variabler.h_s_m > 0.0 and variabler.h_r_m > 0.0 and variabler.d_m > 0.0):
+        return None
+    h_s = max(variabler.h_s_m, MINSTA_HOJD_M)
+    h_r = max(variabler.h_r_m, MINSTA_HOJD_M)
+    profil = calc_eq_ssp(h_s, h_r, atmosfar)
+    if profil.xi_per_m == 0.0:
+        return None
+    radie = Skuggzonslasning().radie if skuggzon is None else skuggzon.radie
+    return reflexgeometri(variabler.d_m, h_s, h_r, profil.xi_per_m, profil.c0_m_s, uppat, radie)
+
+
+def klassa_segment_refraktion(
+    geo: Terranggeometri,
+    variabler: Segmentvariabler,
+    geometri: Reflexgeometri,
+    vaglangd_m: float,
+) -> Segmentklass:
+    """Relativa höjder med krökta strålar, AV 1106/07 avsnitt 5.12, ekv. (136)–(139).
+
+    h̆′_S = R_S·sin ψ_G, h̆′_R = R_R·sin ψ_G, d̆′ = (R_S + R_R)·cos ψ_G och d̆_refl = R_S·cos ψ_G
+    (ekv. 348). h_S,Fz = MinConcaveHeight(h̆′_R, d̆_x, d̆′, λ) med d̆_x = d_(i−1) − d_refl + d̆_refl
+    (ekv. 138) och h_R,Fz = MinConcaveHeight(h̆′_S, d̆_x, d̆′, λ) med
+    d̆_x = d′ − d_i + d_refl − d̆_refl (ekv. 139, som tryckt med det omodifierade d′).
+
+    I skuggzon (ekv. 347) är ψ_G = 0, så h̆′_S = h̆′_R = 0 och båda relativa höjderna 0:
+    segmentet räknas då som konvext med vikten 0 enligt ekv. (153). Se loggen P-S2.
+    """
+    if not vaglangd_m > 0.0:
+        raise BullerFel("Våglängden ska vara större än 0.")
+    psi = geometri.strykvinkel_rad
+    h_s_mod = geometri.kallhojd_modifierad_m
+    h_r_mod = geometri.mottagarhojd_modifierad_m
+    if not (h_s_mod > 0.0 and h_r_mod > 0.0):
+        return Segmentklass(h_s_rel=0.0, h_r_rel=0.0, h_s_fz_m=math.inf, h_r_fz_m=math.inf)
+    d_mod = geometri.avstand_modifierat_m
+    d_refl_mod = geometri.vag_kalla_m * math.cos(psi)
+    f_lambda = F_LAMBDA_DELMODELL3 * vaglangd_m
+    d_x_kalla = variabler.d1_m - geometri.d_refl_m + d_refl_mod
+    d_x_mottagare = variabler.d_m - variabler.d2_m + geometri.d_refl_m - d_refl_mod
+    h_s_fz = minsta_konkava_hojd_m(max(h_r_mod, MINSTA_HOJD_M), d_x_kalla, d_mod, f_lambda)
+    h_r_fz = minsta_konkava_hojd_m(max(h_s_mod, MINSTA_HOJD_M), d_x_mottagare, d_mod, f_lambda)
+    return Segmentklass(
+        h_s_rel=relativ_hojd(h_s_mod, min(geo.h_s_m, h_s_fz)),
+        h_r_rel=relativ_hojd(h_r_mod, min(geo.h_r_m, h_r_fz)),
         h_s_fz_m=h_s_fz,
         h_r_fz_m=h_r_fz,
     )
@@ -429,6 +544,72 @@ def markeffekt_konvext_segment_db(
     return 20.0 * math.log10(tryck * r_sr_m)
 
 
+def kil_med_refraktion(
+    geo: Terranggeometri,
+    kil: EkvivalentKil,
+    atmosfar: Atmosfar,
+    uppat: Uppatmetod = "exakt",
+) -> Kil:
+    """Indata till pwedge för ett konvext segment med krökta strålar, ekv. (142)–(150).
+
+    h′_S1 och d′₁ är källans höjd över källsidans kilyta och avståndet längs ytan från källans
+    fotpunkt till toppen (ekv. 142–143); h′_R2 och d′₂ motsvarande för mottagaren (ekv.
+    144–145). (ξ_S, c_0S) = CalcEqSSP(h′_S1, h″_SCR) och (ξ_R, c_0R) = CalcEqSSP(h″_SCR, h′_R2)
+    med h″_SCR ur ekv. (22) (TC-101327 avsnitt 2.7); DirectRay(d′₁, h′_S1, 0, ξ_S, c_0S) ger
+    τ_S, R_S, Δθ_S och DirectRay(d′₂, 0, h′_R2, ξ_R, c_0R) ger τ_R, R_R, Δθ_R (ekv. 148, 150;
+    ekv. 150 är tryckt med ξ_S, c_0S). θ_S = 2π − θ₁ − β₂ − Δθ_S och θ_R = θ₂ − β₂ + Δθ_R
+    (ekv. 146).
+
+    En källa eller mottagare under sin kilytas förlängning (h′ < 0, som för det konvexa
+    segmentets egen yta) räknas med beloppet av höjden: för ξ = 0 ger det den räta sträckan
+    till toppen, som i den homogena räkningen. Se loggen P-S2, Tolkningar.
+    """
+    forsta = min(kil.index_primar, kil.index_sekundar)
+    andra = max(kil.index_primar, kil.index_sekundar)
+    x1, z1, _, _ = _segmentpunkter(geo, forsta)
+    _, _, x4, z4 = _segmentpunkter(geo, andra)
+    xs0, zs0, h_s1 = normlinje(x1, z1, kil.x_t_m, kil.z_t_m, geo.x_s_m, geo.z_s_m)  # ekv. (142)
+    d1 = langd(xs0, zs0, kil.x_t_m, kil.z_t_m)  # ekv. (143)
+    xr0, zr0, h_r2 = normlinje(kil.x_t_m, kil.z_t_m, x4, z4, geo.x_r_m, geo.z_r_m)  # ekv. (144)
+    d2 = langd(xr0, zr0, kil.x_t_m, kil.z_t_m)  # ekv. (145)
+    if not (d1 > 0.0 and d2 > 0.0):
+        raise BullerFel(
+            f"Segment {kil.index_primar}: källans eller mottagarens fotpunkt på kilytan "
+            "sammanfaller med kilens topp; ekv. (148) och (150) är inte definierade."
+        )
+    h_s1, h_r2 = abs(h_s1), abs(h_r2)
+    h_bis = ekvivalent_skarmhojd_m(geo.r_sr_m, kil.r_s_m, kil.r_r_m)  # ekv. (22)
+    profil_s = calc_eq_ssp(h_s1, h_bis, atmosfar)  # ekv. (147)
+    profil_r = calc_eq_ssp(h_bis, h_r2, atmosfar)  # ekv. (149)
+    strale_s = direkt_strale(d1, h_s1, 0.0, profil_s.xi_per_m, profil_s.c0_m_s, uppat)
+    strale_r = direkt_strale(d2, 0.0, h_r2, profil_r.xi_per_m, profil_r.c0_m_s, uppat)
+    return Kil(
+        beta_rad=kil.beta_rad,
+        theta_s_rad=kil.theta_s_rad - strale_s.vinkelandring_rad,
+        theta_r_rad=kil.theta_r_rad + strale_r.vinkelandring_rad,
+        gangtid_s=strale_s.gangtid_s + strale_r.gangtid_s,
+        gangtid_kalla_s=strale_s.gangtid_s,
+        gangtid_mottagare_s=strale_r.gangtid_s,
+        vag_m=strale_s.vagstracka_m + strale_r.vagstracka_m,
+        vag_kalla_m=strale_s.vagstracka_m,
+        vag_mottagare_m=strale_r.vagstracka_m,
+    )
+
+
+def markeffekt_konvext_segment_refraktion_db(
+    frekvens_hz: float, kil: Kil, index: int, r_sr_m: float, flodesresistivitet_kNsm4: float
+) -> float:
+    """ΔL_i för ett konvext segment med krökta strålar, AV 1106/07 ekv. (151).
+
+    `kil` kommer ur `kil_med_refraktion`. Som `markeffekt_konvext_segment_db` i övrigt.
+    """
+    impedans = markimpedans(frekvens_hz, flodesresistivitet_kNsm4)
+    tryck = abs(kiltryck_impedans(frekvens_hz, kil, impedans, impedans))
+    if not tryck > 0.0:
+        raise BullerFel(f"Segment {index}: kiltrycket är noll vid {frekvens_hz:.1f} Hz.")
+    return 20.0 * math.log10(tryck * r_sr_m)
+
+
 def konvex_fresnelgeometri(geo: Terranggeometri, index: int) -> Segmentvariabler:
     """Geometrin för ett konvext segments Fresnelzonsvikt, AV 1106/07 ekv. (152), figur 19.
 
@@ -481,6 +662,8 @@ class Delmodell3Resultat:
     konkav_vikt: Flyttal
     h_s_rel: Flyttal
     h_r_rel: Flyttal
+    # Besked per band när en kil inte gick att bilda och felet sköts upp (annars None).
+    fel: tuple[str | None, ...] = ()
 
     @property
     def summa_konkav_vikt(self) -> Flyttal:
@@ -515,16 +698,12 @@ def vag_samman_segment_db(vikter: Flyttal, markeffekter_db: Flyttal) -> tuple[fl
     return dl0, dl0 * (1.0 - r_prim + r_prim / summa)
 
 
-def _homogen(atmosfar: HomogenAtmosfar | Atmosfar) -> HomogenAtmosfar:
-    """Kontrollerar att atmosfären är utan refraktion; krökta strålar täcks inte."""
+def _homogen(atmosfar: HomogenAtmosfar | Atmosfar) -> HomogenAtmosfar | None:
+    """Atmosfären som `HomogenAtmosfar` när den saknar refraktion och fluktuationer, annars None."""
     if isinstance(atmosfar, HomogenAtmosfar):
         return atmosfar
     if atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion:
-        raise BullerFel(
-            "Delmodell 3 täcker ännu bara räta strålar (A = B = 0, s_A = s_B = 0). Krökta "
-            "strålar kräver delmodell 1 med refraktion, FresnelZoneW enligt AV 1106/07 "
-            "ekv. (346)–(348) och ekv. (147)–(150), som inte är implementerade."
-        )
+        return None
     return HomogenAtmosfar(
         temperatur_c=atmosfar.temperatur_mark_c,
         relativ_fuktighet_procent=atmosfar.relativ_fuktighet_procent,
@@ -539,14 +718,33 @@ def delmodell3(
     geo: Terranggeometri,
     atmosfar: HomogenAtmosfar | Atmosfar,
     fresnelzon: Fresnelzonsregel = "klippt",
+    *,
+    uppat: Uppatmetod = "exakt",
+    ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
+    uppskjut_fel: bool = False,
+    overgangshojd: Overgangshojd = "prim",
 ) -> Delmodell3Resultat:
     """Delmodell 3 med alla delresultat, AV 1106/07 avsnitt 5.12, ekv. (134)–(156).
 
     `geo` kommer ur `terrang.terranggeometri(profil)`. Segmentens flödesresistivitet och
-    råhet tas ur `geo`. `atmosfar` ska vara homogen (annars `BullerFel`).
+    råhet tas ur `geo`. Utan refraktion och fluktuerande refraktion räknas räta strålar; annars
+    krökta strålar enligt modulens docstring, med `uppat`, `ct2_form` och `skuggzon` som i
+    `delmodell1.markeffekt_plan_mark_db`.
+
+    Ett konvext segment eller övergångssegment vars ekvivalenta kil inte går att bilda ger
+    `BullerFel`. Med `uppskjut_fel=True` avbryts inte räkningen: ΔL₃ blir då NaN i de band
+    där felet uppstod och beskedet sparas i `Delmodell3Resultat.fel`, så att sammansättningen
+    kan avgöra om bandet alls används (r_flat < 1 och r_scr1 < 1) innan den ger felet vidare.
+    Vikterna, de relativa höjderna och w_con räknas alltid. `overgangshojd` väljer höjderna i
+    ekv. (140) för övergångssegment (`Overgangshojd`).
     """
+    if overgangshojd not in ("prim", "bis"):
+        raise BullerFel(f"Okänt val för höjderna i ekv. (140): {overgangshojd!r} (prim eller bis).")
     luft = _homogen(atmosfar)
-    c = luft.ljudhastighet_m_s
+    bryter = luft is None
+    atm = atmosfar if isinstance(atmosfar, Atmosfar) else None
+    c = atmosfar.c_m_s if isinstance(atmosfar, Atmosfar) else atmosfar.ljudhastighet_m_s
     antal_segment = geo.x_m.shape[0] - 1
     antal_band = frekvenser_hz.shape[0]
     vikt = np.zeros((antal_segment, antal_band), dtype=np.float64)
@@ -554,6 +752,7 @@ def delmodell3(
     konkav_vikt = np.zeros((antal_segment, antal_band), dtype=np.float64)
     h_s_rel = np.zeros((antal_segment, antal_band), dtype=np.float64)
     h_r_rel = np.zeros((antal_segment, antal_band), dtype=np.float64)
+    fel: list[str | None] = [None] * antal_band
 
     for i in range(antal_segment):
         sigma = float(geo.flodesresistivitet_kNsm4[i])
@@ -561,42 +760,111 @@ def delmodell3(
         v = segmentvariabler_for(geo, i)
         konkav_effekt: Flyttal | None = None  # ekv. (140), räknas bara om något band behöver den
         kilar: dict[bool, EkvivalentKil] = {}
+        krokta_kilar: dict[bool, Kil] = {}
         konvex_geometri: Segmentvariabler | None = None
+        konvex_reflex: Reflexgeometri | None = None
+        # Ekv. (134)–(135): krökta strålar över segmentets förlängning (None = räta).
+        reflex = segmentrefraktion(v, atm, uppat, skuggzon) if bryter and atm is not None else None
         for b in range(antal_band):
             f = float(frekvenser_hz[b])
             f_lambda = F_LAMBDA_DELMODELL3 * c / f
-            klass = klassa_segment(geo, i, c / f)
+            if reflex is None:
+                klass = klassa_segment(geo, i, c / f)
+            else:
+                klass = klassa_segment_refraktion(geo, v, reflex, c / f)
             h_s_rel[i, b], h_r_rel[i, b] = klass.h_s_rel, klass.h_r_rel
             r = klass.r
 
             w_konkav, dl_konkav = 0.0, 0.0
             if r > 0.0:
-                w_konkav = fresnelzonsvikt_delmodell3(
-                    v.d_m, v.h_s_m, v.h_r_m, v.d1_m, v.d2_m, f_lambda, fresnelzon
-                )  # ekv. (134)
+                if reflex is None:
+                    w_konkav = fresnelzonsvikt_delmodell3(
+                        v.d_m, v.h_s_m, v.h_r_m, v.d1_m, v.d2_m, f_lambda, fresnelzon
+                    )  # ekv. (134)
+                else:
+                    w_konkav = fresnelzonsvikt_delmodell3_refraktion(
+                        v.d_m, reflex, v.d1_m, v.d2_m, f_lambda, fresnelzon
+                    )  # ekv. (134) med ekv. (346)–(350)
                 if w_konkav > 0.0:
                     if konkav_effekt is None:
-                        konkav_effekt = markeffekt_plan_mark_db(
-                            frekvenser_hz, v.d_m, v.h_s_m, v.h_r_m, sigma, rahet, luft
-                        )
+                        if luft is not None:
+                            konkav_effekt = markeffekt_plan_mark_db(
+                                frekvenser_hz, v.d_m, v.h_s_m, v.h_r_m, sigma, rahet, luft
+                            )
+                        else:
+                            konkav_effekt = markeffekt_plan_mark_db(
+                                frekvenser_hz,
+                                v.d_m,
+                                v.h_s_m,
+                                v.h_r_m,
+                                sigma,
+                                rahet,
+                                atmosfar,
+                                uppat,
+                                ct2_form,
+                                skuggzon,
+                            )  # ekv. (140)
                     dl_konkav = float(konkav_effekt[b])
+                    if overgangshojd == "bis" and r < 1.0:
+                        # AV 1849/00 avsnitt 4.4.2: h′ ersätts med h″ när h′ < h″.
+                        h_s_bis = max(v.h_s_m, min(geo.h_s_m, klass.h_s_fz_m))
+                        h_r_bis = max(v.h_r_m, min(geo.h_r_m, klass.h_r_fz_m))
+                        dl_konkav = float(
+                            markeffekt_plan_mark_db(
+                                frekvenser_hz[b : b + 1],
+                                v.d_m,
+                                h_s_bis,
+                                h_r_bis,
+                                sigma,
+                                rahet,
+                                atmosfar if luft is None else luft,
+                                uppat,
+                                ct2_form,
+                                skuggzon,
+                            )[0]
+                        )
 
             w_konvex, dl_konvex = 0.0, 0.0
             if r < 1.0:
                 if konvex_geometri is None:
                     konvex_geometri = konvex_fresnelgeometri(geo, i)
+                    if bryter and atm is not None:
+                        konvex_reflex = segmentrefraktion(
+                            konvex_geometri, atm, uppat, skuggzon
+                        )  # ekv. (154)
                 g = konvex_geometri
-                w_x = fresnelzonsvikt_delmodell3(
-                    g.d_m, g.h_s_m, g.h_r_m, g.d1_m, g.d2_m, f_lambda, fresnelzon
-                )
+                if konvex_reflex is None:
+                    w_x = fresnelzonsvikt_delmodell3(
+                        g.d_m, g.h_s_m, g.h_r_m, g.d1_m, g.d2_m, f_lambda, fresnelzon
+                    )
+                else:
+                    w_x = fresnelzonsvikt_delmodell3_refraktion(
+                        g.d_m, konvex_reflex, g.d1_m, g.d2_m, f_lambda, fresnelzon
+                    )
                 w_konvex = w_x * max(klass.h_s_rel, klass.h_r_rel)  # ekv. (153)
                 if w_konvex > 0.0:
                     mot_kallan = klass.h_s_rel < klass.h_r_rel
-                    if mot_kallan not in kilar:
-                        kilar[mot_kallan] = ekvivalent_kil(geo, i, mot_kallan)
-                    dl_konvex = markeffekt_konvext_segment_db(
-                        f, kilar[mot_kallan], geo.r_sr_m, sigma, c
-                    )
+                    try:
+                        if mot_kallan not in kilar:
+                            kilar[mot_kallan] = ekvivalent_kil(geo, i, mot_kallan)
+                        if atm is not None and atm.har_refraktion:
+                            if mot_kallan not in krokta_kilar:
+                                krokta_kilar[mot_kallan] = kil_med_refraktion(
+                                    geo, kilar[mot_kallan], atm, uppat
+                                )
+                            dl_konvex = markeffekt_konvext_segment_refraktion_db(
+                                f, krokta_kilar[mot_kallan], i, geo.r_sr_m, sigma
+                            )
+                        else:
+                            dl_konvex = markeffekt_konvext_segment_db(
+                                f, kilar[mot_kallan], geo.r_sr_m, sigma, c
+                            )
+                    except BullerFel as kilfel:
+                        if not uppskjut_fel:
+                            raise
+                        if fel[b] is None:
+                            fel[b] = f"segment {i} (konvex del, vikt {w_konvex:.3g}): {kilfel}"
+                        dl_konvex = math.nan
 
             # Ekv. (155); för konkava (r = 1) och konvexa (r = 0) segment återstår en term.
             vikt[i, b] = w_konkav * r + w_konvex * (1.0 - r)
@@ -607,7 +875,10 @@ def delmodell3(
     dl0 = np.empty(antal_band, dtype=np.float64)
     dl3 = np.empty(antal_band, dtype=np.float64)
     for b in range(antal_band):
-        dl0[b], dl3[b] = vag_samman_segment_db(vikt[:, b], effekt[:, b])
+        if fel[b] is not None:
+            dl0[b], dl3[b] = math.nan, math.nan
+        else:
+            dl0[b], dl3[b] = vag_samman_segment_db(vikt[:, b], effekt[:, b])
     return Delmodell3Resultat(
         frekvenser_hz=np.array(frekvenser_hz, dtype=np.float64),
         markeffekt_db=dl3,
@@ -617,6 +888,7 @@ def delmodell3(
         konkav_vikt=konkav_vikt,
         h_s_rel=h_s_rel,
         h_r_rel=h_r_rel,
+        fel=tuple(fel),
     )
 
 

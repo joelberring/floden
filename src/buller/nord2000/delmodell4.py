@@ -14,25 +14,31 @@ Vad som räknas:
 * **Skärmens verkan i fritt fält**, |p̂_SCR| = |p̂_1,ff|·R_SR (ekv. 160–163), med räta eller
   krökta strålar (CalcEqSSP och DirectRay ur `refraktion.py` och `stralar_krokta.py`), och
   gångvägsskillnaden Δℓ med refraktion (ekv. 301) till kroken i `terrang_skarmar.py`.
-* **Markens verkan utöver skärmen**, |p̂_G| (ekv. 164–183, 187) och ΔL₄ (ekv. 188), **bara i
-  homogen atmosfär utan fluktuerande refraktion**. Med refraktion kräver ekv. (166)–(172),
-  (174) och (184)–(186) CalcEqSSPGround, FresnelZoneW med ekv. (346)–(348) och
-  ShadowZoneShielding, som inte finns ännu (paket P-R2): `BullerFel`.
+* **Markens verkan utöver skärmen**, |p̂_G| (ekv. 164–183, 187) och ΔL₄ (ekv. 188). I homogen
+  atmosfär utan fluktuerande refraktion räknas räta strålar. Annars (P-S2, formlerna avlästa
+  från sidbild s. 71–76) räknas markdelen med krökta strålar: CalcEqSSPGround för medel- och
+  övre refraktion på var sida (ekv. 166, 170), DirectRay, ReflectedRay och TravelTimeDiff
+  (ekv. 167–168, 171–172), spegelvinklarnas Δθ (ekv. 165), FresnelZoneW med refraktion
+  (ekv. 174), F_Δτ i koherensen (ekv. 177–181) och skuggzonsfallen (ekv. 184–186) med
+  ShadowZoneShielding, allt med funktionerna i `refraktion_mark.py`, `stralar_krokta.py` och
+  `fresnel.py`.
 
-Val som avviker från eller fyller ut den tryckta texten står under "Tolkningar" i loggen.
+Val som avviker från eller fyller ut den tryckta texten står under "Tolkningar" i loggen
+(`docs/buller/logg/P-4.md`; för refraktionen i markdelen `docs/buller/logg/P-S2.md`).
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
 
+from buller.nord2000.delmodell1 import Ct2Form
 from buller.nord2000.delmodell4_kilben import Kilben, kilben, medelreflektion_kilben
 from buller.nord2000.frekvenser import vagtal_per_m
-from buller.nord2000.fresnel import fresnelzonsvikt
+from buller.nord2000.fresnel import fresnelzonsvikt, fresnelzonsvikt_refraktion
 from buller.nord2000.geometri import MINSTA_HOJD_M, langd, normlinje, stralar_plan_mark
 from buller.nord2000.kildiffraktion import (
     Kil,
@@ -42,13 +48,27 @@ from buller.nord2000.kildiffraktion import (
 )
 from buller.nord2000.koherens import (
     koherens_bandmedelvarde,
+    koherens_fluktuerande_refraktion,
     koherens_markrahet,
     koherens_turbulens,
     transversell_separation_m,
 )
 from buller.nord2000.mark import inkoherent_reflektion, markimpedans, sfarisk_reflektion
-from buller.nord2000.refraktion import Atmosfar, calc_eq_ssp
-from buller.nord2000.stralar_krokta import Uppatmetod, direkt_strale
+from buller.nord2000.refraktion import Atmosfar, calc_eq_ssp, ovre_atmosfar
+from buller.nord2000.refraktion_mark import (
+    Skuggzonslasning,
+    calc_eq_ssp_mark,
+    kilavstand_skuggzon_m,
+    skuggzonsavskarmning_db,
+)
+from buller.nord2000.stralar_krokta import (
+    SKUGGZONSMARGINAL,
+    Uppatmetod,
+    direkt_strale,
+    reflekterad_strale,
+    skuggzonsavstand_m,
+    stralar_krokt_plan_mark,
+)
 from buller.nord2000.terrang import Terranggeometri, terranggeometri
 from buller.nord2000.terrang_skarmar import Skarmform
 from buller.typer import BullerFel, Flyttal, Terrangprofil
@@ -144,7 +164,7 @@ def ekvivalent_skarmhojd_m(r_sr_m: float, r_st_m: float, r_rt_m: float) -> float
     return 0.0
 
 
-def _vinkel_fran_lodlinjen_rad(dz_m: float, dx_bort_m: float) -> float:
+def vinkel_fran_lodlinjen_rad(dz_m: float, dx_bort_m: float) -> float:
     """arctan(dz/dx) + π/2: vinkeln mellan lodlinjen nedåt från T och riktningen mot en punkt.
 
     Formen i AV 1106/07 ekv. (162) och (165), där `dx_bort_m` är punktens horisontella
@@ -241,14 +261,14 @@ def kilgeometri(geo: Terranggeometri, index_w1: int, index_t: int, index_w2: int
     x_2, z_2 = float(geo.x_m[index_w2]), float(geo.z_m[index_w2])
     if not geo.x_s_m < x_t < geo.x_r_m:
         raise BullerFel("Skärmkanten ska ligga mellan källan och mottagaren.")
-    beta1 = _vinkel_fran_lodlinjen_rad(z_1 - z_t, x_t - x_1)
-    beta2 = _vinkel_fran_lodlinjen_rad(z_2 - z_t, x_2 - x_t)
+    beta1 = vinkel_fran_lodlinjen_rad(z_1 - z_t, x_t - x_1)
+    beta2 = vinkel_fran_lodlinjen_rad(z_2 - z_t, x_2 - x_t)
     return Kilgeometri(
         beta1_rad=beta1,
         beta2_rad=beta2,
         beta_rad=2.0 * math.pi - beta1 - beta2,
-        theta1_rad=_vinkel_fran_lodlinjen_rad(geo.z_s_m - z_t, x_t - geo.x_s_m),
-        theta2_rad=_vinkel_fran_lodlinjen_rad(geo.z_r_m - z_t, geo.x_r_m - x_t),
+        theta1_rad=vinkel_fran_lodlinjen_rad(geo.z_s_m - z_t, x_t - geo.x_s_m),
+        theta2_rad=vinkel_fran_lodlinjen_rad(geo.z_r_m - z_t, geo.x_r_m - x_t),
     )
 
 
@@ -407,10 +427,25 @@ class Marksida:
     koherens_turbulens: float  # F_c för sidan
     koherens_rahet: float  # F_r för sidan
     vinkel_bild_rad: float  # θ₁ eller θ₂ för spegelpunkten (ekv. 165)
+    gangtid_direkt_s: float  # τ_1S eller τ_1R
+    gangtid_reflekterad_s: float  # τ_2S eller τ_2R
+    gangtidsskillnad_ovre_s: float  # Δτ_S+ eller Δτ_R+ (lika med Δτ utan fluktuerande refraktion)
+    # Den reflekterade strålens vinkeländring i områdets "källa" (Δθ_S) och "mottagare" (Δθ_R),
+    # ReflectedRay i den frekvensoberoende profilen. Δθ_Si i ekv. (165) är värdet i skärmtoppen
+    # på källsidan (områdets mottagare), Δθ_Ri värdet i skärmtoppen på mottagarsidan (källan).
+    vinkelandring_kalla_rad: float = 0.0
+    vinkelandring_mottagare_rad: float = 0.0
+    # Sant när spegelpunktens vinkel ska ersättas av den direkta strålens: i skuggzon
+    # (p̂₂ = p̂₁, ekv. 184–186) och när ReflectedRay saknas i ekv. (165).
+    bildvinkel_som_direkt: bool = False
+    skuggzon_db: float = 0.0  # ΔL_SZ,1 eller ΔL_SZ,2
 
 
-def _neutral_sida(vag_direkt_m: float, vinkel_rad: float) -> Marksida:
-    """En sida utan markreflex: Q̂ = 0 och ℜ = 0, så att bara den andra sidans termer återstår."""
+def neutral_sida(vag_direkt_m: float, vinkel_rad: float, gangtid_direkt_s: float = 0.0) -> Marksida:
+    """En sida utan markreflex: Q̂ = 0 och ℜ = 0, så att bara den andra sidans termer återstår.
+
+    `gangtid_direkt_s` behövs bara med krökta strålar (räta strålar räknar τ = R/c).
+    """
     return Marksida(
         vikt_bis=0.0,
         vag_direkt_m=vag_direkt_m,
@@ -422,6 +457,9 @@ def _neutral_sida(vag_direkt_m: float, vinkel_rad: float) -> Marksida:
         koherens_turbulens=1.0,
         koherens_rahet=1.0,
         vinkel_bild_rad=vinkel_rad,
+        gangtid_direkt_s=gangtid_direkt_s,
+        gangtid_reflekterad_s=gangtid_direkt_s,
+        gangtidsskillnad_ovre_s=0.0,
     )
 
 
@@ -521,7 +559,7 @@ class Delmodell4Resultat:
     stralar: Skarmstralar  # geometri, kil för p̂_1,ff och Δℓ (ekv. 301)
 
 
-def _per_frekvens(varde: Flyttal | float | None, antal: int, namn: str) -> list[float] | None:
+def per_frekvens(varde: Flyttal | float | None, antal: int, namn: str) -> list[float] | None:
     if varde is None:
         return None
     falt = np.asarray(varde, dtype=np.float64)
@@ -532,7 +570,7 @@ def _per_frekvens(varde: Flyttal | float | None, antal: int, namn: str) -> list[
     return [float(v) for v in falt]
 
 
-def _kontrollera_frekvenser(frekvenser_hz: Flyttal) -> Flyttal:
+def kontrollera_frekvenser(frekvenser_hz: Flyttal) -> Flyttal:
     frekvenser = np.asarray(frekvenser_hz, dtype=np.float64)
     if frekvenser.ndim != 1 or frekvenser.shape[0] == 0 or not bool(np.all(frekvenser > 0.0)):
         raise BullerFel("Frekvenserna ska vara en icke-tom vektor med värden större än 0 Hz.")
@@ -553,10 +591,10 @@ def kilytornas_reflektion(
     bilaga G.5, där Q_e = √ρ_E för en byggd yta som bara är känd genom sin
     energireflektionskoefficient (`delmodell4_kilben.ekvivalent_reflektion_ur_energireflektion`).
     """
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     antal = frekvenser.shape[0]
-    givet_s = _per_frekvens(q_kilyta_kalla, antal, "q_kilyta_kalla")
-    givet_r = _per_frekvens(q_kilyta_mottagare, antal, "q_kilyta_mottagare")
+    givet_s = per_frekvens(q_kilyta_kalla, antal, "q_kilyta_kalla")
+    givet_r = per_frekvens(q_kilyta_mottagare, antal, "q_kilyta_mottagare")
     ben_s, ben_r = kilben_ur_terrang(geo, form)
     q_s = np.empty(antal, dtype=np.float64)
     q_r = np.empty(antal, dtype=np.float64)
@@ -588,7 +626,7 @@ def skarmeffekt_fritt_falt_db(
     (se loggen). Returnerar också `Skarmstralar`, där `gangvagsskillnad_m` är Δℓ enligt
     ekv. (301) till kroken `gangvagsskillnad_t1_m` i `terrang_skarmar.tolka_terrang`.
     """
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     stralar = skarmstralar(profil, form, atmosfar, uppat)
     geo = terranggeometri(profil)
     q_s, q_r = kilytornas_reflektion(
@@ -603,7 +641,7 @@ def skarmeffekt_fritt_falt_db(
     return niva, stralar
 
 
-def _marksida(
+def marksida(
     frekvens_hz: float,
     variabler: Segmentvariabler,
     hojdfaktor: float,
@@ -654,7 +692,264 @@ def _marksida(
             vagtal_per_m(frekvens_hz, c), stralar.strykvinkel_rad, rahet_m
         ),
         vinkel_bild_rad=vinkel_bild_rad,
+        gangtid_direkt_s=stralar.r1_m / c,
+        gangtid_reflekterad_s=stralar.tau2_s,
+        gangtidsskillnad_ovre_s=stralar.gangtidsskillnad_s,
     )
+
+
+def marksidor_refraktion(
+    frekvenser_hz: Flyttal,
+    variabler: Segmentvariabler,
+    hojdfaktor: float,
+    sigma: float,
+    rahet_m: float,
+    vinkel_bild_rad: float,
+    atmosfar: Atmosfar,
+    *,
+    uppat: Uppatmetod = "exakt",
+    ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
+) -> list[Marksida | None]:
+    """Ett reflekterande segment med krökta strålar, en post per frekvens (ekv. 165–174, 184–186).
+
+    Området mellan "källan" (S eller en skärmtopp) och "mottagaren" (en skärmtopp eller R)
+    räknas som plan mark längs segmentets förlängning, på samma sätt som delmodell 1 med
+    refraktion (`delmodell1`):
+
+    * (ξ(f), c₀(f)), c̄, (ξ, c₀) ur CalcEqSSPGround(h′_S, h′_R, Ẑ_G(f), z₀, A, B, C) och
+      motsvarande för A₊, B₊ (ekv. 166, 170); f_π och f_2π räknas med avståndet d′;
+    * DirectRay och ReflectedRay i den frekvensberoende profilen ger τ₁, R₁, d_SZ, τ₂, R₂, ψ_G,
+      och TravelTimeDiff ger Δτ och Δτ₊ (ekv. 167–168, 171–172);
+    * Q̂ = Q̂(f, τ₂, ψ_G, Ẑ_G) (ekv. 169, 173);
+    * w = FresnelZoneW(d′, h′_S, h′_R, d₁, d₂, λ/16, ξ, c₀) i den frekvensoberoende profilen
+      (ekv. 174);
+    * spegelpunktens vinkeländring vid skärmtoppen ur ReflectedRay i den frekvensoberoende
+      profilen (ekv. 165): Δθ_R när toppen är områdets "mottagare" (källsidan), Δθ_S när den
+      är dess "källa" (mottagarsidan); båda lämnas ut och anroparen väljer;
+    * i skuggzon (ξ < 0 och d′ > 0,95·d_SZ): ΔL_SZ = ShadowZoneShielding(f, d′, h′_S, h′_R, ξ,
+      c₀, d_SZ), Q̂ = Q̂(f, τ₁, 0, Ẑ_G) och den reflekterade strålen ersätts av den direkta
+      (p̂₂ = p̂₁ osv., ekv. 184–186); Δτ = 0 och ψ_G = 0 där (avsnitt 5.5.6).
+
+    Vilken profil som avgör skuggzonen, kilens topp i ShadowZoneShielding och gångtiden i Q̂
+    läses som i delmodell 1 (`skuggzon`, `refraktion_mark.Skuggzonslasning`), så att plan mark
+    och mark vid en skärm behandlas lika. F_c räknas med c̄ ur CalcEqSSPGround (ekv. 166) och
+    F_r med k₀ = 2πf/c₀ i den frekvensoberoende profilen. Höjder under 0,01 m ersätts med
+    0,01 m i strålgången (avsnitt 5.4.1), som i delmodell 1 med refraktion.
+    """
+    antal = frekvenser_hz.shape[0]
+    if hojdfaktor <= 0.0:
+        return [None] * antal
+    lasning = Skuggzonslasning() if skuggzon is None else skuggzon
+    d = variabler.avstand_m
+    h_s = max(variabler.hojd_kalla_m, MINSTA_HOJD_M)
+    h_r = max(variabler.hojd_mottagare_m, MINSTA_HOJD_M)
+    c_mark = atmosfar.c_m_s
+    hard = math.isinf(sigma) and sigma > 0.0
+    impedanser = [
+        complex(math.inf) if hard else markimpedans(float(f), sigma) for f in frekvenser_hz
+    ]
+    profiler = calc_eq_ssp_mark(frekvenser_hz, d, h_s, h_r, sigma, impedanser, atmosfar)
+    fluktuerar = atmosfar.har_fluktuerande_refraktion
+    profiler_ovre = (
+        calc_eq_ssp_mark(frekvenser_hz, d, h_s, h_r, sigma, impedanser, ovre_atmosfar(atmosfar))
+        if fluktuerar
+        else profiler
+    )
+    xi_ob = profiler.oberoende.xi_per_m
+    c0_ob = profiler.oberoende.c0_m_s
+    c_medel = profiler.oberoende.c_medel_m_s
+
+    def i_skugga(xi: float) -> bool:
+        return xi < 0.0 and d > SKUGGZONSMARGINAL * skuggzonsavstand_m(h_s, h_r, xi, uppat)
+
+    en_gang = lasning.avgorande == "oberoende"
+    skugga_oberoende = lasning.avgorande != "per_band" and i_skugga(xi_ob)
+    skugga_alla = en_gang and skugga_oberoende
+    skugga_alla_ovre = en_gang and i_skugga(profiler_ovre.oberoende.xi_per_m)
+
+    # Ekv. (165): spegelpunktens vinkeländring vid skärmtoppen, frekvensoberoende profil.
+    vinkelandring_kalla = 0.0
+    vinkelandring_mottagare = 0.0
+    bild_saknas = False
+    if xi_ob != 0.0:
+        if i_skugga(xi_ob):
+            bild_saknas = True  # ingen reflekterad stråle: den direkta strålens vinkel används
+        else:
+            bildstrale = reflekterad_strale(d, h_s, h_r, xi_ob, c0_ob, uppat)
+            vinkelandring_kalla = bildstrale.vinkelandring_kalla_rad
+            vinkelandring_mottagare = bildstrale.vinkelandring_mottagare_rad
+
+    ct2 = atmosfar.ct2
+    if ct2_form == "tryckt":
+        ct2 = ct2 * (atmosfar.temperatur_luft_c + 273.15)
+    elif ct2_form != "kvadrat":
+        raise BullerFel(f"Okänd form för C_T²-termen: {ct2_form!r} (kvadrat eller tryckt).")
+    separation = transversell_separation_m(h_s, h_r)
+
+    sidor: list[Marksida | None] = []
+    for i, f_np in enumerate(frekvenser_hz):
+        f = float(f_np)
+        vikt = hojdfaktor * fresnelzonsvikt_refraktion(
+            d,
+            h_s,
+            h_r,
+            variabler.d1_m,
+            variabler.d2_m,
+            F_LAMBDA_ANDEL_SKARM * c_mark / f,
+            xi_ob,
+            c0_ob,
+            uppat,
+        )  # ekv. (174)
+        if vikt <= 0.0:
+            sidor.append(None)
+            continue
+        p = profiler.per_frekvens[i]
+        stralar = stralar_krokt_plan_mark(d, h_s, h_r, p.xi_per_m, p.c0_m_s, c_mark, uppat)
+        reflekterad = None if skugga_alla else stralar.reflekterad
+        dtau = 0.0 if reflekterad is None else max(stralar.gangtidsskillnad_s, 0.0)
+        if fluktuerar:
+            po = profiler_ovre.per_frekvens[i]
+            ovre = stralar_krokt_plan_mark(d, h_s, h_r, po.xi_per_m, po.c0_m_s, c_mark, uppat)
+            dtau_ovre = (
+                0.0
+                if skugga_alla_ovre or ovre.reflekterad is None
+                else max(ovre.gangtidsskillnad_s, 0.0)
+            )
+        else:
+            dtau_ovre = dtau
+        psi = 0.0 if reflekterad is None else reflekterad.strykvinkel_rad
+        tau_1 = stralar.direkt.gangtid_s
+        r_1 = stralar.direkt.vagstracka_m
+        if reflekterad is None:  # ekv. (184)–(186): Q̂(f, τ₁, 0, Ẑ) och p̂₂ = p̂₁
+            q = _ytreflektion(f, tau_1 if lasning.q_gangtid == "direkt" else 0.0, 0.0, sigma)
+            tau_2, r_2 = tau_1, r_1
+        else:
+            q = _ytreflektion(f, reflekterad.gangtid_s, psi, sigma)
+            tau_2, r_2 = reflekterad.gangtid_s, reflekterad.vagstracka_m
+        skuggzon_db = 0.0
+        if reflekterad is None or skugga_oberoende:  # ΔL_SZ, ShadowZoneShielding
+            if lasning.kiltopp == "av1851":
+                kiltopp: float | None = kilavstand_skuggzon_m(d, h_s, h_r)
+            else:
+                d_sz = (
+                    stralar.direkt.skuggzonsavstand_m
+                    if lasning.avgorande == "per_band"
+                    else skuggzonsavstand_m(h_s, h_r, xi_ob, uppat)
+                )
+                kiltopp = d_sz if d_sz < d else None
+            if kiltopp is not None:
+                skuggzon_db = skuggzonsavskarmning_db(
+                    f, d, h_s, h_r, xi_ob, c0_ob, kiltopp, lasning.niva
+                )
+        sidor.append(
+            Marksida(
+                vikt_bis=vikt,
+                vag_direkt_m=r_1,
+                vag_reflekterad_m=r_2,
+                gangtidsskillnad_s=dtau,
+                strykvinkel_rad=psi,
+                reflektion=q,
+                inkoherent=_inkoherent(f, sigma),
+                koherens_turbulens=koherens_turbulens(
+                    f, atmosfar.cv2, ct2, atmosfar.temperatur_luft_c, c_medel, separation, d
+                ),
+                koherens_rahet=koherens_markrahet(vagtal_per_m(f, c0_ob), psi, rahet_m),
+                vinkel_bild_rad=vinkel_bild_rad,
+                gangtid_direkt_s=tau_1,
+                gangtid_reflekterad_s=tau_2,
+                gangtidsskillnad_ovre_s=dtau_ovre,
+                vinkelandring_kalla_rad=vinkelandring_kalla,
+                vinkelandring_mottagare_rad=vinkelandring_mottagare,
+                bildvinkel_som_direkt=reflekterad is None or bild_saknas,
+                skuggzon_db=skuggzon_db,
+            )
+        )
+    return sidor
+
+
+def marksidor(
+    frekvenser_hz: Flyttal,
+    variabler: Segmentvariabler,
+    hojdfaktor: float,
+    sigma: float,
+    rahet_m: float,
+    vinkel_bild_rad: float,
+    atmosfar: Atmosfar,
+    *,
+    uppat: Uppatmetod = "exakt",
+    ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
+) -> list[Marksida | None]:
+    """Ett reflekterande segment vid alla frekvenser: räta eller krökta strålar efter atmosfären.
+
+    Homogen atmosfär utan fluktuerande refraktion går genom `marksida` (räta strålar, som
+    före refraktionen infördes), allt annat genom `marksidor_refraktion`.
+    """
+    if atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion:
+        return marksidor_refraktion(
+            frekvenser_hz,
+            variabler,
+            hojdfaktor,
+            sigma,
+            rahet_m,
+            vinkel_bild_rad,
+            atmosfar,
+            uppat=uppat,
+            ct2_form=ct2_form,
+            skuggzon=skuggzon,
+        )
+    if ct2_form == "tryckt":  # C_T²/T i stället för C_T²/T², som i `delmodell1`
+        atmosfar = replace(atmosfar, ct2=atmosfar.ct2 * (atmosfar.temperatur_luft_c + 273.15))
+    elif ct2_form != "kvadrat":
+        raise BullerFel(f"Okänd form för C_T²-termen: {ct2_form!r} (kvadrat eller tryckt).")
+    return [
+        marksida(float(f), variabler, hojdfaktor, sigma, rahet_m, vinkel_bild_rad, atmosfar)
+        for f in frekvenser_hz
+    ]
+
+
+def koherenser_tva_sidor(
+    frekvens_hz: float, sida_1: Marksida, sida_2: Marksida, koherens_spridningszon: float
+) -> tuple[float, float, float]:
+    """F₂, F₃ och F₄, AV 1106/07 ekv. (177), (179) och (181) (i delmodell 5: 210, 212, 214).
+
+    F₂ = F_f(Δτ_S)·F_Δτ(Δτ_S, Δτ_S+)·F_c,1·F_r,1·F_s, F₃ på samma sätt för mottagarsidan och
+    F₄ = F_f(Δτ_S + Δτ_R)·F_Δτ(Δτ_S + Δτ_R, Δτ_S+ + Δτ_R+)·F_c,1·F_c,2·F_r,1·F_r,2·F_s. Utan
+    fluktuerande refraktion är Δτ₊ = Δτ och F_Δτ = 1 (avsnitt 5.9.2).
+    """
+    dtau_s, dtau_r = sida_1.gangtidsskillnad_s, sida_2.gangtidsskillnad_s
+    ovre_s, ovre_r = sida_1.gangtidsskillnad_ovre_s, sida_2.gangtidsskillnad_ovre_s
+    f2 = (
+        koherens_bandmedelvarde(frekvens_hz, dtau_s)
+        * sida_1.koherens_turbulens
+        * sida_1.koherens_rahet
+        * koherens_spridningszon
+    ) * koherens_fluktuerande_refraktion(frekvens_hz, dtau_s, ovre_s)
+    f3 = (
+        koherens_bandmedelvarde(frekvens_hz, dtau_r)
+        * sida_2.koherens_turbulens
+        * sida_2.koherens_rahet
+        * koherens_spridningszon
+    ) * koherens_fluktuerande_refraktion(frekvens_hz, dtau_r, ovre_r)
+    f4 = (
+        koherens_bandmedelvarde(frekvens_hz, dtau_s + dtau_r)
+        * sida_1.koherens_turbulens
+        * sida_2.koherens_turbulens
+        * sida_1.koherens_rahet
+        * sida_2.koherens_rahet
+        * koherens_spridningszon
+    ) * koherens_fluktuerande_refraktion(frekvens_hz, dtau_s + dtau_r, ovre_s + ovre_r)
+    return f2, f3, f4
+
+
+def skuggzonsfaktor(sida_1: Marksida, sida_2: Marksida) -> float:
+    """10^(ΔL_SZ,1/20)·10^(ΔL_SZ,2/20), faktorn framför |p̂_G| i AV 1106/07 ekv. (184)–(186)."""
+    summa_db = sida_1.skuggzon_db + sida_2.skuggzon_db
+    if summa_db == 0.0:
+        return 1.0
+    faktor: float = 10.0 ** (summa_db / 20.0)
+    return faktor
 
 
 def skarm_en_kant(
@@ -668,6 +963,9 @@ def skarm_en_kant(
     koherens_spridningszon: Flyttal | float | None = None,
     fullt_koherent: bool = False,
     viktregel: Viktregel = "av1849",
+    uppat: Uppatmetod = "exakt",
+    ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
 ) -> Delmodell4Resultat:
     """Delmodell 4: ΔL₄(f) för terräng med en skärm med en kant, AV 1106/07 avsnitt 5.13.
 
@@ -686,24 +984,20 @@ def skarm_en_kant(
     `viktregel` väljer hur Fresnelzonsvikterna normeras när summan på en sida är över 1
     eller 0 (`normerade_vikter`); förvalet följer AV 1849/00, `"tryckt"` är ekv. (187) bokstavligt.
 
-    Gäller homogen atmosfär utan fluktuerande refraktion (A = B = s_A = s_B = 0): strålarna är
-    räta och F_Δτ = 1. Annat ger `BullerFel`; skärmens verkan i fritt fält och Δℓ med refraktion
-    finns i `skarmeffekt_fritt_falt_db`.
+    I homogen atmosfär utan fluktuerande refraktion är strålarna räta och F_Δτ = 1. Annars
+    räknas markdelen med krökta strålar (`marksidor_refraktion`): p̂₁–p̂₄ får sträckor och
+    gångtider ur den frekvensberoende profilen på var sida, spegelvinklarna får Δθ_Si och Δθ_Ri
+    (ekv. 165), och i skuggzon gäller ekv. (184)–(186). `uppat`, `ct2_form` och `skuggzon` läses
+    som i delmodell 1. Om spegelpunktens vinkel θ₁ + Δθ_Si (θ₂ + Δθ_Ri) blir större än den
+    direkta strålens används den direkta strålens vinkel (stycket före ekv. 165).
     """
-    if atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion:
-        raise BullerFel(
-            "Delmodell 4 täcker ännu bara homogen atmosfär utan fluktuerande refraktion: "
-            "markdelen med krökta strålar (AV 1106/07 ekv. 166–172, 174, 184–186) kräver "
-            "CalcEqSSPGround, FresnelZoneW med ekv. (346)–(348) och ShadowZoneShielding, som inte "
-            "är implementerade. Skärmens verkan i fritt fält och Δℓ (ekv. 301) med refraktion ges "
-            "av skarmeffekt_fritt_falt_db."
-        )
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     antal = frekvenser.shape[0]
-    f_s_lista = _per_frekvens(koherens_spridningszon, antal, "koherens_spridningszon")
+    f_s_lista = per_frekvens(koherens_spridningszon, antal, "koherens_spridningszon")
     geo = terranggeometri(profil)
-    stralar = skarmstralar(profil, form, atmosfar)
+    stralar = skarmstralar(profil, form, atmosfar, uppat)
     c = atmosfar.c_m_s
+    rata = not (atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion)
     vinklar = stralar.vinklar
     n = geo.x_m.shape[0]
     x_t, z_t = float(geo.x_m[form.index_kant]), float(geo.z_m[form.index_kant])
@@ -721,7 +1015,7 @@ def skarm_en_kant(
             v.hojd_mottagare_m, h_max1
         )  # r_S1·r_R1, ekv. (175)
         x_bild, z_bild = bildpunkt(xa, za, xb, zb, geo.x_s_m, geo.z_s_m)
-        theta1_bild = _vinkel_fran_lodlinjen_rad(z_bild - z_t, x_t - x_bild)
+        theta1_bild = vinkel_fran_lodlinjen_rad(z_bild - z_t, x_t - x_bild)
         kallsida.append(
             (v, faktor, float(geo.flodesresistivitet_kNsm4[i]), float(geo.rahet_m[i]), theta1_bild)
         )
@@ -734,10 +1028,25 @@ def skarm_en_kant(
             v.hojd_kalla_m, h_max2
         )  # r_R2·r_S2, ekv. (176)
         x_bild, z_bild = bildpunkt(xa, za, xb, zb, geo.x_r_m, geo.z_r_m)
-        theta2_bild = _vinkel_fran_lodlinjen_rad(z_bild - z_t, x_bild - x_t)
+        theta2_bild = vinkel_fran_lodlinjen_rad(z_bild - z_t, x_bild - x_t)
         mottagarsida.append(
             (v, faktor, float(geo.flodesresistivitet_kNsm4[i]), float(geo.rahet_m[i]), theta2_bild)
         )
+    # Ekv. (166)–(174): varje segment vid alla frekvenser (räta eller krökta strålar).
+    alla_1 = [
+        marksidor(
+            frekvenser, v, fak, sig, r, th, atmosfar,
+            uppat=uppat, ct2_form=ct2_form, skuggzon=skuggzon,
+        )
+        for v, fak, sig, r, th in kallsida
+    ]  # fmt: skip
+    alla_2 = [
+        marksidor(
+            frekvenser, v, fak, sig, r, th, atmosfar,
+            uppat=uppat, ct2_form=ct2_form, skuggzon=skuggzon,
+        )
+        for v, fak, sig, r, th in mottagarsida
+    ]  # fmt: skip
 
     delta_l = np.empty(antal, dtype=np.float64)
     skarm_db = np.empty(antal, dtype=np.float64)
@@ -754,21 +1063,37 @@ def skarm_en_kant(
             theta_r: float,
             vag_s: float,
             vag_r: float,
+            tid_s: float,
+            tid_r: float,
             f: float = f,
             qs: complex = qs,
             qr: complex = qr,
         ) -> complex:
-            """p̂ = pwedge(…) med räta strålar, ekv. (160), för ett av trycken p̂₁–p̂₄."""
-            kil = kil_rata_stralar(vinklar.beta_rad, theta_s, theta_r, vag_s, vag_r, c)
+            """p̂ = pwedge(…), ekv. (160), för ett av trycken p̂₁–p̂₄.
+
+            Räta strålar: τ = R/c. Krökta: gångtiderna ur ekv. (167) och (171).
+            """
+            if rata:
+                kil = kil_rata_stralar(vinklar.beta_rad, theta_s, theta_r, vag_s, vag_r, c)
+            else:
+                kil = Kil(
+                    beta_rad=vinklar.beta_rad,
+                    theta_s_rad=theta_s,
+                    theta_r_rad=theta_r,
+                    gangtid_s=tid_s + tid_r,
+                    gangtid_kalla_s=tid_s,
+                    gangtid_mottagare_s=tid_r,
+                    vag_m=vag_s + vag_r,
+                    vag_kalla_m=vag_s,
+                    vag_mottagare_m=vag_r,
+                )
             return kiltryck_reflektionskoefficienter(f, kil, qs, qr)
 
         p_ff = kiltryck_reflektionskoefficienter(f, stralar.kil, qs, qr)  # ekv. (160)
         p_scr = abs(p_ff) * geo.r_sr_m  # ekv. (163)
 
-        sidor_1 = [_marksida(f, v, fak, sig, r, th, atmosfar) for v, fak, sig, r, th in kallsida]
-        sidor_2 = [
-            _marksida(f, v, fak, sig, r, th, atmosfar) for v, fak, sig, r, th in mottagarsida
-        ]
+        sidor_1 = [segment[nr] for segment in alla_1]
+        sidor_2 = [segment[nr] for segment in alla_2]
         w_prim_1, w_prim_2, w_q1, w_q2 = normerade_vikter(
             [0.0 if s is None else s.vikt_bis for s in sidor_1],
             [0.0 if s is None else s.vikt_bis for s in sidor_2],
@@ -780,47 +1105,56 @@ def skarm_en_kant(
         par_1 = [(s, w) for s, w in zip(sidor_1, w_prim_1, strict=True) if s and w > 0.0]
         par_2 = [(s, w) for s, w in zip(sidor_2, w_prim_2, strict=True) if s and w > 0.0]
         if viktregel == "av1849":
+            kil_ff = stralar.kil
             if not par_1:
-                par_1 = [(_neutral_sida(stralar.kil.vag_kalla_m, vinklar.theta1_rad), 1.0)]
+                par_1 = [
+                    (
+                        neutral_sida(
+                            kil_ff.vag_kalla_m, vinklar.theta1_rad, kil_ff.gangtid_kalla_s
+                        ),
+                        1.0,
+                    )
+                ]
             if not par_2:
-                par_2 = [(_neutral_sida(stralar.kil.vag_mottagare_m, vinklar.theta2_rad), 1.0)]
+                par_2 = [
+                    (
+                        neutral_sida(
+                            kil_ff.vag_mottagare_m, vinklar.theta2_rad, kil_ff.gangtid_mottagare_s
+                        ),
+                        1.0,
+                    )
+                ]
 
         lg_pg = 0.0  # Σ w′_i1·w′_i2·ln|p̂_G,i1,i2|
         theta_s0 = stralar.kil.theta_s_rad
         theta_r0 = stralar.kil.theta_r_rad
         for s1, w1 in par_1:
-            theta_si = 2.0 * math.pi - s1.vinkel_bild_rad - vinklar.beta2_rad  # ekv. (165)
+            # Ekv. (165): θ_Si = 2π − θ₁ − β₂ − Δθ_Si, dock inte mindre än θ_S (se docstring).
+            theta_si = (
+                2.0 * math.pi
+                - s1.vinkel_bild_rad
+                - vinklar.beta2_rad
+                - s1.vinkelandring_mottagare_rad
+            )
+            if s1.bildvinkel_som_direkt or (not rata and theta_si < theta_s0):
+                theta_si = theta_s0
+            r1s, r2s = s1.vag_direkt_m, s1.vag_reflekterad_m
+            t1s, t2s = s1.gangtid_direkt_s, s1.gangtid_reflekterad_s
             for s2, w2 in par_2:
-                theta_ri = s2.vinkel_bild_rad - vinklar.beta2_rad  # ekv. (165)
-                p1 = tryck(theta_s0, theta_r0, s1.vag_direkt_m, s2.vag_direkt_m)
-                p2 = tryck(theta_si, theta_r0, s1.vag_reflekterad_m, s2.vag_direkt_m)
-                p3 = tryck(theta_s0, theta_ri, s1.vag_direkt_m, s2.vag_reflekterad_m)
-                p4 = tryck(theta_si, theta_ri, s1.vag_reflekterad_m, s2.vag_reflekterad_m)
+                # Ekv. (165): θ_Ri = θ₂ − β₂ + Δθ_Ri, dock inte större än θ_R.
+                theta_ri = s2.vinkel_bild_rad - vinklar.beta2_rad + s2.vinkelandring_kalla_rad
+                if s2.bildvinkel_som_direkt or (not rata and theta_ri > theta_r0):
+                    theta_ri = theta_r0
+                r1r, r2r = s2.vag_direkt_m, s2.vag_reflekterad_m
+                t1r, t2r = s2.gangtid_direkt_s, s2.gangtid_reflekterad_s
+                p1 = tryck(theta_s0, theta_r0, r1s, r1r, t1s, t1r)
+                p2 = tryck(theta_si, theta_r0, r2s, r1r, t2s, t1r)
+                p3 = tryck(theta_s0, theta_ri, r1s, r2r, t1s, t2r)
+                p4 = tryck(theta_si, theta_ri, r2s, r2r, t2s, t2r)
                 if fullt_koherent:
                     f2 = f3 = f4 = 1.0
                 else:
-                    dtau_s, dtau_r = s1.gangtidsskillnad_s, s2.gangtidsskillnad_s
-                    # Ekv. (177), (179), (181); F_Δτ = 1 utan fluktuerande refraktion.
-                    f2 = (
-                        koherens_bandmedelvarde(f, dtau_s)
-                        * s1.koherens_turbulens
-                        * s1.koherens_rahet
-                        * f_s
-                    )
-                    f3 = (
-                        koherens_bandmedelvarde(f, dtau_r)
-                        * s2.koherens_turbulens
-                        * s2.koherens_rahet
-                        * f_s
-                    )
-                    f4 = (
-                        koherens_bandmedelvarde(f, dtau_s + dtau_r)
-                        * s1.koherens_turbulens
-                        * s2.koherens_turbulens
-                        * s1.koherens_rahet
-                        * s2.koherens_rahet
-                        * f_s
-                    )
+                    f2, f3, f4 = koherenser_tva_sidor(f, s1, s2, f_s)  # ekv. (177)–(181)
                 p_g = markfaktor_basmodell(
                     p1,
                     p2,
@@ -836,6 +1170,7 @@ def skarm_en_kant(
                     s1.inkoherent,
                     s2.inkoherent,
                 )
+                p_g *= skuggzonsfaktor(s1, s2)  # ekv. (184)–(186)
                 if not p_g > 0.0:
                     raise BullerFel(
                         "Markfaktorn |p_G| blev 0 för ett segmentpar: ΔL₄ är inte definierad."

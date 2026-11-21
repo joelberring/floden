@@ -734,14 +734,71 @@ class TestTackning(unittest.TestCase):
             ct2=0.008,
         )
 
-    def test_krokta_stralar_ger_bullerfel(self) -> None:
+    def test_svag_refraktion_gar_mot_rata_stralar(self) -> None:
+        """Krökta strålar (P-S2): med försumbar vind eller fluktuation återfås räta strålar.
+
+        Under gränsen i TC-101327 avsnitt 2.1 är ξ = 0, och den nya räknevägen (delmodell 1
+        med refraktion i ekv. 140, vikter ur FresnelZoneW) ska då ge samma ΔL₃ som den gamla.
+        """
+        rak = delmodell3(self.f, self.geo, self._atmosfar()).markeffekt_db
         for atmosfar in (
-            self._atmosfar(a=0.5),
-            self._atmosfar(b=-0.05),
-            self._atmosfar(s_a=0.1),
+            self._atmosfar(a=1.0e-7),
+            self._atmosfar(a=-1.0e-7),
+            self._atmosfar(s_a=1.0e-12),
         ):
-            with self.assertRaisesRegex(BullerFel, "räta strålar"):
-                delmodell3(self.f, self.geo, atmosfar)
+            krokt = delmodell3(self.f, self.geo, atmosfar).markeffekt_db
+            np.testing.assert_allclose(krokt, rak, rtol=0, atol=1e-9)
+
+    def test_refraktion_andrar_resultatet_och_ar_andligt(self) -> None:
+        rak = delmodell3(self.f, self.geo, self._atmosfar()).markeffekt_db
+        for atmosfar in (self._atmosfar(a=0.5), self._atmosfar(b=0.05), self._atmosfar(s_a=0.1)):
+            krokt = delmodell3(self.f, self.geo, atmosfar, uppskjut_fel=True)
+            self.assertTrue(bool(np.all(np.isfinite(krokt.markeffekt_db))), krokt.fel)
+            self.assertGreater(float(np.max(np.abs(krokt.markeffekt_db - rak))), 0.01)
+
+    def test_plan_mark_i_segment_med_refraktion_ar_delmodell_1(self) -> None:
+        """Plan mark delad i segment: vikterna summerar till 1 och ΔL₃ = ΔL₁, även med vind."""
+        p = _profil([0.0, 20.0, 60.0, 100.0], [0.0, 0.0, 0.0, 0.0], 200.0, 0.3, 1.5)
+        geo = terranggeometri(p)
+        for a, s_a in ((0.4, 0.1), (0.1, 0.0)):  # nedåtbrytning; uppåt blir kantsegmenten övergång
+            atmosfar = self._atmosfar(a=a, s_a=s_a)
+            resultat = delmodell3(self.f, geo, atmosfar)
+            vantat = markeffekt_plan_mark_db(self.f, 100.0, 0.3, 1.5, 200.0, 0.0, atmosfar)
+            np.testing.assert_allclose(np.sum(resultat.vikt, axis=0), 1.0, rtol=0, atol=1e-9)
+            np.testing.assert_allclose(resultat.markeffekt_db, vantat, rtol=0, atol=1e-9)
+
+    def test_kil_som_inte_gar_att_bilda_kan_skjutas_upp(self) -> None:
+        """Motvind över en dal: första segmentet blir övergångssegment utan möjlig kil.
+
+        Utan `uppskjut_fel` ges `BullerFel`; med den blir ΔL₃ NaN i de berörda banden och
+        beskedet sparas, medan vikterna och w_con räknas i alla band.
+        """
+        dal = terranggeometri(
+            _profil([0.0, 40.0, 100.0, 160.0, 200.0], [0.0, -2.0, -3.0, -2.0, 0.0], 200.0, 0.5, 1.5)
+        )
+        motvind = self._atmosfar(a=-0.566)  # motvind ca 3 m/s på 10 m höjd
+        with self.assertRaises(BullerFel):
+            delmodell3(self.f, dal, motvind)
+        resultat = delmodell3(self.f, dal, motvind, uppskjut_fel=True)
+        berorda = [b for b, besked in enumerate(resultat.fel) if besked is not None]
+        self.assertGreater(len(berorda), 0)
+        for b in range(self.f.shape[0]):
+            self.assertEqual(bool(np.isnan(resultat.markeffekt_db[b])), b in berorda)
+        self.assertTrue(bool(np.all(np.isfinite(resultat.summa_konkav_vikt))))
+
+    def test_overgangshojd_bis_ror_bara_overgangssegment(self) -> None:
+        prim = delmodell3(self.f, self.geo, STILLA)
+        bis = delmodell3(self.f, self.geo, STILLA, overgangshojd="bis")
+        np.testing.assert_array_equal(prim.vikt, bis.vikt)
+        for i in range(prim.vikt.shape[0]):
+            for b in range(self.f.shape[0]):
+                r = min(prim.h_s_rel[i, b], prim.h_r_rel[i, b])
+                if r in (0.0, 1.0):
+                    self.assertEqual(
+                        prim.markeffekt_segment_db[i, b], bis.markeffekt_segment_db[i, b]
+                    )
+        with self.assertRaises(BullerFel):
+            delmodell3(self.f, self.geo, STILLA, overgangshojd="annan")  # type: ignore[arg-type]
 
     def test_atmosfar_utan_refraktion_ar_homogen(self) -> None:
         a = delmodell3(self.f, self.geo, self._atmosfar()).markeffekt_db

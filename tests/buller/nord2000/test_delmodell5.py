@@ -668,18 +668,40 @@ class TestAllmanModell(unittest.TestCase):
         vantat = np.where(r.markfaktor_pg > 1.0, 20.0 * np.log10(r.markfaktor_pg), 0.0)
         np.testing.assert_allclose(med - utan, vantat, rtol=0, atol=1e-9)
 
-    def test_refraktion_och_fluktuerande_refraktion_ger_fel(self) -> None:
+    def test_svag_refraktion_gar_mot_rata_stralar(self) -> None:
+        """Krökta strålar (P-S2, ekv. 193–198 och markdelen) återger räta strålar när ξ = 0."""
         profil = _tjock_skarm()
-        for vader in (Vader(vind_m_s=3.0), Vader(dt_dz_k_m=0.1), Vader(std_vind_m_s=0.5)):
-            with self.assertRaises(BullerFel):
-                d5.skarm_tva_kanter(FREKVENSER, profil, FORM_T1, 3, atmosfar_ur_vader(vader))
-        with self.assertRaises(BullerFel):
-            d5.skarmeffekt_tva_kanter_fritt_falt_db(
-                FREKVENSER,
-                profil,
-                d5.tvakantsform(FORM_T1, 3),
-                atmosfar_ur_vader(Vader(vind_m_s=3.0)),
+        rak = _kor(profil)
+        for vader in (Vader(vind_m_s=1e-6), Vader(vind_m_s=-1e-6), Vader(std_vind_m_s=1e-9)):
+            krokt = d5.skarm_tva_kanter(FREKVENSER, profil, FORM_T1, 3, atmosfar_ur_vader(vader))
+            np.testing.assert_allclose(krokt.delta_l_db, rak.delta_l_db, rtol=0, atol=1e-9)
+
+    def test_refraktion_och_fluktuerande_refraktion_raknas(self) -> None:
+        profil = _tjock_skarm()
+        rak = _kor(profil)
+        fluktuerande = d5.skarm_tva_kanter(
+            FREKVENSER, profil, FORM_T1, 3, atmosfar_ur_vader(Vader(std_vind_m_s=0.5))
+        )
+        np.testing.assert_array_equal(fluktuerande.skarmeffekt_db, rak.skarmeffekt_db)
+        self.assertGreater(float(np.max(np.abs(fluktuerande.delta_l_db - rak.delta_l_db))), 0.01)
+        niva = {}
+        for vind in (3.0, -3.0):
+            atm = atmosfar_ur_vader(Vader(vind_m_s=vind))
+            r = d5.skarm_tva_kanter(FREKVENSER, profil, FORM_T1, 3, atm)
+            self.assertTrue(bool(np.all(np.isfinite(r.delta_l_db))))
+            niva[vind], stralar = d5.skarmeffekt_tva_kanter_fritt_falt_db(
+                FREKVENSER, profil, d5.tvakantsform(FORM_T1, 3), atm
             )
+            # Δθ har samma tecken på alla tre delsträckorna: + vid nedåtbrytning (ekv. 41–42).
+            tecken = 1.0 if vind > 0 else -1.0
+            for delta in (
+                stralar.vinkelandring_kalla_rad,
+                stralar.vinkelandring_mitten_rad,
+                stralar.vinkelandring_mottagare_rad,
+            ):
+                self.assertGreater(tecken * delta, 0.0)
+        # Skärmens verkan i fritt fält: medvind dämpar mindre än motvind.
+        self.assertTrue(bool(np.all(niva[3.0][10:] > niva[-3.0][10:])))
 
     def test_ogiltig_indata_ger_fel(self) -> None:
         profil = _tjock_skarm()
