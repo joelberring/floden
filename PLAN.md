@@ -56,7 +56,7 @@ stämmer med de syntetiska fallen i testsviten.
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
 | T05 | SFINCS som 2D-referens, subgrid, koppling till sänkgrafen | T01, T03 | pågår |
-| T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | redo |
+| T09c | Environment Agency-testfallen och hybrid mot full 2D | T05 | klar |
 
 ## M6 – Ruttanalys och rapporter
 

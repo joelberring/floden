@@ -98,6 +98,38 @@ class TestCliOchTestsvit(unittest.TestCase):
         self.assertIn("Yta över gränsdjup", text)
         self.assertIn("| 100 |", text)
 
+    def test_cli_risk_med_t06_jordart(self) -> None:
+        ut = io.StringIO()
+        with redirect_stdout(ut):
+            kod = main(
+                [
+                    "risk",
+                    "--omrade",
+                    "A3",
+                    "--gransdjup-m",
+                    "0.20",
+                    "--max-aterkomsttid-ar",
+                    "100",
+                    "--klimatfaktor",
+                    "1.24",
+                    "--jordart",
+                    "sand",
+                ]
+            )
+        self.assertEqual(kod, 0)
+        self.assertIn("Kumulativ översvämningsrisk", ut.getvalue())
+
+    def test_cli_testsvit_grupp_c_ea(self) -> None:
+        ut = io.StringIO()
+        with redirect_stdout(ut):
+            kod = main(["testsvit", "--grupp", "C"])
+        self.assertEqual(kod, 0)
+        text = ut.getvalue()
+        self.assertIn("EA1", text)
+        self.assertIn("EA2", text)
+        self.assertIn("EA8A", text)
+        self.assertIn("3/3", text)
+
 
 if __name__ == "__main__":
     unittest.main()

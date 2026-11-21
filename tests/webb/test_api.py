@@ -275,6 +275,57 @@ class TestWebbApiOchKlient(unittest.TestCase):
         self.assertEqual(status_fel, 400)
         self.assertIn("gransdjup_m", json.loads(kropp_fel.decode("utf-8"))["fel"])
 
+    def test_post_kor_och_risk_med_t06_infiltration(self) -> None:
+        bas_payload = {
+            "omrade_id": "A3_tva_sankor_sammanslagning",
+            "regn_id": "stockholm_cds_6h_100ar_kf124",
+        }
+        infil_payload = {
+            **bas_payload,
+            "forluster": {
+                "aktivera": True,
+                "jordart": "sand",
+                "grundvatten": "normal",
+                "tjale": False,
+                "initial_mm": 2.0,
+            },
+        }
+        s1, _, k1 = self.app.hantera_forfragan(
+            "POST", "/api/kor", json.dumps(bas_payload).encode("utf-8")
+        )
+        s2, _, k2 = self.app.hantera_forfragan(
+            "POST", "/api/kor", json.dumps(infil_payload).encode("utf-8")
+        )
+        self.assertEqual(s1, 200)
+        self.assertEqual(s2, 200)
+        r1 = json.loads(k1.decode("utf-8"))
+        r2 = json.loads(k2.decode("utf-8"))
+        self.assertIsNone(r1["forluster"])
+        self.assertIsNotNone(r2["forluster"])
+        self.assertEqual(r2["forluster"]["jordart"], "sand")
+        self.assertLess(
+            r2["forluster"]["netto_avrinning_medel_mm"],
+            r2["forluster"]["brutto_regn_mm"],
+        )
+        self.assertLessEqual(r2["fore"]["max_djup_m"], r1["fore"]["max_djup_m"])
+
+        s_risk, _, k_risk = self.app.hantera_forfragan(
+            "POST",
+            "/api/risk",
+            json.dumps(
+                {
+                    "omrade_id": "A3_tva_sankor_sammanslagning",
+                    "gransdjup_m": 0.20,
+                    "max_aterkomsttid_ar": 100.0,
+                    "klimatfaktor": 1.24,
+                    "jordart": "sand",
+                }
+            ).encode("utf-8"),
+        )
+        self.assertEqual(s_risk, 200)
+        rr = json.loads(k_risk.decode("utf-8"))
+        self.assertEqual(rr["gransdjup_m"], 0.20)
+
     def test_webbklientens_filer_finns_och_har_giltig_struktur(self) -> None:
         webb_rot = _REPO_ROT / "webb"
         pkg = json.loads((webb_rot / "package.json").read_text(encoding="utf-8"))

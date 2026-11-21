@@ -24,6 +24,11 @@ from mark_forluster.infiltration import (
     berakna_cell_infiltration,
     green_ampt_tidsserie,
 )
+from mark_forluster.koppling import (
+    ForlustKopplingResultat,
+    berakna_effektivt_regn_k5,
+    k4_till_strikt_intervallserie,
+)
 from mark_forluster.parametrar import (
     BERG,
     BYGGNAD,
@@ -109,6 +114,7 @@ __all__ = [
     "EffektivMarkParametrar",
     "ForlustFel",
     "ForlustInstallningar",
+    "ForlustKopplingResultat",
     "ForlustResultat",
     "GreenAmptStegResultat",
     "InfiltrationResultat",
@@ -119,12 +125,14 @@ __all__ = [
     "ScenarioSammanfattning",
     "berakna_brunnsavbordning",
     "berakna_cell_infiltration",
+    "berakna_effektivt_regn_k5",
     "berakna_forluster_for_scenario",
     "berakna_grundvattentak",
     "effektiv_markparametrar",
     "green_ampt_tidsserie",
     "hamta_jordart",
     "jamfor_scenarier",
+    "k4_till_strikt_intervallserie",
     "kalibrera_dtw_mot_ror",
     "klassificera_in_utstromning",
     "las_scenario_k5",
