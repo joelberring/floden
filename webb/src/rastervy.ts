@@ -18,6 +18,12 @@ export interface VyLager {
   synlig: boolean;
 }
 
+export interface VyByggnad {
+  ring: Array<[number, number]>;
+  hal: Array<Array<[number, number]>>;
+  status: "oforandrad" | "ny" | "andrad";
+}
+
 export interface Bakgrund {
   paa: boolean;
   /** Plattmall, t.ex. https://tile.openstreetmap.org/{z}/{x}/{y}.png */
@@ -44,6 +50,8 @@ export class RasterVy {
   private readonly ctx: CanvasRenderingContext2D;
   private lager: VyLager[] = [];
   private rutor: Utbredning[] = [];
+  private byggnader: VyByggnad[] = [];
+  private notis: string | null = null;
   private bakgrund: Bakgrund = { paa: false, urlMall: "" };
   private cx = 0;
   private cy = 0;
@@ -100,6 +108,18 @@ export class RasterVy {
     this.rita();
   }
 
+  /** Byggnadernas fotavtryck: grå ytor under resultatet och kantlinjer över det. */
+  settByggnader(byggnader: VyByggnad[]): void {
+    this.byggnader = byggnader;
+    this.rita();
+  }
+
+  /** Kort förklaring nere till höger i vyn (t.ex. "Grå yta: tak, inte mark"), eller null. */
+  settNotis(notis: string | null): void {
+    this.notis = notis;
+    this.rita();
+  }
+
   settBakgrund(bakgrund: Bakgrund): void {
     this.bakgrund = bakgrund;
     this.rita();
@@ -107,11 +127,14 @@ export class RasterVy {
 
   /** Anpassar vyn så att utbredningen syns med en liten marginal. */
   anpassa(u: Utbredning): void {
+    // Minst 40 m (annars hamnar en enda cell i fokus) och 8 % marginal runt resultatet.
+    const bredd = Math.max(u.x_max - u.x_min, 40);
+    const hojd = Math.max(u.y_max - u.y_min, 40);
     this.cx = (u.x_min + u.x_max) / 2;
     this.cy = (u.y_min + u.y_max) / 2;
-    const b = Math.max(1, this.bredd - 48);
-    const h = Math.max(1, this.hojd - 48);
-    this.mpp = Math.max((u.x_max - u.x_min) / b, (u.y_max - u.y_min) / h, 1e-3);
+    const b = Math.max(1, (this.bredd - 48) * 0.92);
+    const h = Math.max(1, (this.hojd - 48) * 0.92);
+    this.mpp = Math.max(bredd / b, hojd / h, 1e-3);
     this.harVy = true;
     this.rita();
   }
@@ -200,6 +223,7 @@ export class RasterVy {
 
     if (this.bakgrund.paa && this.bakgrund.urlMall) this.ritaPlattor();
     this.ritaRutnat();
+    this.ritaByggnader(false);
     for (const l of this.lager) {
       if (!l.synlig || !l.bild.complete || l.bild.naturalWidth === 0) continue;
       const [x0, y0] = this.tillSkarm(l.utbredning.x_min, l.utbredning.y_max);
@@ -210,8 +234,59 @@ export class RasterVy {
       c.drawImage(l.bild, x0, y0, x1 - x0, y1 - y0);
       c.globalAlpha = 1;
     }
+    this.ritaByggnader(true);
     this.ritaRutor();
     this.ritaSkalstock();
+    this.ritaNotis();
+  }
+
+  private byggnadsvag(b: VyByggnad): Path2D {
+    const p = new Path2D();
+    for (const ring of [b.ring, ...b.hal]) {
+      ring.forEach(([e, n], i) => {
+        const [x, y] = this.tillSkarm(e, n);
+        if (i === 0) p.moveTo(x, y);
+        else p.lineTo(x, y);
+      });
+      p.closePath();
+    }
+    return p;
+  }
+
+  /** `kanter` false: grå fyllning under resultatet. true: kantlinjer över det. */
+  private ritaByggnader(kanter: boolean): void {
+    const c = this.ctx;
+    c.save();
+    for (const b of this.byggnader) {
+      const v = this.byggnadsvag(b);
+      if (!kanter) {
+        c.fillStyle = b.status === "oforandrad" ? "#d6d6d6" : "#bcbcbc";
+        c.fill(v, "evenodd");
+        continue;
+      }
+      c.setLineDash(b.status === "andrad" ? [6, 3] : []);
+      c.lineWidth = b.status === "oforandrad" ? 1 : 2;
+      c.strokeStyle = b.status === "oforandrad" ? "#7a7a7a" : "#111111";
+      c.stroke(v);
+    }
+    c.restore();
+  }
+
+  private ritaNotis(): void {
+    if (!this.notis) return;
+    const c = this.ctx;
+    c.save();
+    c.font = "11px ui-monospace, Menlo, monospace";
+    const w = c.measureText(this.notis).width + 16;
+    const x = this.bredd - w - 8;
+    const y = this.hojd - 30;
+    c.fillStyle = "rgba(255,255,255,0.88)";
+    c.fillRect(x, y, w, 22);
+    c.fillStyle = "#111111";
+    c.textBaseline = "middle";
+    c.textAlign = "left";
+    c.fillText(this.notis, x + 8, y + 11);
+    c.restore();
   }
 
   private ritaRutnat(): void {

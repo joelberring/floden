@@ -12,6 +12,7 @@ import {
   korSimulering,
   skapaRapport,
 } from "./api";
+import { startaKontoLyssning } from "./konto";
 import { renderaModulVaxlare, startaRouter } from "./router";
 import { arPolygonRitLage, FlodenKartaKontroll, STANDARD_LAGER, type RitLage } from "./karta";
 import type {
@@ -1473,6 +1474,7 @@ omradeValjare.addEventListener("change", () => {
 
 let kartanHarVisats = false;
 
+startaKontoLyssning();
 startaRouter({
   visaKarta(omradeId: string | null): void {
     void arbetsbankKlar.then(() => {

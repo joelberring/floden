@@ -107,8 +107,7 @@ def _las_laser_csv(
             e_kol, n_kol, z_kol = "e", "n", "z"
         else:
             raise PipelineFel(
-                f"Laser-CSV {sokvag} måste ha kolumner 'e_m,n_m,z_m' eller 'e,n,z', "
-                f"fick {falt}."
+                f"Laser-CSV {sokvag} måste ha kolumner 'e_m,n_m,z_m' eller 'e,n,z', fick {falt}."
             )
 
         har_klass = "klass" in falt
@@ -715,8 +714,7 @@ def _ladda_regn_for_kor(args: argparse.Namespace, indata: Path) -> tuple[RegnSer
         return las_regn_k4_csv(k1_regn), k1_regn
 
     raise RegnFel(
-        "Inget regn angavs (--regn-id, --regn-csv eller --aterkomsttid-ar) "
-        f"och '{k1_regn}' saknas."
+        f"Inget regn angavs (--regn-id, --regn-csv eller --aterkomsttid-ar) och '{k1_regn}' saknas."
     )
 
 
@@ -1336,9 +1334,7 @@ def bygg_parser() -> argparse.ArgumentParser:
     bl_parser.add_argument(
         "--k1", type=str, required=True, help="K1-indatamapp eller testfalls-ID."
     )
-    bl_parser.add_argument(
-        "--mm", type=float, nargs="+", required=True, help="Regnmängd(er) i mm."
-    )
+    bl_parser.add_argument("--mm", type=float, nargs="+", required=True, help="Regnmängd(er) i mm.")
     bl_parser.add_argument("--ut", type=str, required=True, help="Målkatalog.")
     bl_parser.add_argument("--persistens-faktor", type=float, default=None)
     bl_parser.add_argument("--rot", type=str, default="testsvit")
@@ -1647,10 +1643,25 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_luft(subparsers)
 
+    from demovarld.cli import registrera as registrera_demo
+
+    registrera_demo(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
-        help="Starta Flodens lokala HTTP/JSON-API för webbklienten.",
-        description="Startar det lokala HTTP/JSON-API:t på angiven värd och port.",
+        help="Starta Floden i webbläsaren: klient och API från samma port.",
+        description="Bygger webbklienten vid behov och serverar den tillsammans med det lokala "
+        "HTTP/JSON-API:t från samma port (http://127.0.0.1:8765 som standard).",
+    )
+    webb_parser.add_argument(
+        "--bygg",
+        action="store_true",
+        help="Bygg om klienten (npm ci och npm run build) även om den verkar vara aktuell.",
+    )
+    webb_parser.add_argument(
+        "--ingen-bygg",
+        action="store_true",
+        help="Bygg inte klienten (servera bara API:t om webb/dist saknas).",
     )
     webb_parser.add_argument(
         "--host",
@@ -1714,16 +1725,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         from luft.cli import kor as kor_luft
 
         return kor_luft(args)
+    if args.kommando == "demo":
+        from demovarld.cli import kor as kor_demo
+
+        return kor_demo(args)
     if args.kommando == "webb":
         from webb.api import skapa_http_server
+        from webb.klientbygge import KlientByggeFel, sakerstall_klient
 
+        if not args.ingen_bygg:
+            try:
+                sakerstall_klient(Path(args.konfig).resolve().parent / "webb", tvinga=args.bygg)
+            except KlientByggeFel as exc:
+                print(f"Kunde inte bygga webbklienten: {exc}", file=sys.stderr)
+                return 1
         server = skapa_http_server(
             host=args.host,
             port=args.port,
             testsvit_rot=args.rot,
             konfig_fil=args.konfig,
         )
-        print(f"Floden API lyssnar på http://{args.host}:{args.port}")
+        print(f"Floden körs på http://{args.host}:{args.port}  (Ctrl+C avslutar)")
         try:
             server.serve_forever()
         except KeyboardInterrupt:

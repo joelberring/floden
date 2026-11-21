@@ -1,0 +1,39 @@
+# Demo: blåytor (maxdjup) före/efter ett nytt hus i demovärlden (syntetisk, K1 v2). Bygg världen och
+# kör frågan med
+#   floden demo
+#
+# Regnet ur IDF-källan Stockholmsregn 2024 (Tabell 7, utan klimatfaktor i tabellen):
+#   återkomsttid 100 år, varaktighet 360 min (6 timmar), klimatfaktor 1.4 (rapportens
+#   rekommendation, uttrycklig parameter), blockregn. Källa, faktor och tabellens sha256 står i
+#   varje jobbs run.json och visas i resultatets sammanfattning. Statisk fyllning
+#   (Fill-Spill-Merge): inget flöde i tid, ingen infiltration och inget ledningsnät, alltså
+#   maxdjup i sänkor, inte en dynamisk simulering.
+#
+# Scenario `nytt_hus`: ett 18 m-hus (14 x 40 m) byggs ut från södra lamellen i sydvästra gården
+# och spärrar gårdens avrinning från skålen (0,5 m djup) mot porten. Vattnet dämms upp och
+# djupet ökar uppströms. Husets egna celler visas som tak, inte som mark.
+#
+# Vattenlösaren tar en K1-ruta, så vattenvärlden är fokusområdet (300 x 300 m) som en ruta.
+# Vatten som rinner över rutans kant räknas som utflöde (ut_m3 i mätvärdena).
+kontrakt = "K20/v1"
+fraga_id = "demo-vatten"
+beskrivning = "Blåytor (maxdjup) vid Stockholmsregn 2024, 100 år, klimatfaktor 1.4, före/efter ett nytt hus."
+
+[scenarier.fore]
+bas = "../../data/demo/varld/vatten/bas"
+
+[scenarier.efter]
+bas = "../../data/demo/varld/vatten/bas"
+k9 = ["../../data/demo/varld/vatten/k9_nytt_hus.json"]
+
+[[analyser]]
+id = "skyfall"
+losare = "vatten.statisk_fyllning"
+parametrar = { idf = "stockholmsregn-2024", aterkomsttid_ar = 100, varaktighet_min = 360, klimatfaktor = 1.4, regntyp = "block" }
+
+[[jamforelser]]
+analys = "skyfall"
+utdata = "max_djup"
+fore = "fore"
+efter = "efter"
+troskel = 0.01

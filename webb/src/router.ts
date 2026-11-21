@@ -3,6 +3,7 @@
  * Kartsidan är arbetsbänken i index.html (main.ts) och göms i stället för att ritas om,
  * så att kartan och pågående ritningar finns kvar mellan sidbyten.
  */
+import { laddaKonto, vidKontoandring } from "./konto";
 import { hamtaModuler, hamtaOmraden } from "./api";
 import { visaFragor } from "./fragor";
 import {
@@ -81,6 +82,20 @@ export function startaRouter(krokar: RouterKrokar): void {
       })
       .catch(() => undefined),
   ]);
+
+  const ritaHuvud = (): void => {
+    const rutt = tolkaHash(window.location.hash);
+    sidhuvud.innerHTML =
+      rutt.sida === "start" ? sidhuvudStart() : sidhuvudApp(rutt.sida, senasteOmrade);
+  };
+  // Inloggningsläget kommer från /konto/jag: bara sidhuvudet (och startsidan) ritas om.
+  vidKontoandring(() => {
+    ritaHuvud();
+    if (tolkaHash(window.location.hash).sida === "start") {
+      vySida.innerHTML = sidaStart(moduler);
+    }
+  });
+  void laddaKonto();
 
   const rita = (): void => {
     const rutt = tolkaHash(window.location.hash);

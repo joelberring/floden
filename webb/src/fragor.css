@@ -382,3 +382,84 @@ input[type="radio"] {
 .varning-ruta details {
   margin-top: 2px;
 }
+
+/* Demo, antaganden, värden under markören, byggnadsforklaring, inloggning */
+.demo-rad {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+  padding: 16px 0 24px;
+}
+.demo-kort {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding: 16px;
+  border: 1px solid var(--f-linje-stark);
+}
+.demo-kort h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.demo-kort p {
+  margin: 0;
+}
+.demo-kommer {
+  border-style: dashed;
+  color: var(--f-text-dampad);
+}
+.antaganden {
+  margin: 16px 0;
+  padding: 12px 18px;
+  border: 1px solid var(--f-linje);
+}
+.antaganden ul {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.antaganden .etikett-liten {
+  margin-right: 8px;
+}
+.avlasning {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  align-items: center;
+  min-height: 44px;
+  padding: 8px 0;
+}
+.avl-post {
+  display: inline-flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.plan-ruta.kontext {
+  fill: #f0f0f0;
+  stroke-dasharray: 2 3;
+  stroke: #8a8a8a;
+}
+.bygg-forklaring .ruta {
+  display: inline-block;
+  width: 18px;
+  height: 12px;
+  margin-right: 8px;
+  border: 1px solid #7a7a7a;
+}
+.bygg-oforandrad {
+  background: #d6d6d6;
+}
+.bygg-ny {
+  background: #bcbcbc;
+  border: 2px solid #111 !important;
+}
+.bygg-andrad {
+  background: #bcbcbc;
+  border: 2px dashed #111 !important;
+}
+.konto-inloggad {
+  margin-right: 8px;
+  font-size: 0.875rem;
+}

@@ -6,14 +6,15 @@ import argparse
 import base64
 import json
 import math
+import mimetypes
 import os
 import tempfile
 import threading
 import time
 import tomllib
 import urllib.parse
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from dynamik.nodmodell import DynamikFel, DynamikResultat, EntrePunkt
 from dynamik.risk import berakna_kumulativ_oversvamningsrisk
 from gemensamt.hash import sha256_bytes, sha256_fil
+from gemensamt.konfig import las_konfig
 from gemensamt.koordinater import EPSG_INTERN, HOJDSYSTEM
 from gemensamt.manifest import KONTRAKT_K0, FilPost, RunManifest, skapa_manifest
 from gemensamt.regn import (
@@ -37,6 +39,7 @@ from gemensamt.regn import (
     lista_regnforval,
     skapa_regn_fran_spec,
 )
+from konto import Forfragan, KontoAdapter, KontoKonfig, las_konto_konfig
 from lapp.experiment import (
     ExperimentAtgarder,
     ExperimentFel,
@@ -203,9 +206,7 @@ def _tolka_regnserie(
         raw_kf = kropp.get("klimatfaktor")
         kf_val = float(raw_kf) if raw_kf is not None else 1.0
         raw_var_min = kropp.get("varaktighet_min")
-        var_min_val = (
-            float(raw_var_min) if raw_var_min is not None else STANDARD_VARAKTIGHET_MIN
-        )
+        var_min_val = float(raw_var_min) if raw_var_min is not None else STANDARD_VARAKTIGHET_MIN
         raw_typ = kropp.get("regntyp") or kropp.get("typ")
         typ_val = str(raw_typ).strip().lower() if raw_typ is not None else "cds"
         try:
@@ -247,13 +248,9 @@ def _tolka_regnserie(
     if not has_i and not has_d:
         return standard_tid, standard_intensitet, {}
 
-    intensitet = (
-        float(kropp["intensitet_mm_h"]) if has_i else float(standard_intensitet[0])
-    )
+    intensitet = float(kropp["intensitet_mm_h"]) if has_i else float(standard_intensitet[0])
     varaktighet = (
-        float(kropp["varaktighet_s"])
-        if has_d
-        else float(standard_tid[-1] - standard_tid[0])
+        float(kropp["varaktighet_s"]) if has_d else float(standard_tid[-1] - standard_tid[0])
     )
     if not math.isfinite(intensitet) or intensitet < 0.0:
         raise FlodenWebbFel(f"Ogiltig intensitet_mm_h: {intensitet!r} (måste vara >= 0).")
@@ -435,6 +432,8 @@ def _ensemble_payload(
 STANDARD_FRAGEMAPP = "exempel/fragor"
 STANDARD_CACHEMAPP = "data/cache/karna"
 STANDARD_KORNINGSMAPP = "data/cache/webb/korningar"
+STANDARD_DEMOMAPP = "data/demo/varld"
+STANDARD_KLIENTMAPP = "webb/dist"
 
 
 def _skapa_fragetjanst(
@@ -468,18 +467,23 @@ def _skapa_fragetjanst(
         fragemappar=[abs_(m) for m in fragemappar],
         cachemapp=abs_(cachemapp or webb.get("cachemapp", STANDARD_CACHEMAPP)),
         korningsmapp=abs_(korningsmapp or webb.get("korningsmapp", STANDARD_KORNINGSMAPP)),
+        demomapp=abs_(webb.get("demomapp", STANDARD_DEMOMAPP)),
     )
 
 
 def _binart_svar(
     status_kod: int, innehall: bytes, content_type: str
 ) -> tuple[int, dict[str, str], bytes]:
-    return status_kod, {
-        "Content-Type": content_type,
-        "Content-Length": str(len(innehall)),
-        "Cache-Control": "no-store",
-        "Access-Control-Allow-Origin": "*",
-    }, innehall
+    return (
+        status_kod,
+        {
+            "Content-Type": content_type,
+            "Content-Length": str(len(innehall)),
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*",
+        },
+        innehall,
+    )
 
 
 class FlodenApiApp:
@@ -493,9 +497,13 @@ class FlodenApiApp:
         fragemappar: Sequence[str | Path] | None = None,
         cachemapp: str | Path | None = None,
         korningsmapp: str | Path | None = None,
+        konto: KontoAdapter | None = None,
+        klientmapp: str | Path | None = None,
     ) -> None:
         self.testsvit_rot = Path(testsvit_rot)
         self.konfig_fil = Path(konfig_fil)
+        self.konto = konto if konto is not None else _skapa_konto(self.konfig_fil)
+        self.klientmapp = _klientmapp(self.konfig_fil, klientmapp)
         self._fragekonfig = (fragemappar, cachemapp, korningsmapp)
         self._fragor: FragaTjanst | None = None
         self._lock = threading.Lock()
@@ -625,9 +633,7 @@ class FlodenApiApp:
             "epsg": EPSG_INTERN,
             "hojdsystem": HOJDSYSTEM,
             "kallor": list(DEFAULT_KALLOR),
-            "gatusektioner": [
-                sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())
-            ],
+            "gatusektioner": [sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())],
         }
 
     def lista_omraden(self) -> dict[str, Any]:
@@ -644,9 +650,7 @@ class FlodenApiApp:
                 float(geo.x_max),
                 float(geo.y_max),
             ]
-            bbox_wgs84 = list(
-                bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max)
-            )
+            bbox_wgs84 = list(bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max))
             poster.append(
                 {
                     "omrade_id": omrade_id,
@@ -731,9 +735,7 @@ class FlodenApiApp:
                 "mark_osakerhet_max_m": osak_max,
                 **_ensemble_payload(bas_ens, geo, max_skala_m=max_skala),
             },
-            "gatusektioner": [
-                sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())
-            ],
+            "gatusektioner": [sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())],
             "kallor": list(omrade.kallor),
         }
 
@@ -1207,9 +1209,7 @@ class FlodenApiApp:
         mime_map = {
             "html": "text/html; charset=utf-8",
             "md": "text/markdown; charset=utf-8",
-            "docx": (
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            ),
+            "docx": ("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         }
         if fmt not in mime_map:
             raise FlodenWebbFel(f"Ogiltigt exportformat '{fmt}'. Giltiga: html, md, docx.")
@@ -1403,12 +1403,8 @@ class FlodenApiApp:
         geo = omrade.geo
         # Bygg ett deterministiskt syntetiskt gatunät (3 horisontella + 3 vertikala stråk)
         # över områdets bbox så ruttanalys kan utvärderas även på syntetiska K1-områden.
-        xs = [
-            geo.x_min + (geo.x_max - geo.x_min) * f for f in (0.15, 0.50, 0.85)
-        ]
-        ys = [
-            geo.y_min + (geo.y_max - geo.y_min) * f for f in (0.20, 0.50, 0.80)
-        ]
+        xs = [geo.x_min + (geo.x_max - geo.x_min) * f for f in (0.15, 0.50, 0.85)]
+        ys = [geo.y_min + (geo.y_max - geo.y_min) * f for f in (0.20, 0.50, 0.80)]
         noder: list[VagNod] = []
         hojd_m, bredd_m = omrade.mark_z.shape
         for yi, y_val in enumerate(ys):
@@ -1636,14 +1632,27 @@ class FlodenApiApp:
             return _json_svar(202, svar)
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
 
-    def _hantera_korningar(self, verb: str, sokvag: str) -> tuple[int, dict[str, str], bytes]:
+    def _hantera_korningar(
+        self, verb: str, sokvag: str, query: Mapping[str, list[str]] | None = None
+    ) -> tuple[int, dict[str, str], bytes]:
         delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
+        query = query or {}
         if verb == "GET" and not delar:
             return _json_svar(200, self.fragor.lista_korningar())
         if verb == "GET" and len(delar) == 1:
             return _json_svar(200, self.fragor.korning_status(delar[0]))
         if verb == "GET" and len(delar) == 2 and delar[1] == "resultat":
             return _json_svar(200, self.fragor.resultat(delar[0]))
+        if verb == "GET" and len(delar) == 2 and delar[1] == "avlasning":
+            try:
+                e = float(query.get("e", [""])[0])
+                n = float(query.get("n", [""])[0])
+            except ValueError as exc:
+                raise FlodenWebbFel("Parametrarna e och n måste vara tal.", status_kod=400) from exc
+            if not (math.isfinite(e) and math.isfinite(n)):
+                raise FlodenWebbFel("Parametrarna e och n måste vara ändliga.", status_kod=400)
+            lager = query.get("lager", [""])[0]
+            return _json_svar(200, self.fragor.avlasning(delar[0], lager, e, n))
         if verb == "GET" and len(delar) == 3 and delar[1] == "lager" and delar[2].endswith(".png"):
             png = self.fragor.lager_png(delar[0], delar[2].removesuffix(".png"))
             return _binart_svar(200, png, "image/png")
@@ -1683,8 +1692,11 @@ class FlodenApiApp:
             if ren_sokvag == "/api/fragor" or ren_sokvag.startswith("/api/fragor/"):
                 return self._hantera_fragor(verb, ren_sokvag)
 
+            if verb == "GET" and ren_sokvag == "/api/demo":
+                return _json_svar(200, self.fragor.demo())
+
             if ren_sokvag == "/api/korningar" or ren_sokvag.startswith("/api/korningar/"):
-                return self._hantera_korningar(verb, ren_sokvag)
+                return self._hantera_korningar(verb, ren_sokvag, query)
 
             if verb == "GET" and ren_sokvag == "/api/omraden":
                 return _json_svar(200, self.lista_omraden())
@@ -1736,6 +1748,105 @@ class FlodenApiApp:
                 },
             )
 
+    def hantera_http(
+        self,
+        metod: str,
+        ra_sokvag: str,
+        rubriker: Mapping[str, str],
+        las_kropp: Callable[[], bytes],
+    ) -> tuple[int, list[tuple[str, str]], bytes]:
+        """Hela HTTP-vägen: konto, statiska klientfiler, inloggningskontroll och API.
+
+        Ordningen följer `docs/KONTO.md` avsnitt 8: `/konto/*` först, sedan klientens statiska
+        filer (de innehåller ingen data, så att inloggningssidan kan visas), sedan
+        `kraver_inloggning` **före** att kroppen läses, och sist API:t. Med inloggning på skickas
+        ingen `Access-Control-Allow-Origin`: klient och API nås från samma ursprung.
+        `las_kropp` anropas högst en gång och bara när kroppen behövs.
+        """
+        verb = metod.upper()
+        req = Forfragan.fran_ra(verb, ra_sokvag, rubriker)
+        if self.konto.ager_sokvag(req.sokvag):
+            kropp_in = las_kropp() if verb in ("POST", "PUT", "PATCH", "DELETE") else b""
+            return self.konto.hantera_konto(verb, req.sokvag, req.query, req.headers, kropp_in)
+        if verb in ("GET", "HEAD") and not req.sokvag.startswith("/api"):
+            statisk = self._statisk(req.sokvag, verb == "HEAD")
+            if statisk is not None:
+                return statisk
+        kontroll = self.konto.kraver_inloggning(req)
+        if not kontroll.tillaten:
+            assert kontroll.svar is not None
+            return kontroll.svar
+        try:
+            kropp_in = las_kropp() if verb == "POST" else b""
+        except FlodenWebbFel as exc:
+            status, headers, kropp = _json_svar(
+                exc.status_kod, {"fel": str(exc), "status": exc.status_kod}
+            )
+            return status, list(headers.items()), kropp
+        status, headers, kropp = self.hantera_forfragan(verb, ra_sokvag, kropp_in)
+        ut = list(headers.items())
+        if self.konto.aktiv:
+            ut = [(k, v) for k, v in ut if not k.lower().startswith("access-control-")]
+        return status, ut, kropp
+
+    def _statisk(
+        self, sokvag: str, bara_huvud: bool
+    ) -> tuple[int, list[tuple[str, str]], bytes] | None:
+        """En fil ur den byggda klienten (`webb/dist`), eller None om sökvägen inte är en."""
+        rot = self.klientmapp
+        if rot is None:
+            return None
+        rel = urllib.parse.unquote(sokvag).lstrip("/") or "index.html"
+        fil = (rot / rel).resolve()
+        if not fil.is_relative_to(rot.resolve()) or not fil.is_file():
+            return None
+        innehall = fil.read_bytes()
+        typ = _FILTYPER.get(fil.suffix.lower()) or mimetypes.guess_type(fil.name)[0]
+        rubriker = [
+            ("Content-Type", typ or "application/octet-stream"),
+            ("Content-Length", str(len(innehall))),
+            ("Cache-Control", "no-cache"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "same-origin"),
+        ]
+        return 200, rubriker, b"" if bara_huvud else innehall
+
+
+_FILTYPER = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+    ".map": "application/json; charset=utf-8",
+}
+
+
+def _skapa_konto(konfig_fil: Path) -> KontoAdapter:
+    """Kontosystemet ur `[konto]` i konfigurationen. Utan konfigurationsfil: inloggning av."""
+    if not konfig_fil.is_file():
+        return KontoAdapter(KontoKonfig())
+    lokal = konfig_fil.resolve().parent / "config.local.toml"
+    konfig = las_konfig(konfig_fil, lokal)
+    konto_konf = las_konto_konfig(konfig)
+    if konto_konf.aktiv and not konto_konf.databas.is_absolute():
+        konto_konf = replace(konto_konf, databas=konfig_fil.resolve().parent / konto_konf.databas)
+    return KontoAdapter(konto_konf)
+
+
+def _klientmapp(konfig_fil: Path, klientmapp: str | Path | None) -> Path | None:
+    """Mappen med den byggda klienten, om `index.html` finns där (annars serveras ingen klient)."""
+    rot = konfig_fil.resolve().parent
+    val: str | Path = klientmapp if klientmapp is not None else STANDARD_KLIENTMAPP
+    if klientmapp is None and konfig_fil.is_file():
+        with konfig_fil.open("rb") as fh:
+            val = tomllib.load(fh).get("webb", {}).get("klientmapp", STANDARD_KLIENTMAPP)
+    mapp = Path(val)
+    mapp = mapp if mapp.is_absolute() else rot / mapp
+    return mapp if (mapp / "index.html").is_file() else None
+
 
 def skapa_http_server(
     host: str = "127.0.0.1",
@@ -1746,56 +1857,67 @@ def skapa_http_server(
     fragemappar: Sequence[str | Path] | None = None,
     cachemapp: str | Path | None = None,
     korningsmapp: str | Path | None = None,
+    klientmapp: str | Path | None = None,
+    konto: KontoAdapter | None = None,
 ) -> ThreadingHTTPServer:
-    """Skapar en lokal `ThreadingHTTPServer` kopplad till `FlodenApiApp`."""
+    """Skapar en lokal `ThreadingHTTPServer` kopplad till `FlodenApiApp`.
+
+    Klienten (`webb/dist`, om den är byggd) och API:t serveras från samma port; inloggningen styrs
+    av `[konto]` i konfigurationen (standard `inloggning = "av"`, oförändrat beteende)."""
     app = FlodenApiApp(
         testsvit_rot=testsvit_rot,
         konfig_fil=konfig_fil,
         fragemappar=fragemappar,
         cachemapp=cachemapp,
         korningsmapp=korningsmapp,
+        konto=konto,
+        klientmapp=klientmapp,
     )
 
+    max_bytes = 25 * 1024 * 1024
+
     class _FlodenHandler(BaseHTTPRequestHandler):
-        def _skicka(self, status: int, headers: Mapping[str, str], kropp: bytes) -> None:
+        def _skicka(
+            self, status: int, headers: Sequence[tuple[str, str]], kropp: bytes, huvud: bool = False
+        ) -> None:
             self.send_response(status)
-            for nyckel, varde in headers.items():
+            for nyckel, varde in headers:
                 self.send_header(nyckel, varde)
+            if not any(n.lower() == "content-length" for n, _ in headers):
+                self.send_header("Content-Length", str(len(kropp)))
             self.end_headers()
-            self.wfile.write(kropp)
+            if not huvud:
+                self.wfile.write(kropp)
 
-        def do_OPTIONS(self) -> None:  # noqa: N802
-            status, headers, kropp = app.hantera_forfragan("OPTIONS", self.path)
-            self._skicka(status, headers, kropp)
-
-        def do_GET(self) -> None:  # noqa: N802
-            status, headers, kropp = app.hantera_forfragan("GET", self.path)
-            self._skicka(status, headers, kropp)
-
-        def do_POST(self) -> None:  # noqa: N802
-            max_bytes = 25 * 1024 * 1024
+        def _las_kropp(self) -> bytes:
             raw_len = self.headers.get("Content-Length", "0") or "0"
             try:
                 langd = int(raw_len)
-            except ValueError:
-                status, headers, kropp = _json_svar(
-                    400, {"fel": f"Ogiltig Content-Length: {raw_len!r}", "status": 400}
-                )
-                self._skicka(status, headers, kropp)
-                return
+            except ValueError as exc:
+                raise FlodenWebbFel(f"Ogiltig Content-Length: {raw_len!r}", status_kod=400) from exc
             if langd < 0 or langd > max_bytes:
-                status, headers, kropp = _json_svar(
-                    413,
-                    {
-                        "fel": f"Förfrågningskropp överstiger maxgränsen ({max_bytes} byte).",
-                        "status": 413,
-                    },
+                raise FlodenWebbFel(
+                    f"Förfrågningskropp överstiger maxgränsen ({max_bytes} byte).", status_kod=413
                 )
-                self._skicka(status, headers, kropp)
-                return
-            kropp_in = self.rfile.read(langd) if langd > 0 else b""
-            status, headers, kropp = app.hantera_forfragan("POST", self.path, kropp_in)
-            self._skicka(status, headers, kropp)
+            return self.rfile.read(langd) if langd > 0 else b""
+
+        def _hantera(self, metod: str) -> None:
+            status, headers, kropp = app.hantera_http(
+                metod, self.path, dict(self.headers.items()), self._las_kropp
+            )
+            self._skicka(status, headers, kropp, huvud=metod == "HEAD")
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            self._hantera("OPTIONS")
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            self._hantera("HEAD")
+
+        def do_GET(self) -> None:  # noqa: N802
+            self._hantera("GET")
+
+        def do_POST(self) -> None:  # noqa: N802
+            self._hantera("POST")
 
         def log_message(self, format: str, *args: Any) -> None:
             return

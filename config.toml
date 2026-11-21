@@ -55,7 +55,7 @@ vardboende = 10.0
 skola = 12.0
 forskola = 12.0
 
-# Webben (webb/, src/webb). Körs lokalt utan inloggning.
+# Webben (webb/, src/webb). Körs lokalt; inloggning är av om inte [konto] säger annat (docs/KONTO.md).
 [webb]
 # Mappar med utredningsfrågor (K20) som webben listar. Relativa sökvägar räknas från repots rot.
 # Kan åsidosättas med miljövariabeln FLODEN_FRAGEMAPPAR (kolonseparerad) eller --fragemapp.
@@ -63,3 +63,7 @@ fragemappar = ["exempel/fragor"]
 # Kärnans resultatcache (K22) och webbens körningar (resultat, förhandsvisningar). Lokal disk.
 cachemapp = "data/cache/karna"
 korningsmapp = "data/cache/webb/korningar"
+# Demovärlden som `floden demo` bygger (visas som kort överst på frågesidan) och den byggda
+# webbklienten som `floden webb` serverar. Relativa sökvägar räknas från repots rot.
+demomapp = "data/demo/varld"
+klientmapp = "webb/dist"
