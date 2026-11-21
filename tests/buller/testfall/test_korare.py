@@ -20,7 +20,7 @@ from buller.testfall import (
     sammanstallning_md,
 )
 from buller.testfall.korare import berakna_rak_vag
-from buller.typer import ANTAL_BAND, BullerFel, P2PKarna, Vader
+from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Terrangprofil, Vader
 from tests.buller.testfall.hjalp import (
     Frifaltskarna,
     Konstantemission,
@@ -93,14 +93,50 @@ class TestBerakning(unittest.TestCase):
         # Exponeringsnivån för en passage beror inte på trafikmängden.
         np.testing.assert_allclose(tva.spektrum_db["LE"], en.spektrum_db["LE"])
 
-    def test_vind_och_fel_typ_ger_fel(self) -> None:
+    def test_vind_utan_riktning_och_fel_typ_ger_fel(self) -> None:
+        # Sedan P-R2 räknas fall med vind när bladets vindriktning φ finns; utan den går
+        # vindkomponenten längs utbredningsvägarna inte att bestämma.
         with self.assertRaises(BullerFel) as ctx:
             berakna_rak_vag(
-                self.karna, self.emission, exempel_fall(vader=Vader(vind_m_s=3.0)), NOLLVAGNING
+                self.karna,
+                self.emission,
+                exempel_fall(vader=Vader(vind_m_s=3.0), vader_tillagg={}),
+                NOLLVAGNING,
             )
         self.assertIn("vind", str(ctx.exception))
         with self.assertRaises(BullerFel):
             berakna_rak_vag(self.karna, self.emission, self.fall, np.zeros(3))
+
+    def test_vind_projiceras_pa_varje_utbredningsvag(self) -> None:
+        """Kärnan får u·cos(φ − θ) för källpunkten i vinkeln θ (se `vindkomponent_m_s`)."""
+
+        class Vindlogg(Frifaltskarna):
+            def __init__(self) -> None:
+                super().__init__()
+                self.vindar: list[float] = []
+
+            def overforing_db(self, profil: Terrangprofil, vader: Vader) -> Flyttal:
+                self.vindar.append(vader.vind_m_s)
+                return super().overforing_db(profil, vader)
+
+        for riktning, tecken in ((0.0, 1.0), (180.0, -1.0)):
+            karna = Vindlogg()
+            fall = exempel_fall(
+                vader=Vader(vind_m_s=3.0), vader_tillagg={"vindriktning_grader": riktning}
+            )
+            berakna_rak_vag(karna, self.emission, fall, NOLLVAGNING)
+            vindar = np.array(karna.vindar)
+            # Medvind (φ = 0) eller motvind (φ = 180) från alla källpunkter, full styrka mitt för.
+            self.assertTrue(bool(np.all(tecken * vindar > 0.0)))
+            self.assertAlmostEqual(float(np.max(tecken * vindar)), 3.0, 9)
+            np.testing.assert_allclose(vindar, vindar[::-1], atol=1e-12)
+        karna = Vindlogg()
+        sidvind = exempel_fall(
+            vader=Vader(vind_m_s=3.0), vader_tillagg={"vindriktning_grader": 90.0}
+        )
+        berakna_rak_vag(karna, self.emission, sidvind, NOLLVAGNING)
+        vindar = np.array(karna.vindar)
+        np.testing.assert_allclose(vindar, -vindar[::-1], atol=1e-12)  # medvind ena hållet
 
 
 class TestUtfall(unittest.TestCase):
@@ -166,9 +202,7 @@ class TestUtfall(unittest.TestCase):
         hog = berakna_rak_vag(
             Frifaltskarna(), self.emission, exempel_fall(mottagare_hojd_m=4.0), a_vagning_db()
         )
-        facit = exempel_facit(
-            True, hog.totalnivaer_db, hog.spektrum_db, {"mottagare_hojd_m": 4.0}
-        )
+        facit = exempel_facit(True, hog.totalnivaer_db, hog.spektrum_db, {"mottagare_hojd_m": 4.0})
         self.assertIs(
             kor_fall(Frifaltskarna(), self.emission, self.fall, facit).utfall, Utfall.GODKAND
         )
@@ -209,7 +243,8 @@ class TestDigitaliseradeFallIKoraren(unittest.TestCase):
         self.assertFalse([r.fall_id for r in rl18 if r.utfall is Utfall.GODKAND])
         self.assertFalse([r.fall_id for r in rl18 if r.utfall is Utfall.EJ_FACIT])
         self.assertIs(self.per_id["N18R001"].utfall, Utfall.UNDERKAND)
-        self.assertIs(self.per_id["N18R012"].utfall, Utfall.EJ_KORBAR)  # vind
+        # Fall med vind räknas sedan P-R2 (vindriktningen φ är tolkad) och underkänns också.
+        self.assertIs(self.per_id["N18R012"].utfall, Utfall.UNDERKAND)
         self.assertIs(self.per_id["N18R121"].utfall, Utfall.EJ_KORBAR)  # skog
         self.assertIs(self.per_id["N18K1"].utfall, Utfall.EJ_KORBAR)
 
@@ -221,9 +256,7 @@ class TestDigitaliseradeFallIKoraren(unittest.TestCase):
 
     def test_tom_kallmodell_ger_aldrig_godkant(self) -> None:
         resultat = kor_alla(Frifaltskarna(), Vagemission(las_emissionsdata(TOM_DATA)), N_ROT)
-        self.assertEqual(
-            {r.utfall for r in resultat}, {Utfall.EJ_FACIT, Utfall.EJ_KORBAR}
-        )
+        self.assertEqual({r.utfall for r in resultat}, {Utfall.EJ_FACIT, Utfall.EJ_KORBAR})
 
     def test_medfoljande_kallmodell_gar_att_kora_och_far_belaggning_och_temperatur(self) -> None:
         emission = Konstantemission(100.0)

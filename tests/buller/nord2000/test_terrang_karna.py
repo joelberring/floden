@@ -249,10 +249,23 @@ class TestNord2000Karna(unittest.TestCase):
             h: Flyttal = resultat.overforing_db
             self.assertLess(float(np.max(h - resultat.spridning_db)), 6.03)
 
-    def test_refraktion_vagras(self) -> None:
-        for vader in (Vader(vind_m_s=3.0), Vader(dt_dz_k_m=-0.1), Vader(std_vind_m_s=0.5)):
-            with self.assertRaisesRegex(BullerFel, "refraktion"):
-                self.karna.overforing_db(PLAN_VAG_GRAS, vader)
+    def test_refraktion_raknas_pa_plan_mark_och_vagras_annars(self) -> None:
+        """Sedan P-R2 räknar kärnan refraktion över plan mark (tidigare gav den `BullerFel`).
+
+        Det som fortfarande saknas ska vägras med besked: flera markreflexer (delmodell 8) vid
+        nedåtbrytning med N > 4, och skärmar eller icke-plan terräng oavsett väder.
+        """
+        for vader in (Vader(vind_m_s=-3.0), Vader(dt_dz_k_m=-0.1), Vader(std_vind_m_s=0.5)):
+            overforing = self.karna.overforing_db(PLAN_VAG_GRAS, vader)
+            self.assertEqual(overforing.shape, (27,))
+            self.assertTrue(bool(np.all(np.isfinite(overforing))))
+        with self.assertRaisesRegex(BullerFel, "markreflexer"):
+            self.karna.overforing_db(PLAN_VAG_GRAS, Vader(vind_m_s=3.0))
+        for vader in (Vader(vind_m_s=3.0), Vader(vind_m_s=-3.0), Vader(std_vind_m_s=0.5)):
+            with self.assertRaisesRegex(BullerFel, "skärmar"):
+                self.karna.overforing_db(TUNN_SKARM, vader)
+            with self.assertRaisesRegex(BullerFel, "icke-plan"):
+                self.karna.overforing_db(DAL, vader)
 
     def test_skarm_vagras(self) -> None:
         with self.assertRaisesRegex(BullerFel, "skärmar"):

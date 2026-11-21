@@ -3,23 +3,35 @@
 Källa: DELTA AV 1106/07 (rev. 2014), avsnitt 5.2 (ekv. 1) och 5.22 (ekv. 329–332), med
 ändringarna i TC-101327 (2019).
 
-Täckning i detta skede: homogen atmosfär utan fluktuerande refraktion, plan terräng (alla
-terrängpunkter på en rät linje) med en eller flera marktyper, alltså delmodell 1, 2 och 9.
-Allt annat ger `BullerFel`; se `docs/buller/logg/B4.md` och `docs/buller/B4-uppdelning.md`.
+Täckning i detta skede: plan terräng (alla terrängpunkter på en rät linje) med en eller
+flera marktyper, alltså delmodell 1, 2 och 9, med eller utan refraktion (vind,
+temperaturgradient och deras fluktuationer, inklusive skuggzon vid uppåtbrytning).
+Allt annat ger `BullerFel`; se `docs/buller/logg/B4.md`, `docs/buller/logg/P-R2.md` och
+`docs/buller/B4-uppdelning.md`.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
-from buller.nord2000.atmosfar import HomogenAtmosfar, homogen_atmosfar
-from buller.nord2000.delmodell1 import markeffekt_plan_mark_db
-from buller.nord2000.delmodell2 import Marksegment, markeffekt_blandad_mark_db, marktyper
+from buller.nord2000.atmosfar import HomogenAtmosfar
+from buller.nord2000.delmodell1 import Ct2Form, markeffekt_plan_mark_db
+from buller.nord2000.delmodell2 import (
+    Fresnelzonsval,
+    Marksegment,
+    Skuggzonsvikter,
+    markeffekt_blandad_mark_db,
+    marktyper,
+)
 from buller.nord2000.frekvenser import mittfrekvenser_hz
 from buller.nord2000.luftabsorption import luftabsorption_db
+from buller.nord2000.refraktion import Atmosfar, atmosfar_ur_vader
+from buller.nord2000.refraktion_mark import antal_stralar_flera_markreflexer
+from buller.nord2000.stralar_krokta import Uppatmetod
 from buller.nord2000.terrang import (
     GeometriOverPlanMark,
     Terranggeometri,
@@ -35,6 +47,11 @@ from buller.typer import BullerFel, Flyttal, Terrangprofil, Vader
 # som plan i den här ofullständiga kärnan. Värdet är ett numeriskt skydd mot avrundning, inte
 # en del av metoden: metodens egen övergång (r_flat, ekv. 317–318) kräver delmodell 3.
 PLAN_TOLERANS_M = 1.0e-6
+
+# AV 1106/07 avsnitt 5.17: under N = 4 bidrar delmodell 8 (flera markreflexer) inte.
+MINSTA_N_DELMODELL8 = 4.0
+
+Delmodell8Val = Literal["vagra", "utelamna"]
 
 
 @dataclass(frozen=True)
@@ -82,7 +99,11 @@ def markeffekt_plan_modell_db(
     frekvenser_hz: Flyttal,
     over_plan: GeometriOverPlanMark,
     segment: list[Marksegment],
-    atmosfar: HomogenAtmosfar,
+    atmosfar: HomogenAtmosfar | Atmosfar,
+    uppat: Uppatmetod = "bokstavlig",
+    ct2_form: Ct2Form = "kvadrat",
+    fresnelzon: Fresnelzonsval = "oklippt",
+    skuggzonsvikter: Skuggzonsvikter = "hog",
 ) -> tuple[Flyttal, str]:
     """ΔL_flat: delmodell 1 vid en marktyp, annars delmodell 2 (AV 1106/07 ekv. 332)."""
     typer = marktyper(segment)
@@ -97,12 +118,23 @@ def markeffekt_plan_modell_db(
                 sigma,
                 rahet,
                 atmosfar,
+                uppat,
+                ct2_form,
             ),
             "1",
         )
     return (
         markeffekt_blandad_mark_db(
-            frekvenser_hz, over_plan.d_e_m, over_plan.h_se_m, over_plan.h_re_m, segment, atmosfar
+            frekvenser_hz,
+            over_plan.d_e_m,
+            over_plan.h_se_m,
+            over_plan.h_re_m,
+            segment,
+            atmosfar,
+            uppat,
+            ct2_form,
+            fresnelzon,
+            skuggzonsvikter,
         ),
         "2",
     )
@@ -113,16 +145,67 @@ class Nord2000Karna:
 
     `nord2000_konform` är falsk: kärnan täcker bara en del av metoden och har inte passerat
     testsviten. Fall utanför täckningen ger `BullerFel`, aldrig ett närmevärde.
+
+    Två val där metodtexten medger två läsningar kan ställas in (förvalen är de läsningar
+    texten stöder bäst; se `docs/buller/logg/P-R1.md`, `P-7.md` och `P-R2.md`):
+
+    * `uppat`: strålar vid uppåtbrytning, `"bokstavlig"` (|ξ′|, AV 1106/07 avsnitt 5.5.4) eller
+      `"exakt"` (den verkliga uppåtkrökta bågen).
+    * `ct2_form`: temperaturtermen i F_c (ekv. 113), `"kvadrat"` (C_T²/T²) eller `"tryckt"`
+      (C_T²/T).
+
+    * `fresnelzon`: Fresnelzonen i delmodell 2, `"oklippt"` (ekv. 349–351 som tryckta) eller
+      `"klippt"` (begränsad till sträckan källa–mottagare, avsnitt 5.8).
+
+    * `skuggzonsvikter`: delmodell 2 i skuggzon, `"hog"` (w_H i alla band) eller `"lag"` (w_L i
+      alla band); texten avgör inte, se `delmodell2.markeffekt_blandad_mark_db`.
+
+    Delmodell 8 (flera markreflexer vid stark nedåtbrytning, avsnitt 5.17) ingår inte. När
+    N i ekv. (279) är större än 4 skulle den bidra, och då ger kärnan `BullerFel`
+    (`delmodell8="vagra"`, förval). Med `delmodell8="utelamna"` räknas ΔL_t ändå, utan ΔL₈;
+    det är avsett för utredning och resultatet är då inte metodens (för lågt).
     """
 
     namn: str = "nord2000-referens"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     nord2000_konform: bool = False
 
+    def __init__(
+        self,
+        uppat: Uppatmetod = "bokstavlig",
+        ct2_form: Ct2Form = "kvadrat",
+        delmodell8: Delmodell8Val = "vagra",
+        fresnelzon: Fresnelzonsval = "oklippt",
+        skuggzonsvikter: Skuggzonsvikter = "hog",
+    ) -> None:
+        if skuggzonsvikter not in ("hog", "lag"):
+            raise BullerFel(
+                f"Okänt val för vikterna i skuggzon: {skuggzonsvikter!r} (hog eller lag)."
+            )
+        self.skuggzonsvikter: Skuggzonsvikter = skuggzonsvikter
+        if fresnelzon not in ("oklippt", "klippt"):
+            raise BullerFel(f"Okänt val för Fresnelzonen: {fresnelzon!r} (oklippt eller klippt).")
+        self.fresnelzon: Fresnelzonsval = fresnelzon
+        if delmodell8 not in ("vagra", "utelamna"):
+            raise BullerFel(f"Okänt val för delmodell 8: {delmodell8!r} (vagra eller utelamna).")
+        self.delmodell8: Delmodell8Val = delmodell8
+        if uppat not in ("bokstavlig", "exakt"):
+            raise BullerFel(f"Okänd metod för uppåtbrytning: {uppat!r} (bokstavlig eller exakt).")
+        if ct2_form not in ("kvadrat", "tryckt"):
+            raise BullerFel(f"Okänd form för C_T²-termen: {ct2_form!r} (kvadrat eller tryckt).")
+        self.uppat: Uppatmetod = uppat
+        self.ct2_form: Ct2Form = ct2_form
+
     def berakna(self, profil: Terrangprofil, vader: Vader) -> Nord2000Delresultat:
-        """Räknar alla utbredningseffekter i ekv. (329) för en profil och ett väder."""
-        atmosfar = homogen_atmosfar(vader)
-        c = atmosfar.ljudhastighet_m_s
+        """Räknar alla utbredningseffekter i ekv. (329) för en profil och ett väder.
+
+        Vädret översätts med `refraktion.atmosfar_ur_vader` (A, B, s_A, s_B). Skärmkontrollen
+        (r_scr1) räknas med Δℓ₀ och C som i homogen atmosfär; ekv. (301) behövs först när
+        skärmar med refraktion ingår, och sådana profiler ger ändå `BullerFel` här.
+        ΔL_d och ΔL_a räknas med R_SR (ekv. 8), även med refraktion.
+        """
+        atmosfar = atmosfar_ur_vader(vader)
+        c = atmosfar.c_m_s
         frekvenser = mittfrekvenser_hz()
         geo = terranggeometri(profil)
 
@@ -146,15 +229,33 @@ class Nord2000Karna:
             )
 
         over_plan = geometri_over_plan_mark(geo, plan)
+        antal_stralar = antal_stralar_flera_markreflexer(
+            geo.d_bas_tot_m, max(over_plan.h_se_m, over_plan.h_re_m), atmosfar
+        )
+        if antal_stralar > MINSTA_N_DELMODELL8 and self.delmodell8 == "vagra":
+            raise BullerFel(
+                "Nord2000Karna täcker ännu inte flera markreflexer: N = "
+                f"{antal_stralar:.1f} > 4 i AV 1106/07 ekv. (279) (nedåtbrytning över "
+                f"{geo.d_bas_tot_m:.0f} m), och delmodell 8 (avsnitt 5.17) är inte implementerad."
+            )
         segment = marksegment_over_plan_mark(geo, over_plan)
-        terrang, delmodell = markeffekt_plan_modell_db(frekvenser, over_plan, segment, atmosfar)
+        terrang, delmodell = markeffekt_plan_modell_db(
+            frekvenser,
+            over_plan,
+            segment,
+            atmosfar,
+            self.uppat,
+            self.ct2_form,
+            self.fresnelzon,
+            self.skuggzonsvikter,
+        )
         return Nord2000Delresultat(
             frekvenser_hz=frekvenser,
             spridning_db=sfarisk_spridning_db(geo.r_sr_m),
             luftabsorption_db=luftabsorption_db(
                 frekvenser,
                 geo.r_sr_m,
-                atmosfar.temperatur_c,
+                atmosfar.temperatur_luft_c,
                 atmosfar.relativ_fuktighet_procent,
                 atmosfar.lufttryck_kpa,
             ),

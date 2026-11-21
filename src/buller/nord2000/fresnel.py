@@ -1,12 +1,13 @@
-"""Fresnelzoner och Fresnelzonsvikter i Nord2000 (homogen atmosfär).
+"""Fresnelzoner och Fresnelzonsvikter i Nord2000.
 
 Källa: DELTA AV 1106/07 (rev. 2014), avsnitt 5.8 samt hjälpfunktionerna i avsnitt 5.23.4
 (CalcFZd, ekv. 338–339), 5.23.5 (FresnelZoneSize, ekv. 340–344), 5.23.6 (FresnelZoneW,
-ekv. 345–351) och 5.23.7 (FresnelZoneWm, ekv. 352–353).
+ekv. 345–351) och 5.23.7 (FresnelZoneWm, ekv. 352–353), med TC-101327 (2019) avsnitt 2.13.
 
-Refraktionskorrektionen i avsnitt 5.23.6 (ekv. 346–348) är inte implementerad: funktionerna
-här gäller ξ = 0, där de korrigerade storheterna (d, h_S, h_R, d_refl med båge över) är lika
-med de okorrigerade.
+Funktionerna utan "refraktion" i namnet gäller ξ = 0 (räta strålar), där de korrigerade
+storheterna (d, h_S, h_R, d_refl med båge över) är lika med de okorrigerade. Funktionerna
+med "refraktion" i namnet inför korrektionen i ekv. (346)–(348) och anropar de förra när
+ξ = 0, så att svaret då är bit för bit detsamma.
 """
 
 from __future__ import annotations
@@ -15,6 +16,12 @@ import math
 from dataclasses import dataclass
 
 from buller.nord2000.geometri import MINSTA_HOJD_M
+from buller.nord2000.stralar_krokta import (
+    SKUGGZONSMARGINAL,
+    Uppatmetod,
+    reflekterad_strale,
+    skuggzonsavstand_m,
+)
 from buller.typer import BullerFel
 
 
@@ -96,6 +103,27 @@ def _andel(d1: float, d2: float, zon_start: float, zon_slut: float) -> float:
     return (zon_slut - d1) / zonlangd
 
 
+def klippt_fresnelzon(zon: Fresnelzon, avstand_m: float) -> Fresnelzon:
+    """Zonen begränsad till sträckan mellan källa och mottagare, AV 1106/07 avsnitt 5.8.
+
+    Avsnitt 5.8 anger att bara den del av Fresnelzonen som ligger mellan källa och mottagare
+    tas med; ekv. (349)–(351) har ingen sådan begränsning. De två läsningarna och deras utfall
+    står i `docs/buller/logg/P-R2.md`. Förvalet i modulen är ekvationerna som de är tryckta
+    (oklippt); den här funktionen ger den andra läsningen: d_1,Fz ≥ 0 och d_2,Fz ≤ d.
+    """
+    return Fresnelzon(
+        d1_fz_m=max(zon.d1_fz_m, 0.0), d2_fz_m=min(zon.d2_fz_m, avstand_m), d_refl_m=zon.d_refl_m
+    )
+
+
+def fresnelzonsandel(d1_m: float, d2_m: float, zon_start_m: float, zon_slut_m: float) -> float:
+    """Andelen av zonen [zon_start, zon_slut] som segmentet [d1, d2] täcker, ekv. (351).
+
+    Samma fallindelning används för de två halvorna i ekv. (353).
+    """
+    return _andel(d1_m, d2_m, zon_start_m, zon_slut_m)
+
+
 def fresnelzonsvikt(
     avstand_m: float,
     kallhojd_m: float,
@@ -127,6 +155,163 @@ def fresnelzonsvikt_modifierad(
     här används d_refl − d_1 (se `docs/buller/tolkningar.md`).
     """
     zon = fresnelzon_langs_mark(avstand_m, kallhojd_m, mottagarhojd_m, f_lambda_m)
+    w_s = _andel(d1_m, d2_m, zon.d1_fz_m, zon.d_refl_m)
+    w_r = _andel(d1_m, d2_m, zon.d_refl_m, zon.d2_fz_m)
+    return 0.5 * (w_s + w_r)
+
+
+@dataclass(frozen=True)
+class Reflexgeometri:
+    """Reflexpunkten och strålens två delar med refraktion, AV 1106/07 ekv. (346)–(348).
+
+    R_S och R_R är väglängderna källa–reflexpunkt och reflexpunkt–mottagare, ψ_G strykvinkeln
+    och d_refl reflexpunktens verkliga avstånd från källan längs marken. Egenskaperna ger de
+    modifierade storheterna i ekv. (348) (källa S′ och mottagare R′ i figur 38).
+    """
+
+    vag_kalla_m: float  # R_S
+    vag_mottagare_m: float  # R_R
+    strykvinkel_rad: float  # ψ_G
+    d_refl_m: float
+    i_skuggzon: bool
+
+    @property
+    def avstand_modifierat_m(self) -> float:
+        """d med båge = (R_S + R_R)·cos ψ_G, ekv. (348)."""
+        return (self.vag_kalla_m + self.vag_mottagare_m) * math.cos(self.strykvinkel_rad)
+
+    @property
+    def kallhojd_modifierad_m(self) -> float:
+        """h_S med båge = R_S·sin ψ_G, ekv. (348)."""
+        return self.vag_kalla_m * math.sin(self.strykvinkel_rad)
+
+    @property
+    def mottagarhojd_modifierad_m(self) -> float:
+        """h_R med båge = R_R·sin ψ_G, ekv. (348)."""
+        return self.vag_mottagare_m * math.sin(self.strykvinkel_rad)
+
+
+def reflexgeometri_skuggzon(
+    avstand_m: float, kallhojd_m: float, mottagarhojd_m: float
+) -> Reflexgeometri:
+    """Reflexgeometrin när mottagaren ligger i skuggzonen, AV 1106/07 ekv. (347), TC 2.13.
+
+    ψ_G = 0, d_refl = d·√h_S/(√h_S + √h_R), R_S = R₀·arccos(1 − h_S/R₀) och motsvarande för
+    R_R: bågarna på en cirkel med radien R₀ som tangerar marken i reflexpunkten. Ett argument
+    under −1 till arccos ersätts med −1 (TC-101327 avsnitt 2.13).
+
+    R₀ är tryckt som d/(2·(√h_S + √h_R)) inom parentes utan exponent, vilket inte är en längd.
+    Här används R₀ = d²/(2·(√h_S + √h_R)²), den radie som gör d_refl och bågarna i samma
+    ekvation förenliga (en tangerande cirkel når höjden h på avståndet √(2·R₀·h)); se
+    tolkningar i `docs/buller/logg/P-R2.md`.
+    """
+    rotsumma = math.sqrt(kallhojd_m) + math.sqrt(mottagarhojd_m)
+    r0 = avstand_m**2 / (2.0 * rotsumma**2)
+    return Reflexgeometri(
+        vag_kalla_m=r0 * math.acos(max(1.0 - kallhojd_m / r0, -1.0)),
+        vag_mottagare_m=r0 * math.acos(max(1.0 - mottagarhojd_m / r0, -1.0)),
+        strykvinkel_rad=0.0,
+        d_refl_m=avstand_m * math.sqrt(kallhojd_m) / rotsumma,
+        i_skuggzon=True,
+    )
+
+
+def reflexgeometri(
+    avstand_m: float,
+    kallhojd_m: float,
+    mottagarhojd_m: float,
+    xi_per_m: float,
+    c0_m_s: float,
+    uppat: Uppatmetod = "bokstavlig",
+) -> Reflexgeometri:
+    """Första steget i FresnelZoneW, AV 1106/07 avsnitt 5.23.6, ekv. (346)–(347).
+
+    Utanför skuggzonen ger ReflectedRay R_S, R_R, ψ_G och d_refl (ekv. 346); i skuggzonen
+    (ξ < 0 och d > 0,95·d_SZ, samma villkor som i avsnitt 5.5.4) gäller ekv. (347). Höjder
+    under 0,01 m ersätts med 0,01 m (avsnitt 5.23.6). ξ och c₀ är den frekvensoberoende
+    profilen (avsnitt 5.5.3).
+    """
+    if avstand_m <= 0.0:
+        raise BullerFel("Fresnelzonen kräver avstånd större än 0.")
+    h_s = max(kallhojd_m, MINSTA_HOJD_M)
+    h_r = max(mottagarhojd_m, MINSTA_HOJD_M)
+    if xi_per_m < 0.0 and avstand_m > SKUGGZONSMARGINAL * skuggzonsavstand_m(
+        h_s, h_r, xi_per_m, uppat
+    ):
+        return reflexgeometri_skuggzon(avstand_m, h_s, h_r)
+    stralar = reflekterad_strale(avstand_m, h_s, h_r, xi_per_m, c0_m_s, uppat)
+    return Reflexgeometri(
+        vag_kalla_m=stralar.vagstracka_kalla_m,
+        vag_mottagare_m=stralar.vagstracka_mottagare_m,
+        strykvinkel_rad=stralar.strykvinkel_rad,
+        d_refl_m=stralar.d_refl_m,
+        i_skuggzon=False,
+    )
+
+
+def fresnelzon_langs_mark_refraktion(geometri: Reflexgeometri, f_lambda_m: float) -> Fresnelzon:
+    """Zonens gränser med refraktion, AV 1106/07 avsnitt 5.23.6, ekv. (348)–(350).
+
+    FresnelZoneSize (ekv. 340–344) tillämpad på de modifierade lägena S′ och R′: där är
+    ψ = ψ_G, R = R_S + R_R, och sträckorna till reflexpunkten R_S och R_R, så a₁ och a₂ är
+    CalcFZd(R_S, R_R, π − ψ_G) och CalcFZd(R_S, R_R, ψ_G). Gränserna läggs kring den verkliga
+    reflexpunkten d_refl (ekv. 350). Formen gäller också ψ_G = 0 (skuggzon), där de modifierade
+    höjderna är 0 och ekv. (341)–(342) inte kan räknas.
+    """
+    if f_lambda_m <= 0.0:
+        raise BullerFel("Fresnelzonen kräver F·λ större än 0.")
+    psi = geometri.strykvinkel_rad
+    a1 = calc_fzd(geometri.vag_kalla_m, geometri.vag_mottagare_m, math.pi - psi, f_lambda_m)
+    a2 = calc_fzd(geometri.vag_kalla_m, geometri.vag_mottagare_m, psi, f_lambda_m)
+    return Fresnelzon(
+        d1_fz_m=geometri.d_refl_m - a1, d2_fz_m=geometri.d_refl_m + a2, d_refl_m=geometri.d_refl_m
+    )
+
+
+def fresnelzonsvikt_refraktion(
+    avstand_m: float,
+    kallhojd_m: float,
+    mottagarhojd_m: float,
+    d1_m: float,
+    d2_m: float,
+    f_lambda_m: float,
+    xi_per_m: float,
+    c0_m_s: float,
+    uppat: Uppatmetod = "bokstavlig",
+) -> float:
+    """Funktionen FresnelZoneW, AV 1106/07 avsnitt 5.23.6, ekv. (345)–(351), TC 2.13.
+
+    För ξ = 0 anropas `fresnelzonsvikt` (räta strålar).
+    """
+    if xi_per_m == 0.0:
+        return fresnelzonsvikt(avstand_m, kallhojd_m, mottagarhojd_m, d1_m, d2_m, f_lambda_m)
+    geometri = reflexgeometri(avstand_m, kallhojd_m, mottagarhojd_m, xi_per_m, c0_m_s, uppat)
+    zon = fresnelzon_langs_mark_refraktion(geometri, f_lambda_m)
+    return _andel(d1_m, d2_m, zon.d1_fz_m, zon.d2_fz_m)
+
+
+def fresnelzonsvikt_modifierad_refraktion(
+    avstand_m: float,
+    kallhojd_m: float,
+    mottagarhojd_m: float,
+    d1_m: float,
+    d2_m: float,
+    f_lambda_m: float,
+    xi_per_m: float,
+    c0_m_s: float,
+    uppat: Uppatmetod = "bokstavlig",
+) -> float:
+    """Funktionen FresnelZoneWm, AV 1106/07 avsnitt 5.23.7, ekv. (352)–(353), med refraktion.
+
+    Samma förfarande som `fresnelzonsvikt_refraktion` men med vikten i ekv. (353). För ξ = 0
+    anropas `fresnelzonsvikt_modifierad`.
+    """
+    if xi_per_m == 0.0:
+        return fresnelzonsvikt_modifierad(
+            avstand_m, kallhojd_m, mottagarhojd_m, d1_m, d2_m, f_lambda_m
+        )
+    geometri = reflexgeometri(avstand_m, kallhojd_m, mottagarhojd_m, xi_per_m, c0_m_s, uppat)
+    zon = fresnelzon_langs_mark_refraktion(geometri, f_lambda_m)
     w_s = _andel(d1_m, d2_m, zon.d1_fz_m, zon.d_refl_m)
     w_r = _andel(d1_m, d2_m, zon.d_refl_m, zon.d2_fz_m)
     return 0.5 * (w_s + w_r)

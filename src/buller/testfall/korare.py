@@ -17,6 +17,10 @@ Exponeringsnivån för en fordonspassage fås ur definitionen L_E = L_eq,T + 10�
 ett fordon under T, alltså L_E = L_eq,T(N) + 10·lg(T / (N · 1 s)). Sambandet stämmer med
 talen i rapportens bilaga A (skillnaden L_E − L_eq,24h är 9,37 dB = 10·lg(86 400 / 10 000)).
 
+Vind (blad med u ≠ 0): bladen anger vindhastigheten u på höjden zu och en vinkel φ.
+Vindkomponenten längs utbredningsvägen från källpunkten i vinkeln θ är u·cos(φ − θ), se
+`vindkomponent_m_s` för definitionen av φ och varifrån den kommer.
+
 Maximalnivå beräknas inte (se `buller.emission`).
 """
 
@@ -52,6 +56,7 @@ from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Vader
 
 _VADERFALT = frozenset(Vader.__dataclass_fields__)
 _VILLKOR_MOTTAGARHOJD = "mottagare_hojd_m"
+_VINDRIKTNING = "vindriktning_grader"  # bladens φ, i fallets [vader_tillagg]
 VILLKOR_REGELVARIANT = "regelvariant"
 
 
@@ -165,6 +170,37 @@ def forhallanden_for_fall(fall: N2kFall) -> Vagforhallanden | None:
     return Vagforhallanden(belaggning, float(stenstorlek), lufttemperatur_c=temperatur)
 
 
+def vindkomponent_m_s(
+    vind_m_s: float, vindriktning_grader: float, kallpunktsvinkel_rad: float
+) -> float:
+    """Vindkomponenten i utbredningsriktningen (medvind positiv) för en källpunkt på rak väg.
+
+    Bladens φ tolkas som vinkeln i horisontalplanet mellan den riktning vinden blåser mot och
+    vägens normal från vägen mot mottagaren: φ = 0 är medvind och φ = 180° motvind för
+    utbredning vinkelrätt från vägen. Utbredningsvägen från källpunkten i vinkeln θ (sedd
+    från mottagaren, räknad från normalen) bildar vinkeln θ med normalen, så komponenten är
+    u·cos(φ − θ). Åt vilket håll längs vägen φ och θ räknas spelar ingen roll, eftersom
+    källpunkterna ligger symmetriskt kring normalen.
+
+    Underlag: ingen av rapporterna definierar φ i ord eller figur (RL 18/18 och Miljøprojekt
+    1335 kapitel 2 samt bladen). Definitionen följer av tre uppgifter i dem:
+
+    * u är vindhastighetens komponent i utbredningsriktningen (AV 1851/00, beteckningar och
+      ekv. 26); en vind med riktning ger alltså u·cos(vinkeln mot utbredningsriktningen).
+    * RL 18/18 kapitel 2: varje grupp 2–12 innehåller ett medvinds- och ett motvindsfall;
+      bladen x2 har "u=3, φ=0" och x3 "u=3, φ=180".
+    * Bladens egna referensvärden (kolumnen dL): φ = 180 har 10–20 dB starkare dämpning över
+      800 Hz än u = 0 (skuggzon, alltså motvind) och φ = 0 svagare (medvind); φ = 90
+      (blad 14) skiljer sig från u = 0 (blad 11), så vinden projiceras per utbredningsväg och
+      inte en gång för hela vägen; φ = 0 och φ = 180 ger olika värden, så φ räknas från
+      normalen och inte från vägens längdriktning.
+
+    Den tredje punkten är avläst ur facit, men bara kvalitativt (vilket blad som har
+    skuggzon); inget beräknat värde har jämförts. Se `docs/buller/logg/P-R2.md`.
+    """
+    return vind_m_s * math.cos(math.radians(vindriktning_grader) - kallpunktsvinkel_rad)
+
+
 def berakna_rak_vag(
     karna: P2PKarna, emission: Emissionsmodell, fall: N2kFall, a_vagning_db: Flyttal
 ) -> Berakning:
@@ -177,11 +213,11 @@ def berakna_rak_vag(
         raise BullerFel(f"Fall {fall.id} saknar väg, väder eller mottagare.")
     if a_vagning_db.shape != (ANTAL_BAND,):
         raise BullerFel(f"a_vagning_db ska ha {ANTAL_BAND} värden.")
-    if fall.vader.vind_m_s != 0.0:
+    vindriktning = fall.vader_tillagg.get(_VINDRIKTNING)
+    if fall.vader.vind_m_s != 0.0 and vindriktning is None:
         raise BullerFel(
-            "Fallet har vind, men hur vindriktningen i testfallens blad ska räknas om till "
-            "vindkomponent längs varje utbredningsväg är inte avläst ur någon källa. "
-            "Köraren räknar därför bara fall utan vind."
+            f"Fallet har vind men ingen vindriktning ([vader_tillagg] {_VINDRIKTNING}); "
+            "vindkomponenten längs utbredningsvägarna kan inte bestämmas."
         )
     perioder = {post.period for post in fall.trafik}
     if len(perioder) != 1:
@@ -206,9 +242,14 @@ def berakna_rak_vag(
                 f"Emissionsmodellen gav form {effekt_db.shape}, väntade "
                 f"({len(hojder)}, {ANTAL_BAND})."
             )
+        vader = fall.vader
+        if vader.vind_m_s != 0.0 and vindriktning is not None:
+            vader = replace(
+                vader, vind_m_s=vindkomponent_m_s(vader.vind_m_s, vindriktning, float(vinkel))
+            )
         for j, hojd in enumerate(hojder):
             profil = fall.profil(kalla_hojd_m=hojd, stracka=1.0 / math.cos(vinkel))
-            overforing_db = np.asarray(karna.overforing_db(profil, fall.vader))
+            overforing_db = np.asarray(karna.overforing_db(profil, vader))
             if overforing_db.shape != (ANTAL_BAND,):
                 raise BullerFel(f"Kärnan {karna.namn} gav form {overforing_db.shape}.")
             bidrag[k, j, :] = effekt_db[j, :] + overforing_db
@@ -329,7 +370,7 @@ def sammanstallning_md(resultat: Sequence[Fallresultat]) -> str:
         + ", ".join(f"{u.value}: {antal[u]}" for u in Utfall)
         + ".",
         "",
-        "Fall som är \"ej facit\" räknas varken som godkända eller underkända; avvikelserna "
+        'Fall som är "ej facit" räknas varken som godkända eller underkända; avvikelserna '
         "visas bara som upplysning.",
         "",
         "| ID | Namn | Kärna | Utfall | Max avvikelse total (dB) | Max avvikelse band (dB) "

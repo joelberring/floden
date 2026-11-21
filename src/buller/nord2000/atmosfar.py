@@ -1,11 +1,12 @@
-"""Atmosfärens tillstånd för referenskärnan: i detta skede endast homogen atmosfär.
+"""Homogen atmosfär för referenskärnan, och bryggan till den allmänna `refraktion.Atmosfar`.
 
 Källa: DELTA AV 1106/07 (rev. 2014), avsnitt 5.3.2 (ekv. 2–3), 5.4.2 (ekv. 10) och 5.9.
 
 Metoden beskriver ljudhastighetsprofilen med koefficienterna A, B och C samt deras
 fluktuationer s_A och s_B. Omräkningen från vind och temperaturgradient (`buller.typer.Vader`)
-till A och B finns inte i AV 1106/07 och hör till refraktionspaketet. Här accepteras därför
-bara väder med A = B = 0 och s_A = s_B = 0; allt annat ger `BullerFel`.
+finns i `refraktion.atmosfar_ur_vader` (P-R1). `HomogenAtmosfar` och `homogen_atmosfar` är
+kvar för specialfallet A = B = 0 och s_A = s_B = 0 (de accepterar inget annat); kärnan och
+delmodell 1–2 räknar med `Atmosfar` och tar emot båda typerna genom `som_atmosfar`.
 """
 
 from __future__ import annotations
@@ -13,7 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from buller.nord2000.frekvenser import ljudhastighet_m_s
+from buller.nord2000.refraktion import Atmosfar
 from buller.typer import BullerFel, Vader
+
+# Råhetslängd i `som_atmosfar`. Den används inte i någon formel när A = s_A = 0 (ekv. 2 och
+# 18–20 innehåller z₀ bara tillsammans med A), men `Atmosfar` kräver ett värde större än 0.
+_Z0_UTAN_BETYDELSE_M = 1.0
 
 
 @dataclass(frozen=True)
@@ -58,4 +64,27 @@ def homogen_atmosfar(vader: Vader) -> HomogenAtmosfar:
         lufttryck_kpa=vader.lufttryck_kpa,
         cv2=vader.cv2,
         ct2=vader.ct2,
+    )
+
+
+def som_atmosfar(atmosfar: HomogenAtmosfar | Atmosfar) -> Atmosfar:
+    """`HomogenAtmosfar` uttryckt som `refraktion.Atmosfar` med A = B = s_A = s_B = 0.
+
+    t₀ = t_air = `temperatur_c` (samma val som i `refraktion.atmosfar_ur_vader`). En `Atmosfar`
+    returneras oförändrad.
+    """
+    if isinstance(atmosfar, Atmosfar):
+        return atmosfar
+    return Atmosfar(
+        a_m_s=0.0,
+        b_per_s=0.0,
+        s_a_m_s=0.0,
+        s_b_per_s=0.0,
+        z0_m=_Z0_UTAN_BETYDELSE_M,
+        temperatur_mark_c=atmosfar.temperatur_c,
+        temperatur_luft_c=atmosfar.temperatur_c,
+        relativ_fuktighet_procent=atmosfar.relativ_fuktighet_procent,
+        lufttryck_kpa=atmosfar.lufttryck_kpa,
+        cv2=atmosfar.cv2,
+        ct2=atmosfar.ct2,
     )
