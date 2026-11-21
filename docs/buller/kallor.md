@@ -28,8 +28,13 @@ Den lokala källmappen ligger utanför repot och anges med `[buller] kallmapp` i
 
 - Metodrapporterna och testfallens Excel-filer finns sedan 2026-11-21 i den lokala källmappen (utanför git), med
   ursprungsadresser och sha256 i `kallforteckning.csv`. Sökvägen anges i `config.local.toml` under `[buller] kallmapp`.
-- Rapporterna checkas aldrig in. Testfallens tal (`testsvit/N_nord2000/`) och källmodellens koefficienter
-  (`src/buller/emission/data/`) ligger i repot med källa angiven. **Joel avgör före publicering** om de får ligga i ett
-  öppet repo.
+- Rapporterna checkas aldrig in.
+- **Testfallens facit ligger inte i det publika repot** (beslut 2026-11-21 inför första push). `testsvit/N_nord2000/` och
+  `docs/buller/kontroll/testfall_tabeller.md` står i `.gitignore` och skapas lokalt:
+  `python -m buller.testfall.xlsimport --kallmapp <källmapp> --ut testsvit/N_nord2000`, där källmappen innehåller
+  `testfall/` enligt `kallforteckning.csv`. Testerna som kräver fallen hoppas över när mappen saknas, så CI prövar
+  inte överensstämmelsen; den körs lokalt.
+- Metodens tabeller (AV 1106/07, i `src/buller/nord2000/`) och källmodellens koefficienter (SP 2006:12, i
+  `src/buller/emission/data/`) ligger kvar i repot med källa per värde: utan dem går metoden inte att räkna.
 - Gällande testfall är RL 18-18 (2018). Kunskapscentrum om bullers två rättelser (2024) hanteras som uttryckliga
   undantag i jämförelsen, inte som ändringar av facit.

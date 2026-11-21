@@ -32,6 +32,10 @@ from buller.testfall.jamforelse import Utfall
 from buller.testfall.korare import Fallresultat, kor_alla
 
 ROT = Path(__file__).resolve().parents[2] / "testsvit" / "N_nord2000"
+SAKNAR_TESTFALL = (
+    "Testfallen (testsvit/N_nord2000) ligger inte i det publika repot; "
+    "importera dem lokalt, se docs/buller/kallor.md"
+)
 
 
 def _blad(*nummer: int) -> set[str]:
@@ -99,6 +103,7 @@ EJ_FACIT = {"N01", "N02", "N03", "N04"}
 BLAD_MED_FLERA_MARKREFLEXER = _blad(9, 12, 13, 14, 16, 22)
 
 
+@unittest.skipUnless(ROT.is_dir(), SAKNAR_TESTFALL)
 class TestTestsvitN(unittest.TestCase):
     karna: Nord2000Karna
     resultat: dict[str, Fallresultat]

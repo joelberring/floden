@@ -43,6 +43,10 @@ from tests.buller.testfall.hjalp import (
 )
 
 N_ROT = Path(__file__).resolve().parents[3] / "testsvit" / "N_nord2000"
+SAKNAR_TESTFALL = (
+    "Testfallen (testsvit/N_nord2000) ligger inte i det publika repot; "
+    "importera dem lokalt, se docs/buller/kallor.md"
+)
 NOLLVAGNING = np.zeros(ANTAL_BAND)
 TOM_DATA = Path(__file__).parent / "tom_emission.toml"
 
@@ -431,6 +435,7 @@ class TestUtfall(unittest.TestCase):
         self.assertIs(urval.utfall, Utfall.GODKAND)
 
 
+@unittest.skipUnless(N_ROT.is_dir(), SAKNAR_TESTFALL)
 class TestDigitaliseradeFallIKoraren(unittest.TestCase):
     def setUp(self) -> None:
         self.resultat = kor_alla(Frifaltskarna(), Konstantemission(100.0), N_ROT)

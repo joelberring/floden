@@ -19,6 +19,10 @@ from testsvit.korare import hitta_testfall
 
 REPO = Path(__file__).resolve().parents[3]
 N_ROT = REPO / "testsvit" / "N_nord2000"
+SAKNAR_TESTFALL = (
+    "Testfallen (testsvit/N_nord2000) ligger inte i det publika repot; "
+    "importera dem lokalt, se docs/buller/kallor.md"
+)
 
 
 class Tempmapp(unittest.TestCase):
@@ -173,6 +177,7 @@ class TestValidering(Tempmapp):
             fall.profil(kalla_hojd_m=0.3, stracka=0.5)
 
 
+@unittest.skipUnless(N_ROT.is_dir(), SAKNAR_TESTFALL)
 class TestDigitaliseradeFall(unittest.TestCase):
     def test_alla_fall_laser_och_ar_inte_facit(self) -> None:
         fall = [f for f in hitta_fall(N_ROT) if not f.id.startswith("N18")]
