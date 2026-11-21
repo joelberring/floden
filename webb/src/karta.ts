@@ -1,17 +1,25 @@
 import maplibregl from "maplibre-gl";
 import type {
   BboxTuple,
+  DikeAtgardPayload,
+  ExperimentAtgarderPayload,
+  GataHojdsattningPayload,
   GeoJsonCollection,
+  GrundmodellRattningPayload,
+  HojdRattningPayload,
   JamforLage,
   KorSvar,
   LagerId,
   LappByggnadPayload,
   LappGataPayload,
   LappMagasinPayload,
+  MarkJusteringPayload,
   OmradeLagerSvar,
+  OppnaPassagePayload,
   PercentilNyckel,
   RiskSvar,
   RuttSvar,
+  VallAtgardPayload,
 } from "./types";
 
 const REF_E_M = 150000.0;
@@ -21,7 +29,26 @@ const REF_LAT_DEG = 59.33;
 const METERS_PER_DEG_LAT = 111390.0;
 const METERS_PER_DEG_LON = 111320.0 * Math.cos((REF_LAT_DEG * Math.PI) / 180.0);
 
-export type RitLage = "ingen" | "gata" | "byggnad" | "magasin";
+export type RitLage =
+  | "ingen"
+  | "gata"
+  | "byggnad"
+  | "magasin"
+  | "bro"
+  | "rattning_hojd"
+  | "dike"
+  | "vall"
+  | "gata_hojd"
+  | "mark_justering";
+
+export function arPolygonRitLage(lage: RitLage): boolean {
+  return (
+    lage === "byggnad" ||
+    lage === "magasin" ||
+    lage === "rattning_hojd" ||
+    lage === "mark_justering"
+  );
+}
 
 export interface LagerTillstand {
   id: LagerId;
@@ -550,11 +577,20 @@ export class FlodenKartaKontroll {
     sektion: string;
     entreRh2000: number;
     magasinVolymM3: number;
+    broBreddM: number;
+    expHojdDeltaM: number;
+    expBreddM: number;
     index: number;
   }):
     | { typ: "gata"; data: LappGataPayload }
     | { typ: "byggnad"; data: LappByggnadPayload }
     | { typ: "magasin"; data: LappMagasinPayload }
+    | { typ: "bro"; data: OppnaPassagePayload }
+    | { typ: "rattning_hojd"; data: HojdRattningPayload }
+    | { typ: "dike"; data: DikeAtgardPayload }
+    | { typ: "vall"; data: VallAtgardPayload }
+    | { typ: "gata_hojd"; data: GataHojdsattningPayload }
+    | { typ: "mark_justering"; data: MarkJusteringPayload }
     | null {
     const punkter = [...this.ritPunkter3011];
     const lage = this.ritLage;
@@ -605,6 +641,105 @@ export class FlodenKartaKontroll {
       };
     }
 
+    if (lage === "bro") {
+      if (punkter.length < 2) {
+        return null;
+      }
+      return {
+        typ: "bro",
+        data: {
+          passage_id: `bro-${alternativ.index}`,
+          typ: "bro",
+          linje: punkter,
+          bredd_m: Math.max(0.5, alternativ.broBreddM),
+          aktiv: true,
+        },
+      };
+    }
+
+    if (lage === "rattning_hojd") {
+      if (punkter.length < 3) {
+        return null;
+      }
+      return {
+        typ: "rattning_hojd",
+        data: {
+          rattning_id: `rattning-${alternativ.index}`,
+          polygon: punkter,
+          utjamna_fran_rand: true,
+          ta_bort_byggnad: true,
+          aktiv: true,
+        },
+      };
+    }
+
+    if (lage === "dike") {
+      if (punkter.length < 2) {
+        return null;
+      }
+      return {
+        typ: "dike",
+        data: {
+          atgard_id: `dike-${alternativ.index}`,
+          linje: punkter,
+          botten_bredd_m: Math.max(0.5, alternativ.expBreddM),
+          slantslutning: 2.0,
+          djup_m: Math.max(0.05, Math.abs(alternativ.expHojdDeltaM)),
+          aktiv: true,
+        },
+      };
+    }
+
+    if (lage === "vall") {
+      if (punkter.length < 2) {
+        return null;
+      }
+      return {
+        typ: "vall",
+        data: {
+          atgard_id: `vall-${alternativ.index}`,
+          linje: punkter,
+          kron_bredd_m: Math.max(0.5, alternativ.expBreddM),
+          slantslutning: 2.0,
+          hojd_over_mark_m: Math.max(0.05, Math.abs(alternativ.expHojdDeltaM)),
+          aktiv: true,
+        },
+      };
+    }
+
+    if (lage === "gata_hojd") {
+      if (punkter.length < 2) {
+        return null;
+      }
+      return {
+        typ: "gata_hojd",
+        data: {
+          atgard_id: `gata-hojd-${alternativ.index}`,
+          linje: punkter,
+          bredd_m: Math.max(1.0, alternativ.expBreddM),
+          delta_z_m: alternativ.expHojdDeltaM,
+          tvarfall: 0.025,
+          kantsten_hojd_m: 0.12,
+          aktiv: true,
+        },
+      };
+    }
+
+    if (lage === "mark_justering") {
+      if (punkter.length < 3) {
+        return null;
+      }
+      return {
+        typ: "mark_justering",
+        data: {
+          atgard_id: `mark-${alternativ.index}`,
+          polygon: punkter,
+          delta_z_m: alternativ.expHojdDeltaM,
+          aktiv: true,
+        },
+      };
+    }
+
     return null;
   }
 
@@ -612,6 +747,8 @@ export class FlodenKartaKontroll {
     gator: LappGataPayload[],
     byggnader: LappByggnadPayload[],
     magasin: LappMagasinPayload[],
+    grundmodell?: GrundmodellRattningPayload,
+    experiment?: ExperimentAtgarderPayload,
   ): void {
     const features: GeoJsonCollection["features"] = [];
     for (const g of gator) {
@@ -650,6 +787,93 @@ export class FlodenKartaKontroll {
         properties: { id: m.magasin_id },
       });
     }
+
+    for (const p of grundmodell?.passager ?? []) {
+      if (!p.aktiv) {
+        continue;
+      }
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: p.linje.map(([e, n]) => e3011TillWgs84(e, n)),
+        },
+        properties: { id: p.passage_id },
+      });
+    }
+    for (const h of grundmodell?.hojd_rattningar ?? []) {
+      if (!h.aktiv) {
+        continue;
+      }
+      const ring = [...h.polygon, h.polygon[0] ?? [0, 0]].map(([e, n]) =>
+        e3011TillWgs84(e, n),
+      );
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: ring,
+        },
+        properties: { id: h.rattning_id },
+      });
+    }
+
+    for (const d of experiment?.diken ?? []) {
+      if (!d.aktiv) {
+        continue;
+      }
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: d.linje.map(([e, n]) => e3011TillWgs84(e, n)),
+        },
+        properties: { id: d.atgard_id },
+      });
+    }
+    for (const v of experiment?.vallar ?? []) {
+      if (!v.aktiv) {
+        continue;
+      }
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: v.linje.map(([e, n]) => e3011TillWgs84(e, n)),
+        },
+        properties: { id: v.atgard_id },
+      });
+    }
+    for (const g of experiment?.gator ?? []) {
+      if (!g.aktiv) {
+        continue;
+      }
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: g.linje.map(([e, n]) => e3011TillWgs84(e, n)),
+        },
+        properties: { id: g.atgard_id },
+      });
+    }
+    for (const m of experiment?.mark_justeringar ?? []) {
+      if (!m.aktiv) {
+        continue;
+      }
+      const ring = [...m.polygon, m.polygon[0] ?? [0, 0]].map(([e, n]) =>
+        e3011TillWgs84(e, n),
+      );
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: ring,
+        },
+        properties: { id: m.atgard_id },
+      });
+    }
+
     if (this.laddad) {
       this.uppdateraGeoJsonKalla("src-lapp-skiss", {
         type: "FeatureCollection",
@@ -667,7 +891,7 @@ export class FlodenKartaKontroll {
       return;
     }
     const coords = this.ritPunkter3011.map(([e, n]) => e3011TillWgs84(e, n));
-    if ((this.ritLage === "byggnad" || this.ritLage === "magasin") && coords.length >= 3) {
+    if (arPolygonRitLage(this.ritLage) && coords.length >= 3) {
       const first = coords[0];
       if (first) {
         coords.push(first);

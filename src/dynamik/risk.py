@@ -37,8 +37,10 @@ from gemensamt.regn import (
     generera_blockregn,
     generera_cds_regn,
 )
+from mark_forluster.grundvatten import uppskatta_dtw_fran_terrang
 from mark_forluster.koppling import berakna_effektivt_regn_k5
 from mark_forluster.parametrar import ForlustFel
+from markmodell.hinder_oppningar import VATTEN
 from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf
 
 __all__ = [
@@ -567,6 +569,24 @@ def berakna_kumulativ_oversvamningsrisk(
     cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
     aktiv_cell_area_m2 = float(np.sum(aktiv_mask)) * cell_area_m2
 
+    dtw_arr: NDArray[np.float32] | None = None
+    if infiltration_jordart is not None:
+        z_arr = np.asarray(graf.mark_z, dtype=np.float32)
+        giltig_z = np.isfinite(z_arr)
+        if np.any(giltig_z):
+            vatten_mask = np.asarray(graf.markslag == VATTEN, dtype=np.bool_)
+            if not np.any(vatten_mask):
+                z_min = float(np.min(z_arr[giltig_z]))
+                vatten_mask = np.asarray(giltig_z & (z_arr <= z_min + 0.05), dtype=np.bool_)
+            z_ren = np.where(
+                giltig_z, z_arr, float(np.median(z_arr[giltig_z]))
+            ).astype(np.float32)
+            dtw_arr = uppskatta_dtw_fran_terrang(
+                z_ren,
+                vatten_mask,
+                pixelstorlek_m=float(graf.geo.pixelstorlek_x),
+            )
+
     steg_lista: list[AterkomstStegResultat] = []
     djup_lager: list[NDArray[np.float64]] = []
     nod_djup_per_steg: list[dict[int, float]] = []
@@ -596,6 +616,7 @@ def berakna_kumulativ_oversvamningsrisk(
                     initial_mm=infiltration_initial_mm,
                     pixelstorlek_m=float(graf.geo.pixelstorlek_x),
                     mark_z=graf.mark_z,
+                    dtw_m=dtw_arr,
                     regn_ref=regn.regn_id,
                 )
             except ForlustFel as exc:
@@ -722,6 +743,10 @@ def berakna_kumulativ_oversvamningsrisk(
             "initial_forlust_mm": init_forlust,
             "brunnar_avdrag_m3_s": brunnar,
             "efterforlopp_s": efterforlopp,
+            "infiltration_jordart": infiltration_jordart,
+            "grundvatten": grundvatten,
+            "tjale": bool(tjale),
+            "infiltration_initial_mm": float(infiltration_initial_mm),
             "epsg": graf.geo.epsg,
         },
         utdata=[],

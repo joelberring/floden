@@ -104,6 +104,37 @@ def _berakna_tathet_och_celler(
     return tathet, cell_z, antal_per_cell
 
 
+def _uppdatera_narmaste_batch(
+    saknad_e: NDArray[np.float64],
+    saknad_n: NDArray[np.float64],
+    cand_e: NDArray[np.float64],
+    cand_n: NDArray[np.float64],
+    cand_z: NDArray[np.float64],
+    best_d2: NDArray[np.float64],
+    best_z: NDArray[np.float64],
+) -> None:
+    """Uppdaterar närmaste punkt för saknade celler i små batchar för att undvika OOM."""
+    cell_batch = 64
+    pt_batch = 8192
+    n_celler = saknad_e.size
+    n_punkter = cand_e.size
+    for c0 in range(0, n_celler, cell_batch):
+        c1 = min(n_celler, c0 + cell_batch)
+        ce = saknad_e[c0:c1, None]
+        cn = saknad_n[c0:c1, None]
+        lok_idx_arr = np.arange(c1 - c0)
+        for p0 in range(0, n_punkter, pt_batch):
+            p1 = min(n_punkter, p0 + pt_batch)
+            de = ce - cand_e[None, p0:p1]
+            dn = cn - cand_n[None, p0:p1]
+            d2 = de * de + dn * dn
+            min_idx = np.argmin(d2, axis=1)
+            min_d2 = d2[lok_idx_arr, min_idx]
+            battre = min_d2 < best_d2[c0:c1]
+            best_d2[c0:c1] = np.where(battre, min_d2, best_d2[c0:c1])
+            best_z[c0:c1] = np.where(battre, cand_z[p0 + min_idx], best_z[c0:c1])
+
+
 def interpolera_markpunkter(
     punkter_e: NDArray[np.float64],
     punkter_n: NDArray[np.float64],
@@ -220,73 +251,156 @@ def interpolera_markpunkter(
         cell_block = 32
         for r0 in range(0, rader, cell_block):
             r1 = min(rader, r0 + cell_block)
-            n_b_max = n_vektor[r0]
-            n_b_min = n_vektor[r1 - 1]
+            n_b_max = float(n_vektor[r0])
+            n_b_min = float(n_vektor[r1 - 1])
             by_lo = max(0, int(math.floor((n_b_min - max_avstand_m - by0) / bucket_m)))
             by_hi = min(n_by - 1, int(math.floor((n_b_max + max_avstand_m - by0) / bucket_m)))
 
             for k0 in range(0, kolumner, cell_block):
                 k1 = min(kolumner, k0 + cell_block)
-                e_b_min = e_vektor[k0]
-                e_b_max = e_vektor[k1 - 1]
+                e_b_min = float(e_vektor[k0])
+                e_b_max = float(e_vektor[k1 - 1])
                 bx_lo = max(0, int(math.floor((e_b_min - max_avstand_m - bx0) / bucket_m)))
-                bx_hi = min(n_bx - 1, int(math.floor((e_b_max + max_avstand_m - bx0) / bucket_m)))
+                bx_hi = min(
+                    n_bx - 1, int(math.floor((e_b_max + max_avstand_m - bx0) / bucket_m))
+                )
 
                 kand_idx_delar: list[NDArray[np.int64]] = []
-                for by_i in range(by_lo, by_hi + 1):
-                    for bx_i in range(bx_lo, bx_hi + 1):
-                        bid = by_i * n_bx + bx_i
-                        s0 = int(offsets[bid])
-                        s1 = int(offsets[bid + 1])
-                        if s1 > s0:
-                            kand_idx_delar.append(np.arange(s0, s1, dtype=np.int64))
+                if by_lo <= by_hi and bx_lo <= bx_hi:
+                    for by_i in range(by_lo, by_hi + 1):
+                        for bx_i in range(bx_lo, bx_hi + 1):
+                            bid = by_i * n_bx + bx_i
+                            s0 = int(offsets[bid])
+                            s1 = int(offsets[bid + 1])
+                            if s1 > s0:
+                                kand_idx_delar.append(np.arange(s0, s1, dtype=np.int64))
 
                 grid_e, grid_n = np.meshgrid(e_vektor[k0:k1], n_vektor[r0:r1])
 
-                if not kand_idx_delar:
-                    # Fallback mot hela punktmängden för avstånd och närmaste punkt
-                    de_all = grid_e[..., None] - e_s[None, None, :]
-                    dn_all = grid_n[..., None] - n_s[None, None, :]
-                    d2_all = de_all * de_all + dn_all * dn_all
-                    min_idx = np.argmin(d2_all, axis=2)
-                    avstand_m[r0:r1, k0:k1] = np.sqrt(np.min(d2_all, axis=2)).astype(np.float32)
-                    mark_z[r0:r1, k0:k1] = z_s[min_idx].astype(np.float32)
-                    continue
+                if kand_idx_delar:
+                    kand = np.concatenate(kand_idx_delar)
+                    ek = e_s[kand]
+                    nk = n_s[kand]
+                    zk = z_s[kand]
 
-                kand = np.concatenate(kand_idx_delar)
-                ek = e_s[kand]
-                nk = n_s[kand]
-                zk = z_s[kand]
+                    de = grid_e[..., None] - ek[None, None, :]
+                    dn = grid_n[..., None] - nk[None, None, :]
+                    d2 = de * de + dn * dn
 
-                de = grid_e[..., None] - ek[None, None, :]
-                dn = grid_n[..., None] - nk[None, None, :]
-                d2 = de * de + dn * dn
+                    min_d2 = np.min(d2, axis=2)
+                    min_idx = np.argmin(d2, axis=2)
+                    avst = np.sqrt(min_d2)
+                    inom = d2 <= max_r2
+                    har_inom = np.any(inom, axis=2)
 
-                min_d2 = np.min(d2, axis=2)
-                min_idx = np.argmin(d2, axis=2)
-                avst = np.sqrt(min_d2)
-                inom = d2 <= max_r2
-                har_inom = np.any(inom, axis=2)
-
-                d2_safe = np.where(d2 > 1e-12, d2, 1e-12)
-                vikter = np.where(inom, np.power(d2_safe, -halv_potens), 0.0)
-                vikt_sum = np.sum(vikter, axis=2)
-                z_idw = np.sum(vikter * zk[None, None, :], axis=2) / np.where(
-                    vikt_sum > 0.0, vikt_sum, 1.0
-                )
-                z_block = np.where(har_inom, z_idw, zk[min_idx])
-
-                # För celler där inte ens den vidgade bucketen hade punkt inom max_avstand_m
-                # används avstånd till alla punkter i den vidgade sökningen om den täcker.
-                if not np.all(har_inom):
-                    de_all = grid_e[..., None] - e_s[None, None, :]
-                    dn_all = grid_n[..., None] - n_s[None, None, :]
-                    d2_all = de_all * de_all + dn_all * dn_all
+                    d2_safe = np.where(d2 > 1e-12, d2, 1e-12)
+                    vikter = np.where(inom, np.power(d2_safe, -halv_potens), 0.0)
+                    vikt_sum = np.sum(vikter, axis=2)
+                    z_idw = np.sum(vikter * zk[None, None, :], axis=2) / np.where(
+                        vikt_sum > 0.0, vikt_sum, 1.0
+                    )
+                    z_block = np.where(har_inom, z_idw, zk[min_idx])
                     saknad = ~har_inom
-                    min_d2_all = np.min(d2_all, axis=2)
-                    min_idx_all = np.argmin(d2_all, axis=2)
-                    avst = np.where(saknad, np.sqrt(min_d2_all), avst)
-                    z_block = np.where(saknad, z_s[min_idx_all], z_block)
+                else:
+                    avst = np.full(grid_e.shape, np.inf, dtype=np.float64)
+                    z_block = np.zeros(grid_e.shape, dtype=np.float64)
+                    saknad = np.ones(grid_e.shape, dtype=np.bool_)
+
+                if np.any(saknad):
+                    saknad_e = grid_e[saknad]
+                    saknad_n = grid_n[saknad]
+                    avst_saknad = avst[saknad]
+                    best_d2 = np.where(np.isfinite(avst_saknad), avst_saknad * avst_saknad, np.inf)
+                    best_z = z_block[saknad].copy()
+
+                    har_prev = by_lo <= by_hi and bx_lo <= bx_hi
+                    if har_prev:
+                        base_by0, base_by1 = by_lo, by_hi
+                        base_bx0, base_bx1 = bx_lo, bx_hi
+                        prev_by0, prev_by1 = by_lo, by_hi
+                        prev_bx0, prev_bx1 = bx_lo, bx_hi
+                    else:
+                        mitt_by = int(math.floor((0.5 * (n_b_min + n_b_max) - by0) / bucket_m))
+                        mitt_bx = int(math.floor((0.5 * (e_b_min + e_b_max) - bx0) / bucket_m))
+                        base_by0 = base_by1 = max(0, min(n_by - 1, mitt_by))
+                        base_bx0 = base_bx1 = max(0, min(n_bx - 1, mitt_bx))
+                        prev_by0, prev_by1 = 1, 0
+                        prev_bx0, prev_bx1 = 1, 0
+
+                    radie = 1
+                    while True:
+                        ry0 = max(0, base_by0 - radie)
+                        ry1 = min(n_by - 1, base_by1 + radie)
+                        rx0 = max(0, base_bx0 - radie)
+                        rx1 = min(n_bx - 1, base_bx1 + radie)
+                        if (
+                            har_prev
+                            and ry0 == prev_by0
+                            and ry1 == prev_by1
+                            and rx0 == prev_bx0
+                            and rx1 == prev_bx1
+                        ):
+                            break
+
+                        ring_delar: list[NDArray[np.int64]] = []
+                        for by_i in range(ry0, ry1 + 1):
+                            for bx_i in range(rx0, rx1 + 1):
+                                if (
+                                    har_prev
+                                    and prev_by0 <= by_i <= prev_by1
+                                    and prev_bx0 <= bx_i <= prev_bx1
+                                ):
+                                    continue
+                                bid = by_i * n_bx + bx_i
+                                s0 = int(offsets[bid])
+                                s1 = int(offsets[bid + 1])
+                                if s1 > s0:
+                                    ring_delar.append(np.arange(s0, s1, dtype=np.int64))
+
+                        if ring_delar:
+                            ring_kand = np.concatenate(ring_delar)
+                            _uppdatera_narmaste_batch(
+                                saknad_e,
+                                saknad_n,
+                                e_s[ring_kand],
+                                n_s[ring_kand],
+                                z_s[ring_kand],
+                                best_d2,
+                                best_z,
+                            )
+
+                        har_prev = True
+                        prev_by0, prev_by1 = ry0, ry1
+                        prev_bx0, prev_bx1 = rx0, rx1
+
+                        if np.all(np.isfinite(best_d2)):
+                            max_best = math.sqrt(float(np.max(best_d2)))
+                            kant_avst: list[float] = []
+                            if rx0 > 0:
+                                kant_avst.append(e_b_min - (bx0 + rx0 * bucket_m))
+                            if rx1 < n_bx - 1:
+                                kant_avst.append((bx0 + (rx1 + 1) * bucket_m) - e_b_max)
+                            if ry0 > 0:
+                                kant_avst.append(n_b_min - (by0 + ry0 * bucket_m))
+                            if ry1 < n_by - 1:
+                                kant_avst.append((by0 + (ry1 + 1) * bucket_m) - n_b_max)
+                            if not kant_avst or max_best <= min(kant_avst):
+                                break
+                        radie *= 2
+
+                    if not np.all(np.isfinite(best_d2)):
+                        _uppdatera_narmaste_batch(
+                            saknad_e,
+                            saknad_n,
+                            e_s,
+                            n_s,
+                            z_s,
+                            best_d2,
+                            best_z,
+                        )
+
+                    avst[saknad] = np.sqrt(best_d2)
+                    z_block[saknad] = best_z
 
                 avstand_m[r0:r1, k0:k1] = avst.astype(np.float32)
                 mark_z[r0:r1, k0:k1] = z_block.astype(np.float32)

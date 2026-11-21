@@ -2,6 +2,22 @@
 
 from __future__ import annotations
 
+from lapp.experiment import (
+    DikeAtgard,
+    ExperimentAtgarder,
+    ExperimentFel,
+    ExperimentResultat,
+    GataHojdsattningAtgard,
+    GrundmodellRattning,
+    HojdRattning,
+    MarkJusteringAtgard,
+    MarkslagRattning,
+    OppnaPassage,
+    RattningResultat,
+    VallAtgard,
+    tillampa_experiment,
+    tillampa_grundmodell_rattning,
+)
 from lapp.fore_efter import (
     AlternativSammanfattning,
     EntreForandring,
@@ -45,13 +61,20 @@ from lapp.tillampa import (
 
 __all__ = [
     "AlternativSammanfattning",
+    "DikeAtgard",
     "EntreForandring",
+    "ExperimentAtgarder",
+    "ExperimentFel",
+    "ExperimentResultat",
     "ForeEfterResultat",
     "GILTIGA_KOORDINATORDNINGAR",
     "GILTIGA_MARKSLAG",
     "GILTIGA_OPERATIONSTYPER",
+    "GataHojdsattningAtgard",
     "GatuRastreringResultat",
     "Gatusektion",
+    "GrundmodellRattning",
+    "HojdRattning",
     "HojdYta",
     "KONTRAKT_K3",
     "LandXmlYta",
@@ -63,9 +86,14 @@ __all__ = [
     "LappOperation",
     "LappTillampning",
     "LokalOmrakningResultat",
+    "MarkJusteringAtgard",
+    "MarkslagRattning",
+    "OppnaPassage",
     "ProjektEntreUtvardering",
     "ProjektLapp",
+    "RattningResultat",
     "RegistreradEntre",
+    "VallAtgard",
     "formatera_alternativ_tabell",
     "hitta_berorda_noder",
     "jamfor_alternativ",
@@ -76,6 +104,8 @@ __all__ = [
     "rastrera_landxml_tin",
     "rastrera_parametrisk_gata",
     "skriv_lapp_k3",
+    "tillampa_experiment",
+    "tillampa_grundmodell_rattning",
     "tillampa_lapp",
     "uppdatera_sankgraf_lokalt",
 ]

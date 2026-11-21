@@ -42,17 +42,22 @@ class TestParametrar(unittest.TestCase):
                 j.delta_theta(hog_markfukt=False),
             )
 
-    def test_okand_jordart_och_okant_markslag_ger_tydligt_fel(self) -> None:
+    def test_okand_jordart_och_ogiltigt_markslag_ger_tydligt_fel(self) -> None:
         with self.assertRaises(ForlustFel):
             hamta_jordart("kvicksand")
         with self.assertRaises(ForlustFel):
             hamta_jordart(99)
         with self.assertRaises(ForlustFel):
-            effektiv_markparametrar(OKANT, "moran")
-        with self.assertRaises(ForlustFel):
             effektiv_markparametrar(42, "moran")
+        with self.assertRaises(ForlustFel):
+            effektiv_markparametrar(-1, "moran")
 
     def test_markslag_koppling_och_tjale(self) -> None:
+        okant = effektiv_markparametrar(OKANT, "moran")
+        self.assertEqual(okant.ksat_mm_h, 0.0)
+        self.assertEqual(okant.initial_faktor, 0.5)
+        self.assertEqual(okant.delta_theta, 0.0)
+
         hard = effektiv_markparametrar(HARDGJORT, "sand")
         self.assertEqual(hard.ksat_mm_h, 0.0)
         self.assertEqual(hard.initial_faktor, 1.0)

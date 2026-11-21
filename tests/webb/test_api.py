@@ -346,6 +346,87 @@ class TestWebbApiOchKlient(unittest.TestCase):
             self.assertEqual(len(raw), res["storlek_bytes"])
             if fmt == "docx":
                 self.assertTrue(raw.startswith(b"PK"))
+            if fmt == "html":
+                html_text = raw.decode("utf-8")
+                self.assertIn("data:image/png;base64,", html_text)
+
+    def test_post_kor_med_grundmodell_rattning_och_experiment(self) -> None:
+        omrade = self.app.ladda_omrade("A3_tva_sankor_sammanslagning")
+        geo = omrade.geo
+        cx = 0.5 * (geo.x_min + geo.x_max)
+        cy = 0.5 * (geo.y_min + geo.y_max)
+
+        payload = {
+            "omrade_id": "A3_tva_sankor_sammanslagning",
+            "intensitet_mm_h": 60.0,
+            "varaktighet_s": 1800.0,
+            "grundmodell_rattning": {
+                "rattning_id": "ratt-test-1",
+                "passager": [
+                    {
+                        "passage_id": "bro-1",
+                        "typ": "bro",
+                        "linje": [[cx - 2.0, cy], [cx + 2.0, cy]],
+                        "bredd_m": 1.5,
+                        "aktiv": True,
+                    }
+                ],
+            },
+            "experiment": {
+                "experiment_id": "exp-test-1",
+                "diken": [
+                    {
+                        "atgard_id": "dike-1",
+                        "linje": [[cx - 3.0, cy - 2.0], [cx + 3.0, cy - 2.0]],
+                        "djup_m": 0.4,
+                        "botten_bredd_m": 1.0,
+                        "slantslutning": 1.0,
+                        "aktiv": True,
+                    },
+                    {
+                        "atgard_id": "dike-inaktiv",
+                        "linje": [[cx - 3.0, cy + 3.0], [cx + 3.0, cy + 3.0]],
+                        "djup_m": 0.8,
+                        "aktiv": False,
+                    },
+                ],
+                "vallar": [
+                    {
+                        "atgard_id": "vall-1",
+                        "linje": [[cx - 2.0, cy + 2.0], [cx + 2.0, cy + 2.0]],
+                        "hojd_over_mark_m": 0.5,
+                        "kron_bredd_m": 0.5,
+                        "slantslutning": 1.0,
+                        "aktiv": True,
+                    }
+                ],
+                "gator": [
+                    {
+                        "atgard_id": "gata-1",
+                        "linje": [[cx - 2.0, cy - 3.0], [cx + 2.0, cy - 3.0]],
+                        "bredd_m": 2.0,
+                        "delta_z_m": 0.15,
+                        "aktiv": True,
+                    }
+                ],
+            },
+        }
+        status, _, kropp = self.app.hantera_forfragan(
+            "POST", "/api/kor", json.dumps(payload).encode("utf-8")
+        )
+        self.assertEqual(status, 200, kropp.decode("utf-8"))
+        res = json.loads(kropp.decode("utf-8"))
+        self.assertTrue(res["har_lapp"])
+        self.assertIsNotNone(res["grundmodell_rattning"])
+        self.assertEqual(res["grundmodell_rattning"]["antal_aktiva_rattningar"], 1)
+        self.assertIsNotNone(res["experiment"])
+        self.assertEqual(res["experiment"]["antal_aktiva_atgarder"], 3)
+        self.assertGreater(res["experiment"]["antal_andrade_celler"], 0)
+        self.assertGreater(res["experiment"]["schakt_volym_m3"], 0.0)
+        self.assertGreater(res["experiment"]["fyll_volym_m3"], 0.0)
+        manifest = RunManifest.fran_dict(res["manifest"])
+        self.assertIn("grundmodell_rattning_sha256", manifest.parametrar)
+        self.assertIn("experiment_sha256", manifest.parametrar)
 
     def test_post_rutt_kumulativ_vagrisk_och_testvardessparr(self) -> None:
         # Utan bekräftade testvärden måste skarp spärr returnera 400
@@ -407,6 +488,9 @@ class TestWebbApiOchKlient(unittest.TestCase):
         self.assertIn("maplibre-karta", index_html)
         self.assertIn("regn-forval", index_html)
         self.assertIn("risk-knapp", index_html)
+        self.assertIn("rita-bro-knapp", index_html)
+        self.assertIn("rita-dike-knapp", index_html)
+        self.assertIn("rita-vall-knapp", index_html)
 
         for filnamn in ("types.ts", "api.ts", "karta.ts", "main.ts", "style.css"):
             sokvag = webb_rot / "src" / filnamn

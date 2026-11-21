@@ -6,6 +6,7 @@ import base64
 import json
 import math
 import tempfile
+import threading
 import time
 import urllib.parse
 from collections.abc import Mapping
@@ -32,6 +33,15 @@ from gemensamt.regn import (
     RegnFel,
     lista_regnforval,
     skapa_regn_fran_spec,
+)
+from lapp.experiment import (
+    ExperimentAtgarder,
+    ExperimentFel,
+    ExperimentResultat,
+    GrundmodellRattning,
+    RattningResultat,
+    tillampa_experiment,
+    tillampa_grundmodell_rattning,
 )
 from lapp.fore_efter import ForeEfterResultat, kor_fore_efter
 from lapp.kontrakt import (
@@ -435,17 +445,19 @@ class FlodenApiApp:
     ) -> None:
         self.testsvit_rot = Path(testsvit_rot)
         self.konfig_fil = Path(konfig_fil)
+        self._lock = threading.Lock()
         self._omrade_cache: dict[str, LaddatOmrade] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
 
     def hamta_sektioner(self) -> dict[str, Gatusektion]:
-        """Läser gatusektioner från `config.toml` med säker cache."""
-        if self._sektioner_cache is None:
-            if self.konfig_fil.is_file():
-                self._sektioner_cache = las_gatusektioner_fran_konfig(self.konfig_fil)
-            else:
-                self._sektioner_cache = {}
-        return self._sektioner_cache
+        """Läser gatusektioner från `config.toml` med trådsäker cache."""
+        with self._lock:
+            if self._sektioner_cache is None:
+                if self.konfig_fil.is_file():
+                    self._sektioner_cache = las_gatusektioner_fran_konfig(self.konfig_fil)
+                else:
+                    self._sektioner_cache = {}
+            return self._sektioner_cache
 
     def _upptack_omraden(self) -> dict[str, Testfall]:
         try:
@@ -462,8 +474,9 @@ class FlodenApiApp:
 
     def ladda_omrade(self, omrade_id: str) -> LaddatOmrade:
         """Läser in och cachar K1-markmodell och sänkgraf för ett område."""
-        if omrade_id in self._omrade_cache:
-            return self._omrade_cache[omrade_id]
+        with self._lock:
+            if omrade_id in self._omrade_cache:
+                return self._omrade_cache[omrade_id]
 
         katalog = self._upptack_omraden()
         fall = katalog.get(omrade_id)
@@ -534,7 +547,8 @@ class FlodenApiApp:
             kallor=DEFAULT_KALLOR,
             bas_graf=bas_graf,
         )
-        self._omrade_cache[omrade_id] = laddat
+        with self._lock:
+            self._omrade_cache[omrade_id] = laddat
         return laddat
 
     def halsa(self) -> dict[str, Any]:
@@ -683,12 +697,50 @@ class FlodenApiApp:
         regn_tid, regn_int, regn_meta = _tolka_regnserie(
             payload, omrade.regn_tid_s, omrade.regn_intensitet_mm_h
         )
+        raw_rattning = payload.get("grundmodell_rattning")
+        raw_experiment = payload.get("experiment")
+        rattning: GrundmodellRattning | None = None
+        experiment: ExperimentAtgarder | None = None
+        ratt_res: RattningResultat | None = None
+        exp_res: ExperimentResultat | None = None
+
+        bas_mark_z = omrade.mark_z
+        bas_osak_z = omrade.osakerhet_z
+        bas_markslag = omrade.markslag
+        bas_graf = omrade.bas_graf
+        try:
+            if raw_rattning is not None:
+                rattning = GrundmodellRattning.fran_dict(raw_rattning)
+                if rattning.har_aktiva():
+                    ratt_res = tillampa_grundmodell_rattning(
+                        bas_mark_z,
+                        bas_osak_z,
+                        bas_markslag,
+                        omrade.geo,
+                        rattning,
+                    )
+                    bas_mark_z = ratt_res.mark_z
+                    bas_osak_z = ratt_res.osakerhet_z
+                    bas_markslag = ratt_res.markslag
+                    bas_graf = bygg_sankgraf(
+                        bas_mark_z,
+                        bas_osak_z,
+                        bas_markslag,
+                        omrade.geo,
+                        brytlinjer=omrade.brytlinjer,
+                        oppningar=omrade.oppningar,
+                    )
+            if raw_experiment is not None:
+                experiment = ExperimentAtgarder.fran_dict(raw_experiment)
+        except (ExperimentFel, SankGrafFel) as exc:
+            raise FlodenWebbFel(f"Ogiltig rättning eller experimentåtgärd: {exc}") from exc
+
         jordart_val, gw_val, tjale_val, init_mm_val = _tolka_forluster(payload)
         forluster_meta: dict[str, Any] | None = None
         if jordart_val is not None:
             try:
                 koppl = berakna_effektivt_regn_k5(
-                    omrade.markslag,
+                    bas_markslag,
                     regn_tid,
                     regn_int,
                     jordart=jordart_val,
@@ -696,7 +748,7 @@ class FlodenApiApp:
                     tjale=tjale_val,
                     initial_mm=init_mm_val,
                     pixelstorlek_m=float(omrade.geo.pixelstorlek_x),
-                    mark_z=omrade.mark_z,
+                    mark_z=bas_mark_z,
                     regn_ref=str(regn_meta.get("regn_id", "webb_regn")),
                 )
             except ForlustFel as exc:
@@ -711,7 +763,7 @@ class FlodenApiApp:
             sektioner = self.hamta_sektioner()
 
             fore_dyn: DynamikResultat = kor_dynamik_handelsestyrd(
-                omrade.bas_graf,
+                bas_graf,
                 regn_tid,
                 regn_int,
             )
@@ -719,10 +771,10 @@ class FlodenApiApp:
             fe_res: ForeEfterResultat | None = None
             if lapp is not None:
                 fe_res = kor_fore_efter(
-                    omrade.bas_graf,
-                    omrade.mark_z,
-                    omrade.osakerhet_z,
-                    omrade.markslag,
+                    bas_graf,
+                    bas_mark_z,
+                    bas_osak_z,
+                    bas_markslag,
                     lapp,
                     regn_tid,
                     regn_int,
@@ -738,6 +790,7 @@ class FlodenApiApp:
                 efter_graf = fe_res.efter_graf
                 diff_arr = fe_res.diff_max_djup_m
                 efter_mark_z = fe_res.tillampning.mark_z
+                efter_osak_z = fe_res.tillampning.osakerhet_z
                 efter_markslag = fe_res.tillampning.markslag
                 efter_brytlinjer = fe_res.tillampning.alla_brytlinjer
                 fordrojningsvolym = float(fe_res.fordrojningsvolym_m3)
@@ -764,10 +817,11 @@ class FlodenApiApp:
                 ]
             else:
                 efter_dyn = fore_dyn
-                efter_graf = omrade.bas_graf
+                efter_graf = bas_graf
                 diff_arr = np.zeros_like(fore_dyn.max_djup_m, dtype=np.float32)
-                efter_mark_z = omrade.mark_z
-                efter_markslag = omrade.markslag
+                efter_mark_z = bas_mark_z
+                efter_osak_z = bas_osak_z
+                efter_markslag = bas_markslag
                 efter_brytlinjer = omrade.brytlinjer
                 fordrojningsvolym = 0.0
                 grann_forsamring = 0.0
@@ -775,9 +829,36 @@ class FlodenApiApp:
                 nya_drabbade = []
                 projekt_entreer = []
 
+            if experiment is not None and experiment.har_aktiva():
+                exp_res = tillampa_experiment(
+                    efter_mark_z,
+                    efter_osak_z,
+                    efter_markslag,
+                    omrade.geo,
+                    experiment,
+                )
+                efter_mark_z = exp_res.mark_z
+                efter_osak_z = exp_res.osakerhet_z
+                efter_markslag = exp_res.markslag
+                efter_graf = bygg_sankgraf(
+                    efter_mark_z,
+                    efter_osak_z,
+                    efter_markslag,
+                    omrade.geo,
+                    brytlinjer=efter_brytlinjer,
+                    oppningar=omrade.oppningar,
+                )
+                efter_dyn = kor_dynamik_handelsestyrd(efter_graf, regn_tid, regn_int)
+                diff_arr = (efter_dyn.max_djup_m - fore_dyn.max_djup_m).astype(np.float32)
+                cell_area = float(omrade.geo.pixelstorlek_x) * float(omrade.geo.pixelstorlek_y)
+                grann_forsamring = float(np.sum(np.maximum(diff_arr, 0.0))) * cell_area
+                max_okning_granne = (
+                    float(max(0.0, float(np.max(diff_arr)))) if diff_arr.size > 0 else 0.0
+                )
+
             scenarier = _skapa_ensemble_scenarier(regn_tid, regn_int)
             ens_res = kor_ensemble(efter_graf, scenarier, percentiler=(10.0, 50.0, 90.0))
-        except (LappFel, DynamikFel, SankGrafFel, RenderingFel, ValueError) as exc:
+        except (LappFel, ExperimentFel, DynamikFel, SankGrafFel, RenderingFel, ValueError) as exc:
             raise FlodenWebbFel(f"Simuleringsfel: {exc}", status_kod=400) from exc
 
         kortid_s = time.perf_counter() - t_start
@@ -790,9 +871,19 @@ class FlodenApiApp:
         max_diff_abs = max(0.15, float(np.max(np.abs(diff_arr))))
 
         manifest: RunManifest
-        if fe_res is not None:
+        if fe_res is not None and exp_res is None and ratt_res is None:
             manifest = fe_res.manifest
         else:
+            manifest_params: dict[str, Any] = {
+                "omrade_id": omrade.omrade_id,
+                "regn_tid_s": list(regn_tid),
+                "regn_intensitet_mm_h": list(regn_int),
+                "epsg": EPSG_INTERN,
+            }
+            if ratt_res is not None:
+                manifest_params["grundmodell_rattning_sha256"] = ratt_res.rattning_sha256
+            if exp_res is not None:
+                manifest_params["experiment_sha256"] = exp_res.experiment_sha256
             manifest = skapa_manifest(
                 modul="webb",
                 indata=[
@@ -802,12 +893,7 @@ class FlodenApiApp:
                         sha256=omrade.bas_recept_sha256,
                     )
                 ],
-                parametrar={
-                    "omrade_id": omrade.omrade_id,
-                    "regn_tid_s": list(regn_tid),
-                    "regn_intensitet_mm_h": list(regn_int),
-                    "epsg": EPSG_INTERN,
-                },
+                parametrar=manifest_params,
                 utdata=[],
                 matvarden={
                     "kortid_s": float(kortid_s),
@@ -816,6 +902,26 @@ class FlodenApiApp:
                 },
             )
 
+        rattning_payload: dict[str, Any] | None = None
+        if ratt_res is not None and rattning is not None:
+            rattning_payload = {
+                "rattning_id": rattning.rattning_id,
+                "antal_aktiva_rattningar": int(ratt_res.antal_aktiva_rattningar),
+                "antal_andrade_celler": int(ratt_res.antal_andrade_celler),
+                "rattning_sha256": ratt_res.rattning_sha256,
+            }
+
+        experiment_payload: dict[str, Any] | None = None
+        if exp_res is not None and experiment is not None:
+            experiment_payload = {
+                "experiment_id": experiment.experiment_id,
+                "antal_aktiva_atgarder": int(exp_res.antal_aktiva_atgarder),
+                "antal_andrade_celler": int(exp_res.antal_andrade_celler),
+                "schakt_volym_m3": float(exp_res.schakt_volym_m3),
+                "fyll_volym_m3": float(exp_res.fyll_volym_m3),
+                "experiment_sha256": exp_res.experiment_sha256,
+            }
+
         geo = omrade.geo
         bbox_3011 = [float(geo.x_min), float(geo.y_min), float(geo.x_max), float(geo.y_max)]
         bbox_wgs84 = list(bbox_3011_till_wgs84(geo.x_min, geo.y_min, geo.x_max, geo.y_max))
@@ -823,7 +929,7 @@ class FlodenApiApp:
         return {
             "omrade_id": omrade.omrade_id,
             "lapp_id": lapp.lapp_id if lapp is not None else None,
-            "har_lapp": lapp is not None,
+            "har_lapp": lapp is not None or exp_res is not None,
             "epsg": EPSG_INTERN,
             "hojdsystem": HOJDSYSTEM,
             "bbox_3011": bbox_3011,
@@ -871,6 +977,8 @@ class FlodenApiApp:
             "nya_drabbade_entreer": nya_drabbade,
             "projekt_entreer": projekt_entreer,
             "forluster": forluster_meta,
+            "grundmodell_rattning": rattning_payload,
+            "experiment": experiment_payload,
             "kortid_s": float(kortid_s),
             "manifest": manifest.till_dict(),
             "kallor": list(omrade.kallor),
@@ -1164,6 +1272,13 @@ class FlodenApiApp:
 
             fil_sokvag = rapp_res.filer[fmt]
             data_bytes = fil_sokvag.read_bytes()
+            if fmt == "html" and karta_fil.is_file():
+                karta_b64 = base64.b64encode(karta_fil.read_bytes()).decode("ascii")
+                html_text = data_bytes.decode("utf-8").replace(
+                    'src="max_djup.png"',
+                    f'src="data:image/png;base64,{karta_b64}"',
+                )
+                data_bytes = html_text.encode("utf-8")
 
         kortid_s = time.perf_counter() - t_start
         return {
@@ -1548,7 +1663,26 @@ def skapa_http_server(
             self._skicka(status, headers, kropp)
 
         def do_POST(self) -> None:  # noqa: N802
-            langd = int(self.headers.get("Content-Length", "0") or "0")
+            max_bytes = 25 * 1024 * 1024
+            raw_len = self.headers.get("Content-Length", "0") or "0"
+            try:
+                langd = int(raw_len)
+            except ValueError:
+                status, headers, kropp = _json_svar(
+                    400, {"fel": f"Ogiltig Content-Length: {raw_len!r}", "status": 400}
+                )
+                self._skicka(status, headers, kropp)
+                return
+            if langd < 0 or langd > max_bytes:
+                status, headers, kropp = _json_svar(
+                    413,
+                    {
+                        "fel": f"Förfrågningskropp överstiger maxgränsen ({max_bytes} byte).",
+                        "status": 413,
+                    },
+                )
+                self._skicka(status, headers, kropp)
+                return
             kropp_in = self.rfile.read(langd) if langd > 0 else b""
             status, headers, kropp = app.hantera_forfragan("POST", self.path, kropp_in)
             self._skicka(status, headers, kropp)

@@ -11,10 +11,15 @@ import {
   korSimulering,
   skapaRapport,
 } from "./api";
-import { FlodenKartaKontroll, STANDARD_LAGER, type RitLage } from "./karta";
+import { arPolygonRitLage, FlodenKartaKontroll, STANDARD_LAGER, type RitLage } from "./karta";
 import type {
+  DikeAtgardPayload,
+  ExperimentAtgarderPayload,
   FordonTyp,
   ForlusterBegaran,
+  GataHojdsattningPayload,
+  GrundmodellRattningPayload,
+  HojdRattningPayload,
   JamforLage,
   KorBegaran,
   KorSvar,
@@ -22,7 +27,9 @@ import type {
   LappByggnadPayload,
   LappGataPayload,
   LappMagasinPayload,
+  MarkJusteringPayload,
   OmradeLagerSvar,
+  OppnaPassagePayload,
   OsakerhetBlock,
   PercentilNyckel,
   RapportBegaran,
@@ -36,6 +43,7 @@ import type {
   RiskSvar,
   RuttBegaran,
   RuttSvar,
+  VallAtgardPayload,
 } from "./types";
 
 interface WebbTillstand {
@@ -55,6 +63,12 @@ interface WebbTillstand {
   gator: LappGataPayload[];
   byggnader: LappByggnadPayload[];
   magasin: LappMagasinPayload[];
+  grundmodellPassager: OppnaPassagePayload[];
+  grundmodellHojdRattningar: HojdRattningPayload[];
+  expDiken: DikeAtgardPayload[];
+  expVallar: VallAtgardPayload[];
+  expGator: GataHojdsattningPayload[];
+  expMarkJusteringar: MarkJusteringPayload[];
   kallor: string[];
 }
 
@@ -75,6 +89,12 @@ const tillstand: WebbTillstand = {
   gator: [],
   byggnader: [],
   magasin: [],
+  grundmodellPassager: [],
+  grundmodellHojdRattningar: [],
+  expDiken: [],
+  expVallar: [],
+  expGator: [],
+  expMarkJusteringar: [],
   kallor: ["©Lantmäteriet", "SGU", "SMHI", "Floden"],
 };
 
@@ -119,6 +139,12 @@ const magasinVolymInput = hämtaEl<HTMLInputElement>("magasin-volym");
 const ritStatusBox = hämtaEl<HTMLDivElement>("rit-status");
 const ritTextSpan = hämtaEl<HTMLSpanElement>("rit-text");
 const objektLista = hämtaEl<HTMLUListElement>("lapp-objekt-lista");
+const broBreddInput = hämtaEl<HTMLInputElement>("bro-bredd");
+const expHojdDeltaInput = hämtaEl<HTMLInputElement>("exp-hojd-delta");
+const expBreddInput = hämtaEl<HTMLInputElement>("exp-bredd");
+const expLista = hämtaEl<HTMLUListElement>("exp-lista");
+const laddaExpFilInput = hämtaEl<HTMLInputElement>("ladda-exp-fil");
+const expStatus = hämtaEl<HTMLParagraphElement>("exp-status");
 const korKnapp = hämtaEl<HTMLButtonElement>("kor-knapp");
 const korStatus = hämtaEl<HTMLParagraphElement>("kor-status");
 const resultatKort = hämtaEl<HTMLDivElement>("resultat-kort");
@@ -155,6 +181,19 @@ const sidavidDiffImg = hämtaEl<HTMLImageElement>("sidavid-diff-img");
 
 const lagerKryssrutor = new Map<LagerId, HTMLInputElement>();
 
+const RIT_ETIKETTER: Record<RitLage, string> = {
+  ingen: "",
+  gata: "gata",
+  byggnad: "byggnad",
+  magasin: "magasin",
+  bro: "bro/trumma",
+  rattning_hojd: "höjdrättning/hinder",
+  dike: "dike",
+  vall: "vall/mur",
+  gata_hojd: "gatuhöjdsättning",
+  mark_justering: "schakt/fyllnad",
+};
+
 const kartaKontroll = new FlodenKartaKontroll("maplibre-karta", {
   onKoordinatHover: (e, n) => {
     koordIndikator.textContent = `EPSG:3011 · E ${e.toFixed(1)} m, N ${n.toFixed(1)} m`;
@@ -165,8 +204,8 @@ const kartaKontroll = new FlodenKartaKontroll("maplibre-karta", {
       return;
     }
     ritStatusBox.hidden = false;
-    const minPkt = lage === "gata" ? 2 : 3;
-    ritTextSpan.textContent = `Ritar ${lage}: ${antal} punkter (minst ${minPkt} krävs).`;
+    const minPkt = arPolygonRitLage(lage) ? 3 : 2;
+    ritTextSpan.textContent = `Ritar ${RIT_ETIKETTER[lage]}: ${antal} punkter (minst ${minPkt} krävs).`;
   },
 });
 
@@ -407,6 +446,48 @@ function base64TillBlob(base64Str: string, mimeTyp: string): Blob {
   return new Blob([bytes], { type: mimeTyp });
 }
 
+function byggGrundmodellPayload(): GrundmodellRattningPayload | undefined {
+  if (
+    tillstand.grundmodellPassager.length === 0 &&
+    tillstand.grundmodellHojdRattningar.length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    rattning_id: "webb-grundmodell-rattning",
+    passager: tillstand.grundmodellPassager,
+    hojd_rattningar: tillstand.grundmodellHojdRattningar,
+  };
+}
+
+function byggExperimentPayload(): ExperimentAtgarderPayload | undefined {
+  if (
+    tillstand.expDiken.length === 0 &&
+    tillstand.expVallar.length === 0 &&
+    tillstand.expGator.length === 0 &&
+    tillstand.expMarkJusteringar.length === 0
+  ) {
+    return undefined;
+  }
+  return {
+    experiment_id: "webb-experiment",
+    diken: tillstand.expDiken,
+    vallar: tillstand.expVallar,
+    gator: tillstand.expGator,
+    mark_justeringar: tillstand.expMarkJusteringar,
+  };
+}
+
+function synkaKartaSkiss(): void {
+  kartaKontroll.ritaLappObjekt(
+    tillstand.gator,
+    tillstand.byggnader,
+    tillstand.magasin,
+    byggGrundmodellPayload(),
+    byggExperimentPayload(),
+  );
+}
+
 function renderaObjektLista(): void {
   objektLista.innerHTML = "";
   const poster: string[] = [];
@@ -424,7 +505,131 @@ function renderaObjektLista(): void {
     li.textContent = text;
     objektLista.append(li);
   }
-  kartaKontroll.ritaLappObjekt(tillstand.gator, tillstand.byggnader, tillstand.magasin);
+  synkaKartaSkiss();
+}
+
+function laggTillExpRad(
+  etikett: string,
+  aktiv: boolean,
+  onToggle: (nyAktiv: boolean) => void,
+  onTaBort: () => void,
+): void {
+  const li = document.createElement("li");
+  li.className = aktiv ? "exp-rad" : "exp-rad exp-rad-inaktiv";
+
+  const label = document.createElement("label");
+  const kryss = document.createElement("input");
+  kryss.type = "checkbox";
+  kryss.checked = aktiv;
+  kryss.addEventListener("change", () => {
+    onToggle(kryss.checked);
+    renderaExpLista();
+  });
+
+  const span = document.createElement("span");
+  span.textContent = etikett;
+  span.title = etikett;
+  label.append(kryss, span);
+
+  const taBortKnapp = document.createElement("button");
+  taBortKnapp.type = "button";
+  taBortKnapp.className = "exp-ta-bort";
+  taBortKnapp.textContent = "×";
+  taBortKnapp.title = "Ta bort";
+  taBortKnapp.setAttribute("aria-label", `Ta bort ${etikett}`);
+  taBortKnapp.addEventListener("click", () => {
+    onTaBort();
+    renderaExpLista();
+  });
+
+  li.append(label, taBortKnapp);
+  expLista.append(li);
+}
+
+function renderaExpLista(): void {
+  expLista.innerHTML = "";
+
+  tillstand.grundmodellPassager.forEach((p, idx) => {
+    laggTillExpRad(
+      `[Grund] Bro/trumma ${p.passage_id} (${p.bredd_m.toFixed(1)} m)`,
+      p.aktiv,
+      (ny) => {
+        p.aktiv = ny;
+      },
+      () => {
+        tillstand.grundmodellPassager.splice(idx, 1);
+      },
+    );
+  });
+
+  tillstand.grundmodellHojdRattningar.forEach((h, idx) => {
+    laggTillExpRad(
+      `[Grund] Rättning ${h.rattning_id} (${h.polygon.length} pkt)`,
+      h.aktiv,
+      (ny) => {
+        h.aktiv = ny;
+      },
+      () => {
+        tillstand.grundmodellHojdRattningar.splice(idx, 1);
+      },
+    );
+  });
+
+  tillstand.expDiken.forEach((d, idx) => {
+    laggTillExpRad(
+      `[Exp] Dike ${d.atgard_id} (djup ${d.djup_m.toFixed(2)} m, b ${d.botten_bredd_m.toFixed(1)} m)`,
+      d.aktiv,
+      (ny) => {
+        d.aktiv = ny;
+      },
+      () => {
+        tillstand.expDiken.splice(idx, 1);
+      },
+    );
+  });
+
+  tillstand.expVallar.forEach((v, idx) => {
+    laggTillExpRad(
+      `[Exp] Vall ${v.atgard_id} (+${v.hojd_over_mark_m.toFixed(2)} m, b ${v.kron_bredd_m.toFixed(1)} m)`,
+      v.aktiv,
+      (ny) => {
+        v.aktiv = ny;
+      },
+      () => {
+        tillstand.expVallar.splice(idx, 1);
+      },
+    );
+  });
+
+  tillstand.expGator.forEach((g, idx) => {
+    const tecken = g.delta_z_m >= 0 ? "+" : "";
+    laggTillExpRad(
+      `[Exp] Gata ${g.atgard_id} (${tecken}${g.delta_z_m.toFixed(2)} m, b ${g.bredd_m.toFixed(1)} m)`,
+      g.aktiv,
+      (ny) => {
+        g.aktiv = ny;
+      },
+      () => {
+        tillstand.expGator.splice(idx, 1);
+      },
+    );
+  });
+
+  tillstand.expMarkJusteringar.forEach((m, idx) => {
+    const tecken = m.delta_z_m >= 0 ? "+" : "";
+    laggTillExpRad(
+      `[Exp] Mark ${m.atgard_id} (${tecken}${m.delta_z_m.toFixed(2)} m, ${m.polygon.length} pkt)`,
+      m.aktiv,
+      (ny) => {
+        m.aktiv = ny;
+      },
+      () => {
+        tillstand.expMarkJusteringar.splice(idx, 1);
+      },
+    );
+  });
+
+  synkaKartaSkiss();
 }
 
 function renderaOsakerhetOchKallor(): void {
@@ -485,9 +690,24 @@ function renderaResultatKort(): void {
     `
     : "";
 
+  const grundmodellRader = res.grundmodell_rattning
+    ? `
+      <div class="mått-rad"><span>Grundmodell-rättningar</span><strong>${res.grundmodell_rattning.antal_aktiva_rattningar} st (${res.grundmodell_rattning.antal_andrade_celler} celler)</strong></div>
+    `
+    : "";
+
+  const experimentRader = res.experiment
+    ? `
+      <div class="mått-rad"><span>Experimentåtgärder</span><strong>${res.experiment.antal_aktiva_atgarder} st (${res.experiment.antal_andrade_celler} celler)</strong></div>
+      <div class="mått-rad"><span>Schakt / fyllnad</span><strong>${res.experiment.schakt_volym_m3.toFixed(1)} m³ / ${res.experiment.fyll_volym_m3.toFixed(1)} m³</strong></div>
+    `
+    : "";
+
   resultatKort.innerHTML = `
     ${regnRader}
     ${forlustRader}
+    ${grundmodellRader}
+    ${experimentRader}
     <div class="mått-rad"><span>Maxdjup före</span><strong>${res.fore.max_djup_m.toFixed(3)} m</strong></div>
     <div class="mått-rad"><span>Maxdjup efter</span><strong>${res.efter.max_djup_m.toFixed(3)} m</strong></div>
     <div class="mått-rad"><span>Max djupökning granne</span><strong>${res.max_okning_djup_granne_m.toFixed(3)} m</strong></div>
@@ -817,26 +1037,82 @@ hämtaEl<HTMLButtonElement>("rita-byggnad-knapp").addEventListener("click", () =
 hämtaEl<HTMLButtonElement>("rita-magasin-knapp").addEventListener("click", () => {
   kartaKontroll.startaRitning("magasin");
 });
+hämtaEl<HTMLButtonElement>("rita-bro-knapp").addEventListener("click", () => {
+  kartaKontroll.startaRitning("bro");
+});
+hämtaEl<HTMLButtonElement>("rita-rattning-hojd-knapp").addEventListener("click", () => {
+  kartaKontroll.startaRitning("rattning_hojd");
+});
+hämtaEl<HTMLButtonElement>("rita-dike-knapp").addEventListener("click", () => {
+  kartaKontroll.startaRitning("dike");
+});
+hämtaEl<HTMLButtonElement>("rita-vall-knapp").addEventListener("click", () => {
+  kartaKontroll.startaRitning("vall");
+});
+hämtaEl<HTMLButtonElement>("rita-gata-hojd-knapp").addEventListener("click", () => {
+  kartaKontroll.startaRitning("gata_hojd");
+});
+hämtaEl<HTMLButtonElement>("rita-mark-justering-knapp").addEventListener("click", () => {
+  kartaKontroll.startaRitning("mark_justering");
+});
 
 hämtaEl<HTMLButtonElement>("sluta-rita-knapp").addEventListener("click", () => {
+  const antalTotalt =
+    tillstand.gator.length +
+    tillstand.byggnader.length +
+    tillstand.magasin.length +
+    tillstand.grundmodellPassager.length +
+    tillstand.grundmodellHojdRattningar.length +
+    tillstand.expDiken.length +
+    tillstand.expVallar.length +
+    tillstand.expGator.length +
+    tillstand.expMarkJusteringar.length;
+
+  const broBreddVal = Number(broBreddInput.value);
+  const expHojdVal = Number(expHojdDeltaInput.value);
+  const expBreddVal = Number(expBreddInput.value);
+
   const ritad = kartaKontroll.slutforRitning({
     sektion: gataSektionSelect.value || "standard-12m",
     entreRh2000: Number(byggnadEntreInput.value) || 10.4,
     magasinVolymM3: Number(magasinVolymInput.value) || 8.0,
-    index: tillstand.gator.length + tillstand.byggnader.length + tillstand.magasin.length + 1,
+    broBreddM: Number.isFinite(broBreddVal) && broBreddVal > 0 ? broBreddVal : 4.0,
+    expHojdDeltaM: Number.isFinite(expHojdVal) ? expHojdVal : 0.4,
+    expBreddM: Number.isFinite(expBreddVal) && expBreddVal > 0 ? expBreddVal : 1.5,
+    index: antalTotalt + 1,
   });
   if (!ritad) {
-    korStatus.textContent = "För få punkter ritade för att skapa lappobjekt.";
+    korStatus.textContent = "För få punkter ritade för att skapa objekt.";
     return;
   }
   if (ritad.typ === "gata") {
     tillstand.gator.push(ritad.data);
+    renderaObjektLista();
   } else if (ritad.typ === "byggnad") {
     tillstand.byggnader.push(ritad.data);
-  } else {
+    renderaObjektLista();
+  } else if (ritad.typ === "magasin") {
     tillstand.magasin.push(ritad.data);
+    renderaObjektLista();
+  } else if (ritad.typ === "bro") {
+    tillstand.grundmodellPassager.push(ritad.data);
+    renderaExpLista();
+  } else if (ritad.typ === "rattning_hojd") {
+    tillstand.grundmodellHojdRattningar.push(ritad.data);
+    renderaExpLista();
+  } else if (ritad.typ === "dike") {
+    tillstand.expDiken.push(ritad.data);
+    renderaExpLista();
+  } else if (ritad.typ === "vall") {
+    tillstand.expVallar.push(ritad.data);
+    renderaExpLista();
+  } else if (ritad.typ === "gata_hojd") {
+    tillstand.expGator.push(ritad.data);
+    renderaExpLista();
+  } else if (ritad.typ === "mark_justering") {
+    tillstand.expMarkJusteringar.push(ritad.data);
+    renderaExpLista();
   }
-  renderaObjektLista();
 });
 
 hämtaEl<HTMLButtonElement>("avbryt-rita-knapp").addEventListener("click", () => {
@@ -852,6 +1128,83 @@ hämtaEl<HTMLButtonElement>("rensa-lapp-knapp").addEventListener("click", () => 
   landxmlFilInput.value = "";
   landxmlStatus.textContent = "Ingen LandXML-fil laddad.";
   renderaObjektLista();
+});
+
+hämtaEl<HTMLButtonElement>("spara-exp-knapp").addEventListener("click", () => {
+  const innehall = {
+    grundmodell_rattning: byggGrundmodellPayload() ?? {
+      rattning_id: "webb-grundmodell-rattning",
+      passager: [],
+      hojd_rattningar: [],
+    },
+    experiment: byggExperimentPayload() ?? {
+      experiment_id: "webb-experiment",
+      diken: [],
+      vallar: [],
+      gator: [],
+      mark_justeringar: [],
+    },
+  };
+  const blob = new Blob([JSON.stringify(innehall, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `floden-experiment-${tillstand.omradeId || "omrade"}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  expStatus.textContent = "Sparade experiment- och rättnings-JSON.";
+});
+
+laddaExpFilInput.addEventListener("change", () => {
+  const fil = laddaExpFilInput.files?.[0];
+  if (!fil) {
+    return;
+  }
+  void fil
+    .text()
+    .then((text) => {
+      const parsed: unknown = JSON.parse(text);
+      if (typeof parsed !== "object" || parsed === null) {
+        throw new Error("Filen måste innehålla ett JSON-objekt.");
+      }
+      const obj = parsed as {
+        grundmodell_rattning?: GrundmodellRattningPayload | null;
+        experiment?: ExperimentAtgarderPayload | null;
+      };
+      const gm = obj.grundmodell_rattning;
+      const exp = obj.experiment;
+      tillstand.grundmodellPassager = Array.isArray(gm?.passager) ? gm.passager : [];
+      tillstand.grundmodellHojdRattningar = Array.isArray(gm?.hojd_rattningar)
+        ? gm.hojd_rattningar
+        : [];
+      tillstand.expDiken = Array.isArray(exp?.diken) ? exp.diken : [];
+      tillstand.expVallar = Array.isArray(exp?.vallar) ? exp.vallar : [];
+      tillstand.expGator = Array.isArray(exp?.gator) ? exp.gator : [];
+      tillstand.expMarkJusteringar = Array.isArray(exp?.mark_justeringar)
+        ? exp.mark_justeringar
+        : [];
+      renderaExpLista();
+      expStatus.textContent = `Laddade ${fil.name}.`;
+    })
+    .catch((err: unknown) => {
+      expStatus.textContent = `Kunde inte läsa JSON: ${err instanceof Error ? err.message : String(err)}`;
+    })
+    .finally(() => {
+      laddaExpFilInput.value = "";
+    });
+});
+
+hämtaEl<HTMLButtonElement>("rensa-exp-knapp").addEventListener("click", () => {
+  tillstand.grundmodellPassager = [];
+  tillstand.grundmodellHojdRattningar = [];
+  tillstand.expDiken = [];
+  tillstand.expVallar = [];
+  tillstand.expGator = [];
+  tillstand.expMarkJusteringar = [];
+  renderaExpLista();
+  expStatus.textContent = "Rensade rättningar och experimentåtgärder.";
 });
 
 korKnapp.addEventListener("click", () => {
@@ -892,6 +1245,16 @@ korKnapp.addEventListener("click", () => {
 
   if (tillstand.landxmlText) {
     begaran.landxml = tillstand.landxmlText;
+  }
+
+  const grundmodellPayload = byggGrundmodellPayload();
+  if (grundmodellPayload) {
+    begaran.grundmodell_rattning = grundmodellPayload;
+  }
+
+  const experimentPayload = byggExperimentPayload();
+  if (experimentPayload) {
+    begaran.experiment = experimentPayload;
   }
 
   void korSimulering(begaran)

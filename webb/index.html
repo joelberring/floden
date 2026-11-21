@@ -175,6 +175,53 @@
           </div>
         </section>
 
+        <section class="panel-sektion experiment-panel" aria-label="Experimentläge och grundmodell-rättning">
+          <h2>Experimentläge &amp; grundmodell-rättning</h2>
+          <div class="exp-grupp">
+            <h3 class="under-rubrik">Grundmodell – påverkar före &amp; efter</h3>
+            <div class="knapp-rad">
+              <button type="button" id="rita-bro-knapp" class="sekundar-knapp liten">Öppna bro/trumma</button>
+              <button type="button" id="rita-rattning-hojd-knapp" class="sekundar-knapp liten">Rätta höjd / ta bort hinder</button>
+            </div>
+            <div class="exp-bredd-rad">
+              <label class="falt-etikett" for="bro-bredd">Bro-/trumbredd (m)</label>
+              <input id="bro-bredd" class="kontroll" type="number" min="0.5" step="0.5" value="4.0" />
+            </div>
+          </div>
+
+          <div class="exp-grupp">
+            <h3 class="under-rubrik">Experiment – påverkar bara efter</h3>
+            <div class="knapp-rad">
+              <button type="button" id="rita-dike-knapp" class="sekundar-knapp liten">Dike</button>
+              <button type="button" id="rita-vall-knapp" class="sekundar-knapp liten">Vall/mur</button>
+              <button type="button" id="rita-gata-hojd-knapp" class="sekundar-knapp liten">Höjdsätt gata</button>
+              <button type="button" id="rita-mark-justering-knapp" class="sekundar-knapp liten">Schakt/fyllnad</button>
+            </div>
+            <div class="grid-tva">
+              <div>
+                <label class="falt-etikett" for="exp-hojd-delta">Höjd/djup Δz (m)</label>
+                <input id="exp-hojd-delta" class="kontroll" type="number" step="0.05" value="0.40" />
+              </div>
+              <div>
+                <label class="falt-etikett" for="exp-bredd">Bredd (m)</label>
+                <input id="exp-bredd" class="kontroll" type="number" min="0.5" step="0.5" value="1.5" />
+              </div>
+            </div>
+          </div>
+
+          <ul id="exp-lista" class="exp-lista"></ul>
+
+          <div class="knapp-rad">
+            <button type="button" id="spara-exp-knapp" class="sekundar-knapp liten">Spara JSON</button>
+            <label class="sekundar-knapp liten fil-knapp" for="ladda-exp-fil">
+              Ladda JSON
+              <input id="ladda-exp-fil" type="file" accept=".json,application/json" hidden />
+            </label>
+            <button type="button" id="rensa-exp-knapp" class="sekundar-knapp liten">Rensa</button>
+          </div>
+          <p id="exp-status" class="hjalptext" role="status"></p>
+        </section>
+
         <section class="panel-sektion">
           <button type="button" id="kor-knapp" class="primar-knapp fullbredd">
             Kör simulering (före/efter + ensemble)

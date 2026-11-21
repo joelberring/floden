@@ -77,6 +77,18 @@ def _diff_fargkarta(diff_m: NDArray[np.float64], max_abs_m: float) -> NDArray[np
     return rgb
 
 
+def _latin1_saker(text: str) -> str:
+    """Normaliserar Unicode-tecken som saknas i Pillows inbyggda latin-1-typsnitt."""
+    s = (
+        text.replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .replace("\u2212", "-")
+        .replace("\u2265", ">=")
+        .replace("\u2264", "<=")
+    )
+    return s.encode("latin-1", errors="replace").decode("latin-1")
+
+
 def _komponera_karta_med_legend(
     rgb: NDArray[np.uint8],
     legend_rgb: NDArray[np.uint8],
@@ -121,13 +133,21 @@ def _komponera_karta_med_legend(
         outline=(60, 60, 60),
     )
 
-    rit.text((_RAND_PX, 10), titel, fill=(20, 20, 20))
+    rit.text((_RAND_PX, 10), _latin1_saker(titel), fill=(20, 20, 20))
     etikett_x = legend_x + _LEGEND_BREDD_PX + 6
-    rit.text((etikett_x, _TITEL_HOJD_PX), legend_topp, fill=(30, 30, 30))
-    rit.text((etikett_x, _TITEL_HOJD_PX + vis_h // 2 - 5), legend_mitt, fill=(30, 30, 30))
-    rit.text((etikett_x, _TITEL_HOJD_PX + vis_h - 12), legend_botten, fill=(30, 30, 30))
+    rit.text((etikett_x, _TITEL_HOJD_PX), _latin1_saker(legend_topp), fill=(30, 30, 30))
+    rit.text(
+        (etikett_x, _TITEL_HOJD_PX + vis_h // 2 - 5),
+        _latin1_saker(legend_mitt),
+        fill=(30, 30, 30),
+    )
+    rit.text(
+        (etikett_x, _TITEL_HOJD_PX + vis_h - 12),
+        _latin1_saker(legend_botten),
+        fill=(30, 30, 30),
+    )
 
-    fot_text = f"EPSG:3011 / RH 2000 | Källa: {kalla}"
+    fot_text = _latin1_saker(f"EPSG:3011 / RH 2000 | Källa: {kalla}")
     rit.text((_RAND_PX, _TITEL_HOJD_PX + vis_h + 8), fot_text, fill=(70, 70, 70))
     return duk
 
