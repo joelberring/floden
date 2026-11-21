@@ -226,12 +226,61 @@ def kor_dagsljus_testfall() -> tuple[list[DagsljusFall], str]:
         )
         return float(np.abs(t - bf).mean())
 
+    def _fore_efter_block(hojd_efter_m: float) -> tuple[Hojdfalt, Hojdfalt]:
+        """Block 30 x 20 m centrerat i origo: höjd 12 m före och `hojd_efter_m` efter."""
+        n = 801
+        xc = (np.arange(n) - n // 2) * 1.0
+        xx, yy = np.meshgrid(xc, -xc)
+        fot = (np.abs(xx) <= 15) & (np.abs(yy) <= 10)
+        z0, z1 = np.zeros((n, n)), np.zeros((n, n))
+        z0[fot], z1[fot] = 12.0, hojd_efter_m
+        return Hojdfalt(z0, 1.0, -n / 2.0, n / 2.0), Hojdfalt(z1, 1.0, -n / 2.0, n / 2.0)
+
+    def _timmar_punkter(f: Hojdfalt, px: NDArray[np.float64], py: NDArray[np.float64]) -> Falt:
+        k = 180
+        sh, sa = solposition(dygnsfonster_utc("2026-03-20", 18.07, 10.0), 59.33, 18.07)
+        hk = np.empty((k, px.size))
+        for i, phi in enumerate(riktningar_rad(k)):
+            hk[i] = horisont_mipmap(
+                f, px, py, np.zeros(px.size), np.full(px.size, phi), radie_fe
+            ).h_rad
+        return soltimmar_fran_profiler(hk, sh, sa, 10.0 / 60.0)
+
+    hmax_fe, hmin_fe = 20.0, 15.0
+    radie_fe = hmax_fe / math.tan(math.radians(hmin_fe))  # 74,6 m
+
+    def e6() -> float:
+        """Höjt block: soltimmar får aldrig öka (utanför blockets egna celler); mått = största
+        ökning i timmar över 300 markpunkter i en ring 1-60 m från blocket."""
+        f0, f1 = _fore_efter_block(hmax_fe)
+        gx, gy = np.meshgrid(np.arange(-60.5, 61.0, 6.0), np.arange(-60.5, 61.0, 6.0))
+        px, py = gx.ravel(), gy.ravel()
+        ute = ~((np.abs(px) <= 16) & (np.abs(py) <= 11))
+        px, py = px[ute], py[ute]
+        d = _timmar_punkter(f1, px, py) - _timmar_punkter(f0, px, py)
+        assert d.min() < -0.5  # fler skuggtimmar finns (testet mäter inte tomt)
+        return max(0.0, float(d.max()))
+
+    def e7() -> float:
+        """Punkter bortom påverkansradien (H_max / tan h_min) från det höjda blocket är exakt
+        oförändrade: största absoluta skillnad i soltimmar över 240 punkter 92-150 m bort."""
+        f0, f1 = _fore_efter_block(hmax_fe)
+        v = np.radians(np.arange(0.0, 360.0, 3.0))
+        pr = np.concatenate([(radie_fe + 18.0) + 0.0 * v, 150.0 + 0.0 * v])
+        px = np.concatenate([pr[: v.size] * np.sin(v), pr[v.size :] * np.sin(v)])
+        py = np.concatenate([pr[: v.size] * np.cos(v), pr[v.size :] * np.cos(v)])
+        # Blockets celler når 15,5 m från origo i x: avståndet till blocket är minst radie + 2,5 m.
+        d = _timmar_punkter(f1, px, py) - _timmar_punkter(f0, px, py)
+        return float(np.abs(d).max())
+
     spec = [
         ("E1", "Fri plan: VSC = 39,6 % (BRE), SVF = 1", e1, 3e-6, "andel"),
         ("E2", "Oändlig vägg: h = atan(H cos psi / d)", e2, 1e-12, "rad"),
         ("E3", "Gaturum H/W: SVF mitt i gatan mot Oke (K = 64)", e3, 1e-9, "andel"),
         ("E4", "Gaturum: VSC vid fasadfot mot kvadratur (K/2 = 1024)", e4, 1e-5, "andel"),
         ("E5", "Skuggstudie: soltimmar mot strålgång (K = 512), medelfel", e5, 0.03, "h"),
+        ("E6", "Före/efter: höjt block ger aldrig fler soltimmar (K = 180)", e6, 1e-9, "h"),
+        ("E7", "Före/efter: punkter bortom påverkansradien exakt oförändrade", e7, 0.0, "h"),
     ]
     res: list[DagsljusFall] = []
     for id_, namn, f, grans, enhet in spec:

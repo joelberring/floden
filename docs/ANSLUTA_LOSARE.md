@@ -29,6 +29,7 @@ class VscFasad(Losare):
     beskrivning: ClassVar[str] = "Himmelsexponering (VSC) på fasadpunkter."
     indataroller: ClassVar[tuple[str, ...]] = ("fasadpunkter",)   # filer frågan måste ange
     utdataroller: ClassVar[tuple[str, ...]] = ("vsc",)            # filer du alltid lämnar
+    valfria_indataroller: ClassVar[tuple[str, ...]] = ()          # filer frågan får ange (lösaren väljer själv utan dem)
 
     def validera_parametrar(self, p: Mapping[str, Any]) -> dict[str, Any]:
         okanda = set(p) - {"azimutriktningar", "max_avstand_m"}
@@ -71,6 +72,9 @@ LOSARE: list[Losare] = [VscFasad()]
 - **Parametrar kommer i kanonisk form.** Lösaren får exakt det som hashades: ett
   heltalsvärt flyttal (3.0) kommer som heltal (3). Konvertera själv (`float(...)`) där
   typen spelar roll.
+- **Valfri indata.** Roller i `valfria_indataroller` får anges men måste inte; lösaren väljer själv vad som gäller
+  utan dem (`dagsljus.vsc_fasad` tar fasadpunkter ur K11 om `fasadpunkter` saknas). Filens sha256 ingår i nyckeln
+  när den anges.
 - **Extra indata ska vara en fil.** Bara den namngivna filen hashas, så använd GeoPackage,
   Parquet eller CSV, inte Shapefile (vars .dbf/.shx då inte skulle synas i nyckeln).
 - **Alla parametrar valideras.** Okända parametrar ska ge `LosarFel`, inte ignoreras
