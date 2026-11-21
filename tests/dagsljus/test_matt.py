@@ -28,6 +28,8 @@ from dagsljus.matt import (
 from dagsljus.solposition import dygnsfonster_utc, solposition
 
 from .geometri import (
+    blocktest_geometri,
+    bruteforce_timmar,
     kanjon_falt,
     plan,
     svf_kanjon_facit,
@@ -189,54 +191,17 @@ class TestKonvergensRutstorlek(unittest.TestCase):
         self.assertLess(fel[0.25][1], 4e-3)
 
 
-def _blocktest_geometri() -> tuple[Hojdfalt, np.ndarray, np.ndarray]:
-    """Block 30 m (Ö–V) x 20 m (N–S), höjd 15 m, centrerat i origo; punkter norr, öster och väster
-    om det (där skuggan faller ett vårdagjämningsdygn i Stockholm)."""
-    n, cell = 801, 1.0
-    xc = (np.arange(n) - n // 2) * cell
-    xx, yy = np.meshgrid(xc, -xc)
-    z = np.zeros((n, n))
-    z[(np.abs(xx) <= 15) & (np.abs(yy) <= 10)] = 15.0
-    f = Hojdfalt(z, cell, -n * cell / 2, n * cell / 2)
-    pts = (
-        [(0.0, y) for y in (11.5, 14.5, 18.5, 25.5, 35.5, 50.5)]
-        + [(x, 18.5) for x in (-20.5, -15.5, -10.5, 10.5, 20.5, 25.5)]
-        + [(-30.5, 8.5), (30.5, -12.5)]
-    )
-    return f, np.array([p[0] for p in pts]), np.array([p[1] for p in pts])
-
-
-def _bruteforce_timmar(
-    f: Hojdfalt, px: float, py: float, sol_h: np.ndarray, sol_az: np.ndarray, steg_h: float
-) -> float:
-    """Oberoende strålgång: för varje tidssteg, gå mot solen i steg om 0,02 m och kontrollera
-    om någon cell sticker upp över solstrålen. Delar ingen kod med horisontberäkningen."""
-    s = np.arange(0.02, 300.0, 0.02)
-    antal = 0
-    for e, a in zip(sol_h, sol_az, strict=True):
-        if e <= 0:
-            continue
-        xs, ys = px + s * math.sin(a), py + s * math.cos(a)
-        j = np.floor((xs - f.x_min_m) / f.cell_m).astype(int)
-        i = np.floor((f.y_max_m - ys) / f.cell_m).astype(int)
-        ok = (j >= 0) & (j < f.bredd) & (i >= 0) & (i < f.hojd)
-        z = np.where(ok, f.z_m[np.clip(i, 0, f.hojd - 1), np.clip(j, 0, f.bredd - 1)], -1e9)
-        if np.all(z <= s * math.tan(e)):
-            antal += 1
-    return antal * steg_h
-
-
 class TestSoltimmar(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.f, cls.x, cls.y = _blocktest_geometri()
+        cls.f, cls.x, cls.y = blocktest_geometri()
         cls.steg_min = 5.0
         t = dygnsfonster_utc("2026-03-20", 18.07, cls.steg_min)
         cls.sh, cls.sa = solposition(t, 59.33, 18.07)
         cls.steg_h = cls.steg_min / 60.0
         cls.bf = np.array(
             [
-                _bruteforce_timmar(cls.f, px, py, cls.sh, cls.sa, cls.steg_h)
+                bruteforce_timmar(cls.f, px, py, cls.sh, cls.sa, cls.steg_h)
                 for px, py in zip(cls.x, cls.y, strict=True)
             ]
         )
