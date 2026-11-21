@@ -1,0 +1,102 @@
+# Lagerprofil: Stockholms baskarta -> Flodens roller (markmodell.lagerprofil).
+#
+# Profilen är en del av markmodellens recept: dess sha256 skrivs i recept.json, så en ändrad profil ger en ny
+# markmodell. Ändra inte i en profil som använts skarpt – höj `version` eller lägg en ny fil.
+#
+# [[linjer]]: lagerprefix (skiftlägesokänsligt, längsta prefix vinner) -> roll och standardmått.
+#   roll: kantsten, mur, stodmur, staket, bankkant (brytlinjer, standard_m = höjd i m),
+#         byggnad (standard_m = hinderhöjd i m), trumma, port (standard_m = bredd i m).
+#   Raderna motsvarar exakt markmodell.grundkarta.STANDARD_STOCKHOLM_LAGERMAPPNING (testat).
+#
+# [[ytor]]: skraffyrlager (HATCH, även CIRCLE/SOLID) -> markslagskod enligt K1:
+#   1 hårdgjort, 2 tak, 3 grönt tak, 4 gräs, 5 skog, 6 berg i dagen, 7 grus, 8 vatten, 9 byggnad.
+
+namn = "stockholm_baskarta"
+version = 1
+beskrivning = "Stockholms baskarta (DXF/DWG), linjeregler som STANDARD_STOCKHOLM_LAGERMAPPNING"
+
+[[linjer]]
+prefix = "KANTSTEN"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "VAGKANT"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "VÄGKANT"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "MUR"
+roll = "mur"
+standard_m = 1.0
+
+[[linjer]]
+prefix = "STODMUR"
+roll = "stodmur"
+standard_m = 1.5
+
+[[linjer]]
+prefix = "STÖDMUR"
+roll = "stodmur"
+standard_m = 1.5
+
+[[linjer]]
+prefix = "STAKET"
+roll = "staket"
+standard_m = 0.15
+
+[[linjer]]
+prefix = "SLANTKANT"
+roll = "bankkant"
+standard_m = 0.30
+
+[[linjer]]
+prefix = "SLÄNTKANT"
+roll = "bankkant"
+standard_m = 0.30
+
+[[linjer]]
+prefix = "BANKKANT"
+roll = "bankkant"
+standard_m = 0.30
+
+[[linjer]]
+prefix = "HUSLIV"
+roll = "byggnad"
+standard_m = 10.0
+
+[[linjer]]
+prefix = "BYGGNAD"
+roll = "byggnad"
+standard_m = 10.0
+
+[[linjer]]
+prefix = "TRUMMA"
+roll = "trumma"
+standard_m = 1.0
+
+[[linjer]]
+prefix = "PORT"
+roll = "port"
+standard_m = 2.5
+
+# Ytregler: ATT BEKRÄFTA MOT STADENS BASKARTA. Lagernamnen nedan är bara exempel på formen, inte stadens
+# verkliga lagernamn. Inga ytregler är aktiva förrän de bekräftats; utan ytregler ger DWG-läsaren inga
+# markslagsytor (skraffyrerna räknas då som okända lager och listas i varningarna).
+#
+# [[ytor]]
+# prefix = "EXEMPEL_ASFALT"   # att bekräfta mot stadens baskarta
+# markslag = 1
+#
+# [[ytor]]
+# prefix = "EXEMPEL_GRAS"     # att bekräfta mot stadens baskarta
+# markslag = 4
+#
+# [[ytor]]
+# prefix = "EXEMPEL_VATTEN"   # att bekräfta mot stadens baskarta
+# markslag = 8
