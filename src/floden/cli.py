@@ -490,6 +490,43 @@ def _kor_sankgraf_kommando(args: argparse.Namespace) -> int:
         return 2
 
 
+def _kor_blaytor_kommando(args: argparse.Namespace) -> int:
+    """Blåytor vid X mm (systemdesign 4.1): sänkgraf + statisk Fill–Spill–Merge, K6-likt ut."""
+    from vatten.blaytor import Blaytemodell, BlaytorFel, k1_filer, skriv_blaytor
+
+    try:
+        indata = _hitta_omrade_mapp(args.k1, args.rot)
+        filer = k1_filer(indata)
+        modell = Blaytemodell.fran_k1_mapp(indata, args.persistens_faktor)
+        payload: list[dict[str, Any]] = []
+        for mm in args.mm:
+            r = modell.vid_mm(mm)
+            ut = Path(args.ut) if len(args.mm) == 1 else Path(args.ut) / f"mm_{mm:g}"
+            skriv_blaytor(
+                r,
+                modell.graf.geo,
+                ut,
+                indata_filer=filer,
+                parametrar={"k1_mapp": str(indata), "persistens_faktor": args.persistens_faktor},
+            )
+            m = r.matvarden()
+            m["ut"] = str(ut)
+            payload.append(m)
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0
+        for m in payload:
+            print(
+                f"{m['regn_mm']:g} mm: lagrat {m['lagrat_m3']:.3f} m³, ut {m['ut_m3']:.3f} m³, "
+                f"max djup {m['max_djup_m']:.3f} m, fyllda sänkor {m['antal_fyllda_sankor']}, "
+                f"volymfel {m['volymfel_rel']:.1e} -> {m['ut']}"
+            )
+        return 0
+    except (TestsvitFel, K1FormatFel, SankGrafFel, BlaytorFel, ValueError, OSError) as exc:
+        print(f"Fel i blaytorkommando: {exc}", file=sys.stderr)
+        return 2
+
+
 def _ladda_regn_for_kor(args: argparse.Namespace, indata: Path) -> tuple[RegnSerieK4, Path | None]:
     har_csv = args.regn_csv is not None
     har_spec = args.regn_id is not None or args.aterkomsttid_ar is not None
@@ -1022,6 +1059,22 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Skriv ut sammanfattning som JSON.",
     )
 
+    bl_parser = subparsers.add_parser(
+        "blaytor",
+        help="Blåytor vid X mm regn (sänkgraf + statisk fyllning, K6-likt ut).",
+        description="Fördelar X mm likformigt regn genom sänkgrafens fill–spill-träd.",
+    )
+    bl_parser.add_argument(
+        "--k1", type=str, required=True, help="K1-indatamapp eller testfalls-ID."
+    )
+    bl_parser.add_argument(
+        "--mm", type=float, nargs="+", required=True, help="Regnmängd(er) i mm."
+    )
+    bl_parser.add_argument("--ut", type=str, required=True, help="Målkatalog.")
+    bl_parser.add_argument("--persistens-faktor", type=float, default=None)
+    bl_parser.add_argument("--rot", type=str, default="testsvit")
+    bl_parser.add_argument("--json", action="store_true", help="Skriv mätvärden som JSON.")
+
     kor_parser = subparsers.add_parser(
         "kor",
         help="Kör skyfallsberäkning (graf, 2d eller hybrid) till K6.",
@@ -1349,6 +1402,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _kor_markmodell_kommando(args)
     if args.kommando == "sankgraf":
         return _kor_sankgraf_kommando(args)
+    if args.kommando == "blaytor":
+        return _kor_blaytor_kommando(args)
     if args.kommando == "kor":
         return _kor_kor_kommando(args)
     if args.kommando == "testsvit":
