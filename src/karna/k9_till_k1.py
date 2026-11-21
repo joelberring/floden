@@ -4,8 +4,8 @@ K9 är det domänneutrala formatet för planändringar. Kärnans körmotor (T20)
 för att kunna göra det översätts K9-ändringarna till en K3-lapp som tillämpas med
 `lapp.tillampa` (samma väg som vattnet redan använder).
 
-Tolkningen följer `vatten.scenario_lapp` (grenen `vatten-blaytor`) så att samma K9-scenario
-ger samma K1-rutor oavsett väg:
+Detta är den enda översättningen (`vatten.scenario_lapp` är ett tunt lager ovanpå), så samma
+K9-scenario ger samma K1-rutor oavsett väg:
 
 - `byggnad_ny` → `LappByggnad`: kräver `entre_rh2000`, `entre_punkt`; valfritt `hojd_m`,
   `tak_rh2000`, `gransdjup_m`.
@@ -87,8 +87,16 @@ def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
     return float(v)
 
 
-def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
-    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna)."""
+def k9_till_lapp(
+    andringar: Sequence[Andring], scenario: Planscenario, *, sortera: bool = True
+) -> Any:
+    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna).
+
+    Den enda K9→K3-översättningen i Floden: `vatten.scenario_lapp` anropar den. Ändringarna
+    sorteras efter `andring_id` så att lappnyckeln inte beror på listordningen; `sortera=False`
+    behåller scenariots ordning (äldst först, som `platta_ut` ger) för den som vill att senare
+    överlappande ändringar vinner i den ordningen (vattnets förra beteende).
+    """
     from lapp.kontrakt import (
         HojdYta,
         LappByggnad,
@@ -105,7 +113,7 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
             f"K1-rutor än: {', '.join(ej)}. Stöds: {', '.join(sorted(STODDA_TYPER))}."
         )
     hojdytor, markslag, magasin, gator, byggnader = [], [], [], [], []
-    for a in sorted(andringar, key=lambda x: x.andring_id):
+    for a in sorted(andringar, key=lambda x: x.andring_id) if sortera else andringar:
         e = a.egenskaper
         if a.typ == "markhojd":
             if "delta_m" in e:

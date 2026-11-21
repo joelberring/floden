@@ -18,7 +18,7 @@ projektdokumentet *Floden – systemdesign* (avsnitt 2 och 6).
 8. Webb-API: `POST /api/fraga` som kör en K20-fråga (T10 ansluter). *Kvar.*
 9. Jämförelse för tabeller (Parquet per fasadpunkt/byggnad/entré). *Kvar.*
 10. Parallell körning av oberoende jobb (process-pool). *Kvar.*
-11. Gemensam K9→K3-översättning: `vatten.scenario_lapp` (grenen `vatten-blaytor`) och `karna.k9_till_k1` gör samma sak; låt vatten anropa kärnans när grenarna slagits ihop. *Kvar.*
+11. Gemensam K9→K3-översättning: `vatten.scenario_lapp` (grenen `vatten-blaytor`) och `karna.k9_till_k1` gör samma sak; låt vatten anropa kärnans när grenarna slagits ihop. *Klart (grenen `markslag-dwg`): bara `karna.k9_till_k1.k9_till_lapp` översätter; `vatten.scenario_lapp` är ett tunt lager.*
 12. Globala lösare över flera rutor för vatten (`sankgraf.sammanfoga_rutor`). *Kvar, i samråd med vattenuppdraget.*
 
 ## Acceptans

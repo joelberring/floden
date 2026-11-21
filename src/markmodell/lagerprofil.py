@@ -193,3 +193,26 @@ def las_lagerprofil(sokvag: str | Path = STANDARD_LAGERPROFIL_SOKVAG) -> Lagerpr
     if not fil.is_file():
         raise GrundkartaFel(f"Lagerprofilen hittades inte: {fil}")
     return tolka_lagerprofil(fil.read_bytes(), kalla=fil.name)
+
+
+def hitta_lagerprofil(
+    sokvag: str | Path | None = None, konfig: Mapping[str, Any] | None = None
+) -> Lagerprofil:
+    """Väljer lagerprofil: explicit sökväg > `[markmodell] lagerprofil` i konfigurationen > repots.
+
+    Stadens riktiga profil läggs i den lokala datamappen och pekas ut i `config.local.toml`
+    (`[markmodell] lagerprofil = "..."`; relativ sökväg räknas från `[lokal_data] baskarta_mapp`).
+    Repots profil har bara exempel på ytregler (att bekräfta) och ger inga markslagsytor.
+    """
+    if sokvag is not None and str(sokvag).strip():
+        return las_lagerprofil(sokvag)
+    if konfig is not None:
+        namn = (konfig.get("markmodell") or {}).get("lagerprofil", "")
+        if isinstance(namn, str) and namn.strip():
+            fil = Path(namn)
+            if not fil.is_absolute():
+                mapp = (konfig.get("lokal_data") or {}).get("baskarta_mapp", "")
+                if isinstance(mapp, str) and mapp.strip():
+                    fil = Path(mapp) / fil
+            return las_lagerprofil(fil)
+    return las_lagerprofil()

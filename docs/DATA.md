@@ -26,6 +26,21 @@
 - Ledningsdata används bara lokalt eller i stadens miljö. Kod för ledningsnät testas med syntetiska nät.
 - Ange alltid källan i rapporter och kartor (©Lantmäteriet, SGU, SMHI, NVDB osv.).
 
+## Markslag ur baskarta, belagd yta och ortofoto
+
+- **Lagerprofil** (`data/lagerprofiler/*.toml`, `markmodell.lagerprofil`): mappar baskartans lager till roller (linjer) och
+  skraffyrlager till markslagskoder (ytor). Repots `stockholm_baskarta.toml` har bara exempel på ytregler, märkta *att
+  bekräfta*; stadens verkliga lagernamn för skraffyrer är inte kända och inga ytregler är aktiva. En riktig profil läggs i
+  den lokala datamappen (mall: `data/lagerprofiler/lokal_profil.toml.example`) och pekas ut i `config.local.toml` med
+  `[markmodell] lagerprofil = "..."` (relativ sökväg räknas från `[lokal_data] baskarta_mapp`) eller `floden markmodell
+  --lagerprofil`. Profilens sha256 skrivs i `recept.json` (roll `lagerprofil`).
+- **Prioritet** när källorna möts i `markslag.tif`: baskartans ytor > belagd yta ur laserintensitet > ortofototolkning >
+  standardklass; avgörande källa och motsägelseflagga per cell i `markslag_kalla.tif` (K1 v2-tillägget i
+  `DATAKONTRAKT.md`). Beslutet är ett förslag under Öppna beslut i `BESLUT.md`.
+- Belagd yta kräver ett punktmoln med intensitet (LAS/LAZ via `data_inlasning.lasclip`); `floden markmodell --laser-csv`
+  har ingen intensitet, så belagd yta ges än så länge via biblioteket (`markmodell.markslagskallor.belagd_mask_for_ruta`).
+  Ingen riktig DWG, dwgread-körning eller laser-LAZ har körts här; allt är testat på syntetiska ytor.
+
 ## Koordinatsystem
 
 - Intern beräkning: SWEREF 99 18 00 (EPSG:3011), höjder RH 2000.

@@ -76,6 +76,19 @@ fel i stället för gissning om en v1-ruta har byggnadsceller, se nedan). En rut
   (trädhöjd) kan vara källa i stället: läs en lokal fil (hämtad via `data_inlasning.LokalDataCache`) och ge den som
   `vegetation_hojd_m` till `bygg_markmodell_ruta`. Koden laddar inget själv. `vegetation.gpkg` (täthet) är **reserverad**
   men inte byggd i v2.
+- **Markslag ur flera källor (additivt tillägg, ingen versionshöjning):** `markslag_kalla.tif` (uint8, 0,25 m, samma
+  utsträckning som `markslag.tif`, nodata 255) är **valfri** och skrivs bara när `markslagsytor` (DWG), `belagd_yta_mask`
+  eller `ortofoto_markslag` getts till `bygg_markmodell_ruta`; saknas filen gäller bara det tidigare beteendet
+  (`markslag.tif` oförändrad, ingen ny nyckel i receptet). Prioritetsordning (förslag, se Öppna beslut i `BESLUT.md`):
+  baskartans ytor (byggnad, vatten, hårdgjort, tak, grönt tak, berg, grus, gräs, skog i den ordningen när de överlappar;
+  därefter byggnader och öppningar som bränts in) > belagd yta ur laserintensitet (ger markslag 1) > ortofototolkning
+  (`OKANT` = ingen uppgift) > standardklass (1 hårdgjort). Källfilens värde: bit 0–1 = avgörande källa (0 standard,
+  1 ortofoto, 2 belagd yta ur laser, 3 baskarta); bit 2 (4) = en lägre källa, eller en annan baskartayta, sa något annat
+  (högre prioritet vann, cellen flaggas); bit 3 (8) = avgörande källa är ortofoto med konfidens under 0,35. Receptet får
+  `installningar.markslag_prioritet`, `markslag_standard`, `markslag_svag_konfidens`, `markslag_baskarta_prioritet`
+  (+ `markslag_belagd_installningar`) och källorna `markslagsytor` (sha256), `belagd_yta`, `ortofoto_markslag` samt
+  `lagerprofil` (sha256 av profilfilen; skrivs när en profil getts, så en ändrad profil ger ny recept-sha256). `run.json`
+  får `markslag_celler_<källa>`, `markslag_motsagelser`, `markslag_svaga`. Läsare som inte känner filen kan ignorera den.
 - **Källor i `recept.json`:** `byggnadskandidater` (sha256 av kandidaternas kanoniska JSON), `byggnadskalla` (sha256 av
   källfilen, satt av CLI:t `--byggnader`), `laser_klasser`, `vegetation_hojd`; byggnadsregistret, terrängen och
   vegetationen finns som utdata (sha256) i `run.json`.
@@ -341,7 +354,7 @@ sha256 för extra indata, radie, ruta, `[ruta_id, rutans innehållshash]` för b
 nycklarna för de jobb man beror på.
 
 **K9 på K1-rutor:** kedjan plattas ut (`karna.scenario.platta_ut`) och översätts till en K3-lapp
-(`karna.k9_till_k1`, samma tolkning som `vatten.scenario_lapp`). Alla `bas_recept` i K9 måste finnas
+(`karna.k9_till_k1`; `vatten.scenario_lapp` är ett tunt lager ovanpå samma funktion). Alla `bas_recept` i K9 måste finnas
 bland basrutornas `recept.json`, annars fel. På K1 v2-rutor tillämpas `byggnad_ny`,
 `byggnad_bort`, `byggnad_hojd` och `vegetation` av `karna.geometri` (se K9); på v1-rutor ger de tre senare
 och `markhojd` med `delta_m` fel. Nyckeln beror på de utplattade

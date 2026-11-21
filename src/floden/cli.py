@@ -38,11 +38,20 @@ from mark_forluster.parametrar import ForlustFel
 from markmodell.brytlinjer import Brytlinje, BrytlinjeFel
 from markmodell.byggnadskallor import las_byggnadskalla
 from markmodell.byggnadsregister import ByggnadsKandidat, ByggnadsregisterFel
+from markmodell.dwg import MarkslagsYta, las_baskarta_dwg
 from markmodell.grundkarta import GrundkartaFel, interpolera_med_brytlinjer, las_baskarta_dxf
-from markmodell.hinder_oppningar import BYGGNAD, OKANT, Byggnad, HinderOppningFel, Oppning
+from markmodell.hinder_oppningar import (
+    BYGGNAD,
+    OKANT,
+    Byggnad,
+    HinderOppningFel,
+    Oppning,
+    brann_in_byggnader,
+)
 from markmodell.interpolering import InterpoleringFel
 from markmodell.k1_skrivare import K1SkrivFel
 from markmodell.k1_skrivare import skriv_geotiff as skriv_k1_geotiff
+from markmodell.lagerprofil import Lagerprofil, hitta_lagerprofil
 from markmodell.ortofoto import (
     OrtofotoFel,
     klassificera_ortofoto,
@@ -219,6 +228,29 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
         oppningar: tuple[Oppning, ...] = ()
         dxf_varningar: list[str] = []
 
+        markslagsytor: tuple[MarkslagsYta, ...] = ()
+        lagerprofil: Lagerprofil | None = None
+        if args.dxf is not None and args.dwg is not None:
+            raise PipelineFel("Ange antingen --dxf eller --dwg, inte båda.")
+        if args.dwg is not None:
+            from gemensamt.konfig import las_konfig
+
+            try:
+                konfig: dict[str, Any] | None = las_konfig()
+            except Exception:  # config.toml saknas utanför repot: använd repots profil
+                konfig = None
+            lagerprofil = hitta_lagerprofil(args.lagerprofil, konfig)
+            dwg_fil = Path(args.dwg)
+            dwg_res = las_baskarta_dwg(dwg_fil, lagerprofil=lagerprofil)
+            baskarta = dwg_res.baskarta
+            markslagsytor = dwg_res.markslagsytor
+            brytlinjer = baskarta.brytlinjer
+            byggnader = baskarta.byggnader
+            oppningar = baskarta.oppningar
+            dxf_varningar = list(baskarta.varningar)
+            extra_kallor.append(
+                KallPost(roll="baskarta_dwg", kalla=dwg_fil.name, sha256=sha256_fil(dwg_fil))
+            )
         if args.dxf is not None:
             dxf_fil = Path(args.dxf)
             baskarta = las_baskarta_dxf(dxf_fil)
@@ -275,10 +307,23 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
 
         markslag_grund: NDArray[np.uint8] | None = None
         ortofoto_bild: NDArray[np.uint8] | None = None
+        ortofoto_slag: NDArray[np.uint8] | None = None
+        ortofoto_konf: NDArray[np.float32] | None = None
+        flerkalla = args.dwg is not None  # K1 v2-tillägget markslag_kalla.tif
         if args.ortofoto is not None:
             ortofoto_fil = Path(args.ortofoto)
             ortofoto_bild = _las_ortofoto_rgb(ortofoto_fil, ruta.form_rc)
-            markslag_grund = np.full(ruta.form_rc, OKANT, dtype=np.uint8)
+            if flerkalla:
+                _, bygg_slag = brann_in_byggnader(
+                    np.zeros(ruta.form_rc, dtype=np.float32),
+                    np.zeros(ruta.form_rc, dtype=np.uint8),
+                    ruta,
+                    byggnader,
+                )
+                kl = klassificera_ortofoto(ortofoto_bild, byggnad_mask=(bygg_slag == BYGGNAD))
+                ortofoto_slag, ortofoto_konf = kl.markslag, kl.konfidens
+            else:
+                markslag_grund = np.full(ruta.form_rc, OKANT, dtype=np.uint8)
             extra_kallor.append(
                 KallPost(
                     roll="ortofoto",
@@ -304,6 +349,10 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                 oppningar=oppningar,
                 byggnadskandidater=byggnadskandidater,
                 markslag_grund=markslag_grund,
+                markslagsytor=markslagsytor,
+                ortofoto_markslag=ortofoto_slag,
+                ortofoto_konfidens=ortofoto_konf,
+                lagerprofil=lagerprofil,
                 avstand_till_punkt_m=avstand_karta,
                 extra_kallor=extra_kallor,
             )
@@ -311,7 +360,16 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
             slut_markslag = res.markslag
             slut_osakerhet = res.osakerhet_z
 
-            if ortofoto_bild is not None:
+            if ortofoto_bild is not None and flerkalla:
+                # markslag avgjordes av prioritetsordningen; ortofotots skuggtillägg på osäkerheten
+                kl_o = klassificera_ortofoto(ortofoto_bild, byggnad_mask=(res.markslag == BYGGNAD))
+                _, slut_osakerhet = kombinera_ortofoto_med_markmodell(
+                    res.markslag, res.osakerhet_z, kl_o
+                )
+                skriv_k1_geotiff(
+                    res.katalog / "osakerhet.tif", slut_osakerhet, ruta, nodata=-9999.0
+                )
+            elif ortofoto_bild is not None:
                 klassning = klassificera_ortofoto(
                     ortofoto_bild,
                     byggnad_mask=(res.markslag == BYGGNAD),
@@ -1026,6 +1084,21 @@ def bygg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Valfri ASCII-DXF baskarta (brytlinjer, byggnader, öppningar).",
+    )
+    mm_parser.add_argument(
+        "--dwg",
+        type=str,
+        default=None,
+        help="Valfri baskarta i DWG (eller dwgreads JSON): som --dxf plus markslagsytor ur "
+        "lagerprofilens ytregler och markslag_kalla.tif "
+        "(prioritet baskarta > ortofoto > standard).",
+    )
+    mm_parser.add_argument(
+        "--lagerprofil",
+        type=str,
+        default=None,
+        help="Lagerprofil (TOML) för --dwg; annars [markmodell] lagerprofil i config.local.toml, "
+        "annars repots exempelprofil.",
     )
     mm_parser.add_argument(
         "--byggnader",

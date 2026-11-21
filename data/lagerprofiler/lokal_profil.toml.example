@@ -1,0 +1,33 @@
+# Mall för stadens riktiga lagerprofil. Kopiera till den lokala datamappen (utanför repot), byt till
+# stadens verkliga lagernamn och peka ut filen i config.local.toml:
+#
+#   [markmodell]
+#   lagerprofil = "stockholm_baskarta_riktig.toml"   # relativt [lokal_data] baskarta_mapp
+#
+# Lagernamnen nedan är ENDAST exempel på formen och är ATT BEKRÄFTA mot stadens baskarta.
+# Höj `version` när profilen ändras; sha256 skrivs i markmodellens recept.json.
+
+namn = "stockholm_baskarta_lokal"
+version = 1
+
+[[linjer]]
+prefix = "KANTSTEN"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "HUSLIV"
+roll = "byggnad"
+standard_m = 10.0
+
+[[ytor]]
+prefix = "EXEMPEL_ASFALT"   # att bekräfta
+markslag = 1
+
+[[ytor]]
+prefix = "EXEMPEL_GRAS"     # att bekräfta
+markslag = 4
+
+[[ytor]]
+prefix = "EXEMPEL_VATTEN"   # att bekräfta
+markslag = 8

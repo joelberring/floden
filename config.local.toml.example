@@ -7,6 +7,11 @@ baskarta_mapp = ""
 tat_laser_mapp = ""
 ledningar_mapp = ""
 
+[markmodell]
+# Stadens riktiga lagerprofil för baskartans skraffyrer (mall: data/lagerprofiler/lokal_profil.toml.example).
+# Relativ sökväg räknas från baskarta_mapp. Tom = repots exempelprofil (inga markslagsytor).
+lagerprofil = ""
+
 [sokvagar]
 # Exempel på att lägga cache utanför repot:
 # cache = "/data/floden/cache"
