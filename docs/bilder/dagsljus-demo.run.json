@@ -1,0 +1,35 @@
+{
+  "kontrakt": "K0/v1",
+  "modul": "dagsljus-demo",
+  "kodversion": "71e9b5c2b7e7-smutsig",
+  "start": "2026-11-21T13:49:33+01:00",
+  "indata": [],
+  "parametrar": {
+    "azimutriktningar": 180,
+    "datum": "2026-03-20",
+    "steg_min": 10.0,
+    "hojd_max_m": 45.0,
+    "h_min_grader": 5.0,
+    "max_avstand_m": 514.3523536242604,
+    "cellstorlek_m": 1.0,
+    "kvarter_sida_m": 300.0,
+    "anm": "Syntetiskt kvarter på platt mark; inget finns bortom kvarteret."
+  },
+  "utdata": [
+    {
+      "roll": "soltimmar_svf",
+      "fil": "dagsljus-demo-soltimmar-svf.png",
+      "sha256": "9681c4a631f0c61814e9bb5244f28ff080ef41344447fb879f7bdeac9825ba70"
+    }
+  ],
+  "matvarden": {
+    "soltimmar_marken_min_h": 0.0,
+    "soltimmar_marken_medel_h": 4.652310839068559,
+    "soltimmar_marken_max_h": 12.0,
+    "svf_marken_min": 0.211881198587887,
+    "svf_marken_medel": 0.6682221040830159,
+    "dygnets_langd_h": 12.0,
+    "kortid_s": 15.13
+  },
+  "varningar": []
+}

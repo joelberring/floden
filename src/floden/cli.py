@@ -789,6 +789,14 @@ def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
         utfall = "GODKAND" if ok else "UNDERKAND"
         print(f"\nSammanfattning (Grupp D / analytiska 2D-facit): {utfall}.")
         return 0 if ok else 1
+    if grupp is not None and grupp.strip().upper() == "E":
+        from testsvit.dagsljus_fall import kor_dagsljus_testfall
+
+        dl_res, dl_tabell = kor_dagsljus_testfall()
+        print(dl_tabell)
+        antal_ok = sum(1 for r in dl_res if r.godkand)
+        print(f"\nSammanfattning (Grupp E / dagsljus): {antal_ok}/{len(dl_res)} passerade.")
+        return 0 if antal_ok == len(dl_res) else 1
     if grupp is not None and grupp.strip().upper() == "C":
         try:
             ea_res, ea_tabell = kor_alla_ea_testfall()
@@ -1399,6 +1407,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     _lagg_till_fraga(subparsers)
 
+    from dagsljus.cli import registrera as registrera_dagsljus
+
+    registrera_dagsljus(subparsers)
+
     from luft.cli import registrera as registrera_luft
 
     registrera_luft(subparsers)
@@ -1462,6 +1474,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from karna.cli import kor_kommando as _kor_fraga
 
         return _kor_fraga(args)
+    if args.kommando == "dagsljus":
+        from dagsljus.cli import kor as kor_dagsljus
+
+        return kor_dagsljus(args)
     if args.kommando == "luft":
         from luft.cli import kor as kor_luft
 
