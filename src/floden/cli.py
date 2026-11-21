@@ -1647,6 +1647,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_demo(subparsers)
 
+    from lantmateriet.cli import registrera as registrera_lantmateriet
+
+    registrera_lantmateriet(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Floden i webbläsaren: klient och API från samma port.",
@@ -1729,6 +1733,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from demovarld.cli import kor as kor_demo
 
         return kor_demo(args)
+    if args.kommando in ("data", "omrade"):
+        from lantmateriet.cli import kor as kor_lantmateriet
+
+        return kor_lantmateriet(args)
     if args.kommando == "webb":
         from webb.api import skapa_http_server
         from webb.klientbygge import KlientByggeFel, sakerstall_klient

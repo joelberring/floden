@@ -1,0 +1,23 @@
+# Skyfall (blåytor, maxdjup) på ett verkligt provområde, byggt lokalt på din dator. Vattenlösaren
+# vatten.statisk_fyllning tar en enda K1-ruta, så området byggs som en ruta (--en-ruta):
+#   floden data lantmateriet --omrade data/omraden/prov1.gpkg --laser --byggnader --ut ~/floden-data/prov1
+#   floden omrade bygg --omrade data/omraden/prov1.gpkg --data ~/floden-data/prov1 --en-ruta --ut data/lokal/prov1/k1_en_ruta
+#   floden fraga kor exempel/fragor/omrade_vatten.toml
+# Se README.md ("Köra ett verkligt område på din dator") och docs/DATA.md.
+#
+# Regnet: Stockholmsregn 2024 (Tabell 7), 100 år, 360 min, klimatfaktor 1,4 (uttrycklig parameter),
+# blockregn, som i exempel/fragor/demo_vatten.toml. Statisk fyllning: maxdjup i sänkor, inget flöde
+# i tid, ingen infiltration och inget ledningsnät. Laserns 1-2 punkter per m2 ger en grov markmodell:
+# kantstenar, trummor och murar syns inte förrän baskarta (DWG) och öppningar läggs in; blåytorna är
+# därför en första bild, inte ett beslutsunderlag.
+kontrakt = "K20/v1"
+fraga_id = "omrade-vatten"
+beskrivning = "Blåytor (maxdjup) vid Stockholmsregn 2024, 100 år, klimatfaktor 1.4, provområdet (nuläge)."
+
+[scenarier.bas]
+bas = "../../data/lokal/prov1/k1_en_ruta"
+
+[[analyser]]
+id = "skyfall"
+losare = "vatten.statisk_fyllning"
+parametrar = { idf = "stockholmsregn-2024", aterkomsttid_ar = 100, varaktighet_min = 360, klimatfaktor = 1.4, regntyp = "block" }

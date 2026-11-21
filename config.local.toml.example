@@ -12,6 +12,13 @@ ledningar_mapp = ""
 # Relativ sökväg räknas från baskarta_mapp. Tom = repots exempelprofil (inga markslagsytor).
 lagerprofil = ""
 
+# Nycklar till Lantmäteriets API (floden data lantmateriet, docs/DATA.md). Hellre i miljön:
+#   LANTMATERIET_KLIENT_ID, LANTMATERIET_KLIENT_HEMLIGHET, LANTMATERIET_METOD
+[lantmateriet]
+klient_id = ""
+klient_hemlighet = ""
+metod = "oauth2"                       # "oauth2" (API-portalens nyckel) eller "basic" (Geotorgets inloggning)
+
 [sokvagar]
 # Exempel på att lägga cache utanför repot:
 # cache = "/data/floden/cache"
