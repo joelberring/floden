@@ -34,3 +34,6 @@ Thumbs.db
 
 # Rust-verktyg
 tools/*/target/
+
+# Resultat från utredningsfrågor (floden fraga kor)
+resultat/

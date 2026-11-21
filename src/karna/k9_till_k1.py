@@ -1,0 +1,200 @@
+"""Översättning av ett K9-planscenario till en K3-lapp, så att det kan materialiseras i K1-rutor.
+
+K9 är det domänneutrala formatet för planändringar. Kärnans körmotor (T20) räknar på K1-rutor;
+för att kunna göra det översätts K9-ändringarna till en K3-lapp som tillämpas med
+`lapp.tillampa` (samma väg som vattnet redan använder).
+
+Tolkningen följer `vatten.scenario_lapp` (grenen `vatten-blaytor`) så att samma K9-scenario
+ger samma K1-rutor oavsett väg:
+
+- `byggnad_ny` → `LappByggnad`: kräver `entre_rh2000`, `entre_punkt`; valfritt `hojd_m`,
+  `tak_rh2000`, `gransdjup_m`.
+- `markhojd` → `HojdYta`: kräver `niva_rh2000` eller `landxml`; valfritt `markslag`, `osakerhet_m`.
+- `markslag` → `LappMarkslag`: kräver `kod`.
+- `gata` → `LappGata`: kräver `sektion`; valfritt `profil_rh2000`, `markslag_korbana`,
+  `markslag_gangbana`.
+- `magasin` → `LappMagasin`: kräver `volym_m3`; valfritt `botten_rh2000`, `markslag`.
+Övriga typer ger ett tydligt fel i stället för att hoppas över: ett scenario som bara delvis
+tillämpas ger resultat som ser rätt ut men inte är det.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any
+
+from karna.hashning import nyckel_for
+from karna.scenario import Andring, Planscenario, ScenarioFel, las_scenario, platta_ut
+
+# Höjs när översättningen ändras (ingår i rutornas lappnyckel).
+K9_TILL_K3_VERSION = "1"
+STODDA_TYPER: frozenset[str] = frozenset({"markhojd", "markslag", "magasin", "gata", "byggnad_ny"})
+
+
+def _ring(geometri: Mapping[str, Any] | None, a: Andring) -> tuple[tuple[float, float], ...]:
+    if geometri is None or geometri.get("type") != "Polygon":
+        raise ScenarioFel(f"{a.typ} '{a.andring_id}': geometrin måste vara en GeoJSON Polygon.")
+    koord = geometri.get("coordinates")
+    if not isinstance(koord, Sequence) or not koord or len(koord) > 1:
+        raise ScenarioFel(
+            f"{a.typ} '{a.andring_id}': polygonen måste ha exakt en ring (hål stöds inte än)."
+        )
+    punkter = [(float(p[0]), float(p[1])) for p in koord[0]]
+    if len(punkter) > 1 and punkter[0] == punkter[-1]:
+        punkter = punkter[:-1]
+    return tuple(punkter)
+
+
+def _linje(geometri: Mapping[str, Any] | None, a: Andring) -> tuple[tuple[float, float], ...]:
+    if geometri is None or geometri.get("type") != "LineString":
+        raise ScenarioFel(f"{a.typ} '{a.andring_id}': geometrin måste vara en GeoJSON LineString.")
+    return tuple((float(p[0]), float(p[1])) for p in geometri.get("coordinates", []))
+
+
+def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
+    if namn not in e:
+        raise ScenarioFel(f"{a.typ} '{a.andring_id}' saknar egenskapen '{namn}'.")
+    v = e[namn]
+    if isinstance(v, bool) or not isinstance(v, int | float):
+        raise ScenarioFel(f"{a.typ} '{a.andring_id}': '{namn}' måste vara ett tal, fick {v!r}.")
+    return float(v)
+
+
+def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
+    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar."""
+    from lapp.kontrakt import (
+        HojdYta,
+        LappByggnad,
+        LappGata,
+        LappMagasin,
+        LappMarkslag,
+        ProjektLapp,
+    )
+
+    ej = sorted({a.typ for a in andringar} - STODDA_TYPER)
+    if ej:
+        raise ScenarioFel(
+            f"Scenariot '{scenario.scenario_id}' har ändringstyper som inte kan tillämpas på "
+            f"K1-rutor än: {', '.join(ej)}. Stöds: {', '.join(sorted(STODDA_TYPER))}."
+        )
+    hojdytor, markslag, magasin, gator, byggnader = [], [], [], [], []
+    for a in sorted(andringar, key=lambda x: x.andring_id):
+        e = a.egenskaper
+        if a.typ == "markhojd":
+            if "delta_m" in e:
+                raise ScenarioFel(
+                    f"markhojd '{a.andring_id}': delta_m stöds inte än i K1-materialiseringen; "
+                    "ange niva_rh2000."
+                )
+            ms = e.get("markslag")
+            hk: dict[str, Any] = {}
+            if "osakerhet_m" in e:
+                hk["osakerhet_m"] = _tal(e, "osakerhet_m", a)
+            if "landxml" in e:
+                hk["landxml"] = str(e["landxml"])
+                if a.geometri is not None:
+                    hk["polygon"] = _ring(a.geometri, a)
+            elif "niva_rh2000" in e:
+                hk["polygon"] = _ring(a.geometri, a)
+                hk["hojd_rh2000"] = _tal(e, "niva_rh2000", a)
+            else:
+                raise ScenarioFel(f"markhojd '{a.andring_id}' saknar niva_rh2000/landxml.")
+            hojdytor.append(
+                HojdYta(yta_id=a.andring_id, markslag=None if ms is None else int(ms), **hk)
+            )
+        elif a.typ == "markslag":
+            markslag.append(
+                LappMarkslag(
+                    omrade_id=a.andring_id,
+                    polygon=_ring(a.geometri, a),
+                    markslag=int(_tal(e, "kod", a)),
+                )
+            )
+        elif a.typ == "magasin":
+            botten = e.get("botten_rh2000")
+            mk: dict[str, Any] = {}
+            if "markslag" in e:
+                mk["markslag"] = int(_tal(e, "markslag", a))
+            magasin.append(
+                LappMagasin(
+                    magasin_id=a.andring_id,
+                    polygon=_ring(a.geometri, a),
+                    volym_m3=_tal(e, "volym_m3", a),
+                    botten_rh2000=None if botten is None else float(botten),
+                    **mk,
+                )
+            )
+        elif a.typ == "gata":
+            if "sektion" not in e:
+                raise ScenarioFel(f"gata '{a.andring_id}' saknar egenskapen 'sektion'.")
+            profil = e.get("profil_rh2000")
+            gk: dict[str, Any] = {}
+            for namn in ("markslag_korbana", "markslag_gangbana"):
+                if namn in e:
+                    gk[namn] = int(_tal(e, namn, a))
+            gator.append(
+                LappGata(
+                    gata_id=a.andring_id,
+                    mittlinje=_linje(a.geometri, a),
+                    sektion=str(e["sektion"]),
+                    profil_rh2000=None if profil is None else tuple(float(z) for z in profil),
+                    **gk,
+                )
+            )
+        elif a.typ == "byggnad_ny":
+            if "entre_rh2000" not in e or "entre_punkt" not in e:
+                raise ScenarioFel(
+                    f"byggnad_ny '{a.andring_id}': K1-materialiseringen går via K3, som kräver "
+                    "entre_rh2000 och entre_punkt [E, N]."
+                )
+            tak = e.get("tak_rh2000")
+            punkt = e["entre_punkt"]
+            kw: dict[str, Any] = {}
+            if "hojd_m" in e:
+                kw["hinderhojd_m"] = _tal(e, "hojd_m", a)
+            if "gransdjup_m" in e:
+                kw["gransdjup_m"] = _tal(e, "gransdjup_m", a)
+            byggnader.append(
+                LappByggnad(
+                    byggnad_id=a.andring_id,
+                    polygon=_ring(a.geometri, a),
+                    entre_rh2000=_tal(e, "entre_rh2000", a),
+                    entre_punkt=(float(punkt[0]), float(punkt[1])),
+                    tak_rh2000=None if tak is None else float(tak),
+                    **kw,
+                )
+            )
+    return ProjektLapp(
+        lapp_id=f"k9-{scenario.scenario_id}"[:120],
+        bas_recept=scenario.bas_recept,
+        beskrivning=f"Översatt från K9-scenariot {scenario.scenario_id} ({scenario.nyckel[:12]}).",
+        hojdytor=tuple(hojdytor),
+        byggnader=tuple(byggnader),
+        gator=tuple(gator),
+        magasin=tuple(magasin),
+        markslag_andringar=tuple(markslag),
+    )
+
+
+def las_k9_kedja(filer: Sequence[Path]) -> tuple[Planscenario, tuple[Andring, ...], str]:
+    """Läser en kedja K9-filer (förfäder först, scenariot sist).
+
+    Returnerar scenariot, dess utplattade ändringar och en nyckel för översättningen som
+    bara beror på vad som faktiskt tillämpas (inte på hur kedjan är uppdelad).
+    """
+    if not filer:
+        raise ScenarioFel("Tom K9-kedja.")
+    scenarier = [las_scenario(f) for f in filer]
+    kanda = {s.nyckel: s for s in scenarier}
+    sista = scenarier[-1]
+    andringar = platta_ut(sista, kanda)
+    nyckel = nyckel_for(
+        {
+            "slag": "k9_till_k3",
+            "version": K9_TILL_K3_VERSION,
+            "bas_recept": list(sista.bas_recept),
+            "andringar": sorted((a.till_dict() for a in andringar), key=lambda d: d["andring_id"]),
+        }
+    )
+    return sista, andringar, nyckel
