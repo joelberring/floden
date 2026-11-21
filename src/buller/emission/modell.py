@@ -13,12 +13,15 @@ Infört ur SP Rapport 2006:12:
 - korrektion för svenska, norska och finska vägar (tabell A.2),
 - beläggning DAC/SMA med stenstorlek (ekv. 2.3), beläggningens ålder (ekv. 2.4) och
   lufttemperatur för DAC (ekv. 2.5),
-- acceleration (ekv. 2.8).
+- acceleration (ekv. 2.8),
+- direktivitet (ekv. 2.9, 2.11, 2.12 och tabell 2.4; se `buller.emission.direktivitet`) när
+  anroparen anger riktningen mot mottagaren (`Kallriktning`). Utan riktning räknas källan som
+  rundstrålande, som före dataversion 3.
 
-Inte infört (se `docs/buller/logg/B1-B5.md`): direktivitet (ekv. 2.9–2.12, tabell 2.4;
-kräver vinklar mot mottagaren), våt vägbana (ekv. 2.6), dubbdäck (tabell A.3 är inläst men
-används inte), porösa och andra beläggningar (avsnitt 8.3), extra delkälla för högt avgasrör,
-motorbroms och lutning som ekvivalent acceleration, samt maximalnivå (avsnitt 2.6).
+Inte infört (se `docs/buller/logg/B1-B5.md` och `B5b.md`): våt vägbana (ekv. 2.6), dubbdäck
+(tabell A.3 är inläst men används inte), porösa och andra beläggningar (avsnitt 8.3), extra
+delkälla för högt avgasrör, motorbroms och lutning som ekvivalent acceleration, samt
+maximalnivå (avsnitt 2.6).
 
 Från fordon till segment (energibalans, inte hämtad ur metoddokumenten): ett fordon med
 hastigheten v befinner sig Δl / v sekunder på ett segment med längden Δl. Med N fordon under
@@ -36,14 +39,20 @@ import tomllib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
+from buller.emission.direktivitet import Direktivitetsdata, Kallriktning, las_direktivitet
 from buller.typer import ANTAL_BAND, BullerFel, Flyttal
 
-DATAFIL = Path(__file__).parent / "data" / "nord2000_road_v2.toml"
+DATAFIL = Path(__file__).parent / "data" / "nord2000_road_v3.toml"
 BULLERTYPER: tuple[str, ...] = ("rull", "drivlina")
+
+# Vad den horisontella direktiviteten verkar på (två läsningar av SP 2006:12, se
+# `Vagemission`): hela delkällans effekt, eller bara den bullertyp texten knyter den till.
+HorisontellVerkan = Literal["delkalla", "bullertyp"]
+HORISONTELL_VERKAN: tuple[HorisontellVerkan, ...] = ("delkalla", "bullertyp")
 _HOJDTOLERANS_M = 1.0e-9
 
 
@@ -163,6 +172,7 @@ class Emissionsdata:
     saknas: tuple[str, ...]
     fil: Path
     korrektioner: Korrektionsdata = Korrektionsdata()
+    direktivitet: Direktivitetsdata | None = None  # None = datafilen saknar [direktivitet]
 
     @property
     def fullstandig(self) -> bool:
@@ -321,14 +331,78 @@ def las_emissionsdata(fil: str | Path = DATAFIL) -> Emissionsdata:
         saknas=tuple(saknas),
         fil=sokvag,
         korrektioner=korrektioner,
+        direktivitet=las_direktivitet(data.get("direktivitet"), hojder, BULLERTYPER, sokvag),
     )
 
 
 class Vagemission:
-    """Källmodell för vägtrafik byggd på en inläst datafil."""
+    """Källmodell för vägtrafik byggd på en inläst datafil.
 
-    def __init__(self, data: Emissionsdata | None = None) -> None:
+    `horisontell_verkan` väljer mellan två läsningar av SP 2006:12 för den horisontella
+    direktiviteten. Avsnitt 2.5 (s. 14–15) och sammanfattningen (s. 7) tilldelar den
+    *punktkällan* på 0,01 m (ekv. 2.12) respektive 0,75 m (ekv. 2.11), men motiverar den med
+    en bullertyp: däck/vägbana för den lägsta källan, och sammanfattningen kallar den övre
+    "the 0,75 m point source for propulsion noise".
+
+    * `"delkalla"` (förval): direktiviteten läggs på all effekt i delkällan, också den femtedel
+      av den andra bullertypen som avsnitt 2.2 lägger där. Det är vad ekvationernas ingress
+      säger ordagrant.
+    * `"bullertyp"`: ekv. (2.12) läggs bara på rullbullret i den lägsta källan och ekv. (2.11)
+      bara på drivlinebullret i källan på 0,75 m.
+
+    Den vertikala direktiviteten (tabell 2.4) gäller i båda läsningarna hela delkällan.
+    """
+
+    def __init__(
+        self,
+        data: Emissionsdata | None = None,
+        *,
+        horisontell_verkan: HorisontellVerkan = "delkalla",
+    ) -> None:
+        if horisontell_verkan not in HORISONTELL_VERKAN:
+            raise BullerFel(
+                f"horisontell_verkan ska vara en av {', '.join(HORISONTELL_VERKAN)}; "
+                f"fick '{horisontell_verkan}'."
+            )
         self.data = data if data is not None else las_emissionsdata()
+        self.horisontell_verkan: HorisontellVerkan = horisontell_verkan
+
+    @property
+    def stoder_direktivitet(self) -> bool:
+        """Sant om datafilen har direktivitet, så att `riktning` kan anges."""
+        return self.data.direktivitet is not None
+
+    def direktivitet_db(self, riktning: Kallriktning) -> dict[str, Flyttal]:
+        """Direktivitetstillägget per bullertyp, form (antal delkällor, ANTAL_BAND) i dB.
+
+        SP 2006:12 ekv. (2.9): ΔL = ΔL_H(f, φ) + ΔL_V(f, ψ), med ΔL_H ur ekv. (2.11) och
+        (2.12) och ΔL_V ur tabell 2.4. Raderna följer `self.delkallhojder_m`, och
+        `riktning.hojdvinkel_rad` ska då också göra det. Tillägget är lika för de två
+        bullertyperna utom i läsningen `horisontell_verkan = "bullertyp"`.
+        """
+        data = self.data.direktivitet
+        if data is None:
+            raise BullerFel(
+                f"Datafilen {self.data.fil} saknar [direktivitet]; källmodellen kan inte räkna "
+                "med riktning mot mottagaren. Anropa utan riktning eller använd en datafil "
+                "med direktivitet."
+            )
+        hojder = self.delkallhojder_m
+        psi = riktning.hojdvinklar_rad(len(hojder))
+        fi = min(max(riktning.vinkel_mot_fardriktning_rad, 0.0), math.pi)
+        tillagg = {typ: np.zeros((len(hojder), ANTAL_BAND)) for typ in BULLERTYPER}
+        for j, hojd in enumerate(hojder):
+            vertikal_db = data.vertikal_db(hojd, psi[j])
+            horisontell_db = data.horisontell_db(hojd, fi, psi[j])
+            post = data.horisontell_for_hojd(hojd)
+            for typ in BULLERTYPER:
+                galler = (
+                    self.horisontell_verkan == "delkalla"
+                    or post is None
+                    or post.bullertyp == typ
+                )
+                tillagg[typ][j, :] = vertikal_db + (horisontell_db if galler else 0.0)
+        return tillagg
 
     @property
     def delkallhojder_m(self) -> tuple[float, ...]:
@@ -432,8 +506,14 @@ class Vagemission:
         hastighet_km_h: float,
         forhallanden: Vagforhallanden | None = None,
         flode: Trafikflode | None = None,
+        riktning: Kallriktning | None = None,
     ) -> Flyttal:
-        """Ljudeffektnivå för ett fordon per delkälla och band, form (antal delkällor, 27)."""
+        """Ljudeffektnivå för ett fordon per delkälla och band, form (antal delkällor, 27).
+
+        Med `riktning` är resultatet ljudeffektnivån plus direktivitetskorrektionen i den
+        riktningen (SP 2006:12 ekv. 2.9; AV 1849/00 om riktade punktkällor), med ψ per
+        delkälla i ordningen `self.delkallhojder_m`. Utan `riktning` är källan rundstrålande.
+        """
         if not math.isfinite(hastighet_km_h) or hastighet_km_h <= 0.0:
             raise BullerFel("hastighet_km_h ska vara större än noll.")
         data = self._kategori(kategori)
@@ -442,10 +522,14 @@ class Vagemission:
             "rull": self.rullkorrektion_db(flode, forhallanden or Vagforhallanden()),
             "drivlina": self.drivlinekorrektion_db(flode),
         }
+        direktivitet = self.direktivitet_db(riktning) if riktning is not None else None
         effekt = np.zeros((len(self.delkallhojder_m), ANTAL_BAND))
         for bullertyp, tabell in data.tabeller.items():
             niva_db = tabell.ljudeffekt_per_fordon_db(hastighet_km_h) + tillagg[bullertyp]
-            effekt += tabell.fordelning * 10.0 ** (niva_db / 10.0)
+            bidrag = tabell.fordelning * 10.0 ** (niva_db / 10.0)
+            if direktivitet is not None:
+                bidrag = bidrag * 10.0 ** (direktivitet[bullertyp] / 10.0)
+            effekt += bidrag
         with np.errstate(divide="ignore"):
             return np.asarray(10.0 * np.log10(effekt), dtype=np.float64)
 
@@ -456,6 +540,7 @@ class Vagemission:
         period_s: float,
         delkallhojder_m: Sequence[float] | None = None,
         forhallanden: Vagforhallanden | None = None,
+        riktning: Kallriktning | None = None,
     ) -> Flyttal:
         """Ekvivalent ljudeffektnivå för ett vägsegment, form (antal delkällor, ANTAL_BAND).
 
@@ -466,9 +551,16 @@ class Vagemission:
             delkallhojder_m: om angivet ska det vara modellens delkällhöjder; raderna i
                 resultatet följer den ordningen. Utelämnat ger `self.delkallhojder_m`.
             forhallanden: beläggning, temperatur och land; utelämnat ger referensförhållandet.
+            riktning: riktningen från segmentets källpunkt mot mottagaren (φ mot fordonens
+                färdriktning och ψ över horisontalplanet, SP 2006:12 figur 2.2). Med den läggs
+                direktiviteten till (ekv. 2.9, 2.11, 2.12 och tabell 2.4); ψ per delkälla
+                följer samma ordning som raderna i resultatet. Utelämnad ger ingen
+                direktivitet (rundstrålande källa).
 
         Returns:
-            L_W per delkälla och tersband i dB re 1 pW (−inf där trafiken är noll).
+            L_W per delkälla och tersband i dB re 1 pW (−inf där trafiken är noll). Med
+            `riktning` är det nivån för den rundstrålande punktkälla som ger samma ljudtryck
+            i den riktningen.
         """
         if not math.isfinite(segment_langd_m) or segment_langd_m <= 0.0:
             raise BullerFel("segment_langd_m ska vara större än noll.")
@@ -477,11 +569,12 @@ class Vagemission:
         if not trafik:
             raise BullerFel("Trafiken saknar poster.")
         ordning = self._ordning(delkallhojder_m)
+        egen_riktning = self._riktning_i_egen_ordning(riktning, ordning)
 
         effekt = np.zeros((len(self.delkallhojder_m), ANTAL_BAND))
         for flode in trafik:
             per_fordon_db = self.ljudeffekt_per_fordon_db(
-                flode.kategori, flode.hastighet_km_h, forhallanden, flode
+                flode.kategori, flode.hastighet_km_h, forhallanden, flode, egen_riktning
             )
             hastighet_m_s = flode.hastighet_km_h / 3.6
             tidsandel = flode.antal_fordon * segment_langd_m / (hastighet_m_s * period_s)
@@ -494,8 +587,20 @@ class Vagemission:
         """Maximalnivå stöds inte: metoden är inte fullständigt läsbar i tillgängliga källor."""
         raise BullerFel(
             "Maximalnivå är inte införd. Metoden står i SP Rapport 2006:12 avsnitt 2.6 "
-            "(ekvation 2.13–2.16) och kräver direktivitet och utbredning per fordonsläge."
+            "(ekvation 2.13–2.16) och kräver utbredning per fordonsläge."
         )
+
+    def _riktning_i_egen_ordning(
+        self, riktning: Kallriktning | None, ordning: Sequence[int]
+    ) -> Kallriktning | None:
+        """Flyttar ψ per delkälla från den begärda radordningen till modellens egen."""
+        if riktning is None or not isinstance(riktning.hojdvinkel_rad, tuple):
+            return riktning
+        psi = riktning.hojdvinklar_rad(len(ordning))
+        egen = [0.0] * len(ordning)
+        for rad, index in enumerate(ordning):
+            egen[index] = psi[rad]
+        return Kallriktning(riktning.vinkel_mot_fardriktning_rad, tuple(egen))
 
     def _ordning(self, delkallhojder_m: Sequence[float] | None) -> list[int]:
         egna = self.delkallhojder_m
@@ -525,9 +630,10 @@ def ljudeffekt_db(
     delkallhojder_m: Sequence[float] | None = None,
     forhallanden: Vagforhallanden | None = None,
     *,
+    riktning: Kallriktning | None = None,
     modell: Vagemission | None = None,
 ) -> Flyttal:
     """Ekvivalent ljudeffektnivå för ett vägsegment med standarddatafilen (se `Vagemission`)."""
     return (modell or Vagemission()).ljudeffekt_db(
-        trafik, segment_langd_m, period_s, delkallhojder_m, forhallanden
+        trafik, segment_langd_m, period_s, delkallhojder_m, forhallanden, riktning
     )

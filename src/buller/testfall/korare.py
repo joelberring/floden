@@ -11,7 +11,10 @@ Beräkningen för rak väg följer KB2:
    det vinkelräta avståndet (ren geometri).
 3. Terrängprofilen mot källpunkten är tvärsnittet utdraget med 1 / cos θ.
 4. Källstyrkan korrigeras för fallets beläggning och lufttemperatur (`forhallanden_for_fall`).
-5. `L[b] = 10·lg Σ 10^((L_W[k, j, b] + H[k, j, b]) / 10)` över källpunkter k och delkällor j.
+5. Källmodellen får riktningen från varje källpunkt mot mottagaren (`riktning_for_kallpunkt`),
+   så att den kan lägga till sin direktivitet (SP 2006:12 avsnitt 2.5). En källmodell som
+   inte tar emot riktning räknas som rundstrålande, och det skrivs i resultatets kommentar.
+6. `L[b] = 10·lg Σ 10^((L_W[k, j, b] + H[k, j, b]) / 10)` över källpunkter k och delkällor j.
 
 Exponeringsnivån för en fordonspassage fås ur definitionen L_E = L_eq,T + 10·lg(T / 1 s) med
 ett fordon under T, alltså L_E = L_eq,T(N) + 10·lg(T / (N · 1 s)). Sambandet stämmer med
@@ -30,10 +33,11 @@ import math
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from buller.emission.direktivitet import Kallriktning
 from buller.emission.modell import Trafikflode, Vagforhallanden
 from buller.testfall.format import (
     TYP_RAK_VAG,
@@ -52,7 +56,7 @@ from buller.testfall.jamforelse import (
     las_regler,
     samsta,
 )
-from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Vader
+from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Terrangprofil, Vader
 
 _VADERFALT = frozenset(Vader.__dataclass_fields__)
 _VILLKOR_MOTTAGARHOJD = "mottagare_hojd_m"
@@ -78,12 +82,55 @@ class Emissionsmodell(Protocol):
         ...
 
 
+@runtime_checkable
+class EmissionsmodellMedDirektivitet(Protocol):
+    """En källmodell som dessutom tar emot riktningen mot mottagaren.
+
+    Köraren använder riktningen bara om modellen har `stoder_direktivitet = True`. Modeller
+    som bara uppfyller `Emissionsmodell` fungerar som förut, utan direktivitet.
+    """
+
+    @property
+    def delkallhojder_m(self) -> tuple[float, ...]: ...
+
+    @property
+    def stoder_direktivitet(self) -> bool: ...
+
+    def ljudeffekt_db(
+        self,
+        trafik: Sequence[Trafikflode],
+        segment_langd_m: float,
+        period_s: float,
+        delkallhojder_m: Sequence[float] | None = None,
+        forhallanden: Vagforhallanden | None = None,
+        riktning: Kallriktning | None = None,
+    ) -> Flyttal:
+        """Form (antal delkällor, ANTAL_BAND), dB re 1 pW, med direktivitet om `riktning` ges."""
+        ...
+
+
+UTAN_DIREKTIVITET_AVSTANGD = (
+    "Källmodellen är räknad utan direktivitet (avstängd i anropet): ingen riktning mot "
+    "mottagaren gavs till källmodellen."
+)
+UTAN_DIREKTIVITET_STODS_INTE = (
+    "Källmodellen är räknad utan direktivitet: emissionsmodellen tar inte emot riktningen "
+    "mot mottagaren."
+)
+
+
 @dataclass(frozen=True)
 class Berakning:
-    """Beräknade nivåer för en serie."""
+    """Beräknade nivåer för en serie.
+
+    `direktivitet` är sant om källmodellen fick riktningen mot mottagaren för varje källpunkt.
+    `anmarkning` är tom då och säger annars varför direktiviteten inte är med.
+    """
 
     totalnivaer_db: dict[str, float]
     spektrum_db: dict[str, Flyttal]
+    direktivitet: bool = False
+    anmarkning: str = ""
 
 
 @dataclass(frozen=True)
@@ -201,10 +248,60 @@ def vindkomponent_m_s(
     return vind_m_s * math.cos(math.radians(vindriktning_grader) - kallpunktsvinkel_rad)
 
 
+def vinkel_mot_fardriktning_rad(kallpunktsvinkel_rad: float) -> float:
+    """φ i SP 2006:12 figur 2.2 för en källpunkt på rak väg: π/2 + θ.
+
+    θ är källpunktens vinkel sedd från mottagaren, räknad från vägens normal. Riktningen från
+    källpunkten mot mottagaren bildar då vinkeln θ med normalen, och med färdriktningen längs
+    vägen åt det håll θ växer blir vinkeln mellan färdriktningen och riktningen mot mottagaren
+    π/2 + θ (ren geometri): källpunkter med θ > 0 har passerat mottagaren (φ > 90°), de med
+    θ < 0 är på väg mot den (φ < 90°).
+
+    Testfallen anger ingen färdriktning för rak väg. Ekv. (2.12) beror bara på |cos φ| = sin|θ|
+    och är opåverkad. Ekv. (2.11) (delkällan på 0,75 m) skiljer framåt från bakåt, men
+    källpunkterna ligger symmetriskt kring normalen, så summan över dem beror bara på
+    färdriktningen när utbredningen är olika åt de två hållen, alltså vid vind med en komponent
+    längs vägen. Inget blad med kategori 2 eller 3 har vind.
+    """
+    return math.pi / 2.0 + kallpunktsvinkel_rad
+
+
+def riktning_for_kallpunkt(
+    kallpunktsvinkel_rad: float, profiler: Sequence[Terrangprofil]
+) -> Kallriktning:
+    """Riktningen från en källpunkt mot mottagaren, med höjdvinkeln ψ per delkälla.
+
+    φ fås ur `vinkel_mot_fardriktning_rad`. ψ är vinkeln över horisontalplanet för den räta
+    linjen från delkällan till mottagaren (SP 2006:12 figur 2.2), räknad ur terrängprofilen
+    mot källpunkten: tan ψ = höjdskillnaden mottagare − källa genom det horisontella
+    avståndet. Linjen är rät också vid refraktion och bakom skärm: AV 1106/07 bilaga D anger
+    att den vertikala utstrålningsvinkeln i Nord2000 tas som riktningen från källa till
+    mottagare.
+    """
+    psi: list[float] = []
+    for profil in profiler:
+        hojdskillnad_m = (float(profil.z_m[-1]) + profil.mottagare_hojd_m) - (
+            float(profil.z_m[0]) + profil.kalla_hojd_m
+        )
+        psi.append(math.atan2(hojdskillnad_m, float(profil.x_m[-1] - profil.x_m[0])))
+    return Kallriktning(vinkel_mot_fardriktning_rad(kallpunktsvinkel_rad), tuple(psi))
+
+
 def berakna_rak_vag(
-    karna: P2PKarna, emission: Emissionsmodell, fall: N2kFall, a_vagning_db: Flyttal
+    karna: P2PKarna,
+    emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
+    fall: N2kFall,
+    a_vagning_db: Flyttal,
+    *,
+    direktivitet: bool = True,
 ) -> Berakning:
-    """Beräknar L_eq, L_E och A-vägda totalnivåer för ett fall med rak väg."""
+    """Beräknar L_eq, L_E och A-vägda totalnivåer för ett fall med rak väg.
+
+    Med `direktivitet = True` (förval) får källmodellen riktningen från varje källpunkt mot
+    mottagaren, om den tar emot en sådan (`EmissionsmodellMedDirektivitet` med
+    `stoder_direktivitet = True`). Annars räknas källorna som rundstrålande, som före paket
+    B5b, och `Berakning.anmarkning` säger det.
+    """
     if fall.typ != TYP_RAK_VAG:
         raise BullerFel(f"Köraren kan bara räkna '{TYP_RAK_VAG}', inte '{fall.typ}'.")
     if not fall.indata_fullstandig:
@@ -233,10 +330,31 @@ def berakna_rak_vag(
     antal = fall.vag.antal_kallpunkter
     vinklar = (np.arange(antal) - (antal - 1) / 2.0) * steg
 
+    riktad = emission if isinstance(emission, EmissionsmodellMedDirektivitet) else None
+    if riktad is not None and not riktad.stoder_direktivitet:
+        riktad = None
+    if not direktivitet:
+        riktad, anmarkning = None, UTAN_DIREKTIVITET_AVSTANGD
+    else:
+        anmarkning = "" if riktad is not None else UTAN_DIREKTIVITET_STODS_INTE
+
     bidrag = np.empty((antal, len(hojder), ANTAL_BAND))
     for k, vinkel in enumerate(vinklar):
         langd_m = avstand_m * (math.tan(vinkel + steg / 2.0) - math.tan(vinkel - steg / 2.0))
-        effekt_db = emission.ljudeffekt_db(trafik, langd_m, period_s, hojder, forhallanden)
+        profiler = [
+            fall.profil(kalla_hojd_m=hojd, stracka=1.0 / math.cos(vinkel)) for hojd in hojder
+        ]
+        if riktad is not None:
+            effekt_db = riktad.ljudeffekt_db(
+                trafik,
+                langd_m,
+                period_s,
+                hojder,
+                forhallanden,
+                riktning_for_kallpunkt(float(vinkel), profiler),
+            )
+        else:
+            effekt_db = emission.ljudeffekt_db(trafik, langd_m, period_s, hojder, forhallanden)
         if effekt_db.shape != (len(hojder), ANTAL_BAND):
             raise BullerFel(
                 f"Emissionsmodellen gav form {effekt_db.shape}, väntade "
@@ -247,8 +365,7 @@ def berakna_rak_vag(
             vader = replace(
                 vader, vind_m_s=vindkomponent_m_s(vader.vind_m_s, vindriktning, float(vinkel))
             )
-        for j, hojd in enumerate(hojder):
-            profil = fall.profil(kalla_hojd_m=hojd, stracka=1.0 / math.cos(vinkel))
+        for j, profil in enumerate(profiler):
             overforing_db = np.asarray(karna.overforing_db(profil, vader))
             if overforing_db.shape != (ANTAL_BAND,):
                 raise BullerFel(f"Kärnan {karna.namn} gav form {overforing_db.shape}.")
@@ -264,20 +381,25 @@ def berakna_rak_vag(
         le_db = leq_db + 10.0 * math.log10(period_s / trafik[0].antal_fordon)
         spektrum["LE"] = le_db
         totaler["LAE"] = float(_energisumma_db(le_db + a_vagning_db))
-    return Berakning(totaler, spektrum)
+    return Berakning(totaler, spektrum, direktivitet=riktad is not None, anmarkning=anmarkning)
 
 
 def kor_fall(
     karna: P2PKarna,
-    emission: Emissionsmodell,
+    emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
     fall: N2kFall,
     facit: Facit | None = None,
     *,
     regler: Avvikelseregler | None = None,
     a_vagning_db: Flyttal | None = None,
     kravda_storheter: Collection[str] | None = None,
+    direktivitet: bool = True,
 ) -> Fallresultat:
     """Kör ett fall och jämför med facit.
+
+    `direktivitet = False` räknar källorna som rundstrålande (se `berakna_rak_vag`). När
+    direktiviteten inte är med, av det skälet eller för att emissionsmodellen inte tar emot
+    riktning, står det i resultatets kommentar.
 
     Utan `regler` används regelverket som facit anger (och seriens `regelvariant`).
     Fall vars facit har `ar_facit = false` får alltid utfallet `Utfall.EJ_FACIT`, oavsett hur
@@ -290,6 +412,7 @@ def kor_fall(
         facit = las_facit(fall.mapp)
     serier: list[Seriejamforelse] = []
     hinder: list[str] = []
+    anmarkningar: list[str] = []
     try:
         vagning = a_vagning_db if a_vagning_db is not None else _standard_a_vagning_db()
         for serie in facit.serier:
@@ -297,7 +420,15 @@ def kor_fall(
                 regelverk=facit.regelverk,
                 variant=str(serie.villkor.get(VILLKOR_REGELVARIANT, STANDARDVARIANT)),
             )
-            berakning = berakna_rak_vag(karna, emission, _fall_med_villkor(fall, serie), vagning)
+            berakning = berakna_rak_vag(
+                karna,
+                emission,
+                _fall_med_villkor(fall, serie),
+                vagning,
+                direktivitet=direktivitet,
+            )
+            if berakning.anmarkning and berakning.anmarkning not in anmarkningar:
+                anmarkningar.append(berakning.anmarkning)
             serier.append(
                 jamfor_serie(
                     berakning.totalnivaer_db,
@@ -324,6 +455,7 @@ def kor_fall(
         utfall = samsta([s.klass for s in serier])
     for s in serier:
         kommentarer += [f"[{s.serie_id}] {a}" for a in s.anmarkningar]
+    kommentarer += anmarkningar
     if not karna.nord2000_konform:
         kommentarer.append("Kärnan är inte Nord2000-konform.")
 
@@ -340,18 +472,27 @@ def kor_fall(
 
 def kor_alla(
     karna: P2PKarna,
-    emission: Emissionsmodell,
+    emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
     rot: str | Path,
     *,
     regler: Avvikelseregler | None = None,
     a_vagning_db: Flyttal | None = None,
+    direktivitet: bool = True,
 ) -> list[Fallresultat]:
     """Kör alla Nord2000-fall under `rot` (t.ex. `testsvit/N_nord2000`).
 
-    Utan `regler` används det regelverk som varje falls facit anger.
+    Utan `regler` används det regelverk som varje falls facit anger. `direktivitet = False`
+    räknar källorna som rundstrålande (se `kor_fall`).
     """
     return [
-        kor_fall(karna, emission, fall, regler=regler, a_vagning_db=a_vagning_db)
+        kor_fall(
+            karna,
+            emission,
+            fall,
+            regler=regler,
+            a_vagning_db=a_vagning_db,
+            direktivitet=direktivitet,
+        )
         for fall in hitta_fall(rot)
     ]
 

@@ -39,7 +39,7 @@ def _blad(*nummer: int) -> set[str]:
 
 
 # Blad i teststraightroad_20181101.xls som är godkända: plan mark med och utan väder.
-GODKANDA_FALL = _blad(*range(1, 14), 15, 16, 17, 18, 21, 22, 23, 24)
+GODKANDA_FALL = _blad(*range(1, 19), 21, 22, 23, 24)
 
 # De tio blad som var godkända redan före refraktionen (homogen atmosfär); största avvikelse i
 # A-vägd totalnivå i dag, i dB (uppmätt värde avrundat uppåt till två decimaler).
@@ -59,9 +59,8 @@ HOMOGENA_FALL_TOTALAVVIKELSE_DB = {
 # Fall som kärnan räknar men som inte klarar reglerna.
 # Värdet är (utfall, största tillåtna avvikelse i A-vägd totalnivå i dB, i tersband i dB);
 # gränserna är uppmätt värde plus en liten marginal.
-KANDA_AVVIKELSER = {
-    # φ = 90° (sidvind): totalnivå −0,73 dB, 800 Hz −1,03 dB; 25–630 Hz och 8–10 kHz inom 0,04 dB.
-    "N18R014": (Utfall.SKA_UTREDAS, 0.80, 1.10),
+KANDA_AVVIKELSER: dict[str, tuple[Utfall, float, float]] = {
+    # Blad 14 (sidvind) blev godkänt när källmodellens direktivitet infördes (B5b, 2026-11-21).
 }
 
 # Fall som inte räknas, med en del av skälet som ska stå i kommentaren.
@@ -124,8 +123,8 @@ class TestTestsvitN(unittest.TestCase):
         self.assertEqual(
             antal,
             {
-                Utfall.GODKAND: 21,
-                Utfall.SKA_UTREDAS: 1,
+                Utfall.GODKAND: 22,
+                Utfall.SKA_UTREDAS: 0,
                 Utfall.UNDERKAND: 0,
                 Utfall.EJ_FACIT: 4,
                 Utfall.EJ_KORBAR: 58,

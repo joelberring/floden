@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import math
 import unittest
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
 
 from buller.akustik.band import a_vagning_db
-from buller.emission import Vagemission, Vagforhallanden, las_emissionsdata
+from buller.emission import (
+    Kallriktning,
+    Trafikflode,
+    Vagemission,
+    Vagforhallanden,
+    las_emissionsdata,
+)
 from buller.testfall import (
     Terrangdata,
     Trafikpost,
@@ -19,7 +26,14 @@ from buller.testfall import (
     kor_fall,
     sammanstallning_md,
 )
-from buller.testfall.korare import berakna_rak_vag
+from buller.testfall.korare import (
+    UTAN_DIREKTIVITET_AVSTANGD,
+    UTAN_DIREKTIVITET_STODS_INTE,
+    EmissionsmodellMedDirektivitet,
+    berakna_rak_vag,
+    riktning_for_kallpunkt,
+    vinkel_mot_fardriktning_rad,
+)
 from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Terrangprofil, Vader
 from tests.buller.testfall.hjalp import (
     Frifaltskarna,
@@ -137,6 +151,200 @@ class TestBerakning(unittest.TestCase):
         berakna_rak_vag(karna, self.emission, sidvind, NOLLVAGNING)
         vindar = np.array(karna.vindar)
         np.testing.assert_allclose(vindar, -vindar[::-1], atol=1e-12)  # medvind ena hållet
+
+
+class Riktademission(Konstantemission):
+    """Konstgjord källmodell med direktivitet: (k0 + k1·|cos φ|) i alla band, en delkälla.
+
+    Med `fram_bak_db` läggs dessutom ett tillägg som skiljer framåt från bakåt,
+    fram_bak_db·cos φ. `spegla` byter färdriktning (φ → π − φ).
+    """
+
+    stoder_direktivitet = True
+
+    def __init__(
+        self, k0_db: float = -2.5, k1_db: float = 4.0, fram_bak_db: float = 0.0,
+        spegla: bool = False,
+    ) -> None:
+        super().__init__(100.0)
+        self.k0_db, self.k1_db, self.fram_bak_db, self.spegla = k0_db, k1_db, fram_bak_db, spegla
+        self.riktningar: list[Kallriktning | None] = []
+
+    def ljudeffekt_db(
+        self,
+        trafik: Sequence[Trafikflode],
+        segment_langd_m: float,
+        period_s: float,
+        delkallhojder_m: Sequence[float] | None = None,
+        forhallanden: Vagforhallanden | None = None,
+        riktning: Kallriktning | None = None,
+    ) -> Flyttal:
+        self.riktningar.append(riktning)
+        niva = super().ljudeffekt_db(trafik, segment_langd_m, period_s, delkallhojder_m)
+        if riktning is None:
+            return niva
+        fi = riktning.vinkel_mot_fardriktning_rad
+        if self.spegla:
+            fi = math.pi - fi
+        return niva + self.k0_db + self.k1_db * abs(math.cos(fi)) + self.fram_bak_db * math.cos(fi)
+
+
+class TestRiktningTillKallmodellen(unittest.TestCase):
+    """Köraren ger källmodellen riktningen från varje källpunkt mot mottagaren."""
+
+    def setUp(self) -> None:
+        self.karna = Frifaltskarna()
+        self.fall = exempel_fall(
+            mottagare_hojd_m=0.5,
+            terrang=Terrangdata((0.0, 60.0), (0.0, 0.0), (200.0,), (0.0,)),
+        )
+
+    def test_vinkeln_mot_fardriktningen(self) -> None:
+        self.assertAlmostEqual(vinkel_mot_fardriktning_rad(0.0), math.pi / 2.0)
+        self.assertAlmostEqual(vinkel_mot_fardriktning_rad(math.radians(-89.0)), math.radians(1.0))
+        self.assertAlmostEqual(vinkel_mot_fardriktning_rad(math.radians(89.0)), math.radians(179.0))
+        for grader in (-60.0, -10.0, 25.0, 80.0):
+            theta = math.radians(grader)
+            # |cos φ| = sin|θ|, och mot en oberoende räkning med vektorer: färdriktningen
+            # (0, 1), källpunkten i (0, d·tan θ) och mottagaren i (d, 0).
+            fi = vinkel_mot_fardriktning_rad(theta)
+            self.assertAlmostEqual(abs(math.cos(fi)), math.sin(abs(theta)), places=12)
+            mot_mottagaren = np.array([1.0, -math.tan(theta)])
+            cos_fi = float(mot_mottagaren[1] / np.linalg.norm(mot_mottagaren))
+            self.assertAlmostEqual(math.cos(fi), cos_fi, places=12)
+
+    def test_hojdvinkeln_per_delkalla(self) -> None:
+        # Mottagaren 4,0 m över plan mark och 48 m från källinjen; källpunkten i 60° ligger
+        # 96 m bort. tan ψ = (4,0 − h_s) / 96.
+        fall = exempel_fall(
+            mottagare_hojd_m=4.0, terrang=Terrangdata((0.0, 60.0), (0.0, 0.0), (200.0,), (0.0,))
+        )
+        theta = math.radians(60.0)
+        profiler = [fall.profil(h, stracka=1.0 / math.cos(theta)) for h in (0.01, 0.30, 0.75)]
+        riktning = riktning_for_kallpunkt(theta, profiler)
+        self.assertAlmostEqual(riktning.vinkel_mot_fardriktning_rad, math.radians(150.0))
+        for psi, hojd in zip(riktning.hojdvinklar_rad(3), (0.01, 0.30, 0.75), strict=True):
+            self.assertAlmostEqual(psi, math.atan((4.0 - hojd) / 96.0), places=12)
+        # Lutande mark räknas med: mottagarens mark 1 m över källans ger större vinkel.
+        lutande = exempel_fall(mottagare_hojd_m=4.0)
+        profil = lutande.profil(0.5)
+        dz = float(profil.z_m[-1] - profil.z_m[0])
+        self.assertGreater(dz, 0.0)
+        psi = riktning_for_kallpunkt(0.0, [profil]).hojdvinklar_rad(1)[0]
+        self.assertAlmostEqual(psi, math.atan((dz + 4.0 - 0.5) / 48.0), places=12)
+        # Mottagare lägre än källan ger negativ vinkel.
+        lag = exempel_fall(
+            mottagare_hojd_m=0.1, terrang=Terrangdata((0.0, 60.0), (0.0, 0.0), (200.0,), (0.0,))
+        )
+        self.assertLess(riktning_for_kallpunkt(0.0, [lag.profil(0.75)]).hojdvinklar_rad(1)[0], 0.0)
+
+    def test_varje_kallpunkt_far_sin_riktning(self) -> None:
+        emission = Riktademission()
+        self.assertIsInstance(emission, EmissionsmodellMedDirektivitet)
+        ber = berakna_rak_vag(self.karna, emission, self.fall, NOLLVAGNING)
+        self.assertTrue(ber.direktivitet)
+        self.assertEqual(ber.anmarkning, "")
+        self.assertEqual(len(emission.riktningar), 179)
+        for k, riktning in enumerate(emission.riktningar):
+            assert riktning is not None
+            self.assertAlmostEqual(
+                riktning.vinkel_mot_fardriktning_rad, math.radians(k + 1.0), places=12
+            )
+            # Källa och mottagare på samma höjd: ψ = 0.
+            self.assertEqual(riktning.hojdvinklar_rad(1), (0.0,))
+
+    def test_linjekalla_med_direktivitet_mot_handrakning(self) -> None:
+        # Som det analytiska fallet i TestBerakning, men varje källpunkt väger dessutom
+        # 10^((−2,5 + 4·sin|θ|) / 10): |cos φ| = sin|θ| på rak väg.
+        d = 48.0
+        ber = berakna_rak_vag(self.karna, Riktademission(), self.fall, NOLLVAGNING)
+        effekt_per_meter_db = 100.0 + 10.0 * math.log10(10000.0 / (80.0 / 3.6 * 86400.0))
+        steg = math.radians(1.0)
+        summa = sum(
+            d
+            * (math.tan(t + steg / 2) - math.tan(t - steg / 2))
+            * math.cos(t) ** 2
+            / d**2
+            * 10.0 ** ((-2.5 + 4.0 * math.sin(abs(t))) / 10.0)
+            for t in (math.radians(k - 89.0) for k in range(179))
+        )
+        vantat = effekt_per_meter_db + 10.0 * math.log10(summa / (4.0 * math.pi))
+        np.testing.assert_allclose(ber.spektrum_db["Leq_24h"], vantat, atol=1e-9)
+        # Mot integralen över −89,5°…89,5° av 10^((−2,5 + 4·sin|θ|) / 10), tätt samplad.
+        theta = np.linspace(0.0, math.radians(89.5), 200001)
+        varden = 10.0 ** ((-2.5 + 4.0 * np.sin(theta)) / 10.0)
+        integral = 2.0 * float(np.sum(0.5 * (varden[1:] + varden[:-1]) * np.diff(theta)))
+        vantat_integral = effekt_per_meter_db + 10.0 * math.log10(integral / (4.0 * math.pi * d))
+        self.assertAlmostEqual(float(ber.spektrum_db["Leq_24h"][0]), vantat_integral, delta=0.05)
+
+    def test_utan_riktning_ingen_direktivitet_och_det_syns(self) -> None:
+        rundstralande = berakna_rak_vag(self.karna, Konstantemission(100.0), self.fall, NOLLVAGNING)
+        self.assertFalse(rundstralande.direktivitet)
+        self.assertEqual(rundstralande.anmarkning, UTAN_DIREKTIVITET_STODS_INTE)
+        emission = Riktademission()
+        avstangd = berakna_rak_vag(
+            self.karna, emission, self.fall, NOLLVAGNING, direktivitet=False
+        )
+        self.assertFalse(avstangd.direktivitet)
+        self.assertEqual(avstangd.anmarkning, UTAN_DIREKTIVITET_AVSTANGD)
+        self.assertEqual(emission.riktningar, [None] * 179)
+        # Avstängd direktivitet ger samma tal som en källmodell utan direktivitet.
+        np.testing.assert_array_equal(
+            avstangd.spektrum_db["Leq_24h"], rundstralande.spektrum_db["Leq_24h"]
+        )
+        # En modell som säger att den inte stöder direktivitet får ingen riktning.
+        stodlos = Riktademission()
+        stodlos.stoder_direktivitet = False
+        ber = berakna_rak_vag(self.karna, stodlos, self.fall, NOLLVAGNING)
+        self.assertEqual(stodlos.riktningar, [None] * 179)
+        self.assertEqual(ber.anmarkning, UTAN_DIREKTIVITET_STODS_INTE)
+
+    def test_kommentaren_sager_nar_direktiviteten_inte_ar_med(self) -> None:
+        # Direktiviteten −6 dB åt alla håll: utan den skiljer resultatet 6 dB från facit.
+        ber = berakna_rak_vag(self.karna, Riktademission(-6.0, 0.0), self.fall, a_vagning_db())
+        facit = exempel_facit(True, ber.totalnivaer_db, ber.spektrum_db)
+        med = kor_fall(self.karna, Riktademission(-6.0, 0.0), self.fall, facit)
+        self.assertIs(med.utfall, Utfall.GODKAND)
+        self.assertNotIn("utan direktivitet", med.kommentar)
+        avstangd = kor_fall(
+            self.karna, Riktademission(-6.0, 0.0), self.fall, facit, direktivitet=False
+        )
+        self.assertIn(UTAN_DIREKTIVITET_AVSTANGD, avstangd.kommentar)
+        self.assertIsNot(avstangd.utfall, Utfall.GODKAND)
+        gammal = kor_fall(self.karna, Konstantemission(100.0), self.fall, facit)
+        self.assertIn(UTAN_DIREKTIVITET_STODS_INTE, gammal.kommentar)
+        self.assertEqual(gammal.kommentar.count("utan direktivitet"), 1)
+
+    def test_fardriktningen_saknar_betydelse_utan_vind(self) -> None:
+        # En direktivitet som skiljer framåt från bakåt (som SP 2006:12 ekv. 2.11) ger samma
+        # nivå åt båda färdriktningarna när utbredningen är lika åt båda hållen längs vägen.
+        ena = berakna_rak_vag(
+            self.karna, Riktademission(fram_bak_db=3.0), self.fall, NOLLVAGNING
+        )
+        andra = berakna_rak_vag(
+            self.karna, Riktademission(fram_bak_db=3.0, spegla=True), self.fall, NOLLVAGNING
+        )
+        np.testing.assert_allclose(
+            ena.spektrum_db["Leq_24h"], andra.spektrum_db["Leq_24h"], atol=1e-9
+        )
+        utan = berakna_rak_vag(self.karna, Riktademission(), self.fall, NOLLVAGNING)
+        self.assertGreater(
+            float(np.max(np.abs(ena.spektrum_db["Leq_24h"] - utan.spektrum_db["Leq_24h"]))), 0.01
+        )
+
+    def test_medfoljande_kallmodell_far_riktning(self) -> None:
+        fall = exempel_fall(mottagare_hojd_m=4.0)
+        med = berakna_rak_vag(self.karna, Vagemission(), fall, NOLLVAGNING)
+        utan = berakna_rak_vag(self.karna, Vagemission(), fall, NOLLVAGNING, direktivitet=False)
+        self.assertTrue(med.direktivitet)
+        self.assertFalse(utan.direktivitet)
+        skillnad = med.spektrum_db["Leq_24h"] - utan.spektrum_db["Leq_24h"]
+        # 25–40 Hz har ingen direktivitet alls (tabell 2.4 börjar på 50 Hz, ekv. 2.12 på 800 Hz).
+        np.testing.assert_allclose(skillnad[:3], 0.0, atol=1e-12)
+        # 800–6300 Hz: ekv. (2.12) på den lägsta källan ändrar nivån märkbart.
+        self.assertGreater(float(np.min(np.abs(skillnad[15:25]))), 0.05)
+        tom = Vagemission(las_emissionsdata(TOM_DATA))
+        self.assertFalse(tom.stoder_direktivitet)
 
 
 class TestUtfall(unittest.TestCase):

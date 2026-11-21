@@ -1,5 +1,6 @@
 """Källmodell för vägtrafik (paket B5): ljudeffektnivå per vägsegment och delkälla."""
 
+from buller.emission.direktivitet import Direktivitetsdata, Kallriktning
 from buller.emission.modell import (
     BULLERTYPER,
     DATAFIL,
@@ -19,7 +20,9 @@ __all__ = [
     "DATAFIL",
     "FORMTYPER",
     "Bullertyptabell",
+    "Direktivitetsdata",
     "Emissionsdata",
+    "Kallriktning",
     "Kategoridata",
     "Trafikflode",
     "Vagemission",

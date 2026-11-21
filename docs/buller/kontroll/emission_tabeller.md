@@ -3,7 +3,7 @@
 Genererad av `buller.emission.kontroll.kontrollutskrift_md`. Ändra inte för hand:
 rätta datafilen och generera om.
 
-- Datafil: `src/buller/emission/data/nord2000_road_v2.toml` (dataversion 2)
+- Datafil: `src/buller/emission/data/nord2000_road_v3.toml` (dataversion 3)
 - Syntetisk: nej
 - Verifierad av människa: nej
 - Fullständig: ja
@@ -168,9 +168,42 @@ Källa: SP Rapport 2006:12 avsnitt 2.2 (s. 9); UG avsnitt 3.1.1 (s. 12)
 | 8000 | 0 | 7.3 | -9.9 | ☐ |
 | 10000 | 2 | 10 | -10.2 | ☐ |
 
+## Direktivitet
+
+Källa: SP Rapport 2006:12 avsnitt 2.5 (s. 13–16), ekvation (2.9), figur 2.2; sammanfattningen (s. 6–7)
+
+∆L = ∆L_H(f, φ) + ∆L_V(f, ψ). φ är vinkeln mellan fordonets färdriktning och riktningen
+mot mottagaren i horisontalplanet, ψ riktningens vinkel över horisontalplanet.
+
+### Horisontell direktivitet
+
+Formtyp `k0_plus_k1_abs_cos_fi`: (k0 + k1·|cos φ|)·√cos ψ, koefficienter [k0, k1].
+Formtyp `polynom_i_pi_halva_minus_fi`: (Σ cₙ·(π/2 − φ)ⁿ)·√cos ψ med φ i radianer,
+koefficienter [c0, c1, c2, …]. Delkällor utan rad har ingen horisontell direktivitet.
+
+| Delkälla (m) | Formtyp | Koefficienter (dB) | Band (Hz) | Bullertyp i texten | Källa | ☐ |
+| --- | --- | --- | --- | --- | --- | --- |
+| 0.01 | `k0_plus_k1_abs_cos_fi` | -2.5, 4 | 800–6300, noll i övriga | rull | SP Rapport 2006:12, ekvation (2.12a–b) (s. 15); sammanfattningen (s. 7) | ☐ |
+| 0.75 | `polynom_i_pi_halva_minus_fi` | 0.6, 0.22, -1.425, 1.546 | alla | drivlina | SP Rapport 2006:12, ekvation (2.11) (s. 14); sammanfattningen (s. 7) | ☐ |
+
+### Vertikal direktivitet
+
+Källa: SP Rapport 2006:12, tabell 2.4 (s. 16). Band som tabellen inte tar upp har ingen
+vertikal direktivitet.
+
+| Frekvens (Hz) | hs = 0.01 m | hs = 0.3 m | hs = 0.75 m | ☐ |
+| --- | --- | --- | --- | --- |
+| 50, 63, 80 | 0 | -2·sin ψ | 0 | ☐ |
+| 100, 125, 160 | 0 | -4·sin ψ | 0 | ☐ |
+| 200, 250, 315 | -2·(1 − cos² ψ) | -5·(1 − cos² ψ) | -2·(1 − cos² ψ) | ☐ |
+| 400, 500, 630 | -3·(1 − cos² ψ) | -5·(1 − cos² ψ) | -3·(1 − cos² ψ) | ☐ |
+| 800, 1000, 1250 | -4·(1 − cos² ψ) | -6·(1 − cos² ψ) | -3·(1 − cos² ψ) | ☐ |
+| 1600, 2000, 2500 | -4·(1 − cos² ψ) | -6·(1 − cos² ψ) | -2·(1 − cos² ψ) | ☐ |
+| 3150, 4000, 5000 | 0 | -5·(1 − cos² ψ) | -2·(1 − cos ψ) | ☐ |
+| 6300, 8000, 10000 | 0 | -8·(1 − cos ψ) | -2·(1 − cos ψ) | ☐ |
+
 ## Inte infört i koden
 
-- Direktivitet: SP 2006:12 ekvation (2.9)–(2.12) och tabell 2.4 (s. 13–16).
 - Våt vägbana: ekvation (2.6a–c) (s. 13).
 - Dubbdäck: tabell A.3 är inläst (ovan) men används inte; hur andelen dubbade däck vägs
   in står inte i avsnitt 8.1.

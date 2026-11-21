@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from buller.emission.direktivitet import Direktivitetsdata
 from buller.emission.modell import BULLERTYPER, Emissionsdata
 from buller.typer import TERSBAND_HZ
+
+_VERTIKALA_FORMLER = {
+    "k_sin_psi": "{k:g}·sin ψ",
+    "k_ett_minus_cos2_psi": "{k:g}·(1 − cos² ψ)",
+    "k_ett_minus_cos_psi": "{k:g}·(1 − cos ψ)",
+}
 
 _ATT_MATA_IN = (
     "## Att mata in för hand",
@@ -15,7 +22,6 @@ _ATT_MATA_IN = (
 _INTE_INFORT = (
     "## Inte infört i koden",
     "",
-    "- Direktivitet: SP 2006:12 ekvation (2.9)–(2.12) och tabell 2.4 (s. 13–16).",
     "- Våt vägbana: ekvation (2.6a–c) (s. 13).",
     "- Dubbdäck: tabell A.3 är inläst (ovan) men används inte; hur andelen dubbade däck vägs",
     "  in står inte i avsnitt 8.1.",
@@ -67,6 +73,60 @@ def _korrektioner_md(data: Emissionsdata) -> list[str]:
         for band, frekvens in enumerate(TERSBAND_HZ):
             celler = " | ".join(f"{v[band]:g}" for _, v in kolumner)
             rader.append(f"| {frekvens:g} | {celler} | ☐ |")
+    return rader
+
+
+def _direktivitet_md(direktivitet: Direktivitetsdata | None) -> list[str]:
+    """Direktivitetens koefficienter, uppställda som i SP 2006:12 avsnitt 2.5."""
+    rader = ["", "## Direktivitet", ""]
+    if direktivitet is None:
+        return [*rader, "Saknas i datafilen: källmodellen räknar bara rundstrålande källor."]
+    rader += [
+        f"Källa: {direktivitet.kalla}",
+        "",
+        "∆L = ∆L_H(f, φ) + ∆L_V(f, ψ). φ är vinkeln mellan fordonets färdriktning och riktningen",
+        "mot mottagaren i horisontalplanet, ψ riktningens vinkel över horisontalplanet.",
+        "",
+        "### Horisontell direktivitet",
+        "",
+        "Formtyp `k0_plus_k1_abs_cos_fi`: (k0 + k1·|cos φ|)·√cos ψ, koefficienter [k0, k1].",
+        "Formtyp `polynom_i_pi_halva_minus_fi`: (Σ cₙ·(π/2 − φ)ⁿ)·√cos ψ med φ i radianer,",
+        "koefficienter [c0, c1, c2, …]. Delkällor utan rad har ingen horisontell direktivitet.",
+        "",
+        "| Delkälla (m) | Formtyp | Koefficienter (dB) | Band (Hz) | Bullertyp i texten | Källa "
+        "| ☐ |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for post in direktivitet.horisontell:
+        if post.lagsta_frekvens_hz is None and post.hogsta_frekvens_hz is None:
+            band = "alla"
+        else:
+            lagst = "" if post.lagsta_frekvens_hz is None else f"{post.lagsta_frekvens_hz:g}"
+            hogst = "" if post.hogsta_frekvens_hz is None else f"{post.hogsta_frekvens_hz:g}"
+            band = f"{lagst}–{hogst}, noll i övriga"
+        koefficienter = ", ".join(f"{k:g}" for k in post.koefficienter_db)
+        rader.append(
+            f"| {post.hojd_m:g} | `{post.formtyp}` | {koefficienter} | {band} "
+            f"| {post.bullertyp} | {post.kalla} | ☐ |"
+        )
+    hojder = [hojd for hojd, _, _ in direktivitet.vertikal_tabell]
+    rader += [
+        "",
+        "### Vertikal direktivitet",
+        "",
+        f"Källa: {direktivitet.vertikal_kalla}. Band som tabellen inte tar upp har ingen",
+        "vertikal direktivitet.",
+        "",
+        "| Frekvens (Hz) | " + " | ".join(f"hs = {h:g} m" for h in hojder) + " | ☐ |",
+        "|" + " --- |" * (len(hojder) + 2),
+    ]
+    for nr, grupp in enumerate(direktivitet.vertikal_bandgrupper_hz):
+        celler = []
+        for _, former, k_db in direktivitet.vertikal_tabell:
+            formel = _VERTIKALA_FORMLER.get(former[nr])
+            celler.append("0" if formel is None else formel.format(k=k_db[nr]))
+        frekvenser = ", ".join(f"{f:g}" for f in grupp)
+        rader.append(f"| {frekvenser} | " + " | ".join(celler) + " | ☐ |")
     return rader
 
 
@@ -127,5 +187,7 @@ def kontrollutskrift_md(data: Emissionsdata) -> str:
                 celler += [f"{t.fordelning[j, band]:g}" for j in range(len(data.delkallhojder_m))]
             rader.append("| " + " | ".join(celler) + " | ☐ |")
     rader += _korrektioner_md(data)
+    if data.fullstandig or data.direktivitet is not None:
+        rader += _direktivitet_md(data.direktivitet)
     rader += ["", *(_INTE_INFORT if data.fullstandig else _ATT_MATA_IN)]
     return "\n".join(rader) + "\n"
