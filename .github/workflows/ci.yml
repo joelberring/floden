@@ -72,11 +72,14 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Installera npm-paket
-        run: npm install --no-audit --no-fund
+      - name: Installera npm-paket (exakt enligt package-lock.json)
+        run: npm ci --no-audit --no-fund
 
       - name: Typkontrollera TypeScript
         run: npm run typecheck
+
+      - name: Enhetstester för klienten
+        run: npm test
 
       - name: Bygg webbklient
         run: npm run build

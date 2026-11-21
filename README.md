@@ -31,3 +31,12 @@ med redovisad osäkerhet och färdiga rapporter.
 3. Läs uppdragets fil i `tasks/` och de kontrakt den hänvisar till.
 4. Arbeta tills uppdragets acceptanskriterier är uppfyllda, eller tills ett stoppvillkor i `AGENTS.md` inträffar.
 5. Skriv en post i `STATUS.md` och uppdatera status i `PLAN.md`.
+
+## Webben (lokalt, utan inloggning)
+
+`webb/` och `src/webb/` är ett lokalt webbgränssnitt som kör Flodens utredningsfrågor (K20): välj
+en fråga, se planen (rutor och vad som finns i cachen), kör, och se kartvy med lager (bas, scenario,
+skillnad), varningar och mätvärden. Allt beräknas av kärnan; webben visar. **Det finns ingen
+inloggning och ingen kontoserver**: API:t lyssnar på `127.0.0.1` och resultaten ligger på den egna
+disken. Kontoserver ingår inte (driftplanen i `docs/ARKITEKTUR-DRIFT.md` beslutar det senare).
+Start och API: se `webb/README.md`.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import time
 import unittest
 
@@ -168,10 +169,13 @@ class TestEaBenchmarkKorning(unittest.TestCase):
 
     def test_alla_fall_tabell_och_kortid(self) -> None:
         self.assertEqual([r.fall_id for r in self.resultat], ["EA1", "EA2", "EA8A"])
+        # Gränsen är 5,0 s. FLODEN_TIDSFAKTOR (standard 1) skalar den på delade eller
+        # belastade maskiner; CI och vanlig lokal körning använder 1.
+        grans_s = 5.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
         self.assertLess(
             self.total_kortid_s,
-            5.0,
-            f"Alla tre EA-fall tog {self.total_kortid_s:.2f} s (gräns 5,0 s)",
+            grans_s,
+            f"Alla tre EA-fall tog {self.total_kortid_s:.2f} s (gräns {grans_s:.1f} s)",
         )
         rader = self.tabell.splitlines()
         self.assertEqual(len(rader), 5)  # rubrik + avgränsare + 3 fall

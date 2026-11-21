@@ -4,6 +4,7 @@
  * så att kartan och pågående ritningar finns kvar mellan sidbyten.
  */
 import { hamtaModuler, hamtaOmraden } from "./api";
+import { visaFragor } from "./fragor";
 import {
   sidaForvaltning,
   sidaOversikt,
@@ -37,6 +38,7 @@ export function tolkaHash(hash: string): Rutt {
     oversikt: "oversikt",
     projekt: "projekt",
     karta: "karta",
+    fragor: "fragor",
     forvaltning: "forvaltning",
   };
   const sida = delar[0] ? sidor[delar[0]] : undefined;
@@ -51,6 +53,7 @@ const SIDTITLAR: Record<SidId, string> = {
   oversikt: "Översikt – Floden",
   projekt: "Projekt – Floden",
   karta: "Karta – Floden",
+  fragor: "Frågor – Floden",
   forvaltning: "Förvaltning – Floden",
 };
 
@@ -106,6 +109,12 @@ export function startaRouter(krokar: RouterKrokar): void {
 
     vyKarta.hidden = true;
     vySida.hidden = false;
+    if (rutt.sida === "fragor") {
+      // Frågesidan håller sitt eget tillstånd och ritas inte om vid adressbyte.
+      visaFragor(vySida, rutt.id);
+      window.scrollTo(0, 0);
+      return;
+    }
     switch (rutt.sida) {
       case "start":
         vySida.innerHTML = sidaStart(moduler);
@@ -148,7 +157,8 @@ export function startaRouter(krokar: RouterKrokar): void {
   rita();
   // Sidorna ritas om när modul- och områdeslistan har kommit (karta ritas inte om).
   void data.then(() => {
-    if (tolkaHash(window.location.hash).sida !== "karta") {
+    const sida = tolkaHash(window.location.hash).sida;
+    if (sida !== "karta" && sida !== "fragor") {
       rita();
     }
   });

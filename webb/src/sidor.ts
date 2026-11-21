@@ -17,7 +17,7 @@ export function esc(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export type SidId = "start" | "oversikt" | "projekt" | "karta" | "forvaltning";
+export type SidId = "start" | "oversikt" | "projekt" | "karta" | "fragor" | "forvaltning";
 
 const ORGANISATION = "[Organisation] / [Förvaltning]";
 
@@ -42,6 +42,7 @@ export function sidhuvudStart(): string {
       <nav class="huvud-nav" aria-label="Startsidan">
         <a href="#/?till=moduler" data-ankare="moduler">Moduler</a>
         <a href="#/?till=principer" data-ankare="principer">Principer</a>
+        <a href="#/fragor">Frågor</a>
         <a class="knapp knapp-svart" href="#/oversikt">Logga in</a>
       </nav>
     </div>`;
@@ -62,6 +63,7 @@ export function sidhuvudApp(aktiv: SidId, omradeId: string | null): string {
         ${lank("oversikt", "Översikt", "#/oversikt")}
         ${lank("projekt", "Projekt", `#/projekt${omr}`)}
         ${lank("karta", "Karta", `#/karta${omr}`)}
+        ${lank("fragor", "Frågor", "#/fragor")}
         ${lank("forvaltning", "Förvaltning", "#/forvaltning")}
         <!-- TODO(kontoservern): kontomeny (namn, utloggning) när inloggning finns. -->
         <button type="button" class="konto-knapp" aria-label="Ditt konto (kommer med kontoservern)" disabled>[I]</button>

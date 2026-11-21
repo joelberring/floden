@@ -1,0 +1,29 @@
+# Blåytor före/efter på det syntetiska testfallet A1 (enkel sänka), kontrakt K20/v1.
+# Ingen byggnad av indata behövs: A1:s K1-ruta ligger i testsviten.
+#   floden fraga plan exempel/fragor/vatten_a1_uppfyllnad.toml
+#   floden fraga kor exempel/fragor/vatten_a1_uppfyllnad.toml
+#
+# Scenariot `efter` fyller västra halvan av sänkan (K3-lappen exempel/a1/lapp_uppfyllnad.json).
+# Maxdjupet (`max_djup`, m) visas som blåytor; jämförelsen ger `efter - fore` i meter.
+kontrakt = "K20/v1"
+fraga_id = "vatten-a1-uppfyllnad"
+beskrivning = "Blåytor vid 100 mm regn i A1-sänkan före och efter att västra halvan fylls upp."
+
+[scenarier.fore]
+bas = "../../testsvit/A1_enkel_sanka/indata"
+
+[scenarier.efter]
+bas = "../../testsvit/A1_enkel_sanka/indata"
+lappar = ["../a1/lapp_uppfyllnad.json"]
+
+[[analyser]]
+id = "skyfall"
+losare = "vatten.statisk_fyllning"
+parametrar = { regn_mm = 100.0 }
+
+[[jamforelser]]
+analys = "skyfall"
+utdata = "max_djup"
+fore = "fore"
+efter = "efter"
+troskel = 0.01

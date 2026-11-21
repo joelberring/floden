@@ -1,0 +1,384 @@
+/*
+ * Sidan Frågor. Samma token som resten (tema.css): vitt, svart, hårfina linjer, raka hörn.
+ * Färg finns bara i kartdata och i varningar (--f-varning).
+ */
+.fragor-sida code,
+.fragor-sida pre {
+  font-family: var(--f-font-mono);
+  font-size: 13px;
+}
+.fragor-notis {
+  margin: 0;
+  max-width: 420px;
+  font-size: 13px;
+}
+.etikett-liten {
+  font-size: var(--f-etikett-storlek);
+  letter-spacing: var(--f-etikett-sparr);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin: 0;
+}
+.hoger {
+  text-align: right;
+}
+.fel-text,
+.varn-text {
+  color: var(--f-varning);
+  margin: 0;
+}
+
+/* 1. Frågelista */
+.fraga-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.fraga-rad {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-height: var(--f-mal-yta);
+  padding: 16px 0;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--f-linje);
+  cursor: pointer;
+}
+.fraga-rad:hover .lista-titel {
+  text-decoration: underline;
+}
+.fraga-rad.vald {
+  border-left: 3px solid var(--f-linje-stark);
+  padding-left: 16px;
+}
+.fraga-rad:disabled {
+  cursor: not-allowed;
+  color: var(--f-text-inaktiv);
+}
+.fraga-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  font-size: 13px;
+}
+.chip {
+  padding: 1px 8px;
+  border: 1px solid var(--f-linje-stark);
+  font-family: var(--f-font-mono);
+  font-size: 12px;
+}
+
+/* 2. Plan */
+.plan-rad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px 56px;
+  align-items: flex-start;
+  padding: 24px 0;
+}
+.plan-tal {
+  display: flex;
+  gap: 32px;
+}
+.tal-kort {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stor-tal {
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+.plan-karta {
+  flex: 1 1 320px;
+  min-width: 260px;
+  max-width: 560px;
+}
+.plan-svg {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--f-linje-stark);
+  background: #fff;
+}
+.plan-ruta {
+  stroke: #111;
+  stroke-width: 0;
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1px;
+}
+.plan-ruta.ingen {
+  fill: #fff;
+}
+.plan-ruta.alla {
+  fill: #111;
+}
+.plan-ruta.delvis {
+  fill: url(#rand);
+}
+.hjalp-ruta {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--f-linje-stark);
+}
+.hjalp-ruta pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  color: var(--f-text-sekundar);
+}
+.kor-rad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  align-items: center;
+  padding: 24px 0 0;
+}
+.kor-status {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 14px;
+}
+progress {
+  width: 220px;
+  height: 8px;
+  appearance: none;
+  border: 1px solid var(--f-linje-stark);
+  background: #fff;
+}
+progress::-webkit-progress-bar {
+  background: #fff;
+}
+progress::-webkit-progress-value {
+  background: var(--f-text);
+}
+progress::-moz-progress-bar {
+  background: var(--f-text);
+}
+
+/* 3. Resultat */
+.varning-ruta {
+  margin: 20px 0;
+  padding: 14px 18px;
+  border: 1px solid var(--f-varning);
+  border-left-width: 6px;
+}
+.varning-ruta .etikett-liten {
+  color: var(--f-varning);
+  margin-right: 8px;
+}
+.varning-ruta.ingen {
+  border-color: var(--f-linje);
+  border-left-width: 1px;
+  color: var(--f-text-dampad);
+}
+.varning-ruta.ingen .etikett-liten {
+  color: var(--f-text-dampad);
+}
+.varning-ruta ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.varning-ruta li {
+  display: grid;
+  gap: 2px;
+}
+.resultat-karta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+  padding-top: 8px;
+}
+.vy-kolumn {
+  flex: 999 1 560px;
+  min-width: 0;
+}
+.vy-verktyg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+}
+.vy-yta {
+  position: relative;
+  height: min(70vh, 640px);
+  min-height: 360px;
+  border: 1px solid var(--f-linje-stark);
+  background: var(--f-karta-bas);
+  overflow: hidden;
+}
+.rastervy-duk {
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+.rastervy-duk.drar {
+  cursor: grabbing;
+}
+.installningar {
+  padding: 10px 0;
+}
+.installningar summary {
+  cursor: pointer;
+  min-height: 28px;
+}
+.kryss-rad,
+.falt-rad {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 13px;
+}
+.falt-rad .kontroll {
+  flex: 1;
+  min-height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--f-linje-stark);
+  background: #fff;
+}
+.lager-kolumn {
+  flex: 1 1 280px;
+  max-width: 360px;
+  display: grid;
+  gap: 12px;
+}
+.flikar {
+  display: flex;
+  flex-wrap: wrap;
+}
+.flik {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--f-linje-stark);
+  background: #fff;
+  font-family: var(--f-font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  margin: 0 -1px -1px 0;
+}
+.flik.vald {
+  background: var(--f-text);
+  color: #fff;
+}
+.lager-lista {
+  display: grid;
+}
+.lager-rad {
+  display: grid;
+  grid-template-columns: auto 72px 1fr;
+  gap: 8px;
+  align-items: center;
+  min-height: var(--f-mal-yta);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--f-linje);
+  cursor: pointer;
+  font-size: 14px;
+}
+.lager-rad.vald {
+  font-weight: 600;
+}
+.lager-typ {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--f-text-dampad);
+}
+.teckenforklaring {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--f-linje-stark);
+}
+.skala-rad {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+.skala-band {
+  height: 12px;
+  border: 1px solid var(--f-linje-stark);
+}
+.klass-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.klass-lista li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.klass-lista .ruta {
+  width: 18px;
+  height: 12px;
+  border: 1px solid var(--f-linje-stark);
+}
+.fil-lista {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.resultat-block {
+  margin-top: 40px;
+}
+.tabell-rubrik {
+  margin: 24px 0 4px;
+  font-family: var(--f-font-rubrik);
+  font-size: 18px;
+  font-weight: 600;
+}
+.tabell-filer {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tabell-filer li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  align-items: center;
+  min-height: var(--f-mal-yta);
+  border-bottom: 1px solid var(--f-linje);
+}
+.plan-svg {
+  max-height: 240px;
+  width: auto;
+  max-width: 100%;
+}
+.rullbar {
+  max-height: 360px;
+  overflow: auto;
+  border-bottom: 1px solid var(--f-linje);
+}
+.rullbar thead th {
+  position: sticky;
+  top: 0;
+  background: var(--f-bakgrund);
+  box-shadow: 0 1px 0 var(--f-linje-stark);
+}
+input[type="range"],
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--f-text);
+}
+.varianter {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+.varning-ruta details {
+  margin-top: 2px;
+}

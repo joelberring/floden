@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from webb.api import FlodenApiApp, FlodenWebbFel, skapa_http_server
+from webb.api import FlodenApiApp, skapa_http_server
+from webb.fel import FlodenWebbFel
 from webb.rendering import (
     DEFAULT_KALLOR,
     bbox_3011_till_wgs84,
