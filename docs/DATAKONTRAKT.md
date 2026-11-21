@@ -84,11 +84,12 @@ fel i stället för gissning om en v1-ruta har byggnadsceller, se nedan). En rut
   därefter byggnader och öppningar som bränts in) > belagd yta ur laserintensitet (ger markslag 1) > ortofototolkning
   (`OKANT` = ingen uppgift) > standardklass (1 hårdgjort). Källfilens värde: bit 0–1 = avgörande källa (0 standard,
   1 ortofoto, 2 belagd yta ur laser, 3 baskarta); bit 2 (4) = en lägre källa, eller en annan baskartayta, sa något annat
-  (högre prioritet vann, cellen flaggas); bit 3 (8) = avgörande källa är ortofoto med konfidens under 0,35. Receptet får
+  (högre prioritet vann, cellen flaggas); bit 3 (8) = avgörande källa är ortofoto med konfidens under 0,35; bit 4 (16) = avgörande baskartayta ligger på ett lager med
+  status Odefinierad (Stockholms lagergrammatik, se `DATA.md`). Receptet får
   `installningar.markslag_prioritet`, `markslag_standard`, `markslag_svag_konfidens`, `markslag_baskarta_prioritet`
   (+ `markslag_belagd_installningar`) och källorna `markslagsytor` (sha256), `belagd_yta`, `ortofoto_markslag` samt
   `lagerprofil` (sha256 av profilfilen; skrivs när en profil getts, så en ändrad profil ger ny recept-sha256). `run.json`
-  får `markslag_celler_<källa>`, `markslag_motsagelser`, `markslag_svaga`. Läsare som inte känner filen kan ignorera den.
+  får `markslag_celler_<källa>`, `markslag_motsagelser`, `markslag_svaga`, `markslag_osakra_kallor`. Läsare som inte känner filen kan ignorera den.
 - **Källor i `recept.json`:** `byggnadskandidater` (sha256 av kandidaternas kanoniska JSON), `byggnadskalla` (sha256 av
   källfilen, satt av CLI:t `--byggnader`), `laser_klasser`, `vegetation_hojd`; byggnadsregistret, terrängen och
   vegetationen finns som utdata (sha256) i `run.json`.

@@ -17,6 +17,8 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+from data_inlasning.lantmateriet import PunktMoln, las_las_punktmoln
+from data_inlasning.lasclip import las_laser_punktmoln
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from dynamik.nodmodell import DynamikFel, DynamikResultat, skriv_dynamik_resultat_k6
 from dynamik.risk import berakna_kumulativ_oversvamningsrisk
@@ -52,6 +54,7 @@ from markmodell.interpolering import InterpoleringFel
 from markmodell.k1_skrivare import K1SkrivFel
 from markmodell.k1_skrivare import skriv_geotiff as skriv_k1_geotiff
 from markmodell.lagerprofil import Lagerprofil, hitta_lagerprofil
+from markmodell.markslagskallor import belagd_mask_for_ruta
 from markmodell.ortofoto import (
     OrtofotoFel,
     klassificera_ortofoto,
@@ -136,6 +139,14 @@ def _las_laser_csv(
     return pe, pn, pz, klasser
 
 
+def _las_laser_las(sokvag: Path, epsg: int) -> PunktMoln:
+    """Läser LAS direkt eller LAZ via lasclip (ingen klippning) som punktmoln i EPSG:3011."""
+    if sokvag.suffix.lower() == ".laz":
+        stor = 1.0e9
+        return las_laser_punktmoln(sokvag, (-stor, -stor, stor, stor), kall_epsg=epsg)
+    return las_las_punktmoln(sokvag, kall_epsg=epsg)
+
+
 def _las_ortofoto_rgb(sokvag: Path, form_rc: tuple[int, int]) -> NDArray[np.uint8]:
     """Läser ortofoto (PNG/TIFF) som RGB-uint8 och skalar vid behov till `form_rc`."""
     if not sokvag.is_file():
@@ -150,8 +161,10 @@ def _las_ortofoto_rgb(sokvag: Path, form_rc: tuple[int, int]) -> NDArray[np.uint
 
 def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
     try:
-        if args.grund_tif is None and args.laser_csv is None:
-            raise PipelineFel("Ange minst en höjdkälla: --grund-tif eller --laser-csv.")
+        if args.grund_tif is None and args.laser_csv is None and args.laser_las is None:
+            raise PipelineFel(
+                "Ange minst en höjdkälla: --grund-tif, --laser-csv eller --laser-las."
+            )
         if not math.isfinite(args.upplosning_m) or args.upplosning_m <= 0.0:
             raise PipelineFel(f"upplosning_m måste vara > 0, fick {args.upplosning_m}.")
 
@@ -192,6 +205,17 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
         pz: NDArray[np.float64] | None = None
         klasser: NDArray[np.int32] | None = None
 
+        laser_moln: PunktMoln | None = None
+        if args.laser_csv is not None and args.laser_las is not None:
+            raise PipelineFel("Ange antingen --laser-csv eller --laser-las, inte båda.")
+        if args.laser_las is not None:
+            las_fil = Path(args.laser_las)
+            laser_moln = _las_laser_las(las_fil, args.laser_epsg)
+            pe, pn, pz = laser_moln.e_m, laser_moln.n_m, laser_moln.z_rh2000
+            klasser = laser_moln.klass.astype(np.int32)
+            extra_kallor.append(
+                KallPost(roll="laser_las", kalla=las_fil.name, sha256=sha256_fil(las_fil))
+            )
         if args.laser_csv is not None:
             laser_fil = Path(args.laser_csv)
             pe, pn, pz, klasser = _las_laser_csv(laser_fil)
@@ -202,24 +226,24 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                     sha256=sha256_fil(laser_fil),
                 )
             )
-            if ruta is None:
-                uppl = float(args.upplosning_m)
-                e_lo = float(np.min(pe))
-                e_hi = float(np.max(pe))
-                n_lo = float(np.min(pn))
-                n_hi = float(np.max(pn))
-                e_min = math.floor(e_lo / uppl) * uppl
-                n_min = math.floor(n_lo / uppl) * uppl
-                n_kol = math.floor((e_hi - e_min) / uppl) + 1
-                n_rad = math.floor((n_hi - n_min) / uppl) + 1
-                n_celler = max(4, n_kol, n_rad)
-                ruta = Ruta(
-                    e_min_m=e_min,
-                    n_min_m=n_min,
-                    storlek_m=n_celler * uppl,
-                    overlapp_m=0.0,
-                    upplosning_m=uppl,
-                )
+        if pe is not None and pn is not None and ruta is None:
+            uppl = float(args.upplosning_m)
+            e_lo = float(np.min(pe))
+            e_hi = float(np.max(pe))
+            n_lo = float(np.min(pn))
+            n_hi = float(np.max(pn))
+            e_min = math.floor(e_lo / uppl) * uppl
+            n_min = math.floor(n_lo / uppl) * uppl
+            n_kol = math.floor((e_hi - e_min) / uppl) + 1
+            n_rad = math.floor((n_hi - n_min) / uppl) + 1
+            n_celler = max(4, n_kol, n_rad)
+            ruta = Ruta(
+                e_min_m=e_min,
+                n_min_m=n_min,
+                storlek_m=n_celler * uppl,
+                overlapp_m=0.0,
+                upplosning_m=uppl,
+            )
 
         assert ruta is not None
 
@@ -309,7 +333,17 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
         ortofoto_bild: NDArray[np.uint8] | None = None
         ortofoto_slag: NDArray[np.uint8] | None = None
         ortofoto_konf: NDArray[np.float32] | None = None
-        flerkalla = args.dwg is not None  # K1 v2-tillägget markslag_kalla.tif
+        belagd_mask: NDArray[np.bool_] | None = None
+        belagd_inst: dict[str, float] | None = None
+        if args.belagd_yta:
+            if laser_moln is None or laser_moln.intensitet is None:
+                raise PipelineFel("--belagd-yta kräver --laser-las med intensitet.")
+            belagd_mask, belagd_res = belagd_mask_for_ruta(laser_moln, ruta)
+            belagd_inst = belagd_res.installningar
+            if belagd_res.skal is not None:
+                dxf_varningar.append(f"Ingen belagd yta ur laser: {belagd_res.skal}.")
+        # K1 v2-tillägget markslag_kalla.tif skrivs när fler källor än ortofotot används
+        flerkalla = args.dwg is not None or belagd_mask is not None
         if args.ortofoto is not None:
             ortofoto_fil = Path(args.ortofoto)
             ortofoto_bild = _las_ortofoto_rgb(ortofoto_fil, ruta.form_rc)
@@ -350,6 +384,8 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                 byggnadskandidater=byggnadskandidater,
                 markslag_grund=markslag_grund,
                 markslagsytor=markslagsytor,
+                belagd_yta_mask=belagd_mask,
+                belagd_installningar=belagd_inst,
                 ortofoto_markslag=ortofoto_slag,
                 ortofoto_konfidens=ortofoto_konf,
                 lagerprofil=lagerprofil,
@@ -1078,6 +1114,26 @@ def bygg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Valfri CSV med laserpunkter (kolumner e_m,n_m,z_m eller e,n,z[,klass]).",
+    )
+    mm_parser.add_argument(
+        "--laser-las",
+        type=str,
+        default=None,
+        help="Valfri LAS eller LAZ med laserpunkter inklusive intensitet (LAZ via tools/lasclip, "
+        "se `cargo build --release --manifest-path tools/lasclip/Cargo.toml`).",
+    )
+    mm_parser.add_argument(
+        "--laser-epsg",
+        type=int,
+        default=3006,
+        help="Koordinatsystem i --laser-las (standard 3006, Lantmäteriets laser); konverteras "
+        "till EPSG:3011.",
+    )
+    mm_parser.add_argument(
+        "--belagd-yta",
+        action="store_true",
+        help="Belagd yta ur laserintensiteten (kräver --laser-las) som markslagskälla; "
+        "baskarta > belagd yta > ortofoto > standard, med markslag_kalla.tif.",
     )
     mm_parser.add_argument(
         "--dxf",

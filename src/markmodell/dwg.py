@@ -25,6 +25,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,6 +40,7 @@ from markmodell.grundkarta import (
     bygg_baskarta_fran_entiteter,
 )
 from markmodell.lagerprofil import Lagerprofil
+from markmodell.stockholm_lager import Beslut, bestam_atgard, sammanfatta_beslut
 
 Xy = tuple[float, float]
 Json = dict[str, Any]
@@ -74,6 +76,8 @@ class MarkslagsYta:
     markslag: int
     lager: str
     ringar: tuple[tuple[Xy, ...], ...]
+    osaker: bool = False
+    """Lagret har status Odefinierad (Stockholms grammatik): med, men med högre osäkerhet."""
 
 
 @dataclass(frozen=True)
@@ -560,6 +564,29 @@ def kor_dwgread(
     return utdata
 
 
+def _grammatikvarningar(
+    antal: Counter[str], hoppade: Counter[str], osakra_linjer: int
+) -> list[str]:
+    delar = [
+        f"{antal['markslag']} ytor som markslag",
+        f"{antal['byggnad']} byggnadsytor",
+        f"{antal['byggnad_kontur']} byggnadskonturer",
+        f"{antal['brytlinje'] + antal['oppning']} linjer som brytlinjer/öppningar",
+        f"{antal['hoppa_over']} hoppade över",
+        f"{antal['okand_objekt']} utan regel",
+    ]
+    ut = ["Stockholms lagergrammatik: " + ", ".join(delar) + "."]
+    if hoppade:
+        ut.append(
+            "Hoppade över: "
+            + "; ".join(f"{n} st {skal}" for skal, n in sorted(hoppade.items()))
+            + "."
+        )
+    if osakra_linjer:
+        ut.append(f"{osakra_linjer} linjer ur lager med status Odefinierad (högre osäkerhet).")
+    return ut
+
+
 def las_baskarta_dwg(
     kalla: str | Path | Iterable[str],
     *,
@@ -590,11 +617,53 @@ def las_baskarta_dwg(
     regler: tuple[LagerMappning, ...] = (
         lagerprofil.linjeregler if lagerprofil is not None else _bygg_lagerregler(None)
     )
+    gram = lagerprofil.stockholm if lagerprofil is not None else None
+    lager_med_yta = {o.lager for o in objekt if o.typ == "yta"}
+    grammatikregler: dict[str, LagerMappning] = {}
+    beslutsrader: list[tuple[str, Beslut]] = []
+    antal_beslut: Counter[str] = Counter()
+    skal_hoppade: Counter[str] = Counter()
+    antal_osakra_linjer = 0
     entiteter: list[tuple[str, list[Xy], float | None]] = []
     ytor: list[MarkslagsYta] = []
     varningar: list[str] = []
     punkter_utan_roll = 0
     for o in objekt:
+        beslut = (
+            bestam_atgard(gram, o.lager, "yta" if o.typ == "yta" else "linje")
+            if gram is not None and o.typ in ("yta", "linje")
+            else None
+        )
+        if beslut is not None:  # lagret följer Stockholms grammatik
+            if beslut.atgard == "byggnad_kontur" and o.lager in lager_med_yta:
+                beslut = Beslut("hoppa_over", "husets kontur: ytan med samma namn används")
+            beslutsrader.append((o.lager, beslut))
+            antal_beslut[beslut.atgard] += 1
+            if beslut.atgard in ("hoppa_over", "okand_objekt"):
+                skal_hoppade[beslut.skal] += 1
+                continue
+            if beslut.atgard == "markslag":
+                assert beslut.markslag is not None
+                ytor.append(
+                    MarkslagsYta(
+                        markslag=beslut.markslag,
+                        lager=o.lager,
+                        ringar=o.ringar,
+                        osaker=beslut.osaker,
+                    )
+                )
+                continue
+            assert beslut.roll is not None
+            nyckel = o.lager.strip().upper()
+            grammatikregler.setdefault(
+                nyckel, LagerMappning(prefix=nyckel, roll=beslut.roll, standard_m=beslut.standard_m)
+            )
+            if o.typ == "yta":
+                entiteter.extend((o.lager, list(r), o.z) for r in o.ringar)
+            else:
+                entiteter.append((o.lager, list(o.punkter), o.z))
+                antal_osakra_linjer += int(beslut.osaker)
+            continue
         if o.typ == "yta":
             ytregel = lagerprofil.matcha_yta(o.lager) if lagerprofil is not None else None
             if ytregel is not None:
@@ -610,6 +679,11 @@ def las_baskarta_dwg(
         else:
             punkter_utan_roll += 1
 
+    if grammatikregler:
+        regler = (*grammatikregler.values(), *regler)
+    if beslutsrader:
+        varningar.extend(_grammatikvarningar(antal_beslut, skal_hoppade, antal_osakra_linjer))
+        varningar.extend(sammanfatta_beslut(beslutsrader))
     if trasiga:
         varningar.append(f"{trasiga} objekt i dwgreads JSON gick inte att tolka och hoppades över.")
     if punkter_utan_roll:

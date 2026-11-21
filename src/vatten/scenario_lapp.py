@@ -57,8 +57,7 @@ def scenario_till_lapp(
             )
         else:
             kvar.append(a)
-    # sortera=False: scenariots ordning gäller som förut (se k9_till_lapp).
-    lapp = k9_till_lapp(kvar, scenario, sortera=False)
+    lapp = k9_till_lapp(kvar, scenario)  # kärnans ordning: andring_id
     lapp = replace(
         lapp,
         lapp_id=scenario.scenario_id,

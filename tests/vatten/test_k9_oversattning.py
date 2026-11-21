@@ -2,7 +2,8 @@
 
 Facit nedan är mätt med den gamla, egna översättningen i `vatten.scenario_lapp` (före borttagningen
 av dubbletten) på testsvitens A1. Samma K9-scenarier ska ge samma K3-lapp (JSON och sha256), samma
-K1-celler (mark, osäkerhet, markslag) och samma djup vid 300 mm.
+K1-celler (mark, osäkerhet, markslag) och samma djup vid 300 mm. Scenarierna har inga överlappande
+ändringar av samma typ, så kärnans id-ordning ändrar inget här (se `test_en_ordning…`).
 """
 
 from __future__ import annotations
@@ -125,18 +126,31 @@ class TestK9TillK3EnDel(unittest.TestCase):
         )
         self.assertEqual(list(som.ignorerade), FACIT["ignorerade"])
 
-    def test_vattnet_anvander_karnans_funktion(self) -> None:
+    def test_vattnet_anvander_karnans_funktion_och_ordning(self) -> None:
         s = alla()
         andringar = [a for a in platta_ut(s, {s.nyckel: s}) if a.typ != "vegetation"]
-        karnan = k9_till_lapp(andringar, s, sortera=False)
+        karnan = k9_till_lapp(andringar, s)
         vatten = scenario_till_lapp(s, ignorera_typer={"vegetation"}).lapp
         self.assertEqual(karnan.till_dict()["operationer"], vatten.till_dict()["operationer"])
         self.assertIs(ScenarioLappFel, ScenarioFel)
-        # kärnans egen (sorterade) väg ger samma operationer i annan ordning, inte andra operationer
-        sorterad = k9_till_lapp(andringar, s)
+
+    def test_en_ordning_andring_id_aven_i_vattnet(self) -> None:
+        """Överlappande ändringar med olika id: id-ordning (kärnans), inte listordning."""
+        yta = kv(5, 5, 8, 8)
+        s = Planscenario(
+            "o",
+            ("r",),
+            (
+                Andring("markhojd", "b", yta, {"niva_rh2000": 10.4}),
+                Andring("markhojd", "a", yta, {"niva_rh2000": 10.2}),
+            ),
+        )
+        lapp = scenario_till_lapp(s).lapp
+        self.assertEqual([y.yta_id for y in lapp.hojdytor], ["a", "b"])  # inte listordningen b, a
+        # samma lapp oavsett hur ändringarna listas
+        s2 = Planscenario("o", ("r",), tuple(reversed(s.andringar)))
         self.assertEqual(
-            sorted(json.dumps(o, sort_keys=True) for o in sorterad.till_dict()["operationer"]),
-            sorted(json.dumps(o, sort_keys=True) for o in vatten.till_dict()["operationer"]),
+            scenario_till_lapp(s2).lapp.till_dict()["operationer"], lapp.till_dict()["operationer"]
         )
 
     def test_k1_celler_och_djup_ar_identiska_med_forut(self) -> None:

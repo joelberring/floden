@@ -105,7 +105,7 @@ class TestPrioritet(unittest.TestCase):
     def test_ytor_rasteriseras_med_prioritet_och_konflikt(self) -> None:
         a = MarkslagsYta(GRAS, "A", (_kvadrat(150000, 6576000, 150010, 6576010),))
         b = MarkslagsYta(VATTEN, "B", (_kvadrat(150005, 6576000, 150015, 6576010),))
-        kod, konflikt = rasterisera_ytor([a, b], RUTA)
+        kod, konflikt, _ = rasterisera_ytor([a, b], RUTA)
         # RUTA: rad 0 = norr; n 6576000-6576010 är nedre halvan (rad 10-19), kol 0-9 resp 5-14
         self.assertEqual(int(kod[15, 2]), GRAS)
         self.assertEqual(int(kod[15, 12]), VATTEN)
@@ -119,7 +119,7 @@ class TestPrioritet(unittest.TestCase):
             _kvadrat(150000, 6576000, 150020, 6576020),
             _kvadrat(150005, 6576005, 150015, 6576015),
         )
-        kod, _ = rasterisera_ytor([MarkslagsYta(GRAS, "A", ring)], RUTA)
+        kod, _, _ = rasterisera_ytor([MarkslagsYta(GRAS, "A", ring)], RUTA)
         self.assertEqual(int(kod[10, 10]), 0)
         self.assertEqual(int(kod[1, 1]), GRAS)
 
@@ -344,3 +344,44 @@ class TestCliDwg(unittest.TestCase):
             )
             self.assertTrue((rot / "ut" / "markslag_kalla.tif").is_file())
             self.assertIn("markslag_prioritet", recept.installningar)
+
+
+class TestCliBelagdYta(unittest.TestCase):
+    def test_laser_las_med_intensitet_ger_belagd_yta_som_kalla(self) -> None:
+        from data_inlasning.lantmateriet import skriv_syntetisk_las
+        from floden.cli import main as cli_main
+
+        # 120 x 120 m: västra halvan "asfalt" (låg intensitet), östra "gräs" (hög), bara markpunkter
+        e, n, z, k, i = [], [], [], [], []
+        for x in np.arange(0.25, 120.0, 0.5):
+            for y in np.arange(0.25, 120.0, 0.5):
+                e.append(660000.0 + x)
+                n.append(6570000.0 + y)
+                z.append(10.0)
+                k.append(2)
+                i.append(5000 if x < 60 else 30000)
+        with tempfile.TemporaryDirectory() as t:
+            rot = Path(t)
+            skriv_syntetisk_las(
+                rot / "l.las",
+                np.array(e), np.array(n), np.array(z),
+                np.array(k, dtype=np.uint8), np.array(i, dtype=np.uint16),
+            )  # fmt: skip
+            kod = cli_main(
+                [
+                    "markmodell", "--ut", str(rot / "ut"), "--laser-las", str(rot / "l.las"),
+                    "--laser-epsg", "3011", "--belagd-yta", "--upplosning-m", "1.0",
+                ]
+            )  # fmt: skip
+            run = json.loads((rot / "ut" / "run.json").read_text(encoding="utf-8"))
+            recept = las_recept(rot / "ut" / "recept.json")
+            self.assertTrue((rot / "ut" / "markslag_kalla.tif").is_file())
+        self.assertEqual(kod, 0)
+        self.assertIn("belagd_yta", [k.roll for k in recept.kallor])
+        self.assertIn("laser_las", [k.roll for k in recept.kallor])
+        self.assertIn("markslag_belagd_installningar", recept.installningar)
+        mv = run["matvarden"]
+        # västra halvan är belagd: ungefär halva rutan har belagd yta som avgörande källa
+        self.assertGreater(mv["markslag_celler_belagd_laser"], 0.3 * 120 * 120)
+        self.assertLess(mv["markslag_celler_belagd_laser"], 0.6 * 120 * 120)
+        self.assertEqual(mv["markslag_celler_baskarta"], 0)

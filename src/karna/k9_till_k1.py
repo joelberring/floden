@@ -87,15 +87,12 @@ def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
     return float(v)
 
 
-def k9_till_lapp(
-    andringar: Sequence[Andring], scenario: Planscenario, *, sortera: bool = True
-) -> Any:
+def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
     """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna).
 
     Den enda K9→K3-översättningen i Floden: `vatten.scenario_lapp` anropar den. Ändringarna
-    sorteras efter `andring_id` så att lappnyckeln inte beror på listordningen; `sortera=False`
-    behåller scenariots ordning (äldst först, som `platta_ut` ger) för den som vill att senare
-    överlappande ändringar vinner i den ordningen (vattnets förra beteende).
+    sorteras efter `andring_id` (en enda deterministisk ordning), så lappen och dess nyckel beror
+    inte på listordningen. Överlappande ändringar med olika id tillämpas alltså i id-ordning.
     """
     from lapp.kontrakt import (
         HojdYta,
@@ -113,7 +110,7 @@ def k9_till_lapp(
             f"K1-rutor än: {', '.join(ej)}. Stöds: {', '.join(sorted(STODDA_TYPER))}."
         )
     hojdytor, markslag, magasin, gator, byggnader = [], [], [], [], []
-    for a in sorted(andringar, key=lambda x: x.andring_id) if sortera else andringar:
+    for a in sorted(andringar, key=lambda x: x.andring_id):
         e = a.egenskaper
         if a.typ == "markhojd":
             if "delta_m" in e:

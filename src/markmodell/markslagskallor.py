@@ -15,7 +15,9 @@ Där källor motsäger varandra vinner den högre prioriteten, men cellen får e
   `KALLA_BASKARTA` 3),
 - bit 2 (värde 4, `FLAGGA_MOTSAGELSE`): en lägre prioriterad källa (eller en annan baskartayta) sa
   något annat,
-- bit 3 (värde 8, `FLAGGA_SVAG`): avgörande källa är ortofoto med konfidens under `SVAG_KONFIDENS`.
+- bit 3 (värde 8, `FLAGGA_SVAG`): avgörande källa är ortofoto med konfidens under `SVAG_KONFIDENS`,
+- bit 4 (värde 16, `FLAGGA_OSAKER_KALLA`): avgörande baskartayta ligger på ett lager med status
+  Odefinierad (Stockholms grammatik): ytan är med men osäkrare.
 
 Inom baskartan gäller `BASKARTA_PRIORITET` när ytor överlappar (och cellen flaggas).
 """
@@ -63,6 +65,7 @@ KALLA_BASKARTA = 3
 KALLA_MASK = 3
 FLAGGA_MOTSAGELSE = 4
 FLAGGA_SVAG = 8
+FLAGGA_OSAKER_KALLA = 16
 
 SVAG_KONFIDENS = 0.35
 """Ortofotoklassning under denna konfidens flaggas som svag (skuggor ligger under 0,35)."""
@@ -105,20 +108,24 @@ class MarkslagKallor:
     def antal_motsagelser(self) -> int:
         return int(np.sum((self.kalla & FLAGGA_MOTSAGELSE) != 0))
 
+    def antal_osakra(self) -> int:
+        return int(np.sum((self.kalla & FLAGGA_OSAKER_KALLA) != 0))
+
     def antal_svaga(self) -> int:
         return int(np.sum((self.kalla & FLAGGA_SVAG) != 0))
 
 
 def rasterisera_ytor(
     ytor: Sequence[MarkslagsYta], ruta: Ruta
-) -> tuple[NDArray[np.uint8], NDArray[np.bool_]]:
-    """Baskartans ytor på rutnätet: (markslagskod, konflikt); kod 0 = ingen yta.
+) -> tuple[NDArray[np.uint8], NDArray[np.bool_], NDArray[np.bool_]]:
+    """Baskartans ytor på rutnätet: (markslagskod, konflikt, osäker); kod 0 = ingen yta.
 
     Cellcentrum avgör; ringarna i en yta tolkas med jämn–udda-regeln (hål blir hål).
     """
     rader, kolumner = ruta.form_rc
     e_vektor, n_vektor = ruta.cell_centra_en()
     per_kod: dict[int, NDArray[np.bool_]] = {}
+    sakra: dict[int, NDArray[np.bool_]] = {}  # celler täckta av minst en yta utan osäkerhetsflagga
     for yta in ytor:
         if not yta.ringar:
             continue
@@ -138,6 +145,9 @@ def rasterisera_ytor(
                 )
         mask = per_kod.setdefault(yta.markslag, np.zeros((rader, kolumner), dtype=bool))
         mask[np.ix_(rad, kol)] |= inne
+        if not yta.osaker:
+            sak = sakra.setdefault(yta.markslag, np.zeros((rader, kolumner), dtype=bool))
+            sak[np.ix_(rad, kol)] |= inne
     kod = np.zeros((rader, kolumner), dtype=np.uint8)
     antal = np.zeros((rader, kolumner), dtype=np.int16)
     for k in reversed(BASKARTA_PRIORITET):  # lägst först, högst skriver sist
@@ -147,7 +157,11 @@ def rasterisera_ytor(
     okanda = sorted(set(per_kod) - set(BASKARTA_PRIORITET))
     if okanda:
         raise MarkslagKallorFel(f"Markslagskoder utan plats i BASKARTA_PRIORITET: {okanda}")
-    return kod, antal > 1
+    osaker = np.zeros((rader, kolumner), dtype=bool)
+    for k, mask in per_kod.items():
+        vinner = kod == k
+        osaker |= vinner & mask & ~sakra.get(k, np.zeros_like(mask))
+    return kod, antal > 1, osaker
 
 
 def kombinera_markslag(
@@ -155,6 +169,7 @@ def kombinera_markslag(
     *,
     baskarta_kod: NDArray[np.uint8] | None = None,
     baskarta_konflikt: NDArray[np.bool_] | None = None,
+    baskarta_osaker: NDArray[np.bool_] | None = None,
     belagd_mask: NDArray[np.bool_] | None = None,
     ortofoto: NDArray[np.uint8] | None = None,
     ortofoto_konfidens: NDArray[np.floating[Any]] | None = None,
@@ -170,6 +185,7 @@ def kombinera_markslag(
     for namn, a in (
         ("baskarta_kod", baskarta_kod),
         ("baskarta_konflikt", baskarta_konflikt),
+        ("baskarta_osaker", baskarta_osaker),
         ("belagd_mask", belagd_mask),
         ("ortofoto", ortofoto),
         ("ortofoto_konfidens", ortofoto_konfidens),
@@ -201,6 +217,8 @@ def kombinera_markslag(
     if ortofoto_konfidens is not None:
         svag = (kalla == KALLA_ORTOFOTO) & (np.asarray(ortofoto_konfidens) < svag_konfidens)
     kalla = kalla | (mot * np.uint8(FLAGGA_MOTSAGELSE)) | (svag * np.uint8(FLAGGA_SVAG))
+    if baskarta_osaker is not None:
+        kalla = kalla | ((bas & baskarta_osaker) * np.uint8(FLAGGA_OSAKER_KALLA))
     return MarkslagKallor(markslag=slag, kalla=kalla.astype(np.uint8))
 
 
@@ -220,7 +238,9 @@ def efter_inbranning(
         & (gammal != KALLA_BASKARTA)
         & (fore.markslag != slutligt)
     )
-    behall = np.where(gammal == KALLA_BASKARTA, fore.kalla & FLAGGA_MOTSAGELSE, 0).astype(np.uint8)
+    behall = np.where(
+        gammal == KALLA_BASKARTA, fore.kalla & (FLAGGA_MOTSAGELSE | FLAGGA_OSAKER_KALLA), 0
+    ).astype(np.uint8)
     ny = np.uint8(KALLA_BASKARTA) | behall | (skiljer * np.uint8(FLAGGA_MOTSAGELSE))
     kalla[inbrand] = ny[inbrand]
     return MarkslagKallor(markslag=np.array(slutligt, dtype=np.uint8, copy=True), kalla=kalla)

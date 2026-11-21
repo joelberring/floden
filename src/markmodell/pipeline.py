@@ -268,12 +268,13 @@ def bygg_markmodell_ruta(
             raise PipelineFel(
                 "markslag_grund kan inte kombineras med markslagsytor/belagd yta/ortofoto."
             )
-        bas_kod, bas_konflikt = rasterisera_ytor(markslagsytor, ruta)
+        bas_kod, bas_konflikt, bas_osaker = rasterisera_ytor(markslagsytor, ruta)
         try:
             kallor_fore = kombinera_markslag(
                 ruta.form_rc,
                 baskarta_kod=bas_kod if markslagsytor else None,
                 baskarta_konflikt=bas_konflikt if markslagsytor else None,
+                baskarta_osaker=bas_osaker if markslagsytor else None,
                 belagd_mask=belagd_yta_mask,
                 ortofoto=ortofoto_markslag,
                 ortofoto_konfidens=ortofoto_konfidens,
@@ -564,6 +565,7 @@ def bygg_markmodell_ruta(
                     },
                     "markslag_motsagelser": int(np.sum((markslag_kalla & 4) != 0)),
                     "markslag_svaga": int(np.sum((markslag_kalla & 8) != 0)),
+                    "markslag_osakra_kallor": int(np.sum((markslag_kalla & 16) != 0)),
                 }
                 if markslag_kalla is not None
                 else {}
