@@ -292,6 +292,41 @@ class TestKorFraga(unittest.TestCase):
             with self.assertRaises(FragaFel):
                 kor_fraga(f, {"b": b}, Berakningsgraf(cache))
 
+    def test_nodbyggaren_far_utplattat_scenario(self) -> None:
+        from karna.korning import kor_fraga
+
+        sett: list[tuple[str | None, int]] = []
+
+        def bygg(steg: Any, scenario: Planscenario) -> Nod:
+            sett.append((scenario.forald, len(scenario.andringar)))
+            return Nod(Losare("test.platt", "1", lambda i, p, u: {"n": p["n"]}),
+                       {}, {"n": len(scenario.andringar), "s": scenario.nyckel})
+
+        registrera_analystyp("test_platt", "testmodul", bygg)
+        a = Planscenario("a", ("r",), (Andring("byggnad_ny", "h1", POLY, {"hojd_m": 9.0}),))
+        b = a.gren("b", [Andring("magasin", "m1", POLY, {"volym_m3": 5.0})])
+        f = tolka_fraga({"fraga": "x", "scenario": "b", "analys": [{"typ": "test_platt"}]})
+        with tempfile.TemporaryDirectory() as tmp:
+            svar = kor_fraga(f, {"b": b}, Berakningsgraf(Cache(Path(tmp))), kanda={a.nyckel: a})
+        self.assertEqual(sett, [(None, 2)])
+        self.assertEqual(svar.steg[0].resultat.matvarden["n"], 2)
+
+    def test_katalog_som_indata(self) -> None:
+        def antal(i: Mapping[str, Path], p: Mapping[str, Any], u: Path) -> dict[str, Any]:
+            return {"filer": len(list(i["k1"].iterdir()))}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            k1 = Path(tmp) / "k1"
+            k1.mkdir()
+            (k1 / "mark.tif").write_bytes(b"a")
+            (k1 / "recept.json").write_text("{}")
+            g = Berakningsgraf(Cache(Path(tmp) / "cache"))
+            nod = Nod(Losare("test.katalog", "1", antal), {"k1": k1})
+            n1 = g.nyckel(nod)
+            self.assertEqual(g.kor(nod).matvarden["filer"], 2)
+            (k1 / "mark.tif").write_bytes(b"b")
+            self.assertNotEqual(Berakningsgraf(g.cache).nyckel(nod), n1)
+
     def test_analys_utan_nodbyggare_kors_inte(self) -> None:
         from karna.korning import kor_fraga
 

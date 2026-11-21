@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from karna.fraga import FragaFel, Utredningsfraga, nodbyggare_for
 from karna.graf import Berakningsgraf, Resultat
-from karna.scenario import Planscenario
+from karna.scenario import Planscenario, platta_ut
 
 
 @dataclass(frozen=True)
@@ -35,12 +35,29 @@ def kor_fraga(
     fraga: Utredningsfraga,
     scenarier: Mapping[str, Planscenario],
     graf: Berakningsgraf,
+    kanda: Mapping[str, Planscenario] | None = None,
 ) -> FragaSvar:
-    """Kör alla analyssteg. `scenarier` mappar frågans scenarionamn till scenarier."""
+    """Kör alla analyssteg. `scenarier` mappar frågans scenarionamn till scenarier.
+
+    Nodbyggaren får scenariot utplattat mot basen (`forald=None`, alla ärvda ändringar med), så
+    modulerna behöver inte känna till förälderkedjan. Föräldrar som behövs för utplattningen kan
+    ligga bland `scenarier` eller i `kanda`.
+    """
     def hamta(namn: str) -> Planscenario:
         if namn not in scenarier:
             raise FragaFel(f"Scenariot '{namn}' i frågan '{fraga.fraga}' finns inte.")
         return scenarier[namn]
+
+    alla = {s.nyckel: s for s in scenarier.values()}
+    alla.update(kanda or {})
+
+    def platt(s: Planscenario) -> Planscenario:
+        return Planscenario(
+            scenario_id=s.scenario_id,
+            bas_recept=s.bas_recept,
+            andringar=platta_ut(s, alla),
+            beskrivning=s.beskrivning,
+        )
 
     huvud = hamta(fraga.scenario)
     jamfor = hamta(fraga.jamfor_med) if fraga.jamfor_med is not None else None
@@ -51,8 +68,8 @@ def kor_fraga(
     byggare = [nodbyggare_for(steg.typ) for steg in fraga.analys]
     svar: list[StegSvar] = []
     for steg, bygg in zip(fraga.analys, byggare, strict=True):
-        r = graf.kor(bygg(steg, huvud))
-        rj = graf.kor(bygg(steg, jamfor)) if jamfor is not None else None
+        r = graf.kor(bygg(steg, platt(huvud)))
+        rj = graf.kor(bygg(steg, platt(jamfor))) if jamfor is not None else None
         svar.append(StegSvar(steg.typ, steg.modul, r, rj))
 
     nycklar = {fraga.scenario: huvud.nyckel}
