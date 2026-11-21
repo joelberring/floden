@@ -100,6 +100,7 @@ from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
 from webb.moduler import lista_moduler
+from webb.projekt import ProjektTjanst
 from webb.rendering import (
     DEFAULT_KALLOR,
     RenderingFel,
@@ -517,6 +518,27 @@ class FlodenApiApp:
             if self._fragor is None:
                 self._fragor = _skapa_fragetjanst(self.konfig_fil, *self._fragekonfig)
             return self._fragor
+
+    @property
+    def projekt(self) -> ProjektTjanst:
+        """Demokvarteret som projekt (ur demokörningarna)."""
+        return ProjektTjanst(self.fragor)
+
+    def _demo_moduler(self) -> set[str]:
+        """Domäner (modulnamn) som är förkörda i demon, ur demons översikt och frågornas lösare."""
+        demo = self.fragor.demo()
+        if not demo.get("finns"):
+            return set()
+        ut: set[str] = set()
+        for ref, del_ in demo.get("delar", {}).items():
+            if not isinstance(del_, dict) or "korning_id" not in del_:
+                continue
+            try:
+                fraga = self.fragor.hamta_fraga(ref)
+            except FlodenWebbFel:
+                continue
+            ut.update(a["doman"] for a in fraga.get("analyser", []) if a.get("doman"))
+        return ut
 
     def hamta_sektioner(self) -> dict[str, Gatusektion]:
         """Läser gatusektioner från `config.toml` med trådsäker cache."""
@@ -1687,7 +1709,16 @@ class FlodenApiApp:
                 return _json_svar(200, self.lista_regn(region=region_param))
 
             if verb == "GET" and ren_sokvag == "/api/moduler":
-                return _json_svar(200, lista_moduler())
+                return _json_svar(200, lista_moduler(self._demo_moduler()))
+
+            if ren_sokvag == "/api/projekt" or ren_sokvag.startswith("/api/projekt/"):
+                if verb != "GET":
+                    return _json_svar(405, {"fel": "Metoden är inte tillåten.", "status": 405})
+                delar = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
+                if not delar:
+                    return _json_svar(200, self.projekt.lista())
+                if len(delar) == 1:
+                    return _json_svar(200, self.projekt.hamta(delar[0]))
 
             if ren_sokvag == "/api/fragor" or ren_sokvag.startswith("/api/fragor/"):
                 return self._hantera_fragor(verb, ren_sokvag)

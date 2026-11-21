@@ -16,12 +16,16 @@ export interface VyLager {
   utbredning: Utbredning;
   opacitet: number;
   synlig: boolean;
+  /** Svepläge: bara vänster respektive höger sida om svepgränsen ritas. */
+  del?: "vanster" | "hoger";
 }
 
 export interface VyByggnad {
   ring: Array<[number, number]>;
   hal: Array<Array<[number, number]>>;
   status: "oforandrad" | "ny" | "andrad";
+  /** Svepläge: byggnaden ritas bara på vänster respektive höger sida om svepgränsen. */
+  del?: "vanster" | "hoger";
 }
 
 export interface Bakgrund {
@@ -64,9 +68,13 @@ export class RasterVy {
   private readonly plattor = new Map<string, HTMLImageElement>();
   private readonly storlekslyssnare: ResizeObserver;
   private dra: { x: number; y: number } | null = null;
+  private svepAndel: number | null = null;
 
   /** Anropas med markörens SWEREF-koordinat (E, N), eller null när markören lämnar vyn. */
   onMarkor: ((e: number | null, n: number | null) => void) | null = null;
+
+  /** Anropas när användaren flyttat eller zoomat vyn (för att hålla två vyer i takt). */
+  onVyAndrad: (() => void) | null = null;
 
   constructor(private readonly behallare: HTMLElement) {
     this.duk = document.createElement("canvas");
@@ -120,6 +128,25 @@ export class RasterVy {
     this.rita();
   }
 
+  /** Svepgräns som andel (0–1) av bredden, eller null när sveplägret inte används. */
+  settSvep(andel: number | null): void {
+    this.svepAndel = andel;
+    this.rita();
+  }
+
+  hamtaVy(): { cx: number; cy: number; mpp: number } {
+    return { cx: this.cx, cy: this.cy, mpp: this.mpp };
+  }
+
+  /** Sätter vyn utan att tala om det (används för att följa en annan vy). */
+  settVy(v: { cx: number; cy: number; mpp: number }): void {
+    this.cx = v.cx;
+    this.cy = v.cy;
+    this.mpp = v.mpp;
+    this.harVy = true;
+    this.rita();
+  }
+
   settBakgrund(bakgrund: Bakgrund): void {
     this.bakgrund = bakgrund;
     this.rita();
@@ -142,6 +169,7 @@ export class RasterVy {
   zooma(faktor: number): void {
     this.mpp *= faktor;
     this.rita();
+    this.onVyAndrad?.();
   }
 
   private matStorlek(): void {
@@ -174,6 +202,7 @@ export class RasterVy {
     this.cy = n - (n - this.cy) * faktor;
     this.mpp *= faktor;
     this.rita();
+    this.onVyAndrad?.();
   }
 
   private vid_hjul(h: WheelEvent): void {
@@ -196,6 +225,7 @@ export class RasterVy {
     this.cy += (h.offsetY - this.dra.y) * this.mpp;
     this.dra = { x: h.offsetX, y: h.offsetY };
     this.rita();
+    this.onVyAndrad?.();
   }
 
   private vid_upp(h: PointerEvent): void {
@@ -229,12 +259,21 @@ export class RasterVy {
       const [x0, y0] = this.tillSkarm(l.utbredning.x_min, l.utbredning.y_max);
       const [x1, y1] = this.tillSkarm(l.utbredning.x_max, l.utbredning.y_min);
       const cellPx = (l.utbredning.x_max - l.utbredning.x_min) / l.bild.naturalWidth / this.mpp;
+      c.save();
+      if (l.del && this.svepAndel !== null) {
+        const gx = Math.round(this.bredd * this.svepAndel);
+        c.beginPath();
+        if (l.del === "vanster") c.rect(0, 0, gx, this.hojd);
+        else c.rect(gx, 0, this.bredd - gx, this.hojd);
+        c.clip();
+      }
       c.globalAlpha = l.opacitet;
       c.imageSmoothingEnabled = cellPx < 1; // skarpa celler när man zoomat in
       c.drawImage(l.bild, x0, y0, x1 - x0, y1 - y0);
-      c.globalAlpha = 1;
+      c.restore();
     }
     this.ritaByggnader(true);
+    this.ritaSvepgrans();
     this.ritaRutor();
     this.ritaSkalstock();
     this.ritaNotis();
@@ -259,16 +298,42 @@ export class RasterVy {
     c.save();
     for (const b of this.byggnader) {
       const v = this.byggnadsvag(b);
+      c.save();
+      if (b.del && this.svepAndel !== null) {
+        const gx = Math.round(this.bredd * this.svepAndel);
+        c.beginPath();
+        if (b.del === "vanster") c.rect(0, 0, gx, this.hojd);
+        else c.rect(gx, 0, this.bredd - gx, this.hojd);
+        c.clip();
+      }
       if (!kanter) {
         c.fillStyle = b.status === "oforandrad" ? "#d6d6d6" : "#bcbcbc";
         c.fill(v, "evenodd");
-        continue;
+      } else {
+        c.setLineDash(b.status === "andrad" ? [6, 3] : []);
+        c.lineWidth = b.status === "oforandrad" ? 1 : 2;
+        c.strokeStyle = b.status === "oforandrad" ? "#7a7a7a" : "#111111";
+        c.stroke(v);
       }
-      c.setLineDash(b.status === "andrad" ? [6, 3] : []);
-      c.lineWidth = b.status === "oforandrad" ? 1 : 2;
-      c.strokeStyle = b.status === "oforandrad" ? "#7a7a7a" : "#111111";
-      c.stroke(v);
+      c.restore();
     }
+    c.restore();
+  }
+
+  private ritaSvepgrans(): void {
+    if (this.svepAndel === null) return;
+    const c = this.ctx;
+    const gx = Math.round(this.bredd * this.svepAndel) + 0.5;
+    c.save();
+    c.strokeStyle = "#ffffff";
+    c.lineWidth = 3;
+    c.beginPath();
+    c.moveTo(gx, 0);
+    c.lineTo(gx, this.hojd);
+    c.stroke();
+    c.strokeStyle = "#111111";
+    c.lineWidth = 1;
+    c.stroke();
     c.restore();
   }
 
@@ -318,6 +383,9 @@ export class RasterVy {
     }
     for (let n = Math.ceil(n0 / steg) * steg; n <= n1; n += steg) {
       const [, y] = this.tillSkarm(0, n);
+      // Skalstocken ligger nere till vänster (rutan y - 18 .. y + 14 kring this.hojd - 20): en
+      // koordinatetikett som skulle hamna under den lämnas ute, linjen finns kvar.
+      if (y + 14 > this.hojd - 40 && y + 2 < this.hojd - 4) continue;
       c.fillText(formatTal(n), 3, y + 3);
     }
   }

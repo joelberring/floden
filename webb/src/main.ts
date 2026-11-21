@@ -13,7 +13,8 @@ import {
   skapaRapport,
 } from "./api";
 import { startaKontoLyssning } from "./konto";
-import { renderaModulVaxlare, startaRouter } from "./router";
+import { startaRouter } from "./router";
+import "./begriplig.css";
 import { arPolygonRitLage, FlodenKartaKontroll, STANDARD_LAGER, type RitLage } from "./karta";
 import type {
   DikeAtgardPayload,
@@ -555,7 +556,7 @@ function renderaExpLista(): void {
 
   tillstand.grundmodellPassager.forEach((p, idx) => {
     laggTillExpRad(
-      `[Grund] Bro/trumma ${p.passage_id} (${p.bredd_m.toFixed(1)} m)`,
+      `Grundmodell: Bro/trumma ${p.passage_id} (${p.bredd_m.toFixed(1)} m)`,
       p.aktiv,
       (ny) => {
         p.aktiv = ny;
@@ -568,7 +569,7 @@ function renderaExpLista(): void {
 
   tillstand.grundmodellHojdRattningar.forEach((h, idx) => {
     laggTillExpRad(
-      `[Grund] Rättning ${h.rattning_id} (${h.polygon.length} pkt)`,
+      `Grundmodell: Rättning ${h.rattning_id} (${h.polygon.length} pkt)`,
       h.aktiv,
       (ny) => {
         h.aktiv = ny;
@@ -581,7 +582,7 @@ function renderaExpLista(): void {
 
   tillstand.expDiken.forEach((d, idx) => {
     laggTillExpRad(
-      `[Exp] Dike ${d.atgard_id} (djup ${d.djup_m.toFixed(2)} m, b ${d.botten_bredd_m.toFixed(1)} m)`,
+      `Experiment: Dike ${d.atgard_id} (djup ${d.djup_m.toFixed(2)} m, b ${d.botten_bredd_m.toFixed(1)} m)`,
       d.aktiv,
       (ny) => {
         d.aktiv = ny;
@@ -594,7 +595,7 @@ function renderaExpLista(): void {
 
   tillstand.expVallar.forEach((v, idx) => {
     laggTillExpRad(
-      `[Exp] Vall ${v.atgard_id} (+${v.hojd_over_mark_m.toFixed(2)} m, b ${v.kron_bredd_m.toFixed(1)} m)`,
+      `Experiment: Vall ${v.atgard_id} (+${v.hojd_over_mark_m.toFixed(2)} m, b ${v.kron_bredd_m.toFixed(1)} m)`,
       v.aktiv,
       (ny) => {
         v.aktiv = ny;
@@ -608,7 +609,7 @@ function renderaExpLista(): void {
   tillstand.expGator.forEach((g, idx) => {
     const tecken = g.delta_z_m >= 0 ? "+" : "";
     laggTillExpRad(
-      `[Exp] Gata ${g.atgard_id} (${tecken}${g.delta_z_m.toFixed(2)} m, b ${g.bredd_m.toFixed(1)} m)`,
+      `Experiment: Gata ${g.atgard_id} (${tecken}${g.delta_z_m.toFixed(2)} m, b ${g.bredd_m.toFixed(1)} m)`,
       g.aktiv,
       (ny) => {
         g.aktiv = ny;
@@ -622,7 +623,7 @@ function renderaExpLista(): void {
   tillstand.expMarkJusteringar.forEach((m, idx) => {
     const tecken = m.delta_z_m >= 0 ? "+" : "";
     laggTillExpRad(
-      `[Exp] Mark ${m.atgard_id} (${tecken}${m.delta_z_m.toFixed(2)} m, ${m.polygon.length} pkt)`,
+      `Experiment: Mark ${m.atgard_id} (${tecken}${m.delta_z_m.toFixed(2)} m, ${m.polygon.length} pkt)`,
       m.aktiv,
       (ny) => {
         m.aktiv = ny;
@@ -1466,8 +1467,8 @@ const arbetsbankKlar = starta().catch((err: unknown) => {
 
 // Kartsidans adress följer valt område (utan att routern ritar om).
 omradeValjare.addEventListener("change", () => {
-  const ny = `#/karta/${encodeURIComponent(omradeValjare.value)}`;
-  if (window.location.hash.startsWith("#/karta") && window.location.hash !== ny) {
+  const ny = `#/arbetsbank/${encodeURIComponent(omradeValjare.value)}`;
+  if (window.location.hash.startsWith("#/arbetsbank") && window.location.hash !== ny) {
     window.history.replaceState(null, "", ny);
   }
 });
@@ -1476,7 +1477,7 @@ let kartanHarVisats = false;
 
 startaKontoLyssning();
 startaRouter({
-  visaKarta(omradeId: string | null): void {
+  visaArbetsbank(omradeId: string | null): void {
     void arbetsbankKlar.then(() => {
       if (!kartanHarVisats) {
         // Kartan laddades medan sidan var dold och har ännu ingen storlek.
@@ -1494,8 +1495,5 @@ startaRouter({
       omradeValjare.value = omradeId;
       omradeValjare.dispatchEvent(new Event("change"));
     });
-  },
-  modulerKlara(moduler) {
-    renderaModulVaxlare(hämtaEl<HTMLDivElement>("modul-vaxlare"), moduler);
   },
 });

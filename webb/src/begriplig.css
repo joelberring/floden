@@ -1,0 +1,413 @@
+/*
+ * Sidor för planerare: meny, start, projekt, karta, om beräkningarna. Samma token som resten
+ * (tema.css): vitt, svart, hårfina linjer, raka hörn. Färg finns bara i kartdata.
+ */
+
+/* ---------- Meny: samma på alla sidor, hamburgare i smalt fönster ---------- */
+.huvud-inre {
+  flex-wrap: wrap;
+}
+.meny-knapp {
+  display: none;
+  min-height: var(--f-mal-yta);
+  padding: 0 18px;
+  border: 1px solid var(--f-linje-stark);
+  background: var(--f-bakgrund);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+@media (max-width: 1100px) {
+  .huvud-inre {
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+  .meny-knapp {
+    display: inline-flex;
+    align-items: center;
+  }
+  .huvud-nav {
+    display: none;
+    flex-basis: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    border-top: 1px solid var(--f-linje);
+  }
+  .sidhuvud.oppen .huvud-nav {
+    display: flex;
+  }
+  .huvud-nav a {
+    min-height: 48px;
+    border-bottom: 1px solid var(--f-linje-svag);
+  }
+  .huvud-nav a[aria-current="page"] {
+    font-weight: 600;
+    border-bottom-color: var(--f-linje-svag);
+  }
+  .huvud-nav a.knapp {
+    margin: 12px 0;
+    justify-content: center;
+  }
+}
+
+/* ---------- Startsidan ---------- */
+.halsning {
+  margin: 0 0 16px;
+  font-size: 15px;
+  color: var(--f-text-dampad);
+}
+.hjalte {
+  padding-top: 72px;
+  padding-bottom: 64px;
+  align-items: end;
+}
+.hjalte-rubrik {
+  font-size: clamp(40px, 5.6vw, 84px);
+}
+.steg-lista {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 48px;
+  margin: 0;
+  padding: 8px 0 56px;
+}
+.steg {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding-top: 20px;
+  border-top: 1px solid var(--f-linje);
+  margin-top: 16px;
+}
+.steg-nr {
+  font-family: var(--f-font-rubrik);
+  font-size: 40px;
+  line-height: 1;
+  color: var(--f-text);
+}
+.steg h3 {
+  margin: 0;
+  font-family: var(--f-font-rubrik);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--f-text);
+}
+.steg p {
+  margin: 0;
+  color: var(--f-text-sekundar);
+}
+.modul-kort h3 {
+  font-size: 28px;
+}
+.modul-kort {
+  padding-bottom: 32px;
+}
+.modul-status {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.sidfot-lankar a {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ---------- Gemensamma delar ---------- */
+.chip {
+  display: inline-block;
+  padding: 2px 10px;
+  border: 1px solid var(--f-linje-stark);
+  font-family: var(--f-font);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--f-text);
+}
+.textlank {
+  color: var(--f-text);
+  font-size: 14px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.hjalp-ruta {
+  margin: 16px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--f-linje-stark);
+  color: var(--f-text);
+}
+.hjalp-ruta code,
+.paahittat-ruta code {
+  font-family: var(--f-font-mono);
+  font-size: 13px;
+}
+.teknisk {
+  margin: 20px 0 0;
+  font-size: 13px;
+}
+.teknisk > summary {
+  cursor: pointer;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  color: var(--f-text-dampad);
+  letter-spacing: 0.04em;
+}
+.teknisk > summary:hover {
+  color: var(--f-text);
+}
+.teknisk .enkel-lista {
+  margin-top: 6px;
+  color: var(--f-text-sekundar);
+}
+
+/* ---------- Projektsidan ---------- */
+.projekt-etikett {
+  margin: 0 0 12px;
+}
+.projekt-ingress {
+  max-width: 640px;
+  margin: 12px 0 0;
+}
+.paahittat-ruta {
+  margin: 8px 0 32px;
+  padding: 14px 18px;
+  border: 1px dashed var(--f-linje-stark);
+  color: var(--f-text);
+}
+.andringar li {
+  padding: 8px 0;
+  color: var(--f-text);
+}
+.projekt-avsnitt {
+  margin-top: 40px;
+}
+.avsnitt-ingress {
+  margin: 16px 0;
+  max-width: 680px;
+  color: var(--f-text-sekundar);
+}
+.regn-rad {
+  margin: 16px 0 0;
+  color: var(--f-text);
+}
+.regn-rad .etikett-liten {
+  margin-right: 10px;
+}
+.jamfor-tabell th[scope="row"] {
+  font-weight: 400;
+}
+.jamfor-tabell td {
+  white-space: nowrap;
+}
+
+/* ---------- Om beräkningarna ---------- */
+.om-ingress {
+  margin: 12px 0 48px;
+  max-width: 720px;
+}
+.modul-rad {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px 48px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--f-linje);
+}
+.modul-rad h3 {
+  margin: 0 0 6px;
+  font-family: var(--f-font-rubrik);
+  font-size: 22px;
+  color: var(--f-text);
+}
+.modul-rad p {
+  margin: 0;
+  color: var(--f-text-sekundar);
+}
+@media (max-width: 700px) {
+  .modul-rad {
+    grid-template-columns: 1fr;
+  }
+}
+.kontroll-sektion {
+  margin-top: 64px;
+  color: var(--f-text-dampad);
+}
+.kontroll-sektion .etikett {
+  color: var(--f-text-dampad);
+}
+.kontroll-lista {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.kontroll-rad {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 2fr auto;
+  gap: 4px 20px;
+  align-items: baseline;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--f-linje-svag);
+}
+@media (max-width: 800px) {
+  .kontroll-rad {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---------- Utredningsfrågor ---------- */
+.fragor-ingress {
+  margin: 0 0 32px;
+  max-width: 680px;
+  font-size: 17px;
+}
+.fler-exempel {
+  margin-top: 24px;
+}
+.fler-exempel > summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  color: var(--f-text-dampad);
+}
+.plan-text {
+  align-self: center;
+  max-width: 420px;
+  margin: 0;
+}
+.lasruta {
+  padding: 14px 16px;
+  border: 1px solid var(--f-linje-stark);
+  background: var(--f-bakgrund);
+}
+.lasruta p {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--f-text);
+}
+
+/* ---------- Kartsidan ---------- */
+.karta-sida {
+  padding-top: 24px;
+}
+.flikrad {
+  margin: 4px 0 12px;
+}
+.flikrad .flik,
+#lagen .flik {
+  font-family: var(--f-font);
+  font-size: 13px;
+  min-height: 40px;
+  padding: 0 16px;
+}
+.andring-text {
+  margin: 0 0 20px;
+  color: var(--f-text);
+}
+.andring-text .etikett-liten {
+  margin-right: 10px;
+}
+.karta-rad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-start;
+}
+.karta-par {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.karta-par.tva {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.karta-ruta {
+  margin: 0;
+  min-width: 0;
+}
+.karta-ruta[hidden] {
+  display: none;
+}
+.karta-bildtext {
+  min-height: 20px;
+  padding-bottom: 6px;
+  font-size: 13px;
+  color: var(--f-text-sekundar);
+}
+.karta-par.tva .vy-yta {
+  height: min(60vh, 560px);
+}
+.svep-rad {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 0 0;
+}
+.svep-rad[hidden] {
+  display: none;
+}
+.svep-rad input {
+  width: 100%;
+  min-height: 32px;
+}
+.kryss-grupp {
+  display: grid;
+}
+@media (max-width: 900px) {
+  .karta-par.tva {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .lager-kolumn {
+    max-width: none;
+    flex-basis: 100%;
+  }
+}
+
+/* ---------- Avstånd och tabeller ---------- */
+.innehall {
+  gap: 36px;
+  padding-top: 40px;
+}
+.jamfor-tabell thead th {
+  font-size: 15px;
+  padding: 14px 16px;
+}
+.jamfor-tabell thead th.hoger,
+.jamfor-tabell td.hoger {
+  text-align: right;
+}
+.jamfor-tabell {
+  min-width: 480px;
+}
+.teknisk > summary,
+.fler-exempel > summary {
+  list-style: none;
+}
+.teknisk > summary::-webkit-details-marker,
+.fler-exempel > summary::-webkit-details-marker {
+  display: none;
+}
+.teknisk > summary::before,
+.fler-exempel > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 18px;
+  font-family: var(--f-font-mono);
+}
+.teknisk[open] > summary::before,
+.fler-exempel[open] > summary::before {
+  content: "−";
+}
+.karta-sida .rubrikrad {
+  align-items: flex-end;
+}
+.vy-verktyg .flikar {
+  margin: 0;
+}

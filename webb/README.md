@@ -27,7 +27,7 @@ PYTHONPATH=src python -m floden.cli dagsljus demo --fore-efter   # bygger data/c
 
 Vattenfrågan (`vatten_a1_uppfyllnad.toml`) använder testsvitens A1 och behöver inget förarbete.
 
-## Sidan Frågor (`#/fragor`)
+## Sidan Utredningsfrågor (`#/fragor`)
 
 1. **Välj fråga.** Listan är frågefilerna (K20, `.toml`/`.json`) i frågemapparna. En fil som inte går att
    tolka visas som ogiltig med kärnans felmeddelande; saknad indata visas tillsammans med frågefilens
@@ -55,7 +55,8 @@ Allt läser via kärnans API (`karna.utredning`, `karna.korplan`, `karna.resulta
 
 | Metod och adress | Svar |
 | --- | --- |
-| `GET /api/moduler` | Moduler med status **ur kärnan**: lösare per domän (upptäckta via `<paket>/floden_losare.py`) och analystyper. En modul är i drift när den har en lösare eller analystyp. |
+| `GET /api/moduler` | De fyra produktmodulerna (vatten, luft, buller, dagsljus) med en enda statuskälla: `status` (`finns_i_demon`, `finns_ej_forberaknad`, `under_utveckling`) och färdig `status_text`. Kärnans lösare och demons körningar avgör vatten och dagsljus; luft och buller läses ur `data/webb/modulstatus.toml` (bullrets testfallstal med källa `docs/buller/logg/P-S2.md`, kontrollerat av ett test). Lösare har `visningsnamn`. |
+| `GET /api/projekt`, `GET /api/projekt/<id>` | Demokvarteret: mått ur körningarnas resultat (mark utan tak), regn, vyer och teknisk information. Mått som inte går att räkna utelämnas. |
 | `GET /api/fragor` | K20-frågorna i frågemapparna: analyser, scenarier, jämförelser, saknad indata, felmeddelande. |
 | `GET /api/fragor/<ref>` | En fråga. `ref` är filnamnet utan ändelse. |
 | `POST /api/fragor/<ref>/plan` | Plan: `sammanfattning` (jobb, i_cache, att_kora), `per_analys`, `scenarier` med rutor och utbredning, `jobb`. 422 med kärnans felmeddelande vid fel (t.ex. saknad bas). |
@@ -94,15 +95,17 @@ Inter/Inter Tight; färg bara i kartdata och varningar). `src/fragor.css` använ
 
 | Adress | Sida |
 | --- | --- |
-| `#/` | Startsida med modulerna (listan kommer från `GET /api/moduler`) |
-| `#/oversikt` | Områden, körningar, beräkningsserver (platshållare till kontoservern finns) |
-| `#/projekt/<omrade_id>?modul=<id>` | Projektsida med en flik per modul |
-| `#/karta/<omrade_id>` | Kartsidan: arbetsbänken (`main.ts`, MapLibre) för skyfall och projektlappar |
-| `#/fragor` och `#/fragor/<ref>` | Frågesidan ovan |
-| `#/forvaltning` | Förvaltningssida (platshållare) |
+| `#/` | Start: tre steg och modulernas status (`GET /api/moduler`) |
+| `#/projekt` (alias `#/oversikt`) | Demokvarteret med siffror ur körningarna (`GET /api/projekt`) |
+| `#/karta/<projekt>?vy=<vy>` | Kartan: före, efter, skillnad, svep, sida vid sida, avläsning och byggnadslager |
+| `#/fragor` och `#/fragor/<ref>` | Utredningsfrågor (se ovan) |
+| `#/om` | Om beräkningarna: modulerna och *Kontroll av beräkningarna* (A1–A9) |
+| `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om beräkningarna* |
+| `#/forvaltning` | Visas bara när inloggning är på och kontoservern har data för kontot |
 
-Projekt, förvaltningar, medlemmar och körhistorik per användare saknar backend tills kontoservern
-finns. Där står hakparentes, aldrig påhittade tal eller namn.
+Menyn är densamma på alla sidor och blir en *Meny*-knapp under 1100 px. Inget i gränssnittet visar
+hakparentes eller påhittade tal; ett test (`tests/webb/test_klient_platshallare.py`,
+`src/platshallare.test.ts`) söker igenom klientens text efter `[Ord]`-platshållare.
 
 ## Bygg och test
 

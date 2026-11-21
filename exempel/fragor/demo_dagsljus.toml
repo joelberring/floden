@@ -19,7 +19,7 @@
 #   byggnader 170 m bort. Vegetation ingår inte (standard, se docs/DAGSLJUS.md avsnitt 12).
 kontrakt = "K20/v1"
 fraga_id = "demo-dagsljus"
-beskrivning = "Soltimmar vid vårdagjämning och VSC på fasader före/efter: höjt hus och nytt hus."
+beskrivning = "Soltimmar på marken och dagsljus på fasader före och efter: ett höjt hus och ett nytt hus."
 
 [scenarier.bas]
 bas = "../../data/demo/varld/dagsljus/bas"

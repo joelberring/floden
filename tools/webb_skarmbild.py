@@ -9,8 +9,9 @@ Förutsätter att API:t och klienten körs och att demokvarteret är byggt:
 
 Argument: --url (klientens adress), --chrome (sökväg till Chrome/Chromium).
 
-Med `--demo` tas i stället docs/bilder/demo-*.png mot `floden webb` (som serverar klienten själv,
-standard http://127.0.0.1:8765) efter `floden demo`. Inget körs om: resultaten läses ur cachen.
+Med `--demo` tas i stället docs/bilder/demo-*.png (start, projekt, karta bred och smal,
+frågesidan) mot `floden webb` (som serverar klienten själv, standard
+http://127.0.0.1:8765) efter `floden demo`. Inget körs om: resultaten läses ur cachen.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Browser, Page, sync_playwright
 
 UT = Path(__file__).resolve().parents[1] / "docs" / "bilder"
 
@@ -66,12 +67,37 @@ def _hovra(sida: Page, rel_x: float, rel_y: float) -> None:
     sida.wait_for_timeout(900)
 
 
-def _demo(sida: Page, url: str) -> None:
-    sida.goto(f"{url}/#/fragor")
-    sida.wait_for_selector("[data-demo=demo_dagsljus]")
-    sida.wait_for_timeout(500)
-    sida.screenshot(path=str(UT / "demo-start.png"))
+def _sida(
+    sida: Page, url: str, adress: str, vantar_pa: str, fil: str, *, helsida: bool = True
+) -> None:
+    sida.goto(f"{url}/{adress}")
+    sida.wait_for_selector(vantar_pa, timeout=60_000)
+    sida.wait_for_timeout(1500)
+    sida.screenshot(path=str(UT / fil), full_page=helsida)
 
+
+def _demo(webblasare: Browser, url: str) -> None:
+    """demo-*.png: start, projekt, karta (1440 och 800 px) samt frågesidans resultat."""
+    for bredd, suffix in ((1440, ""), (800, "-smal")):
+        sida = webblasare.new_page(viewport={"width": bredd, "height": 1000})
+        _sida(sida, url, "#/", ".modul-kort", f"demo-start{suffix}.png")
+        _sida(sida, url, "#/projekt/demokvarteret", ".jamfor-tabell", f"demo-projekt{suffix}.png")
+        sida.goto(f"{url}/#/karta/demokvarteret?vy=dagsljus-hojd")
+        sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
+        sida.wait_for_timeout(2000)
+        _hovra(sida, 0.60, 0.38)
+        sida.screenshot(path=str(UT / f"demo-karta{suffix}.png"), full_page=True)
+        if bredd == 1440:
+            sida.click('[data-vy="vatten-nytt-hus"]')
+            sida.wait_for_timeout(1500)
+            sida.click('[data-lage="skillnad"]')
+            sida.wait_for_timeout(1000)
+            _hovra(sida, 0.33, 0.74)
+            sida.screenshot(path=str(UT / "demo-karta-vatten.png"), full_page=True)
+        sida.close()
+
+    sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
+    _sida(sida, url, "#/fragor", "[data-demo=demo_dagsljus]", "demo-fragor.png")
     sida.click("[data-demo=demo_vatten]")
     sida.wait_for_selector(".resultat-karta", timeout=60_000)
     sida.wait_for_timeout(1200)
@@ -97,11 +123,11 @@ def main() -> None:
     UT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         webblasare = p.chromium.launch(executable_path=args.chrome, args=["--no-sandbox"])
-        sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
         if args.demo:
-            _demo(sida, url)
+            _demo(webblasare, url)
             webblasare.close()
             return
+        sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
 
         _kor_fraga(sida, url, "dagsljus_fore_efter")
         sida.locator("#fr-plan").screenshot(path=str(UT / "webb-plan.png"))

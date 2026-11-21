@@ -10,7 +10,19 @@ export type KontoLage =
   | { lage: "okand" }
   | { lage: "av" }
   | { lage: "ut" }
-  | { lage: "in"; namn: string; epost: string };
+  | { lage: "in"; namn: string; epost: string; medlemskap: Medlemskap[]; projekt: KontoProjekt[] };
+
+export interface Medlemskap {
+  organisation: string;
+  forvaltning: string | null;
+  roll: string;
+}
+
+export interface KontoProjekt {
+  id: string;
+  namn: string;
+  roll: string;
+}
 
 export const CSRF_HUVUD = "X-Floden-CSRF";
 const CSRF_KAKNAMN = ["__Host-floden-csrf", "floden_csrf"];
@@ -56,10 +68,25 @@ export function csrfHuvud(kakor: string): Record<string, string> {
 /** Tolkar svaret från `GET /konto/jag` (status och JSON-kropp). */
 export function tolkaKontoSvar(status: number, data: unknown): KontoLage {
   if (status === 401) return { lage: "ut" };
-  const d = (data ?? {}) as { inloggning?: string; konto?: { namn?: string; epost?: string } };
+  const d = (data ?? {}) as {
+    inloggning?: string;
+    konto?: { namn?: string; epost?: string };
+    medlemskap?: Array<{ organisation?: string; forvaltning?: string | null; roll?: string }>;
+    projekt?: Array<{ id?: string; namn?: string; roll?: string }>;
+  };
   if (status === 200 && d.inloggning === "av") return { lage: "av" };
   if (status === 200 && d.inloggning === "pa" && d.konto) {
-    return { lage: "in", namn: d.konto.namn ?? "", epost: d.konto.epost ?? "" };
+    return {
+      lage: "in",
+      namn: d.konto.namn ?? "",
+      epost: d.konto.epost ?? "",
+      medlemskap: (d.medlemskap ?? []).map((m) => ({
+        organisation: m.organisation ?? "",
+        forvaltning: m.forvaltning ?? null,
+        roll: m.roll ?? "",
+      })),
+      projekt: (d.projekt ?? []).map((p) => ({ id: p.id ?? "", namn: p.namn ?? "", roll: p.roll ?? "" })),
+    };
   }
   return { lage: "okand" };
 }
@@ -109,14 +136,28 @@ export function kontoHuvudHtml(): string {
   return "";
 }
 
-/** Knapparna på startsidans hjälte. */
+/** Inloggningsknappen på startsidans hjälte (tom när ingen inloggning behövs). */
 export function kontoHjalteHtml(): string {
   const l = aktuellt;
   if (l.lage === "ut") {
-    return `<a class="knapp knapp-svart knapp-stor" href="${esc(inloggningsAdress("/"))}" data-konto="logga-in">Logga in med Google</a>`;
+    return `<a class="knapp knapp-stor" href="${esc(inloggningsAdress("/"))}" data-konto="logga-in">Logga in med Google</a>`;
   }
-  return `<a class="knapp knapp-svart knapp-stor" href="#/fragor">Öppna utredningsfrågorna</a>
-    <a class="knapp knapp-stor" href="#/oversikt">Översikt</a>`;
+  return "";
+}
+
+/**
+ * Förvaltningssidan och förvaltningsväljaren visas bara när inloggning är på och kontoservern
+ * har uppgifter om användaren (minst ett medlemskap). Annars finns de inte alls.
+ */
+export function forvaltningSynlig(l: KontoLage = aktuellt): boolean {
+  return l.lage === "in" && l.medlemskap.length > 0;
+}
+
+/** Namn att hälsa med, eller null när ingen är inloggad (då hälsar sidan inte alls). */
+export function halsningsnamn(l: KontoLage = aktuellt): string | null {
+  if (l.lage !== "in") return null;
+  const namn = l.namn.trim().split(/\s+/)[0] ?? "";
+  return namn || null;
 }
 
 /** Notis på frågesidan. */
