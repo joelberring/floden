@@ -120,6 +120,9 @@ class Vindfalt:
     nu_t_m2_s: FloatArray  # (nx, ny, nz), medel turbulent viskositet (SGS + upplöst)
     medelperiod_s: float
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Standardavvikelse för horisontell vindhastighet |u_h| över medelperioden (m/s),
+    # (nx, ny, nz). Valfri; behövs för byig vind (GEM) i vindkomfortstudier.
+    u_std_m_s: FloatArray | None = None
 
     def __post_init__(self) -> None:
         nx, ny, nz = self.grid.form
@@ -127,6 +130,11 @@ class Vindfalt:
             raise LuftFel(f"u_m_s ska ha formen (3, {nx}, {ny}, {nz}).")
         if self.nu_t_m2_s.shape != (nx, ny, nz):
             raise LuftFel(f"nu_t_m2_s ska ha formen ({nx}, {ny}, {nz}).")
+        if self.u_std_m_s is not None:
+            if self.u_std_m_s.shape != (nx, ny, nz):
+                raise LuftFel(f"u_std_m_s ska ha formen ({nx}, {ny}, {nz}).")
+            if not np.all(np.isfinite(self.u_std_m_s)) or np.any(self.u_std_m_s < 0):
+                raise LuftFel("u_std_m_s måste vara ändlig och icke-negativ.")
         if not np.all(np.isfinite(self.u_m_s)) or not np.all(np.isfinite(self.nu_t_m2_s)):
             raise LuftFel("Vindfältet innehåller NaN/Inf – körningen har divergerat.")
         if np.any(self.nu_t_m2_s < 0):
@@ -150,4 +158,5 @@ class Vindfalt:
             nu_t_m2_s=self.nu_t_m2_s * f,
             medelperiod_s=self.medelperiod_s / f,
             metadata={**self.metadata, "skalat_fran_u_ref_m_s": self.inflode.u_ref_m_s},
+            u_std_m_s=None if self.u_std_m_s is None else self.u_std_m_s * f,
         )

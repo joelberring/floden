@@ -87,7 +87,8 @@ Separat spår, licens MIT (`src/luft/`). Detaljer, matematik och färdplan i `do
 | L-a | LBM-LES 3D, linjär spridning med adjungerad lösning, NO₂-kemi, vindbibliotek, statistik, export, CLI | – | klar |
 | L-b | Serverkörning med CuPy, prestanda och minne | L-a, server | redo |
 | L-c | Vindtunnelvalidering (CEDVAL/Michelstadt) | L-a, data | redo |
-| L-d | Väggmodell och inflödesturbulens | L-a | redo |
-| L-f | TVD-advektion och GPU-lösare för spridningen | L-a | redo |
-| L-g | Emissionsmodell vägdamm (NORTRIP-typ) och avgaser | L-a, trafikdata | redo |
+| L-d | Väggmodell, inflödesturbulens, rättade randvillkor, prestanda | L-a | klar |
+| L-f | TVD-advektion och snabbare lösare (GPU-lösare kvar) | L-a | klar (CPU) |
+| L-g | Emissionsmodell vägdamm (NORTRIP-typ) och avgaser | L-a | klar (kalibrering väntar på data) |
+| L-k | Vindkomfort och vindfara för höga hus (NEN 8100, Lawson), före/efter | L-a | klar |
 | L-h | Validering mot mätstationer | L-c, L-g | väntar |

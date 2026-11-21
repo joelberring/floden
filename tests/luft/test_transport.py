@@ -193,11 +193,12 @@ def test_l5_adjungerad_dualitet() -> None:
     assert y.min() >= -1e-14 * y.max()
 
 
-def test_l5_iterativ_samma_som_direkt() -> None:
+@pytest.mark.parametrize("forkond", ["auto", "sgs", "ilu"])
+def test_l5_iterativ_samma_som_direkt(forkond: str) -> None:
     vind = _kub()
     amne = Amne("NOx", deposition_m_s=0.005)
     direkt = TransportOperator(vind, amne)
-    iterativ = TransportOperator(vind, amne, troskel_direkt=0)
+    iterativ = TransportOperator(vind, amne, troskel_direkt=0, forkonditionering=forkond)
     s = np.stack([_slumpkallor(vind, 10, 5), _slumpkallor(vind, 10, 6)])
     cd, ci = direkt.los(s), iterativ.los(s)
     assert cd.shape == s.shape
@@ -208,9 +209,15 @@ def test_l5_iterativ_samma_som_direkt() -> None:
         np.max(np.abs(direkt.los_adjungerad(w) - iterativ.los_adjungerad(w)))
         / np.max(np.abs(direkt.los_adjungerad(w)))
     )
-    print(f"iterativ mot direkt: {fel:.2e}, adjungerad {fel_adj:.2e}")
+    print(f"iterativ ({forkond}) mot direkt: {fel:.2e}, adjungerad {fel_adj:.2e}")
     assert fel < 1e-8
     assert fel_adj < 1e-8
+    assert iterativ._forkond_typ == ("ilu" if forkond == "ilu" else "sgs")
+
+
+def test_okand_forkonditionering_kastar() -> None:
+    with pytest.raises(LuftFel):
+        TransportOperator(_kub(), Amne("x"), forkonditionering="amg")
 
 
 # ------------------------------------------------------------------- L6

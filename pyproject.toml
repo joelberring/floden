@@ -88,4 +88,5 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: långsamt test, körs med FLODEN_LANGSAMMA_TESTER=1"]
 pythonpath = ["src"]

@@ -103,15 +103,17 @@ def spara_vindfalt(falt: Vindfalt, sokvag: str | Path) -> Path:
         raise LuftFel(f"Vindfältets metadata går inte att spara som JSON: {exc}") from exc
     mal = Path(sokvag)
     mal.parent.mkdir(parents=True, exist_ok=True)
+    falt_att_spara: dict[str, Any] = {
+        "u_m_s": falt.u_m_s,
+        "nu_t_m2_s": falt.nu_t_m2_s,
+        "fast": g.fast,
+        "lad_m2_m3": g.lad_m2_m3,
+        "meta": np.array(meta_text),
+    }
+    if falt.u_std_m_s is not None:
+        falt_att_spara["u_std_m_s"] = falt.u_std_m_s  # valfritt i KL1/v1
     with mal.open("wb") as fh:
-        np.savez_compressed(
-            fh,
-            u_m_s=falt.u_m_s,
-            nu_t_m2_s=falt.nu_t_m2_s,
-            fast=g.fast,
-            lad_m2_m3=g.lad_m2_m3,
-            meta=np.array(meta_text),
-        )
+        np.savez_compressed(fh, **falt_att_spara)
     return mal
 
 
@@ -128,6 +130,7 @@ def ladda_vindfalt(sokvag: str | Path) -> Vindfalt:
             nu_t = data["nu_t_m2_s"]
             fast = data["fast"]
             lad = data["lad_m2_m3"]
+            u_std = data["u_std_m_s"] if "u_std_m_s" in data.files else None
     except (OSError, ValueError) as exc:
         raise LuftFel(f"Kunde inte läsa vindfältet {kalla}: {exc}") from exc
     if meta.get("kontrakt") != KONTRAKT_KL1:
@@ -162,6 +165,7 @@ def ladda_vindfalt(sokvag: str | Path) -> Vindfalt:
         nu_t_m2_s=nu_t,
         medelperiod_s=medelperiod,
         metadata=metadata,
+        u_std_m_s=u_std,
     )
 
 

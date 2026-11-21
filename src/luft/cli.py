@@ -34,6 +34,13 @@ from luft.lbm import LbmParametrar
 from luft.transport import Amne
 from luft.typer import FloatArray, Inflode, LuftFel
 from luft.vindbibliotek import Vaderserie, Vindbibliotek
+from luft.vindkomfort import (
+    KRITERIER,
+    Komfortresultat,
+    berakna_komfort,
+    jamfor,
+    omrakna_vindhastighet,
+)
 
 TESTVARDE_MARKNING = "TESTVÄRDE – syntetiska indata, inte för skarpa slutsatser"
 
@@ -75,6 +82,26 @@ def registrera(subparsers: Any) -> None:
     h.add_argument("--receptor", type=float, nargs=2, metavar=("X", "Y"))
     h.add_argument("--interpolera", action="store_true")
     h.add_argument("--ut", required=True)
+
+    k = sub.add_parser("komfort", help="Vindkomfort och vindfara på gånghöjd (NEN 8100/Lawson).")
+    gemensamma_doman(k)
+    k.add_argument("--bibliotek", required=True, help="Vindbibliotek för förslaget (efter).")
+    k.add_argument("--fore", help="Vindbibliotek för nuläget, för före/efter-jämförelse.")
+    k.add_argument("--vader", required=True,
+                   help="CSV med referensvind vid inflödets z_ref/z0 (se --omrakna).")
+    k.add_argument("--kriterium", choices=sorted(KRITERIER), default="nen8100")
+    k.add_argument("--toppfaktor", type=float, help="Toppfaktor g för GEM (Lawson).")
+    k.add_argument("--omrakna", type=float, nargs=3, metavar=("Z_STATION", "Z0_STATION", "BLAND"),
+                   help="Räkna om stationsvind till inflödets z_ref/z0 via blandningshöjd.")
+    k.add_argument("--ut", required=True)
+
+    kd = sub.add_parser("komfortdemo", help="Höghus före/efter i syntetiskt kvarter (CPU).")
+    kd.add_argument("--ut", required=True)
+    kd.add_argument("--riktningar", type=int, default=8)
+    kd.add_argument("--dx", type=float, default=4.0)
+    kd.add_argument("--genomstromningar", type=float, default=1.5)
+    kd.add_argument("--hushojd", type=float, default=75.0)
+    kd.add_argument("--backend", choices=BACKENDS, default="numpy")
 
     d = sub.add_parser("demo", help="Syntetiskt kvarter genom hela kedjan (CPU).")
     d.add_argument("--ut", required=True)
@@ -223,7 +250,7 @@ def _syntetisk_vader(antal: int = 8760, seed: int = 1) -> Vaderserie:
 
 def _rita_png(sokvag: Path, falt: FloatArray, hojd: FloatArray, ruta: RasterRuta, titel: str,
               enhet: str, linjer: list[FloatArray], punkt: tuple[float, float] | None,
-              log: bool = False) -> None:
+              log: bool = False, divergerande: bool = False) -> None:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -238,8 +265,14 @@ def _rita_png(sokvag: Path, falt: FloatArray, hojd: FloatArray, ruta: RasterRuta
         positiva = falt[np.isfinite(falt) & (falt > 0)]
         if positiva.size:
             norm = LogNorm(vmin=float(np.percentile(positiva, 50)), vmax=float(positiva.max()))
-    im = ax.imshow(falt, extent=(x0, x1, y0, y1), cmap="magma_r", interpolation="nearest",
-                   norm=norm)
+    cmap = "magma_r"
+    vmin = vmax = None
+    if divergerande:
+        cmap = "RdBu_r"
+        m = float(np.nanmax(np.abs(falt))) if np.isfinite(falt).any() else 1.0
+        vmin, vmax = -m, m
+    im = ax.imshow(falt, extent=(x0, x1, y0, y1), cmap=cmap, interpolation="nearest",
+                   norm=norm, vmin=vmin, vmax=vmax)
     hx = x0 + (np.arange(hojd.shape[1]) + 0.5) * (x1 - x0) / hojd.shape[1]
     hy = y1 - (np.arange(hojd.shape[0]) + 0.5) * (y1 - y0) / hojd.shape[0]
     ax.contour(hx, hy, (hojd > 0).astype(float), levels=[0.5], colors="#333333",
@@ -333,6 +366,168 @@ def _kor_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- vindkomfort
+
+
+def _rita_klasser(sokvag: Path, klass: FloatArray, namn: tuple[str, ...], hojd: FloatArray,
+                  ruta: RasterRuta, titel: str, farger: list[str]) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import BoundaryNorm, ListedColormap
+    from matplotlib.patches import Patch
+
+    x0, y0, x1, y1 = ruta.utbredning
+    cmap = ListedColormap(farger[: len(namn)])
+    norm = BoundaryNorm(np.arange(-0.5, len(namn) + 0.5), cmap.N)
+    fig, ax = plt.subplots(figsize=(7, 6), dpi=130)
+    ax.imshow(klass, extent=(x0, x1, y0, y1), cmap=cmap, norm=norm, interpolation="nearest")
+    hx = x0 + (np.arange(hojd.shape[1]) + 0.5) * (x1 - x0) / hojd.shape[1]
+    hy = y1 - (np.arange(hojd.shape[0]) + 0.5) * (y1 - y0) / hojd.shape[0]
+    ax.contour(hx, hy, (hojd > 0).astype(float), levels=[0.5], colors="#333333", linewidths=0.8)
+    ax.legend(handles=[Patch(color=farger[i], label=n) for i, n in enumerate(namn)],
+              loc="upper left", bbox_to_anchor=(1.01, 1.0), fontsize=8, frameon=False)
+    ax.set_title(titel, fontsize=10)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    fig.text(0.01, 0.01, TESTVARDE_MARKNING, fontsize=7, color="#a00000")
+    fig.tight_layout()
+    fig.savefig(sokvag)
+    plt.close(fig)
+
+
+KLASSFARGER = ["#1a9850", "#91cf60", "#fee08b", "#fc8d59", "#d73027"]
+FARAFARGER = ["#f7f7f7", "#fdae61", "#a50026"]
+
+
+def _skriv_komfort(ut: Path, res: Komfortresultat, prefix: str) -> list[Path]:
+    from luft.export import skriv_geotiff_float
+
+    filer = [
+        skriv_geotiff_float(ut / f"{prefix}komfortklass.tif", res.komfortklass, res.ruta,
+                            "Komfortklass (index i kriteriets klasslista)", "klass"),
+        skriv_geotiff_float(ut / f"{prefix}faraklass.tif", res.faraklass, res.ruta,
+                            "Faraklass (index i kriteriets klasslista)", "klass"),
+    ]
+    for v, andel in res.andel_komfort.items():
+        filer.append(skriv_geotiff_float(ut / f"{prefix}andel_over_{v:g}ms.tif", andel * 100,
+                                         res.ruta, f"Andel timmar över {v:g} m/s", "%"))
+    return filer
+
+
+def _komfort_manifest(ut: Path, filer: list[Path], parametrar: dict[str, Any],
+                      matvarden: dict[str, Any], varningar: list[str], start: str) -> Path:
+    from gemensamt.hash import sha256_fil
+    from gemensamt.manifest import FilPost, skapa_manifest, skriv_manifest
+
+    m = skapa_manifest(
+        "luft-vindkomfort",
+        parametrar=parametrar,
+        utdata=[FilPost("komfort", f.name, sha256_fil(f)) for f in filer],
+        matvarden=matvarden,
+        varningar=varningar,
+        start=start,
+    )
+    return skriv_manifest(m, ut / "run.json")
+
+
+def _vader_for_komfort(args: argparse.Namespace, bib: Vindbibliotek) -> Vaderserie:
+    vader = Vaderserie.las_csv(args.vader)
+    if args.omrakna:
+        inf = bib.for_riktning(bib.riktningar_grad[0]).inflode
+        u = omrakna_vindhastighet(vader.vindhastighet_m_s, args.omrakna[0], args.omrakna[1],
+                                  inf.z_ref_m, inf.z0_m, args.omrakna[2])
+        vader = Vaderserie(vader.tid, vader.vindriktning_grad, u, vader.giltig)
+    return vader
+
+
+def _kor_komfort(args: argparse.Namespace) -> int:
+    start = datetime.now().astimezone().isoformat()
+    spec = _spec(args)
+    bib = Vindbibliotek.ladda(args.bibliotek)
+    vader = _vader_for_komfort(args, bib)
+    ut = Path(args.ut)
+    ut.mkdir(parents=True, exist_ok=True)
+    efter = berakna_komfort(bib, vader, spec.utbredning, spec.raster_dx_m, args.kriterium,
+                            args.toppfaktor)
+    filer = _skriv_komfort(ut, efter, "")
+    matvarden: dict[str, Any] = {}
+    varningar = list(efter.varningar)
+    if args.fore:
+        fore = berakna_komfort(Vindbibliotek.ladda(args.fore), vader, spec.utbredning,
+                               spec.raster_dx_m, args.kriterium, args.toppfaktor)
+        filer += _skriv_komfort(ut, fore, "fore_")
+        d = jamfor(fore, efter)
+        from luft.export import skriv_geotiff_float
+
+        filer.append(skriv_geotiff_float(ut / "klass_skillnad.tif", d["klass_skillnad"],
+                                         efter.ruta, "Komfortklass efter − före", "klass"))
+        matvarden.update({k: v for k, v in d.items() if isinstance(v, float)})
+        varningar += fore.varningar
+    m = _komfort_manifest(ut, filer, {"kriterium": efter.kriterium.namn,
+                                      "kalla": efter.kriterium.kalla,
+                                      "toppfaktor": args.toppfaktor}, matvarden,
+                          sorted(set(varningar)), start)
+    print(f"Vindkomfort skriven i {ut} ({m.name}).")
+    return 0
+
+
+def _kor_komfortdemo(args: argparse.Namespace) -> int:
+    start = datetime.now().astimezone().isoformat()
+    ut = Path(args.ut)
+    ut.mkdir(parents=True, exist_ok=True)
+    rdx = 2.0
+    hojd_fore, ox, oy = syntetiskt_kvarter(rdx)
+    s = rdx
+    hojd_fore[int(100 / s):int(130 / s), int(100 / s):int(130 / s)] = 18.0  # inget höghus
+    hojd_efter = hojd_fore.copy()
+    hojd_efter[int(100 / s):int(130 / s), int(100 / s):int(130 / s)] = args.hushojd
+    param = LbmParametrar(upprampning_genomstromningar=args.genomstromningar,
+                          medel_genomstromningar=args.genomstromningar)
+    hojd_doman = max(80.0, 2.0 * args.hushojd)
+    bibliotek: dict[str, Vindbibliotek] = {}
+    for namn, h in (("fore", hojd_fore), ("efter", hojd_efter)):
+        mapp = ut / f"vindbibliotek_{namn}"
+        if (mapp / "bibliotek.json").exists():
+            bibliotek[namn] = Vindbibliotek.ladda(mapp)
+            continue
+        spec = Domanspec(h, rdx, ox, oy, args.dx, hojd_doman, 80.0, 160.0, 60.0)
+        bibliotek[namn] = bygg_vindbibliotek(spec, _riktningar(args.riktningar),
+                                             Inflode(5.0, 10.0, 0.5), param, args.backend, _logg)
+        bibliotek[namn].spara(mapp)
+    utb = Domanspec(hojd_fore, rdx, ox, oy, args.dx, hojd_doman, 0, 0, 0).utbredning
+    # syntetisk referensvind (TESTVÄRDE), dominerande sydväst
+    rng = np.random.default_rng(7)
+    n = 8760
+    vader = Vaderserie.skapa((225.0 + rng.normal(0.0, 60.0, n)) % 360.0,
+                             rng.weibull(2.0, n) * 6.0)
+    res = {k: berakna_komfort(b, vader, utb, rdx, "nen8100") for k, b in bibliotek.items()}
+    d = jamfor(res["fore"], res["efter"])
+    k = res["efter"].kriterium
+    for namn, r in res.items():
+        _rita_klasser(ut / f"komfort_{namn}.png", r.komfortklass, k.komfort_klasser,
+                      hojd_fore if namn == "fore" else hojd_efter, r.ruta,
+                      f"NEN 8100 komfortklass, {'med höghus' if namn == 'efter' else 'nuläge'}",
+                      KLASSFARGER)
+        _rita_klasser(ut / f"fara_{namn}.png", r.faraklass, k.fara_klasser,
+                      hojd_fore if namn == "fore" else hojd_efter, r.ruta,
+                      f"NEN 8100 vindfara, {namn}", FARAFARGER)
+    skillnad = np.asarray(d["andel_skillnad"], dtype=np.float64) * 100
+    _rita_png(ut / "andel_over_5ms_skillnad.png", skillnad,
+              hojd_efter, res["efter"].ruta, "Ändring i andel timmar > 5 m/s (procentenheter)",
+              "procentenheter", [], None, divergerande=True)
+    filer = _skriv_komfort(ut, res["efter"], "") + _skriv_komfort(ut, res["fore"], "fore_")
+    matvarden = {kk: v for kk, v in d.items() if isinstance(v, float)}
+    _komfort_manifest(ut, filer, {"demo": True, "markning": TESTVARDE_MARKNING,
+                                  "hushojd_m": args.hushojd, "dx_m": args.dx,
+                                  "riktningar": args.riktningar}, matvarden,
+                      [TESTVARDE_MARKNING] + res["efter"].varningar, start)
+    print(json.dumps(matvarden, indent=2, ensure_ascii=False))
+    print(f"Komfortdemo klar i {ut}.")
+    return 0
+
+
 def kor(args: argparse.Namespace) -> int:
     """Kör ett `floden luft`-underkommando."""
     try:
@@ -342,8 +537,12 @@ def kor(args: argparse.Namespace) -> int:
             return _kor_halt(args)
         if args.luft_kommando == "demo":
             return _kor_demo(args)
+        if args.luft_kommando == "komfort":
+            return _kor_komfort(args)
+        if args.luft_kommando == "komfortdemo":
+            return _kor_komfortdemo(args)
     except LuftFel as exc:
         print(f"Fel i luftkörningen: {exc}", file=sys.stderr)
         return 1
-    print("Ange underkommando: vind, halt eller demo.", file=sys.stderr)
+    print("Ange underkommando: vind, halt, komfort, demo eller komfortdemo.", file=sys.stderr)
     return 2

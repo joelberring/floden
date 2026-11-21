@@ -46,7 +46,11 @@ Diskretiseras med finita volymer på samma rutnät:
 - Flöden på cellytor. Ytflödena **projiceras divergensfria** (Helmholtz-projektion: lös en Poissonekvation
   för korrektionen) innan operatorn byggs. Då blir uppströmsoperatorn en M-matris: halter blir aldrig negativa
   och massan bevaras exakt.
-- Uppströms advektion (första ordningen, monoton) i v1; TVD/flödesbegränsare senare.
+- Advektion: uppströms (standard, monoton) eller TVD (van Leer/Koren) med begränsaren *frusen* ur en
+  referenslösning och begränsad till 2/Pe per yta, så att operatorn förblir linjär och en M-matris
+  (superposition, adjungerad dualitet och positivitet gäller exakt). Vinsten är störst vid låga cellpecletal.
+- Lösare: symmetrisk Gauss–Seidel-förkonditionering med celler numrerade medvinds (nästan exakt för
+  advektionen), transponerad för den adjungerade; projektionen med geometrisk multigrid-förkonditionerad CG.
 - Deposition som sänka på ytor mot fast cell (`v_d`, m/s); partiklar får sedimentationshastighet `w_s`
   som läggs på den vertikala hastigheten.
 - Randvillkor: inflöde c = 0 (bakgrundshalt adderas separat); utflöde och tak = advektivt utflöde.
@@ -76,6 +80,29 @@ PM behandlas i v1 som spårämne med `w_s` och `v_d`. Emission från vägslitage
 sandning, fukt) kräver en egen emissionsmodell av NORTRIP-typ; den byggs som eget uppdrag och ger
 `s` till operatorn. Inga emissionsfaktorer hårdkodas: de är indata, och testvärden markeras som sådana.
 
+### 2.6 Vindkomfort och höga hus
+Samma vindbibliotek ger *förstärkningen* `A_d = |u_h| / u_ref` på gånghöjd per riktning. Vid neutral skiktning
+är den oberoende av vindstyrkan, så andelen timmar med lokal vind över en tröskel V blir
+`P = Σ_d #{h ∈ d : U_h > V / A_d} / N`, exakt med sortering och binärsökning. Byighet (Lawson, GEM) använder
+standardavvikelsen `u_std` från LES: `Ã = max(A, (A + g·σ/u_ref)/1,85)`. Kriterier med källa i
+`vindkomfort.KRITERIER`:
+- **NEN 8100:2006**: 1,75 m, tröskel 5 m/s; klass A–E vid <2,5 / 2,5–5 / 5–10 / 10–20 / ≥20 % av timmarna;
+  fara 15 m/s: 0,05–0,3 % begränsad risk, ≥0,3 % farligt.
+- **Lawson LDDC** (variant enligt CPP Wind): max(medel, GEM) ≤ 4/6/8/10 m/s högst 5 % av tiden
+  (sitta/stå/promenera/gå målmedvetet); fara över 15 resp. 20 m/s mer än 0,022 %.
+
+Ingen svensk norm finns; valet är ett planeringsbeslut. Väderdata räknas om till inflödets referenshöjd och
+råhet med `omrakna_vindhastighet` (log-lag via blandningshöjd, som är indata). Före/efter: två vindbibliotek
+(nuläge, förslag) → `jamfor` ger ändrad klass och ändrad överskridandeandel. Gånghöjd kräver fint rutnät nära
+marken (helst ≤ 1–2 m celler); grövre rutnät ger en varning och är bara översiktligt.
+
+### 2.7 Randvillkor och noggrannhet (L-d)
+Standard sedan L-d: inflöde med icke-jämviktsextrapolation (Guo m.fl. 2002), tryckutflöde (ρ = 1), start
+från profilen och `u_lattice="auto"` (Mach-mål 0,15). L-a-randen gav ca 30 % för lågt massflöde och finns
+kvar som val (`inflodesrand="jamvikt"`). Valbart: väggmodell (log-lag som väggkraft, `vaggmodell="loglag"`)
+och syntetiska virvlar vid inflödet (SEM, `inflodesturbulens="virvlar"`). Kraftfelet i den reguljariserade
+kollisionen (halverad kraft nära τ = ½) är rättat.
+
 ## 3. Moduler
 
 | Modul | Innehåll |
@@ -88,6 +115,8 @@ sandning, fukt) kräver en egen emissionsmodell av NORTRIP-typ; den byggs som eg
 | `luft/kemi.py` | fotostationär NO₂ |
 | `luft/vindbibliotek.py` | bibliotek över riktningar, viktning med väderdata, statistik |
 | `luft/export.py` | KL2-utdata (GeoTIFF/npz + `run.json`) |
+| `luft/emission.py` | vägdamm och avgaser per vägavsnitt och timme (NORTRIP-typ), `timvis_halt` |
+| `luft/vindkomfort.py` | vindkomfort och vindfara på gånghöjd (NEN 8100, Lawson LDDC), före/efter |
 | `luft/kedja.py` | hela kedjan: `bygg_vindbibliotek`, `berakna_halter`, `kanslighet_for_receptor` |
 | `luft/cli.py` | `floden luft vind \| halt \| demo` |
 
@@ -177,6 +206,9 @@ server och data.
 ```bash
 floden luft demo --ut demo/                       # syntetiskt kvarter, hela kedjan på CPU (~8 min)
 floden luft vind --byggnader hojd.tif --ut bib/ --riktningar 12 --dx 2 --backend cupy   # server
+floden luft komfort --byggnader hojd_forslag.tif --bibliotek bib_forslag/ --fore bib_nulage/ \
+                    --vader vader.csv --omrakna 10 0.03 60 --kriterium nen8100 --ut komfort/
+floden luft komfortdemo --ut kdemo/                # höghus före/efter i syntetiskt kvarter
 floden luft halt --bibliotek bib/ --byggnader hojd.tif --vagar vagar.gpkg --vader vader.csv \
                  --grans 40 --percentil 98 --receptor 152140 6577170 --ut resultat/
 ```
@@ -197,10 +229,11 @@ Rastret ska vara EPSG:3011, nordorienterat. Vägarna behöver fältet `emission_
 | L-a | Typer, LBM-LES, spridning med projektion och adjungerad, NO₂-kemi, geometri, vindbibliotek, statistik, export, CLI, demo | klar (2026-11-21) |
 | L-b | Server: köra `--backend cupy`, mäta MLUPS, minnesoptimering (en buffert, streaming i ett steg, gles lagring av luftceller) | redo |
 | L-c | Validering mot vindtunnel (CEDVAL A1-1, Michelstadt) med vedertagna mått (FAC2, hit rate) | redo, kräver data |
-| L-d | Väggmodell (log-lag) på byggnader och mark; spektral inflödesturbulens | redo |
+| L-d | Väggmodell (log-lag), syntetiska virvlar vid inflödet, Mach-säkert u_lattice, 2,5× snabbare, rättade randvillkor | klar (2026-11-21) |
 | L-e | Termisk skiktning (Boussinesq, Monin–Obukhov) och svagvindsklasser | väntar på L-c |
-| L-f | Andra ordningens advektion (TVD) i spridningen; GPU-lösare för glesa systemet (AMG) | redo |
-| L-g | Emissionsmodell för vägdamm (NORTRIP-typ: slitage, dubbdäck, fukt, sandning, salt) och avgaser | redo, kräver trafikdata |
+| L-f | TVD-advektion (frusen, M-matrisbegränsad), 7–10× snabbare lösare; GPU-lösare kvar | TVD och CPU-lösare klara (2026-11-21) |
+| L-g | Emissionsmodell för vägdamm (NORTRIP-typ: slitage, dubbdäck, fukt, sandning, salt) och avgaser | modell klar (2026-11-21), kalibrering kräver trafik- och mätdata |
+| L-k | Vindkomfort och vindfara (NEN 8100, Lawson), före/efter för höga hus | klar (2026-11-21) |
 | L-h | Validering mot mätstationer (t.ex. Hornsgatan) med bakgrundshalter | kräver data |
 | L-i | Koppling till gemensam geometrikärna (när den finns) och till frågelager/webb | väntar |
 | L-j | Lagrangepartiklar för PM-episoder och korttidsutsläpp | senare |
