@@ -112,7 +112,7 @@ def _krav_str(tabell: Mapping[str, Any], nyckel: str, kontext: str) -> str:
 
 def _krav_tal(tabell: Mapping[str, Any], nyckel: str, kontext: str) -> float:
     varde = tabell.get(nyckel)
-    if isinstance(varde, bool) or not isinstance(varde, (int, float)) or not math.isfinite(varde):
+    if isinstance(varde, bool) or not isinstance(varde, int | float) or not math.isfinite(varde):
         raise GrundkartaFel(f"{kontext}: '{nyckel}' måste vara ett ändligt tal.")
     return float(varde)
 

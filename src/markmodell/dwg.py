@@ -175,7 +175,7 @@ def _lista(varde: Any) -> list[Any]:
 
 
 def _tal(varde: Any, reserv: float = 0.0) -> float:
-    if isinstance(varde, bool) or not isinstance(varde, (int, float)) or not math.isfinite(varde):
+    if isinstance(varde, bool) or not isinstance(varde, int | float) or not math.isfinite(varde):
         return reserv
     return float(varde)
 
@@ -184,7 +184,7 @@ def _xy(varde: Any) -> Xy | None:
     if (
         isinstance(varde, list)
         and len(varde) >= 2
-        and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in varde[:2])
+        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in varde[:2])
         and math.isfinite(varde[0])
         and math.isfinite(varde[1])
     ):
@@ -195,7 +195,7 @@ def _xy(varde: Any) -> Xy | None:
 def _z(varde: Any) -> float | None:
     if isinstance(varde, list) and len(varde) >= 3:
         z = varde[2]
-        if isinstance(z, (int, float)) and not isinstance(z, bool) and math.isfinite(z):
+        if isinstance(z, int | float) and not isinstance(z, bool) and math.isfinite(z):
             return float(z)
     return None
 
@@ -408,7 +408,7 @@ def _byggare(
         flagga = int(_tal(obj.get("flag")))
         sluten = bool(flagga & 512) or bool(flagga & 1)
         hojd = obj.get("elevation")
-        z = _medel([_tal(hojd)]) if isinstance(hojd, (int, float)) else None
+        z = _medel([_tal(hojd)]) if isinstance(hojd, int | float) else None
         return lambda: _linje(
             sort,
             _med_bagar(
@@ -478,7 +478,7 @@ def _byggare(
     if sort == "POINT":
         x, y = _tal(obj.get("x"), math.nan), _tal(obj.get("y"), math.nan)
         z_p = obj.get("z")
-        z = _medel([_tal(z_p)]) if isinstance(z_p, (int, float)) else None
+        z = _medel([_tal(z_p)]) if isinstance(z_p, int | float) else None
         return lambda: (
             DwgObjekt("", "punkt", sort, punkter=((x, y),), z=z)
             if math.isfinite(x) and math.isfinite(y)
@@ -577,7 +577,7 @@ def las_baskarta_dwg(
     ytregler blir
     markslagsytor. Utan profil används `STANDARD_STOCKHOLM_LAGERMAPPNING` och inga ytregler.
     """
-    if isinstance(kalla, (str, Path)):
+    if isinstance(kalla, str | Path):
         fil = Path(kalla)
         if not fil.is_file():
             raise GrundkartaFel(f"Filen hittades inte: {fil}")
