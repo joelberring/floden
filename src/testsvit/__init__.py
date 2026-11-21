@@ -34,13 +34,13 @@ from testsvit.syntetiska import (
 )
 
 __all__ = [
-    "BrytlinjePost",
     "EPSG_SWEREF99_1800",
+    "PIXELSTORLEK_M",
+    "BrytlinjePost",
     "FallResultat",
     "GeoTransformInfo",
     "K1FormatFel",
     "OppningPost",
-    "PIXELSTORLEK_M",
     "SyntetisktFallSpec",
     "Testfall",
     "TestsvitFel",

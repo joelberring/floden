@@ -37,6 +37,8 @@ from gemensamt.regn import (
     generera_blockregn,
     generera_cds_regn,
 )
+from mark_forluster.koppling import berakna_effektivt_regn_k5
+from mark_forluster.parametrar import ForlustFel
 from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf
 
 __all__ = [
@@ -310,17 +312,21 @@ def _kor_dynamik_med_cache(
     avrinning_faktor: float,
     initial_forlust_mm: float,
     brunnar_avdrag_m3_s: float,
+    eff_tid_s: Sequence[float] | None = None,
+    eff_intensitet_mm_h: Sequence[float] | None = None,
 ) -> DynamikResultat:
     """Kör exakt händelsestyrd dynamik och återanvänder förberäknad `GrafStrukturCache`."""
     t_wall_start = time.perf_counter()
 
-    raw_iv, _ = skapa_regn_intervall(regn.tid_s, regn.intensitet_mm_h, slut_tid_s=slut_tid_s)
+    tid_kalla = eff_tid_s if eff_tid_s is not None else regn.tid_s
+    intens_kalla = eff_intensitet_mm_h if eff_intensitet_mm_h is not None else regn.intensitet_mm_h
+    raw_iv, _ = skapa_regn_intervall(tid_kalla, intens_kalla, slut_tid_s=slut_tid_s)
     netto_iv, netto_regn_m = applicera_initial_forlust(raw_iv, initial_forlust_mm)
 
     kardinal, tider_hist, nod_niva_hist, nod_volym_hist = _kor_handelsestyrd_karna(
         graf,
         netto_iv,
-        float(regn.tid_s[0]),
+        float(tid_kalla[0]),
         netto_regn_m,
         cache=cache,
         avrinning_faktor=avrinning_faktor,
@@ -513,6 +519,10 @@ def berakna_kumulativ_oversvamningsrisk(
     initial_forlust_mm: float = 0.0,
     brunnar_avdrag_m3_s: float = 0.0,
     efterforlopp_s: float = 0.0,
+    infiltration_jordart: str | None = None,
+    grundvatten: str = "normal",
+    tjale: bool = False,
+    infiltration_initial_mm: float = 2.0,
     indata: Sequence[FilPost] | None = None,
     kodversion: str | None = None,
     start: str | None = None,
@@ -571,6 +581,29 @@ def berakna_kumulativ_oversvamningsrisk(
             toppfaktor=tf,
             idf_tabell=idf_tabell,
         )
+        eff_tid: Sequence[float] | None = None
+        eff_int: Sequence[float] | None = None
+        steg_init = init_forlust
+        if infiltration_jordart is not None:
+            try:
+                koppl = berakna_effektivt_regn_k5(
+                    graf.markslag,
+                    regn.tid_s,
+                    regn.intensitet_mm_h,
+                    jordart=infiltration_jordart,
+                    grundvatten=grundvatten,
+                    tjale=tjale,
+                    initial_mm=infiltration_initial_mm,
+                    pixelstorlek_m=float(graf.geo.pixelstorlek_x),
+                    mark_z=graf.mark_z,
+                    regn_ref=regn.regn_id,
+                )
+            except ForlustFel as exc:
+                raise DynamikFel(f"Ogiltig markförlustparameter: {exc}") from exc
+            eff_tid = koppl.effektiv_regn_tid_s
+            eff_int = koppl.effektiv_regn_intensitet_mm_h
+            steg_init = 0.0
+
         slut_tid_s = float(regn.tid_s[-1]) + efterforlopp
         dynamik = _kor_dynamik_med_cache(
             graf,
@@ -578,8 +611,10 @@ def berakna_kumulativ_oversvamningsrisk(
             regn,
             slut_tid_s=slut_tid_s,
             avrinning_faktor=avr,
-            initial_forlust_mm=init_forlust,
+            initial_forlust_mm=steg_init,
             brunnar_avdrag_m3_s=brunnar,
+            eff_tid_s=eff_tid,
+            eff_intensitet_mm_h=eff_int,
         )
         djup64 = np.asarray(dynamik.max_djup_m, dtype=np.float64)
         djup_lager.append(djup64)

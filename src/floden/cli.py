@@ -24,6 +24,7 @@ from gemensamt.regn import (
 )
 from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.typer import SankGrafFel, las_brytlinjer_fran_gpkg, las_oppningar_fran_gpkg
+from testsvit.ea_fall import EaBenchmarkFel, kor_alla_ea_testfall
 from testsvit.k1_io import K1FormatFel, las_geotiff
 from testsvit.korare import TestsvitFel, hitta_testfall, kor_testsvit
 
@@ -40,6 +41,17 @@ def _kor_skelettkommando(kommando: str, uppdrag: str) -> int:
 
 
 def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
+    if grupp is not None and grupp.strip().upper() == "C":
+        try:
+            ea_res, ea_tabell = kor_alla_ea_testfall()
+        except EaBenchmarkFel as exc:
+            print(f"Fel i EA-testsvit (grupp C): {exc}", file=sys.stderr)
+            return 2
+        print(ea_tabell)
+        antal_ok = sum(1 for r in ea_res if r.godkand)
+        print(f"\nSammanfattning (Grupp C / EA): {antal_ok}/{len(ea_res)} testfall passerade.")
+        return 0 if antal_ok == len(ea_res) else 1
+
     try:
         resultat, tabell = kor_testsvit(rot=rot, grupp=grupp)
     except TestsvitFel as exc:
@@ -54,6 +66,11 @@ def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
     print(tabell)
     antal_ok = sum(1 for r in resultat if r.godkand)
     antal_totalt = len(resultat)
+    if grupp is None:
+        ea_res, ea_tabell = kor_alla_ea_testfall()
+        print("\n" + ea_tabell)
+        antal_ok += sum(1 for r in ea_res if r.godkand)
+        antal_totalt += len(ea_res)
     print(f"\nSammanfattning: {antal_ok}/{antal_totalt} testfall passerade.")
     return 0 if antal_ok == antal_totalt else 1
 
@@ -163,6 +180,10 @@ def _kor_risk_kommando(args: argparse.Namespace) -> int:
             varaktighet_min=args.varaktighet_min,
             regntyp=args.regntyp,
             tidshorisont_ar=args.tidshorisont_ar,
+            infiltration_jordart=args.jordart,
+            grundvatten=args.grundvatten,
+            tjale=args.tjale,
+            infiltration_initial_mm=args.initial_mm,
         )
 
         if args.json:
@@ -378,6 +399,30 @@ def bygg_parser() -> argparse.ArgumentParser:
         default="cds",
         choices=("cds", "block"),
         help="Regntyp: 'cds' (standard) eller 'block'.",
+    )
+    risk_parser.add_argument(
+        "--jordart",
+        type=str,
+        default=None,
+        help="Aktivera T06 Green–Ampt-infiltration för jordart (t.ex. moran, sand, lera, berg).",
+    )
+    risk_parser.add_argument(
+        "--grundvatten",
+        type=str,
+        default="normal",
+        choices=("normal", "hog"),
+        help="Grundvattenläge vid T06-infiltration: 'normal' (standard) eller 'hog'.",
+    )
+    risk_parser.add_argument(
+        "--tjale",
+        action="store_true",
+        help="Aktivera tjäle (reducerar Ksat och porvolym) vid T06-infiltration.",
+    )
+    risk_parser.add_argument(
+        "--initial-mm",
+        type=float,
+        default=2.0,
+        help="Initial ytmagasinering i mm vid T06-infiltration (standard: 2.0).",
     )
     risk_parser.add_argument(
         "--rot",

@@ -44,6 +44,8 @@ from lapp.kontrakt import (
     ProjektLapp,
     las_gatusektioner_fran_konfig,
 )
+from mark_forluster.koppling import berakna_effektivt_regn_k5
+from mark_forluster.parametrar import ForlustFel
 from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.typer import (
     SankGraf,
@@ -230,6 +232,37 @@ def _tolka_regnserie(
     if not math.isfinite(varaktighet) or varaktighet <= 0.0:
         raise FlodenWebbFel(f"Ogiltig varaktighet_s: {varaktighet!r} (måste vara > 0).")
     return (0.0, varaktighet), (intensitet, intensitet), {}
+
+
+def _tolka_forluster(
+    kropp: Mapping[str, Any],
+) -> tuple[str | None, str, bool, float]:
+    """Tolkar valfria T06 markförlustparametrar (`forluster` eller `jordart`)."""
+    raw_forl = kropp.get("forluster")
+    if raw_forl is None:
+        raw_jord = kropp.get("jordart")
+        if not isinstance(raw_jord, str) or not raw_jord.strip():
+            return None, "normal", False, 2.0
+        return (
+            raw_jord.strip(),
+            str(kropp.get("grundvatten", "normal")).strip().lower(),
+            bool(kropp.get("tjale", False)),
+            float(kropp.get("initial_mm", 2.0)),
+        )
+
+    if not isinstance(raw_forl, Mapping):
+        raise FlodenWebbFel("'forluster' måste vara ett JSON-objekt.")
+    if raw_forl.get("aktivera") is False:
+        return None, "normal", False, 2.0
+    raw_jord = raw_forl.get("jordart")
+    if not isinstance(raw_jord, str) or not raw_jord.strip():
+        return None, "normal", False, 2.0
+    return (
+        raw_jord.strip(),
+        str(raw_forl.get("grundvatten", "normal")).strip().lower(),
+        bool(raw_forl.get("tjale", False)),
+        float(raw_forl.get("initial_mm", 2.0)),
+    )
 
 
 def _bygg_projektlapp_fran_payload(
@@ -630,6 +663,27 @@ class FlodenApiApp:
         regn_tid, regn_int, regn_meta = _tolka_regnserie(
             payload, omrade.regn_tid_s, omrade.regn_intensitet_mm_h
         )
+        jordart_val, gw_val, tjale_val, init_mm_val = _tolka_forluster(payload)
+        forluster_meta: dict[str, Any] | None = None
+        if jordart_val is not None:
+            try:
+                koppl = berakna_effektivt_regn_k5(
+                    omrade.markslag,
+                    regn_tid,
+                    regn_int,
+                    jordart=jordart_val,
+                    grundvatten=gw_val,
+                    tjale=tjale_val,
+                    initial_mm=init_mm_val,
+                    pixelstorlek_m=float(omrade.geo.pixelstorlek_x),
+                    mark_z=omrade.mark_z,
+                    regn_ref=str(regn_meta.get("regn_id", "webb_regn")),
+                )
+            except ForlustFel as exc:
+                raise FlodenWebbFel(f"Ogiltiga markförlustparametrar: {exc}") from exc
+            regn_tid = koppl.effektiv_regn_tid_s
+            regn_int = koppl.effektiv_regn_intensitet_mm_h
+            forluster_meta = koppl.till_dict()
         grann_entreer = _kopiera_entreer_fran_payload(payload)
 
         try:
@@ -796,6 +850,7 @@ class FlodenApiApp:
             "max_okning_djup_granne_m": max_okning_granne,
             "nya_drabbade_entreer": nya_drabbade,
             "projekt_entreer": projekt_entreer,
+            "forluster": forluster_meta,
             "kortid_s": float(kortid_s),
             "manifest": manifest.till_dict(),
             "kallor": list(omrade.kallor),
@@ -842,6 +897,7 @@ class FlodenApiApp:
             tidshorisont_ar = float(payload.get("tidshorisont_ar", 50.0))
             varaktighet_min = float(payload.get("varaktighet_min", STANDARD_VARAKTIGHET_MIN))
             regntyp = str(payload.get("regntyp", "cds")).strip().lower()
+            jordart_val, gw_val, tjale_val, init_mm_val = _tolka_forluster(payload)
             raw_tider = payload.get("aterkomsttider_ar")
             aterkomsttider: list[float] | None = None
             if raw_tider is not None:
@@ -861,6 +917,10 @@ class FlodenApiApp:
                 varaktighet_min=varaktighet_min,
                 regntyp=regntyp,
                 tidshorisont_ar=tidshorisont_ar,
+                infiltration_jordart=jordart_val,
+                grundvatten=gw_val,
+                tjale=tjale_val,
+                infiltration_initial_mm=init_mm_val,
                 indata=[
                     FilPost(
                         roll="bas_recept",
@@ -869,7 +929,7 @@ class FlodenApiApp:
                     )
                 ],
             )
-        except (DynamikFel, RegnFel, ValueError) as exc:
+        except (DynamikFel, RegnFel, ForlustFel, ValueError) as exc:
             raise FlodenWebbFel(f"Riskberäkningsfel: {exc}", status_kod=400) from exc
 
         kortid_s = time.perf_counter() - t_start
