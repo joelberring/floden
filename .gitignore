@@ -23,6 +23,7 @@ env/
 config.local.toml
 *.local.toml
 data/cache/
+data/demo/
 data/intern/
 data/konto/
 data/ledningar/

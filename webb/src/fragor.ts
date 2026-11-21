@@ -1,19 +1,24 @@
 /*
  * Sidan Frågor: välj en utredningsfråga (K20) -> se planen (rutor, cache) -> kör -> se resultatet
  * (kartvy i SWEREF-koordinater, varningar, mätvärden). Allt beräknas av kärnan; klienten visar.
- * Webben körs lokalt utan inloggning.
+ * Lokalt körs webben utan inloggning; med `inloggning = "pa"` styr servern åtkomsten (konto.ts).
  */
 import "./fragor.css";
 import {
+  hamtaAvlasning,
+  hamtaDemo,
   hamtaFragor,
   hamtaKorning,
+  hamtaKorningar,
   hamtaResultat,
   hamtaTabellForhandsvisning,
   planeraFraga,
   startaKorning,
 } from "./api";
 import type {
+  AvlasningSvar,
   DataTabellRef,
+  DemoSvar,
   FragaPost,
   KorningSvar,
   LagerPost,
@@ -23,7 +28,8 @@ import type {
   Utbredning,
   VarningPost,
 } from "./fragor-typer";
-import { RasterVy, type VyLager } from "./rastervy";
+import { kontoNotis, vidKontoandring } from "./konto";
+import { RasterVy, type VyByggnad, type VyLager } from "./rastervy";
 import { esc } from "./sidor";
 
 const OSM_MALL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
@@ -43,6 +49,8 @@ interface Tillstand {
   aktivAnalys: string | null;
   aktivtLager: string | null;
   fleraLager: boolean;
+  visaTak: boolean;
+  demo: DemoSvar | null;
   opacitet: number;
   forhandsvisning: { ref: DataTabellRef; kolumner: string[]; rader: Array<Record<string, unknown>>; antal: number } | null;
 }
@@ -60,18 +68,24 @@ const t: Tillstand = {
   aktivAnalys: null,
   aktivtLager: null,
   fleraLager: false,
+  visaTak: false,
+  demo: null,
   opacitet: 1,
   forhandsvisning: null,
 };
 
 let vy: RasterVy | null = null;
 let vyLager = new Map<string, VyLager>();
+let vyBilder = new Map<string, { png: HTMLImageElement; tak: HTMLImageElement | null }>();
+let avlasningSeq = 0;
+let avlasningTimer: number | null = null;
 let timer: number | null = null;
 let rot: HTMLElement | null = null;
 
 /* ---------- Formatering ---------- */
 
 const TAL = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 4 });
+const DEC1 = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
 const HELTAL = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 });
 
 export function formateraVarde(v: unknown): string {
@@ -100,23 +114,84 @@ export function visaFragor(container: HTMLElement, ref: string | null): void {
       <div class="sidbredd innehall fragor-sida">
         <div class="rubrikrad">
           <h1 class="sidrubrik">Frågor</h1>
-          <p class="dampad fragor-notis">Körs lokalt utan inloggning. Resultat sparas på den här datorn.</p>
+          <p class="dampad fragor-notis" id="fr-notis">${esc(kontoNotis())}</p>
         </div>
+        <section id="fr-demo" aria-labelledby="fr-demo-rubrik" hidden></section>
         <section id="fr-val" aria-labelledby="fr-val-rubrik"></section>
         <section id="fr-plan" aria-labelledby="fr-plan-rubrik" hidden></section>
         <section id="fr-resultat" aria-labelledby="fr-resultat-rubrik" hidden></section>
       </div>`;
     avslutaVy();
+    ritaDemo();
     ritaVal();
     ritaPlan();
     ritaResultat();
   }
+  void laddaDemo();
   void laddaFragor().then(() => {
     if (ref && t.vald?.ref !== ref) {
       const post = t.fragor?.find((f) => f.ref === ref);
       if (post) void valj(post, false);
     }
   });
+}
+
+vidKontoandring(() => {
+  const n = el("fr-notis");
+  if (n) n.textContent = kontoNotis();
+});
+
+async function laddaDemo(): Promise<void> {
+  if (t.demo) return;
+  try {
+    t.demo = await hamtaDemo();
+  } catch {
+    t.demo = null; // Demon är valfri: utan den visas bara frågelistan.
+  }
+  ritaDemo();
+}
+
+function ritaDemo(): void {
+  const sek = el("fr-demo");
+  if (!sek) return;
+  const d = t.demo;
+  sek.hidden = !d || !d.finns;
+  if (!d || !d.finns || !d.delar) return;
+  const kort = (
+    del: { ref: string; tid_s: number; jobb: number } | undefined,
+    rubrik: string,
+    text: string,
+  ): string =>
+    del
+      ? `<article class="demo-kort">
+           <h3>${esc(rubrik)}</h3>
+           <p>${esc(text)}</p>
+           <button type="button" class="knapp knapp-svart" data-demo="${esc(del.ref)}">Visa resultatet</button>
+           <span class="dampad liten-text">${del.jobb} jobb</span>
+         </article>`
+      : "";
+  const luft = d.delar.luft
+    ? `<article class="demo-kort demo-kommer">
+         <h3>Luft <span class="chip">Kommer</span></h3>
+         <p>${esc(d.delar.luft.text)}</p>
+       </article>`
+    : "";
+  sek.innerHTML = `
+    <div class="sektionsrad linje-under-stark">
+      <h2 class="etikett" id="fr-demo-rubrik">Demo</h2>
+      <span class="dampad">Ett påhittat kvarter. Inga verkliga data, inga verkliga byggnader.</span>
+    </div>
+    <div class="demo-rad">
+      ${kort(d.delar.demo_dagsljus, "Dagsljus", "Soltimmar på marken före och efter: en höjd byggnad och ett nytt hus.")}
+      ${kort(d.delar.demo_vatten, "Vatten", "Blåytor och maxdjup vid ett skyfall, före och efter ett nytt hus.")}
+      ${luft}
+    </div>`;
+  for (const knapp of Array.from(sek.querySelectorAll<HTMLButtonElement>("[data-demo]"))) {
+    knapp.addEventListener("click", () => {
+      const post = t.fragor?.find((f) => f.ref === knapp.dataset.demo);
+      if (post) void valj(post, true);
+    });
+  }
 }
 
 async function laddaFragor(): Promise<void> {
@@ -167,7 +242,7 @@ function fragaRad(f: FragaPost): string {
   const problem = !f.giltig
     ? `<span class="fel-text">Kan inte köras: ${esc(f.fel ?? "okänt fel")}</span>`
     : (f.indata_saknas?.length ?? 0) > 0
-      ? `<span class="varn-text">Indata saknas (${f.indata_saknas?.length}): se hjälptexten nedan när frågan är vald.</span>`
+      ? `<span class="dampad">Indata saknas (${f.indata_saknas?.length}): frågan kan inte köras förrän den byggts. Se hjälptexten när frågan är vald.</span>`
       : "";
   return `
     <li>
@@ -204,6 +279,25 @@ async function valj(post: FragaPost, uppdateraAdress: boolean): Promise<void> {
     t.planFel = e instanceof Error ? e.message : String(e);
   }
   if (t.vald?.ref === post.ref) ritaPlan();
+  await laddaSenasteKorning(post);
+}
+
+/** Visar redan körda resultat direkt: senaste klara körning med samma plan (samma jobbnycklar). */
+async function laddaSenasteKorning(post: FragaPost): Promise<void> {
+  const nyckel = t.plan?.plan_nyckel;
+  if (!nyckel) return;
+  try {
+    const lista = await hamtaKorningar();
+    const k = lista.korningar.find(
+      (x) => x.ref === post.ref && x.status === "klar" && x.plan_nyckel === nyckel,
+    );
+    if (!k || t.vald?.ref !== post.ref || t.resultat) return;
+    t.korning = k;
+    ritaKorStatus();
+    await laddaResultat(k.korning_id);
+  } catch {
+    // Ingen tidigare körning att visa; användaren kan köra frågan.
+  }
 }
 
 /* ---------- 2. Plan och körning ---------- */
@@ -261,7 +355,7 @@ function planInnehall(p: PlanSvar, hjalp: string): string {
       <div class="plan-karta">
         ${planKartaSvg(p)}
         <p class="dampad liten-text">${rutor} rutor${u ? ` · E ${HELTAL.format(u.x_min)}–${HELTAL.format(u.x_max)} · N ${HELTAL.format(u.y_min)}–${HELTAL.format(u.y_max)} (SWEREF 99 18 00)` : ""}.
-          Mörk ruta: alla jobb finns i cachen. Streckad: delvis. Vit: ska köras.</p>
+          Mörk ruta: alla jobb finns i cachen. Streckad: delvis. Vit: ska köras. Ljusgrå med prickad kant: omgivning, ingen beräkning.</p>
       </div>
     </div>
     <div class="tabell-ruta">
@@ -290,11 +384,25 @@ function planKartaSvg(p: PlanSvar): string {
     e.cache += j.i_cache ? 1 : 0;
     per.set(j.ruta, e);
   }
+  const globalt = p.jobb.some((j) => !j.ruta);
   const rutor = sc.rutor
     .map((r) => {
       const e = per.get(r.ruta_id);
-      const klass = !e || e.cache === 0 ? "ingen" : e.cache === e.alla ? "alla" : "delvis";
-      return `<rect class="plan-ruta ${klass}" x="${r.x_min - u.x_min}" y="${u.y_max - r.y_max}" width="${r.x_max - r.x_min}" height="${r.y_max - r.y_min}"><title>${esc(r.ruta_id)}: ${e ? `${e.cache} av ${e.alla} jobb i cache` : "globalt jobb"}</title></rect>`;
+      const klass = !e
+        ? globalt
+          ? "ingen"
+          : "kontext"
+        : e.cache === 0
+          ? "ingen"
+          : e.cache === e.alla
+            ? "alla"
+            : "delvis";
+      const text = e
+        ? `${e.cache} av ${e.alla} jobb i cache`
+        : globalt
+          ? "globalt jobb"
+          : "kontext: ingen beräkning i rutan, den finns bara med som omgivning";
+      return `<rect class="plan-ruta ${klass}" x="${r.x_min - u.x_min}" y="${u.y_max - r.y_max}" width="${r.x_max - r.x_min}" height="${r.y_max - r.y_min}"><title>${esc(r.ruta_id)}: ${text}</title></rect>`;
     })
     .join("");
   return `<svg class="plan-svg" viewBox="0 0 ${b} ${h}" style="aspect-ratio:${b} / ${h}" role="img" aria-label="Rutor i planen, färgade efter cachestatus">
@@ -403,6 +511,12 @@ function avslutaVy(): void {
   vy?.avsluta();
   vy = null;
   vyLager = new Map();
+  vyBilder = new Map();
+  avlasningSeq += 1;
+  if (avlasningTimer !== null) {
+    window.clearTimeout(avlasningTimer);
+    avlasningTimer = null;
+  }
 }
 
 function ritaResultat(): void {
@@ -423,6 +537,7 @@ function ritaResultat(): void {
       <h2 class="etikett" id="fr-resultat-rubrik">3 · Resultat</h2>
       <span class="dampad">${esc(r.fraga_id)} · ${s.jobb} jobb, ${s.i_cache} från cache, ${s.att_kora} körda på ${TAL.format(s.total_tid_s)} s · <span class="mono">${esc(r.korning.korning_id)}</span></span>
     </div>
+    ${antagandenHtml(r)}
     ${varningarHtml(r.varningar)}
     <div class="resultat-karta">
       <div class="vy-kolumn">
@@ -435,6 +550,7 @@ function ritaResultat(): void {
           </span>
         </div>
         <div id="vy-yta" class="vy-yta"></div>
+        <div id="avlasning" class="avlasning" role="status"><span class="dampad">Håll markören över kartan för att läsa värden.</span></div>
         <details class="installningar">
           <summary class="etikett-liten">Inställningar</summary>
           <label class="kryss-rad"><input type="checkbox" id="bakgrund-pa" ${lasBakgrund() ? "checked" : ""}/> Bakgrundskarta (hämtar plattor från en extern tjänst; av som standard)</label>
@@ -452,6 +568,55 @@ function ritaResultat(): void {
   ritaMatvarden(r);
   ritaJamforelser(r);
   ritaDatatabeller(r);
+}
+
+/** Parametrar som visas i sammanfattningen (resten finns i jobbens run.json). */
+const PARAMETERTEXT: Record<string, [string, string]> = {
+  azimutriktningar: ["riktningar", ""],
+  h_min_grader: ["lägsta solhöjd", "°"],
+  hojd_max_m: ["högsta höjd i terrängen", "m"],
+  cellstorlek_m: ["cellstorlek", "m"],
+};
+
+const REGNTYP: Record<string, string> = { block: "blockregn", cds: "CDS-regn" };
+
+/** Antaganden ur jobbens manifest (run.json). Webben räknar inget: allt här är lösarens egna värden. */
+function antagandenHtml(r: ResultatSvar): string {
+  const a = r.antaganden;
+  if (!a) return "";
+  const rader: string[] = [];
+  const medRegn = new Set<string>();
+  for (const g of a.regn) {
+    medRegn.add(g.analys);
+    const delar: string[] = [];
+    if (g.kalla) {
+      delar.push(`${esc(g.rapport ?? g.kalla)}${g.tabell ? ` (${esc(g.tabell)})` : ""}`);
+      if (g.aterkomsttid_ar != null) delar.push(`${TAL.format(g.aterkomsttid_ar)} års återkomsttid`);
+      if (g.varaktighet_min != null) {
+        const typ = g.regntyp ? `, ${esc(REGNTYP[g.regntyp] ?? g.regntyp)}` : "";
+        delar.push(`${TAL.format(g.varaktighet_min)} min${typ}`);
+      }
+    } else {
+      delar.push("Regn angivet direkt (ingen IDF-källa)");
+    }
+    if (g.klimatfaktor != null) {
+      delar.push(`klimatfaktor ${TAL.format(g.klimatfaktor)}${g.klimatfaktor_ingar_i_tabell ? " (ingår i tabellen)" : ""}`);
+    }
+    if (g.regn_mm != null) delar.push(`${DEC1.format(g.regn_mm)} mm regn totalt`);
+    rader.push(`<li><span class="etikett-liten">Regn</span> <span>${delar.join(" · ")}</span></li>`);
+  }
+  for (const an of a.analyser) {
+    if (medRegn.has(an.analys)) continue;
+    const par = Object.entries(PARAMETERTEXT)
+      .filter(([k]) => an.parametrar[k] !== null && an.parametrar[k] !== undefined)
+      .map(([k, [namn, enhet]]) => `${esc(namn)} ${esc(String(an.parametrar[k]))}${enhet ? ` ${enhet}` : ""}`)
+      .join(" · ");
+    rader.push(
+      `<li><span class="etikett-liten">${esc(an.analys)}</span> <span>${esc(an.losare)}@${esc(an.version)}${par ? ` · ${par}` : ""}</span></li>`,
+    );
+  }
+  if (rader.length === 0) return "";
+  return `<div class="antaganden" aria-label="Antaganden"><span class="etikett-liten">Antaganden</span><ul>${rader.join("")}</ul></div>`;
 }
 
 function varningarHtml(v: VarningPost[]): string {
@@ -498,22 +663,26 @@ function startaVy(r: ResultatSvar): void {
           ? "EPSG:3011 · SWEREF 99 18 00"
           : `E ${HELTAL.format(e)} · N ${HELTAL.format(n)} · EPSG:3011`;
     }
+    planeraAvlasning(e, n);
   };
   for (const l of r.lager) {
-    const bild = new Image();
-    bild.onload = () => vy?.rita();
-    bild.src = l.png;
-    vyLager.set(l.id, { id: l.id, bild, utbredning: l.utbredning, opacitet: 1, synlig: false });
+    const png = new Image();
+    png.onload = () => vy?.rita();
+    png.src = l.png;
+    let tak: HTMLImageElement | null = null;
+    if (l.png_med_tak) {
+      tak = new Image();
+      tak.onload = () => vy?.rita();
+      tak.src = l.png_med_tak;
+    }
+    vyBilder.set(l.id, { png, tak });
+    vyLager.set(l.id, { id: l.id, bild: png, utbredning: l.utbredning, opacitet: 1, synlig: false });
   }
-  const alla = utbredningen(r.lager);
-  if (alla) vy.anpassa(alla);
+  anpassaTillResultat();
   uppdateraVyLager();
   el("vy-in")?.addEventListener("click", () => vy?.zooma(0.7));
   el("vy-ut")?.addEventListener("click", () => vy?.zooma(1 / 0.7));
-  el("vy-anpassa")?.addEventListener("click", () => {
-    const a = utbredningen(r.lager);
-    if (a) vy?.anpassa(a);
-  });
+  el("vy-anpassa")?.addEventListener("click", () => anpassaTillResultat());
   const paKryss = el<HTMLInputElement>("bakgrund-pa");
   const url = el<HTMLInputElement>("bakgrund-url");
   const uppdateraBakgrund = (): void => {
@@ -526,22 +695,102 @@ function startaVy(r: ResultatSvar): void {
   uppdateraBakgrund();
 }
 
+/**
+ * Vyn passas mot det som faktiskt syns i det aktiva lagret (bounding box för celler med
+ * värde, utan maskade). Sker vid start, analysbyte och "Anpassa"; lagerbyte flyttar inte kartan.
+ */
+function anpassaTillResultat(): void {
+  const r = t.resultat;
+  if (!r || !vy) return;
+  const aktivt = r.lager.find((l) => l.id === t.aktivtLager);
+  const u = utbredningen(aktivt ? [aktivt] : r.lager);
+  if (u) vy.anpassa(u);
+}
+
 function utbredningen(lager: LagerPost[]): Utbredning | null {
   if (lager.length === 0) return null;
+  const ut = lager.map((l) => l.synlig_utbredning ?? l.utbredning);
   return {
-    x_min: Math.min(...lager.map((l) => l.utbredning.x_min)),
-    y_min: Math.min(...lager.map((l) => l.utbredning.y_min)),
-    x_max: Math.max(...lager.map((l) => l.utbredning.x_max)),
-    y_max: Math.max(...lager.map((l) => l.utbredning.y_max)),
+    x_min: Math.min(...ut.map((u) => u.x_min)),
+    y_min: Math.min(...ut.map((u) => u.y_min)),
+    x_max: Math.max(...ut.map((u) => u.x_max)),
+    y_max: Math.max(...ut.map((u) => u.y_max)),
   };
+}
+
+/* ---------- Värden under markören ---------- */
+
+function planeraAvlasning(e: number | null, n: number | null): void {
+  if (avlasningTimer !== null) window.clearTimeout(avlasningTimer);
+  avlasningTimer = null;
+  const r = t.resultat;
+  const lager = t.aktivtLager;
+  if (e === null || n === null || !r || !lager) {
+    avlasningSeq += 1;
+    visaAvlasning(null);
+    return;
+  }
+  avlasningTimer = window.setTimeout(() => void lasAvlasning(r.korning.korning_id, lager, e, n), 90);
+}
+
+async function lasAvlasning(korning: string, lager: string, e: number, n: number): Promise<void> {
+  const nr = ++avlasningSeq;
+  try {
+    const svar = await hamtaAvlasning(korning, lager, e, n);
+    if (nr === avlasningSeq) visaAvlasning(svar);
+  } catch {
+    if (nr === avlasningSeq) visaAvlasning(null);
+  }
+}
+
+const DEC2 = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 });
+
+function formateraAvlasning(v: number, enhet: string, typ: string): string {
+  const tecken = typ === "skillnad" && v > 0 ? "+" : "";
+  return `${tecken}${DEC2.format(v)}${enhet ? ` ${enhet}` : ""}`;
+}
+
+function visaAvlasning(a: AvlasningSvar | null): void {
+  const ruta = el("avlasning");
+  if (!ruta) return;
+  if (!a || a.varden.every((x) => !x.inom)) {
+    ruta.innerHTML = `<span class="dampad">Håll markören över kartan för att läsa värden.</span>`;
+    return;
+  }
+  const delar = a.varden
+    .filter((x) => x.inom)
+    .map((x) => {
+      let text: string;
+      if (x.tak && !t.visaTak) text = "tak – inte mark";
+      else if (x.varde === null) text = "inget värde";
+      else text = formateraAvlasning(x.varde, x.enhet, x.typ) + (x.tak ? " (tak)" : "");
+      return `<span class="avl-post"><span class="etikett-liten">${esc(x.typ === "bas" ? "Bas" : `${TYP_ETIKETT[x.typ]} ${x.scenario}`)}</span> <span class="mono">${esc(text)}</span></span>`;
+    });
+  ruta.innerHTML = delar.join("");
 }
 
 function uppdateraVyLager(): void {
   for (const [id, l] of vyLager) {
     l.synlig = id === t.aktivtLager;
     l.opacitet = t.opacitet;
+    const b = vyBilder.get(id);
+    if (b) l.bild = t.visaTak && b.tak ? b.tak : b.png;
   }
   vy?.settLager(Array.from(vyLager.values()));
+  uppdateraByggnader();
+}
+
+/** Byggnadslagret för det aktiva lagret: scenariots byggnader (skillnad: "efter"-scenariot). */
+function uppdateraByggnader(): void {
+  const r = t.resultat;
+  const l = r?.lager.find((x) => x.id === t.aktivtLager);
+  if (!r || !l || !vy) return;
+  const sid = l.typ === "skillnad" ? (l.efter ?? l.scenario) : l.scenario;
+  const poster = r.byggnader?.scenarier[sid] ?? [];
+  const byggnader: VyByggnad[] = poster.map((b) => ({ ring: b.ring, hal: b.hal, status: b.status }));
+  vy.settByggnader(byggnader);
+  const maskat = l.tak_maskat && !t.visaTak;
+  vy.settNotis(maskat ? "Grå yta: tak, inte mark" : null);
 }
 
 const TYP_ETIKETT: Record<LagerPost["typ"], string> = {
@@ -579,13 +828,21 @@ function ritaLagerPanel(): void {
     <div class="flikar" role="group" aria-label="Analys">${flikar}</div>
     <div class="lager-lista" role="radiogroup" aria-label="Lager">${rader || '<p class="dampad">Inga rasterlager.</p>'}</div>
     ${finnsFler ? `<label class="kryss-rad"><input type="checkbox" id="fler-lager" ${t.fleraLager ? "checked" : ""}/> Visa fler lager (flaggor, kontroller)</label>` : ""}
+    ${aktivt?.tak_maskat ? `<label class="kryss-rad"><input type="checkbox" id="visa-tak" ${t.visaTak ? "checked" : ""}/> Visa värden på tak (${HELTAL.format(aktivt.tak_yta_m2)} m² byggnadsyta)</label>` : ""}
     <label class="falt-rad">Opacitet <input type="range" id="opacitet" min="10" max="100" value="${Math.round(t.opacitet * 100)}"/></label>
-    ${aktivt ? teckenforklaringHtml(aktivt) : ""}`;
+    ${aktivt ? teckenforklaringHtml(aktivt) : ""}
+    ${byggnadsforklaring(aktivt)}`;
+  panel.querySelector<HTMLInputElement>("#visa-tak")?.addEventListener("change", (h) => {
+    t.visaTak = (h.target as HTMLInputElement).checked;
+    uppdateraVyLager();
+    ritaLagerPanel();
+  });
   for (const k of Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-analys]"))) {
     k.addEventListener("click", () => {
       t.aktivAnalys = k.dataset.analys ?? null;
       t.aktivtLager = t.aktivAnalys ? valjStandardLager(r.lager, t.aktivAnalys) : null;
       uppdateraVyLager();
+      anpassaTillResultat();
       ritaLagerPanel();
     });
   }
@@ -604,6 +861,20 @@ function ritaLagerPanel(): void {
     t.opacitet = Number((h.target as HTMLInputElement).value) / 100;
     uppdateraVyLager();
   });
+}
+
+function byggnadsforklaring(l: LagerPost | null): string {
+  if (!l || !t.resultat?.byggnader) return "";
+  const maskat = l.tak_maskat && !t.visaTak;
+  return `<div class="teckenforklaring bygg-forklaring">
+    <h3 class="etikett-liten">Byggnader</h3>
+    <ul class="klass-lista">
+      <li><span class="ruta bygg-oforandrad"></span><span class="mono">Byggnad (fotavtryck)</span></li>
+      <li><span class="ruta bygg-ny"></span><span class="mono">Ny byggnad</span></li>
+      <li><span class="ruta bygg-andrad"></span><span class="mono">Ändrad höjd</span></li>
+    </ul>
+    ${maskat ? `<p class="dampad liten-text">Grå ytor är tak, inte mark. Där visas inget markvärde.</p>` : ""}
+  </div>`;
 }
 
 function teckenforklaringHtml(l: LagerPost): string {

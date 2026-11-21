@@ -100,6 +100,15 @@ def _indata_hashar(analys: Analys, losare: Analyslosare) -> dict[str, str]:
     return ut
 
 
+def _inom_fokus(ruta: Ruta, fokus: tuple[float, float, float, float] | None) -> bool:
+    """Sant om rutans mittpunkt ligger inom analysens `fokus` (alltid sant utan fokus)."""
+    if fokus is None:
+        return True
+    x0, y0, x1, y1 = fokus
+    mx, my = (ruta.x_min + ruta.x_max) / 2.0, (ruta.y_min + ruta.y_max) / 2.0
+    return x0 <= mx <= x1 and y0 <= my <= y1
+
+
 def planera(fraga: KorbarFraga, cache: ResultatCache) -> Plan:
     """Materialiserar scenarier och räknar fram alla jobbnycklar utan att köra lösarna."""
     scenarier = {sid: materialisera_scenario(spec, cache) for sid, spec in fraga.scenarier.items()}
@@ -125,7 +134,11 @@ def planera(fraga: KorbarFraga, cache: ResultatCache) -> Plan:
             if radie is None:
                 enheter = [(None, ())]
             else:
-                enheter = [(r, scen.grannar(r, radie)) for r in scen.rutor]
+                enheter = [
+                    (r, scen.grannar(r, radie))
+                    for r in scen.rutor
+                    if _inom_fokus(r, analys.fokus)
+                ]
 
             for ruta, grannar in enheter:
                 rutor = scen.rutor if ruta is None else (ruta, *grannar)

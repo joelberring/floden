@@ -39,6 +39,7 @@ Relativa sökvägar tolkas relativt frågefilens katalog.
 from __future__ import annotations
 
 import json
+import math
 import re
 import tomllib
 from collections.abc import Mapping
@@ -77,6 +78,10 @@ class Analys:
     parametrar: Mapping[str, Any] = field(default_factory=dict)
     indata: Mapping[str, Path] = field(default_factory=dict)
     beror_pa: tuple[str, ...] = ()
+    fokus: tuple[float, float, float, float] | None = None
+    """Valfri avgränsning (x_min, y_min, x_max, y_max, EPSG:3011): rutvisa lösare körs bara för
+    rutor vars mittpunkt ligger inom den. Övriga rutor ingår som grannar (marginal) men får inga
+    egna jobb eller resultat. Så kan ett område ha en marginal utan att kantrutorna körs."""
 
 
 @dataclass(frozen=True)
@@ -164,8 +169,23 @@ def _troskel(varde: Any, sammanhang: str) -> float:
 
 _TILLATNA_TOPP = {"kontrakt", "fraga_id", "beskrivning", "scenarier", "analyser", "jamforelser"}
 _TILLATNA_SCENARIO = {"bas", "lappar", "k9"}
-_TILLATNA_ANALYS = {"id", "losare", "scenarier", "parametrar", "indata", "beror_pa"}
+_TILLATNA_ANALYS = {"id", "losare", "scenarier", "parametrar", "indata", "beror_pa", "fokus"}
 _TILLATNA_JAMFOR = {"analys", "utdata", "fore", "efter", "troskel"}
+
+
+def _fokus(varde: Any, sammanhang: str) -> tuple[float, float, float, float] | None:
+    if varde is None:
+        return None
+    if (
+        not isinstance(varde, list | tuple)
+        or len(varde) != 4
+        or not all(isinstance(x, int | float) and not isinstance(x, bool) for x in varde)
+    ):
+        raise FragaFel(f"{sammanhang} måste vara [x_min, y_min, x_max, y_max] (EPSG:3011).")
+    x0, y0, x1, y1 = (float(x) for x in varde)
+    if not all(math.isfinite(x) for x in (x0, y0, x1, y1)) or x0 >= x1 or y0 >= y1:
+        raise FragaFel(f"{sammanhang}: x_min < x_max och y_min < y_max krävs, fick {list(varde)}.")
+    return (x0, y0, x1, y1)
 
 
 def _okanda(data: Mapping[str, Any], tillatna: set[str], sammanhang: str) -> None:
@@ -242,6 +262,7 @@ def fraga_fran_dict(data: Any, rot: Path, kalla: Path | None = None) -> KorbarFr
                 parametrar=dict(param),
                 indata=indata,
                 beror_pa=_strlista(a.get("beror_pa"), f"{ctx}.beror_pa"),
+                fokus=_fokus(a.get("fokus"), f"{ctx}.fokus"),
             )
         )
     for a in analyser:

@@ -136,7 +136,7 @@ PYTHONPATH=src python -m konto.admin registrera-doman <org-id> kommun.se        
 
 ## 8. Integrationsguide för `src/webb/api.py`
 
-Görs i ett senare steg av huvudtråden efter att webbens PR är mergad. Inget i `src/webb/api.py` eller `webb/` är ändrat i den här grenen.
+**Status:** kopplat i `src/webb/api.py` (`FlodenApiApp.hantera_http`, grenen `demo-visning`). Ordningen nedan följs: `/konto/*` först, klientens statiska filer (ingen data), `kraver_inloggning` före att kroppen läses, sedan API:t. Med `inloggning = "pa"` skickas inget `Access-Control-Allow-Origin`; klienten (`webb/src/konto.ts`, `api.ts`) läser `/konto/jag`, visar Google-knapp, *Inloggad som* och *Logga ut* och lägger `X-Floden-CSRF` på alla POST. Tester: `tests/webb/test_inloggning.py` (falsk leverantör). `/api/halsa` är öppen (`oppna_sokvagar`). Prövat bara mot den falska leverantören, inte mot Google. Texten nedan är den ursprungliga guiden.
 
 Adaptern känner inte till `http.server`. Anropen webbservern ska göra:
 

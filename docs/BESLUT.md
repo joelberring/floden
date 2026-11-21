@@ -32,6 +32,7 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 | 2026-11-21 | **Luft startas** som spår L (ersätter "bara vatten först" för luft). 3D krävs: LBM-LES (D3Q19) för vind, linjär spridningsoperator med adjungerad lösning på medelfältet. Se `docs/LUFT.md`. | Joel vill ha 3D-luft och partiklar; separata agenter bygger vatten, buller, dagsljus och gemensam kärna. |
 | 2026-11-21 | **Luftens lösare skrivs mot ett array-API (NumPy/CuPy)** i stället för Rust/wgpu i första versionen. Samma kod körs på CPU i tester och CUDA-GPU på server. | LBM är minnesbandbreddsbunden och enkel att uttrycka vektoriserat; Rust/wgpu kan bli aktuellt när lösaren är validerad. |
 | 2026-11-20 | **Provområde i Hägersten-Älvsjö**, ca 1 km². | Joels arbetsområde och lokalkännedom. |
+| 2026-11-21 | **K20 får det valfria fältet `fokus` per analys (förblir v1)** och IDF-parametrar i `vatten.statisk_fyllning` (lösarversion förblir 1). Båda är tillägg: frågor och körningar utan dem är byte-identiska. `fokus` begränsar rutvisa jobb till rutor vars mittpunkt ligger i en ruta (EPSG:3011) så att demons kantzon bara är kontext. *Mitt val i demo-spåret; Joel kan kräva K20/v2.* | Dagsljuset ska inte ge trunkeringsvarningar på kvarterets kant, och demon ska visa regn ur Stockholmsregn 2024 utan att fuska med artefakter. |
 
 ## Öppna beslut (Joel)
 

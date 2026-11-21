@@ -29,25 +29,97 @@ def _tal(parametrar: Mapping[str, Any], namn: str, *, minst: float | None = None
     return float(v)
 
 
+_IDF_PARAMETRAR = {"aterkomsttid_ar", "klimatfaktor", "varaktighet_min", "regntyp"}
+_STATISK_PARAMETRAR = {"regn_mm", "persistens_faktor", "idf"} | _IDF_PARAMETRAR
+
+
 class StatiskFyllning(Analyslosare):
     """Sänkgraf och exakt volymbevarande statisk fyllning för ett regndjup."""
 
     namn: ClassVar[str] = "vatten.statisk_fyllning"
     doman: ClassVar[str] = "vatten"
     version: ClassVar[str] = "1"
-    beskrivning: ClassVar[str] = "Statisk Fill–Spill–Merge-fyllning (T02) för ett regndjup i mm."
+    beskrivning: ClassVar[str] = (
+        "Statisk Fill–Spill–Merge-fyllning (T02) för ett regndjup i mm, direkt (regn_mm) eller "
+        "ur en registrerad IDF-källa (idf, aterkomsttid_ar, klimatfaktor, varaktighet_min)."
+    )
     utdataroller: ClassVar[tuple[str, ...]] = ("max_djup",)
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
-        okanda = sorted(set(parametrar) - {"regn_mm", "persistens_faktor"})
+        okanda = sorted(set(parametrar) - _STATISK_PARAMETRAR)
         if okanda:
             raise LosarFel(f"{self.namn}: okända parametrar {okanda}.")
-        ut: dict[str, Any] = {"regn_mm": _tal(parametrar, "regn_mm", minst=0.0)}
         if "persistens_faktor" in parametrar:
-            ut["persistens_faktor"] = _tal(parametrar, "persistens_faktor", minst=0.0)
+            persistens: float | None = _tal(parametrar, "persistens_faktor", minst=0.0)
         else:
-            ut["persistens_faktor"] = None
+            persistens = None
+        if "idf" not in parametrar:
+            fel_idf = sorted(set(parametrar) & _IDF_PARAMETRAR)
+            if fel_idf:
+                raise LosarFel(f"{self.namn}: {fel_idf} kräver parametern 'idf'.")
+            return {
+                "regn_mm": _tal(parametrar, "regn_mm", minst=0.0),
+                "persistens_faktor": persistens,
+            }
+        # Regn ur en registrerad IDF-källa (gemensamt.regn): källa, återkomsttid, varaktighet och
+        # klimatfaktor är uttryckliga parametrar och ingår i nyckeln och i K0-manifestet.
+        from gemensamt.regn import RegnFel, hamta_idf_kalla
+
+        if "regn_mm" in parametrar:
+            raise LosarFel(f"{self.namn}: 'regn_mm' och 'idf' kan inte anges samtidigt.")
+        kalla_id = parametrar["idf"]
+        if not isinstance(kalla_id, str):
+            raise LosarFel(f"Parametern 'idf' måste vara en källa som text, fick {kalla_id!r}.")
+        typ = parametrar.get("regntyp", "block")
+        if typ not in ("block", "cds"):
+            raise LosarFel(f"Parametern 'regntyp' måste vara 'block' eller 'cds', fick {typ!r}.")
+        try:
+            kalla = hamta_idf_kalla(kalla_id)
+            kf = (
+                _tal(parametrar, "klimatfaktor", minst=0.0)
+                if "klimatfaktor" in parametrar
+                else kalla.standard_klimatfaktor
+            )
+            ut: dict[str, Any] = {
+                "persistens_faktor": persistens,
+                "idf": kalla_id,
+                "regntyp": typ,
+                "aterkomsttid_ar": _tal(parametrar, "aterkomsttid_ar", minst=0.0),
+                "varaktighet_min": (
+                    _tal(parametrar, "varaktighet_min", minst=0.0)
+                    if "varaktighet_min" in parametrar
+                    else 60.0
+                ),
+                "klimatfaktor": kf,
+            }
+            ut.update(kalla.manifest_parametrar(kf))
+        except RegnFel as exc:
+            raise LosarFel(f"{self.namn}: {exc}") from exc
         return ut
+
+    @staticmethod
+    def _regn_mm(parametrar: Mapping[str, Any]) -> tuple[float, dict[str, Any]]:
+        """Regndjup (mm) och mätvärden om regnet: `regn_mm` direkt, annars ur IDF-källan."""
+        if "idf" not in parametrar:
+            return float(parametrar["regn_mm"]), {}
+        from gemensamt.regn import RegnFel, skapa_regn_fran_idf_kalla
+
+        try:
+            serie = skapa_regn_fran_idf_kalla(
+                str(parametrar["idf"]),
+                float(parametrar["aterkomsttid_ar"]),
+                klimatfaktor=float(parametrar["klimatfaktor"]),
+                typ=str(parametrar["regntyp"]),
+                varaktighet_min=float(parametrar["varaktighet_min"]),
+            )
+        except RegnFel as exc:
+            raise LosarFel(f"vatten.statisk_fyllning: {exc}") from exc
+        return float(serie.total_djup_mm), {
+            "regn_mm": float(serie.total_djup_mm),
+            "klimatfaktor": float(serie.klimatfaktor),
+            "aterkomsttid_ar": float(parametrar["aterkomsttid_ar"]),
+            "varaktighet_min": float(parametrar["varaktighet_min"]),
+        }
 
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
         from sankgraf.fyllning import kor_statisk_k1_mapp
@@ -60,9 +132,10 @@ class StatiskFyllning(Analyslosare):
                 " Sammanfogning över rutgränser (sankgraf.sammanfoga_rutor) är inte inkopplad."
             )
         ruta = rutor[0]
+        regn_mm, regn_matvarden = self._regn_mm(kontext.parametrar)
         _, res = kor_statisk_k1_mapp(
             ruta.mapp,
-            regn_m=float(kontext.parametrar["regn_mm"]) / 1000.0,
+            regn_m=regn_mm / 1000.0,
             persistens_faktor=kontext.parametrar["persistens_faktor"],
         )
         _, geo = las_geotiff(ruta.mapp / "mark.tif")
@@ -80,6 +153,7 @@ class StatiskFyllning(Analyslosare):
                 "lagrat_m3": float(res.lagrat_m3),
                 "ut_m3": float(res.ut_m3),
                 "volymfel_rel": float(res.volymfel_rel),
+                **regn_matvarden,
             },
         )
 

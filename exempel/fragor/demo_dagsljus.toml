@@ -1,0 +1,59 @@
+# Demo: dagsljus före/efter i demovärlden (syntetisk, K1 v2). Bygg världen och kör frågan med
+#   floden demo
+#
+# Scenarier: bas, `hojd` (K9 byggnad_hojd: det låga huset i nordöstra gården höjs från 4 till 15 m)
+# och `nytt_hus` (K9 byggnad_ny: ett 18 m-hus, 14 x 40 m, i sydvästra gården).
+#
+# Varför varningen om påverkansradien inte gäller här (redovisat val):
+#   Påverkansradien är hojd_max_m / tan(h_min_grader) = 30 / tan(10 grader) = 170 m.
+#   Världen är 700 x 700 m men frågan avgränsas med `fokus` till mittområdet
+#   (300 x 300 m, de fyra mittkvarteren). Det är 200 m marginal till världens
+#   kant åt alla håll, mer än radien, så ingen stråle från ett resultat lämnar höjdfältet.
+#   Marginalrutorna ingår som hinder men får inga egna resultat.
+#   hojd_max_m = 30 m: högsta byggnad är 21 m och marken varierar knappt 4 m, så
+#   höjdspannet i data är under 30 m (lösaren varnar annars).
+#   h_min_grader = 10: hinder som skymmer mindre än 10 grader bortom 170 m ingår inte. Det är exakt för
+#   solhöjder över 10 grader; under dem (första och sista timmen vid vårdagjämningen) kan
+#   soltimmarna vara något för höga. Det är lika i före och efter, så skillnaden påverkas inte av
+#   avgränsningen. Gårdsstudier är känsliga för skuggor från närmaste lamellerna, inte för
+#   byggnader 170 m bort. Vegetation ingår inte (standard, se docs/DAGSLJUS.md avsnitt 12).
+kontrakt = "K20/v1"
+fraga_id = "demo-dagsljus"
+beskrivning = "Soltimmar vid vårdagjämning och VSC på fasader före/efter: höjt hus och nytt hus."
+
+[scenarier.bas]
+bas = "../../data/demo/varld/dagsljus/bas"
+
+[scenarier.hojd]
+bas = "../../data/demo/varld/dagsljus/bas"
+k9 = ["../../data/demo/varld/dagsljus/k9_hojd.json"]
+
+[scenarier.nytt_hus]
+bas = "../../data/demo/varld/dagsljus/bas"
+k9 = ["../../data/demo/varld/dagsljus/k9_nytt_hus.json"]
+
+[[analyser]]
+id = "sol"
+losare = "dagsljus.soltimmar_mark"
+fokus = [151200, 6.5802e+06, 151500, 6.5805e+06]
+parametrar = { datum = ["2026-03-20"], steg_min = 10, azimutriktningar = 180, cellstorlek_m = 1, hojd_max_m = 30, h_min_grader = 10 }
+
+[[analyser]]
+id = "vsc"
+losare = "dagsljus.vsc_fasad"
+fokus = [151200, 6.5802e+06, 151500, 6.5805e+06]
+parametrar = { cellstorlek_m = 1, hojd_max_m = 30, h_min_grader = 10, fasad_steg_m = 6.0, vaningshojd_m = 3.0 }
+
+[[jamforelser]]
+analys = "sol"
+utdata = "soltimmar"
+fore = "bas"
+efter = "hojd"
+troskel = 0.1
+
+[[jamforelser]]
+analys = "sol"
+utdata = "soltimmar"
+fore = "bas"
+efter = "nytt_hus"
+troskel = 0.1

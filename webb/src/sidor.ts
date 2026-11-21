@@ -6,6 +6,7 @@
  * senare). Där står platshållare i hakparentes: inga påhittade tal och inga namn
  * (AGENTS.md: tal kommer bara ur beräkningar, inga personuppgifter).
  */
+import { kontoHjalteHtml, kontoHuvudHtml } from "./konto";
 import type { ModulInfo, OmradeSammanfattning } from "./types";
 
 export function esc(text: string): string {
@@ -43,7 +44,7 @@ export function sidhuvudStart(): string {
         <a href="#/?till=moduler" data-ankare="moduler">Moduler</a>
         <a href="#/?till=principer" data-ankare="principer">Principer</a>
         <a href="#/fragor">Frågor</a>
-        <a class="knapp knapp-svart" href="#/oversikt">Logga in</a>
+        ${kontoHuvudHtml()}
       </nav>
     </div>`;
 }
@@ -65,8 +66,7 @@ export function sidhuvudApp(aktiv: SidId, omradeId: string | null): string {
         ${lank("karta", "Karta", `#/karta${omr}`)}
         ${lank("fragor", "Frågor", "#/fragor")}
         ${lank("forvaltning", "Förvaltning", "#/forvaltning")}
-        <!-- TODO(kontoservern): kontomeny (namn, utloggning) när inloggning finns. -->
-        <button type="button" class="konto-knapp" aria-label="Ditt konto (kommer med kontoservern)" disabled>[I]</button>
+        ${kontoHuvudHtml()}
       </nav>
     </div>`;
 }
@@ -91,10 +91,7 @@ export function sidaStart(moduler: ModulInfo[]): string {
       <div class="hjalte-text">
         <p class="ingress">Skyfall, luft, buller och dagsljus räknade på samma grund, för samma projekt.</p>
         <div class="knapp-par">
-          <!-- TODO(kontoservern): starta SSO-inloggning mot kommunens inloggningstjänst. -->
-          <a class="knapp knapp-svart knapp-stor" href="#/oversikt">Logga in med kommunens konto</a>
-          <!-- TODO(kontoservern): lösenord eller inbjudan för konsulter. -->
-          <a class="knapp knapp-stor" href="#/oversikt">Annan inloggning</a>
+          ${kontoHjalteHtml()}
         </div>
       </div>
     </section>

@@ -81,6 +81,8 @@ export interface PlanJobb {
 
 export interface PlanSvar {
   ref: string;
+  /** Hash av planens jobbnycklar: en körning med samma nyckel hör till exakt den här frågan. */
+  plan_nyckel?: string;
   fraga_id: string;
   sammanfattning: { jobb: number; i_cache: number; att_kora: number };
   per_analys: Record<string, { jobb: number; i_cache: number; att_kora: number }>;
@@ -96,6 +98,7 @@ export interface KorningSvar {
   ref: string;
   fraga_id: string;
   fraga_fil: string;
+  plan_nyckel?: string | null;
   status: KorStatus;
   skapad: string;
   start: string | null;
@@ -132,11 +135,18 @@ export interface LagerPost {
   skala: { min: number; max: number };
   teckenforklaring: Teckenforklaring;
   utbredning: Utbredning;
+  /** Bounding box för de celler som faktiskt har ett värde (utan byggnadsmaskade celler). */
+  synlig_utbredning: Utbredning | null;
   pixelstorlek_m: number;
   bredd_px: number;
   hojd_px: number;
   nedsampling: number;
   png: string;
+  /** Samma lager utan takmask: byggnadernas fotavtryck visas med värden. */
+  png_med_tak: string | null;
+  tak_maskat: boolean;
+  tak_celler: number;
+  tak_yta_m2: number;
   geotiff: Array<{ ruta: string | null; fil: string; url: string }>;
   fore?: string;
   efter?: string;
@@ -191,6 +201,93 @@ export interface DataTabellRef {
   forhandsvisning: string;
 }
 
+export type ByggnadStatus = "oforandrad" | "ny" | "andrad";
+
+export interface ByggnadPost {
+  id: string;
+  ring: Array<[number, number]>;
+  hal: Array<Array<[number, number]>>;
+  hojd_m: number;
+  takhojd_rh2000: number;
+  hojdkalla: string;
+  status: ByggnadStatus;
+}
+
+export interface ByggnaderSvar {
+  bas: string;
+  scenarier: Record<string, ByggnadPost[]>;
+}
+
+export interface RegnAntagande {
+  analys: string;
+  kalla: string | null;
+  rapport?: string | null;
+  tabell?: string | null;
+  url?: string | null;
+  aterkomsttid_ar?: number | null;
+  varaktighet_min?: number | null;
+  regntyp?: string | null;
+  klimatfaktor: number | null;
+  klimatfaktor_ingar_i_tabell?: boolean | null;
+  regn_mm: number | null;
+}
+
+export interface AnalysAntagande {
+  analys: string;
+  losare: string;
+  version: string;
+  kodversion: string | null;
+  parametrar: Record<string, unknown>;
+}
+
+export interface Antaganden {
+  regn: RegnAntagande[];
+  analyser: AnalysAntagande[];
+}
+
+export interface AvlasningVarde {
+  lager_id: string;
+  namn: string;
+  typ: "bas" | "scenario" | "skillnad";
+  scenario: string;
+  enhet: string;
+  etikett: string;
+  varde: number | null;
+  tak: boolean;
+  inom: boolean;
+}
+
+export interface AvlasningSvar {
+  e: number;
+  n: number;
+  analys: string;
+  roll: string;
+  varden: AvlasningVarde[];
+}
+
+export interface KorningLista {
+  korningar: KorningSvar[];
+}
+
+export interface DemoDel {
+  ref: string;
+  korning_id: string;
+  jobb: number;
+  oforandrad: boolean;
+  tid_s: number;
+}
+
+export interface DemoSvar {
+  finns: boolean;
+  lage?: string;
+  total_tid_s?: number;
+  delar?: {
+    demo_dagsljus?: DemoDel;
+    demo_vatten?: DemoDel;
+    luft?: { status: string; text: string };
+  };
+}
+
 export interface ResultatSvar {
   korning: KorningSvar;
   fraga_id: string;
@@ -201,6 +298,8 @@ export interface ResultatSvar {
   jamforelser: JamforelseResultat[];
   varningar: VarningPost[];
   lager: LagerPost[];
+  byggnader: ByggnaderSvar | null;
+  antaganden: Antaganden;
   datatabeller: DataTabellRef[];
 }
 

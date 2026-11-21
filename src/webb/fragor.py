@@ -17,10 +17,12 @@ Inloggning och konton finns inte; servern är till för lokal användning.
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib
 import json
 import re
 import secrets
+import shutil
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -29,20 +31,25 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from karna.analyslosare import LosarFel, hamta_losare
+from karna.geometri import GeometriFel, las_byggnader
 from karna.korplan import Plan, kor_utredning, planera
 from karna.resultatcache import CacheFel, ResultatCache
-from karna.rutscenario import ScenarioFel
+from karna.rutscenario import ScenarioFel, materialisera_scenario
 from karna.utredning import FragaFel, KorbarFraga, las_fraga
 from webb.fel import FlodenWebbFel
 from webb.moduler import losarinfo
 from webb.resultatlager import (
+    MASKADE_ROLLER,
     LagerFel,
     Mosaik,
     etikett_och_enhet,
     farg_for_roll,
-    rita_png,
+    rita_bild,
     sammanfoga,
+    tak_mask,
     teckenforklaring,
     varde_intervall,
 )
@@ -50,10 +57,16 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
+LAGER_VERSION = 2
 
 
 def _nu() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _plan_nyckel(plan: Plan) -> str:
+    nycklar = "\n".join(sorted(j.nyckel for j in plan.jobb))
+    return hashlib.sha256(nycklar.encode("utf-8")).hexdigest()
 
 
 def _kontrollera_id(varde: str, vad: str) -> str:
@@ -77,6 +90,8 @@ class Korning:
     slut: str | None = None
     fel: str | None = None
     jobb_totalt: int = 0
+    plan_nyckel: str | None = None
+    """sha256 över planens jobbnycklar: samma nyckel betyder att körningen redan är gjord."""
     plan: Plan | None = None
     """Planen hålls i minnet så länge körningen pågår (för framstegsmätning)."""
 
@@ -96,6 +111,7 @@ class Korning:
             "slut": self.slut,
             "fel": self.fel,
             "jobb_totalt": self.jobb_totalt,
+            "plan_nyckel": self.plan_nyckel,
         }
 
 
@@ -109,7 +125,9 @@ class FragaTjanst:
         fragemappar: list[Path],
         cachemapp: Path,
         korningsmapp: Path,
+        demomapp: Path | None = None,
     ) -> None:
+        self.demomapp = demomapp
         self.rot = rot
         self.fragemappar = fragemappar
         self.cachemapp = cachemapp
@@ -243,6 +261,17 @@ class FragaTjanst:
 
     # ------------------------------------------------------------------ frågor och plan
 
+    def demo(self) -> dict[str, Any]:
+        """Demons översikt (`demo.json`, skriven av `floden demo`), eller `finns: false`."""
+        fil = None if self.demomapp is None else self.demomapp / "demo.json"
+        if fil is None or not fil.is_file():
+            return {"finns": False}
+        try:
+            d: dict[str, Any] = json.loads(fil.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"finns": False}
+        return {"finns": True, **d}
+
     def lista_fragor(self) -> dict[str, Any]:
         return {
             "fragemappar": [self._visa(m) for m in self.fragemappar],
@@ -263,7 +292,12 @@ class FragaTjanst:
     def planera_fraga(self, ref: str) -> dict[str, Any]:
         _, fraga = self._las(ref)
         plan = self._planera(fraga)
-        return {"ref": ref, "fraga_id": fraga.fraga_id, **_beskriv_plan(plan)}
+        return {
+            "ref": ref,
+            "fraga_id": fraga.fraga_id,
+            "plan_nyckel": _plan_nyckel(plan),
+            **_beskriv_plan(plan),
+        }
 
     # ------------------------------------------------------------------ körningar
 
@@ -297,6 +331,7 @@ class FragaTjanst:
                         slut=d.get("slut"),
                         fel=d.get("fel"),
                         jobb_totalt=int(d.get("jobb_totalt", 0)),
+                        plan_nyckel=d.get("plan_nyckel"),
                     )
                 except (OSError, ValueError, KeyError):
                     continue  # en trasig post hindrar inte de andra
@@ -325,6 +360,7 @@ class FragaTjanst:
             fraga_fil=self._visa(fil),
             mapp=self.korningsmapp / korning_id,
             jobb_totalt=len(plan.jobb),
+            plan_nyckel=_plan_nyckel(plan),
             plan=plan,
         )
         with self._lock:
@@ -332,6 +368,47 @@ class FragaTjanst:
             self._skriv_status(k)
         self._exekutor.submit(self._kor, k, fraga, plan)
         return {**self._status(k), "ateranvand": False}
+
+    def kor_synkront(self, ref: str, korning_id: str) -> tuple[dict[str, Any], bool]:
+        """Kör frågan i anropets tråd under ett fast `korning_id` (för `floden demo`).
+
+        Är en körning med samma id redan klar för exakt samma plan (samma jobbnycklar) lämnas den
+        orörd och `(status, True)` returneras; annars körs frågan (jobb som finns i cachen körs
+        inte om) och resultatet ersätter den gamla körningen. Fel kastas som `FlodenWebbFel`.
+        """
+        fil, fraga = self._las(ref)
+        self._lasta_korningar()
+        plan = self._planera(fraga)
+        plan_nyckel = _plan_nyckel(plan)
+        _kontrollera_id(korning_id, "körnings-id")
+        with self._lock:
+            gammal = self._korningar.get(korning_id)
+            if (
+                gammal is not None
+                and gammal.status == "klar"
+                and gammal.plan_nyckel == plan_nyckel
+                and (gammal.utmapp / "sammanstallning.json").is_file()
+            ):
+                return self._status(gammal), True
+            mapp = self.korningsmapp / korning_id
+            if mapp.exists():
+                shutil.rmtree(mapp)
+            k = Korning(
+                korning_id=korning_id,
+                ref=ref,
+                fraga_id=fraga.fraga_id,
+                fraga_fil=self._visa(fil),
+                mapp=mapp,
+                jobb_totalt=len(plan.jobb),
+                plan_nyckel=plan_nyckel,
+                plan=plan,
+            )
+            self._korningar[korning_id] = k
+            self._skriv_status(k)
+        self._kor(k, fraga, plan)
+        if k.status != "klar":
+            raise FlodenWebbFel(f"Körningen {korning_id} misslyckades: {k.fel}", status_kod=500)
+        return self._status(k), False
 
     def _kor(self, k: Korning, fraga: KorbarFraga, plan: Plan) -> None:
         with self._lock:
@@ -409,6 +486,9 @@ class FragaTjanst:
         k = self._hamta(korning_id)
         s = self._sammanstallning(k)
         lager, lagervarningar = self._lager(k, s)
+        byggnader, byggnadsvarning = self._byggnader(k, s, lager)
+        if byggnadsvarning:
+            lagervarningar = [*lagervarningar, byggnadsvarning]
         return {
             "korning": self._status(k),
             "fraga_id": s["fraga_id"],
@@ -425,6 +505,8 @@ class FragaTjanst:
             ],
             "varningar": [*_varningar(s), *(_webbvarning(t) for t in lagervarningar)],
             "lager": lager,
+            "byggnader": byggnader,
+            "antaganden": self._antaganden(k, s),
             "datatabeller": self._datatabeller(k, s),
         }
 
@@ -435,11 +517,16 @@ class FragaTjanst:
         with self._lock:
             if cachefil.is_file():
                 d = json.loads(cachefil.read_text(encoding="utf-8"))
-                return d["lager"], d["varningar"]
+                if d.get("version") == LAGER_VERSION:
+                    return d["lager"], d["varningar"]
             lager, varningar = self._bygg_lager(k, s)
             cachefil.parent.mkdir(parents=True, exist_ok=True)
             cachefil.write_text(
-                json.dumps({"lager": lager, "varningar": varningar}, ensure_ascii=False) + "\n",
+                json.dumps(
+                    {"version": LAGER_VERSION, "lager": lager, "varningar": varningar},
+                    ensure_ascii=False,
+                )
+                + "\n",
                 encoding="utf-8",
             )
             return lager, varningar
@@ -523,6 +610,9 @@ class FragaTjanst:
             ]
             skalor[nyckel] = varde_intervall(ras)
 
+        rutor_per_scenario, rutvarning = self._scenariorutor(k, s)
+        if rutvarning:
+            varningar.append(rutvarning)
         lager: list[dict[str, Any]] = []
         for p in poster:
             m = mosaiker.get(p["id"])
@@ -537,15 +627,53 @@ class FragaTjanst:
             else:
                 lo, hi = skalor[(p["analys"], p["roll"])]
                 namn = f"{etikett} · {p['scenario']}"
-            png, bredd, hojd, faktor = rita_png(
-                m.raster, farg, lo=lo, hi=hi, troskel=float(p["troskel"])
+            # Byggnadernas tak är inte mark: maskas i markrastren (soltimmar, SVF, djup). Skillnaden
+            # maskar fotavtrycket i före och efter, så att ett nytt hus inte syns som ändrad mark.
+            tak: Any = None
+            if rutor_per_scenario is not None and p["roll"] in MASKADE_ROLLER:
+                scen = [p["fore"], p["efter"]] if p["skillnad"] else [p["scenario"]]
+                try:
+                    mappar = [
+                        mapp for sid in scen for mapp in rutor_per_scenario.get(sid, {}).values()
+                    ]
+                    tak = tak_mask(m, mappar)
+                except (LagerFel, OSError, ValueError) as exc:
+                    varningar.append(f"Takmasken för {p['id']} kunde inte byggas: {exc}")
+            har_tak = tak is not None and bool(tak.any())
+            bild = rita_bild(
+                m.raster,
+                farg,
+                lo=lo,
+                hi=hi,
+                troskel=float(p["troskel"]),
+                dold=tak if har_tak else None,
             )
-            (ut / f"{p['id']}.png").write_bytes(png)
+            (ut / f"{p['id']}.png").write_bytes(bild.png)
+            png_tak = None
+            if har_tak:
+                med = rita_bild(m.raster, farg, lo=lo, hi=hi, troskel=float(p["troskel"]))
+                (ut / f"{p['id']}.tak.png").write_bytes(med.png)
+                png_tak = f"/api/korningar/{k.korning_id}/lager/{p['id']}.tak.png"
+            np.save(ut / f"{p['id']}.npy", m.raster)
+            if tak is not None:
+                np.save(ut / f"{p['id']}.tak.npy", tak)
+            faktor = bild.faktor
             if faktor > 1:
                 varningar.append(
                     f"Förhandsvisningen av {p['id']} är nedsamplad {faktor} gånger; "
                     "GeoTIFF-filerna har full upplösning."
                 )
+            u = m.utbredning
+            synlig = None
+            if bild.synlig_px is not None:
+                c0, r0, c1, r1 = bild.synlig_px
+                cell = m.pixelstorlek_m * faktor
+                synlig = {
+                    "x_min": u.x_min + c0 * cell,
+                    "x_max": min(u.x_max, u.x_min + c1 * cell),
+                    "y_max": u.y_max - r0 * cell,
+                    "y_min": max(u.y_min, u.y_max - r1 * cell),
+                }
             lager.append(
                 {
                     "id": p["id"],
@@ -561,11 +689,18 @@ class FragaTjanst:
                     "skala": {"min": lo, "max": hi},
                     "teckenforklaring": teckenforklaring(farg, lo, hi, float(p["troskel"])),
                     "utbredning": m.utbredning.som_dict(),
+                    "synlig_utbredning": synlig,
                     "pixelstorlek_m": m.pixelstorlek_m,
-                    "bredd_px": bredd,
-                    "hojd_px": hojd,
+                    "bredd_px": bild.bredd_px,
+                    "hojd_px": bild.hojd_px,
                     "nedsampling": faktor,
                     "png": f"/api/korningar/{k.korning_id}/lager/{p['id']}.png",
+                    "png_med_tak": png_tak,
+                    "tak_maskat": har_tak,
+                    "tak_celler": int(tak.sum()) if tak is not None else 0,
+                    "tak_yta_m2": (
+                        float(tak.sum()) * m.pixelstorlek_m**2 if tak is not None else 0.0
+                    ),
                     "geotiff": [
                         {"ruta": rid, "fil": f.name, "url": self._url_fil(k, f)}
                         for rid, f in zip(p["ruta_ider"], p["filer"], strict=True)
@@ -585,6 +720,210 @@ class FragaTjanst:
         if not fil.is_file():
             raise FlodenWebbFel(f"Okänt lager '{lager_id}'.", status_kod=404)
         return fil.read_bytes()
+
+    # Byggnader, antaganden och avläsning --------------------------------------------------
+
+    def _scenariorutor(
+        self, k: Korning, s: dict[str, Any]
+    ) -> tuple[dict[str, dict[str, Path]] | None, str | None]:
+        """K1-rutornas kataloger per scenario (kärnans materialisering ur cachen).
+
+        Stämmer inte scenariots nyckel med den som körningen fick (frågefilen eller indata har
+        ändrats sedan dess) returneras inget, så att byggnader och tak aldrig kommer från en annan
+        värld än resultatet."""
+        try:
+            fraga = las_fraga(self._fil_for(k.ref))
+            ut: dict[str, dict[str, Path]] = {}
+            for sid, spec in fraga.scenarier.items():
+                sc = materialisera_scenario(spec, self.cache())
+                kand = s["scenarier"].get(sid)
+                if kand is not None and kand["nyckel"] != sc.nyckel:
+                    return None, (
+                        "Frågefilen eller dess indata har ändrats sedan körningen: byggnadslagret "
+                        "och takmaskerna visas inte. Kör frågan igen."
+                    )
+                ut[sid] = {r.ruta_id: Path(r.mapp) for r in sc.rutor}
+            return ut, None
+        except (FlodenWebbFel, *_FRAGEFEL, OSError) as exc:
+            return None, f"Byggnadslagret och takmaskerna kunde inte läsas: {exc}"
+
+    def _byggnader(
+        self, k: Korning, s: dict[str, Any], lager: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Byggnadsfotavtryck per scenario ur K1 v2-rutornas byggnadsregister (`byggnader.gpkg`).
+
+        Bara byggnader i rutor som ligger i lagrens utsträckning. `status` jämför med första
+        scenariot: `ny`, `andrad` (annan takhöjd) eller `oforandrad`."""
+        if not lager:
+            return None, None
+        cachefil = k.mapp / "webb" / "byggnader.json"
+        with self._lock:
+            if cachefil.is_file():
+                d = json.loads(cachefil.read_text(encoding="utf-8"))
+                if d.get("version") == LAGER_VERSION:
+                    return d["byggnader"], d.get("varning")
+            rutor, varning = self._scenariorutor(k, s)
+            if rutor is None:
+                return None, varning
+            x0 = min(la["utbredning"]["x_min"] for la in lager)
+            y0 = min(la["utbredning"]["y_min"] for la in lager)
+            x1 = max(la["utbredning"]["x_max"] for la in lager)
+            y1 = max(la["utbredning"]["y_max"] for la in lager)
+            ordning = list(s["scenarier"])
+            per_scen: dict[str, dict[str, dict[str, Any]]] = {}
+            try:
+                for sid in ordning:
+                    poster: dict[str, dict[str, Any]] = {}
+                    for mapp in rutor.get(sid, {}).values():
+                        for b in las_byggnader(mapp):
+                            xs = [p[0] for p in b.polygon]
+                            ys = [p[1] for p in b.polygon]
+                            if max(xs) < x0 or min(xs) > x1 or max(ys) < y0 or min(ys) > y1:
+                                continue
+                            poster[b.byggnad_id] = {
+                                "id": b.byggnad_id,
+                                "ring": [[float(x), float(y)] for x, y in b.polygon],
+                                "hal": [[[float(x), float(y)] for x, y in r] for r in b.hal],
+                                "hojd_m": float(b.hojd_m),
+                                "takhojd_rh2000": float(b.takhojd_rh2000),
+                                "hojdkalla": b.hojdkalla,
+                            }
+                    per_scen[sid] = poster
+            except (GeometriFel, OSError, ValueError) as exc:
+                return None, f"Byggnadsregistret kunde inte läsas: {exc}"
+            bas_id = ordning[0]
+            bas = per_scen.get(bas_id, {})
+            ut: dict[str, Any] = {"bas": bas_id, "scenarier": {}}
+            for sid in ordning:
+                lista: list[dict[str, Any]] = []
+                for bid, post in sorted(per_scen[sid].items()):
+                    if sid == bas_id:
+                        status = "oforandrad"
+                    elif bid not in bas:
+                        status = "ny"
+                    elif abs(bas[bid]["takhojd_rh2000"] - post["takhojd_rh2000"]) > 1e-6:
+                        status = "andrad"
+                    else:
+                        status = "oforandrad"
+                    lista.append({**post, "status": status})
+                ut["scenarier"][sid] = lista
+            cachefil.parent.mkdir(parents=True, exist_ok=True)
+            cachefil.write_text(
+                json.dumps(
+                    {"version": LAGER_VERSION, "byggnader": ut, "varning": None}, ensure_ascii=False
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return ut, None
+
+    def _antaganden(self, k: Korning, s: dict[str, Any]) -> dict[str, Any]:
+        """Regnkälla och parametrar per analys, rakt ur jobbens K0-manifest (`run.json`).
+
+        Webben räknar inget: `regn_mm` och källan är det lösaren skrev. Samma parametrar i flera
+        jobb ger en post."""
+        regn: list[dict[str, Any]] = []
+        analyser: list[dict[str, Any]] = []
+        sedda: set[str] = set()
+        for j in s["jobb"]:
+            if j["analys"] in sedda:
+                continue
+            sedda.add(j["analys"])
+            try:
+                m = json.loads((self._jobbmapp(k, j) / "run.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            par: dict[str, Any] = dict(m.get("parametrar", {}))
+            mv: dict[str, Any] = dict(m.get("matvarden", {}))
+            enkla = {
+                n: v
+                for n, v in par.items()
+                if n not in ("nyckel", "losare_version")
+                and not isinstance(v, dict | list)
+                and not n.startswith("idf_")
+            }
+            analyser.append(
+                {
+                    "analys": j["analys"],
+                    "losare": j["losare"],
+                    "version": j["version"],
+                    "kodversion": m.get("kodversion"),
+                    "parametrar": enkla,
+                }
+            )
+            if "idf_kalla" in par:
+                regn.append(
+                    {
+                        "analys": j["analys"],
+                        "kalla": par["idf_kalla"],
+                        "rapport": par.get("idf_rapport"),
+                        "tabell": par.get("idf_tabell"),
+                        "url": par.get("idf_url"),
+                        "aterkomsttid_ar": par.get("aterkomsttid_ar"),
+                        "varaktighet_min": par.get("varaktighet_min"),
+                        "regntyp": par.get("regntyp"),
+                        "klimatfaktor": par.get("idf_klimatfaktor"),
+                        "klimatfaktor_ingar_i_tabell": par.get("idf_klimatfaktor_ingar_i_tabell"),
+                        "regn_mm": mv.get("regn_mm"),
+                        "sha256": par.get("idf_sha256"),
+                    }
+                )
+            elif "regn_mm" in par:
+                regn.append(
+                    {
+                        "analys": j["analys"],
+                        "kalla": None,
+                        "regn_mm": par["regn_mm"],
+                        "klimatfaktor": None,
+                    }
+                )
+        return {"regn": regn, "analyser": analyser}
+
+    def avlasning(self, korning_id: str, lager_id: str, e: float, n: float) -> dict[str, Any]:
+        """Värdena i punkten (e, n) i alla lager för samma analys och roll som `lager_id`.
+
+        Läser cellen ur de rasterlager som ritats (samma celler som syns); inget räknas om. `tak`
+        är sant när cellen är en byggnads fotavtryck."""
+        k = self._hamta(korning_id)
+        _kontrollera_id(lager_id, "lager-id")
+        lager = self.resultat(korning_id)["lager"]
+        valt = next((la for la in lager if la["id"] == lager_id), None)
+        if valt is None:
+            raise FlodenWebbFel(f"Okänt lager '{lager_id}'.", status_kod=404)
+        rader: list[dict[str, Any]] = []
+        for la in lager:
+            if la["analys"] != valt["analys"] or la["roll"] != valt["roll"]:
+                continue
+            u = la["utbredning"]
+            px = la["pixelstorlek_m"]
+            kol, rad = int((e - u["x_min"]) // px), int((u["y_max"] - n) // px)
+            inom = u["x_min"] <= e < u["x_max"] and u["y_min"] < n <= u["y_max"]
+            varde: float | None = None
+            tak = False
+            if inom:
+                arr = np.load(k.mapp / "webb" / f"{la['id']}.npy", mmap_mode="r")
+                if 0 <= rad < arr.shape[0] and 0 <= kol < arr.shape[1]:
+                    v = float(arr[rad, kol])
+                    varde = v if np.isfinite(v) else None
+                    takfil = k.mapp / "webb" / f"{la['id']}.tak.npy"
+                    if takfil.is_file():
+                        tak = bool(np.load(takfil, mmap_mode="r")[rad, kol])
+            rader.append(
+                {
+                    "lager_id": la["id"],
+                    "namn": la["namn"],
+                    "typ": la["typ"],
+                    "scenario": la["scenario"],
+                    "enhet": la["enhet"],
+                    "etikett": la["etikett"],
+                    "varde": varde,
+                    "tak": tak,
+                    "inom": inom,
+                }
+            )
+        ordning = {"bas": 0, "scenario": 1, "skillnad": 2}
+        rader.sort(key=lambda x: (ordning[x["typ"]], x["lager_id"]))
+        return {"e": e, "n": n, "analys": valt["analys"], "roll": valt["roll"], "varden": rader}
 
     # Filer och tabeller --------------------------------------------------------------------
 

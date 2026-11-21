@@ -32,11 +32,64 @@ med redovisad osäkerhet och färdiga rapporter.
 4. Arbeta tills uppdragets acceptanskriterier är uppfyllda, eller tills ett stoppvillkor i `AGENTS.md` inträffar.
 5. Skriv en post i `STATUS.md` och uppdatera status i `PLAN.md`.
 
-## Webben (lokalt, utan inloggning)
+## Webben (lokalt, inloggning av som standard)
 
 `webb/` och `src/webb/` är ett lokalt webbgränssnitt som kör Flodens utredningsfrågor (K20): välj
 en fråga, se planen (rutor och vad som finns i cachen), kör, och se kartvy med lager (bas, scenario,
-skillnad), varningar och mätvärden. Allt beräknas av kärnan; webben visar. **Det finns ingen
-inloggning och ingen kontoserver**: API:t lyssnar på `127.0.0.1` och resultaten ligger på den egna
-disken. Kontoserver ingår inte (driftplanen i `docs/ARKITEKTUR-DRIFT.md` beslutar det senare).
-Start och API: se `webb/README.md`.
+skillnad), byggnader, varningar och mätvärden. Allt beräknas av kärnan; webben visar. Som standard
+(`inloggning = "av"`) finns **ingen inloggning**: servern lyssnar på `127.0.0.1` och resultaten ligger
+på den egna disken. Med `inloggning = "pa"` kopplas kontosystemet in (Google-inloggning, CSRF,
+skyddat API), se `docs/KONTO.md`. Start och API: se `webb/README.md`.
+
+## Visa Floden på din dator
+
+Så här visar du Floden för kollegor, från noll till en körande demo på en Mac. Allt körs lokalt och
+inget skickas någonstans.
+
+**Krav:** Python 3.11 eller senare (`brew install python@3.12`), Node.js 20 eller senare
+(`brew install node`) och git.
+
+```bash
+git clone https://github.com/joelberring/floden.git && cd floden
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"          # Flodens Python-paket och verktygen; `.[konto]` räcker för inloggning
+export PYTHONPATH=src            # om `floden` inte hittar paketen
+(cd webb && npm ci)              # webbklientens beroenden (en gång)
+
+floden demo                      # bygger ett påhittat kvarter och kör frågorna: cirka 30 sekunder
+floden webb                      # bygger klienten vid behov och startar servern
+```
+
+Öppna sedan **http://localhost:8765** (`floden webb --port 9000` ändrar porten). `floden demo` kan
+köras om utan kostnad: är inget ändrat tar det under en sekund, och `--tvinga` bygger om allt.
+`floden demo --liten` är en grövre och snabbare variant (cirka 15 sekunder) som mest är till för test.
+
+Kvarteret är **syntetiskt**: ett påhittat område med fyra kvarter, gator, gårdar och en skålformad
+sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkliga byggnader.
+
+**Förslag till visning (5–7 punkter):**
+
+1. Öppna **Frågor**. De tre korten överst är demon: dagsljus, vatten och luft (luft är märkt
+   *Kommer*, den visas när luftmodulen ligger på main).
+2. **Dagsljus.** Tryck *Visa resultatet*. Lagret *Soltimmar · höjd − bas* visar var skuggan faller
+   när en byggnad görs högre (blått är färre soltimmar). Byt till *nytt hus* för det andra fallet.
+3. **Hovra** över kartan: värdena för bas, scenario och skillnad står under kartan. Grå ytor är
+   byggnader (*tak, inte mark*): där visas inget markvärde. Slå på *Visa värden på tak* om du vill
+   se dem ändå.
+4. **Vatten.** Tryck *Visa resultatet* på vattenkortet. Rutan *Antaganden* överst visar regnet
+   som lösaren faktiskt använde: Stockholmsregn 2024, 100 år, 360 min, klimatfaktor 1,4. Källa och
+   faktor är körningens egna, inte webbens.
+5. Skillnadslagret visar var vattnet dämms upp när det nya huset byggs. Växla mellan *Bas*,
+   *Scenario* och *Skillnad* och jämför djupen.
+6. **Varningar** står överst i resultatet. Där står bara det lösarna själva varnat för; en rad som
+   *Inga varningar från lösarna* är ett verkligt besked.
+7. Frågan om *hur det räknades*: allt går att följa till `run.json` per jobb (K0-manifest), och
+   samma fråga ger samma svar (cachen, K22).
+
+**Inloggning med Google** är avslagen som standard. Den slås på i `config.local.toml`
+(`inloggning = "pa"` plus Googles klient-id och hemlighet) och beskrivs steg för steg i
+`docs/KONTO.md` (avsnitt 2 för Google-klienten, avsnitt 8 för hur den är kopplad i webben). Med
+inloggning på visas en *Logga in med Google*-knapp, *Inloggad som …* och *Logga ut* i sidhuvudet.
+
+Skärmbilder: `docs/bilder/demo-start.png`, `demo-dagsljus.png`, `demo-vatten.png`
+(`python tools/webb_skarmbild.py --demo`).

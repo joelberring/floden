@@ -13,8 +13,12 @@ import type {
   RuttBegaran,
   RuttSvar,
 } from "./types";
+import { csrfHuvud, settKontoLage } from "./konto";
 import type {
+  AvlasningSvar,
+  DemoSvar,
   FragaPost,
+  KorningLista,
   FragorSvar,
   KorningSvar,
   PlanSvar,
@@ -24,8 +28,26 @@ import type {
 
 const API_BAS = "/api";
 
+export class OinloggadFel extends Error {
+  constructor() {
+    super("Inloggning krävs.");
+    this.name = "OinloggadFel";
+  }
+}
+
 async function lasJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const svar = await fetch(url, init);
+  // Alla POST bär CSRF-huvudet (docs/KONTO.md avsnitt 8). Utan inloggning finns ingen kaka
+  // och då skickas inget huvud.
+  const metod = (init?.method ?? "GET").toUpperCase();
+  const huvuden: Record<string, string> = {
+    ...((init?.headers as Record<string, string> | undefined) ?? {}),
+    ...(metod === "GET" || metod === "HEAD" ? {} : csrfHuvud(document.cookie)),
+  };
+  const svar = await fetch(url, { ...init, headers: huvuden });
+  if (svar.status === 401) {
+    settKontoLage({ lage: "ut" });
+    throw new OinloggadFel();
+  }
   const text = await svar.text();
   let data: unknown;
   try {
@@ -127,4 +149,22 @@ export function hamtaResultat(korningId: string): Promise<ResultatSvar> {
 
 export function hamtaTabellForhandsvisning(url: string): Promise<TabellForhandsvisning> {
   return lasJson<TabellForhandsvisning>(url);
+}
+
+export function hamtaKorningar(): Promise<KorningLista> {
+  return lasJson<KorningLista>(`${API_BAS}/korningar`);
+}
+
+export function hamtaDemo(): Promise<DemoSvar> {
+  return lasJson<DemoSvar>(`${API_BAS}/demo`);
+}
+
+export function hamtaAvlasning(
+  korningId: string,
+  lagerId: string,
+  e: number,
+  n: number,
+): Promise<AvlasningSvar> {
+  const q = `lager=${encodeURIComponent(lagerId)}&e=${e.toFixed(2)}&n=${n.toFixed(2)}`;
+  return lasJson<AvlasningSvar>(`${API_BAS}/korningar/${encodeURIComponent(korningId)}/avlasning?${q}`);
 }

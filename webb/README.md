@@ -1,10 +1,11 @@
 # Floden webbklient (T10)
 
-Lokalt webbgränssnitt för Floden. **Körs utan inloggning och utan kontoserver**: API:t lyssnar bara på
-`127.0.0.1`, ingenting skickas till någon extern tjänst (utom den valfria bakgrundskartan, se nedan),
-och resultaten sparas på den egna disken. Konton, förvaltningar och körhistorik per användare kommer
-först när driftplanen (`docs/ARKITEKTUR-DRIFT.md`) beslutat om kontoserver. Inloggningsknapparna i
-sidhuvudet är platshållare (`TODO(kontoservern)`) och gör inget.
+Lokalt webbgränssnitt för Floden. Som standard **utan inloggning** (`inloggning = "av"`): servern
+lyssnar bara på `127.0.0.1`, ingenting skickas till någon extern tjänst (utom den valfria
+bakgrundskartan, se nedan) och resultaten sparas på den egna disken. Med `inloggning = "pa"` (se
+`docs/KONTO.md`) visar sidhuvudet *Logga in med Google*, *Inloggad som* och *Logga ut*, alla POST
+bär CSRF-huvudet `X-Floden-CSRF` och API:t kräver en session. Enklast: `floden demo` och
+`floden webb` (se README, "Visa Floden på din dator"); `floden webb` bygger klienten vid behov.
 
 ## Starta lokalt
 

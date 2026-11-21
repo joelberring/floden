@@ -22,6 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+from markmodell.hinder_oppningar import BYGGNAD
 from testsvit.k1_io import las_geotiff
 
 MAX_PX = 2048
@@ -44,6 +45,9 @@ _VATTEN_KLASSER: tuple[tuple[float, str], ...] = (
 )
 _SKILLNAD_MINSKNING = "#2b5d8c"
 _SKILLNAD_OKNING = "#b4462b"
+
+MASKADE_ROLLER = frozenset({"soltimmar", "svf", "max_djup"})
+"""Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
 
 ETIKETTER: dict[str, tuple[str, str]] = {
     "soltimmar": ("Soltimmar", "h"),
@@ -203,6 +207,18 @@ def _skillnad(
     return rgb, synlig
 
 
+@dataclass(frozen=True)
+class Bild:
+    """En ritad förhandsvisning och var den har synliga celler."""
+
+    png: bytes
+    bredd_px: int
+    hojd_px: int
+    faktor: int
+    synlig_px: tuple[int, int, int, int] | None
+    """(kol_min, rad_min, kol_max, rad_max) i bildens pixlar (exklusivt övre gräns) eller None."""
+
+
 def rita_png(
     raster: NDArray[np.float32],
     farg: str,
@@ -210,12 +226,30 @@ def rita_png(
     lo: float,
     hi: float,
     troskel: float = 0.0,
+    dold: NDArray[np.bool_] | None = None,
 ) -> tuple[bytes, int, int, int]:
     """Ritar rastret som transparent RGBA-PNG. Returnerar (png, bredd, hojd, nedsamplingsfaktor).
 
     `lo`/`hi` är den gemensamma skalan (samma för före och efter, annars går de inte att jämföra);
-    för `skillnad` är `hi` största absolutvärdet. Saknade värden är genomskinliga.
+    för `skillnad` är `hi` största absolutvärdet. Saknade värden är genomskinliga, och celler i
+    `dold` (t.ex. byggnadernas tak, som inte är mark) likaså.
     """
+    b = rita_bild(raster, farg, lo=lo, hi=hi, troskel=troskel, dold=dold)
+    return b.png, b.bredd_px, b.hojd_px, b.faktor
+
+
+def rita_bild(
+    raster: NDArray[np.float32],
+    farg: str,
+    *,
+    lo: float,
+    hi: float,
+    troskel: float = 0.0,
+    dold: NDArray[np.bool_] | None = None,
+) -> Bild:
+    """Som `rita_png` men även med de synliga cellernas utsträckning (för att zooma till dem)."""
+    if dold is not None and dold.shape != raster.shape:
+        raise LagerFel(f"Masken {dold.shape} passar inte rastret {raster.shape}.")
     v, faktor = _nedsampla(raster)
     ok = np.isfinite(v)
     if farg == "vatten":
@@ -227,12 +261,61 @@ def rita_png(
         synlig = ok
     else:
         raise LagerFel(f"Okänd färgskala '{farg}'.")
+    if dold is not None:
+        d = dold[::faktor, ::faktor] if faktor > 1 else dold
+        synlig = synlig & ~d
     rgba = np.zeros((*v.shape, 4), dtype=np.uint8)
     rgba[..., :3] = rgb
     rgba[..., 3] = np.where(synlig, 255, 0).astype(np.uint8)
     buf = io.BytesIO()
     Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", optimize=True)
-    return buf.getvalue(), int(v.shape[1]), int(v.shape[0]), faktor
+    rader = np.flatnonzero(synlig.any(axis=1))
+    kol = np.flatnonzero(synlig.any(axis=0))
+    bbox = (
+        None
+        if rader.size == 0
+        else (int(kol[0]), int(rader[0]), int(kol[-1]) + 1, int(rader[-1]) + 1)
+    )
+    return Bild(buf.getvalue(), int(v.shape[1]), int(v.shape[0]), faktor, bbox)
+
+
+def tak_mask(mosaik: Mosaik, rutor: Sequence[Path]) -> NDArray[np.bool_]:
+    """Celler i `mosaik` som är byggnadens fotavtryck (markslag 9) i någon av K1-rutorna `rutor`.
+
+    På byggnadens celler visar ett markraster byggnadens tak, inte mark: soltimmar på ett tak
+    och djup i en byggnad är inte markvärden. Läser bara `markslag.tif`; ingenting räknas om.
+    Ligger rutorna på ett finare rutnät än mosaiken slås cellerna ihop (en cell är tak om någon
+    av dess delceller är det).
+    """
+    px = mosaik.pixelstorlek_m
+    u = mosaik.utbredning
+    h, b = mosaik.raster.shape
+    ut = np.zeros((h, b), dtype=np.bool_)
+    for mapp in rutor:
+        fil = mapp / "markslag.tif"
+        if not fil.is_file():
+            continue
+        arr, geo = las_geotiff(fil)
+        f = px / geo.pixelstorlek_x
+        if f < 1.0 - 1e-9 or abs(f - round(f)) > 1e-6:
+            raise LagerFel(
+                f"{fil}: cellstorleken {geo.pixelstorlek_x} m passar inte lagrets {px} m."
+            )
+        fi = round(f)
+        fot = np.asarray(arr) == BYGGNAD
+        hh, bb = (fot.shape[0] // fi) * fi, (fot.shape[1] // fi) * fi
+        if fi > 1:
+            fot = fot[:hh, :bb].reshape(hh // fi, fi, bb // fi, fi).any(axis=(1, 3))
+        c0f, r0f = (geo.x_min - u.x_min) / px, (u.y_max - geo.y_max) / px
+        if abs(c0f - round(c0f)) > 1e-3 or abs(r0f - round(r0f)) > 1e-3:
+            raise LagerFel(f"{fil}: rutan ligger inte på lagrets cellrutnät.")
+        c0, r0 = round(c0f), round(r0f)
+        rs, cs = max(0, r0), max(0, c0)
+        re, ce = min(h, r0 + fot.shape[0]), min(b, c0 + fot.shape[1])
+        if re <= rs or ce <= cs:
+            continue
+        ut[rs:re, cs:ce] |= fot[rs - r0 : re - r0, cs - c0 : ce - c0]
+    return ut
 
 
 def teckenforklaring(farg: str, lo: float, hi: float, troskel: float = 0.0) -> dict[str, Any]:

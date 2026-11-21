@@ -316,6 +316,8 @@ losare = "<doman>.<namn>"               # K21
 scenarier = ["…"]                       # valfritt; utelämnat = alla
 parametrar = { … }                      # valideras av lösaren
 indata = { <roll> = "fil" }             # roller enligt lösarens indataroller
+fokus = [x_min, y_min, x_max, y_max]    # valfritt, EPSG:3011: bara rutor vars mittpunkt ligger inom
+                                        # rutan körs (övriga rutor är kontext för grannar)
 beror_pa = ["<analys-id>"]              # valfritt; cykler ger fel
 
 [[jamforelser]]                         # valfritt
