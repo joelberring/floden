@@ -522,7 +522,20 @@ export interface ModulInfo {
   beskrivning: string;
   status: ModulStatus;
   analystyper: string[];
+  losare?: ModulLosare[];
   kartfarg: string;
+}
+
+export interface ModulLosare {
+  namn: string;
+  version: string;
+  doman: string;
+  beskrivning: string;
+  indataroller: string[];
+  valfria_indataroller: string[];
+  utdataroller: string[];
+  radie_m: number | null;
+  radie_kalla: "standardparametrar" | "kraver_parametrar";
 }
 
 export interface ModulerSvar {

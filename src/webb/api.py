@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import json
 import math
+import os
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -91,6 +94,8 @@ from testsvit.k1_io import (
     las_regn_csv,
 )
 from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
+from webb.fel import FlodenWebbFel
+from webb.fragor import FragaTjanst
 from webb.moduler import lista_moduler
 from webb.rendering import (
     DEFAULT_KALLOR,
@@ -115,14 +120,6 @@ _ENSEMBLE_FAKTORER: tuple[tuple[str, float, float], ...] = (
     ("p75-hög", 1.075, 0.0),
     ("p90-extrem", 1.15, 0.0),
 )
-
-
-class FlodenWebbFel(Exception):
-    """Fel i webb-API:ts indata, routing eller exekvering."""
-
-    def __init__(self, meddelande: str, *, status_kod: int = 400) -> None:
-        super().__init__(meddelande)
-        self.status_kod = status_kod
 
 
 @dataclass(frozen=True)
@@ -435,6 +432,56 @@ def _ensemble_payload(
     }
 
 
+STANDARD_FRAGEMAPP = "exempel/fragor"
+STANDARD_CACHEMAPP = "data/cache/karna"
+STANDARD_KORNINGSMAPP = "data/cache/webb/korningar"
+
+
+def _skapa_fragetjanst(
+    konfig_fil: Path,
+    fragemappar: Sequence[str | Path] | None,
+    cachemapp: str | Path | None,
+    korningsmapp: str | Path | None,
+) -> FragaTjanst:
+    """Sökvägar: argument > miljövariabeln `FLODEN_FRAGEMAPPAR` > `[webb]` i konfigurationen.
+
+    Relativa sökvägar räknas från konfigurationsfilens katalog (repots rot).
+    """
+    rot = konfig_fil.resolve().parent
+    webb: dict[str, Any] = {}
+    if konfig_fil.is_file():
+        with konfig_fil.open("rb") as fh:
+            webb = dict(tomllib.load(fh).get("webb", {}))
+    if fragemappar is None:
+        miljo = os.environ.get("FLODEN_FRAGEMAPPAR")
+        if miljo:
+            fragemappar = [m for m in miljo.split(os.pathsep) if m]
+        else:
+            fragemappar = list(webb.get("fragemappar", [STANDARD_FRAGEMAPP]))
+
+    def abs_(p: str | Path) -> Path:
+        pp = Path(p)
+        return pp if pp.is_absolute() else rot / pp
+
+    return FragaTjanst(
+        rot=rot,
+        fragemappar=[abs_(m) for m in fragemappar],
+        cachemapp=abs_(cachemapp or webb.get("cachemapp", STANDARD_CACHEMAPP)),
+        korningsmapp=abs_(korningsmapp or webb.get("korningsmapp", STANDARD_KORNINGSMAPP)),
+    )
+
+
+def _binart_svar(
+    status_kod: int, innehall: bytes, content_type: str
+) -> tuple[int, dict[str, str], bytes]:
+    return status_kod, {
+        "Content-Type": content_type,
+        "Content-Length": str(len(innehall)),
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+    }, innehall
+
+
 class FlodenApiApp:
     """Testbar applikationsrouter för Flodens lokala webb-API (T10)."""
 
@@ -443,12 +490,25 @@ class FlodenApiApp:
         *,
         testsvit_rot: str | Path = "testsvit",
         konfig_fil: str | Path = "config.toml",
+        fragemappar: Sequence[str | Path] | None = None,
+        cachemapp: str | Path | None = None,
+        korningsmapp: str | Path | None = None,
     ) -> None:
         self.testsvit_rot = Path(testsvit_rot)
         self.konfig_fil = Path(konfig_fil)
+        self._fragekonfig = (fragemappar, cachemapp, korningsmapp)
+        self._fragor: FragaTjanst | None = None
         self._lock = threading.Lock()
         self._omrade_cache: dict[str, LaddatOmrade] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
+
+    @property
+    def fragor(self) -> FragaTjanst:
+        """Tjänsten för K20-frågor. Skapas vid första användning (inga kataloger vid start)."""
+        with self._lock:
+            if self._fragor is None:
+                self._fragor = _skapa_fragetjanst(self.konfig_fil, *self._fragekonfig)
+            return self._fragor
 
     def hamta_sektioner(self) -> dict[str, Gatusektion]:
         """Läser gatusektioner från `config.toml` med trådsäker cache."""
@@ -1563,6 +1623,37 @@ class FlodenApiApp:
             "kallor": list(omrade.kallor),
         }
 
+    def _hantera_fragor(self, verb: str, sokvag: str) -> tuple[int, dict[str, str], bytes]:
+        delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
+        if verb == "GET" and not delar:
+            return _json_svar(200, self.fragor.lista_fragor())
+        if verb == "GET" and len(delar) == 1:
+            return _json_svar(200, self.fragor.hamta_fraga(delar[0]))
+        if verb == "POST" and len(delar) == 2 and delar[1] == "plan":
+            return _json_svar(200, self.fragor.planera_fraga(delar[0]))
+        if verb == "POST" and len(delar) == 2 and delar[1] == "kor":
+            svar = self.fragor.starta_korning(delar[0])
+            return _json_svar(202, svar)
+        return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
+
+    def _hantera_korningar(self, verb: str, sokvag: str) -> tuple[int, dict[str, str], bytes]:
+        delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
+        if verb == "GET" and not delar:
+            return _json_svar(200, self.fragor.lista_korningar())
+        if verb == "GET" and len(delar) == 1:
+            return _json_svar(200, self.fragor.korning_status(delar[0]))
+        if verb == "GET" and len(delar) == 2 and delar[1] == "resultat":
+            return _json_svar(200, self.fragor.resultat(delar[0]))
+        if verb == "GET" and len(delar) == 3 and delar[1] == "lager" and delar[2].endswith(".png"):
+            png = self.fragor.lager_png(delar[0], delar[2].removesuffix(".png"))
+            return _binart_svar(200, png, "image/png")
+        if verb == "GET" and len(delar) >= 3 and delar[1] == "fil":
+            innehall, typ = self.fragor.fil(delar[0], "/".join(delar[2:]))
+            return _binart_svar(200, innehall, typ)
+        if verb == "GET" and len(delar) >= 3 and delar[1] == "tabell":
+            return _json_svar(200, self.fragor.tabell(delar[0], "/".join(delar[2:])))
+        return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
+
     def hantera_forfragan(
         self,
         metod: str,
@@ -1588,6 +1679,12 @@ class FlodenApiApp:
 
             if verb == "GET" and ren_sokvag == "/api/moduler":
                 return _json_svar(200, lista_moduler())
+
+            if ren_sokvag == "/api/fragor" or ren_sokvag.startswith("/api/fragor/"):
+                return self._hantera_fragor(verb, ren_sokvag)
+
+            if ren_sokvag == "/api/korningar" or ren_sokvag.startswith("/api/korningar/"):
+                return self._hantera_korningar(verb, ren_sokvag)
 
             if verb == "GET" and ren_sokvag == "/api/omraden":
                 return _json_svar(200, self.lista_omraden())
@@ -1646,9 +1743,18 @@ def skapa_http_server(
     *,
     testsvit_rot: str | Path = "testsvit",
     konfig_fil: str | Path = "config.toml",
+    fragemappar: Sequence[str | Path] | None = None,
+    cachemapp: str | Path | None = None,
+    korningsmapp: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     """Skapar en lokal `ThreadingHTTPServer` kopplad till `FlodenApiApp`."""
-    app = FlodenApiApp(testsvit_rot=testsvit_rot, konfig_fil=konfig_fil)
+    app = FlodenApiApp(
+        testsvit_rot=testsvit_rot,
+        konfig_fil=konfig_fil,
+        fragemappar=fragemappar,
+        cachemapp=cachemapp,
+        korningsmapp=korningsmapp,
+    )
 
     class _FlodenHandler(BaseHTTPRequestHandler):
         def _skicka(self, status: int, headers: Mapping[str, str], kropp: bytes) -> None:
@@ -1698,8 +1804,18 @@ def skapa_http_server(
 
 
 def main() -> None:
-    """Startar Flodens lokala webb-API-server på http://127.0.0.1:8765."""
-    server = skapa_http_server()
+    """Startar Flodens lokala webb-API-server på http://127.0.0.1:8765 (utan inloggning)."""
+    ap = argparse.ArgumentParser(prog="python -m webb.api", description=main.__doc__)
+    ap.add_argument("--host", default="127.0.0.1", help="Standard 127.0.0.1 (bara den här datorn)")
+    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument(
+        "--fragemapp",
+        action="append",
+        default=None,
+        help="Mapp med K20-frågor (upprepa för flera). Standard: [webb] i config.toml.",
+    )
+    args = ap.parse_args()
+    server = skapa_http_server(args.host, args.port, fragemappar=args.fragemapp)
     raw_host = server.server_address[0]
     host = raw_host.decode("utf-8") if isinstance(raw_host, bytes | bytearray) else str(raw_host)
     port = server.server_address[1]

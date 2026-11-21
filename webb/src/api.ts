@@ -13,6 +13,14 @@ import type {
   RuttBegaran,
   RuttSvar,
 } from "./types";
+import type {
+  FragaPost,
+  FragorSvar,
+  KorningSvar,
+  PlanSvar,
+  ResultatSvar,
+  TabellForhandsvisning,
+} from "./fragor-typer";
 
 const API_BAS = "/api";
 
@@ -85,4 +93,38 @@ export function beraknaRutt(begaran: RuttBegaran): Promise<RuttSvar> {
 
 export function hamtaModuler(): Promise<ModulerSvar> {
   return lasJson<ModulerSvar>(`${API_BAS}/moduler`);
+}
+
+/* ---------- Utredningsfrågor (K20) ---------- */
+
+export function hamtaFragor(): Promise<FragorSvar> {
+  return lasJson<FragorSvar>(`${API_BAS}/fragor`);
+}
+
+export function hamtaFraga(ref: string): Promise<FragaPost> {
+  return lasJson<FragaPost>(`${API_BAS}/fragor/${encodeURIComponent(ref)}`);
+}
+
+export function planeraFraga(ref: string): Promise<PlanSvar> {
+  return lasJson<PlanSvar>(`${API_BAS}/fragor/${encodeURIComponent(ref)}/plan`, {
+    method: "POST",
+  });
+}
+
+export function startaKorning(ref: string): Promise<KorningSvar> {
+  return lasJson<KorningSvar>(`${API_BAS}/fragor/${encodeURIComponent(ref)}/kor`, {
+    method: "POST",
+  });
+}
+
+export function hamtaKorning(korningId: string): Promise<KorningSvar> {
+  return lasJson<KorningSvar>(`${API_BAS}/korningar/${encodeURIComponent(korningId)}`);
+}
+
+export function hamtaResultat(korningId: string): Promise<ResultatSvar> {
+  return lasJson<ResultatSvar>(`${API_BAS}/korningar/${encodeURIComponent(korningId)}/resultat`);
+}
+
+export function hamtaTabellForhandsvisning(url: string): Promise<TabellForhandsvisning> {
+  return lasJson<TabellForhandsvisning>(url);
 }
