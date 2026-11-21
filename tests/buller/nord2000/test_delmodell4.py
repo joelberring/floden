@@ -785,11 +785,67 @@ class TestAllmanModell(unittest.TestCase):
         self.assertTrue(bool(np.all(r.q_av_kalla == 0.5)))
         self.assertFalse(bool(np.allclose(r.delta_l_db, _kor(p).delta_l_db, atol=1e-3)))
 
-    def test_refraktion_och_fluktuerande_refraktion_ger_fel(self) -> None:
+    def test_svag_refraktion_gar_mot_rata_stralar(self) -> None:
+        """Markdelen med krökta strålar (P-S2) återger räta strålar när ξ = 0.
+
+        Under gränsen i TC-101327 avsnitt 2.1 är den ekvivalenta profilen homogen; den nya
+        räknevägen (CalcEqSSPGround, DirectRay, ReflectedRay, FresnelZoneW med refraktion) ska
+        då ge samma ΔL₄ som räknevägen med räta strålar.
+        """
         p = _tunn_skarm(3.0)
-        for vader in (Vader(vind_m_s=3.0), Vader(dt_dz_k_m=-0.1), Vader(std_vind_m_s=0.5)):
-            with self.assertRaises(BullerFel):
-                d4.skarm_en_kant(FREKVENSER, p, _form(p), atmosfar_ur_vader(vader))
+        rak = _kor(p)
+        for vader in (Vader(vind_m_s=1e-6), Vader(vind_m_s=-1e-6), Vader(std_vind_m_s=1e-9)):
+            krokt = d4.skarm_en_kant(FREKVENSER, p, _form(p), atmosfar_ur_vader(vader))
+            np.testing.assert_allclose(krokt.delta_l_db, rak.delta_l_db, rtol=0, atol=1e-9)
+            np.testing.assert_allclose(krokt.markfaktor_pg, rak.markfaktor_pg, rtol=1e-10)
+
+    def test_fluktuerande_refraktion_ror_bara_koherensen(self) -> None:
+        """s_u > 0 utan medelvind: skärmens verkan är oförändrad, F_Δτ minskar interferensen."""
+        p = _tunn_skarm(3.0)
+        rak = _kor(p)
+        fluktuerande = d4.skarm_en_kant(
+            FREKVENSER, p, _form(p), atmosfar_ur_vader(Vader(std_vind_m_s=0.5))
+        )
+        np.testing.assert_array_equal(fluktuerande.skarmeffekt_db, rak.skarmeffekt_db)
+        np.testing.assert_array_equal(fluktuerande.viktsumma_kalla, rak.viktsumma_kalla)
+        skillnad = np.abs(fluktuerande.delta_l_db - rak.delta_l_db)
+        self.assertGreater(float(np.max(skillnad)), 0.05)
+        self.assertLess(float(np.max(skillnad[:6])), 1e-3)  # 25–80 Hz: Δτ₊ − Δτ ≪ 1/f
+
+    def test_medvind_och_motvind(self) -> None:
+        """Med vind räknas hela delmodellen; motvind dämpar mer än medvind över 1 kHz."""
+        p = _tunn_skarm(3.0)
+        med = d4.skarm_en_kant(FREKVENSER, p, _form(p), atmosfar_ur_vader(Vader(vind_m_s=3.0)))
+        mot = d4.skarm_en_kant(FREKVENSER, p, _form(p), atmosfar_ur_vader(Vader(vind_m_s=-3.0)))
+        for r in (med, mot):
+            self.assertTrue(bool(np.all(np.isfinite(r.delta_l_db))))
+            self.assertTrue(bool(np.all(r.markfaktor_pg > 0.0)))
+        hoga = FREKVENSER >= 1000.0
+        self.assertGreater(float(np.mean(med.delta_l_db[hoga] - mot.delta_l_db[hoga])), 1.0)
+        self.assertGreater(med.stralar.gangvagsskillnad_m, 0.0)
+        self.assertGreater(mot.stralar.gangvagsskillnad_m, med.stralar.gangvagsskillnad_m)
+
+    def test_skuggzon_pa_mottagarsidan(self) -> None:
+        """Stark motvind: mottagarsidans mark hamnar i skuggzon och ekv. (185) tillämpas."""
+        p = _tunn_skarm(1.0, h_s=0.5, h_r=0.5, x_t=10.0, d=200.0)
+        atm = atmosfar_ur_vader(Vader(vind_m_s=-6.0))
+        geo = terranggeometri(p)
+        form = _form(p)
+        x_t, z_t = float(geo.x_m[form.index_kant]), float(geo.z_m[form.index_kant])
+        i = form.index_w2
+        v = d4.segmentvariabler(
+            x_t, z_t, geo.x_r_m, geo.z_r_m,
+            float(geo.x_m[i]), float(geo.z_m[i]), float(geo.x_m[i + 1]), float(geo.z_m[i + 1]),
+        )  # fmt: skip
+        sidor = d4.marksidor_refraktion(FREKVENSER, v, 1.0, 200.0, 0.0, 1.0, atm)
+        hog = sidor[-1]
+        assert hog is not None
+        self.assertTrue(hog.bildvinkel_som_direkt)
+        self.assertEqual(hog.vag_reflekterad_m, hog.vag_direkt_m)
+        self.assertEqual(hog.gangtidsskillnad_s, 0.0)
+        self.assertLess(hog.skuggzon_db, -3.0)
+        r = d4.skarm_en_kant(FREKVENSER, p, form, atm)
+        self.assertTrue(bool(np.all(np.isfinite(r.delta_l_db))))
 
     def test_ogiltig_indata_ger_fel(self) -> None:
         p = _tunn_skarm(3.0)

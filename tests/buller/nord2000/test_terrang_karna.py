@@ -277,8 +277,8 @@ class TestNord2000Karna(unittest.TestCase):
         """Sedan P-R2 räknar kärnan refraktion över plan mark (tidigare gav den `BullerFel`).
 
         Sedan P-S1 räknas också nedåtbrytning med N > 4 (delmodell 8, flera markreflexer; förut
-        `BullerFel`). Det som fortfarande saknas ska vägras med besked: skärmar och icke-plan
-        terräng, oavsett väder.
+        `BullerFel`). Sedan P-S2 räknas också skärmar och icke-plan terräng, se testerna nedan
+        och `test_sammansattning.py`.
         """
         for vader in (
             Vader(vind_m_s=-3.0),
@@ -293,18 +293,38 @@ class TestNord2000Karna(unittest.TestCase):
         self.assertGreater(medvind.antal_stralar, 4.0)
         self.assertIsNotNone(medvind.flera_markreflexer_db)
         for vader in (Vader(vind_m_s=3.0), Vader(vind_m_s=-3.0), Vader(std_vind_m_s=0.5)):
-            with self.assertRaisesRegex(BullerFel, "skärmar"):
-                self.karna.overforing_db(TUNN_SKARM, vader)
-            with self.assertRaisesRegex(BullerFel, "icke-plan"):
-                self.karna.overforing_db(DAL, vader)
+            for terrang in (TUNN_SKARM, DAL):
+                overforing = self.karna.overforing_db(terrang, vader)
+                self.assertTrue(bool(np.all(np.isfinite(overforing))))
 
-    def test_skarm_vagras(self) -> None:
-        with self.assertRaisesRegex(BullerFel, "skärmar"):
-            self.karna.overforing_db(TUNN_SKARM, Vader())
+    def test_skarm_och_icke_plan_terrang_raknas(self) -> None:
+        """Sedan P-S2 sätts delmodell 3–7 samman (ekv. 332); förut gav profilerna `BullerFel`."""
+        skarm = self.karna.berakna(TUNN_SKARM, Vader())
+        self.assertIn("4", skarm.delmodell.split("+"))
+        self.assertIn("7", skarm.delmodell.split("+"))
+        dal = self.karna.berakna(DAL, Vader())
+        self.assertIn("3", dal.delmodell.split("+"))
+        for resultat in (skarm, dal):
+            self.assertEqual(resultat.overforing_db.shape, (27,))
+            self.assertTrue(bool(np.all(np.isfinite(resultat.overforing_db))))
+        # Skärmen (3 m, 11,75 m från källan) dämpar minst 5 dB i alla band från 250 Hz.
+        self.assertTrue(bool(np.all(skarm.terrang_db[10:] < -5.0)))
 
-    def test_icke_plan_terrang_vagras(self) -> None:
-        with self.assertRaisesRegex(BullerFel, "icke-plan"):
-            self.karna.overforing_db(DAL, Vader())
+    def test_det_som_inte_gar_att_rakna_vagras_med_delmodellens_namn(self) -> None:
+        """Motvind över en dal, sedd snett (profilen utdragen med 1/cos 80°).
+
+        Ett övergångssegment får där en ekvivalent kil med β < π, som kildiffraktionen inte
+        täcker. Beskedet ska säga vilken delmodell, vilket band och vilket segment.
+        """
+        stracka = 1.0 / math.cos(math.radians(80.0))
+        dal = profil(
+            [x * stracka for x in (0.0, 1.75, 2.75, 21.75, 46.75, 71.75, 96.75)],
+            [0.0, 0.0, 0.0, -2.0, -3.0, -2.0, 0.0],
+            [20000.0] + [200.0] * 5,
+        )
+        vader = Vader(vind_m_s=-3.0 * math.cos(math.radians(80.0)), std_vind_m_s=0.5)
+        with self.assertRaisesRegex(BullerFel, r"Delmodell 3 .* Hz, segment \d"):
+            self.karna.overforing_db(dal, vader)
 
     def test_ogiltig_mark_vagras(self) -> None:
         with self.assertRaises(BullerFel):

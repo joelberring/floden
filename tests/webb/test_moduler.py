@@ -66,15 +66,20 @@ class TestModuler(unittest.TestCase):
         self.assertGreater(sol["radie_m"], 0.0)
 
     def test_modul_slas_pa_nar_en_losare_registreras(self) -> None:
+        # Luft har riktiga lösare sedan PR #29; provet registrerar en extra och kontrollerar att
+        # den syns och att modulen är i drift, oavsett om den var kommande före.
         fore = {m["modul_id"]: m for m in lista_moduler()["moduler"]}
-        self.assertEqual(fore["luft"]["status"], "kommande")
+        fore_namn = [x["namn"] for x in fore["luft"]["losare"]]
         analyslosare.registrera_losare(_ProvLuft())
         try:
             efter = {m["modul_id"]: m for m in lista_moduler()["moduler"]}
         finally:
             analyslosare._REGISTER.pop("luft.webbprov", None)
         self.assertEqual(efter["luft"]["status"], "i_drift")
-        self.assertEqual([x["namn"] for x in efter["luft"]["losare"]], ["luft.webbprov"])
+        self.assertEqual(
+            sorted(x["namn"] for x in efter["luft"]["losare"]),
+            sorted([*fore_namn, "luft.webbprov"]),
+        )
         self.assertEqual(fore["vatten"]["status"], efter["vatten"]["status"])
 
     def test_modul_slas_pa_nar_den_registrerar_en_analystyp(self) -> None:

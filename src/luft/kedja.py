@@ -46,6 +46,8 @@ class Domanspec:
     buffert_nedstroms_m: float
     buffert_sidor_m: float
     vegetation_hojd_m: FloatArray | None = None
+    # Bladytetäthet i vegetationsceller: ett tal, eller ett raster (samma form som höjdrastret).
+    lad_m2_m3: FloatArray | float = 1.0
 
     @property
     def utbredning(self) -> tuple[float, float, float, float]:
@@ -82,6 +84,7 @@ def bygg_vindbibliotek(
             buffert_nedstroms_m=spec.buffert_nedstroms_m,
             buffert_sidor_m=spec.buffert_sidor_m,
             vegetation_hojd_m=spec.vegetation_hojd_m,
+            lad_m2_m3=spec.lad_m2_m3,
             vindriktning_grad=float(r),
         )
         if logg is not None:

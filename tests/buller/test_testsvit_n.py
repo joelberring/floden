@@ -6,16 +6,16 @@ om ett fall saknas i redovisningen. Fall som kärnan inte täcker ska redovisas 
 med skälet angivet, aldrig räknas med ett närmevärde. Kärnan är ännu inte Nord2000-konform
 som helhet.
 
-Läget efter P-S1 (2026-11-21, `docs/buller/logg/P-S1.md`), 84 fall:
+Läget efter P-S2 (2026-11-21, `docs/buller/logg/P-S2.md`), 84 fall:
 
-* 21 godkända: plan mark, blad 1–13, 15–18 och 21–24 (homogen atmosfär, temperaturgradient,
-  medvind med flera markreflexer, motvind med skuggzon, blandad mark).
-* 1 ska utredas: blad 14 (sidvind). Avvikelsen ligger i 800–6300 Hz, det område där
-  källmodellens horisontella direktivitet (SP 2006:12 ekv. 2.12) verkar; den är inte införd
-  i `buller.emission`. Se loggen.
-* 0 underkända.
-* 58 ej körbara: icke-plan terräng (20), skärmar (16), skog (4), kurvig väg (10), stadsgata
-  (4) och årsmedel (4).
+* 33 godkända: plan mark (blad 1–18, 21–24), dal utan vind (51, 54, 61, 64), tunn skärm
+  (71, 72, 74), tjock skärm (81, 82, 84) och två skärmar (94).
+* 16 ska utredas och 4 underkända, alla med orsak eller hypotes i loggen. Medvind över dal
+  (52, 62, 102) är underkända med upp till 7 dB i 1–2 kHz: med den ekvivalenta profilen för
+  källan 0,01 m över vägbanan flyttar de krökta strålarna Fresnelzonen till vägytan
+  (ekv. 134 med 346–348). Inget av utfallen är "rättat" mot facit.
+* 27 ej körbara: motvind över icke-plan terräng där delmodell 3 kräver en kil som inte går
+  att bilda (33, 43, 53, 63, 103), skog (4), kurvig väg (10), stadsgata (4), årsmedel (4).
 * 4 ej facit (N01–N04, Miljøprojekt 1335/2010).
 
 Listan `KANDA_AVVIKELSER` är ett kvitto på läget, inte ett godkännande.
@@ -43,7 +43,7 @@ def _blad(*nummer: int) -> set[str]:
 
 
 # Blad i teststraightroad_20181101.xls som är godkända: plan mark med och utan väder.
-GODKANDA_FALL = _blad(*range(1, 19), 21, 22, 23, 24)
+GODKANDA_FALL = _blad(*range(1, 19), 21, 22, 23, 24, 51, 54, 61, 64, 71, 72, 74, 81, 82, 84, 94)
 
 # De tio blad som var godkända redan före refraktionen (homogen atmosfär); största avvikelse i
 # A-vägd totalnivå i dag, i dB (uppmätt värde avrundat uppåt till två decimaler).
@@ -60,21 +60,65 @@ HOMOGENA_FALL_TOTALAVVIKELSE_DB = {
     "N18R018": 0.37,
 }
 
+# De 22 fall som var godkända före P-S2: största |rest| i totalnivå och i tersband (dB), uppmätt
+# 2026-11-21 på main 1ea99eb och avrundat uppåt till tusendelar. P-S2 får inte försämra dem.
+FORE_P_S2_REST_DB: dict[str, tuple[float, float]] = {
+    "N18R001": (0.014, 0.007),
+    "N18R002": (0.016, 0.008),
+    "N18R003": (0.020, 0.008),
+    "N18R004": (0.026, 0.007),
+    "N18R005": (0.025, 0.007),
+    "N18R006": (0.016, 0.006),
+    "N18R007": (0.012, 0.006),
+    "N18R008": (0.017, 0.007),
+    "N18R009": (0.016, 0.055),
+    "N18R010": (0.034, 0.042),
+    "N18R011": (0.053, 0.116),
+    "N18R012": (0.011, 0.064),
+    "N18R013": (0.001, 0.022),
+    "N18R014": (0.001, 0.026),
+    "N18R015": (0.026, 0.046),
+    "N18R016": (0.020, 0.909),
+    "N18R017": (0.024, 0.001),
+    "N18R018": (0.249, 0.739),
+    "N18R021": (0.018, 0.007),
+    "N18R022": (0.012, 0.022),
+    "N18R023": (0.023, 0.061),
+    "N18R024": (0.013, 0.007),
+}
+
 # Fall som kärnan räknar men som inte klarar reglerna.
 # Värdet är (utfall, största tillåtna avvikelse i A-vägd totalnivå i dB, i tersband i dB);
 # gränserna är uppmätt värde plus en liten marginal.
 KANDA_AVVIKELSER: dict[str, tuple[Utfall, float, float]] = {
-    # Blad 14 (sidvind) blev godkänt när källmodellens direktivitet infördes (B5b, 2026-11-21).
+    # P-S2: orsak eller hypotes per fall i docs/buller/logg/P-S2.md, avsnitt 5.
+    "N18R031": (Utfall.SKA_UTREDAS, 0.27, 1.85),
+    "N18R032": (Utfall.SKA_UTREDAS, 0.03, 3.16),
+    "N18R034": (Utfall.SKA_UTREDAS, 0.25, 1.32),
+    "N18R041": (Utfall.SKA_UTREDAS, 0.24, 1.85),
+    "N18R042": (Utfall.SKA_UTREDAS, 0.09, 3.16),
+    "N18R044": (Utfall.SKA_UTREDAS, 0.23, 1.32),
+    "N18R052": (Utfall.UNDERKAND, 6.00, 7.29),
+    "N18R062": (Utfall.UNDERKAND, 5.90, 6.98),
+    "N18R073": (Utfall.SKA_UTREDAS, 0.29, 1.06),
+    "N18R083": (Utfall.SKA_UTREDAS, 0.40, 1.23),
+    "N18R091": (Utfall.SKA_UTREDAS, 0.77, 2.05),
+    "N18R092": (Utfall.SKA_UTREDAS, 0.43, 1.29),
+    "N18R093": (Utfall.UNDERKAND, 1.13, 2.24),
+    "N18R101": (Utfall.SKA_UTREDAS, 0.46, 1.26),
+    "N18R102": (Utfall.UNDERKAND, 2.85, 4.40),
+    "N18R104": (Utfall.SKA_UTREDAS, 0.59, 0.92),
+    "N18R111": (Utfall.SKA_UTREDAS, 0.43, 3.76),
+    "N18R112": (Utfall.SKA_UTREDAS, 0.72, 5.16),
+    "N18R113": (Utfall.SKA_UTREDAS, 0.37, 4.28),
+    "N18R114": (Utfall.SKA_UTREDAS, 0.40, 4.02),
 }
 
 # Fall som inte räknas, med en del av skälet som ska stå i kommentaren.
 EJ_KORBARA = {
     **dict.fromkeys(
-        _blad(31, 32, 33, 34, 41, 42, 43, 44, 51, 52, 53, 54, 61, 62, 63, 64, 101, 102, 103, 104),
-        "icke-plan terräng",
-    ),
-    **dict.fromkeys(
-        _blad(71, 72, 73, 74, 81, 82, 83, 84, 91, 92, 93, 94, 111, 112, 113, 114), "skärmar"
+        _blad(33, 43, 53, 63, 103),
+        "Delmodell 3 (icke-plan terräng)",
     ),
     **dict.fromkeys(_blad(121, 122, 123, 124), "spridningszonen"),
     **dict.fromkeys(
@@ -128,17 +172,19 @@ class TestTestsvitN(unittest.TestCase):
         self.assertEqual(
             antal,
             {
-                Utfall.GODKAND: 22,
-                Utfall.SKA_UTREDAS: 0,
-                Utfall.UNDERKAND: 0,
+                Utfall.GODKAND: 33,
+                Utfall.SKA_UTREDAS: 16,
+                Utfall.UNDERKAND: 4,
                 Utfall.EJ_FACIT: 4,
-                Utfall.EJ_KORBAR: 58,
+                Utfall.EJ_KORBAR: 27,
             },
         )
 
-    def test_inget_fall_ar_underkant(self) -> None:
+    def test_underkanda_fall_ar_kanda(self) -> None:
         underkanda = {i for i, r in self.resultat.items() if r.utfall is Utfall.UNDERKAND}
-        self.assertEqual(underkanda, set())
+        self.assertEqual(
+            underkanda, {i for i, (u, _, _) in KANDA_AVVIKELSER.items() if u is Utfall.UNDERKAND}
+        )
 
     def test_godkanda_fall(self) -> None:
         for fall_id in sorted(GODKANDA_FALL):
@@ -161,9 +207,22 @@ class TestTestsvitN(unittest.TestCase):
                 assert r.max_total_avvikelse_db is not None
                 self.assertLessEqual(r.max_total_avvikelse_db, grans_db)
 
+    def test_tidigare_godkanda_fall_har_inte_forsamrats(self) -> None:
+        for fall_id, (grans_total_db, grans_band_db) in sorted(FORE_P_S2_REST_DB.items()):
+            with self.subTest(fall=fall_id):
+                r = self.resultat[fall_id]
+                self.assertIs(r.utfall, Utfall.GODKAND, r.kommentar)
+                assert r.max_total_avvikelse_db is not None
+                assert r.max_band_avvikelse_db is not None
+                self.assertLessEqual(r.max_total_avvikelse_db, grans_total_db)
+                self.assertLessEqual(r.max_band_avvikelse_db, grans_band_db)
+
     def test_kanda_avvikelser_har_oforandrat_utfall(self) -> None:
         ska_utredas = {i for i, r in self.resultat.items() if r.utfall is Utfall.SKA_UTREDAS}
-        self.assertEqual(ska_utredas, set(KANDA_AVVIKELSER))
+        self.assertEqual(
+            ska_utredas,
+            {i for i, (u, _, _) in KANDA_AVVIKELSER.items() if u is Utfall.SKA_UTREDAS},
+        )
         for fall_id, (utfall, grans_total_db, grans_band_db) in sorted(KANDA_AVVIKELSER.items()):
             with self.subTest(fall=fall_id):
                 r = self.resultat[fall_id]

@@ -308,6 +308,28 @@ samma yta beroende på vilken kant som är viktigast. Implementerat bokstavligt 
 | 2026-11-21 | P-S1 | 7. Delmodell 8: hf eller lf (P-8 tolkning 7). | hf, oförändrat; bekräftat av blad 9, 12, 13, 16, 22 (lf: blad 9 underkänt, +8,2 dB vid 25 Hz; blad 16 +7,9 dB vid 25 Hz). |
 | 2026-11-21 | P-S1 | 8. P-R2 tolkning 1, 2, 4, 8 (Q:s gångtid, 20·lg, kilens topp, R₀). | Oförändrade; bekräftade av blad 10, 15, 23 (siffror i 2.2). P-R2 tolkning 3 (icke-reflekterande kil) är inte en avvikelse från AV 1106/07: avsnitt 5.7.5 säger det själv. |
 
+### P-S2 (inget val avgjort av testfall)
+
+Ur `docs/buller/logg/P-S2.md` avsnitt 3. Sidor i AV 1106/07.
+
+| Datum | Paket | Fråga | Val och skäl |
+| --- | --- | --- | --- |
+| 2026-11-21 | P-S2 | 1. Skuggzon i delmodell 4–6: med vilken profil avgörs den? (s. 71–76, ekv. 167, 171, 184–186; motsvarande 217–219 och 261–267) | Band för band med ξ(f): texten anropar DirectRay med den frekvensberoende profilen och använder det d_SZ i villkoret. Delmodell 1:s förval `delat` (P-S1, avgjort av testfall, preliminärt) förs **inte** över. Alternativ: samma läsning som delmodell 1 (b8bb734). |
+| 2026-11-21 | P-S2 | 2. Δℓ för T₁₂ med refraktion (5.21.3, s. 137–138) | Som ekv. (307) med delmodell 5:s strålar: T₁₂ på källsidan R′_S = R_S, R′_R = R_M, θ_1S, θ_1R; annars R_M, R_R, θ_2S, θ_2R. Går strålarna inte att räkna används Δℓ₀ (samma reservregel som b8bb734 har för T₂; r_Δℓ tar ändå max(Δℓ, Δℓ₀)). Alternativ: Δℓ₀ alltid (b8bb734). |
+| 2026-11-21 | P-S2 | 3. T₂: delmodell 6:s strålar går inte att räkna (en topp under linjen från den andra, P-6 tolkning 11) | Δℓ₀ för T₂ (b8bb734). Ingen text. |
+| 2026-11-21 | P-S2 | 4. Ekv. (150) är tryckt med ξ_S, c_0S | ξ_R, c_0R ur ekv. (149). AV 1851/00 avsnitt 6.3 (s. 27): mottagarsidan räknas med egen profil ur mottagarens höjd och skärmhöjden; ekv. (149) har annars ingen användning. |
+| 2026-11-21 | P-S2 | 5. Ekv. (142)–(145) med källa/mottagare under sin kilytas förlängning (h′ < 0) | Beloppet av höjden: för ξ = 0 ger det den räta sträckan till toppen, som den homogena räkningen. Ingen text. |
+| 2026-11-21 | P-S2 | 6. Ekv. (139): d̆_x = d − d_i + d_refl − d̆_refl | d läses som segmentets d′ (samma som den homogena räkningen, P-3). |
+| 2026-11-21 | P-S2 | 7. Typ av segment med krökta strålar (s. 60–61): "If the segment is a convex segment h̆′ = h′" | Konvext i den meningen = källa eller mottagare på eller under segmentets förlängning (figur 17b); då h̆′ = h′. Annars FresnelZoneW:s korrigerade höjder. **Följd:** i skuggzon ger ekv. (347)–(348) ψ_G = 0 och h̆′ = 0, så varje sådant segment blir konvext (ekv. 136–137). Bokstavligt; se avsnitt 5.3. |
+| 2026-11-21 | P-S2 | 8. MinConcaveHeight när d₁ > d (ändpunkten bortom mottagarens fotpunkt) | 0, samma skäl som P-3 tolkning 4 (d₁ < 0). |
+| 2026-11-21 | P-S2 | 9. "Image point angles … may become larger than corresponding angles of the direct ray … shall be set equal" (s. 71, 99–100) | Jämförs med hela diffraktionsvinkeln inklusive Δθ (θ_Si mot θ_S, θ_Ri mot θ_R), och bara med refraktion: texten motiverar regeln med "strong upward refraction", och den geometriska spegelvinkeln θ′₁ beror inte av refraktionen. Homogen atmosfär oförändrad. |
+| 2026-11-21 | P-S2 | 10. Delmodell 6, mittområdet: ekv. (231)–(232) skriver Δθ_Mi i båda topparna | Inte ett tryckfel: (231) tar Δθ_Mi ur ReflectedRay:s femte utdata (Δθ_S, vid T₁), (232) ur den sjätte (Δθ_R, vid T₂); kontrollerat mot ekv. (50) s. 31. |
+| 2026-11-21 | P-S2 | 11. Ekv. (193) tryckt med ett enda h″_SCR för två kanter | h″_SCR (ekv. 22) för den kant strålen börjar eller slutar i, enligt avsnitt 5.5.2 ("If the ray is starting or ending at a screen top"); som P-6 gjorde. |
+| 2026-11-21 | P-S2 | 12. Δθ_Si och Δθ_Ri i ekv. (165) | Ur ReflectedRay i den frekvensoberoende profilen: Δθ_Si = sjätte utdata (Δθ_R, i toppen), Δθ_Ri = femte (Δθ_S, i toppen); kontrollerat mot ekv. (50). |
+| 2026-11-21 | P-S2 | 13. ΔL_d och ΔL_a för skärmade banor (öppen fråga 4 i B4-uppdelning) | R_SR (ekv. 8, 330): delmodell 4–6 är normerade mot fritt fält på R_SR (ekv. 163). Ej prövat mot text för luftabsorptionen; **öppet**. |
+| 2026-11-21 | P-S2 | 14. Plan profil i flera segment | Genvägen `PLAN_TOLERANS_M` (10⁻⁶ m) behålls: metodens egen övergång ger r_flat = 1 där (provat i homogen atmosfär), men delmodell 3:s klassning går inte alltid att räkna med starkt krökta strålar. Numeriskt skydd, inte metod. |
+| 2026-11-21 | P-S2 | 15. Delmodell 3 kan inte bilda en kil i ett band | Felet sparas och ges bara om bandet har vikt: r_flat < 1 och r_scr1 < 1. Ett band utan vikt läses inte (ekv. 319, 306). |
+
 ## Hur testfallen får användas när texten har flera läsningar (samordnarens regel, 2026-11-21, ska bekräftas av Joel)
 
 Regeln "ingen anpassning mot testfall" gäller oförändrad för tal: inga korrektionsfaktorer, inga justerade konstanter.
