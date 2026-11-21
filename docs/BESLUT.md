@@ -25,3 +25,4 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 - Om och hur stadens tätare laser och baskarta får användas utanför stadens miljö.
 - Leverantör för GPU-tid när full 2D körs i större skala.
 - Vem som är person X (numerik och hydraulik).
+- Dagsljus: kräver K1 v2 (vägrar v1-rutor), standard K = 180 för soltimmar, vegetation av som standard, och `valfria_indataroller` i K21 (additivt). Agentens val i dagsljus fas 1b; se `docs/DAGSLJUS.md`.

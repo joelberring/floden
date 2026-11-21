@@ -1,0 +1,54 @@
+# Skuggstudie före/efter på det syntetiska demokvarteret (K1 v2 + K9), kontrakt K20/v1.
+#
+# Bygg kvarteret och kör hela frågan (skriver också bilden docs/bilder/dagsljus-fore-efter.png):
+#   floden dagsljus demo --fore-efter
+# Eller bara frågan, när kvarteret redan är byggt (data/cache/exempel/dagsljus-kvarter/):
+#   floden fraga plan exempel/fragor/dagsljus_fore_efter.toml
+#   floden fraga kor exempel/fragor/dagsljus_fore_efter.toml
+#
+# Scenarier: bas, `hojd` (K9 byggnad_hojd: det låga huset höjs från 4 till 21 m) och `nytt_hus`
+# (K9 byggnad_ny: ett nytt 21 m-hus i det nordöstra gårdsrummet). Jämförelserna ger
+# `efter - fore` i soltimmar på mark/tak (negativt = fler skuggtimmar). VSC räknas på K11-punkter
+# ur byggnadsregistret för bas och båda scenarierna; byggnader utan punkter i bas (det nya
+# huset) får bara värden efter. Samma fasadpunkt-id jämförs mellan scenarierna.
+kontrakt = "K20/v1"
+fraga_id = "dagsljus-fore-efter"
+beskrivning = "Soltimmar vid vårdagjämning och VSC på fasader före/efter två planändringar."
+
+[scenarier.bas]
+bas = "../../data/cache/exempel/dagsljus-kvarter/bas"
+
+[scenarier.hojd]
+bas = "../../data/cache/exempel/dagsljus-kvarter/bas"
+k9 = ["../../data/cache/exempel/dagsljus-kvarter/k9_hojd.json"]
+
+[scenarier.nytt_hus]
+bas = "../../data/cache/exempel/dagsljus-kvarter/bas"
+k9 = ["../../data/cache/exempel/dagsljus-kvarter/k9_nytt_hus.json"]
+
+# Soltimmar på mark och tak, vårdagjämningen. K = 180 är standard för soltimmar (docs/DAGSLJUS.md
+# avsnitt 6). hojd_max_m = 45 för att tornet (45 m) ryms: radie 45 / tan 5 grader = 514 m.
+[[analyser]]
+id = "sol"
+losare = "dagsljus.soltimmar_mark"
+parametrar = { datum = ["2026-03-20"], steg_min = 10, hojd_max_m = 45.0, h_min_grader = 5.0 }
+
+# VSC (BRE, mulen CIE-himmel) på fasadpunkter ur K11: en punkt var 6:e meter och 3:e meter höjd.
+[[analyser]]
+id = "vsc"
+losare = "dagsljus.vsc_fasad"
+parametrar = { hojd_max_m = 45.0, h_min_grader = 5.0, fasad_steg_m = 6.0, vaningshojd_m = 3.0 }
+
+[[jamforelser]]
+analys = "sol"
+utdata = "soltimmar"
+fore = "bas"
+efter = "hojd"
+troskel = 0.1
+
+[[jamforelser]]
+analys = "sol"
+utdata = "soltimmar"
+fore = "bas"
+efter = "nytt_hus"
+troskel = 0.1

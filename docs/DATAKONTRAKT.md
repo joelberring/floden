@@ -329,6 +329,7 @@ Python-gränssnitt `karna.losare.Losare`. Se `docs/ANSLUTA_LOSARE.md`.
 | --- | --- |
 | `namn` | `<doman>.<namn>`, domän ∈ {vatten, luft, buller, dagsljus, geometri, ovrigt} |
 | `version` | Sträng. Höjs när resultatet kan ändras för samma indata. Ingår i nyckeln |
+| `indataroller`, `valfria_indataroller` | Roller frågan måste ange resp. får ange (tillägg 2026-11-21, bakåtkompatibelt: lösare utan `valfria_indataroller` beter sig som förut; K21 förblir v1) |
 | `validera_parametrar(p)` | Returnerar fullständiga parametrar med standardvärden; okända ger `LosarFel` |
 | `paverkansradie_m(p)` | `None` = globalt jobb; tal ≥ 0 = rutvisa jobb, nyckeln beror bara på rutor närmare än radien |
 | `kor(kontext)` | Skriver i `kontext.utmapp`, returnerar `LosarUtdata(filer, matvarden, varningar)`. Får parametrarna i kanonisk form (samma som hashades). Rutvisa jobb ser bara rutorna i nyckeln |

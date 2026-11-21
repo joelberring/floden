@@ -150,15 +150,22 @@ def ytmodell_fran(
 
 
 def las_ytmodell(
-    ruta: RutaLike, *, vegetation: bool = False, tillat_saknad_vegetation: bool = False
+    ruta: RutaLike,
+    *,
+    vegetation: bool = False,
+    tillat_saknad_vegetation: bool = False,
+    utan_hojdkalla: frozenset[str] = frozenset(),
 ) -> tuple[NDArray[np.float32], GeoTransformInfo]:
     """Ytmodell (DSM) på markrutnätet. Med `vegetation=True` ingår `vegetation.tif`.
 
     Saknas vegetationsfilen ger `vegetation=True` fel, om inte `tillat_saknad_vegetation`
     (då antas ingen vegetation, vilket är en antagen nolla och inte en mätning).
+
+    `utan_hojdkalla` utelämnar byggnader vars `hojdkalla` finns i mängden (t.ex. `{"standard"}`
+    för en känslighetskörning utan byggnader med gissad höjd). Standard: alla byggnader ingår.
     """
     terrang, geo = las_terrang(ruta)
-    byggnader = las_byggnader(ruta)
+    byggnader = tuple(b for b in las_byggnader(ruta) if b.hojdkalla not in utan_hojdkalla)
     veg_mark: NDArray[np.float32] | None = None
     if vegetation:
         veg = las_vegetation(ruta)

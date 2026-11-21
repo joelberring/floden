@@ -86,6 +86,8 @@ class Analyslosare(ABC):
     - `version`: höjs när resultatet kan ändras för samma indata. Ingår i cachenyckeln.
     - `beskrivning`: en mening.
     - `indataroller`: roller som frågan måste ange under `[analyser.indata]`.
+    - `valfria_indataroller`: roller som frågan får ange; lösaren avgör själv vad som gäller
+      när de saknas (filens sha256 ingår i nyckeln när den anges).
     - `utdataroller`: roller som lösaren alltid lämnar.
     """
 
@@ -94,6 +96,7 @@ class Analyslosare(ABC):
     version: ClassVar[str]
     beskrivning: ClassVar[str] = ""
     indataroller: ClassVar[tuple[str, ...]] = ()
+    valfria_indataroller: ClassVar[tuple[str, ...]] = ()
     utdataroller: ClassVar[tuple[str, ...]] = ()
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
@@ -134,7 +137,7 @@ def _validera_klass(losare: Analyslosare) -> None:
         raise LosarFel(f"Lösarnamnet '{losare.namn}' måste börja med domänen '{losare.doman}.'.")
     if not losare.version.strip():
         raise LosarFel(f"Lösaren {losare.namn} har tom version.")
-    for roll in (*losare.indataroller, *losare.utdataroller):
+    for roll in (*losare.indataroller, *losare.valfria_indataroller, *losare.utdataroller):
         if not _ROLL_MONSTER.match(roll):
             raise LosarFel(f"Ogiltig roll '{roll}' i {losare.namn}.")
 

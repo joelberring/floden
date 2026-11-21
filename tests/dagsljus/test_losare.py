@@ -13,10 +13,12 @@ from typing import Any
 
 import numpy as np
 
+from dagsljus.exempelkvarter import bygg_ruta, rektangel
 from dagsljus.floden_losare import las_fasadpunkter
 from dagsljus.horisont import Hojdfalt, horisont_referens, riktningar_rad
 from dagsljus.matt import VSC_OSKYMD
 from karna.analyslosare import LosarFel, hamta_losare
+from karna.geometri import las_ytmodell
 from karna.korplan import kor_utredning, planera
 from karna.paverkan import dagsljus_paverkansradie_m
 from karna.resultatcache import ResultatCache
@@ -27,15 +29,6 @@ from .geometri import vsc_kanjon_facit
 
 REPO = Path(__file__).resolve().parents[2]
 PAR = {"hojd_max_m": 12.0, "h_min_grader": 10.0, "azimutriktningar": 16}
-
-
-def _skriv_ruta(mapp: Path, x_min: float, y_max: float, z: np.ndarray[Any, Any]) -> None:
-    mapp.mkdir(parents=True)
-    kw = {"x_min": x_min, "y_max": y_max, "pixelstorlek": 1.0}
-    skriv_geotiff(mapp / "mark.tif", np.asarray(z, dtype=np.float32), **kw)
-    skriv_geotiff(mapp / "osakerhet.tif", np.full(z.shape, 0.05, dtype=np.float32), **kw)
-    skriv_geotiff(mapp / "markslag.tif", np.full(z.shape, 1, dtype=np.uint8), **kw)
-    (mapp / "recept.json").write_text(json.dumps({"ruta_id": mapp.name}), encoding="utf-8")
 
 
 def _fraga(bas: Path, analyser: list[dict[str, Any]], extra: dict[str, Any] | None = None) -> Any:
@@ -54,16 +47,17 @@ class TestLosare(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = Path(tempfile.mkdtemp())
         self.cache = ResultatCache(self.tmp / "cache")
-        self.bas = self.tmp / "bas"
-        self.bas.mkdir()
         # A: x 150000-150060, B: x 150060-150120 (grannar), C: 300 m bort (utanför radien).
-        self.a = np.zeros((60, 60))
-        self.b = np.zeros((60, 60))
-        self.b[20:40, 10:20] = 12.0  # byggnad 12 m i B, vägg 10 m öster om gränsen
-        self.c = np.zeros((60, 60))
-        _skriv_ruta(self.bas / "mm_150000_6576000", 150000.0, 6576060.0, self.a)
-        _skriv_ruta(self.bas / "mm_150060_6576000", 150060.0, 6576060.0, self.b)
-        _skriv_ruta(self.bas / "mm_150400_6576000", 150400.0, 6576060.0, self.c)
+        # Byggnad 12 m i B, vägg 10 m öster om gränsen mellan A och B (K1 v2-rutor à 1 m).
+        self.bas = self._bygg_bas(12.0, self.tmp / "bas")
+
+    @staticmethod
+    def _bygg_bas(hojd_m: float, mapp: Path) -> Path:
+        hus = [rektangel(150070.0, 150080.0, 6576020.0, 6576040.0, hojd_m, "hus")]
+        bygg_ruta(mapp, 150000.0, 6576000.0, 60.0, [])
+        bygg_ruta(mapp, 150060.0, 6576000.0, 60.0, hus)  # byggnaden ligger bara i B
+        bygg_ruta(mapp, 150400.0, 6576000.0, 60.0, [])
+        return mapp
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -74,9 +68,11 @@ class TestLosare(unittest.TestCase):
         losare = hamta_losare("dagsljus.svf_mark")
         p = losare.validera_parametrar({})
         self.assertAlmostEqual(
-            losare.paverkansradie_m(p) or 0.0, 60.0 / math.tan(math.radians(5.0)), places=9
+            losare.paverkansradie_m(p) or 0.0,
+            60.0 / math.tan(math.radians(5.0)) + math.sqrt(2.0) * float(p["cellstorlek_m"]),
+            places=9,
         )
-        self.assertEqual(losare.paverkansradie_m(p), dagsljus_paverkansradie_m(60.0, 5.0))
+        self.assertGreater(losare.paverkansradie_m(p) or 0.0, dagsljus_paverkansradie_m(60.0, 5.0))
 
     def test_okanda_och_ogiltiga_parametrar_ger_fel(self) -> None:
         for namn, p in (
@@ -103,7 +99,9 @@ class TestLosare(unittest.TestCase):
         self.assertEqual(svf.shape, (60, 60))
         self.assertAlmostEqual(geo.x_min, 150000.0)
         # Facit: samma höjdfält sammanfogat för hand (A och B), referensimplementationen.
-        z = np.hstack([self.a, self.b])
+        za = las_ytmodell(self.bas / "mm_150000_6576000")[0]
+        zb = las_ytmodell(self.bas / "mm_150060_6576000")[0]
+        z = np.hstack([za, zb]).astype(np.float64)
         falt = Hojdfalt(z, 1.0, 150000.0, 6576060.0)
         ii, jj = np.array([30, 30, 10, 50]), np.array([58, 30, 5, 59])
         x = 150000.0 + jj + 0.5
@@ -128,10 +126,9 @@ class TestLosare(unittest.TestCase):
         plan1 = planera(_fraga(self.bas, analys), self.cache)
         bas2 = self.tmp / "bas2"
         shutil.copytree(self.bas, bas2)
-        b2 = self.b.copy()
-        b2[20:40, 10:20] = 20.0
         shutil.rmtree(bas2 / "mm_150060_6576000")
-        _skriv_ruta(bas2 / "mm_150060_6576000", 150060.0, 6576060.0, b2)
+        hus20 = rektangel(150070.0, 150080.0, 6576020.0, 6576040.0, 20.0, "hus")
+        bygg_ruta(bas2, 150060.0, 6576000.0, 60.0, [hus20])
         plan2 = planera(_fraga(bas2, analys), self.cache)
         n1 = {j.ruta.ruta_id: j.nyckel for j in plan1.jobb if j.ruta}
         n2 = {j.ruta.ruta_id: j.nyckel for j in plan2.jobb if j.ruta}
@@ -171,10 +168,10 @@ class TestLosare(unittest.TestCase):
 
     def test_nan_i_ruta_ger_fel(self) -> None:
         bas = self.tmp / "nanbas"
-        bas.mkdir()
-        z = np.zeros((20, 20))
+        mapp = bygg_ruta(bas, 150000.0, 6576000.0, 20.0, [])
+        z, geo = las_geotiff(mapp / "terrang.tif")
         z[3, 3] = np.nan
-        _skriv_ruta(bas / "mm_150000_6576000", 150000.0, 6576020.0, z)
+        skriv_geotiff(mapp / "terrang.tif", z, x_min=geo.x_min, y_max=geo.y_max, pixelstorlek=1.0)
         with self.assertRaises(Exception) as cm:
             kor_utredning(
                 _fraga(bas, [{"id": "svf", "losare": "dagsljus.svf_mark", "parametrar": PAR}]),
@@ -182,6 +179,23 @@ class TestLosare(unittest.TestCase):
                 self.tmp / "ut",
             )
         self.assertIn("NaN", str(cm.exception))
+
+    def test_v1_ruta_vagras_med_tydligt_fel(self) -> None:
+        """K1 v1 har 'fast hinderhöjd' i mark.tif: dagsljus ger fel, inte ett tyst fel resultat."""
+        v1 = self.tmp / "v1bas"
+        shutil.copytree(self.bas, v1)
+        for ruta in v1.glob("mm_*"):
+            for f in ("terrang.tif", "byggnader.gpkg", "vegetation.tif"):
+                (ruta / f).unlink(missing_ok=True)
+        for losare in ("svf_mark", "soltimmar_mark", "horisont"):
+            with self.assertRaises(LosarFel, msg=losare) as cm:
+                kor_utredning(
+                    _fraga(v1, [{"id": "a", "losare": f"dagsljus.{losare}", "parametrar": PAR}]),
+                    self.cache,
+                    self.tmp / f"ut_{losare}",
+                )
+            self.assertIn("K1 v1", str(cm.exception))
+            self.assertIn("hinderhöjd", str(cm.exception))
 
 
 class TestVscFasad(unittest.TestCase):
@@ -191,13 +205,14 @@ class TestVscFasad(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.cache = ResultatCache(self.tmp / "cache")
         n = 241
-        z = np.zeros((n, n))
-        kol = np.arange(n) - n // 2
-        z[:, np.abs(kol) > 10] = 20.0  # gata |kolumn| <= 10 (21 celler), väggytor vid +-10,5 m
-        self.bas = self.tmp / "bas"
-        self.bas.mkdir()
+        # Gata |kolumn| <= 10 (21 celler), väggytor vid +-10,5 m: två 20 m höga byggnader.
         self.x0, self.y1 = 150000.0, 6576000.0 + n
-        _skriv_ruta(self.bas / "mm_150000_6576000", self.x0, self.y1, z)
+        hus = [
+            rektangel(self.x0, self.x0 + 110.0, 6576000.0, self.y1, 20.0, "vast"),
+            rektangel(self.x0 + 131.0, self.x0 + n, 6576000.0, self.y1, 20.0, "ost"),
+        ]
+        self.bas = self.tmp / "bas"
+        bygg_ruta(self.bas, self.x0, 6576000.0, float(n), hus)
         self.xm = self.x0 + n / 2  # gatans mitt (x) = cellmittpunkt i kolumn 120
         self.ym = self.y1 - n / 2
 

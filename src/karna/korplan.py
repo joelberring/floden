@@ -85,7 +85,9 @@ def _indata_hashar(analys: Analys, losare: Analyslosare) -> dict[str, str]:
     saknas = sorted(set(losare.indataroller) - set(analys.indata))
     if saknas:
         raise LosarFel(f"Analys '{analys.id}' ({losare.namn}) saknar indata för rollerna {saknas}.")
-    okanda = sorted(set(analys.indata) - set(losare.indataroller))
+    okanda = sorted(
+        set(analys.indata) - set(losare.indataroller) - set(losare.valfria_indataroller)
+    )
     if okanda:
         raise LosarFel(
             f"Analys '{analys.id}': {losare.namn} känner inte till indataroller {okanda}."

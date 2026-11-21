@@ -1,6 +1,7 @@
 """`floden dagsljus ...`: demo på syntetiskt kvarter och mätning av prestanda.
 
 floden dagsljus demo  [--ut docs/bilder] [--riktningar 180] [--datum 2026-03-20]
+floden dagsljus demo --fore-efter [--ut docs/bilder]   (skuggstudie före/efter, K1 v2 + K9 + K20)
 floden dagsljus bench [--storlek-m 1000] [--cell-m 1.0] [--riktningar 64] [--punkter 20000]
 """
 
@@ -45,6 +46,17 @@ def registrera(subparsers: Any) -> None:
     d.add_argument("--riktningar", type=int, default=180, help="Azimutriktningar K.")
     d.add_argument("--datum", default="2026-03-20", help="Datum (vårdagjämning).")
     d.add_argument("--steg-min", type=float, default=10.0, help="Tidssteg i minuter.")
+    d.add_argument(
+        "--fore-efter",
+        action="store_true",
+        help="Bygg ett K1 v2-kvarter, kör exempelfrågan (K20) för bas och två K9-scenarier och "
+        "rita skillnadskartor i soltimmar och VSC. Övriga flaggor gäller då inte (frågefilen "
+        "styr).",
+    )
+    d.add_argument("--fraga", default="exempel/fragor/dagsljus_fore_efter.toml")
+    d.add_argument("--data", default="data/cache/exempel/dagsljus-kvarter")
+    d.add_argument("--cache", default="data/cache/karna")
+    d.add_argument("--resultat", default="resultat/dagsljus-fore-efter")
 
     b = sub.add_parser("bench", help="Mät prestanda (celler/s, punkter·riktningar/s).")
     b.add_argument("--storlek-m", type=float, default=1000.0, help="Sidlängd på beräkningsytan.")
@@ -310,6 +322,10 @@ def kor(args: argparse.Namespace) -> int:
     """Kör ett `floden dagsljus`-underkommando."""
     try:
         if args.dagsljus_kommando == "demo":
+            if args.fore_efter:
+                from dagsljus.fore_efter_demo import kor_fore_efter
+
+                return kor_fore_efter(args)
             return _kor_demo(args)
         if args.dagsljus_kommando == "bench":
             return _kor_bench(args)
