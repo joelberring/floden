@@ -19,12 +19,12 @@ och `rapport` (verifierbart: testfall, manifest, spårbar indata, oberoende jäm
 
 | Paket | Innehåll | Beroenden | Status |
 | --- | --- | --- | --- |
-| B1 | Källor och testdata: testfallsformat, körare (`testsvit` grupp N), digitaliserade fall | – | pågår |
+| B1 | Källor och testdata: testfallsformat, körare, 80 fall ur RL 18-18 importerade | – | klar (första version) |
 | B2 | Utvärdering av färdiga komponenter (NoiseModelling, Embree m.fl.) | B3 | redo |
 | B3 | Bullerscen: profilextraktion, markklass → impedansklass, källsegment, fasadpunkter | – | klar (första version) |
 | B4a | Akustiska grundfunktioner och baslinjekärna (inte Nord2000) | – | klar |
 | B4 | Referenskärna Nord2000 punkt-till-punkt | B1, metodrapporter | pågår |
-| B5 | Källmodell väg (Nord2000 Road, svenska inställningar) | B1 | pågår |
+| B5 | Källmodell väg ur SP 2006:12 (direktivitet, lutning, maxnivå, dubbdäck återstår) | B1 | pågår |
 | B6 | Banfinnare: direkta och reflekterade banor, korridorindex | B3 | klar (första version) |
 | B7 | Snabbkärna (vektoriserad/GPU), ≤ 0,05 dB mot B4 | B4 | väntar |
 | B8 | Operatorlager: överföringslager, klustring med felgräns, inkrementell omräkning | KB1–KB2 | klar (första version) |

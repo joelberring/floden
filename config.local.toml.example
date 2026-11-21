@@ -10,3 +10,7 @@ ledningar_mapp = ""
 [sokvagar]
 # Exempel på att lägga cache utanför repot:
 # cache = "/data/floden/cache"
+
+# Mapp med Nord2000-rapporter och testfallens Excel-filer (checkas aldrig in).
+[buller]
+kallmapp = ""
