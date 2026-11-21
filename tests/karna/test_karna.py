@@ -256,5 +256,86 @@ regn_mm = 40.0
             registrera_analystyp("test_vsc", "buller")
 
 
+class TestKorFraga(unittest.TestCase):
+    def test_fraga_kors_mot_tva_scenarier_med_cache(self) -> None:
+        from karna.korning import kor_fraga
+
+        anrop: list[int] = []
+
+        def rakna(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[str, Any]:
+            anrop.append(p["antal_hus"])
+            return {"hus_x_faktor": p["antal_hus"] * p["faktor"]}
+
+        losare = Losare("test.hus", "1", rakna, modul="testmodul")
+
+        def bygg(steg: Any, scenario: Planscenario) -> Nod:
+            hus = sum(1 for a in scenario.andringar if a.typ == "byggnad_ny")
+            return Nod(losare, {}, {"antal_hus": hus, "faktor": steg.parametrar["faktor"],
+                                    "scenario": scenario.nyckel})
+
+        registrera_analystyp("test_husraknare", "testmodul", bygg)
+        a = Planscenario("a", ("r",), (Andring("byggnad_ny", "h1", POLY, {"hojd_m": 9.0}),))
+        b = Planscenario("b", ("r",), (Andring("byggnad_ny", "h1", POLY, {"hojd_m": 9.0}),
+                                       Andring("byggnad_ny", "h2", POLY, {"hojd_m": 9.0})))
+        f = tolka_fraga({"fraga": "hus", "scenario": "b", "jamfor_med": "a",
+                         "analys": [{"typ": "test_husraknare", "faktor": 10}]})
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Cache(Path(tmp))
+            svar = kor_fraga(f, {"a": a, "b": b}, Berakningsgraf(cache))
+            s = svar.steg[0]
+            assert s.jamfort_med is not None
+            self.assertEqual((s.resultat.matvarden["hus_x_faktor"],
+                              s.jamfort_med.matvarden["hus_x_faktor"]), (20, 10))
+            kor_fraga(f, {"a": a, "b": b}, Berakningsgraf(cache))
+            self.assertEqual(anrop, [2, 1])  # andra gången ur cachen
+            self.assertEqual(svar.nyckel, f.nyckel({"a": a.nyckel, "b": b.nyckel}))
+            with self.assertRaises(FragaFel):
+                kor_fraga(f, {"b": b}, Berakningsgraf(cache))
+
+    def test_nodbyggaren_far_utplattat_scenario(self) -> None:
+        from karna.korning import kor_fraga
+
+        sett: list[tuple[str | None, int]] = []
+
+        def bygg(steg: Any, scenario: Planscenario) -> Nod:
+            sett.append((scenario.forald, len(scenario.andringar)))
+            return Nod(Losare("test.platt", "1", lambda i, p, u: {"n": p["n"]}),
+                       {}, {"n": len(scenario.andringar), "s": scenario.nyckel})
+
+        registrera_analystyp("test_platt", "testmodul", bygg)
+        a = Planscenario("a", ("r",), (Andring("byggnad_ny", "h1", POLY, {"hojd_m": 9.0}),))
+        b = a.gren("b", [Andring("magasin", "m1", POLY, {"volym_m3": 5.0})])
+        f = tolka_fraga({"fraga": "x", "scenario": "b", "analys": [{"typ": "test_platt"}]})
+        with tempfile.TemporaryDirectory() as tmp:
+            svar = kor_fraga(f, {"b": b}, Berakningsgraf(Cache(Path(tmp))), kanda={a.nyckel: a})
+        self.assertEqual(sett, [(None, 2)])
+        self.assertEqual(svar.steg[0].resultat.matvarden["n"], 2)
+
+    def test_katalog_som_indata(self) -> None:
+        def antal(i: Mapping[str, Path], p: Mapping[str, Any], u: Path) -> dict[str, Any]:
+            return {"filer": len(list(i["k1"].iterdir()))}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            k1 = Path(tmp) / "k1"
+            k1.mkdir()
+            (k1 / "mark.tif").write_bytes(b"a")
+            (k1 / "recept.json").write_text("{}")
+            g = Berakningsgraf(Cache(Path(tmp) / "cache"))
+            nod = Nod(Losare("test.katalog", "1", antal), {"k1": k1})
+            n1 = g.nyckel(nod)
+            self.assertEqual(g.kor(nod).matvarden["filer"], 2)
+            (k1 / "mark.tif").write_bytes(b"b")
+            self.assertNotEqual(Berakningsgraf(g.cache).nyckel(nod), n1)
+
+    def test_analys_utan_nodbyggare_kors_inte(self) -> None:
+        from karna.korning import kor_fraga
+
+        registrera_analystyp("test_bara_validering", "testmodul")
+        f = tolka_fraga({"fraga": "x", "scenario": "s",
+                         "analys": [{"typ": "test_bara_validering"}]})
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(FragaFel):
+            kor_fraga(f, {"s": Planscenario("s", ("r",))}, Berakningsgraf(Cache(Path(tmp))))
+
+
 if __name__ == "__main__":
     unittest.main()

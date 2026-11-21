@@ -6,7 +6,8 @@ Samma fråga två gånger kostar inget. Ändras en indatafil eller en parameter 
 nedströms nya nycklar och räknas om; resten hämtas ur cachen.
 
 En lösare är en vanlig funktion `f(indata, parametrar, utkatalog) -> matvarden`. `indata` är
-en mappning roll → sökväg: en fil, eller katalogen med en föregående nods resultat.
+en mappning roll → sökväg: en fil, en katalog (nyckel över alla filer i den), eller
+katalogen med en föregående nods resultat.
 Lösarens `version` ska höjas när koden ändras så att resultatet kan ändras.
 """
 
@@ -79,9 +80,10 @@ class Berakningsgraf:
         self.cache = cache
         self.raknade: list[str] = []
         self._filnycklar: dict[tuple[str, int, int], str] = {}
-        self._nycklar: dict[int, str] = {}
 
     def _filnyckel(self, fil: Path) -> str:
+        if fil.is_dir():
+            return self._katalognyckel(fil)
         if not fil.is_file():
             raise GrafFel(f"Indatafilen saknas: '{fil}'.")
         st = fil.stat()
@@ -90,18 +92,25 @@ class Berakningsgraf:
             self._filnycklar[k] = sha256_fil(fil)
         return self._filnycklar[k]
 
+    def _katalognyckel(self, katalog: Path) -> str:
+        """En katalog (t.ex. en K1-mapp) som indata: sha256 av (relativ sökväg, filens sha256)."""
+        filer = sorted(p for p in katalog.rglob("*") if p.is_file())
+        if not filer:
+            raise GrafFel(f"Indatakatalogen är tom: '{katalog}'.")
+        return nyckel_for(
+            [[p.relative_to(katalog).as_posix(), self._filnyckel(p)] for p in filer]
+        )
+
     def nyckel(self, nod: Nod, _pa_vag: frozenset[int] = frozenset()) -> str:
         if id(nod) in _pa_vag:
             raise GrafFel("Cykel i beräkningsgrafen.")
-        if id(nod) in self._nycklar:
-            return self._nycklar[id(nod)]
         indata: dict[str, str] = {}
         for roll, kalla in nod.indata.items():
             if isinstance(kalla, Nod):
                 indata[roll] = "nod:" + self.nyckel(kalla, _pa_vag | {id(nod)})
             else:
                 indata[roll] = "fil:" + self._filnyckel(Path(kalla))
-        n = nyckel_for(
+        return nyckel_for(
             {
                 "losare": nod.losare.namn,
                 "version": nod.losare.version,
@@ -109,8 +118,7 @@ class Berakningsgraf:
                 "indata": indata,
             }
         )
-        self._nycklar[id(nod)] = n
-        return n
+
 
     def kor(self, nod: Nod) -> Resultat:
         n = self.nyckel(nod)
