@@ -1,0 +1,34 @@
+# Dagsljus på ett verkligt provområde (Lantmäteriets laser, byggnader), byggt lokalt på din dator:
+#   floden data lantmateriet --omrade data/omraden/prov1.gpkg --laser --byggnader --ut ~/floden-data/prov1
+#   floden omrade bygg --omrade data/omraden/prov1.gpkg --data ~/floden-data/prov1 --ut data/lokal/prov1/k1
+#   floden fraga kor exempel/fragor/omrade_dagsljus.toml
+# Se README.md ("Köra ett verkligt område på din dator") och docs/DATA.md.
+#
+# Bara basläget (inget planförslag): lägg till ett scenario med ett K9-planscenario när du har ett:
+#   [scenarier.efter]
+#   bas = "../../data/lokal/prov1/k1"
+#   k9 = ["sökväg/till/scenario.json"]
+# och en [[jamforelser]] (analys, utdata = "soltimmar", fore = "bas", efter = "efter", troskel = 0.1),
+# som i exempel/fragor/demo_dagsljus.toml.
+#
+# Parametrar: hojd_max_m = 60 m (byggnader och mark i Stockholm ryms normalt), h_min_grader = 5
+# (påverkansradien blir då 60 / tan 5 grader = 686 m). Provområdet är litet: rutor vid områdets kant
+# saknar grannrutor, så skuggor från byggnader utanför området ingår inte (lösaren varnar).
+# Byggnadshöjderna är ur Lantmäteriets laser (oklassade punkter i byggnadens polygon räknas som tak,
+# se docs/DATA.md) eller standardhöjd; kontrollera dem innan siffrorna används.
+kontrakt = "K20/v1"
+fraga_id = "omrade-dagsljus"
+beskrivning = "Soltimmar vid vårdagjämning och VSC på fasader på provområdet (nuläge)."
+
+[scenarier.bas]
+bas = "../../data/lokal/prov1/k1"
+
+[[analyser]]
+id = "sol"
+losare = "dagsljus.soltimmar_mark"
+parametrar = { datum = ["2026-03-20"], steg_min = 10, azimutriktningar = 180, cellstorlek_m = 1, hojd_max_m = 60, h_min_grader = 5 }
+
+[[analyser]]
+id = "vsc"
+losare = "dagsljus.vsc_fasad"
+parametrar = { cellstorlek_m = 1, hojd_max_m = 60, h_min_grader = 5, fasad_steg_m = 6.0, vaningshojd_m = 3.0 }
