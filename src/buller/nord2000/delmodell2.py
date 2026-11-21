@@ -35,18 +35,20 @@ from buller.nord2000.fresnel import (
 from buller.nord2000.geometri import MINSTA_HOJD_M
 from buller.nord2000.mark import markimpedans
 from buller.nord2000.refraktion import Atmosfar, calc_eq_ssp
+from buller.nord2000.refraktion_mark import Skuggzonslasning
 from buller.nord2000.stralar_krokta import Uppatmetod
 from buller.typer import BullerFel, Flyttal
 
 F_LAMBDA_DELMODELL2 = 0.25  # AV 1106/07 avsnitt 5.8 och 5.11
 HOGSTA_FREKVENS_FASDIFF_HZ = 100_000.0  # AV 1106/07 avsnitt 5.23.14: extrapolation högst hit
 
-# Fresnelzonens utsträckning: ekv. (349)–(351) som tryckta, eller begränsad enligt avsnitt 5.8.
+# Fresnelzonens utsträckning: begränsad till sträckan källa–mottagare enligt avsnitt 5.8
+# ("klippt", förval sedan P-S1) eller ekv. (349)–(351) som tryckta ("oklippt").
 Fresnelzonsval = Literal["oklippt", "klippt"]
 # Vikterna i skuggzonen, där PhaseDiffFreq inte har något bestämt svar (se docstring till
 # `markeffekt_blandad_mark_db`): "hog" ger högfrekvensvikterna i alla band, "lag" lågfrekvens-
-# vikterna i alla band.
-Skuggzonsvikter = Literal["hog", "lag"]
+# vikterna i alla band och "ovre_band" lågfrekvensvikterna till och med 6,3 kHz.
+Skuggzonsvikter = Literal["hog", "lag", "ovre_band"]
 
 
 @dataclass(frozen=True)
@@ -215,10 +217,11 @@ def markeffekt_blandad_mark_db(
     mottagarhojd_m: float,
     segment: Sequence[Marksegment],
     atmosfar: HomogenAtmosfar | Atmosfar,
-    uppat: Uppatmetod = "bokstavlig",
+    uppat: Uppatmetod = "exakt",
     ct2_form: Ct2Form = "kvadrat",
-    fresnelzon: Fresnelzonsval = "oklippt",
-    skuggzonsvikter: Skuggzonsvikter = "hog",
+    fresnelzon: Fresnelzonsval = "klippt",
+    skuggzonsvikter: Skuggzonsvikter = "ovre_band",
+    skuggzon: Skuggzonslasning | None = None,
 ) -> Flyttal:
     """Markeffekten ΔL_2 per tersband, AV 1106/07 avsnitt 5.11, ekv. (124).
 
@@ -233,30 +236,46 @@ def markeffekt_blandad_mark_db(
     PhaseDiffFreq (ekv. 379) är då π i alla band, lika med det sökta värdet för både f_L och
     f_H, och avsnitt 5.23.14 säger inte vad frekvensen då är. `skuggzonsvikter` väljer:
 
-    * `"hog"` (förval): f_H = lägsta bandets frekvens (gränsvärdet av ekv. 381 när det sökta
+    * `"ovre_band"` (förval): f_H = det näst högsta bandets frekvens (8 kHz) och
+      f_L = 0,8·f_H. Det är vad den linjära extrapolationen "ur värdena vid 8 och 10 kHz"
+      (avsnitt 5.23.14) ger när den förankras i 8 kHz och det sökta värdet är lika med
+      Δα(8 kHz): tillägget (Δα − Δα(8 kHz))·(f₂ − f₁)/(Δα(10 kHz) − Δα(8 kHz)) har täljaren 0.
+      Banden till och med 6,3 kHz får w_L (ekv. 127), 8 och 10 kHz får w_H.
+    * `"lag"`: f_L och f_H över alla band (gränsvärdet av extrapolationen över 10 kHz, som
+      stannar vid 100 kHz). Alla band får w_L.
+    * `"hog"`: f_H = lägsta bandets frekvens (gränsvärdet av ekv. 381 när det sökta
       värdet går mot Δα(25 Hz) underifrån) och f_L = 0,8·f_H. Alla band får w_H, som med
       r_h = 0 är r′ i ekv. (128).
-    * `"lag"`: f_L och f_H över alla band (gränsvärdet av extrapolationen över 10 kHz, som
-      stannar vid 100 kHz). Alla band får w_L (ekv. 127).
 
-    Valet är inte avgjort av texten; utfallet mot testfallen står i `docs/buller/logg/P-R2.md`.
+    Texten avgör inte. Förvalet är avgjort av testfallen (blad 10, 15 och 23; P-R2:s förval
+    var `"hog"`): `"hog"` avviker med upp till 3,5 dB i tersband, och `"lag"` och
+    `"ovre_band"` skiljer sig bara i 8 och 10 kHz, där `"ovre_band"` ligger inom 0,05 dB och
+    `"lag"` 0,14–0,41 dB för lågt. Se `docs/buller/logg/P-S1.md`.
 
-    `fresnelzon`: `"oklippt"` (förval) är ekv. (349)–(351) som de är tryckta; `"klippt"`
-    begränsar zonen till sträckan källa–mottagare som avsnitt 5.8 beskriver.
+    `fresnelzon`: `"klippt"` (förval) begränsar zonen till sträckan källa–mottagare, som
+    avsnitt 5.8 föreskriver i ord; `"oklippt"` är ekv. (349)–(351) som de är tryckta, utan
+    begränsning. Förvalet var `"oklippt"` till och med P-R2 och är ändrat av testfallen
+    (banden 25–630 Hz i alla blad på plan mark), se loggen.
+
+    `skuggzon` (`refraktion_mark.Skuggzonslasning`, `None` = förvalen) förs vidare till
+    delmodell 1 och väljer R₀ i ekv. (347).
     """
     if fresnelzon not in ("oklippt", "klippt"):
         raise BullerFel(f"Okänt val för Fresnelzonen: {fresnelzon!r} (oklippt eller klippt).")
-    if skuggzonsvikter not in ("hog", "lag"):
-        raise BullerFel(f"Okänt val för vikterna i skuggzon: {skuggzonsvikter!r} (hog eller lag).")
+    if skuggzonsvikter not in ("hog", "lag", "ovre_band"):
+        raise BullerFel(
+            f"Okänt val för vikterna i skuggzon: {skuggzonsvikter!r} (hog, lag eller ovre_band)."
+        )
     if not segment:
         raise BullerFel("Delmodell 2 kräver minst ett marksegment.")
     atm = som_atmosfar(atmosfar)
+    lasning = Skuggzonslasning() if skuggzon is None else skuggzon
     h_s = max(kallhojd_m, MINSTA_HOJD_M)
     h_r = max(mottagarhojd_m, MINSTA_HOJD_M)
     typer = marktyper(segment)
     effekter = [
         markeffekt_plan_mark_db(
-            frekvenser_hz, avstand_m, h_s, h_r, sigma, rahet, atm, uppat, ct2_form
+            frekvenser_hz, avstand_m, h_s, h_r, sigma, rahet, atm, uppat, ct2_form, lasning
         )
         for sigma, rahet in typer
     ]
@@ -269,9 +288,12 @@ def markeffekt_blandad_mark_db(
         f_l, f_h = overgangsfrekvenser_hz(frekvenser_hz, avstand_m, h_s, h_r, minsta_sigma, c0)
     else:
         c0 = profil.c0_m_s
-        geometri = reflexgeometri(avstand_m, h_s, h_r, profil.xi_per_m, c0, uppat)
+        geometri = reflexgeometri(avstand_m, h_s, h_r, profil.xi_per_m, c0, uppat, lasning.radie)
         if geometri.i_skuggzon and skuggzonsvikter == "hog":
             f_h = float(frekvenser_hz[0])
+            f_l = 0.8 * f_h
+        elif geometri.i_skuggzon and skuggzonsvikter == "ovre_band":
+            f_h = float(frekvenser_hz[-2])
             f_l = 0.8 * f_h
         elif geometri.i_skuggzon:
             f_h = HOGSTA_FREKVENS_FASDIFF_HZ

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Literal
 
 from buller.nord2000.geometri import MINSTA_HOJD_M
 from buller.nord2000.stralar_krokta import (
@@ -192,7 +193,10 @@ class Reflexgeometri:
 
 
 def reflexgeometri_skuggzon(
-    avstand_m: float, kallhojd_m: float, mottagarhojd_m: float
+    avstand_m: float,
+    kallhojd_m: float,
+    mottagarhojd_m: float,
+    radie: Literal["geometrisk", "tryckt_kvadrat", "tryckt"] = "geometrisk",
 ) -> Reflexgeometri:
     """Reflexgeometrin när mottagaren ligger i skuggzonen, AV 1106/07 ekv. (347), TC 2.13.
 
@@ -201,12 +205,22 @@ def reflexgeometri_skuggzon(
     under −1 till arccos ersätts med −1 (TC-101327 avsnitt 2.13).
 
     R₀ är tryckt som d/(2·(√h_S + √h_R)) inom parentes utan exponent, vilket inte är en längd.
-    Här används R₀ = d²/(2·(√h_S + √h_R)²), den radie som gör d_refl och bågarna i samma
-    ekvation förenliga (en tangerande cirkel når höjden h på avståndet √(2·R₀·h)); se
-    tolkningar i `docs/buller/logg/P-R2.md`.
+    Förvalet (`radie="geometrisk"`) är R₀ = d²/(2·(√h_S + √h_R)²), den radie som gör d_refl
+    och bågarna i samma ekvation förenliga (en tangerande cirkel når höjden h på avståndet
+    √(2·R₀·h)); se tolkningar i `docs/buller/logg/P-R2.md`. De två andra läsningarna finns
+    för jämförelse (`docs/buller/logg/P-S1.md`): `"tryckt_kvadrat"` är den tryckta parentesen
+    i kvadrat, (d/(2·(√h_S + √h_R)))², och `"tryckt"` talvärdet av det tryckta uttrycket
+    utan exponent.
     """
     rotsumma = math.sqrt(kallhojd_m) + math.sqrt(mottagarhojd_m)
-    r0 = avstand_m**2 / (2.0 * rotsumma**2)
+    if radie == "geometrisk":
+        r0 = avstand_m**2 / (2.0 * rotsumma**2)
+    elif radie == "tryckt_kvadrat":
+        r0 = (avstand_m / (2.0 * rotsumma)) ** 2
+    elif radie == "tryckt":
+        r0 = avstand_m / (2.0 * rotsumma)
+    else:
+        raise BullerFel(f"Okänt val för R0 i ekv. (347): {radie!r}.")
     return Reflexgeometri(
         vag_kalla_m=r0 * math.acos(max(1.0 - kallhojd_m / r0, -1.0)),
         vag_mottagare_m=r0 * math.acos(max(1.0 - mottagarhojd_m / r0, -1.0)),
@@ -223,6 +237,7 @@ def reflexgeometri(
     xi_per_m: float,
     c0_m_s: float,
     uppat: Uppatmetod = "bokstavlig",
+    radie: Literal["geometrisk", "tryckt_kvadrat", "tryckt"] = "geometrisk",
 ) -> Reflexgeometri:
     """Första steget i FresnelZoneW, AV 1106/07 avsnitt 5.23.6, ekv. (346)–(347).
 
@@ -238,7 +253,7 @@ def reflexgeometri(
     if xi_per_m < 0.0 and avstand_m > SKUGGZONSMARGINAL * skuggzonsavstand_m(
         h_s, h_r, xi_per_m, uppat
     ):
-        return reflexgeometri_skuggzon(avstand_m, h_s, h_r)
+        return reflexgeometri_skuggzon(avstand_m, h_s, h_r, radie)
     stralar = reflekterad_strale(avstand_m, h_s, h_r, xi_per_m, c0_m_s, uppat)
     return Reflexgeometri(
         vag_kalla_m=stralar.vagstracka_kalla_m,

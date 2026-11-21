@@ -34,13 +34,16 @@ from buller.nord2000.koherens import (
 from buller.nord2000.mark import inkoherent_reflektion, markimpedans, sfarisk_reflektion
 from buller.nord2000.refraktion import Atmosfar, EkvivalentProfil, ovre_atmosfar
 from buller.nord2000.refraktion_mark import (
+    Skuggzonslasning,
     calc_eq_ssp_mark,
     kilavstand_skuggzon_m,
     skuggzonsavskarmning_db,
 )
 from buller.nord2000.stralar_krokta import (
+    SKUGGZONSMARGINAL,
     StralarKroktPlanMark,
     Uppatmetod,
+    skuggzonsavstand_m,
     stralar_krokt_plan_mark,
 )
 from buller.typer import BullerFel, Flyttal
@@ -153,8 +156,9 @@ def markeffekt_plan_mark_db(
     flodesresistivitet_kNsm4: float,
     rahet_m: float,
     atmosfar: HomogenAtmosfar | Atmosfar,
-    uppat: Uppatmetod = "bokstavlig",
+    uppat: Uppatmetod = "exakt",
     ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
 ) -> Flyttal:
     """Funktionen SubModel1: markeffekten ΔL_flat per tersband, AV 1106/07 ekv. (115)–(123).
 
@@ -165,7 +169,9 @@ def markeffekt_plan_mark_db(
 
     `avstand_m` mäts längs marken och höjderna vinkelrätt mot den; höjder under 0,01 m
     ersätts med 0,01 m (avsnitt 5.4.1). `uppat` väljer hur strålar räknas vid uppåtbrytning
-    (`stralar_krokta`), `ct2_form` formen på temperaturtermen i F_c.
+    (`stralar_krokta`; förval `"exakt"`, avgjort av testfall, se `docs/buller/logg/P-S1.md`),
+    `ct2_form` formen på temperaturtermen i F_c och `skuggzon` hur
+    skuggzonsavsnitten läses (`refraktion_mark.Skuggzonslasning`; `None` ger förvalen).
     """
     if avstand_m <= 0.0:
         raise BullerFel("Avståndet längs marken ska vara större än 0.")
@@ -185,6 +191,7 @@ def markeffekt_plan_mark_db(
             atm,
             uppat,
             ct2_form,
+            Skuggzonslasning() if skuggzon is None else skuggzon,
         )
     stralar = stralar_plan_mark(avstand_m, h_s, h_r, atm.c_m_s)
     kvot = stralar.r1_m / stralar.r2_m
@@ -222,6 +229,16 @@ def _stralar(
     return minne[nyckel]
 
 
+def _i_skuggzon(
+    avstand_m: float, h_s: float, h_r: float, xi_per_m: float, uppat: Uppatmetod
+) -> bool:
+    """ξ < 0 och d > 0,95·d_SZ (AV 1106/07 avsnitt 5.10 och 5.5.4)."""
+    if xi_per_m >= 0.0:
+        return False
+    d_sz = skuggzonsavstand_m(h_s, h_r, xi_per_m, uppat)
+    return avstand_m > SKUGGZONSMARGINAL * d_sz
+
+
 def _markeffekt_med_refraktion_db(
     frekvenser_hz: Flyttal,
     avstand_m: float,
@@ -232,6 +249,7 @@ def _markeffekt_med_refraktion_db(
     atm: Atmosfar,
     uppat: Uppatmetod,
     ct2_form: Ct2Form,
+    skuggzon: Skuggzonslasning,
 ) -> Flyttal:
     """Delmodell 1 med refraktion eller fluktuerande refraktion, AV 1106/07 ekv. (115)–(122).
 
@@ -239,14 +257,28 @@ def _markeffekt_med_refraktion_db(
     strålarna och Δτ, Δτ₊ (ekv. 116–117), F (ekv. 118) och sedan
 
     * utanför skuggzon ekv. (120),
-    * i skuggzon (ξ(f) < 0 och d > 0,95·d_SZ) ekv. (121):
+    * i skuggzon ekv. (121):
       ΔL = 10·lg(|1 + F·Q(f, τ₁, 0, Z)|² + (1 − F²)·ℜ_i²) + ΔL_SZ(f), med ΔL_SZ ur
       ShadowZoneShielding (ekv. 122) räknad med den frekvensoberoende profilen.
 
-    Val (se loggen): Q i ekv. (121) räknas med gångtiden τ₁ längs den direkta strålen och
-    ψ_G = 0 (AV 1851/00 ekv. 39; ekv. 121 är tryckt med Q(f, 0, 0, Z)); negativ Δτ, som kan
-    uppstå i läget `bokstavlig`, sätts till 0 (avsnitt 5.9.2 anger Δτ ≥ 0); kilens topp i
-    ShadowZoneShielding läggs enligt AV 1851/00 ekv. (41).
+    Skuggzon är ξ < 0 och d > 0,95·d_SZ. `skuggzon.avgorande` väljer med vilken profil
+    villkoret prövas: bandets ξ(f) för markeffektens form och den frekvensoberoende profilen
+    för ΔL_SZ (`"delat"`, förval), bandets ξ(f) för allt (`"per_band"`), eller den
+    frekvensoberoende profilen för allt (`"oberoende"`; då gäller ekv. 121 med ψ_G = 0 och
+    Δτ = 0 i alla band, också dem där ξ(f) = 0, och samma sak görs för den övre profilen).
+    I ett band som självt ligger i skuggzon är Δτ = 0 (avsnitt 5.5.6) och ψ_G = 0.
+
+    Med `"delat"` är alltså ΔL(f) = [ekv. 120, eller första termen i ekv. 121 när bandet
+    självt ligger i skuggzon] + ΔL_SZ(f), där ΔL_SZ läggs till i alla band när den
+    frekvensoberoende profilen ger skuggzon. ΔL_SZ tonas ut mot låga frekvenser av ξ_SZ(f)
+    (ekv. 385) och är 0 när strålen med ξ_SZ(f) inte når ned till marken.
+
+    Övriga val (se `Skuggzonslasning` och loggen): Q i ekv. (121) räknas med gångtiden τ₁
+    längs den direkta strålen och ψ_G = 0 (AV 1851/00 ekv. 39; ekv. 121 är tryckt med
+    Q(f, 0, 0, Z)); negativ Δτ, som kan uppstå i läget `bokstavlig`, sätts till 0
+    (avsnitt 5.9.2 anger Δτ ≥ 0); kilens topp i ShadowZoneShielding läggs enligt AV 1851/00
+    ekv. (41). Med kilens topp på d_SZ enligt ekv. (43) är ΔL_SZ = 0 så länge d ≤ d_SZ
+    (strålen når då inte marken, och kilen i ekv. 387 är inte definierad).
     """
     impedanser = [markimpedans(float(f), flodesresistivitet_kNsm4) for f in frekvenser_hz]
     profiler = calc_eq_ssp_mark(
@@ -267,19 +299,32 @@ def _markeffekt_med_refraktion_db(
         else profiler
     )
     c0_mark = profiler.oberoende.c0_m_s
+    xi_oberoende = profiler.oberoende.xi_per_m
+    en_gang = skuggzon.avgorande == "oberoende"
+    skugga_oberoende = skuggzon.avgorande != "per_band" and _i_skuggzon(
+        avstand_m, h_s, h_r, xi_oberoende, uppat
+    )
+    skugga_alla = en_gang and skugga_oberoende
+    skugga_alla_ovre = en_gang and _i_skuggzon(
+        avstand_m, h_s, h_r, profiler_ovre.oberoende.xi_per_m, uppat
+    )
     minne: dict[tuple[float, float], StralarKroktPlanMark] = {}
     resultat = np.empty(frekvenser_hz.shape[0], dtype=np.float64)
     for i, f_np in enumerate(frekvenser_hz):
         f = float(f_np)
         z = impedanser[i]
         stralar = _stralar(avstand_m, h_s, h_r, profiler.per_frekvens[i], atm, uppat, minne)
-        dtau = max(stralar.gangtidsskillnad_s, 0.0)
+        reflekterad = None if skugga_alla else stralar.reflekterad
+        dtau = 0.0 if reflekterad is None else max(stralar.gangtidsskillnad_s, 0.0)
         if fluktuerar:
             ovre = _stralar(avstand_m, h_s, h_r, profiler_ovre.per_frekvens[i], atm, uppat, minne)
-            dtau_ovre = max(ovre.gangtidsskillnad_s, 0.0)
+            dtau_ovre = (
+                0.0
+                if skugga_alla_ovre or ovre.reflekterad is None
+                else max(ovre.gangtidsskillnad_s, 0.0)
+            )
         else:
             dtau_ovre = dtau
-        reflekterad = stralar.reflekterad
         koherens = koherens_med_refraktion(
             f,
             avstand_m,
@@ -295,23 +340,30 @@ def _markeffekt_med_refraktion_db(
             ct2_form=ct2_form,
         )
         r_i = inkoherent_reflektion(z)
-        if reflekterad is None:  # skuggzon, ekv. (121)–(122)
-            q = sfarisk_reflektion(f, stralar.direkt.gangtid_s, 0.0, z)
+        if reflekterad is None:  # markeffekten i skuggzon, första termen i ekv. (121)
+            gangtid = stralar.direkt.gangtid_s if skuggzon.q_gangtid == "direkt" else 0.0
+            q = sfarisk_reflektion(f, gangtid, 0.0, z)
             mark = abs(1.0 + koherens * q) ** 2 + (1.0 - koherens**2) * r_i**2
-            resultat[i] = 10.0 * math.log10(mark) + skuggzonsavskarmning_db(
-                f,
-                avstand_m,
-                h_s,
-                h_r,
-                profiler.oberoende.xi_per_m,
-                c0_mark,
-                kilavstand_skuggzon_m(avstand_m, h_s, h_r),
-            )
         else:  # ekv. (120)
             kvot = stralar.direkt.vagstracka_m / reflekterad.vagstracka_m
             q = sfarisk_reflektion(f, reflekterad.gangtid_s, reflekterad.strykvinkel_rad, z)
             fas = cmath.exp(1j * 2.0 * math.pi * f * dtau)
-            koherent = abs(1.0 + koherens * kvot * fas * q) ** 2
-            inkoherent = (1.0 - koherens**2) * (kvot * r_i) ** 2
-            resultat[i] = 10.0 * math.log10(koherent + inkoherent)
+            mark = (
+                abs(1.0 + koherens * kvot * fas * q) ** 2 + (1.0 - koherens**2) * (kvot * r_i) ** 2
+            )
+        resultat[i] = 10.0 * math.log10(mark)
+        if reflekterad is None or skugga_oberoende:  # ΔL_SZ, ekv. (122)
+            if skuggzon.kiltopp == "av1851":
+                kiltopp: float | None = kilavstand_skuggzon_m(avstand_m, h_s, h_r)
+            else:
+                d_sz = (
+                    stralar.direkt.skuggzonsavstand_m
+                    if skuggzon.avgorande == "per_band"
+                    else skuggzonsavstand_m(h_s, h_r, xi_oberoende, uppat)
+                )
+                kiltopp = d_sz if d_sz < avstand_m else None
+            if kiltopp is not None:
+                resultat[i] += skuggzonsavskarmning_db(
+                    f, avstand_m, h_s, h_r, xi_oberoende, c0_mark, kiltopp, skuggzon.niva
+                )
     return resultat

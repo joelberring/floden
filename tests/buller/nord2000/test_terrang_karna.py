@@ -243,24 +243,55 @@ class TestNord2000Karna(unittest.TestCase):
         )
 
     def test_ovre_grans(self) -> None:
-        """L_p − L_W kan inte överstiga fri sfärisk spridning plus markens +6 dB."""
+        """ΔL_t ligger mellan marktypernas egna markeffekter, och nära +6 dB som mest.
+
+        Med Fresnelzonen begränsad till sträckan källa–mottagare (avsnitt 5.8, förval sedan
+        P-S1) summerar vikterna i delmodell 2 till 1, så ΔL_2 är ett vägt medelvärde av
+        delmodell 1 för varje marktyp (ekv. 124) och kan inte ligga utanför deras spann. Över
+        hård mark är gränsen 20·lg 2 = 6,02 dB. Över mjuk mark ger delmodell 1 själv något mer
+        vid de lägsta frekvenserna (|Q| > 1; 6,03 dB vid 25 Hz för σ = 200 kNs/m⁴ på 97 m), så
+        den tidigare gränsen 6,03 dB för hela kärnan höll bara därför att den oklippta zonens
+        vikter summerade till mindre än 1.
+        """
+        atmosfar = HomogenAtmosfar(15.0, 70.0, 101.325, 0.0, 0.0)
         for p in (PLAN_VAG_GRAS, profil([0.0, 500.0], [0.0, 0.0], [20000.0], 0.01, 4.0)):
             resultat = self.karna.berakna(p, Vader())
+            d = float(p.x_m[-1] - p.x_m[0])
+            per_typ = np.array(
+                [
+                    markeffekt_plan_mark_db(
+                        self.f, d, p.kalla_hojd_m, p.mottagare_hojd_m, float(sigma), 0.0, atmosfar
+                    )
+                    for sigma in p.flodesresistivitet_kNsm4
+                ]
+            )
+            self.assertTrue(bool(np.all(resultat.terrang_db <= per_typ.max(axis=0) + 1e-9)))
+            self.assertTrue(bool(np.all(resultat.terrang_db >= per_typ.min(axis=0) - 1e-9)))
             h: Flyttal = resultat.overforing_db
-            self.assertLess(float(np.max(h - resultat.spridning_db)), 6.03)
+            self.assertLess(float(np.max(h - resultat.spridning_db)), 6.05)
+        hard = self.karna.berakna(profil([0.0, 500.0], [0.0, 0.0], [20000.0], 0.01, 4.0), Vader())
+        # σ = 20 000 kNs/m⁴ är inte oändligt hård: 2·10⁻⁵ dB över 20·lg 2 vid 25 Hz.
+        self.assertLess(float(np.max(hard.terrang_db)), 20.0 * math.log10(2.0) + 1e-3)
 
     def test_refraktion_raknas_pa_plan_mark_och_vagras_annars(self) -> None:
         """Sedan P-R2 räknar kärnan refraktion över plan mark (tidigare gav den `BullerFel`).
 
-        Det som fortfarande saknas ska vägras med besked: flera markreflexer (delmodell 8) vid
-        nedåtbrytning med N > 4, och skärmar eller icke-plan terräng oavsett väder.
+        Sedan P-S1 räknas också nedåtbrytning med N > 4 (delmodell 8, flera markreflexer; förut
+        `BullerFel`). Det som fortfarande saknas ska vägras med besked: skärmar och icke-plan
+        terräng, oavsett väder.
         """
-        for vader in (Vader(vind_m_s=-3.0), Vader(dt_dz_k_m=-0.1), Vader(std_vind_m_s=0.5)):
+        for vader in (
+            Vader(vind_m_s=-3.0),
+            Vader(dt_dz_k_m=-0.1),
+            Vader(std_vind_m_s=0.5),
+            Vader(vind_m_s=3.0),
+        ):
             overforing = self.karna.overforing_db(PLAN_VAG_GRAS, vader)
             self.assertEqual(overforing.shape, (27,))
             self.assertTrue(bool(np.all(np.isfinite(overforing))))
-        with self.assertRaisesRegex(BullerFel, "markreflexer"):
-            self.karna.overforing_db(PLAN_VAG_GRAS, Vader(vind_m_s=3.0))
+        medvind = self.karna.berakna(PLAN_VAG_GRAS, Vader(vind_m_s=3.0))
+        self.assertGreater(medvind.antal_stralar, 4.0)
+        self.assertIsNotNone(medvind.flera_markreflexer_db)
         for vader in (Vader(vind_m_s=3.0), Vader(vind_m_s=-3.0), Vader(std_vind_m_s=0.5)):
             with self.assertRaisesRegex(BullerFel, "skärmar"):
                 self.karna.overforing_db(TUNN_SKARM, vader)

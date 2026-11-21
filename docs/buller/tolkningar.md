@@ -294,6 +294,20 @@ samma yta beroende på vilken kant som är viktigast. Implementerat bokstavligt 
 | 2026-11-21 | P-6 | 20. Skärmformer som delar punkt (W₁₂ = W₂₁) eller går om varandra. | Delad punkt tillåts (inget marksegment mellan skärmarna). Former i fel ordning eller som överlappar ger `BullerFel`. En kant på eller under baslinjen ger `BullerFel` (h_SCR ≤ 0), som i delmodell 4. |
 | 2026-11-21 | P-6 | 21. Hård yta, höjder under 0,01 m, t_mean och c̄. | Som P-4 (tolkning 13, 15, 16 där), genom `delmodell4._marksida`. |
 
+### P-S1 (innehåller fem förvalsbyten märkta "avgjord av testfall")
+
+
+| Datum | Paket | Fråga | Val och skäl |
+| --- | --- | --- | --- |
+| 2026-11-21 | P-S1 | 1. Med vilken profil avgörs skuggzon i delmodell 1 (ersätter P-R2 tolkning 6)? | `delat`: markeffektens form (ekv. 120 eller första termen i ekv. 121) band för band med ξ(f); ΔL_SZ(f) i alla band när den frekvensoberoende profilen ger skuggzon. **Avgjord av testfall** (blad 15: 1,12 dB med `per_band`, 1,08 dB med `oberoende`, 0,01 dB med `delat`; blad 23: 0,87, 1,02, 0,01 dB). Textstöd: ekv. (122), ekv. (385), AV 1851/00 avsnitt 6.1. Alternativ finns kvar som val. |
+| 2026-11-21 | P-S1 | 2. Vikterna i delmodell 2 i skuggzon (ersätter P-R2 tolkning 9). | `ovre_band`: f_H = 8 kHz-bandets frekvens, f_L = 0,8·f_H. **Avgjord av testfall**: `hog` ger 0,78 och 0,93 dB i blad 15 och 23 (band upp till 3,6 dB); `lag` och `ovre_band` 0,01 dB, men `lag` ligger 0,14–0,41 dB för lågt i 8 och 10 kHz där `ovre_band` ligger inom 0,05 dB. Svagt underlag för skillnaden lag/ovre_band (fyra bandvärden). |
+| 2026-11-21 | P-S1 | 3. Uppåtbrytning (ersätter förvalet i P-R1 tolkning 3). | `exakt`. **Avgjord av testfall** (blad 10: 8 och 10 kHz −1,32/−1,29 dB med `bokstavlig`, +0,03/+0,04 dB med `exakt`; fyra band över 1 dB mot inget). Går emot ordalydelsen i avsnitt 5.5.4; vilar på ett blad. |
+| 2026-11-21 | P-S1 | 4. Fresnelzonens klippning i delmodell 2 (ersätter förvalet i P-R2 tolkning 18). | `klippt`, som avsnitt 5.8 definierar zonen. **Avgjord av testfall**: banden 25–630 Hz inom 0,04 dB i blad 1–7, 9–15, 21–23 (med `oklippt` 0,07–0,20 dB, och 1,05, 1,28, 2,62 dB i blad 13, 14, 16); blad 14 och 16 underkända med `oklippt`. |
+| 2026-11-21 | P-S1 | 5. Ekv. (287) för A₀ över formelns maximum (315,3 dB), där dämpningen avtar med avståndet och formeln slutar vara definierad vid ca 820 dB (ändrar B4:s tolkning "`BullerFel`"). | `monoton`: dämpningen hålls på formelns största värde (146,2 dB). **Avgjord av testfall**: 10 kHz-bandet i blad 9, 11, 12, 14, 21, 22, 24 från +1,5…+2,9 dB till inom 0,05 dB; blad 16 från ej körbar till godkänd. Rentonsdämpning över maximum ger samma värden inom 0,001 dB men är inte kontinuerlig. |
+| 2026-11-21 | P-S1 | 6. ΔL_SZ med kilens topp enligt ekv. (43) när d ≤ d_SZ (läsningen `kiltopp="ekv43"`, inte förval). | 0 dB: kilens topp ligger då bortom mottagaren och ekv. (387) är inte definierad. |
+| 2026-11-21 | P-S1 | 7. Delmodell 8: hf eller lf (P-8 tolkning 7). | hf, oförändrat; bekräftat av blad 9, 12, 13, 16, 22 (lf: blad 9 underkänt, +8,2 dB vid 25 Hz; blad 16 +7,9 dB vid 25 Hz). |
+| 2026-11-21 | P-S1 | 8. P-R2 tolkning 1, 2, 4, 8 (Q:s gångtid, 20·lg, kilens topp, R₀). | Oförändrade; bekräftade av blad 10, 15, 23 (siffror i 2.2). P-R2 tolkning 3 (icke-reflekterande kil) är inte en avvikelse från AV 1106/07: avsnitt 5.7.5 säger det själv. |
+
 ## Hur testfallen får användas när texten har flera läsningar (samordnarens regel, 2026-11-21, ska bekräftas av Joel)
 
 Regeln "ingen anpassning mot testfall" gäller oförändrad för tal: inga korrektionsfaktorer, inga justerade konstanter.

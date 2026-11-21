@@ -2,10 +2,9 @@
 
 Källor (varje formel avläst från sidbild):
 
-* DELTA AV 1106/07 (rev. 2014), avsnitt 5.5.3 (CalcEqSSPGround, ekv. 23–28), 5.23.9
-  (HeightOfCircularRay, ekv. 355–368) och 5.23.16 (ShadowZoneShielding, ekv. 384–387).
-* DELTA AV 1106/07, avsnitt 5.5.7 (ekv. 54) och 5.17 (ekv. 279 och 284): antalet strålar N,
-  som avgör om delmodell 8 (flera markreflexer) bidrar. Delmodell 8 själv ingår inte här.
+* DELTA AV 1106/07 (rev. 2014), avsnitt 5.5.3 (CalcEqSSPGround, ekv. 23–28) och 5.23.16
+  (ShadowZoneShielding, ekv. 384–387). HeightOfCircularRay (avsnitt 5.23.9), RayCurvature
+  (avsnitt 5.5.7) och antalet strålar N (avsnitt 5.17) finns i `delmodell8.py` (en källa).
 * DELTA AV 1851/00 (rev. 2006), avsnitt 4 (ekv. 39–42), för det AV 1106/07 lämnar oklart i
   skuggzonen: var kilens topp ligger (ekv. 41) och att nivån är 20·lg av trycket (ekv. 42).
 
@@ -19,7 +18,9 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
+from buller.nord2000.delmodell8 import hojd_cirkelstrale
 from buller.nord2000.fasdiff import fasdifferensfrekvens_hz
 from buller.nord2000.kildiffraktion import Kil, kiltryck_icke_reflekterande
 from buller.nord2000.refraktion import (
@@ -44,6 +45,65 @@ HOJD_DELTA_C10_M = 10.0
 # AV 1106/07 ekv. (385): ξ_SZ växer linjärt i lg f från 0 vid 20 Hz till ξ vid 2000 Hz.
 SKUGGZON_NEDRE_FREKVENS_HZ = 20.0
 SKUGGZON_OVRE_FREKVENS_HZ = 2000.0
+
+
+# Läsningar av skuggzonsavsnitten där texten inte är entydig. Var och en är ett diskret val
+# mellan det som står i AV 1106/07, AV 1851/00 eller följer av figurerna; se
+# `Skuggzonslasning` och `docs/buller/logg/P-S1.md`. Inget av valen är ett tal.
+Skuggzonsavgorande = Literal["per_band", "oberoende", "delat"]
+Skuggzonsgangtid = Literal["direkt", "noll"]
+Skuggzonsniva = Literal["20lg", "10lg"]
+Kiltopp = Literal["av1851", "ekv43"]
+Skuggzonsradie = Literal["geometrisk", "tryckt_kvadrat", "tryckt"]
+
+
+@dataclass(frozen=True)
+class Skuggzonslasning:
+    """Hur skuggzonen i plan mark-modellen läses (AV 1106/07 avsnitt 5.10, 5.23.6 och 5.23.16).
+
+    * `avgorande`: med vilken profil avgörs att mottagaren ligger i skuggzon?
+      `"per_band"`: med den frekvensberoende profilen ξ(f), band för band, både för
+      markeffektens form (ekv. 120 eller första termen i ekv. 121) och för om ΔL_SZ läggs
+      till (ekv. 116 anropar DirectRay med ξ(f), som texten före ekv. 116 säger är
+      frekvensberoende). `"oberoende"`: en gång med den frekvensoberoende profilen; ekv. (121)
+      med ψ_G = 0 och Δτ = 0 gäller då i alla band (d_SZ står inte bland de storheter texten
+      räknar upp som frekvensberoende). `"delat"`: markeffektens form avgörs band för band
+      med ξ(f) (strålvariablerna är frekvensberoende), medan ΔL_SZ läggs till i alla band
+      så snart den frekvensoberoende profilen ger skuggzon (ekv. 122 anger uttryckligen den
+      frekvensoberoende profilen, och ξ_SZ(f) i ekv. 385 tonar själv ut ΔL_SZ mot 20 Hz).
+      Förval `"delat"`, avgjort av testfallen (blad 15 och 23, se loggen); P-R2:s förval var
+      `"per_band"`.
+    * `q_gangtid`: Q i ekv. (121) med gångtiden τ₁ längs den direkta strålen (`"direkt"`,
+      AV 1851/00 ekv. 39) eller med gångtid 0 som ekv. (121) är tryckt (`"noll"`; då är Q = 1).
+    * `niva`: ekv. (387) som 20·lg (`"20lg"`, AV 1851/00 ekv. 42) eller som tryckt (`"10lg"`).
+    * `kiltopp`: kilens topp på d·√h_S/(√h_S + √h_R) från källan (`"av1851"`, AV 1851/00
+      ekv. 41 och d_refl i AV 1106/07 ekv. 347) eller på d_SZ enligt ekv. (43) (`"ekv43"`, som
+      avsnitt 5.23.16 hänvisar till i ord).
+    * `radie`: R₀ i ekv. (347): d²/(2·(√h_S + √h_R)²) (`"geometrisk"`), den tryckta
+      parentesen i kvadrat (`"tryckt_kvadrat"`) eller som tryckt utan exponent (`"tryckt"`).
+      Påverkar bara Fresnelzonens storlek i delmodell 2.
+
+    Förvalen för `q_gangtid`, `niva`, `kiltopp` och `radie` är P-R2:s (valda ur texten innan
+    utfallet var känt); testfallen stöder dem (siffror i `docs/buller/logg/P-S1.md`).
+    """
+
+    avgorande: Skuggzonsavgorande = "delat"
+    q_gangtid: Skuggzonsgangtid = "direkt"
+    niva: Skuggzonsniva = "20lg"
+    kiltopp: Kiltopp = "av1851"
+    radie: Skuggzonsradie = "geometrisk"
+
+    def __post_init__(self) -> None:
+        if self.avgorande not in ("per_band", "oberoende", "delat"):
+            raise BullerFel(f"Okänt val för skuggzonens avgörande: {self.avgorande!r}.")
+        if self.q_gangtid not in ("direkt", "noll"):
+            raise BullerFel(f"Okänt val för gångtiden i Q i skuggzon: {self.q_gangtid!r}.")
+        if self.niva not in ("20lg", "10lg"):
+            raise BullerFel(f"Okänt val för nivån i ekv. (387): {self.niva!r}.")
+        if self.kiltopp not in ("av1851", "ekv43"):
+            raise BullerFel(f"Okänt val för skuggzonskilens topp: {self.kiltopp!r}.")
+        if self.radie not in ("geometrisk", "tryckt_kvadrat", "tryckt"):
+            raise BullerFel(f"Okänt val för R0 i ekv. (347): {self.radie!r}.")
 
 
 @dataclass(frozen=True)
@@ -166,60 +226,6 @@ def calc_eq_ssp_mark(
     return ProfilerMark(oberoende, tuple(profiler), f_l, f_h)
 
 
-def hojd_cirkelstrale(
-    avstand_m: float, hojd1_m: float, hojd2_m: float, xi_per_m: float, d0_m: float
-) -> tuple[float, float, float]:
-    """Funktionen HeightOfCircularRay, AV 1106/07 avsnitt 5.23.9, ekv. (355)–(368).
-
-    Strålen går från (0, h₁) till (d, h₂) med krökning efter den relativa gradienten ξ.
-    Returnerar (h₀, R₁, R₂): strålens höjd på avståndet d₀ från startpunkten och båglängderna
-    från den punkten till start- och slutpunkten. Formlerna följs bokstavligt: ξ′ = |ξ|
-    (ekv. 356), och för ξ < 0 speglas höjderna (ekv. 360–361, 367). För ξ < 0 kan h₀ bli
-    negativ (strålen under markplanet); det är så funktionen används i ekv. (386).
-
-    ξ = 0 täcks inte av ekv. (363)–(365) (division med ξ′); då returneras den räta linjen, som
-    är formlernas gränsvärde.
-    """
-    if not avstand_m > 0.0:
-        raise BullerFel("Det horisontella avståndet ska vara större än 0.")
-    d = avstand_m
-    if xi_per_m == 0.0:
-        h0 = hojd1_m + (hojd2_m - hojd1_m) * d0_m / d
-        return h0, math.hypot(d0_m, h0 - hojd1_m), math.hypot(d - d0_m, hojd2_m - h0)
-
-    xi = abs(xi_per_m)  # ekv. (356)
-    dh = abs(hojd1_m - hojd2_m)  # ekv. (357)
-    if xi_per_m > 0.0:
-        if hojd1_m > hojd2_m:
-            h1, d0 = hojd2_m, d - d0_m  # ekv. (358)
-        else:
-            h1, d0 = hojd1_m, d0_m  # ekv. (359)
-    elif hojd1_m >= hojd2_m:
-        h1, d0 = -hojd1_m, d0_m  # ekv. (360)
-    else:
-        h1, d0 = -hojd2_m, d - d0_m  # ekv. (361)
-
-    tan_psi = 0.5 * xi * d + dh * (2.0 + xi * dh) / (2.0 * d)  # ekv. (362)
-    x0 = tan_psi / xi  # ekv. (363)
-    z0 = h1 - 1.0 / xi  # ekv. (364)
-    radie = math.sqrt(1.0 + tan_psi * tan_psi) / xi  # ekv. (365): 1/(ξ′·cos ψ_L)
-    kvot = (d0 - x0) / radie
-    if abs(kvot) > 1.0:
-        raise BullerFel("HeightOfCircularRay: punkten ligger utanför strålens cirkel (ekv. 366).")
-    theta = math.acos(kvot)  # ekv. (366)
-    tecken = 1.0 if xi_per_m > 0.0 else -1.0
-    h0 = tecken * (radie * math.sin(theta) + z0)  # ekv. (367)
-    korda1 = math.hypot(d0_m, h0 - hojd1_m)
-    korda2 = math.hypot(d - d0_m, hojd2_m - h0)
-    if korda1 > 2.0 * radie or korda2 > 2.0 * radie:
-        raise BullerFel("HeightOfCircularRay: kordan är längre än cirkelns diameter (ekv. 368).")
-    return (
-        h0,
-        2.0 * radie * math.asin(korda1 / (2.0 * radie)),
-        2.0 * radie * math.asin(korda2 / (2.0 * radie)),
-    )  # ekv. (368)
-
-
 def kilavstand_skuggzon_m(avstand_m: float, kallhojd_m: float, mottagarhojd_m: float) -> float:
     """Avståndet från källan till den ekvivalenta kilens topp, AV 1851/00 avsnitt 4, ekv. (41).
 
@@ -261,8 +267,8 @@ def skuggzonshojd_m(
     marken, alltså höjden med omvänt tecken. Går strålen över marken blir h_SZ negativ.
     """
     xi_sz = gradient_skuggzon_per_m(frekvens_hz, xi_per_m)
-    h0, _, _ = hojd_cirkelstrale(avstand_m, kallhojd_m, mottagarhojd_m, xi_sz, kilavstand_m)
-    return -h0
+    punkt = hojd_cirkelstrale(avstand_m, kallhojd_m, mottagarhojd_m, xi_sz, kilavstand_m)
+    return -punkt.hojd_m
 
 
 def skuggzonsavskarmning_db(
@@ -273,6 +279,7 @@ def skuggzonsavskarmning_db(
     xi_per_m: float,
     c0_m_s: float,
     kilavstand_m: float,
+    niva: Skuggzonsniva = "20lg",
 ) -> float:
     """Funktionen ShadowZoneShielding: ΔL_SZ(f), AV 1106/07 avsnitt 5.23.16, ekv. (384)–(387).
 
@@ -283,9 +290,11 @@ def skuggzonsavskarmning_db(
 
     Val (se loggen): kilen är icke-reflekterande (pwedge0, avsnitt 5.7.5; ekv. 387 saknar
     impedanser), nivån är 20·lg(2·R_SR·|p|) med R_SR = d (AV 1851/00 ekv. 42; ekv. 387 är tryckt
-    med 10·lg), och ΔL_SZ = 0 när h_SZ ≤ 0 (strålen når inte ned till marken vid kilens topp;
-    en kil med β < π är inte definierad).
+    med 10·lg; `niva="10lg"` ger den tryckta formen), och ΔL_SZ = 0 när h_SZ ≤ 0 (strålen når
+    inte ned till marken vid kilens topp; en kil med β < π är inte definierad).
     """
+    if niva not in ("20lg", "10lg"):
+        raise BullerFel(f"Okänt val för nivån i ekv. (387): {niva!r}.")
     if not 0.0 < kilavstand_m < avstand_m:
         raise BullerFel("Skuggzonskilens topp ska ligga mellan källa och mottagare.")
     if not c0_m_s > 0.0:
@@ -312,46 +321,4 @@ def skuggzonsavskarmning_db(
         vag_mottagare_m=r_r,
     )
     tryck = abs(kiltryck_icke_reflekterande(frekvens_hz, kil))
-    return 20.0 * math.log10(2.0 * avstand_m * tryck)
-
-
-def krokningsradie_m(avstand_m: float, atmosfar: Atmosfar) -> float:
-    """R_A,B: strålens krökningsradie i en log-lin-profil, AV 1106/07 avsnitt 5.5.7, ekv. (54).
-
-    R_A = sign(A)·(d/8)·√(2πC/|A|), R_B = sign(B)·√((C/|B|)² + (d/2)²) och
-    1/R_A,B = 1/R_A + 1/R_B. Positiv radie är nedåtbrytning. Utan refraktion (A = B = 0) eller
-    när de två delarna tar ut varandra returneras oändligheten (rät stråle).
-    """
-    if not avstand_m > 0.0:
-        raise BullerFel("Det horisontella avståndet ska vara större än 0.")
-    c = atmosfar.c_m_s
-    a = atmosfar.a_m_s
-    b = atmosfar.b_per_s
-    krokning = 0.0
-    if a != 0.0:
-        krokning += math.copysign(
-            1.0 / (avstand_m / 8.0 * math.sqrt(2.0 * math.pi * c / abs(a))), a
-        )
-    if b != 0.0:
-        krokning += math.copysign(1.0 / math.hypot(c / abs(b), 0.5 * avstand_m), b)
-    return math.inf if krokning == 0.0 else 1.0 / krokning
-
-
-def antal_stralar_flera_markreflexer(
-    avstand_m: float, storsta_hojd_m: float, atmosfar: Atmosfar
-) -> float:
-    """N: ungefärligt antal strålar vid flera markreflexer, AV 1106/07 avsnitt 5.17, ekv. (279).
-
-    N = (4·d/h_max)·√(A′/(2πC)) med A′ = π·C·d²/(32·R_A,B²) (ekv. 284; för B = 0 är A′ = A).
-    För N under 4 bidrar delmodell 8 inte. Delmodell 8 gäller nedåtbrytning; för R_A,B ≤ 0
-    eller oändlig (uppåtbrytning eller ingen refraktion) returneras 0, eftersom ekv. (284)
-    med R² annars skulle ge samma N för uppåt- som för nedåtbrytning (se loggen).
-    """
-    if not storsta_hojd_m > 0.0:
-        raise BullerFel("h_max i ekv. (279) ska vara större än 0.")
-    radie = krokningsradie_m(avstand_m, atmosfar)
-    if radie <= 0.0 or math.isinf(radie):
-        return 0.0
-    c = atmosfar.c_m_s
-    a_ekvivalent = math.pi * c * avstand_m**2 / (32.0 * radie**2)
-    return 4.0 * avstand_m / storsta_hojd_m * math.sqrt(a_ekvivalent / (2.0 * math.pi * c))
+    return (20.0 if niva == "20lg" else 10.0) * math.log10(2.0 * avstand_m * tryck)

@@ -13,6 +13,7 @@ import unittest
 
 import numpy as np
 
+from buller.nord2000 import delmodell8
 from buller.nord2000.atmosfar import HomogenAtmosfar, som_atmosfar
 from buller.nord2000.delmodell1 import (
     koherens_plan_mark,
@@ -31,18 +32,21 @@ from buller.nord2000.fresnel import (
     reflexgeometri,
     reflexgeometri_skuggzon,
 )
-from buller.nord2000.karna import Nord2000Karna
+from buller.nord2000.karna import (
+    STORSTA_A0_BANDFORMEL_DB,
+    Nord2000Karna,
+    luftabsorption_monoton_db,
+)
 from buller.nord2000.kildiffraktion import Kil, kiltryck_icke_reflekterande
+from buller.nord2000.luftabsorption import luftabsorption_db, rentonsdampning_db_per_m
 from buller.nord2000.mark import markimpedans
 from buller.nord2000.refraktion import Atmosfar, atmosfar_ur_vader, calc_eq_ssp, ovre_atmosfar
 from buller.nord2000.refraktion_mark import (
-    antal_stralar_flera_markreflexer,
+    Skuggzonslasning,
     calc_eq_ssp_mark,
     gradient_skuggzon_per_m,
     gradientfaktor,
-    hojd_cirkelstrale,
     kilavstand_skuggzon_m,
-    krokningsradie_m,
     overgangsfrekvenser_refraktion_hz,
     skuggzonsavskarmning_db,
     skuggzonshojd_m,
@@ -57,12 +61,77 @@ from buller.typer import BullerFel, Terrangprofil, Vader
 
 F = mittfrekvenser_hz()
 UPPAT: tuple[Uppatmetod, ...] = ("bokstavlig", "exakt")
-VIKTER: tuple[Skuggzonsvikter, ...] = ("hog", "lag")
+VIKTER: tuple[Skuggzonsvikter, ...] = ("hog", "lag", "ovre_band")
 MEDVIND = atmosfar_ur_vader(Vader(vind_m_s=3.0))
 MOTVIND = atmosfar_ur_vader(Vader(vind_m_s=-3.0))
 STILLA = atmosfar_ur_vader(Vader())
 # Vädret i testfallens grupper 2–12 (RL 18/18), här med motvind.
 MOTVIND_TURBULENT = atmosfar_ur_vader(Vader(vind_m_s=-3.0, std_vind_m_s=0.5, cv2=0.12, ct2=0.008))
+
+
+# HeightOfCircularRay, RayCurvature och N fanns till och med P-R2 också i `refraktion_mark.py`.
+# Sedan P-S1 finns de bara i `delmodell8.py`; testerna nedan prövar den enda källan genom
+# samma anrop som förut.
+def hojd_cirkelstrale(
+    d: float, h1: float, h2: float, xi: float, d0: float
+) -> tuple[float, float, float]:
+    p = delmodell8.hojd_cirkelstrale(d, h1, h2, xi, d0)
+    return p.hojd_m, p.vag_fran_start_m, p.vag_till_slut_m
+
+
+def krokningsradie_m(d: float, atm: Atmosfar) -> float:
+    return delmodell8.krokningsradie_m(d, atm.a_m_s, atm.b_per_s, atm.c_m_s)
+
+
+def antal_stralar_flera_markreflexer(d: float, h_max: float, atm: Atmosfar) -> float:
+    return delmodell8.antal_stralar(d, h_max, delmodell8.ekvivalent_a_m_s(d, atm), atm.c_m_s)
+
+
+def hojd_cirkelstrale_bokstavlig(
+    d: float, h1_in: float, h2_in: float, xi_in: float, d0_in: float
+) -> tuple[float, float, float]:
+    """AV 1106/07 ekv. (356)–(368) rakt av (P-R2:s tidigare `refraktion_mark.hojd_cirkelstrale`).
+
+    Oberoende räkneväg till `delmodell8.hojd_cirkelstrale`, som använder en omskriven form utan
+    utsläckning. Gäller ξ ≠ 0.
+    """
+    xi = abs(xi_in)  # ekv. (356)
+    dh = abs(h1_in - h2_in)  # ekv. (357)
+    if xi_in > 0.0:
+        h1, d0 = (h2_in, d - d0_in) if h1_in > h2_in else (h1_in, d0_in)  # ekv. (358)–(359)
+    elif h1_in >= h2_in:
+        h1, d0 = -h1_in, d0_in  # ekv. (360)
+    else:
+        h1, d0 = -h2_in, d - d0_in  # ekv. (361)
+    tan_psi = 0.5 * xi * d + dh * (2.0 + xi * dh) / (2.0 * d)  # ekv. (362)
+    x0 = tan_psi / xi  # ekv. (363)
+    z0 = h1 - 1.0 / xi  # ekv. (364)
+    radie = math.sqrt(1.0 + tan_psi * tan_psi) / xi  # ekv. (365)
+    theta = math.acos((d0 - x0) / radie)  # ekv. (366)
+    h0 = math.copysign(1.0, xi_in) * (radie * math.sin(theta) + z0)  # ekv. (367)
+    korda1 = math.hypot(d0_in, h0 - h1_in)
+    korda2 = math.hypot(d - d0_in, h2_in - h0)
+    return (
+        h0,
+        2.0 * radie * math.asin(korda1 / (2.0 * radie)),
+        2.0 * radie * math.asin(korda2 / (2.0 * radie)),
+    )  # ekv. (368)
+
+
+def antal_stralar_bokstavlig(d: float, h_max: float, atm: Atmosfar) -> float:
+    """N ur ekv. (54), (284) och (279) rakt av (P-R2:s tidigare räkneväg), 0 utan nedåtbrytning."""
+    c = atm.c_m_s
+    krokning = 0.0
+    if atm.a_m_s != 0.0:
+        krokning += math.copysign(
+            1.0 / (d / 8.0 * math.sqrt(2.0 * math.pi * c / abs(atm.a_m_s))), atm.a_m_s
+        )
+    if atm.b_per_s != 0.0:
+        krokning += math.copysign(1.0 / math.hypot(c / abs(atm.b_per_s), 0.5 * d), atm.b_per_s)
+    if krokning <= 0.0:
+        return 0.0
+    a_ekvivalent = math.pi * c * d**2 * krokning**2 / 32.0
+    return 4.0 * d / h_max * math.sqrt(a_ekvivalent / (2.0 * math.pi * c))
 
 
 def impedanser(sigma: float) -> list[complex]:
@@ -576,11 +645,33 @@ class TestDelmodell1MedRefraktion(unittest.TestCase):
         profiler = calc_eq_ssp_mark(F, d, h_s, h_r, 200.0, impedanser(200.0), MEDVIND)
         assert profiler.f_l_hz is not None
         stilla = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, STILLA)
+        per_band = Skuggzonslasning(avgorande="per_band")
         for atm in (MEDVIND, MOTVIND):
-            vind = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, atm)
+            vind = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, atm, skuggzon=per_band)
             under = profiler.f_l_hz >= F
             self.assertGreater(int(np.sum(under)), 5)
             self.assertLess(float(np.max(np.abs(vind[under] - stilla[under]))), 1.0e-6)
+        # Förvalet (`avgorande="delat"`): markeffekten under f_L är densamma, men i motvind,
+        # där den frekvensoberoende profilen ger skuggzon, läggs ΔL_SZ(f) till i alla band.
+        medvind = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, MEDVIND)
+        self.assertLess(float(np.max(np.abs(medvind[under] - stilla[under]))), 1.0e-6)
+        motvind = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, MOTVIND)
+        oberoende = calc_eq_ssp(h_s, h_r, MOTVIND)
+        kil = kilavstand_skuggzon_m(d, h_s, h_r)
+        avskarmning = np.array(
+            [
+                skuggzonsavskarmning_db(
+                    float(f), d, h_s, h_r, oberoende.xi_per_m, oberoende.c0_m_s, kil
+                )
+                for f in F
+            ]
+        )
+        np.testing.assert_allclose(
+            motvind[under], stilla[under] + avskarmning[under], rtol=0.0, atol=1.0e-6
+        )
+        self.assertEqual(float(avskarmning[0]), 0.0)  # 25 Hz: strålen når inte marken
+        self.assertLess(float(avskarmning[under][-1]), -1.0)
+        self.assertTrue(bool(np.all(np.diff(avskarmning) <= 1.0e-9)))  # växer jämnt med f
 
     def test_medvind_och_motvind_skiljer_at_ratt_hall(self) -> None:
         """Hård mark (klass G, 20 000 kNs/m⁴) och låg källa: ingen interferensdipp under 10 kHz.
@@ -808,17 +899,21 @@ class TestDelmodell2MedRefraktion(unittest.TestCase):
                 self.assertLess(float(np.max(np.abs(klippt - ett))), 1.0e-9)
 
     def test_oklippt_zon_ger_viktsumma_under_ett(self) -> None:
-        """Förvalet (ekv. 349–351 som tryckta): zonen sticker ut bakom källan vid låga frekvenser.
+        """Ekv. (349)–(351) som tryckta: zonen sticker ut bakom källan vid låga frekvenser.
 
         På 10 m med höjderna 0,01 och 1,5 m och F_λ = 1/4 är viktsumman vid 25 Hz omkring 0,76.
+        Förvalet sedan P-S1 är den klippta zonen (avsnitt 5.8), där en marktyp delad i två
+        segment ger samma svar som delmodell 1.
         """
         d, h_s, h_r = 10.0, 0.01, 1.5
         segment = [Marksegment(0.0, 3.0, 200.0, 0.0), Marksegment(3.0, d, 200.0, 0.0)]
         ett = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, STILLA)
-        oklippt = markeffekt_blandad_mark_db(F, d, h_s, h_r, segment, STILLA)
+        oklippt = markeffekt_blandad_mark_db(F, d, h_s, h_r, segment, STILLA, fresnelzon="oklippt")
         kvot = float(oklippt[0] / ett[0])
         self.assertLess(kvot, 0.9)
         self.assertGreater(kvot, 0.6)
+        forval = markeffekt_blandad_mark_db(F, d, h_s, h_r, segment, STILLA)
+        self.assertLess(float(np.max(np.abs(forval - ett))), 1.0e-9)
 
     def test_okanda_val(self) -> None:
         with self.assertRaises(BullerFel):
@@ -878,33 +973,83 @@ class TestKarnaMedRefraktion(unittest.TestCase):
         )
         self.assertLess(float(np.mean(motvind.terrang_db[16:] - stilla.terrang_db[16:])), -3.0)
 
-    def test_flera_markreflexer_vagras(self) -> None:
-        """Medvind 3 m/s på 100 m ger N ≈ 4,2 > 4: delmodell 8 skulle bidra och saknas."""
-        with self.assertRaisesRegex(BullerFel, "markreflexer"):
-            Nord2000Karna().overforing_db(self.PROFIL, Vader(vind_m_s=3.0))
-        # Kort avstånd: N < 4, ingen vägran.
-        nara = plan_profil(30.0, [200.0], [0.0, 30.0], 0.3, 1.5)
-        self.assertTrue(
-            bool(np.all(np.isfinite(Nord2000Karna().overforing_db(nara, Vader(vind_m_s=3.0)))))
+    def test_flera_markreflexer_laggs_till_med_energisumma(self) -> None:
+        """Medvind 3 m/s på 100 m ger N ≈ 4,2 > 4: ΔL_t = ΔL_flat ⊕ ΔL₈ (ekv. 332)."""
+        medvind = Vader(vind_m_s=3.0)
+        med = Nord2000Karna().berakna(self.PROFIL, medvind)
+        utan = Nord2000Karna(delmodell8="utelamna").berakna(self.PROFIL, medvind)
+        d8 = delmodell8.flera_markreflexer(F, self.PROFIL, atmosfar_ur_vader(medvind))
+        self.assertGreater(med.antal_stralar, 4.0)
+        self.assertEqual(med.antal_stralar, d8.antal_stralar)
+        assert med.flera_markreflexer_db is not None
+        self.assertTrue(bool(np.array_equal(med.flera_markreflexer_db, d8.delta_l_db)))
+        np.testing.assert_allclose(
+            med.terrang_db,
+            10.0 * np.log10(10.0 ** (utan.terrang_db / 10.0) + 10.0 ** (d8.delta_l_db / 10.0)),
+            rtol=0.0,
+            atol=1.0e-12,
         )
-        utan = Nord2000Karna(delmodell8="utelamna").overforing_db(self.PROFIL, Vader(vind_m_s=3.0))
-        self.assertTrue(bool(np.all(np.isfinite(utan))))
+        self.assertTrue(bool(np.all(med.terrang_db > utan.terrang_db)))
+        self.assertIsNone(utan.flera_markreflexer_db)
+        # ΔL_d och ΔL_a berörs inte.
+        self.assertEqual(med.spridning_db, utan.spridning_db)
+        self.assertTrue(bool(np.array_equal(med.luftabsorption_db, utan.luftabsorption_db)))
+        # Lågfrekvenslösningen (koherent summa) ger minst lika mycket.
+        lag = Nord2000Karna(delmodell8="lag").berakna(self.PROFIL, medvind)
+        self.assertTrue(bool(np.all(lag.terrang_db >= med.terrang_db)))
+
+    def test_flera_markreflexer_bidrar_inte_under_troskeln(self) -> None:
+        """N ≤ 4 (kort avstånd), motvind och homogen atmosfär: bit för bit som utan ΔL₈."""
+        nara = plan_profil(30.0, [200.0], [0.0, 30.0], 0.3, 1.5)
+        for profil, vader in (
+            (nara, Vader(vind_m_s=3.0)),
+            (self.PROFIL, Vader(vind_m_s=-3.0)),
+            (self.PROFIL, Vader(cv2=0.12, ct2=0.008)),
+            (self.PROFIL, Vader(std_vind_m_s=0.5)),
+        ):
+            med = Nord2000Karna().berakna(profil, vader)
+            utan = Nord2000Karna(delmodell8="utelamna").berakna(profil, vader)
+            self.assertLessEqual(med.antal_stralar, 4.0)
+            self.assertIsNone(med.flera_markreflexer_db)
+            self.assertTrue(bool(np.array_equal(med.terrang_db, utan.terrang_db)))
 
     def test_valen_paverkar_bara_det_de_ska(self) -> None:
         homogen = Vader(cv2=0.12, ct2=0.008)
         bas = Nord2000Karna().overforing_db(self.PROFIL, homogen)
-        for karna in (Nord2000Karna(uppat="exakt"), Nord2000Karna(skuggzonsvikter="lag")):
+        for karna in (
+            Nord2000Karna(uppat="bokstavlig"),
+            Nord2000Karna(skuggzonsvikter="hog"),
+            Nord2000Karna(skuggzon=Skuggzonslasning(avgorande="per_band", kiltopp="ekv43")),
+            Nord2000Karna(delmodell8="utelamna"),
+        ):
             self.assertTrue(bool(np.array_equal(karna.overforing_db(self.PROFIL, homogen), bas)))
         motvind = Vader(vind_m_s=-3.0, std_vind_m_s=0.5, cv2=0.12, ct2=0.008)
         a = Nord2000Karna().overforing_db(self.PROFIL, motvind)
-        b = Nord2000Karna(skuggzonsvikter="lag").overforing_db(self.PROFIL, motvind)
-        self.assertFalse(bool(np.array_equal(a, b)))
+        for karna in (
+            Nord2000Karna(skuggzonsvikter="hog"),
+            Nord2000Karna(skuggzon=Skuggzonslasning(avgorande="per_band")),
+            Nord2000Karna(skuggzon=Skuggzonslasning(avgorande="oberoende")),
+            Nord2000Karna(skuggzon=Skuggzonslasning(q_gangtid="noll")),
+            Nord2000Karna(skuggzon=Skuggzonslasning(niva="10lg")),
+            Nord2000Karna(skuggzon=Skuggzonslasning(kiltopp="ekv43")),
+            Nord2000Karna(skuggzon=Skuggzonslasning(radie="tryckt_kvadrat")),
+            Nord2000Karna(skuggzon=Skuggzonslasning(radie="tryckt")),
+        ):
+            b = karna.overforing_db(self.PROFIL, motvind)
+            self.assertTrue(bool(np.all(np.isfinite(b))))
+            self.assertFalse(bool(np.array_equal(a, b)))
+        # Fresnelzonens klippning verkar också i homogen atmosfär (vikterna vid låga frekvenser).
+        oklippt = Nord2000Karna(fresnelzon="oklippt").overforing_db(self.PROFIL, homogen)
+        self.assertFalse(bool(np.array_equal(oklippt, bas)))
+        self.assertLess(float(np.max(np.abs(oklippt - bas))), 0.25)
 
     def test_okanda_val(self) -> None:
         for kw in (
             {"uppat": "annat"},
             {"ct2_form": "annat"},
             {"delmodell8": "annat"},
+            {"delmodell8": "vagra"},
+            {"luftabsorption": "annat"},
             {"fresnelzon": "annat"},
             {"skuggzonsvikter": "annat"},
         ):
@@ -945,3 +1090,266 @@ class TestVindkomponent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEnKallaMedDelmodell8(unittest.TestCase):
+    """`delmodell8.py` är enda källan för strålens höjd, R_A,B och N (P-S1).
+
+    Innan dubbletterna i `refraktion_mark.py` togs bort jämfördes de med `delmodell8.py` på
+    slumpade fall (siffror i `docs/buller/logg/P-S1.md`). De borttagna funktionerna följde
+    ekvationerna rakt av och finns kvar här som oberoende räkneväg.
+    """
+
+    def test_delmodell8_mot_ekvationerna_rakt_av(self) -> None:
+        import random
+
+        slump = random.Random(20261121)
+        for _ in range(3000):
+            vader = Vader(
+                vind_m_s=slump.uniform(-8.0, 8.0),
+                dt_dz_k_m=slump.choice([0.0, slump.uniform(-0.3, 0.3)]),
+                z0_m=10.0 ** slump.uniform(-3.5, 0.0),
+            )
+            atm = atmosfar_ur_vader(vader)
+            d = 10.0 ** slump.uniform(0.5, 3.8)
+            h = 10.0 ** slump.uniform(-2.0, 1.5)
+            n1 = antal_stralar_bokstavlig(d, h, atm)
+            n2 = antal_stralar_flera_markreflexer(d, h, atm)
+            self.assertAlmostEqual(n1, n2, delta=1e-12 * max(n1, 1.0))
+            h1 = 10.0 ** slump.uniform(-2.0, 1.3)
+            h2 = 10.0 ** slump.uniform(-2.0, 1.3)
+            xi = slump.choice([-1.0, 1.0]) * 10.0 ** slump.uniform(-7.0, -1.5)
+            d0 = slump.uniform(0.0, d)
+            a = hojd_cirkelstrale_bokstavlig(d, h1, h2, xi, d0)
+            b = hojd_cirkelstrale(d, h1, h2, xi, d0)
+            for u, v in zip(a, b, strict=True):
+                self.assertAlmostEqual(u, v, delta=1e-6)
+
+    def test_skuggzonshojden_anvander_delmodell8(self) -> None:
+        d, h_s, h_r, xi = 100.0, 0.3, 1.5, -2.0e-3
+        kil = kilavstand_skuggzon_m(d, h_s, h_r)
+        for f in (100.0, 1000.0, 4000.0):
+            vantad = -delmodell8.hojd_cirkelstrale(
+                d, h_s, h_r, gradient_skuggzon_per_m(f, xi), kil
+            ).hojd_m
+            self.assertEqual(skuggzonshojd_m(f, d, h_s, h_r, xi, kil), vantad)
+
+
+class TestSkuggzonslasningar(unittest.TestCase):
+    """Läsningarna av skuggzonsavsnitten (P-S1): egenskaper som följer av texten själv."""
+
+    def test_forval_och_okanda_val(self) -> None:
+        forval = Skuggzonslasning()
+        self.assertEqual(
+            (forval.avgorande, forval.q_gangtid, forval.niva, forval.kiltopp, forval.radie),
+            ("delat", "direkt", "20lg", "av1851", "geometrisk"),
+        )
+        for kw in (
+            {"avgorande": "annat"},
+            {"q_gangtid": "annat"},
+            {"niva": "annat"},
+            {"kiltopp": "annat"},
+            {"radie": "annat"},
+        ):
+            with self.assertRaises(BullerFel):
+                Skuggzonslasning(**kw)  # type: ignore[arg-type]
+        with self.assertRaises(BullerFel):
+            skuggzonsavskarmning_db(1000.0, 100.0, 0.3, 1.5, -2e-3, 340.0, 30.0, "annat")  # type: ignore[arg-type]
+        with self.assertRaises(BullerFel):
+            reflexgeometri_skuggzon(100.0, 0.3, 1.5, "annat")  # type: ignore[arg-type]
+
+    def test_inget_sprang_in_i_skuggzonen_med_delat_avgorande(self) -> None:
+        """AV 1851/00 avsnitt 6.1: skuggzonsmodellen ska inte ge ett språng vid skuggzonens kant.
+
+        Mjuk mark, motvind 3 m/s, testfallens turbulens: med `avgorande="per_band"` går varje
+        band mellan f_L och f_H in i skuggzonen på sitt eget avstånd och får då hela ΔL_SZ på
+        en gång (över 10 dB vid 800 Hz på 183,5 m). Med `"delat"` finns ΔL_SZ redan där, och
+        största ändring över 0,5 m är under 1 dB i alla band.
+        """
+        avstand = np.arange(30.0, 300.01, 0.5)
+
+        def storsta_sprang(avgorande: str) -> float:
+            nivaer = np.array(
+                [
+                    markeffekt_plan_mark_db(
+                        F,
+                        float(d),
+                        0.3,
+                        1.5,
+                        200.0,
+                        0.0,
+                        MOTVIND_TURBULENT,
+                        skuggzon=Skuggzonslasning(avgorande=avgorande),  # type: ignore[arg-type]
+                    )
+                    for d in avstand
+                ]
+            )
+            return float(np.max(np.abs(np.diff(nivaer, axis=0))))
+
+        self.assertLess(storsta_sprang("delat"), 1.0)
+        self.assertGreater(storsta_sprang("per_band"), 10.0)
+
+    def test_avgorandet_spelar_ingen_roll_utan_skuggzon_eller_pa_hard_mark(self) -> None:
+        """Medvind, och hård mark (frekvensoberoende profil): de tre läsningarna är lika."""
+        for sigma, atm, d in (
+            (200.0, MEDVIND, 100.0),
+            (200.0, MOTVIND, 30.0),  # utanför skuggzon (d_SZ ≈ 55 m)
+            (20000.0, MOTVIND_TURBULENT, 100.0),
+        ):
+            svar = [
+                markeffekt_plan_mark_db(
+                    F, d, 0.3, 1.5, sigma, 0.0, atm, skuggzon=Skuggzonslasning(avgorande=a)
+                )
+                for a in ("delat", "per_band", "oberoende")
+            ]
+            self.assertTrue(bool(np.array_equal(svar[0], svar[1])))
+            np.testing.assert_allclose(svar[0], svar[2], rtol=0.0, atol=1.0e-9)
+
+    def test_tryckta_lasningar_av_ekv_121_och_387(self) -> None:
+        """Hård mark utan turbulens i skuggzon: Q(f, 0, 0, Z) = 1, och 10·lg halverar ΔL_SZ."""
+        d, h_s, h_r = 100.0, 0.3, 1.5
+        profil = calc_eq_ssp(h_s, h_r, MOTVIND)
+        kil = kilavstand_skuggzon_m(d, h_s, h_r)
+        tjugo = np.array(
+            [
+                skuggzonsavskarmning_db(float(f), d, h_s, h_r, profil.xi_per_m, profil.c0_m_s, kil)
+                for f in F
+            ]
+        )
+        tio = markeffekt_plan_mark_db(
+            F, d, h_s, h_r, 200.0, 0.0, MOTVIND, skuggzon=Skuggzonslasning(niva="10lg")
+        )
+        tjugo_tot = markeffekt_plan_mark_db(F, d, h_s, h_r, 200.0, 0.0, MOTVIND)
+        np.testing.assert_allclose(tjugo_tot - tio, 0.5 * tjugo, rtol=0.0, atol=1.0e-9)
+        # Gångtid 0 i Q ger Q = 1 för all mark: i ett band som självt ligger i skuggzon är
+        # markeffekten då 20·lg 2 + ΔL_SZ, oberoende av marken.
+        noll = markeffekt_plan_mark_db(
+            F, d, h_s, h_r, 200.0, 0.0, MOTVIND, skuggzon=Skuggzonslasning(q_gangtid="noll")
+        )
+        self.assertAlmostEqual(float(noll[-1]), 20.0 * math.log10(2.0) + float(tjugo[-1]), 9)
+
+    def test_radien_i_ekv_347(self) -> None:
+        """De tre läsningarna av R₀: bara den geometriska ger R_S + R_R ≈ d."""
+        d, h_s, h_r = 100.0, 0.3, 1.5
+        geo = reflexgeometri_skuggzon(d, h_s, h_r)
+        kvadrat = reflexgeometri_skuggzon(d, h_s, h_r, "tryckt_kvadrat")
+        tryckt = reflexgeometri_skuggzon(d, h_s, h_r, "tryckt")
+        self.assertAlmostEqual((geo.vag_kalla_m + geo.vag_mottagare_m) / d, 1.0, 3)
+        self.assertAlmostEqual(
+            (kvadrat.vag_kalla_m + kvadrat.vag_mottagare_m) / d, 1.0 / math.sqrt(2.0), 3
+        )
+        self.assertLess(tryckt.vag_kalla_m + tryckt.vag_mottagare_m, 0.2 * d)
+        for g in (geo, kvadrat, tryckt):
+            self.assertEqual(g.d_refl_m, geo.d_refl_m)
+            self.assertEqual(g.strykvinkel_rad, 0.0)
+
+    def test_kiltopp_enligt_ekv_43_ger_noll_fram_till_d_sz(self) -> None:
+        """Med kilens topp på d_SZ (ekv. 43) finns ingen kil förrän d > d_SZ."""
+        h_s, h_r = 0.3, 1.5
+        profil = calc_eq_ssp(h_s, h_r, MOTVIND)
+        d_sz = skuggzonsavstand_m(h_s, h_r, profil.xi_per_m, "exakt")
+        d = 0.98 * d_sz  # i skuggzon (d > 0,95·d_SZ) men före d_SZ
+        ekv43 = markeffekt_plan_mark_db(
+            F, d, h_s, h_r, 20000.0, 0.0, MOTVIND, skuggzon=Skuggzonslasning(kiltopp="ekv43")
+        )
+        av1851 = markeffekt_plan_mark_db(F, d, h_s, h_r, 20000.0, 0.0, MOTVIND)
+        kil = kilavstand_skuggzon_m(d, h_s, h_r)
+        avskarmning = np.array(
+            [
+                skuggzonsavskarmning_db(float(f), d, h_s, h_r, profil.xi_per_m, profil.c0_m_s, kil)
+                for f in F
+            ]
+        )
+        np.testing.assert_allclose(ekv43, av1851 - avskarmning, rtol=0.0, atol=1.0e-9)
+
+
+class TestSkuggzonsvikter(unittest.TestCase):
+    """De tre läsningarna av vikterna i delmodell 2 när mottagaren ligger i skuggzon."""
+
+    def test_ovre_band_ar_lag_till_6k3_och_hog_darover(self) -> None:
+        d, h_s, h_r = 96.75, 0.3, 1.5
+        segment = [Marksegment(0.0, 1.75, 20000.0, 0.0), Marksegment(1.75, d, 200.0, 0.0)]
+        svar = {
+            vikter: markeffekt_blandad_mark_db(
+                F, d, h_s, h_r, segment, MOTVIND_TURBULENT, skuggzonsvikter=vikter
+            )
+            for vikter in VIKTER
+        }
+        self.assertTrue(bool(np.array_equal(svar["ovre_band"][:25], svar["lag"][:25])))
+        self.assertTrue(bool(np.array_equal(svar["ovre_band"][25:], svar["hog"][25:])))
+        self.assertFalse(bool(np.array_equal(svar["lag"][25:], svar["hog"][25:])))
+        forval = markeffekt_blandad_mark_db(F, d, h_s, h_r, segment, MOTVIND_TURBULENT)
+        self.assertTrue(bool(np.array_equal(forval, svar["ovre_band"])))
+
+    def test_utanfor_skuggzon_spelar_valet_ingen_roll(self) -> None:
+        d, h_s, h_r = 96.75, 0.3, 1.5
+        segment = [Marksegment(0.0, 1.75, 20000.0, 0.0), Marksegment(1.75, d, 200.0, 0.0)]
+        for atm in (STILLA, MEDVIND):
+            svar = [
+                markeffekt_blandad_mark_db(F, d, h_s, h_r, segment, atm, skuggzonsvikter=v)
+                for v in VIKTER
+            ]
+            self.assertTrue(bool(np.array_equal(svar[0], svar[1])))
+            self.assertTrue(bool(np.array_equal(svar[0], svar[2])))
+
+
+class TestLuftabsorptionMonoton(unittest.TestCase):
+    """`karna.luftabsorption_monoton_db`: ekv. (287) hållen på sitt största värde."""
+
+    def test_lika_med_ekv_287_under_maximum(self) -> None:
+        for avstand in (10.0, 100.0, 1000.0):
+            self.assertTrue(
+                bool(
+                    np.array_equal(
+                        luftabsorption_monoton_db(F, avstand, 15.0, 70.0, 101.325),
+                        luftabsorption_db(F, avstand, 15.0, 70.0, 101.325),
+                    )
+                )
+            )
+
+    def test_maximum_foljer_av_formeln(self) -> None:
+        """d/dA₀ av A₀·(a − b·A₀)^1,6 är noll i A₀ = a/(2,6·b); dämpningen där är 146,2 dB."""
+        a, b = 1.0053255, 0.00122622
+        self.assertAlmostEqual(STORSTA_A0_BANDFORMEL_DB, a / (2.6 * b), 12)
+        vid = STORSTA_A0_BANDFORMEL_DB * (a - b * STORSTA_A0_BANDFORMEL_DB) ** 1.6
+        for steg in (-1.0, 1.0):
+            intill = STORSTA_A0_BANDFORMEL_DB + steg
+            self.assertLess(intill * (a - b * intill) ** 1.6, vid)
+        self.assertAlmostEqual(vid, 146.2, 1)
+
+    def test_avtar_aldrig_med_avstandet(self) -> None:
+        avstand = [50.0 * 1.3**k for k in range(22)]  # 50 m … 12 km
+        nivaer = np.array([luftabsorption_monoton_db(F, d, 15.0, 70.0, 101.325) for d in avstand])
+        self.assertTrue(bool(np.all(np.diff(nivaer, axis=0) <= 0.0)))
+        self.assertTrue(bool(np.all(nivaer <= 0.0)))
+        self.assertAlmostEqual(float(nivaer[-1, -1]), -146.2, 1)
+
+    def test_tryckt_formel_avtar_for_den_yttersta_kallpunkten(self) -> None:
+        """100 m från en rak väg, källpunkten i 89°: A₀ ≈ 796 dB vid 10 kHz ger 2,9 dB dämpning."""
+        avstand = 96.75 / math.cos(math.radians(89.0))
+        tryckt = luftabsorption_db(F, avstand, 15.0, 70.0, 101.325)
+        mitt = luftabsorption_db(F, 96.75, 15.0, 70.0, 101.325)
+        self.assertGreater(float(tryckt[-1]), float(mitt[-1]))  # mindre dämpning 57 ggr längre bort
+        self.assertAlmostEqual(float(tryckt[-1]), -2.9, 1)
+        monoton = luftabsorption_monoton_db(F, avstand, 15.0, 70.0, 101.325)
+        self.assertAlmostEqual(float(monoton[-1]), -146.2, 1)
+        a0 = np.array([rentonsdampning_db_per_m(float(f), 15.0, 70.0) * avstand for f in F])
+        under = a0 <= STORSTA_A0_BANDFORMEL_DB
+        self.assertEqual(int(np.sum(~under)), 3)  # 6,3, 8 och 10 kHz
+        self.assertTrue(bool(np.array_equal(monoton[under], tryckt[under])))
+        self.assertTrue(bool(np.all(monoton[~under] < -146.0)))
+
+    def test_karnans_val(self) -> None:
+        profil = plan_profil(5544.0, [200.0], [0.0, 5544.0], 0.3, 1.5)
+        vader = Vader(cv2=0.12, ct2=0.008)
+        monoton = Nord2000Karna().berakna(profil, vader)
+        tryckt = Nord2000Karna(luftabsorption="tryckt").berakna(profil, vader)
+        self.assertLess(float(monoton.luftabsorption_db[-1]), -146.0)
+        self.assertGreater(float(tryckt.luftabsorption_db[-1]), -3.0)
+        self.assertTrue(bool(np.array_equal(monoton.terrang_db, tryckt.terrang_db)))
+        # Där ekv. (287) inte är definierad (A₀ över ca 820 dB) ger den tryckta formen fel.
+        langt = plan_profil(20000.0, [200.0], [0.0, 20000.0], 0.3, 1.5)
+        with self.assertRaises(BullerFel):
+            Nord2000Karna(luftabsorption="tryckt").berakna(langt, vader)
+        overforing = Nord2000Karna().berakna(langt, vader).overforing_db
+        self.assertTrue(bool(np.all(np.isfinite(overforing))))
