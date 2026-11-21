@@ -46,12 +46,13 @@ skyddat API), se `docs/KONTO.md`. Start och API: se `webb/README.md`.
 Så här visar du Floden för kollegor, från noll till en körande demo på en Mac. Allt körs lokalt och
 inget skickas någonstans.
 
-**Krav:** Python 3.11 eller senare (`brew install python@3.12`), Node.js 20 eller senare
-(`brew install node`) och git.
+**Krav:** Python 3.12 (3.11–3.13 fungerar; **inte 3.14**, som Homebrews `python3` numera är –
+då finns inga färdiga paket och pip försöker bygga scipy från källkod),
+Node.js 20 eller senare och git: `brew install python@3.12 node`.
 
 ```bash
 git clone https://github.com/joelberring/floden.git && cd floden
-python3 -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate   # kontrollera: python --version
 pip install -e ".[dev]"          # Flodens Python-paket och verktygen; `.[konto]` räcker för inloggning
 export PYTHONPATH=src            # om `floden` inte hittar paketen
 (cd webb && npm ci)              # webbklientens beroenden (en gång)
