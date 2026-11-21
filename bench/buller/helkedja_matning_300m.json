@@ -1,0 +1,37 @@
+{
+  "scen": {
+    "sida_m": 300.0,
+    "byggnader": 42,
+    "cell_m": 1.0
+  },
+  "antal_mottagare": 20,
+  "antal_kallor": 300,
+  "antal_par": 6000,
+  "tid_banor_s": 5.332,
+  "tid_full_s": 2.16,
+  "mikrosekunder_per_par_full": 360.1,
+  "tid_skiss_s": 2.564,
+  "tidsvinst_skiss_mot_full": 0.84,
+  "felgrans_profil_db": 0.5,
+  "storsta_fel_db": 0.005242661108383118,
+  "minsta_fel_db": 0.0,
+  "storsta_garanterade_grans_db": 0.4721100655245004,
+  "fel_inom_grans": true,
+  "markning": "Skiss – ej för beslut",
+  "manifest_matvarden": {
+    "antal_mottagare": 20,
+    "antal_kallor": 300,
+    "antal_banor": 21902,
+    "antal_par_i_lager": 5855,
+    "antal_restpar": 145,
+    "antal_mojliga_par": 6000,
+    "antal_beraknade_par": 6455,
+    "andel_beraknade_par": 1.0758333333333334,
+    "antal_omraknade_par_inkrementellt": 0,
+    "antal_omklustrade_mottagare": 0,
+    "kortid_s": 2.5539940419998857,
+    "garanterad_felgrans_max_db": 0.4721100655245004,
+    "uppmatt_klustringsfel_db": 2.8219750760172246e-05,
+    "antal_kontrollmottagare": 2
+  }
+}

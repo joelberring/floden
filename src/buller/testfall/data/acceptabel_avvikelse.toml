@@ -1,0 +1,117 @@
+# Tillåtna avvikelser mellan beräknat resultat och testfallens facit.
+#
+# Två regelverk, ett per testomgång. Facit anger vilket som gäller (fältet `regelverk`).
+# Inget tal här är kontrollerat av människa. Gränserna får inte ändras för att få ett fall
+# att gå igenom.
+
+[meta]
+dataversion = "2"
+verifierad_av_manniska = false
+
+# ---------------------------------------------------------------------------------------
+# Miljøprojekt 1335/2010, kapitel 6 "Acceptable Deviation", s. 25.
+# Avläst ur PDF:en med pdftotext samt tre gånger via webbhämtning (PDF två gånger, HTML en
+# gång); samma tal varje gång.
+[regelverk.mp1335_2010]
+dokument = "Miljøprojekt 1335/2010, Revised test cases for updated version of Nord2000-road"
+avsnitt = "6 Acceptable Deviation"
+sida = 25
+
+# A-vägda totalnivåer. Rapporten nämner LAeq,24h, LAE och LAmax.
+# Avvikelse större än `grans_underkand_db`: underkänd.
+# Avvikelse större än `grans_utredas_db` (men inte underkänd): ska utredas och förklaras.
+[regelverk.mp1335_2010.standard.totalniva]
+storheter = ["LAeq_24h", "LAE", "LAmax"]
+grans_utredas_db = 0.5
+grans_underkand_db = 1.0
+# Lden nämns inte i kapitel 6 i 1335/2010 men är totalnivån i gruppen årsmedel (bilaga D).
+# Samma gränser tillämpas (tolkning, se docs/buller/logg/B1-B5.md).
+storheter_tolkning = ["Lden"]
+
+# Tersband. Avvikelse större än `grans_utredas_db` i något band: ska utredas.
+# Rapporten anger ingen gräns för underkänt per band.
+[regelverk.mp1335_2010.standard.tersband]
+jamfors = true
+grans_utredas_db = 1.0
+# dL anges enligt kapitel 2 bara som upplysning och krävs inte i provningen.
+jamfors_inte = ["dL"]
+
+# Markeffektdipp. En förskjutning av dippen med så här många tersband godtas i regel.
+[regelverk.mp1335_2010.standard.markeffektdipp]
+tillaten_forskjutning_band = 1
+
+# ---------------------------------------------------------------------------------------
+# Referencelaboratoriet RL 18-18 (version december 2018), kapitel 6, s. 16.
+# Avläst ur PDF:en med pdftotext och en gång via webbhämtning; samma tal.
+# Gränserna gäller när terrängens förbehandling inte påverkar resultatet. Enligt rapporten kan
+# förbehandlingen bortses från i grupp 1 (rak väg), 3 (stadsgata) och 4 (årsmedel).
+[regelverk.rl18_18]
+dokument = "Referencelaboratoriet RL 18-18, Test Cases for Road Traffic Noise – Nord2000, version december 2018"
+avsnitt = "6 Acceptable Deviation"
+sida = 16
+
+# Rapporten nämner LAeq,24h, Lden och LAE (inte LAmax).
+[regelverk.rl18_18.standard.totalniva]
+storheter = ["LAeq_24h", "Lden", "LAE"]
+grans_utredas_db = 0.5
+grans_underkand_db = 1.0
+
+[regelverk.rl18_18.standard.tersband]
+jamfors = true
+grans_utredas_db = 1.0
+jamfors_inte = ["dL"]
+
+[regelverk.rl18_18.standard.markeffektdipp]
+tillaten_forskjutning_band = 1
+
+# Grupp 2 (kurvig väg), ingen vind och medvind: de gulmarkerade värdena i bladet
+# "ToBeTested". Gränserna är fördubblade. Obligatoriskt är bara LAeq,24h (kapitel 3);
+# spektrum och övriga resultat finns kvar som upplysning.
+[regelverk.rl18_18.kurvig_vag_gul.totalniva]
+storheter = ["LAeq_24h"]
+grans_utredas_db = 1.0
+grans_underkand_db = 2.0
+
+[regelverk.rl18_18.kurvig_vag_gul.tersband]
+jamfors = false
+
+# Grupp 2, motvind (inte gulmarkerade): ingen övre gräns är definierad; avvikelse över 2 dB
+# ska uppmärksammas.
+[regelverk.rl18_18.kurvig_vag_motvind.totalniva]
+storheter = ["LAeq_24h"]
+grans_utredas_db = 2.0
+# grans_underkand_db saknas avsiktligt: rapporten definierar ingen.
+
+[regelverk.rl18_18.kurvig_vag_motvind.tersband]
+jamfors = false
+
+# ---------------------------------------------------------------------------------------
+# Kända fel i de officiella testfallen. Undantagen ändrar inte facit; de styr vad som
+# jämförs och skrivs ut som anmärkning i varje resultat.
+# Källa: A. Gustafson (VTI), "A comment on two errors in the official test cases for Nord2000
+# road traffic noise version December 2018", Kunskapscentrum om buller, version 2024-05-20.
+# Avläst med pdftotext; hela texten läst.
+[[undantag]]
+id = "KCB-2024-1"
+regelverk = "rl18_18"
+verkan = "anmarkning"
+storheter = []
+kalla = "Kunskapscentrum om buller 2024-05-20, avsnitt 2.1"
+text = "Facit är räknat med källorna 0,75 m (lätta) respektive 1,25 m (tunga) från fordonets mitt, inte 1 m som källmodellen från 2006 anger. Fallen har källinjen där facit har den. Skillnaden uppges vara högst 0,05 dB i fall 1–7 för rak väg och är inte undersökt i övriga fall."
+
+[[undantag]]
+id = "KCB-2024-2"
+regelverk = "rl18_18"
+verkan = "jamfors_inte"
+storheter = ["LAmax"]
+kalla = "Kunskapscentrum om buller 2024-05-20, avsnitt 2.2"
+text = "Facits maximalnivåer saknar omräkningen från energimedelvärde till aritmetiskt medelvärde (SP Rapport 2006:12, ekvation 2.13) och är därför för höga. LAmax jämförs inte mot facit."
+
+# ---------------------------------------------------------------------------------------
+# INTE ur rapporterna. De säger att nivåskillnaden kan bli stor i band nära en dipp men inte
+# hur nära. Värdet nedan är ett val i B1 (se loggen) och ska beslutas av människa: band som
+# ligger högst så här många band från dippens läge i facit eller i beräkningen räknas som
+# "nära dippen".
+[tolkning_b1]
+dipp_narhet_band = 1
+beslutad_av_manniska = false

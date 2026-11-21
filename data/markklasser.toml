@@ -1,0 +1,134 @@
+# Markklasser (K1 markslagskoder) och deras egenskaper per domän. Läses av karna.geometri.markklass.
+# Kolumnerna per domän läggs till av respektive domänagent; ändra inte andras kolumner.
+# vatten: initial_faktor och ksat_faktor är samma värden som mark_forluster.effektiv_markparametrar
+# använder (ett test håller dem lika). ksat_faktor utelämnas där Ksat kommer från en egen modell
+# (berg, grönt tak) i stället för jordarten. ksat_faktor multiplicerar jordartens Ksat.
+version = 1
+
+[markklass.0]
+namn = "okant"
+
+[markklass.0.vatten]
+initial_faktor = 0.5
+ksat_faktor = 0.0
+
+[markklass.0.luft]
+
+[markklass.0.buller]
+
+[markklass.0.dagsljus]
+
+[markklass.1]
+namn = "hardgjort"
+
+[markklass.1.vatten]
+initial_faktor = 1.0
+ksat_faktor = 0.0
+
+[markklass.1.luft]
+
+[markklass.1.buller]
+
+[markklass.1.dagsljus]
+
+[markklass.2]
+namn = "tak"
+
+[markklass.2.vatten]
+initial_faktor = 1.0
+ksat_faktor = 0.0
+
+[markklass.2.luft]
+
+[markklass.2.buller]
+
+[markklass.2.dagsljus]
+
+[markklass.3]
+namn = "gront_tak"
+
+[markklass.3.vatten]
+initial_faktor = 1.0
+
+[markklass.3.luft]
+
+[markklass.3.buller]
+
+[markklass.3.dagsljus]
+
+[markklass.4]
+namn = "gras"
+
+[markklass.4.vatten]
+initial_faktor = 1.0
+ksat_faktor = 1.0
+
+[markklass.4.luft]
+
+[markklass.4.buller]
+
+[markklass.4.dagsljus]
+
+[markklass.5]
+namn = "skog"
+
+[markklass.5.vatten]
+initial_faktor = 1.5
+ksat_faktor = 1.5
+
+[markklass.5.luft]
+
+[markklass.5.buller]
+
+[markklass.5.dagsljus]
+
+[markklass.6]
+namn = "berg"
+
+[markklass.6.vatten]
+initial_faktor = 1.0
+
+[markklass.6.luft]
+
+[markklass.6.buller]
+
+[markklass.6.dagsljus]
+
+[markklass.7]
+namn = "grus"
+
+[markklass.7.vatten]
+initial_faktor = 1.0
+ksat_faktor = 1.5
+
+[markklass.7.luft]
+
+[markklass.7.buller]
+
+[markklass.7.dagsljus]
+
+[markklass.8]
+namn = "vatten"
+
+[markklass.8.vatten]
+initial_faktor = 0.0
+ksat_faktor = 0.0
+
+[markklass.8.luft]
+
+[markklass.8.buller]
+
+[markklass.8.dagsljus]
+
+[markklass.9]
+namn = "byggnad"
+
+[markklass.9.vatten]
+initial_faktor = 1.0
+ksat_faktor = 0.0
+
+[markklass.9.luft]
+
+[markklass.9.buller]
+
+[markklass.9.dagsljus]

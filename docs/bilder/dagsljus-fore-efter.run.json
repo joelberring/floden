@@ -1,0 +1,66 @@
+{
+  "kontrakt": "K0/v1",
+  "modul": "dagsljus-fore-efter",
+  "kodversion": "43647bfe0468-smutsig",
+  "start": "2026-11-21T15:03:39+01:00",
+  "indata": [
+    {
+      "roll": "fraga",
+      "fil": "exempel/fragor/dagsljus_fore_efter.toml",
+      "sha256": "71f5f170bb440d8765ff09bbb8d0f3250618bc33c5726461ff412c382f4bcd1c"
+    },
+    {
+      "roll": "k9_hojd",
+      "fil": "k9_hojd.json",
+      "sha256": "d996d6772fc4873e5cc7c52edcffde78dae3af70d818a61d0945b34abaad9b7b"
+    },
+    {
+      "roll": "k9_nytt_hus",
+      "fil": "k9_nytt_hus.json",
+      "sha256": "23592ec5cf483c29bc8617e480a74173f7fc7da11c5759e22e826a21fef4679c"
+    }
+  ],
+  "parametrar": {
+    "fraga": "dagsljus-fore-efter",
+    "cellstorlek_m": 1.0,
+    "kvarter_sida_m": 300.0,
+    "anm": "Syntetiskt kvarter på platt mark (K1 v2); nycklar i sammanstallning.json."
+  },
+  "utdata": [
+    {
+      "roll": "fore_efter",
+      "fil": "dagsljus-fore-efter.png",
+      "sha256": "02295221086164ee15c282222a98120e08dc40d933867b5e77b21a8d500ce05b"
+    }
+  ],
+  "matvarden": {
+    "soltimmar_bas_medel_h": 6.582933336771031,
+    "hojd_soltimmar_diff_min_h": -5.5,
+    "hojd_celler_med_fler_soltimmar_utanfor_fotavtryck": 0,
+    "hojd_celler_forandrade": 4323,
+    "hojd_vsc_diff_min_procentenheter": -3.0433999999999983,
+    "hojd_vsc_diff_max_procentenheter": 0.0,
+    "hojd_vsc_punkter_jamforda": 3802,
+    "nytt_hus_soltimmar_diff_min_h": -6.666666507720947,
+    "nytt_hus_celler_med_fler_soltimmar_utanfor_fotavtryck": 0,
+    "nytt_hus_celler_forandrade": 6945,
+    "nytt_hus_vsc_diff_min_procentenheter": -30.4889,
+    "nytt_hus_vsc_diff_max_procentenheter": 0.0,
+    "nytt_hus_vsc_punkter_jamforda": 3802,
+    "jobb": 54,
+    "i_cache": 0,
+    "att_kora": 54,
+    "total_tid_s": 37.778923
+  },
+  "varningar": [
+    "10000 av 10000 celler har strålar som lämnar höjdfältet före påverkansradien (rutan ligger vid kanten av scenariots data); se trunkering.tif (andel av 180 riktningar)",
+    "294 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "304 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "364 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "367 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "444 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "521 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "534 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)",
+    "600 fasadpunkter har strålar som lämnar höjdfältet före påverkansradien (kolumnen trunkerade_riktningar)"
+  ]
+}

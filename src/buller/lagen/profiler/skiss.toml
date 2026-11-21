@@ -1,0 +1,20 @@
+# Toleransprofil för skissläget (KB3/v1). Filens sha256 skrivs i körmanifestet.
+# Här finns bara numeriska toleranser och märkning. Riktvärden, trafikdata och väderstatistik
+# hör inte hemma i profilen: de kräver angiven källa och hanteras av andra paket.
+
+[profil]
+namn = "skiss"
+version = "1"
+lage = "skiss"
+markning = "Skiss – ej för beslut"
+
+[klustring]
+# Garanterad gräns för felet i A-vägd totalnivå per mottagare (dB).
+felgrans_db = 0.5
+# Antal mottagare som dessutom räknas utan klustring för att mäta det verkliga felet.
+kontrollmottagare_antal = 2
+
+[banor]
+# Källor längre bort än så beräknas aldrig; deras övre gräns ingår i redovisad felgräns.
+maxradie_m = 2000.0
+reflexordning = 1

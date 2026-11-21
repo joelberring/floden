@@ -16,6 +16,11 @@ ger samma K1-rutor oavsett väg:
 - `magasin` → `LappMagasin`: kräver `volym_m3`; valfritt `botten_rh2000`, `markslag`.
 Övriga typer ger ett tydligt fel i stället för att hoppas över: ett scenario som bara delvis
 tillämpas ger resultat som ser rätt ut men inte är det.
+
+K1 v2 (byggnadsregister, terräng och vegetation): `byggnad_bort`, `byggnad_hojd` och `vegetation`
+tillämpas av `karna.geometri.tillampa` i stället för via K3, och `byggnad_ny` går dit för v2-rutor
+(utan krav på entré). På en v1-ruta ger de tre förstnämnda ett fel som säger att rutan måste
+byggas om med v2.
 """
 
 from __future__ import annotations
@@ -30,6 +35,27 @@ from karna.scenario import Andring, Planscenario, ScenarioFel, las_scenario, pla
 # Höjs när översättningen ändras (ingår i rutornas lappnyckel).
 K9_TILL_K3_VERSION = "1"
 STODDA_TYPER: frozenset[str] = frozenset({"markhojd", "markslag", "magasin", "gata", "byggnad_ny"})
+GEOMETRI_TYPER: frozenset[str] = frozenset({"byggnad_bort", "byggnad_hojd", "vegetation"})
+
+
+def dela_andringar(
+    andringar: Sequence[Andring], k1_version: int, scenario_id: str = ""
+) -> tuple[tuple[Andring, ...], tuple[Andring, ...]]:
+    """Delar K9-ändringar i (K3-delen, geometridelen) för en K1-version.
+
+    v2: `byggnad_ny` hör till geometridelen. v1: geometrityperna ger fel.
+    """
+    if k1_version < 2:
+        fel = sorted({a.typ for a in andringar} & GEOMETRI_TYPER)
+        if fel:
+            raise ScenarioFel(
+                f"Scenariot '{scenario_id}': {', '.join(fel)} kräver K1 v2 (byggnadsregister, "
+                "terrang.tif och vegetation.tif), men basen är K1 v1. Bygg om rutorna med v2."
+            )
+        return tuple(andringar), ()
+    geometri = tuple(a for a in andringar if a.typ in GEOMETRI_TYPER or a.typ == "byggnad_ny")
+    k3 = tuple(a for a in andringar if a not in geometri)
+    return k3, geometri
 
 
 def _ring(geometri: Mapping[str, Any] | None, a: Andring) -> tuple[tuple[float, float], ...]:
@@ -62,7 +88,7 @@ def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
 
 
 def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
-    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar."""
+    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna)."""
     from lapp.kontrakt import (
         HojdYta,
         LappByggnad,

@@ -1,0 +1,52 @@
+# Spridningszoner (skog) i Nord2000, delmodell 10 – dataversion 1.
+#
+# Källa: DELTA AV 1106/07 (rev. 13 jan 2014), avsnitt 5.19, tabell 8 (s. 125) och tabell 9
+# (s. 126; tabellrubriken står överst på s. 127). FORCE TC-101327 (2019) ändrar inget i
+# avsnitt 5.19 eller i tabellerna.
+#
+# Varje tal är avläst på två oberoende sätt och jämfört maskinellt, tecken för tecken:
+#   1. pdftotext -layout på AV-1106-07.pdf (s. 125–126),
+#   2. sidbild (pdftoppm, 150 dpi hela sidan och 300 dpi utsnitt av tabell 9), avskriven för hand.
+# Som tredje kontroll stämmer båda tabellerna tecken för tecken med DELTA AV 1849/00 (rev. 2006),
+# tabell 5 (s. 94) och bilaga J (s. 127).
+#
+# Inte kontrollerad av människa. Regel: inget tal här får skrivas ur minnet. Ett värde som inte
+# kunnat bekräftas på båda sätten skrivs som tom sträng (""); inläsningen ger då `BullerFel`.
+
+[meta]
+namn = "nord2000_spridningszon"
+dataversion = "1"
+verifierad_av_manniska = false
+dokument = "DELTA AV 1106/07, Proposal for Nordtest Method: Nord2000 – Prediction of Outdoor Sound Propagation, rev. 13 jan 2014"
+kontrolldokument = "DELTA AV 1849/00 (rev. 2006), tabell 5 och bilaga J"
+avlast = "2026-11-21"
+
+# Frekvensvikten k_f för skog som funktion av ka (vågtal gånger medelstamradie).
+# Mellan tabellvärdena gäller linjär interpolation (avsnitt 5.19, stycket före tabell 8).
+[tabell8]
+kalla = "AV 1106/07 avsnitt 5.19, tabell 8, s. 125"
+ka = [0.0, 0.7, 1.0, 1.5, 3.0, 5.0, 10.0, 20.0]
+kf = [0.00, 0.00, 0.05, 0.20, 0.70, 0.82, 0.95, 1.00]
+
+# ΔL(h', α, R') i dB. En rad per R'. Kolumnerna står i tabellens ordning:
+#   h' = 0,01: α = 0; 0,2; 0,4 | h' = 0,1: α = 0; 0,2; 0,4 | h' = 1: α = 0; 0,2; 0,4
+# Värdet −14,25 (R' = 0,5, h' = 0,01, α = 0,2) har två decimaler även i originalet.
+[tabell9]
+kalla = "AV 1106/07 avsnitt 5.19, tabell 9, s. 126"
+h_norm = [0.01, 0.1, 1.0]
+alfa = [0.0, 0.2, 0.4]
+r_norm = [0.0625, 0.125, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 10.0]
+dl_db = [
+    [6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0, 6.0],
+    [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [-7.5, -7.5, -7.5, -6.0, -7.0, -7.5, -6.0, -7.0, -7.5],
+    [-14.0, -14.25, -14.5, -12.5, -13.5, -14.5, -12.5, -13.0, -14.0],
+    [-18.0, -18.8, -19.5, -17.3, -18.0, -19.0, -16.0, -16.8, -17.7],
+    [-21.5, -22.5, -23.5, -20.5, -21.6, -22.8, -19.3, -20.5, -21.3],
+    [-26.3, -27.5, -29.5, -25.5, -27.2, -29.0, -24.0, -25.5, -26.3],
+    [-31.0, -32.5, -34.5, -30.0, -32.0, -33.3, -27.5, -29.5, -30.8],
+    [-40.0, -42.5, -45.5, -37.5, -40.5, -42.9, -34.2, -36.0, -37.8],
+    [-49.5, -52.5, -56.3, -45.5, -49.5, -52.5, -40.4, -42.8, -45.5],
+    [-67.0, -72.5, -78.0, -62.0, -67.0, -72.0, -52.5, -56.2, -60.0],
+    [-102.5, -113.0, -122.5, -94.7, -103.7, -112.0, -78.8, -84.0, -89.7],
+]

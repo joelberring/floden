@@ -1,0 +1,19 @@
+# Toleransprofil för rapportläget (KB3/v1). Filens sha256 skrivs i körmanifestet.
+# Här finns bara numeriska toleranser och märkning. Riktvärden, trafikdata och väderstatistik
+# hör inte hemma i profilen: de kräver angiven källa och hanteras av andra paket.
+
+[profil]
+namn = "rapport"
+version = "1"
+lage = "rapport"
+markning = "Rapport"
+
+[klustring]
+# Garanterad gräns för felet i A-vägd totalnivå per mottagare (dB). KB3: högst 0,1 dB.
+felgrans_db = 0.1
+# Antal mottagare som dessutom räknas utan klustring för att mäta det verkliga felet.
+kontrollmottagare_antal = 10
+
+[banor]
+# Ingen maxradie: avlägsna källor hanteras av klustringen med garanterad felgräns.
+reflexordning = 2

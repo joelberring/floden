@@ -36,6 +36,8 @@ from gemensamt.regn import (
 from mark_forluster.koppling import ForlustKopplingResultat, berakna_effektivt_regn_k5
 from mark_forluster.parametrar import ForlustFel
 from markmodell.brytlinjer import Brytlinje, BrytlinjeFel
+from markmodell.byggnadskallor import las_byggnadskalla
+from markmodell.byggnadsregister import ByggnadsKandidat, ByggnadsregisterFel
 from markmodell.grundkarta import GrundkartaFel, interpolera_med_brytlinjer, las_baskarta_dxf
 from markmodell.hinder_oppningar import BYGGNAD, OKANT, Byggnad, HinderOppningFel, Oppning
 from markmodell.interpolering import InterpoleringFel
@@ -232,6 +234,18 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                 )
             )
 
+        byggnadskandidater: tuple[ByggnadsKandidat, ...] = ()
+        if args.byggnader is not None:
+            bygg_fil = Path(args.byggnader)
+            bygg_res = las_byggnadskalla(
+                bygg_fil, lager=args.byggnader_lager, fran_epsg=args.byggnader_epsg
+            )
+            byggnadskandidater = bygg_res.kandidater
+            dxf_varningar.extend(bygg_res.varningar)
+            extra_kallor.append(
+                KallPost(roll="byggnadskalla", kalla=bygg_fil.name, sha256=bygg_res.sha256)
+            )
+
         avstand_karta: NDArray[np.float32] | None = None
         anvand_barriar_idw = bool(
             args.barriar_idw
@@ -288,6 +302,7 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                 brytlinjer=brytlinjer,
                 byggnader=byggnader,
                 oppningar=oppningar,
+                byggnadskandidater=byggnadskandidater,
                 markslag_grund=markslag_grund,
                 avstand_till_punkt_m=avstand_karta,
                 extra_kallor=extra_kallor,
@@ -384,6 +399,7 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
         return 0
     except (
         PipelineFel,
+        ByggnadsregisterFel,
         GrundkartaFel,
         InterpoleringFel,
         BrytlinjeFel,
@@ -773,6 +789,14 @@ def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
         utfall = "GODKAND" if ok else "UNDERKAND"
         print(f"\nSammanfattning (Grupp D / analytiska 2D-facit): {utfall}.")
         return 0 if ok else 1
+    if grupp is not None and grupp.strip().upper() == "E":
+        from testsvit.dagsljus_fall import kor_dagsljus_testfall
+
+        dl_res, dl_tabell = kor_dagsljus_testfall()
+        print(dl_tabell)
+        antal_ok = sum(1 for r in dl_res if r.godkand)
+        print(f"\nSammanfattning (Grupp E / dagsljus): {antal_ok}/{len(dl_res)} passerade.")
+        return 0 if antal_ok == len(dl_res) else 1
     if grupp is not None and grupp.strip().upper() == "C":
         try:
             ea_res, ea_tabell = kor_alla_ea_testfall()
@@ -976,7 +1000,7 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     mm_parser = subparsers.add_parser(
         "markmodell",
-        help="Bygg markmodell-ruta (K1/v1) från laser/GeoTIFF, DXF-baskarta och ortofoto.",
+        help="Bygg markmodell-ruta (K1/v2) från laser/GeoTIFF, DXF-baskarta och ortofoto.",
         description="Bygg komplett K1-markmodellruta i EPSG:3011 med recept.json och run.json.",
     )
     mm_parser.add_argument(
@@ -1002,6 +1026,20 @@ def bygg_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Valfri ASCII-DXF baskarta (brytlinjer, byggnader, öppningar).",
+    )
+    mm_parser.add_argument(
+        "--byggnader",
+        type=str,
+        default=None,
+        help="Valfri byggnadskälla (GeoPackage/GeoJSON, t.ex. Lantmäteriet eller OSM) till "
+        "byggnader.gpkg (K1 v2). Slås ihop med byggnader ur --dxf.",
+    )
+    mm_parser.add_argument("--byggnader-lager", type=str, default=None, help="Lager i --byggnader.")
+    mm_parser.add_argument(
+        "--byggnader-epsg",
+        type=int,
+        default=None,
+        help="Koordinatsystem om --byggnader saknar eget (konverteras till EPSG:3011).",
     )
     mm_parser.add_argument(
         "--ortofoto",
@@ -1369,6 +1407,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     _lagg_till_fraga(subparsers)
 
+    from dagsljus.cli import registrera as registrera_dagsljus
+
+    registrera_dagsljus(subparsers)
+
     from luft.cli import registrera as registrera_luft
 
     registrera_luft(subparsers)
@@ -1432,6 +1474,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from karna.cli import kor_kommando as _kor_fraga
 
         return _kor_fraga(args)
+    if args.kommando == "dagsljus":
+        from dagsljus.cli import kor as kor_dagsljus
+
+        return kor_dagsljus(args)
     if args.kommando == "luft":
         from luft.cli import kor as kor_luft
 
