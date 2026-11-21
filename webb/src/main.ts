@@ -1,4 +1,5 @@
 import "maplibre-gl/dist/maplibre-gl.css";
+import "./tema.css";
 import "./style.css";
 
 import {
@@ -11,6 +12,7 @@ import {
   korSimulering,
   skapaRapport,
 } from "./api";
+import { renderaModulVaxlare, startaRouter } from "./router";
 import { arPolygonRitLage, FlodenKartaKontroll, STANDARD_LAGER, type RitLage } from "./karta";
 import type {
   DikeAtgardPayload,
@@ -237,6 +239,7 @@ function byggLagerLista(): void {
     slider.max = "100";
     slider.value = String(Math.round(lager.opacitet * 100));
     slider.title = `Opacitet för ${lager.namn}`;
+    slider.setAttribute("aria-label", `Opacitet för ${lager.namn}`);
     slider.addEventListener("input", () => {
       const andel = Number(slider.value) / 100;
       kartaKontroll.sattLager(lager.id, { opacitet: andel });
@@ -1456,6 +1459,41 @@ rapportKnapp.addEventListener("click", () => {
     });
 });
 
-void starta().catch((err: unknown) => {
+const arbetsbankKlar = starta().catch((err: unknown) => {
   korStatus.textContent = `Kunde inte ansluta till API: ${err instanceof Error ? err.message : String(err)}`;
+});
+
+// Kartsidans adress följer valt område (utan att routern ritar om).
+omradeValjare.addEventListener("change", () => {
+  const ny = `#/karta/${encodeURIComponent(omradeValjare.value)}`;
+  if (window.location.hash.startsWith("#/karta") && window.location.hash !== ny) {
+    window.history.replaceState(null, "", ny);
+  }
+});
+
+let kartanHarVisats = false;
+
+startaRouter({
+  visaKarta(omradeId: string | null): void {
+    void arbetsbankKlar.then(() => {
+      if (!kartanHarVisats) {
+        // Kartan laddades medan sidan var dold och har ännu ingen storlek.
+        kartanHarVisats = true;
+        window.requestAnimationFrame(() => kartaKontroll.anpassaVy());
+      }
+      if (!omradeId || omradeId === omradeValjare.value) {
+        return;
+      }
+      const finns = Array.from(omradeValjare.options).some((o) => o.value === omradeId);
+      if (!finns) {
+        korStatus.textContent = `Området ${omradeId} finns inte. Visar ${omradeValjare.value}.`;
+        return;
+      }
+      omradeValjare.value = omradeId;
+      omradeValjare.dispatchEvent(new Event("change"));
+    });
+  },
+  modulerKlara(moduler) {
+    renderaModulVaxlare(hämtaEl<HTMLDivElement>("modul-vaxlare"), moduler);
+  },
 });

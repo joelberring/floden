@@ -70,6 +70,15 @@ stämmer med de syntetiska fallen i testsviten.
 Ledningsnät kopplat i 1D (SWMM) och radarnederbörd. Kräver data från Stockholm Vatten och Avfall och beslut om
 driftmiljö. Planeras när M4 är klar.
 
+## M8 – Gemensam kärna för alla domäner
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| Fas 0 | Planscenario K9, utredningsfråga K10, beräkningsgraf med cache, påverkansradie (grenen `fas0-2`) | T00 | klar |
+| T20 | Körmotor: K20-frågor i fil, rutvisa lösare K21, K9/K3 på K1-rutor, cache K22, jämförelser, `floden fraga` | Fas 0, T04 | pågår |
+
+Domänerna ansluter enligt `docs/KARNA.md` (nodgraf) eller `docs/ANSLUTA_LOSARE.md` (rutvisa lösare).
+
 ## Rekommenderad fördelning på agenter
 
 - **En agent per uppdrag**, aldrig två i samma uppdrag samtidigt.
@@ -77,6 +86,21 @@ driftmiljö. Planeras när M4 är klar.
 - Uppdrag med numerik eller geometrisk robusthet (T01b, T02, T03, T05) behöver den starkaste modellen och en
   människa som granskar mätvärdena.
 - T03 innehåller frågor till Samuel. De samlas i `docs/MATEMATIK.md` i stället för att lösas av agenten.
+
+## Spår L – Luft (3D)
+
+Separat spår, licens MIT (`src/luft/`). Detaljer, matematik och färdplan i `docs/LUFT.md`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| L-a | LBM-LES 3D, linjär spridning med adjungerad lösning, NO₂-kemi, vindbibliotek, statistik, export, CLI | – | klar |
+| L-b | Serverkörning med CuPy, prestanda och minne | L-a, server | redo |
+| L-c | Vindtunnelvalidering (CEDVAL/Michelstadt) | L-a, data | redo |
+| L-d | Väggmodell, inflödesturbulens, rättade randvillkor, prestanda | L-a | klar |
+| L-f | TVD-advektion och snabbare lösare (GPU-lösare kvar) | L-a | klar (CPU) |
+| L-g | Emissionsmodell vägdamm (NORTRIP-typ) och avgaser | L-a | klar (kalibrering väntar på data) |
+| L-k | Vindkomfort och vindfara för höga hus (NEN 8100, Lawson), före/efter | L-a | klar |
+| L-h | Validering mot mätstationer | L-c, L-g | väntar |
 
 ## M8 – Buller enligt Nord2000 (parallellt spår, gren `buller-nord2000`)
 
@@ -87,8 +111,8 @@ Uppdragen och deras status står i `tasks/B00-buller-oversikt.md`; kontrakt i `d
 | B3, B6 | Bullerscen, profiler, källsegment, fasadpunkter, banfinnare | – | klar (första version) |
 | B4a | Akustiska grundfunktioner och baslinjekärna (inte Nord2000) | – | klar |
 | B8, B9 | Operatorlager, klustring med felgräns, inkrementell omräkning, lägen och manifest | KB1–KB2 | klar (första version) |
-| B1, B5 | Testfall grupp N och källmodell väg | källmapp | pågår |
-| B4 | Referenskärna Nord2000 punkt-till-punkt | B1, källmapp | pågår |
+| B1, B5 | Testfall grupp N (lokalt, ej i repot) och källmodell väg med direktivitet | källmapp | klar (första version) |
+| B4 | Referenskärna Nord2000: plan mark med väder inkopplad (22 av 80 fall); terräng och skärmar återstår | B1, källmapp | pågår |
 | B7, B10–B13 | Snabbkärna, rapport, jämförelse, gradienter, vågfysik | B4 | väntar |
 
 **Klar när:** rapportläget kör med en kärna som passerar testsvit grupp N, och en jämförelse mot en utredning i

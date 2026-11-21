@@ -25,7 +25,9 @@ def skriv_npz_deterministiskt(sokvag: str | Path, arrayer: Mapping[str, NDArray[
     with zipfile.ZipFile(mal, mode="w", compression=zipfile.ZIP_STORED) as arkiv:
         for namn, array in arrayer.items():
             buffert = io.BytesIO()
-            np.lib.format.write_array(buffert, np.asarray(array, order="C"), allow_pickle=False)
+            np.lib.format.write_array(  # type: ignore[no-untyped-call,unused-ignore]
+                buffert, np.asarray(array, order="C"), allow_pickle=False
+            )
             post = zipfile.ZipInfo(filename=f"{namn}.npy", date_time=_FAST_TID)
             post.compress_type = zipfile.ZIP_STORED
             post.external_attr = 0o644 << 16

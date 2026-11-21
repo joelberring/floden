@@ -91,6 +91,7 @@ from testsvit.k1_io import (
     las_regn_csv,
 )
 from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
+from webb.moduler import lista_moduler
 from webb.rendering import (
     DEFAULT_KALLOR,
     RenderingFel,
@@ -1584,6 +1585,9 @@ class FlodenApiApp:
             if verb == "GET" and ren_sokvag == "/api/regn":
                 region_param = query.get("region", [None])[0]
                 return _json_svar(200, self.lista_regn(region=region_param))
+
+            if verb == "GET" and ren_sokvag == "/api/moduler":
+                return _json_svar(200, lista_moduler())
 
             if verb == "GET" and ren_sokvag == "/api/omraden":
                 return _json_svar(200, self.lista_omraden())
