@@ -27,12 +27,14 @@ en fråga med en okänd typ ger fel i stället för att tyst hoppas över.
 from __future__ import annotations
 
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from karna.graf import Nod
 from karna.hashning import kanonisk_json, nyckel_for
+from karna.scenario import Planscenario
 
 KONTRAKT_K10 = "K10/v1"
 UTDATATYPER: frozenset[str] = frozenset(
@@ -40,20 +42,38 @@ UTDATATYPER: frozenset[str] = frozenset(
 )
 
 _ANALYSTYPER: dict[str, str] = {}
+_NODBYGGARE: dict[str, Callable[[AnalysSteg, Planscenario], Nod]] = {}
 
 
 class FragaFel(ValueError):
     """Ogiltig utredningsfråga."""
 
 
-def registrera_analystyp(typ: str, modul: str) -> None:
-    """En modul (vatten, luft, buller, dagsljus …) anmäler en analystyp den kan svara på."""
+def registrera_analystyp(
+    typ: str,
+    modul: str,
+    nodbyggare: Callable[[AnalysSteg, Planscenario], Nod] | None = None,
+) -> None:
+    """En modul (vatten, luft, buller, dagsljus …) anmäler en analystyp den kan svara på.
+
+    `nodbyggare(steg, scenario)` gör analyssteget till en nod i beräkningsgrafen; utan den kan
+    frågan valideras men inte köras (`karna.korning.kor_fraga` ger då ett tydligt fel).
+    """
     if not typ.strip() or not modul.strip():
         raise FragaFel("Analystyp och modul måste vara icke-tomma.")
     tidigare = _ANALYSTYPER.get(typ)
     if tidigare is not None and tidigare != modul:
         raise FragaFel(f"Analystypen '{typ}' är redan registrerad av modulen '{tidigare}'.")
     _ANALYSTYPER[typ] = modul
+    if nodbyggare is not None:
+        _NODBYGGARE[typ] = nodbyggare
+
+
+def nodbyggare_for(typ: str) -> Callable[[AnalysSteg, Planscenario], Nod]:
+    if typ not in _NODBYGGARE:
+        modul = _ANALYSTYPER.get(typ, "okänd")
+        raise FragaFel(f"Analystypen '{typ}' (modul {modul}) kan valideras men inte köras än.")
+    return _NODBYGGARE[typ]
 
 
 def analystyper() -> dict[str, str]:

@@ -146,3 +146,48 @@ säga vilka som saknas. Testkörningar använder `config.toml` → `[rutt_test]`
 | `entreer_nabarhet.parquet` | `entre_id, t_s, status (nabar / langre_gangvag / ej_nabar), gangvag_m` |
 | `kritiska_avsnitt.gpkg` | Gatuavsnitt med `vinst` = antal adresser som blir nåbara om avsnittet hålls öppet |
 | `run.json` | Manifest |
+
+## K9 – Planscenario (v1)
+
+Bas + diff, gemensamt för alla moduler (vatten, luft, buller, dagsljus). Kod: `karna.scenario`.
+
+```json
+{
+  "kontrakt": "K9/v1",
+  "scenario_id": "rosteriet-alt-b",
+  "nyckel": "sha256 av innehållet (bas_recept, forald, andringar sorterade på andring_id)",
+  "bas_recept": ["sha256 av berörda rutors recept (K1)"],
+  "forald": "nyckeln till scenariot som detta ärver, eller null",
+  "beskrivning": "fri text, ingår inte i nyckeln",
+  "andringar": [
+    {"typ": "byggnad_ny", "andring_id": "hus1", "geometri": {"type": "Polygon", "coordinates": []},
+     "egenskaper": {"hojd_m": 18.0}}
+  ]
+}
+```
+
+Ändringstyper: `byggnad_ny`, `byggnad_bort` (`byggnads_id`), `byggnad_hojd` (`byggnads_id`, `hojd_m`),
+`markhojd`, `markslag` (`kod` enligt K1), `gata`, `magasin` (`volym_m3`), `vegetation` (`hojd_m`).
+Geometri som GeoJSON i EPSG:3011. En ändring med samma `andring_id` som i föräldern ersätter den.
+En fil vars `nyckel` inte stämmer med innehållet avvisas. K3 (projektlapp) är vattnets tillämpning
+av ett scenario.
+
+## K10 – Utredningsfråga (v1)
+
+En fråga i TOML (eller motsvarande JSON). Kod: `karna.fraga`, `karna.korning`.
+
+```toml
+fraga = "dagsljus-grannar"
+scenario = "rosteriet-alt-b"
+jamfor_med = "rosteriet-alt-a"   # valfritt: båda körs, modulen redovisar B minus A
+utdata = ["karta", "tabell"]       # karta, tabell, tabell_per_fastighet, rapportavsnitt, raster
+
+[[analys]]
+typ = "vsc_fasad"                  # registrerad av en modul med registrera_analystyp
+urval = "befintliga_bostader"
+```
+
+Frågans nyckel = sha256 av innehållet med scenariernas nycklar i stället för namnen (frågans namn
+ingår inte). Okända nycklar och analystyper som ingen modul registrerat ger fel. Varje analyssteg
+körs som en nod i beräkningsgrafen: nyckel = sha256 av lösarens namn och version, parametrar och
+indatanycklar; resultatet sparas i `cache/<nyckel>/` med `run.json` (K0).

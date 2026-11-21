@@ -79,7 +79,6 @@ class Berakningsgraf:
         self.cache = cache
         self.raknade: list[str] = []
         self._filnycklar: dict[tuple[str, int, int], str] = {}
-        self._nycklar: dict[int, str] = {}
 
     def _filnyckel(self, fil: Path) -> str:
         if not fil.is_file():
@@ -93,15 +92,13 @@ class Berakningsgraf:
     def nyckel(self, nod: Nod, _pa_vag: frozenset[int] = frozenset()) -> str:
         if id(nod) in _pa_vag:
             raise GrafFel("Cykel i beräkningsgrafen.")
-        if id(nod) in self._nycklar:
-            return self._nycklar[id(nod)]
         indata: dict[str, str] = {}
         for roll, kalla in nod.indata.items():
             if isinstance(kalla, Nod):
                 indata[roll] = "nod:" + self.nyckel(kalla, _pa_vag | {id(nod)})
             else:
                 indata[roll] = "fil:" + self._filnyckel(Path(kalla))
-        n = nyckel_for(
+        return nyckel_for(
             {
                 "losare": nod.losare.namn,
                 "version": nod.losare.version,
@@ -109,8 +106,7 @@ class Berakningsgraf:
                 "indata": indata,
             }
         )
-        self._nycklar[id(nod)] = n
-        return n
+
 
     def kor(self, nod: Nod) -> Resultat:
         n = self.nyckel(nod)
