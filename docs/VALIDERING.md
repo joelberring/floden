@@ -47,3 +47,8 @@ Dokumenterade skyfall med felanmälningar, räddningstjänstens insatser och fö
 
 Gränserna sätts av en människa när den första omgången resultat finns. Agenter får inte ändra gränserna för att
 få ett test att gå igenom.
+
+## Grupp L – Luft
+
+Testfall L1–L8 och gränser finns i `docs/LUFT.md` avsnitt 6. De körs som enhetstester i `tests/luft/`
+(`pytest tests/luft`).

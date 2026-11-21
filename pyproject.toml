@@ -7,7 +7,7 @@ name = "floden"
 version = "0.1.0"
 description = "Öppen dynamisk skyfallsmodell på gatunivå"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = { text = "GPL-3.0-or-later AND MIT" }  # src/luft är MIT, se docs/BESLUT.md
 requires-python = ">=3.11"
 authors = [
     { name = "Joel Berring" },
@@ -20,9 +20,18 @@ dependencies = [
     "geopandas==1.0.1",
     "pyarrow==18.1.0",
     "pillow==11.0.0",
+    "scipy==1.14.1",
 ]
 
 [project.optional-dependencies]
+# GPU-backend för luftdelen (CUDA 12) på beräkningsservern
+gpu = [
+    "cupy-cuda12x>=13",
+]
+# Figurer i `floden luft demo`
+viz = [
+    "matplotlib==3.9.2",
+]
 # pdal kräver C++-biblioteket PDAL installerat på systemet
 # (t.ex. via conda-forge `python-pdal` eller systempaket `libpdal-dev`).
 laser = [
@@ -70,6 +79,10 @@ module = [
     "shapely.*",
     "PIL",
     "PIL.*",
+    "scipy",
+    "scipy.*",
+    "matplotlib",
+    "matplotlib.*",
 ]
 ignore_missing_imports = true
 

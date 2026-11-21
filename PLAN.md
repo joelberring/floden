@@ -77,3 +77,17 @@ driftmiljö. Planeras när M4 är klar.
 - Uppdrag med numerik eller geometrisk robusthet (T01b, T02, T03, T05) behöver den starkaste modellen och en
   människa som granskar mätvärdena.
 - T03 innehåller frågor till Samuel. De samlas i `docs/MATEMATIK.md` i stället för att lösas av agenten.
+
+## Spår L – Luft (3D)
+
+Separat spår, licens MIT (`src/luft/`). Detaljer, matematik och färdplan i `docs/LUFT.md`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| L-a | LBM-LES 3D, linjär spridning med adjungerad lösning, NO₂-kemi, vindbibliotek, statistik, export, CLI | – | klar |
+| L-b | Serverkörning med CuPy, prestanda och minne | L-a, server | redo |
+| L-c | Vindtunnelvalidering (CEDVAL/Michelstadt) | L-a, data | redo |
+| L-d | Väggmodell och inflödesturbulens | L-a | redo |
+| L-f | TVD-advektion och GPU-lösare för spridningen | L-a | redo |
+| L-g | Emissionsmodell vägdamm (NORTRIP-typ) och avgaser | L-a, trafikdata | redo |
+| L-h | Validering mot mätstationer | L-c, L-g | väntar |
