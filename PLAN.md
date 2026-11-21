@@ -77,3 +77,19 @@ driftmiljö. Planeras när M4 är klar.
 - Uppdrag med numerik eller geometrisk robusthet (T01b, T02, T03, T05) behöver den starkaste modellen och en
   människa som granskar mätvärdena.
 - T03 innehåller frågor till Samuel. De samlas i `docs/MATEMATIK.md` i stället för att lösas av agenten.
+
+## M8 – Buller enligt Nord2000 (parallellt spår, gren `buller-nord2000`)
+
+Uppdragen och deras status står i `tasks/B00-buller-oversikt.md`; kontrakt i `docs/buller/KONTRAKT.md`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| B3, B6 | Bullerscen, profiler, källsegment, fasadpunkter, banfinnare | – | klar (första version) |
+| B4a | Akustiska grundfunktioner och baslinjekärna (inte Nord2000) | – | klar |
+| B8, B9 | Operatorlager, klustring med felgräns, inkrementell omräkning, lägen och manifest | KB1–KB2 | klar (första version) |
+| B1, B5 | Testfall grupp N och källmodell väg | källmapp | pågår |
+| B4 | Referenskärna Nord2000 punkt-till-punkt | B1, källmapp | pågår |
+| B7, B10–B13 | Snabbkärna, rapport, jämförelse, gradienter, vågfysik | B4 | väntar |
+
+**Klar när:** rapportläget kör med en kärna som passerar testsvit grupp N, och en jämförelse mot en utredning i
+etablerad programvara är redovisad.
