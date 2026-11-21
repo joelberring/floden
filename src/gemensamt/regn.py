@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import csv
 import math
+import tomllib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from gemensamt.hash import sha256_fil
 
 KONTRAKT_K4 = "K4/v1"
 STANDARD_ATERKOMSTTIDER_AR: tuple[float, ...] = (
@@ -1032,5 +1035,172 @@ def skapa_regn_fran_spec(
             tidssteg_min=tidssteg_min,
             toppfaktor=toppfaktor,
             idf_tabell=idf_tabell,
+        )
+    raise RegnFel(f"Ogiltig regntyp '{typ}', måste vara 'cds' eller 'block'.")
+
+
+# --- Registrerade IDF-källor (tabeller) --------------------------------------------------------
+
+DATA_REGN_MAPP: Path = Path(__file__).resolve().parents[2] / "data" / "regn"
+IDF_DAHLSTROM_2010 = "dahlstrom-2010"
+IDF_STOCKHOLMSREGN_2024 = "stockholmsregn-2024"
+STOCKHOLMSREGN_2024_STANDARD_KLIMATFAKTOR: float = 1.4
+STOCKHOLMSREGN_2024_TIDIGARE_STADSFAKTOR: float = 1.25
+
+
+@dataclass(frozen=True)
+class IdfKalla:
+    """En registrerad IDF-tabell med sidokort, kontrollsummor och standard-klimatfaktor.
+
+    Tabellvärdena är utan klimatfaktor. `standard_klimatfaktor` används av
+    `skapa_regn_fran_idf_kalla` och av CLI:t när ingen faktor anges; faktorn är alltid en
+    uttrycklig parameter i anropet.
+    """
+
+    kalla_id: str
+    namn: str
+    sidokort: Path
+    standard_klimatfaktor: float
+    standard_klimatfaktor_motivering: str
+
+    def las_sidokort(self) -> dict[str, Any]:
+        """Läser sidokortet (TOML) och kontrollerar att tabellfilernas sha256 stämmer."""
+        if not self.sidokort.is_file():
+            raise RegnFel(f"Sidokort för IDF-källan '{self.kalla_id}' saknas: {self.sidokort}")
+        try:
+            kort = tomllib.loads(self.sidokort.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+            raise RegnFel(f"Kunde inte läsa sidokortet {self.sidokort}: {exc}") from exc
+        if kort.get("id") != self.kalla_id:
+            raise RegnFel(
+                f"Sidokortet {self.sidokort} har id {kort.get('id')!r}, "
+                f"förväntade {self.kalla_id!r}."
+            )
+        for roll, post in kort.get("filer", {}).items():
+            fil = self.sidokort.parent / post["fil"]
+            if not fil.is_file():
+                raise RegnFel(f"Tabellfil saknas för IDF-källan '{self.kalla_id}': {fil}")
+            faktisk = sha256_fil(fil)
+            if faktisk != post["sha256"]:
+                raise RegnFel(
+                    f"sha256 för {fil.name} ({roll}) stämmer inte med sidokortet "
+                    f"({faktisk} != {post['sha256']}); tabellen har ändrats."
+                )
+        return kort
+
+    def las(self) -> IdfTabell:
+        """Läser tabellen och räknar om l/(s·ha) till mm/h (1 l/(s·ha) = 0,36 mm/h)."""
+        kort = self.las_sidokort()
+        fil = self.sidokort.parent / kort["filer"]["intensitet"]["fil"]
+        rad = las_idf_tabell_csv(fil, namn=self.kalla_id)
+        faktor = float(kort["omvandling_till_mm_h"])
+        if abs(faktor - L_PER_S_HA_TILL_MM_H) > 1e-12:
+            raise RegnFel(f"Sidokortets omvandling {faktor} avviker från {L_PER_S_HA_TILL_MM_H}.")
+        return IdfTabell(
+            namn=self.kalla_id,
+            kalla=(
+                f"{kort['namn']} ({kort['utgivare'].split(';')[0]}), {kort['tabell']} "
+                f"s. {kort['sida']}, utan klimatfaktor"
+            ),
+            varaktigheter_min=rad.varaktigheter_min,
+            aterkomsttider_ar=rad.aterkomsttider_ar,
+            intensiteter_mm_h=tuple(
+                tuple(v * L_PER_S_HA_TILL_MM_H for v in r) for r in rad.intensiteter_mm_h
+            ),
+        )
+
+    def manifest_parametrar(self, klimatfaktor: float) -> dict[str, Any]:
+        """Källa och faktor för K0-manifestets `parametrar` (inkl. sha256 för tabellfilerna)."""
+        kort = self.las_sidokort()
+        return {
+            "idf_kalla": self.kalla_id,
+            "idf_rapport": kort["rapport"],
+            "idf_tabell": kort["tabell"],
+            "idf_url": kort["url"],
+            "idf_klimatfaktor": _validera_positivt_tal(klimatfaktor, "klimatfaktor"),
+            "idf_klimatfaktor_ingar_i_tabell": bool(kort["klimatfaktor_ingar"]),
+            "idf_sha256": {roll: post["sha256"] for roll, post in kort["filer"].items()},
+        }
+
+    def indatafiler(self) -> list[tuple[str, Path]]:
+        """Roll och sökväg för filer som ska föras in som `FilPost` i manifestet."""
+        kort = self.las_sidokort()
+        mapp = self.sidokort.parent
+        filer = [(f"idf_{roll}", mapp / post["fil"]) for roll, post in kort["filer"].items()]
+        return [("idf_sidokort", self.sidokort), *filer]
+
+
+IDF_KALLOR: dict[str, IdfKalla] = {
+    IDF_STOCKHOLMSREGN_2024: IdfKalla(
+        kalla_id=IDF_STOCKHOLMSREGN_2024,
+        namn="Stockholmsregn 2024",
+        sidokort=DATA_REGN_MAPP / "stockholmsregn_2024.toml",
+        standard_klimatfaktor=STOCKHOLMSREGN_2024_STANDARD_KLIMATFAKTOR,
+        standard_klimatfaktor_motivering=(
+            "Stockholmsregn 2024 kap. 6.3 rekommenderar klimatfaktor 1,4 (multipliceras med hela "
+            "regnkurvan, kap. 4.9); staden använde 1,25 när rapporten skrevs"
+        ),
+    ),
+}
+
+
+def lista_idf_kallor() -> list[str]:
+    """Id:n för registrerade IDF-tabeller (Dahlström 2010 är en formel, inte en tabell)."""
+    return sorted(IDF_KALLOR)
+
+
+def hamta_idf_kalla(kalla_id: str) -> IdfKalla:
+    """Hämtar en registrerad IDF-källa eller kastar `RegnFel`."""
+    if kalla_id not in IDF_KALLOR:
+        raise RegnFel(
+            f"Okänd IDF-källa '{kalla_id}'. Giltiga: {IDF_DAHLSTROM_2010}, "
+            f"{', '.join(lista_idf_kallor())}."
+        )
+    return IDF_KALLOR[kalla_id]
+
+
+def las_stockholmsregn_2024() -> IdfTabell:
+    """Stockholmsregn 2024, Tabell 7, i mm/h och UTAN klimatfaktor (ange den vid anropet)."""
+    return IDF_KALLOR[IDF_STOCKHOLMSREGN_2024].las()
+
+
+def skapa_regn_fran_idf_kalla(
+    kalla_id: str,
+    aterkomsttid_ar: float,
+    *,
+    klimatfaktor: float | None = None,
+    typ: str = "cds",
+    varaktighet_min: float = STANDARD_VARAKTIGHET_MIN,
+    tidssteg_min: float = STANDARD_TIDSSTEG_MIN,
+    toppfaktor: float = STANDARD_CDS_TOPPFAKTOR,
+) -> RegnSerieK4:
+    """Skapar block- eller CDS-regn ur en registrerad IDF-tabell.
+
+    `klimatfaktor=None` ger källans standardfaktor (Stockholmsregn 2024: 1,4); värdet skrivs i
+    serien (`klimatfaktor`) och i `regn_id`. Faktorn multipliceras med hela regnkurvan.
+    """
+    kalla = hamta_idf_kalla(kalla_id)
+    kf = kalla.standard_klimatfaktor if klimatfaktor is None else klimatfaktor
+    tabell = kalla.las()
+    t_ar = _validera_positivt_tal(aterkomsttid_ar, "aterkomsttid_ar")
+    d_tot = _validera_positivt_tal(varaktighet_min, "varaktighet_min")
+    kf = _validera_positivt_tal(kf, "klimatfaktor")
+    rid = (
+        f"{kalla_id.replace('-', '')}_{typ}_{_formatera_axelvarde(d_tot)}min_"
+        f"{_formatera_axelvarde(t_ar)}ar_kf{_formatera_axelvarde(kf)}"
+    )
+    if typ == "block":
+        return generera_blockregn(
+            t_ar, klimatfaktor=kf, varaktighet_min=d_tot, idf_tabell=tabell, regn_id=rid
+        )
+    if typ == "cds":
+        return generera_cds_regn(
+            t_ar,
+            klimatfaktor=kf,
+            varaktighet_min=d_tot,
+            tidssteg_min=tidssteg_min,
+            toppfaktor=toppfaktor,
+            idf_tabell=tabell,
+            regn_id=rid,
         )
     raise RegnFel(f"Ogiltig regntyp '{typ}', måste vara 'cds' eller 'block'.")
