@@ -25,6 +25,7 @@ from markmodell.byggnadsregister import (
     kandidater_underlag,
     skriv_byggnader_gpkg,
 )
+from markmodell.dwg import MarkslagsYta
 from markmodell.hinder_oppningar import (
     BYGGNAD,
     HARDGJORT,
@@ -39,6 +40,17 @@ from markmodell.k1_skrivare import (
     skriv_brytlinjer_gpkg,
     skriv_geotiff,
     skriv_oppningar_gpkg,
+)
+from markmodell.lagerprofil import Lagerprofil
+from markmodell.markslagskallor import (
+    SVAG_KONFIDENS,
+    MarkslagKallor,
+    MarkslagKallorFel,
+    efter_inbranning,
+    installningar_post,
+    kombinera_markslag,
+    rasterisera_ytor,
+    ytor_sha256,
 )
 from markmodell.osakerhet import OsakerhetParametrar, berakna_osakerhet
 from markmodell.recept import KONTRAKT_K1_V2, KallPost, MarkmodellRecept, skriv_recept
@@ -74,6 +86,11 @@ class RutaResultat:
     recept_sha256: str
     varningar: list[str]
     filer: dict[str, Path]
+
+
+def _antal_per_kalla(kalla: NDArray[np.uint8]) -> dict[str, int]:
+    """Antal celler per avgörande källa ur `markslag_kalla` (till run.json)."""
+    return MarkslagKallor(markslag=kalla, kalla=kalla).antal_per_kalla()
 
 
 def _hasha_array_och_parametrar(
@@ -164,6 +181,13 @@ def bygg_markmodell_ruta(
     vegetation_hojd_m: NDArray[np.float32] | None = None,
     vegetation_upplosning_m: float = VEGETATION_UPPLOSNING_M,
     markslag_grund: NDArray[np.uint8] | None = None,
+    markslagsytor: Sequence[MarkslagsYta] = (),
+    belagd_yta_mask: NDArray[np.bool_] | None = None,
+    belagd_installningar: dict[str, float] | None = None,
+    ortofoto_markslag: NDArray[np.uint8] | None = None,
+    ortofoto_konfidens: NDArray[np.float32] | None = None,
+    standard_markslag: int = HARDGJORT,
+    lagerprofil: Lagerprofil | None = None,
     punkt_tathet_per_m2: NDArray[np.float32] | None = None,
     avstand_till_punkt_m: NDArray[np.float32] | None = None,
     under_vegetation: NDArray[np.bool_] | None = None,
@@ -185,6 +209,12 @@ def bygg_markmodell_ruta(
     `byggnader.gpkg` (register med höjder satta mot laser klass 6) och, om vegetation kan
     härledas (laser klass 3–5) eller anges i `vegetation_hojd_m`, `vegetation.tif`.
     `byggnader` (t.ex. ur DXF) och `byggnadskandidater` (generisk källa) slås ihop.
+
+    Markslag ur flera källor (K1 v2-tillägget `markslag_kalla.tif`): ges `markslagsytor` (DWG),
+    `belagd_yta_mask` (laserintensitet) eller `ortofoto_markslag` slås de ihop med prioriteten
+    baskarta > belagd yta > ortofoto > `standard_markslag` (se `markmodell.markslagskallor`) och
+    `markslag_kalla.tif` skrivs. Utan dem är resultatet oförändrat. `lagerprofil` (om angiven)
+    skrivs med sin sha256 i receptet. `markslag_grund` kan inte kombineras med de nya källorna.
     """
     t_start = time.perf_counter()
     mal_katalog = Path(ut_mapp) / ruta.namn
@@ -229,7 +259,31 @@ def bygg_markmodell_ruta(
     if avstand_till_punkt_m is not None:
         avst_karta = np.array(avstand_till_punkt_m, dtype=np.float32, copy=True)
 
-    if markslag_grund is not None:
+    nya_markslagskallor = bool(markslagsytor) or (
+        belagd_yta_mask is not None or ortofoto_markslag is not None
+    )
+    kallor_fore: MarkslagKallor | None = None
+    if nya_markslagskallor:
+        if markslag_grund is not None:
+            raise PipelineFel(
+                "markslag_grund kan inte kombineras med markslagsytor/belagd yta/ortofoto."
+            )
+        bas_kod, bas_konflikt, bas_osaker = rasterisera_ytor(markslagsytor, ruta)
+        try:
+            kallor_fore = kombinera_markslag(
+                ruta.form_rc,
+                baskarta_kod=bas_kod if markslagsytor else None,
+                baskarta_konflikt=bas_konflikt if markslagsytor else None,
+                baskarta_osaker=bas_osaker if markslagsytor else None,
+                belagd_mask=belagd_yta_mask,
+                ortofoto=ortofoto_markslag,
+                ortofoto_konfidens=ortofoto_konfidens,
+                standard=standard_markslag,
+            )
+        except MarkslagKallorFel as exc:
+            raise PipelineFel(str(exc)) from exc
+        slag = np.array(kallor_fore.markslag, dtype=np.uint8, copy=True)
+    elif markslag_grund is not None:
         if markslag_grund.shape != ruta.form_rc:
             raise PipelineFel(
                 f"markslag_grund har form {markslag_grund.shape}, förväntade {ruta.form_rc}."
@@ -267,7 +321,18 @@ def bygg_markmodell_ruta(
     )
 
     # Steg 6: trummor, portar och passager
+    slag_fore_oppn = slag
     z_slut, slag = brann_in_oppningar(z_med_bygg, slag, ruta, oppningar)
+    markslag_kalla: NDArray[np.uint8] | None = None
+    if kallor_fore is not None:
+        _, bygg_slag = brann_in_byggnader(
+            np.zeros(ruta.form_rc, dtype=np.float32),
+            np.zeros(ruta.form_rc, dtype=np.uint8),
+            ruta,
+            [p.till_byggnad() for p in bygg_poster],
+        )
+        inbrand = (bygg_slag == BYGGNAD) | (slag != slag_fore_oppn)
+        markslag_kalla = efter_inbranning(kallor_fore, slag, inbrand).kalla
 
     # Steg 7: osäkerhet per cell
     under_bygg_mask = slag == BYGGNAD
@@ -346,6 +411,13 @@ def bygg_markmodell_ruta(
         )
     elif (mal_katalog / "vegetation.tif").exists():
         (mal_katalog / "vegetation.tif").unlink()  # gammal fil från en tidigare körning
+    kalla_tif: Path | None = None
+    if markslag_kalla is not None:
+        kalla_tif = skriv_geotiff(
+            mal_katalog / "markslag_kalla.tif", markslag_kalla, ruta, nodata=255
+        )
+    elif (mal_katalog / "markslag_kalla.tif").exists():
+        (mal_katalog / "markslag_kalla.tif").unlink()  # gammal fil från en tidigare körning
     brytlinjer_gpkg = skriv_brytlinjer_gpkg(
         mal_katalog / "brytlinjer.gpkg", snappade_linjer, ruta
     )
@@ -386,6 +458,36 @@ def bygg_markmodell_ruta(
             )
         )
 
+    if lagerprofil is not None:
+        kallor.append(
+            KallPost(
+                roll="lagerprofil",
+                kalla=f"{lagerprofil.namn}@v{lagerprofil.version}:{lagerprofil.kalla}",
+                sha256=lagerprofil.sha256,
+            )
+        )
+    if markslagsytor:
+        kallor.append(
+            KallPost(roll="markslagsytor", kalla="baskarta_dwg", sha256=ytor_sha256(markslagsytor))
+        )
+    if belagd_yta_mask is not None:
+        kallor.append(
+            KallPost(
+                roll="belagd_yta",
+                kalla="minne:laserintensitet",
+                sha256=sha256_bytes(
+                    np.ascontiguousarray(belagd_yta_mask, dtype=np.uint8).tobytes()
+                ),
+            )
+        )
+    if ortofoto_markslag is not None:
+        kallor.append(
+            KallPost(
+                roll="ortofoto_markslag",
+                kalla="minne:ortofototolkning",
+                sha256=sha256_bytes(np.ascontiguousarray(ortofoto_markslag).tobytes()),
+            )
+        )
     osak_p = osakerhet_parametrar if osakerhet_parametrar is not None else OsakerhetParametrar()
     installningar: dict[str, Any] = {
         "snaptolerans_m": snaptolerans_m,
@@ -399,6 +501,14 @@ def bygg_markmodell_ruta(
         "byggnadshojd_fran_laser": byggnadshojd_fran_laser,
         "vegetation_upplosning_m": vegetation_upplosning_m,
     }
+    if kallor_fore is not None:
+        installningar.update(
+            installningar_post(
+                standard=standard_markslag,
+                belagd=belagd_installningar,
+                svag_konfidens=SVAG_KONFIDENS,
+            )
+        )
     recept = MarkmodellRecept(
         kontrakt=KONTRAKT_K1_V2,
         ruta_namn=ruta.namn,
@@ -425,6 +535,10 @@ def bygg_markmodell_ruta(
         utdata_poster.append(
             FilPost(roll="vegetation", fil="vegetation.tif", sha256=sha256_fil(vegetation_tif))
         )
+    if kalla_tif is not None:
+        utdata_poster.append(
+            FilPost(roll="markslag_kalla", fil="markslag_kalla.tif", sha256=sha256_fil(kalla_tif))
+        )
     indata_poster = [
         FilPost(roll=k.roll, fil=k.kalla, sha256=k.sha256) for k in recept.kallor
     ]
@@ -443,6 +557,19 @@ def bygg_markmodell_ruta(
             "osakerhet_max_m": round(osak_res.max_sigma_m, 4),
             "antal_byggnader": len(bygg_poster),
             "vegetation_skriven": vegetation_tif is not None,
+            **(
+                {
+                    **{
+                        f"markslag_celler_{k}": v
+                        for k, v in _antal_per_kalla(markslag_kalla).items()
+                    },
+                    "markslag_motsagelser": int(np.sum((markslag_kalla & 4) != 0)),
+                    "markslag_svaga": int(np.sum((markslag_kalla & 8) != 0)),
+                    "markslag_osakra_kallor": int(np.sum((markslag_kalla & 16) != 0)),
+                }
+                if markslag_kalla is not None
+                else {}
+            ),
             "kortid_s": kortid_s,
         },
         varningar=[*osak_res.varningar, *bygg_varningar],
@@ -471,6 +598,7 @@ def bygg_markmodell_ruta(
             "terrang": terrang_tif,
             "byggnader": byggnader_gpkg,
             **({"vegetation": vegetation_tif} if vegetation_tif is not None else {}),
+            **({"markslag_kalla": kalla_tif} if kalla_tif is not None else {}),
             "brytlinjer": brytlinjer_gpkg,
             "oppningar": oppningar_gpkg,
             "recept": recept_fil,

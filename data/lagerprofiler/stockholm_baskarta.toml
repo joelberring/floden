@@ -1,19 +1,27 @@
-# Lagerprofil: Stockholms baskarta -> Flodens roller (markmodell.lagerprofil).
+# Lagerprofil: Stockholms baskarta och parkkarta -> Flodens roller (markmodell.lagerprofil, markmodell.stockholm_lager).
+#
+# Härledd ur O-Tid, prövad på sprintkartan Älvsjö–Solberga; ska bekräftas mot full lagerlista.
+# Grammatik och nyckelord lyfta från O-Tid (MIT, joelberring/otid, packages/map-revision/src/stockholm-layers.ts @ 4a446af).
 #
 # Profilen är en del av markmodellens recept: dess sha256 skrivs i recept.json, så en ändrad profil ger en ny
 # markmodell. Ändra inte i en profil som använts skarpt – höj `version` eller lägg en ny fil.
 #
-# [[linjer]]: lagerprefix (skiftlägesokänsligt, längsta prefix vinner) -> roll och standardmått.
-#   roll: kantsten, mur, stodmur, staket, bankkant (brytlinjer, standard_m = höjd i m),
-#         byggnad (standard_m = hinderhöjd i m), trumma, port (standard_m = bredd i m).
-#   Raderna motsvarar exakt markmodell.grundkarta.STANDARD_STOCKHOLM_LAGERMAPPNING (testat).
+# Två sätt att tolka ett lager, i ordning:
+#   1. [stockholm]: lagernamn som följer Stockholms grammatik (grupp + objekttyp + geometri gy/gl/gb/glh/s/t + B + status,
+#      t.ex. MarkanlaggningStenmurglBOdefin, och parkkartans Park + grupp + objekttyp) tolkas automatiskt (som O-Tids
+#      isStockholmLayer). Reglerna är reguljära uttryck mot objekttypens normaliserade text (gemener, å/ä -> a, ö -> o),
+#      första träff gäller. Ytor (gy) blir markslag eller byggnader, linjer (gl) blir brytlinjer. Skymt (status Skymd),
+#      text, höjdkurvor, symboler, fastighetsgränser och snöröjning hoppas över. Status Odefinierad tas med men flaggas.
+#   2. [[linjer]]/[[ytor]]: lagerprefix för andra baskartor (klartext som KANTSTEN, STAKET). Samma linjeregler som
+#      markmodell.grundkarta.STANDARD_STOCKHOLM_LAGERMAPPNING (testat).
 #
-# [[ytor]]: skraffyrlager (HATCH, även CIRCLE/SOLID) -> markslagskod enligt K1:
+# Skillnad mot O-Tid: slänt och gräskant hoppas inte över (de påverkar vattnet). Ytornas markslagskoder enligt K1:
 #   1 hårdgjort, 2 tak, 3 grönt tak, 4 gräs, 5 skog, 6 berg i dagen, 7 grus, 8 vatten, 9 byggnad.
+# Rader märkta "att bekräfta" är mina val och inte kontrollerade mot staden.
 
 namn = "stockholm_baskarta"
-version = 1
-beskrivning = "Stockholms baskarta (DXF/DWG), linjeregler som STANDARD_STOCKHOLM_LAGERMAPPNING"
+version = 2
+beskrivning = "Stockholms baskarta och parkkarta (DXF/DWG): grammatiken ur O-Tid + prefixregler; ska bekräftas mot full lagerlista"
 
 [[linjer]]
 prefix = "KANTSTEN"
@@ -85,18 +93,112 @@ prefix = "PORT"
 roll = "port"
 standard_m = 2.5
 
-# Ytregler: ATT BEKRÄFTA MOT STADENS BASKARTA. Lagernamnen nedan är bara exempel på formen, inte stadens
-# verkliga lagernamn. Inga ytregler är aktiva förrän de bekräftats; utan ytregler ger DWG-läsaren inga
-# markslagsytor (skraffyrerna räknas då som okända lager och listas i varningarna).
-#
-# [[ytor]]
-# prefix = "EXEMPEL_ASFALT"   # att bekräfta mot stadens baskarta
-# markslag = 1
-#
-# [[ytor]]
-# prefix = "EXEMPEL_GRAS"     # att bekräfta mot stadens baskarta
-# markslag = 4
-#
-# [[ytor]]
-# prefix = "EXEMPEL_VATTEN"   # att bekräfta mot stadens baskarta
-# markslag = 8
+# Prefixregler för ytor (klartextlager) är inte aktiva: stadens klartextnamn för skraffyrer är okända. Se
+# data/lagerprofiler/lokal_profil.toml.example för formen.
+
+[stockholm]
+# Objekttyper som aldrig påverkar markslag eller vatten (regex mot normaliserad text).
+hoppa_over = 'enhetsomrade|registerenhet|granslinje|tomt|snorojning|markutrustning|va_?anlaggning|elanlaggning|ledstang|hojdkurva|bergkant|text'
+hoppa_over_geometri = ["t", "glh", "s"]   # text, höjdkurva, symbol
+hoppa_over_status = ["skymd"]             # skymt under broar m.m.
+# Byggnader: ytan (gy) ger huset; byggnadens linje (gl) ligger bredvid och hoppas över. Skärmtak är ingen byggnad här.
+byggnad = 'byggnad(?!.*skarmtak)'
+
+# --- ytor (gy) -> markslag ---
+[[stockholm.ytor]]
+objekt = 'skarmtak'
+markslag = 2
+
+[[stockholm.ytor]]
+objekt = 'byggnadsanlaggning(altan|ovrig)'
+hoppa_over = true
+kommentar = "altan och övrig byggnadsanläggning är inget eget markslag (att bekräfta)"
+
+[[stockholm.ytor]]
+objekt = 'trappa'
+markslag = 1
+
+[[stockholm.ytor]]
+objekt = 'byggnad(?!.*skarmtak)'
+roll = "byggnad"
+standard_m = 10.0
+
+[[stockholm.ytor]]
+objekt = 'trafikanlaggningbro'
+hoppa_over = true
+kommentar = "bro: ingen markslagsyta (broar hanteras som öppningar)"
+
+[[stockholm.ytor]]
+objekt = 'grus'
+markslag = 7
+
+[[stockholm.ytor]]
+objekt = 'bassang|plaskdamm'
+markslag = 8
+
+[[stockholm.ytor]]
+objekt = 'naturmarktradbevuxen'
+markslag = 5
+
+[[stockholm.ytor]]
+objekt = 'oppennaturmark|grasyta|slatter'
+markslag = 4
+
+[[stockholm.ytor]]
+objekt = 'buskage|klippthack|plantering'
+markslag = 4
+kommentar = "buskage som gräs (infiltrerande växtbädd), att bekräfta"
+
+[[stockholm.ytor]]
+objekt = 'belaggning|asfalt|plattor|gatsten|vagutbredning|infart|refug|parkvag'
+markslag = 1
+
+[[stockholm.ytor]]
+objekt = 'trad'
+hoppa_over = true
+kommentar = "träd är inget markslag"
+
+# --- linjer (gl) -> brytlinjer för skyfall ---
+[[stockholm.linjer]]
+objekt = 'stodmur'
+roll = "stodmur"
+standard_m = 1.5
+
+[[stockholm.linjer]]
+objekt = 'stenmur|bruksmur|kallmur|bullerskydd'
+roll = "mur"
+standard_m = 1.0
+
+[[stockholm.linjer]]
+objekt = 'staket|natstang|trastaket|plank'
+roll = "staket"
+standard_m = 0.15
+
+[[stockholm.linjer]]
+objekt = 'slant'
+roll = "bankkant"
+standard_m = 0.30
+kommentar = "O-Tid hoppar över slänt; för skyfall är den relevant"
+
+[[stockholm.linjer]]
+objekt = 'graskant'
+roll = "bankkant"
+standard_m = 0.05
+kommentar = "O-Tid hoppar över gräskant; höjden är ett val (att bekräfta)"
+
+[[stockholm.linjer]]
+objekt = 'dike|back'
+roll = "bankkant"
+standard_m = 0.30
+kommentar = "att bekräfta: linjens läge (kant eller mitt) i stadens data är okänt"
+
+[[stockholm.linjer]]
+objekt = 'kantsten|vagavgransning|infart|refug'
+roll = "kantsten"
+standard_m = 0.12
+kommentar = "infart kan ha sänkt kant (att bekräfta)"
+
+[[stockholm.linjer]]
+objekt = 'trumma'
+roll = "trumma"
+standard_m = 1.0

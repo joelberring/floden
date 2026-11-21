@@ -17,6 +17,8 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
+from data_inlasning.lantmateriet import PunktMoln, las_las_punktmoln
+from data_inlasning.lasclip import las_laser_punktmoln
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from dynamik.nodmodell import DynamikFel, DynamikResultat, skriv_dynamik_resultat_k6
 from dynamik.risk import berakna_kumulativ_oversvamningsrisk
@@ -42,11 +44,21 @@ from mark_forluster.parametrar import ForlustFel
 from markmodell.brytlinjer import Brytlinje, BrytlinjeFel
 from markmodell.byggnadskallor import las_byggnadskalla
 from markmodell.byggnadsregister import ByggnadsKandidat, ByggnadsregisterFel
+from markmodell.dwg import MarkslagsYta, las_baskarta_dwg
 from markmodell.grundkarta import GrundkartaFel, interpolera_med_brytlinjer, las_baskarta_dxf
-from markmodell.hinder_oppningar import BYGGNAD, OKANT, Byggnad, HinderOppningFel, Oppning
+from markmodell.hinder_oppningar import (
+    BYGGNAD,
+    OKANT,
+    Byggnad,
+    HinderOppningFel,
+    Oppning,
+    brann_in_byggnader,
+)
 from markmodell.interpolering import InterpoleringFel
 from markmodell.k1_skrivare import K1SkrivFel
 from markmodell.k1_skrivare import skriv_geotiff as skriv_k1_geotiff
+from markmodell.lagerprofil import Lagerprofil, hitta_lagerprofil
+from markmodell.markslagskallor import belagd_mask_for_ruta
 from markmodell.ortofoto import (
     OrtofotoFel,
     klassificera_ortofoto,
@@ -131,6 +143,14 @@ def _las_laser_csv(
     return pe, pn, pz, klasser
 
 
+def _las_laser_las(sokvag: Path, epsg: int) -> PunktMoln:
+    """Läser LAS direkt eller LAZ via lasclip (ingen klippning) som punktmoln i EPSG:3011."""
+    if sokvag.suffix.lower() == ".laz":
+        stor = 1.0e9
+        return las_laser_punktmoln(sokvag, (-stor, -stor, stor, stor), kall_epsg=epsg)
+    return las_las_punktmoln(sokvag, kall_epsg=epsg)
+
+
 def _las_ortofoto_rgb(sokvag: Path, form_rc: tuple[int, int]) -> NDArray[np.uint8]:
     """Läser ortofoto (PNG/TIFF) som RGB-uint8 och skalar vid behov till `form_rc`."""
     if not sokvag.is_file():
@@ -145,8 +165,10 @@ def _las_ortofoto_rgb(sokvag: Path, form_rc: tuple[int, int]) -> NDArray[np.uint
 
 def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
     try:
-        if args.grund_tif is None and args.laser_csv is None:
-            raise PipelineFel("Ange minst en höjdkälla: --grund-tif eller --laser-csv.")
+        if args.grund_tif is None and args.laser_csv is None and args.laser_las is None:
+            raise PipelineFel(
+                "Ange minst en höjdkälla: --grund-tif, --laser-csv eller --laser-las."
+            )
         if not math.isfinite(args.upplosning_m) or args.upplosning_m <= 0.0:
             raise PipelineFel(f"upplosning_m måste vara > 0, fick {args.upplosning_m}.")
 
@@ -187,6 +209,17 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
         pz: NDArray[np.float64] | None = None
         klasser: NDArray[np.int32] | None = None
 
+        laser_moln: PunktMoln | None = None
+        if args.laser_csv is not None and args.laser_las is not None:
+            raise PipelineFel("Ange antingen --laser-csv eller --laser-las, inte båda.")
+        if args.laser_las is not None:
+            las_fil = Path(args.laser_las)
+            laser_moln = _las_laser_las(las_fil, args.laser_epsg)
+            pe, pn, pz = laser_moln.e_m, laser_moln.n_m, laser_moln.z_rh2000
+            klasser = laser_moln.klass.astype(np.int32)
+            extra_kallor.append(
+                KallPost(roll="laser_las", kalla=las_fil.name, sha256=sha256_fil(las_fil))
+            )
         if args.laser_csv is not None:
             laser_fil = Path(args.laser_csv)
             pe, pn, pz, klasser = _las_laser_csv(laser_fil)
@@ -197,24 +230,24 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                     sha256=sha256_fil(laser_fil),
                 )
             )
-            if ruta is None:
-                uppl = float(args.upplosning_m)
-                e_lo = float(np.min(pe))
-                e_hi = float(np.max(pe))
-                n_lo = float(np.min(pn))
-                n_hi = float(np.max(pn))
-                e_min = math.floor(e_lo / uppl) * uppl
-                n_min = math.floor(n_lo / uppl) * uppl
-                n_kol = math.floor((e_hi - e_min) / uppl) + 1
-                n_rad = math.floor((n_hi - n_min) / uppl) + 1
-                n_celler = max(4, n_kol, n_rad)
-                ruta = Ruta(
-                    e_min_m=e_min,
-                    n_min_m=n_min,
-                    storlek_m=n_celler * uppl,
-                    overlapp_m=0.0,
-                    upplosning_m=uppl,
-                )
+        if pe is not None and pn is not None and ruta is None:
+            uppl = float(args.upplosning_m)
+            e_lo = float(np.min(pe))
+            e_hi = float(np.max(pe))
+            n_lo = float(np.min(pn))
+            n_hi = float(np.max(pn))
+            e_min = math.floor(e_lo / uppl) * uppl
+            n_min = math.floor(n_lo / uppl) * uppl
+            n_kol = math.floor((e_hi - e_min) / uppl) + 1
+            n_rad = math.floor((n_hi - n_min) / uppl) + 1
+            n_celler = max(4, n_kol, n_rad)
+            ruta = Ruta(
+                e_min_m=e_min,
+                n_min_m=n_min,
+                storlek_m=n_celler * uppl,
+                overlapp_m=0.0,
+                upplosning_m=uppl,
+            )
 
         assert ruta is not None
 
@@ -223,6 +256,29 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
         oppningar: tuple[Oppning, ...] = ()
         dxf_varningar: list[str] = []
 
+        markslagsytor: tuple[MarkslagsYta, ...] = ()
+        lagerprofil: Lagerprofil | None = None
+        if args.dxf is not None and args.dwg is not None:
+            raise PipelineFel("Ange antingen --dxf eller --dwg, inte båda.")
+        if args.dwg is not None:
+            from gemensamt.konfig import las_konfig
+
+            try:
+                konfig: dict[str, Any] | None = las_konfig()
+            except Exception:  # config.toml saknas utanför repot: använd repots profil
+                konfig = None
+            lagerprofil = hitta_lagerprofil(args.lagerprofil, konfig)
+            dwg_fil = Path(args.dwg)
+            dwg_res = las_baskarta_dwg(dwg_fil, lagerprofil=lagerprofil)
+            baskarta = dwg_res.baskarta
+            markslagsytor = dwg_res.markslagsytor
+            brytlinjer = baskarta.brytlinjer
+            byggnader = baskarta.byggnader
+            oppningar = baskarta.oppningar
+            dxf_varningar = list(baskarta.varningar)
+            extra_kallor.append(
+                KallPost(roll="baskarta_dwg", kalla=dwg_fil.name, sha256=sha256_fil(dwg_fil))
+            )
         if args.dxf is not None:
             dxf_fil = Path(args.dxf)
             baskarta = las_baskarta_dxf(dxf_fil)
@@ -279,10 +335,33 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
 
         markslag_grund: NDArray[np.uint8] | None = None
         ortofoto_bild: NDArray[np.uint8] | None = None
+        ortofoto_slag: NDArray[np.uint8] | None = None
+        ortofoto_konf: NDArray[np.float32] | None = None
+        belagd_mask: NDArray[np.bool_] | None = None
+        belagd_inst: dict[str, float] | None = None
+        if args.belagd_yta:
+            if laser_moln is None or laser_moln.intensitet is None:
+                raise PipelineFel("--belagd-yta kräver --laser-las med intensitet.")
+            belagd_mask, belagd_res = belagd_mask_for_ruta(laser_moln, ruta)
+            belagd_inst = belagd_res.installningar
+            if belagd_res.skal is not None:
+                dxf_varningar.append(f"Ingen belagd yta ur laser: {belagd_res.skal}.")
+        # K1 v2-tillägget markslag_kalla.tif skrivs när fler källor än ortofotot används
+        flerkalla = args.dwg is not None or belagd_mask is not None
         if args.ortofoto is not None:
             ortofoto_fil = Path(args.ortofoto)
             ortofoto_bild = _las_ortofoto_rgb(ortofoto_fil, ruta.form_rc)
-            markslag_grund = np.full(ruta.form_rc, OKANT, dtype=np.uint8)
+            if flerkalla:
+                _, bygg_slag = brann_in_byggnader(
+                    np.zeros(ruta.form_rc, dtype=np.float32),
+                    np.zeros(ruta.form_rc, dtype=np.uint8),
+                    ruta,
+                    byggnader,
+                )
+                kl = klassificera_ortofoto(ortofoto_bild, byggnad_mask=(bygg_slag == BYGGNAD))
+                ortofoto_slag, ortofoto_konf = kl.markslag, kl.konfidens
+            else:
+                markslag_grund = np.full(ruta.form_rc, OKANT, dtype=np.uint8)
             extra_kallor.append(
                 KallPost(
                     roll="ortofoto",
@@ -308,6 +387,12 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
                 oppningar=oppningar,
                 byggnadskandidater=byggnadskandidater,
                 markslag_grund=markslag_grund,
+                markslagsytor=markslagsytor,
+                belagd_yta_mask=belagd_mask,
+                belagd_installningar=belagd_inst,
+                ortofoto_markslag=ortofoto_slag,
+                ortofoto_konfidens=ortofoto_konf,
+                lagerprofil=lagerprofil,
                 avstand_till_punkt_m=avstand_karta,
                 extra_kallor=extra_kallor,
             )
@@ -315,7 +400,16 @@ def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
             slut_markslag = res.markslag
             slut_osakerhet = res.osakerhet_z
 
-            if ortofoto_bild is not None:
+            if ortofoto_bild is not None and flerkalla:
+                # markslag avgjordes av prioritetsordningen; ortofotots skuggtillägg på osäkerheten
+                kl_o = klassificera_ortofoto(ortofoto_bild, byggnad_mask=(res.markslag == BYGGNAD))
+                _, slut_osakerhet = kombinera_ortofoto_med_markmodell(
+                    res.markslag, res.osakerhet_z, kl_o
+                )
+                skriv_k1_geotiff(
+                    res.katalog / "osakerhet.tif", slut_osakerhet, ruta, nodata=-9999.0
+                )
+            elif ortofoto_bild is not None:
                 klassning = klassificera_ortofoto(
                     ortofoto_bild,
                     byggnad_mask=(res.markslag == BYGGNAD),
@@ -1116,10 +1210,45 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Valfri CSV med laserpunkter (kolumner e_m,n_m,z_m eller e,n,z[,klass]).",
     )
     mm_parser.add_argument(
+        "--laser-las",
+        type=str,
+        default=None,
+        help="Valfri LAS eller LAZ med laserpunkter inklusive intensitet (LAZ via tools/lasclip, "
+        "se `cargo build --release --manifest-path tools/lasclip/Cargo.toml`).",
+    )
+    mm_parser.add_argument(
+        "--laser-epsg",
+        type=int,
+        default=3006,
+        help="Koordinatsystem i --laser-las (standard 3006, Lantmäteriets laser); konverteras "
+        "till EPSG:3011.",
+    )
+    mm_parser.add_argument(
+        "--belagd-yta",
+        action="store_true",
+        help="Belagd yta ur laserintensiteten (kräver --laser-las) som markslagskälla; "
+        "baskarta > belagd yta > ortofoto > standard, med markslag_kalla.tif.",
+    )
+    mm_parser.add_argument(
         "--dxf",
         type=str,
         default=None,
         help="Valfri ASCII-DXF baskarta (brytlinjer, byggnader, öppningar).",
+    )
+    mm_parser.add_argument(
+        "--dwg",
+        type=str,
+        default=None,
+        help="Valfri baskarta i DWG (eller dwgreads JSON): som --dxf plus markslagsytor ur "
+        "lagerprofilens ytregler och markslag_kalla.tif "
+        "(prioritet baskarta > ortofoto > standard).",
+    )
+    mm_parser.add_argument(
+        "--lagerprofil",
+        type=str,
+        default=None,
+        help="Lagerprofil (TOML) för --dwg; annars [markmodell] lagerprofil i config.local.toml, "
+        "annars repots exempelprofil.",
     )
     mm_parser.add_argument(
         "--byggnader",

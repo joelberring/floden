@@ -4,8 +4,8 @@ K9 är det domänneutrala formatet för planändringar. Kärnans körmotor (T20)
 för att kunna göra det översätts K9-ändringarna till en K3-lapp som tillämpas med
 `lapp.tillampa` (samma väg som vattnet redan använder).
 
-Tolkningen följer `vatten.scenario_lapp` (grenen `vatten-blaytor`) så att samma K9-scenario
-ger samma K1-rutor oavsett väg:
+Detta är den enda översättningen (`vatten.scenario_lapp` är ett tunt lager ovanpå), så samma
+K9-scenario ger samma K1-rutor oavsett väg:
 
 - `byggnad_ny` → `LappByggnad`: kräver `entre_rh2000`, `entre_punkt`; valfritt `hojd_m`,
   `tak_rh2000`, `gransdjup_m`.
@@ -88,7 +88,12 @@ def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
 
 
 def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
-    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna)."""
+    """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna).
+
+    Den enda K9→K3-översättningen i Floden: `vatten.scenario_lapp` anropar den. Ändringarna
+    sorteras efter `andring_id` (en enda deterministisk ordning), så lappen och dess nyckel beror
+    inte på listordningen. Överlappande ändringar med olika id tillämpas alltså i id-ordning.
+    """
     from lapp.kontrakt import (
         HojdYta,
         LappByggnad,

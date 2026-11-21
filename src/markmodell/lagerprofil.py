@@ -30,6 +30,7 @@ from typing import Any
 
 from gemensamt.hash import sha256_bytes
 from markmodell.grundkarta import GrundkartaFel, LagerMappning
+from markmodell.stockholm_lager import StockholmGrammatik, tolka_grammatik
 
 STANDARD_LAGERPROFIL_SOKVAG: Path = (
     Path(__file__).resolve().parents[2] / "data" / "lagerprofiler" / "stockholm_baskarta.toml"
@@ -76,6 +77,8 @@ class Lagerprofil:
     ytregler: tuple[YtRegel, ...]
     sha256: str
     kalla: str
+    stockholm: StockholmGrammatik | None = None
+    """Stockholms lagergrammatik (`[stockholm]`); lager som följer den tolkas automatiskt."""
 
     def som_lagermappning(self) -> dict[str, tuple[str, float]]:
         """Linjereglerna som dict, samma form som `STANDARD_STOCKHOLM_LAGERMAPPNING`."""
@@ -133,7 +136,7 @@ def tolka_lagerprofil(data: bytes, *, kalla: str = "<bytes>") -> Lagerprofil:
     except (UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
         raise GrundkartaFel(f"Lagerprofilen {kalla} går inte att läsa som TOML: {exc}") from exc
 
-    okanda = set(innehall) - {"namn", "version", "beskrivning", "linjer", "ytor"}
+    okanda = set(innehall) - {"namn", "version", "beskrivning", "linjer", "ytor", "stockholm"}
     if okanda:
         raise GrundkartaFel(f"Lagerprofilen {kalla} har okända nycklar: {sorted(okanda)}.")
     namn = _krav_str(innehall, "namn", f"Lagerprofil {kalla}")
@@ -177,6 +180,13 @@ def tolka_lagerprofil(data: bytes, *, kalla: str = "<bytes>") -> Lagerprofil:
     def sortering(prefix: str) -> tuple[int, str]:
         return (-len(prefix), prefix)  # längsta prefix först, som _bygg_lagerregler
 
+    grammatik: StockholmGrammatik | None = None
+    if "stockholm" in innehall:
+        tabell = innehall["stockholm"]
+        if not isinstance(tabell, dict):
+            raise GrundkartaFel(f"Lagerprofil {kalla}: 'stockholm' måste vara en tabell.")
+        grammatik = tolka_grammatik(tabell, kalla)
+
     return Lagerprofil(
         namn=namn,
         version=version,
@@ -184,6 +194,7 @@ def tolka_lagerprofil(data: bytes, *, kalla: str = "<bytes>") -> Lagerprofil:
         ytregler=tuple(sorted(ytregler, key=lambda r: sortering(r.prefix))),
         sha256=sha256_bytes(data),
         kalla=kalla,
+        stockholm=grammatik,
     )
 
 
@@ -193,3 +204,26 @@ def las_lagerprofil(sokvag: str | Path = STANDARD_LAGERPROFIL_SOKVAG) -> Lagerpr
     if not fil.is_file():
         raise GrundkartaFel(f"Lagerprofilen hittades inte: {fil}")
     return tolka_lagerprofil(fil.read_bytes(), kalla=fil.name)
+
+
+def hitta_lagerprofil(
+    sokvag: str | Path | None = None, konfig: Mapping[str, Any] | None = None
+) -> Lagerprofil:
+    """Väljer lagerprofil: explicit sökväg > `[markmodell] lagerprofil` i konfigurationen > repots.
+
+    Stadens riktiga profil läggs i den lokala datamappen och pekas ut i `config.local.toml`
+    (`[markmodell] lagerprofil = "..."`; relativ sökväg räknas från `[lokal_data] baskarta_mapp`).
+    Repots profil har bara exempel på ytregler (att bekräfta) och ger inga markslagsytor.
+    """
+    if sokvag is not None and str(sokvag).strip():
+        return las_lagerprofil(sokvag)
+    if konfig is not None:
+        namn = (konfig.get("markmodell") or {}).get("lagerprofil", "")
+        if isinstance(namn, str) and namn.strip():
+            fil = Path(namn)
+            if not fil.is_absolute():
+                mapp = (konfig.get("lokal_data") or {}).get("baskarta_mapp", "")
+                if isinstance(mapp, str) and mapp.strip():
+                    fil = Path(mapp) / fil
+            return las_lagerprofil(fil)
+    return las_lagerprofil()

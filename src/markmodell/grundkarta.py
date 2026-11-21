@@ -6,6 +6,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -952,8 +953,14 @@ def las_baskarta_dxf(
     ar_text: bool = False,
     lagermappning: Mapping[str, tuple[str, float]] | None = None,
     snap_tolerans_m: float = 0.25,
+    lagerprofil: Any = None,
 ) -> BaskartaResultat:
-    """Läser en ASCII-DXF baskarta, mappar lager, stänger husliv och topologirensar brytlinjer."""
+    """Läser en ASCII-DXF baskarta, mappar lager, stänger husliv och topologirensar brytlinjer.
+
+    Med `lagerprofil` (`markmodell.lagerprofil.Lagerprofil`) gäller profilens linjeregler, och
+    lager som följer Stockholms grammatik tolkas automatiskt (byggnadens kontur på ett ytlager
+    blir husliv, linjer blir brytlinjer, text, höjdkurvor och skymt hoppas över).
+    """
     if not math.isfinite(snap_tolerans_m) or snap_tolerans_m < 0.0:
         raise GrundkartaFel(f"Ogiltig snap_tolerans_m: {snap_tolerans_m}")
 
@@ -970,11 +977,23 @@ def las_baskarta_dxf(
         except OSError as exc:
             raise GrundkartaFel(f"Kunde inte läsa DXF-filen {sokvag}: {exc}") from exc
 
+    if lagermappning is None and lagerprofil is not None:
+        lagermappning = lagerprofil.som_lagermappning()
     regler = _bygg_lagerregler(lagermappning)
     par = _parsa_dxf_par(dxf_text)
     entiteter, hittade_entities = _extrahera_dxf_entiteter(par)
 
     varningar: list[str] = []
+    if lagerprofil is not None and lagerprofil.stockholm is not None:
+        from markmodell.stockholm_lager import tillampa_pa_linjer
+
+        utfall = tillampa_pa_linjer(entiteter, lagerprofil.stockholm)
+        entiteter = utfall.entiteter
+        regler = (
+            *(LagerMappning(prefix=n, roll=r, standard_m=m) for n, (r, m) in utfall.regler.items()),
+            *regler,
+        )
+        varningar.extend(utfall.varningar)
     if not hittade_entities:
         varningar.append("DXF-filen saknar en ENTITIES-sektion.")
 
