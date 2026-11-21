@@ -222,6 +222,11 @@ Rastret ska vara EPSG:3011, nordorienterat. Vägarna behöver fältet `emission_
 
 *Demo med syntetisk geometri, väder och emissioner (testvärden).*
 
+![Höghus: ändrad vindförstärkning](bilder/luft-komfortdemo-forstarkning.png)
+
+*Komfortdemo: ett 60 m höghus i ett kvarter med 18 m hus, 4 riktningar, 5 m celler (för grovt för skarpa
+slutsatser på gånghöjd – visar bara att kedjan fungerar). Testvärden.*
+
 ## 8. Färdplan
 
 | Steg | Innehåll | Status |

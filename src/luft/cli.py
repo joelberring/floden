@@ -517,6 +517,11 @@ def _kor_komfortdemo(args: argparse.Namespace) -> int:
     _rita_png(ut / "andel_over_5ms_skillnad.png", skillnad,
               hojd_efter, res["efter"].ruta, "Ändring i andel timmar > 5 m/s (procentenheter)",
               "procentenheter", [], None, divergerande=True)
+    a_fore = np.mean(res["fore"].forstarkning_per_riktning, axis=0)
+    a_efter = np.mean(res["efter"].forstarkning_per_riktning, axis=0)
+    _rita_png(ut / "forstarkning_skillnad.png", a_efter - a_fore, hojd_efter, res["efter"].ruta,
+              "Ändrad vindförstärkning U_lok/U_ref på gånghöjd (medel över riktningar)", "–",
+              [], None, divergerande=True)
     filer = _skriv_komfort(ut, res["efter"], "") + _skriv_komfort(ut, res["fore"], "fore_")
     matvarden = {kk: v for kk, v in d.items() if isinstance(v, float)}
     _komfort_manifest(ut, filer, {"demo": True, "markning": TESTVARDE_MARKNING,
