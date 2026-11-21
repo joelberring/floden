@@ -14,6 +14,10 @@ den ger scenario, cache, spårbarhet och jämförelse A/B. Kontrakt: K9 (scenari
 | Körs med | `karna.kor_fraga` (Python) | `floden fraga kor fraga.toml` |
 | Jämförelse A/B | Modulens sak | Kärnan för K1-raster (`[[jamforelser]]`) |
 
+K9-ändringarna för byggnader och vegetation (`byggnad_ny`, `byggnad_bort`, `byggnad_hojd`, `vegetation`) kräver
+K1 v2-rutor; de tillämpas av `karna.geometri` och läses via samma API (`las_byggnader`, `las_terrang`,
+`las_ytmodell`, `las_vegetation`, `fasadpunkter`, `las_markklasser`). Se K1 v2 och K11 i `DATAKONTRAKT.md`.
+
 Båda delar K9, sha256-nycklar och K0-manifest. Välj rutvisa lösare om resultatet bara beror på
 geometrin inom ett avstånd; då behöver modulen inte själv hålla reda på vad som ändrats.
 
