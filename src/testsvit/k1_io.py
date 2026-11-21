@@ -66,6 +66,10 @@ _TAG_SAMPLES_PER_PIXEL = 277
 _TAG_ROWS_PER_STRIP = 278
 _TAG_STRIP_BYTE_COUNTS = 279
 _TAG_SAMPLE_FORMAT = 339
+_TAG_PREDICTOR = 317
+_TAG_TILE_OFFSETS = 324
+_TAG_COMPRESSION_NONE = 1
+_TAG_COMPRESSION_DEFLATE = (8, 32946)
 _TAG_MODEL_PIXEL_SCALE = 33550
 _TAG_MODEL_TIEPOINT = 33922
 _TAG_GEO_KEY_DIRECTORY = 34735
@@ -264,7 +268,12 @@ def _las_tiff_varden(
 def las_geotiff(
     sokvag: str | Path,
 ) -> tuple[NDArray[np.float32] | NDArray[np.uint8], GeoTransformInfo]:
-    """Läser ett okomprimerat little-endian Classic GeoTIFF i ren Python + NumPy."""
+    """Läser ett little-endian Classic GeoTIFF (okomprimerat eller deflate, strips) i ren Python.
+
+    Tiles, prediktorer och andra komprimeringar läses via rasterio om det finns installerat;
+    annars ges ett tydligt `K1FormatFel`. Markmodellens skrivare skriver deflate-strips, så
+    de här filerna måste gå att läsa utan rasterio.
+    """
     fil = Path(sokvag)
     data = fil.read_bytes()
     if len(data) < 8 or data[:2] != b"II":
@@ -282,6 +291,15 @@ def las_geotiff(
         if tiff_type in (_TIFF_TYPE_SHORT, _TIFF_TYPE_LONG, _TIFF_TYPE_DOUBLE):
             taggar[tag] = _las_tiff_varden(data, tiff_type, count, val_bytes)
         pos += 12
+
+    compression_tidig = int(taggar.get(_TAG_COMPRESSION, (1.0,))[0])
+    predictor = int(taggar.get(_TAG_PREDICTOR, (1.0,))[0])
+    if (
+        _TAG_TILE_OFFSETS in taggar
+        or predictor != 1
+        or compression_tidig not in (_TAG_COMPRESSION_NONE, *_TAG_COMPRESSION_DEFLATE)
+    ):
+        return _las_geotiff_rasterio(fil, compression_tidig, predictor)
 
     obligatoriska = (
         _TAG_IMAGE_WIDTH,
@@ -302,13 +320,20 @@ def las_geotiff(
     hojd = int(taggar[_TAG_IMAGE_LENGTH][0])
     bits = int(taggar[_TAG_BITS_PER_SAMPLE][0])
     compression = int(taggar[_TAG_COMPRESSION][0])
-    if compression != 1:
-        raise K1FormatFel(f"Endast okomprimerad TIFF stöds i ren-Python-läsaren ({fil}).")
     sample_format = int(taggar.get(_TAG_SAMPLE_FORMAT, (1.0,))[0])
 
     offsets = [int(v) for v in taggar[_TAG_STRIP_OFFSETS]]
     counts = [int(v) for v in taggar[_TAG_STRIP_BYTE_COUNTS]]
     pixel_chunks = [data[off : off + cnt] for off, cnt in zip(offsets, counts, strict=True)]
+    if compression in _TAG_COMPRESSION_DEFLATE:
+        import zlib
+
+        try:
+            pixel_chunks = [zlib.decompress(c) for c in pixel_chunks]
+        except zlib.error as fel:
+            raise K1FormatFel(f"Trasig deflate-strip i {fil}: {fel}") from fel
+    if len(b"".join(pixel_chunks)) != bredd * hojd * (bits // 8):
+        raise K1FormatFel(f"Pixeldata i {fil} har fel storlek för {bredd}×{hojd}×{bits} bitar.")
     pixel_raw = b"".join(pixel_chunks)
 
     arr: NDArray[np.float32] | NDArray[np.uint8]
@@ -344,6 +369,43 @@ def las_geotiff(
         y_max=float(tiepoint[4]),
         pixelstorlek_x=float(scale[0]),
         pixelstorlek_y=float(scale[1]),
+        epsg=epsg,
+        dtype=dtype_str,
+    )
+    return arr, info
+
+
+def _las_geotiff_rasterio(
+    fil: Path, compression: int, predictor: int
+) -> tuple[NDArray[np.float32] | NDArray[np.uint8], GeoTransformInfo]:
+    """Fallback för tiles, prediktorer och andra komprimeringar (t.ex. COG från rasterio)."""
+    try:
+        import rasterio
+    except ImportError as fel:
+        raise K1FormatFel(
+            f"{fil} är tilad eller använder komprimering {compression}/prediktor {predictor}; "
+            "ren-Python-läsaren klarar bara strips utan prediktor. Installera rasterio."
+        ) from fel
+    with rasterio.open(fil) as ds:
+        band = ds.read(1)
+        tr = ds.transform
+        epsg = int(ds.crs.to_epsg() or 0) if ds.crs is not None else 0
+    arr: NDArray[np.float32] | NDArray[np.uint8]
+    if band.dtype == np.float32:
+        arr = band.astype(np.float32, copy=False)
+        dtype_str = "float32"
+    elif band.dtype == np.uint8:
+        arr = band.astype(np.uint8, copy=False)
+        dtype_str = "uint8"
+    else:
+        raise K1FormatFel(f"Stöd saknas för datatypen {band.dtype} i {fil}")
+    info = GeoTransformInfo(
+        bredd=int(arr.shape[1]),
+        hojd=int(arr.shape[0]),
+        x_min=float(tr.c),
+        y_max=float(tr.f),
+        pixelstorlek_x=float(tr.a),
+        pixelstorlek_y=float(-tr.e),
         epsg=epsg,
         dtype=dtype_str,
     )
