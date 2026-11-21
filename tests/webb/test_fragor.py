@@ -152,6 +152,15 @@ class TestWebbFragor(unittest.TestCase):
 
     # ------------------------------------------------------------------ lista
 
+    def test_omradesfragorna_kraver_egna_data_och_ar_inte_demo(self) -> None:
+        """De hamnar under "Fler exempel (kräver egna data)": inte demo, med indata som saknas."""
+        _, d = _json(self.app, "GET", "/api/fragor")
+        per_ref = {f["ref"]: f for f in d["fragor"]}
+        for ref in ("omrade_dagsljus", "omrade_vatten"):
+            self.assertIn(ref, per_ref)
+            self.assertFalse(per_ref[ref]["i_demon"])
+            self.assertTrue(per_ref[ref]["indata_saknas"])
+
     def test_lista_fragor_visar_filerna_och_felaktiga_som_ogiltiga(self) -> None:
         status, d = _json(self.app, "GET", "/api/fragor")
         self.assertEqual(status, 200)

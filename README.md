@@ -41,6 +41,36 @@ skillnad), byggnader, varningar och mätvärden. Allt beräknas av kärnan; webb
 på den egna disken. Med `inloggning = "pa"` kopplas kontosystemet in (Google-inloggning, CSRF,
 skyddat API), se `docs/KONTO.md`. Start och API: se `webb/README.md`.
 
+## Köra ett verkligt område på din dator
+
+Hämtar Lantmäteriets öppna laser, byggnader och ortofoto för ditt provområde och kör dagsljus och vatten på det. Allt
+körs och sparas **lokalt**; inget laddas upp. Detaljer, villkor och begränsningar: `docs/DATA.md`
+("Hämta öppna data från Lantmäteriet"). **Prövat bara mot en falsk server**, inte mot Lantmäteriet.
+
+1. **Nycklar.** Hos Lantmäteriet (API-portalen `apimanager.lantmateriet.se`) ska du ha nyckel och hemlighet, och
+   produkterna Laserdata Nedladdning skog, Byggnad och Ortofoto Nedladdning ska vara beställda på Geotorget.
+   Har du lagt in dem i O-Tid (Mitt konto) går de inte att läsa ut därifrån, så hämta dem igen. Lägg dem i
+   `config.local.toml` (kopiera `config.local.toml.example`, avsnittet `[lantmateriet]`) eller i miljön:
+   `export LANTMATERIET_KLIENT_ID=...` och `export LANTMATERIET_KLIENT_HEMLIGHET=...`.
+2. **Området.** Rita provområdet (cirka 1 km², gärna med marginal) i QGIS och spara det som GeoPackage i EPSG:3011:
+   `data/omraden/prov1.gpkg`.
+3. **Bygg laserprogrammet (en gång, för LAZ):**
+   `cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml`
+4. **Titta vad tjänsten har** (valfritt): `floden data lantmateriet --lista-samlingar`
+5. **Hämta** till en mapp utanför repot (kan köras om, redan hämtat hoppas över):
+   `floden data lantmateriet --omrade data/omraden/prov1.gpkg --laser --byggnader --orto --ut ~/floden-data/prov1`
+6. **Bygg K1 v2-rutor:**
+   `floden omrade bygg --omrade data/omraden/prov1.gpkg --data ~/floden-data/prov1 --ut data/lokal/prov1/k1`
+   och för vattenlösaren (en enda ruta):
+   `floden omrade bygg --omrade data/omraden/prov1.gpkg --data ~/floden-data/prov1 --en-ruta --ut data/lokal/prov1/k1_en_ruta`
+7. **Kör frågorna** (exempel i `exempel/fragor/omrade_dagsljus.toml` och `omrade_vatten.toml`):
+   `floden fraga kor exempel/fragor/omrade_dagsljus.toml` och `floden fraga kor exempel/fragor/omrade_vatten.toml`
+8. **Visa i webben:** `floden webb` och öppna http://localhost:8765, välj frågorna *omrade-dagsljus* och *omrade-vatten*
+   under **Frågor**.
+
+Lasern har 1-2 punkter per m2 och ingen byggnadsklass; byggnadshöjderna är därför uppskattade ur oklassade punkter i
+husens polygoner (se varningarna). Källa: ©Lantmäteriet. Kontrollera produkternas användarvillkor.
+
 ## Visa Floden på din dator
 
 Så här visar du Floden för kollegor, från noll till en körande demo på en Mac. Allt körs lokalt och
