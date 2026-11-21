@@ -38,6 +38,7 @@ och trummor syns och är dokumenterad.
 | --- | --- | --- | --- |
 | T03 | Händelsestyrd grafmodell, enhetssvar, scenarier, osäkerhetsintervall | T02 | klar |
 | T06 | Infiltration per markslag, grundvattentak, brunnar som sänkor | T01 | klar (syntetiskt; verkligt provområde väntar) |
+| R1 | Regnbibliotek: Stockholmsregn 2024 (Tabell 7) som registrerad IDF-källa, klimatfaktor som uttrycklig parameter (standard 1,4), `--idf` i CLI | T03 | klar |
 
 **Klar när:** djup över tid i sänkorna går att räkna för hundratals regn på några sekunder, och resultatet
 stämmer med de syntetiska fallen i testsviten.

@@ -4,6 +4,7 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 
 | Datum | Beslut | Skäl |
 | --- | --- | --- |
+| 2026-11-21 | **IDF-källa för Stockholm:** Stockholmsregn 2024, Tabell 7 (kap. 4.1, s. 30; Stockholms stad, trafikkontoret) används som Stockholms IDF-källa (`--idf stockholmsregn-2024`), registrerad vid sidan av Dahlström (2010) och de inbyggda förvalen, som är oförändrade. **Klimatfaktor 1,4 som standard** enligt rapportens rekommendation (kap. 6.3, multiplicerad med hela regnkurvan, kap. 4.9); 1,25 (stadens faktor när rapporten skrevs) kan väljas med `--klimatfaktor 1.25`. Tabellvärdena är utan klimatfaktor och faktorn skrivs i regnserien och i K0-manifestet. **Tabell 6/7-skillnaden redovisad:** Tabell 6 (kap. 3.8) ger andra 60-minutersvärden (100 år: 117,9 ± 9,4 mot 127,8 l/(s·ha) i Tabell 7, cirka 8 % högre); rapporten säger att metoderna inte helt överensstämmer. Tabell 7 används, Tabell 6 är inte inlagd. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Offentlig rapport från stadens skyfallsfunktion (Sweco, DHI, SMHI) med tabell för hela intervallet 5–1440 min och 1–1000 år. Källa, sida, fotnot, transkriptionskontroll och sha256 står i `data/regn/stockholmsregn_2024.toml`. |
 | 2026-11-21 | **Samordning:** när parallella trådar är avslutade ansvarar den samlade tråden för öppna frågor. Den mergar PR:er till `main` när hela sviten (pytest, ruff, mypy, `floden testsvit` alla grupper) är grön och för in beslut här märkta så. Kostnader, extern kontakt och stadens data avgörs alltid av Joel. | Joels uppdrag 2026-11-21: "ta ansvar för alla lösa frågor i denna tråd". |
 | 2026-11-21 | **Kontraktsversioner:** tillägg som inte bryter mot äldre data (nya valfria filer eller kolumner) höjer inte versionen. Därför förblir fas 3:s K2-tilläggsfiler **K2/v1**, och `valfria_indataroller` i K21 förblir K21/v1. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Följer regeln överst i `docs/DATAKONTRAKT.md`: bara brytande ändringar höjer versionen. |
 | 2026-11-21 | **K1 v2:s förval godtas:** platt tak på `takhojd_rh2000` och 10 m ± 5 m för byggnader utan höjdkälla (flaggas i `run.json` och i resultat). Laser klass 6 eller källans höjd går alltid före. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Skillnaden mot v1 syns bara på sluttande mark utan känt tak; standardhöjden är synlig och spårbar, inte tyst. |
@@ -36,7 +37,7 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 
 - Exakt avgränsning av provområdet (`data/omraden/prov1.gpkg`).
 - Om och hur stadens tätare laser och baskarta får användas utanför stadens miljö; stadens lagernamn för skraffyrer.
-- Officiell IDF-tabell Stockholmsregn 2024 och K7-trösklar från räddningstjänsten.
+- K7-trösklar från räddningstjänsten (IDF-källan Stockholmsregn 2024 är avgjord, se beslutstabellen).
 - Vem som är person X (numerik och hydraulik).
 - Kostnader: GPU-leverantör och budget (2D, luft), beräkningsserver för stora batcher, VPS (driftplanen 7, punkt 7, 8 och 10), och när hela Stockholm körs (punkt 11).
 - Kontosystem: vilka IdP:er först, vilken kommun/tenant att prova med och vem som är organisationsadmin (driftplanen 7, punkt 3 och 4).

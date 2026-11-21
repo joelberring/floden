@@ -23,13 +23,17 @@ from dynamik.risk import berakna_kumulativ_oversvamningsrisk
 from gemensamt.hash import sha256_fil
 from gemensamt.manifest import FilPost, las_manifest, skriv_manifest
 from gemensamt.regn import (
+    IDF_DAHLSTROM_2010,
+    IDF_KALLOR,
     STANDARD_CDS_TOPPFAKTOR,
     STANDARD_TIDSSTEG_MIN,
     STANDARD_VARAKTIGHET_MIN,
+    IdfKalla,
     RegnFel,
     RegnSerieK4,
     las_regn_k4_csv,
     lista_regnforval,
+    skapa_regn_fran_idf_kalla,
     skapa_regn_fran_spec,
     skriv_regn_k4_csv,
 )
@@ -543,9 +547,58 @@ def _kor_blaytor_kommando(args: argparse.Namespace) -> int:
         return 2
 
 
+IDF_VAL: tuple[str, ...] = (IDF_DAHLSTROM_2010, *sorted(IDF_KALLOR))
+
+
+def _idf_kalla_fran_args(args: argparse.Namespace) -> IdfKalla | None:
+    """Registrerad IDF-tabell vald med `--idf`, eller None för Dahlström (2010)."""
+    val = getattr(args, "idf", IDF_DAHLSTROM_2010)
+    return None if val == IDF_DAHLSTROM_2010 else IDF_KALLOR[val]
+
+
+def _klimatfaktor_fran_args(args: argparse.Namespace, standard_utan_idf: float) -> float:
+    """Uttryckligt `--klimatfaktor`, annars källans standard (Stockholmsregn 2024: 1,4)."""
+    if args.klimatfaktor is not None:
+        return float(args.klimatfaktor)
+    kalla = _idf_kalla_fran_args(args)
+    return kalla.standard_klimatfaktor if kalla is not None else standard_utan_idf
+
+
+def _lagg_idf_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--idf",
+        type=str,
+        default=IDF_DAHLSTROM_2010,
+        choices=IDF_VAL,
+        help=(
+            "IDF-källa: 'dahlstrom-2010' (standard, formel) eller 'stockholmsregn-2024' "
+            "(Tabell 7, utan klimatfaktor; standardfaktor 1,4 enligt rapporten, 1,25 kan väljas "
+            "med --klimatfaktor)."
+        ),
+    )
+
+
 def _ladda_regn_for_kor(args: argparse.Namespace, indata: Path) -> tuple[RegnSerieK4, Path | None]:
     har_csv = args.regn_csv is not None
     har_spec = args.regn_id is not None or args.aterkomsttid_ar is not None
+    idf_kalla = _idf_kalla_fran_args(args)
+    if idf_kalla is not None:
+        if har_csv or args.regn_id is not None:
+            raise RegnFel(
+                f"--idf {idf_kalla.kalla_id} kan inte kombineras med --regn-csv/--regn-id."
+            )
+        if args.aterkomsttid_ar is None:
+            raise RegnFel(f"--idf {idf_kalla.kalla_id} kräver --aterkomsttid-ar.")
+        return (
+            skapa_regn_fran_idf_kalla(
+                idf_kalla.kalla_id,
+                args.aterkomsttid_ar,
+                klimatfaktor=_klimatfaktor_fran_args(args, 1.0),
+                typ=args.regntyp,
+                varaktighet_min=args.varaktighet_min,
+            ),
+            None,
+        )
     if har_csv and har_spec:
         raise RegnFel("Ange inte både --regn-csv och --regn-id/--aterkomsttid-ar samtidigt.")
 
@@ -557,7 +610,7 @@ def _ladda_regn_for_kor(args: argparse.Namespace, indata: Path) -> tuple[RegnSer
         serie = skapa_regn_fran_spec(
             regn_id=args.regn_id,
             aterkomsttid_ar=args.aterkomsttid_ar,
-            klimatfaktor=args.klimatfaktor,
+            klimatfaktor=_klimatfaktor_fran_args(args, 1.0),
             varaktighet_min=args.varaktighet_min,
             typ=args.regntyp,
         )
@@ -641,8 +694,17 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
             "modell": args.modell,
             "regn_id": serie.regn_id,
             "brutto_regn_mm": float(serie.total_djup_mm),
+            "regn_statistikkalla": serie.statistikkalla,
+            "regn_klimatfaktor": float(serie.klimatfaktor),
             "subgrid_faktor": int(args.subgrid_faktor),
         }
+        idf_kalla_kor = _idf_kalla_fran_args(args)
+        if idf_kalla_kor is not None:
+            parametrar.update(idf_kalla_kor.manifest_parametrar(serie.klimatfaktor))
+            indata_poster.extend(
+                FilPost(roll=roll, fil=fil.name, sha256=sha256_fil(fil))
+                for roll, fil in idf_kalla_kor.indatafiler()
+            )
         if koppl is not None:
             parametrar["t06"] = koppl.till_dict()
 
@@ -834,6 +896,8 @@ def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
 def _kor_regn_kommando(args: argparse.Namespace) -> int:
     try:
         if args.lista or (args.id is None and args.aterkomsttid_ar is None):
+            if _idf_kalla_fran_args(args) is not None:
+                raise RegnFel("--idf gäller inte --lista (förvalen bygger på Dahlström 2010).")
             forval = lista_regnforval(region=args.region)
             if args.json:
                 print(json.dumps([f.till_dict() for f in forval], indent=2, ensure_ascii=False))
@@ -851,15 +915,32 @@ def _kor_regn_kommando(args: argparse.Namespace) -> int:
                 )
             return 0
 
-        serie = skapa_regn_fran_spec(
-            regn_id=args.id,
-            aterkomsttid_ar=args.aterkomsttid_ar,
-            klimatfaktor=args.klimatfaktor,
-            varaktighet_min=args.varaktighet_min,
-            typ=args.typ,
-            tidssteg_min=args.tidssteg_min,
-            toppfaktor=args.toppfaktor,
-        )
+        idf_kalla = _idf_kalla_fran_args(args)
+        if idf_kalla is not None:
+            if args.id is not None or args.aterkomsttid_ar is None:
+                raise RegnFel(
+                    f"--idf {idf_kalla.kalla_id} kräver --aterkomsttid-ar och kan inte "
+                    "kombineras med --id (förvalen bygger på Dahlström 2010)."
+                )
+            serie = skapa_regn_fran_idf_kalla(
+                idf_kalla.kalla_id,
+                args.aterkomsttid_ar,
+                klimatfaktor=_klimatfaktor_fran_args(args, 1.0),
+                typ=args.typ,
+                varaktighet_min=args.varaktighet_min,
+                tidssteg_min=args.tidssteg_min,
+                toppfaktor=args.toppfaktor,
+            )
+        else:
+            serie = skapa_regn_fran_spec(
+                regn_id=args.id,
+                aterkomsttid_ar=args.aterkomsttid_ar,
+                klimatfaktor=_klimatfaktor_fran_args(args, 1.0),
+                varaktighet_min=args.varaktighet_min,
+                typ=args.typ,
+                tidssteg_min=args.tidssteg_min,
+                toppfaktor=args.toppfaktor,
+            )
         if args.ut is not None:
             skriv_regn_k4_csv(args.ut, serie)
 
@@ -871,6 +952,8 @@ def _kor_regn_kommando(args: argparse.Namespace) -> int:
             print(f"Klimatfaktor: {serie.klimatfaktor:.2f}, totalt: {serie.total_djup_mm:.2f} mm")
             print(f"Maxintensitet: {serie.max_intensitet_mm_h:.2f} mm/h")
             print(f"Källa: {serie.statistikkalla}")
+            if idf_kalla is not None:
+                print(f"Klimatfaktor-standard: {idf_kalla.standard_klimatfaktor_motivering}")
             if args.ut is not None:
                 print(f"Skrev K4-CSV till: {args.ut}")
         return 0
@@ -927,12 +1010,23 @@ def _kor_risk_kommando(args: argparse.Namespace) -> int:
                 float(x.strip()) for x in args.aterkomsttider.split(",") if x.strip()
             ]
 
+        idf_kalla = _idf_kalla_fran_args(args)
+        idf_indata = (
+            [
+                FilPost(roll=roll, fil=fil.name, sha256=sha256_fil(fil))
+                for roll, fil in idf_kalla.indatafiler()
+            ]
+            if idf_kalla is not None
+            else None
+        )
         res = berakna_kumulativ_oversvamningsrisk(
             graf,
             gransdjup_m=args.gransdjup_m,
             max_aterkomsttid_ar=args.max_aterkomsttid_ar,
             aterkomsttider_ar=aterkomst_lista,
-            klimatfaktor=args.klimatfaktor,
+            klimatfaktor=_klimatfaktor_fran_args(args, 1.24),
+            idf_tabell=idf_kalla.las() if idf_kalla is not None else None,
+            indata=idf_indata,
             varaktighet_min=args.varaktighet_min,
             regntyp=args.regntyp,
             tidshorisont_ar=args.tidshorisont_ar,
@@ -1160,9 +1254,10 @@ def bygg_parser() -> argparse.ArgumentParser:
     kor_parser.add_argument(
         "--klimatfaktor",
         type=float,
-        default=1.0,
-        help="Klimatfaktor (standard: 1.0).",
+        default=None,
+        help="Klimatfaktor (standard: 1.0; med --idf stockholmsregn-2024: 1.4).",
     )
+    _lagg_idf_arg(kor_parser)
     kor_parser.add_argument(
         "--varaktighet-min",
         type=float,
@@ -1273,9 +1368,13 @@ def bygg_parser() -> argparse.ArgumentParser:
     regn_parser.add_argument(
         "--klimatfaktor",
         type=float,
-        default=1.0,
-        help="Klimatfaktor (t.ex. 1.0, 1.24, 1.25, 1.4). Standard: 1.0 (eller förvalets).",
+        default=None,
+        help=(
+            "Klimatfaktor (t.ex. 1.0, 1.24, 1.25, 1.4). Standard: 1.0 (eller förvalets); "
+            "med --idf stockholmsregn-2024: 1.4."
+        ),
     )
+    _lagg_idf_arg(regn_parser)
     regn_parser.add_argument(
         "--varaktighet-min",
         type=float,
@@ -1345,9 +1444,13 @@ def bygg_parser() -> argparse.ArgumentParser:
     risk_parser.add_argument(
         "--klimatfaktor",
         type=float,
-        default=1.24,
-        help="Klimatfaktor (t.ex. 1.0, 1.24, 1.25, 1.4). Standard: 1.24.",
+        default=None,
+        help=(
+            "Klimatfaktor (t.ex. 1.0, 1.24, 1.25, 1.4). Standard: 1.24; "
+            "med --idf stockholmsregn-2024: 1.4."
+        ),
     )
+    _lagg_idf_arg(risk_parser)
     risk_parser.add_argument(
         "--tidshorisont-ar",
         type=float,
