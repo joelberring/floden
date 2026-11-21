@@ -2,6 +2,12 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-21 – Rättning – K1-raster från markmodellen gick inte att läsa (deflate, uint8-offset)
+Gjort: Två fel som slår till på riktiga data, hittade av geometriagenten (K1 v2). (1) `testsvit.k1_io.las_geotiff`, som sänkgraf, CLI och webb använder, läste bara okomprimerade TIFF, medan `markmodell.k1_skrivare.skriv_geotiff` alltid skriver deflate; läsaren klarar nu deflate-strips i ren Python och faller tillbaka på rasterio för tiles och prediktorer (tydligt fel om rasterio saknas). (2) Den rena Python-skrivaren räknade strip-offset som om GDAL_NODATA låg utanför IFD även när strängen (≤ 4 byte, t.ex. nodata 0 för `markslag.tif`) lagrades direkt i posten, så alla offset var 2 byte fel och filen var oläsbar även för GDAL.
+Mätt: Nytt test `tests/testsvit/test_k1_io_deflate.py` (rundtur float32 och uint8 via båda skrivarvägarna, exakt likhet och georeferens) föll 2/2 före och går 2/2 efter. Hela sviten 455 OK / 8 skippade (de sex extra skippade är lasclip/tvad_karna som inte byggts i arbetsträdet), ruff och mypy rena, `floden testsvit` 13/13.
+Öppet: Inget testat mot riktiga Lantmäteriet-rutor än.
+Nästa: Merga före #21 (K1 v2), som har en egen robust läsare i `karna.geometri` som kan förenklas efteråt.
+
 ## 2026-11-21 – Integration – provsammanfogning av #10–#18
 Gjort: Provkörning på grenen `integration-2026-11-21` (från `origin/main` 219f722); alla öppna PR:er sammanfogade med `--no-ff` i beroendeordning #10 → #11 → #14 → #12 → #16 → #17 → #18 → #13 → #15. Main är orörd, inga PR:er mergade, ingen PR skapad. Konflikter: #17 `STATUS.md` (alla poster behållna), #18 `.gitignore` (båda raderna behållna), #15 `STATUS.md` och `src/floden/cli.py` (båda sidors poster och subparser/dispatch behållna). Övriga steg gick rent; `docs/DATAKONTRAKT.md` (#16), `docs/BESLUT.md`, `pyproject.toml` (#15) och `PLAN.md` (#15) slogs ihop automatiskt utan konflikt.
 Mätt (pytest OK/skippade, tid; ruff 0.8.4 och mypy 1.14.1 rena i alla steg; `floden testsvit` 13/13 i alla steg):

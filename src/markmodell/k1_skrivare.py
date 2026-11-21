@@ -113,7 +113,8 @@ def _skriv_geotiff_ren_python(
     tiepoint_pos = pixel_scale_pos + len(pixel_scale)
     geo_keys_pos = tiepoint_pos + len(tiepoint)
     nodata_pos = geo_keys_pos + len(geo_keys)
-    data_start = nodata_pos + len(nodata_str)
+    # GDAL_NODATA ≤ 4 byte lagras direkt i IFD-posten och tar då ingen plats här.
+    data_start = nodata_pos + (len(nodata_str) if len(nodata_str) > 4 else 0)
 
     strip_offsets: list[int] = []
     strip_counts: list[int] = []
