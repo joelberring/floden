@@ -197,9 +197,14 @@ def green_ampt_tidsserie(
             netto_serie[i] = netto_kum
             continue
 
-        # Effektiv regnintensitet efter initial förlust under detta tidssteg
-        eff_i_m_s = kvar_av_regn / dt
-        dt_eff = dt
+        # Regnet fyller först den initiala magasineringen; infiltrationen börjar när den är
+        # full. Resten av steget har alltså full intensitet under den återstående tiden
+        # (tidigare späddes intensiteten ut över hela steget, vilket gav för mycket
+        # infiltration med långa steg).
+        dt_eff = dt - (till_init / i_m_s if i_m_s > 0.0 else 0.0)
+        if dt_eff <= 0.0:
+            dt_eff = dt
+        eff_i_m_s = kvar_av_regn / dt_eff
 
         # Nuvarande potentiell infiltrationskapacitet vid f_kum
         kap_start = (

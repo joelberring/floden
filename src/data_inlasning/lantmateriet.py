@@ -67,6 +67,8 @@ class PunktMoln:
     klass: NDArray[np.uint8]
     epsg: int
     kalla: str
+    intensitet: NDArray[np.uint16] | None = None
+    """Råintensitet (LAS-fältet, 0–65535) per punkt; skalan beror på skannern."""
 
 
 def _validera_bbox(bbox: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
@@ -244,14 +246,15 @@ def las_las_punktmoln(
             klass=tom_u,
             epsg=EPSG_INTERN,
             kalla=str(fil),
+            intensitet=np.empty(0, dtype=np.uint16),
         )
 
     klass_offset = 16 if point_format >= 6 else 15
     dt = np.dtype(
         {
-            "names": ["x", "y", "z", "klass"],
-            "formats": ["<i4", "<i4", "<i4", "u1"],
-            "offsets": [0, 4, 8, klass_offset],
+            "names": ["x", "y", "z", "intensitet", "klass"],
+            "formats": ["<i4", "<i4", "<i4", "<u2", "u1"],
+            "offsets": [0, 4, 8, 12, klass_offset],
             "itemsize": point_record_len,
         }
     )
@@ -269,6 +272,7 @@ def las_las_punktmoln(
         dtype=np.float64,
     )
     klass_arr = np.ascontiguousarray(poster["klass"], dtype=np.uint8)
+    intensitet_arr = np.ascontiguousarray(poster["intensitet"], dtype=np.uint16)
     if point_format <= 5:
         # I LAS 1.0–1.3 ligger syntetisk/nyckelpunkt/överlapp i bit 5–7.
         klass_arr = klass_arr & np.uint8(0x1F)
@@ -295,6 +299,7 @@ def las_las_punktmoln(
         klass=klass_arr,
         epsg=EPSG_INTERN,
         kalla=str(fil),
+        intensitet=intensitet_arr,
     )
 
 
@@ -304,6 +309,7 @@ def skriv_syntetisk_las(
     n_m: NDArray[np.float64],
     z_m: NDArray[np.float64],
     klass: NDArray[np.uint8],
+    intensitet: NDArray[np.uint16] | None = None,
 ) -> Path:
     """Skriver en giltig okomprimerad LAS 1.2-fil (punktformat 0) för tester."""
     e_arr = np.asarray(e_m, dtype=np.float64)
@@ -363,6 +369,11 @@ def skriv_syntetisk_las(
         poster["z"] = np.rint((z_arr - z_off) / scale).astype(np.int32)
         poster["flags"] = np.uint8(0x11)  # return 1 of 1
         poster["klass"] = k_arr & np.uint8(0x1F)
+        if intensitet is not None:
+            i_arr = np.asarray(intensitet, dtype=np.uint16)
+            if i_arr.shape != (antal,):
+                raise DataInlasningFel("Intensiteten måste ha samma längd som punkterna.")
+            poster["intensity"] = i_arr
 
     mal = Path(sokvag)
     mal.parent.mkdir(parents=True, exist_ok=True)

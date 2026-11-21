@@ -978,6 +978,36 @@ def las_baskarta_dxf(
     if not hittade_entities:
         varningar.append("DXF-filen saknar en ENTITIES-sektion.")
 
+    return bygg_baskarta_fran_entiteter(
+        entiteter,
+        regler=regler,
+        snap_tolerans_m=snap_tolerans_m,
+        kalla_prefix="baskarta_dxf",
+        varningar=varningar,
+        z_kalla="DXF",
+    )
+
+
+def bygg_baskarta_fran_entiteter(
+    entiteter: Sequence[tuple[str, Sequence[tuple[float, float]], float | None]],
+    *,
+    regler: Sequence[LagerMappning] | None = None,
+    snap_tolerans_m: float = 0.25,
+    kalla_prefix: str = "baskarta",
+    varningar: Sequence[str] = (),
+    z_kalla: str = "baskartan",
+) -> BaskartaResultat:
+    """Gemensam kedja för DXF och DWG: mappar lager, stänger husliv och topologirensar brytlinjer.
+
+    `entiteter` är (lagernamn, punkter, z) där z är linjens medelhöjd eller None.
+    `regler` är validerade lagerregler (förval: Stockholms standardmappning).
+    """
+    if not math.isfinite(snap_tolerans_m) or snap_tolerans_m < 0.0:
+        raise GrundkartaFel(f"Ogiltig snap_tolerans_m: {snap_tolerans_m}")
+    if regler is None:
+        regler = _bygg_lagerregler(None)
+    varningar = list(varningar)
+
     ra_brytlinjer: list[Brytlinje] = []
     husliv_per_hojd: dict[float, list[list[tuple[float, float]]]] = {}
     oppningar: list[Oppning] = []
@@ -992,7 +1022,7 @@ def las_baskarta_dxf(
             continue
 
         antal_mappade_segment += 1
-        rensade = _rensa_punktsekvens(pts)
+        rensade = _rensa_punktsekvens(list(pts))
         if len(rensade) < 2 or _polylinje_langd(rensade) < _DEGENERERAD_LANGD_M:
             extra_degenererade += 1
             continue
@@ -1011,7 +1041,7 @@ def las_baskarta_dxf(
             botten_z = 0.0 if z_varde is None else z_varde
             if z_varde is None:
                 varningar.append(
-                    f"Öppning ({regel.roll}) på lager '{lager}' saknar Z-värde i DXF; "
+                    f"Öppning ({regel.roll}) på lager '{lager}' saknar Z-värde i {z_kalla}; "
                     "botten_rh2000 satt till 0.0 m och behöver höjdsättas."
                 )
             oppningar.append(
@@ -1019,7 +1049,7 @@ def las_baskarta_dxf(
                     typ=regel.roll,
                     bredd_m=regel.standard_m,
                     botten_rh2000=botten_z,
-                    kalla=f"baskarta_dxf:{lager}",
+                    kalla=f"{kalla_prefix}:{lager}",
                     linje=tuple(rensade),
                 )
             )

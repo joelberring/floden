@@ -12,6 +12,7 @@ from data_inlasning.lantmateriet import (
     skriv_syntetisk_las,
     sok_lantmateriet_stac,
 )
+from data_inlasning.lasclip import hitta_lasclip, klipp_laser, las_laser_punktmoln
 from data_inlasning.sgu_nvdb import (
     SGU_JORDARTER_URL,
     SGU_NAMN_TILL_FLODEN_JORDART,
@@ -39,6 +40,9 @@ __all__ = [
     "TransformatorArray",
     "TransformatorPunkt",
     "hamta_nvdb_vagnat",
+    "hitta_lasclip",
+    "klipp_laser",
+    "las_laser_punktmoln",
     "hamta_sgu_jordarter",
     "las_las_punktmoln",
     "las_nvdb_vagnat_geojson",

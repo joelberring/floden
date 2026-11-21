@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from numpy.typing import NDArray
 
 from buller.banor.direkt import par_inom_radie
 from buller.banor.korridor import STANDARD_CELL_M, Korridorindex
@@ -200,7 +201,9 @@ def bygg_banuppsattning(
 
     # --- kandidater i plan: (mottagare, källa, knäckpunkter, reflekterande väggar) -------
     dm, dk = par_inom_radie(me, mn, ke, kn, maxradie_m)
-    grupper: list[tuple[np.ndarray, np.ndarray, Flyttal, Flyttal, np.ndarray | None]] = [
+    grupper: list[
+        tuple[NDArray[np.int64], NDArray[np.int64], Flyttal, Flyttal, NDArray[np.int64] | None]
+    ] = [
         (dm, dk, np.column_stack([ke[dk], me[dm]]), np.column_stack([kn[dk], mn[dm]]), None)
     ]
     if reflexordning >= 1 and scen.byggnader and me.shape[0] and ke.shape[0]:

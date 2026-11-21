@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,15 @@ from PIL import Image, ImageDraw
 from gemensamt.hash import sha256_bytes, sha256_fil
 from gemensamt.manifest import FilPost, hamta_kodversion, skapa_manifest, skriv_manifest
 from markmodell.brytlinjer import Brytlinje, SnapStatistik, brann_in_brytlinjer, fast_losa_andar
+from markmodell.byggnadsregister import (
+    ByggnadsKandidat,
+    ByggnadsPost,
+    ByggnadsregisterFel,
+    hojdsatt_byggnader,
+    kandidat_fran_byggnad,
+    kandidater_underlag,
+    skriv_byggnader_gpkg,
+)
 from markmodell.hinder_oppningar import (
     BYGGNAD,
     HARDGJORT,
@@ -32,8 +41,16 @@ from markmodell.k1_skrivare import (
     skriv_oppningar_gpkg,
 )
 from markmodell.osakerhet import OsakerhetParametrar, berakna_osakerhet
-from markmodell.recept import KallPost, MarkmodellRecept, skriv_recept
-from markmodell.rutnat import Ruta
+from markmodell.recept import KONTRAKT_K1_V2, KallPost, MarkmodellRecept, skriv_recept
+from markmodell.rutnat import Ruta, RutnatFel
+from markmodell.vegetation import (
+    VEGETATION_UPPLOSNING_M,
+    VegetationFel,
+    faktor_mot_marknat,
+    vegetation_fran_laser,
+)
+
+K1_VERSION = 2
 
 
 class PipelineFel(Exception):
@@ -49,6 +66,9 @@ class RutaResultat:
     mark_z: NDArray[np.float32]
     osakerhet_z: NDArray[np.float32]
     markslag: NDArray[np.uint8]
+    terrang_z: NDArray[np.float32]
+    byggnader: tuple[ByggnadsPost, ...]
+    vegetation_hojd_m: NDArray[np.float32] | None
     snap_statistik: SnapStatistik
     recept: MarkmodellRecept
     recept_sha256: str
@@ -139,6 +159,10 @@ def bygg_markmodell_ruta(
     brytlinjer: Sequence[Brytlinje] = (),
     byggnader: Sequence[Byggnad] = (),
     oppningar: Sequence[Oppning] = (),
+    byggnadskandidater: Sequence[ByggnadsKandidat] = (),
+    byggnadshojd_fran_laser: bool = True,
+    vegetation_hojd_m: NDArray[np.float32] | None = None,
+    vegetation_upplosning_m: float = VEGETATION_UPPLOSNING_M,
     markslag_grund: NDArray[np.uint8] | None = None,
     punkt_tathet_per_m2: NDArray[np.float32] | None = None,
     avstand_till_punkt_m: NDArray[np.float32] | None = None,
@@ -156,6 +180,11 @@ def bygg_markmodell_ruta(
     Antingen `grund_z` eller punktmolnet (`mark_punkter_e`, `mark_punkter_n`, `mark_punkter_z`)
     måste anges. Om punktmoln anges beräknas `grund_z`, avståndskarta och punkttäthet
     automatiskt via `interpolera_markpunkter`.
+
+    Skriver K1 v2: utöver v1-filerna `terrang.tif` (marken före byggnader och öppningar),
+    `byggnader.gpkg` (register med höjder satta mot laser klass 6) och, om vegetation kan
+    härledas (laser klass 3–5) eller anges i `vegetation_hojd_m`, `vegetation.tif`.
+    `byggnader` (t.ex. ur DXF) och `byggnadskandidater` (generisk källa) slås ihop.
     """
     t_start = time.perf_counter()
     mal_katalog = Path(ut_mapp) / ruta.namn
@@ -213,8 +242,29 @@ def bygg_markmodell_ruta(
     snappade_linjer, snap_stat = fast_losa_andar(brytlinjer, tolerans_m=snaptolerans_m)
     z_med_bryt = brann_in_brytlinjer(z_bas, ruta, snappade_linjer, snappa=False)
 
-    # Steg 4: byggnader som hinder
-    z_med_bygg, slag = brann_in_byggnader(z_med_bryt, slag, ruta, byggnader)
+    # Steg 4: byggnader som hinder. Registret höjdsätts mot laser och taket brännas in platt på
+    # takhojd_rh2000 (max(terräng, tak)), så att mark.tif = terrang + byggnader kan återskapas.
+    terrang_z = z_med_bryt
+    kandidater = [kandidat_fran_byggnad(b) for b in byggnader] + list(byggnadskandidater)
+    har_punktmoln = (
+        mark_punkter_e is not None and mark_punkter_n is not None and mark_punkter_z is not None
+    )
+    try:
+        bygg_poster, bygg_varningar = hojdsatt_byggnader(
+            kandidater,
+            terrang_z,
+            ruta,
+            laser_e=mark_punkter_e if har_punktmoln else None,
+            laser_n=mark_punkter_n if har_punktmoln else None,
+            laser_z=mark_punkter_z if har_punktmoln else None,
+            laser_klasser=laser_klasser if har_punktmoln else None,
+            byggnadshojd_fran_laser=byggnadshojd_fran_laser,
+        )
+    except ByggnadsregisterFel as exc:
+        raise PipelineFel(str(exc)) from exc
+    z_med_bygg, slag = brann_in_byggnader(
+        z_med_bryt, slag, ruta, [p.till_byggnad() for p in bygg_poster]
+    )
 
     # Steg 6: trummor, portar och passager
     z_slut, slag = brann_in_oppningar(z_med_bygg, slag, ruta, oppningar)
@@ -239,12 +289,63 @@ def bygg_markmodell_ruta(
         parametrar=osakerhet_parametrar,
     )
 
+    # Vegetation (K1 v2): angiven eller härledd ur laser klass 3-5
+    veg_hojd: NDArray[np.float32] | None = None
+    veg_ruta: Ruta | None = None
+    veg_varningar: list[str] = []
+    onskar_veg = vegetation_hojd_m is not None or (
+        har_punktmoln
+        and laser_klasser is not None
+        and bool(np.any(np.isin(np.asarray(laser_klasser), (3, 4, 5))))
+    )
+    if onskar_veg:
+        try:
+            faktor_mot_marknat(ruta, vegetation_upplosning_m)
+            veg_ruta = replace(ruta, upplosning_m=vegetation_upplosning_m)
+        except (VegetationFel, RutnatFel) as exc:
+            if vegetation_hojd_m is not None:
+                raise PipelineFel(f"Vegetationsrutnätet passar inte rutan: {exc}") from exc
+            veg_varningar.append(f"vegetation.tif hoppades över: {exc}")
+    if veg_ruta is not None:
+        if vegetation_hojd_m is not None:
+            if vegetation_hojd_m.shape != veg_ruta.form_rc:
+                raise PipelineFel(
+                    f"vegetation_hojd_m har form {vegetation_hojd_m.shape}, "
+                    f"förväntade {veg_ruta.form_rc}."
+                )
+            veg_hojd = np.array(vegetation_hojd_m, dtype=np.float32, copy=True)
+        else:
+            assert mark_punkter_e is not None and mark_punkter_n is not None
+            assert mark_punkter_z is not None and laser_klasser is not None
+            veg_hojd = vegetation_fran_laser(
+                mark_punkter_e,
+                mark_punkter_n,
+                mark_punkter_z,
+                laser_klasser,
+                terrang_z,
+                ruta,
+                upplosning_m=vegetation_upplosning_m,
+                bort_mask=slag == BYGGNAD,
+            )
+    bygg_varningar = [*bygg_varningar, *veg_varningar]
+
     # Steg 9: skriv K1-filer
     mark_tif = skriv_geotiff(mal_katalog / "mark.tif", z_slut, ruta, nodata=-9999.0)
     osakerhet_tif = skriv_geotiff(
         mal_katalog / "osakerhet.tif", osak_res.sigma_z_m, ruta, nodata=-9999.0
     )
     markslag_tif = skriv_geotiff(mal_katalog / "markslag.tif", slag, ruta, nodata=0)
+    terrang_tif = skriv_geotiff(mal_katalog / "terrang.tif", terrang_z, ruta, nodata=-9999.0)
+    byggnader_gpkg = skriv_byggnader_gpkg(
+        mal_katalog / "byggnader.gpkg", bygg_poster, ruta.yttre_bbox
+    )
+    vegetation_tif: Path | None = None
+    if veg_hojd is not None and veg_ruta is not None:
+        vegetation_tif = skriv_geotiff(
+            mal_katalog / "vegetation.tif", veg_hojd, veg_ruta, nodata=-9999.0
+        )
+    elif (mal_katalog / "vegetation.tif").exists():
+        (mal_katalog / "vegetation.tif").unlink()  # gammal fil från en tidigare körning
     brytlinjer_gpkg = skriv_brytlinjer_gpkg(
         mal_katalog / "brytlinjer.gpkg", snappade_linjer, ruta
     )
@@ -260,6 +361,30 @@ def bygg_markmodell_ruta(
         byggnader,
         oppningar,
     ) + list(extra_kallor)
+    if byggnadskandidater:
+        kallor.append(
+            KallPost(
+                roll="byggnadskandidater",
+                kalla="byggnadskalla",
+                sha256=sha256_bytes(kandidater_underlag(byggnadskandidater).encode("utf-8")),
+            )
+        )
+    if har_punktmoln and laser_klasser is not None:
+        kallor.append(
+            KallPost(
+                roll="laser_klasser",
+                kalla="minne:punktmoln",
+                sha256=sha256_bytes(np.ascontiguousarray(laser_klasser, dtype=np.int32).tobytes()),
+            )
+        )
+    if vegetation_hojd_m is not None:
+        kallor.append(
+            KallPost(
+                roll="vegetation_hojd",
+                kalla="minne:vegetationsraster",
+                sha256=sha256_bytes(np.ascontiguousarray(vegetation_hojd_m).tobytes()),
+            )
+        )
 
     osak_p = osakerhet_parametrar if osakerhet_parametrar is not None else OsakerhetParametrar()
     installningar: dict[str, Any] = {
@@ -270,8 +395,12 @@ def bygg_markmodell_ruta(
         "storlek_m": ruta.storlek_m,
         "overlapp_m": ruta.overlapp_m,
         "upplosning_m": ruta.upplosning_m,
+        "k1_version": K1_VERSION,
+        "byggnadshojd_fran_laser": byggnadshojd_fran_laser,
+        "vegetation_upplosning_m": vegetation_upplosning_m,
     }
     recept = MarkmodellRecept(
+        kontrakt=KONTRAKT_K1_V2,
         ruta_namn=ruta.namn,
         yttre_bbox=ruta.yttre_bbox,
         upplosning_m=ruta.upplosning_m,
@@ -286,10 +415,16 @@ def bygg_markmodell_ruta(
         FilPost(roll="mark", fil="mark.tif", sha256=sha256_fil(mark_tif)),
         FilPost(roll="osakerhet", fil="osakerhet.tif", sha256=sha256_fil(osakerhet_tif)),
         FilPost(roll="markslag", fil="markslag.tif", sha256=sha256_fil(markslag_tif)),
+        FilPost(roll="terrang", fil="terrang.tif", sha256=sha256_fil(terrang_tif)),
+        FilPost(roll="byggnader", fil="byggnader.gpkg", sha256=sha256_fil(byggnader_gpkg)),
         FilPost(roll="brytlinjer", fil="brytlinjer.gpkg", sha256=sha256_fil(brytlinjer_gpkg)),
         FilPost(roll="oppningar", fil="oppningar.gpkg", sha256=sha256_fil(oppningar_gpkg)),
         FilPost(roll="recept", fil="recept.json", sha256=sha256_fil(recept_fil)),
     ]
+    if vegetation_tif is not None:
+        utdata_poster.append(
+            FilPost(roll="vegetation", fil="vegetation.tif", sha256=sha256_fil(vegetation_tif))
+        )
     indata_poster = [
         FilPost(roll=k.roll, fil=k.kalla, sha256=k.sha256) for k in recept.kallor
     ]
@@ -306,9 +441,11 @@ def bygg_markmodell_ruta(
             "snap_slutna": snap_stat.antal_slutna_andar,
             "osakerhet_medel_m": round(osak_res.medel_sigma_m, 4),
             "osakerhet_max_m": round(osak_res.max_sigma_m, 4),
+            "antal_byggnader": len(bygg_poster),
+            "vegetation_skriven": vegetation_tif is not None,
             "kortid_s": kortid_s,
         },
-        varningar=osak_res.varningar,
+        varningar=[*osak_res.varningar, *bygg_varningar],
         kodversion=ver,
         start=start_tid,
     )
@@ -320,14 +457,20 @@ def bygg_markmodell_ruta(
         mark_z=z_slut,
         osakerhet_z=osak_res.sigma_z_m,
         markslag=slag,
+        terrang_z=terrang_z,
+        byggnader=bygg_poster,
+        vegetation_hojd_m=veg_hojd,
         snap_statistik=snap_stat,
         recept=recept,
         recept_sha256=recept_sha,
-        varningar=list(osak_res.varningar),
+        varningar=[*osak_res.varningar, *bygg_varningar],
         filer={
             "mark": mark_tif,
             "osakerhet": osakerhet_tif,
             "markslag": markslag_tif,
+            "terrang": terrang_tif,
+            "byggnader": byggnader_gpkg,
+            **({"vegetation": vegetation_tif} if vegetation_tif is not None else {}),
             "brytlinjer": brytlinjer_gpkg,
             "oppningar": oppningar_gpkg,
             "recept": recept_fil,

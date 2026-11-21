@@ -30,6 +30,11 @@ terräng, förluster eller dynamik.
 Environment Agencys testfall för 2D-modeller, bland annat fyllning av sänkor och ett urbant fall med regn och
 överbelastade ledningar. Etablerade program har redovisat sina resultat.
 
+### E. Dagsljus (`floden testsvit --grupp E`)
+
+Fri plan (VSC 39,6 %, SVF 1), oändlig vägg, gaturum (SVF mot Oke, VSC mot kvadratur) och skuggstudie mot
+oberoende strålgång. Facit, härledningar och uppmätta avvikelser står i `docs/DAGSLJUS.md`.
+
 ### D. Verkliga händelser (senare)
 
 Dokumenterade skyfall med felanmälningar, räddningstjänstens insatser och försäkringsskador.
@@ -47,3 +52,8 @@ Dokumenterade skyfall med felanmälningar, räddningstjänstens insatser och fö
 
 Gränserna sätts av en människa när den första omgången resultat finns. Agenter får inte ändra gränserna för att
 få ett test att gå igenom.
+
+## Grupp L – Luft
+
+Testfall L1–L8 och gränser finns i `docs/LUFT.md` avsnitt 6. De körs som enhetstester i `tests/luft/`
+(`pytest tests/luft`).

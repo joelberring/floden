@@ -512,3 +512,19 @@ export interface RuttSvar {
   manifest: RunManifestK0;
   kallor: string[];
 }
+
+export type ModulStatus = "i_drift" | "kommande";
+
+export interface ModulInfo {
+  modul_id: string;
+  nr: string;
+  namn: string;
+  beskrivning: string;
+  status: ModulStatus;
+  analystyper: string[];
+  kartfarg: string;
+}
+
+export interface ModulerSvar {
+  moduler: ModulInfo[];
+}

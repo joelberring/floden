@@ -32,6 +32,13 @@ tmp/
 .DS_Store
 Thumbs.db
 
+# Rust-verktyg
+tools/*/target/
+rust/*/target/
+
+# Resultat från utredningsfrågor (floden fraga kor)
+resultat/
+
 # Nord2000-testfallens facit (Referencelaboratoriet RL 18-18, Miljøstyrelsen MP 1335) publiceras inte i repot.
 # Importeras lokalt ur källmappen: python -m buller.testfall.xlsimport --kallmapp <mapp> --ut testsvit/N_nord2000
 testsvit/N_nord2000/

@@ -800,6 +800,43 @@ def skriv_sankgraf_k2(
         FilPost(roll="cell_till_nod", fil=cell_fil.name, sha256=sha256_fil(cell_fil))
     )
 
+    # Tillägg till K2/v1 (bakåtkompatibelt): det som behövs för att läsa tillbaka grafen exakt
+    # (`sankgraf.k2_las.las_sankgraf_k2`). Kontraktets egna filer är oförändrade.
+    topo_fil = mal / "sankgraf_topologi.json"
+    topo_fil.write_text(
+        json.dumps(
+            {
+                "kontrakt": KONTRAKT_K2,
+                "ut_lov_id": {str(k): v for k, v in sorted(graf.ut_lov_id.items())},
+                "overfall_celler": {
+                    str(k): [[int(r), int(c)] for r, c in v]
+                    for k, v in sorted(graf.overfall_celler.items())
+                },
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    filer["sankgraf_topologi"] = topo_fil
+    utdata_poster.append(
+        FilPost(roll="sankgraf_topologi", fil=topo_fil.name, sha256=sha256_fil(topo_fil))
+    )
+    for roll, namn, raster in (
+        ("mark_bearbetad", "mark_bearbetad.tif", np.asarray(graf.mark_z, dtype=np.float32)),
+        ("markslag", "markslag.tif", np.asarray(graf.markslag, dtype=np.uint8)),
+    ):
+        rfil = skriv_geotiff(
+            mal / namn,
+            raster,
+            x_min=graf.geo.x_min,
+            y_max=graf.geo.y_max,
+            pixelstorlek=graf.geo.pixelstorlek_x,
+            epsg=graf.geo.epsg,
+        )
+        filer[roll] = rfil
+        utdata_poster.append(FilPost(roll=roll, fil=rfil.name, sha256=sha256_fil(rfil)))
+
     bbox = (graf.geo.x_min, graf.geo.y_min, graf.geo.x_max, graf.geo.y_max)
     vag_fil = skriv_flodesvagar_gpkg(
         mal / "flodesvagar.gpkg",

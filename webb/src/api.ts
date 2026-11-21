@@ -2,6 +2,7 @@ import type {
   HalsaSvar,
   KorBegaran,
   KorSvar,
+  ModulerSvar,
   OmradenSvar,
   OmradeLagerSvar,
   RapportBegaran,
@@ -80,4 +81,8 @@ export function beraknaRutt(begaran: RuttBegaran): Promise<RuttSvar> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(begaran),
   });
+}
+
+export function hamtaModuler(): Promise<ModulerSvar> {
+  return lasJson<ModulerSvar>(`${API_BAS}/moduler`);
 }

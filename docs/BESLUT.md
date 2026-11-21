@@ -13,6 +13,10 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 | 2026-11-20 | **Språkmodellen genererar aldrig tal.** Rapporttext skrivs från strukturerat resultat och kontrolleras automatiskt. | Spårbarhet och acceptans. |
 | 2026-11-20 | **Gränsvärden för fordon, entréer och gångväg är parametrar** som bestäms med räddningstjänsten. Inga standardvärden används skarpt. | Det finns inget officiellt värde; ansvaret ska ligga hos dem som fattar beslut. |
 | 2026-11-20 | **Börja i Python, flytta heta delar till Rust** (wgpu för GPU) när de är validerade. | Snabb iteration först, prestanda sedan. |
+| 2026-11-21 | **K1 höjs till v2: gemensam geometri** (`byggnader.gpkg`, `terrang.tif`, valfri `vegetation.tif`; fasadpunkter som eget kontrakt K11). Bakåtkompatibelt: v2 lägger till filer. *Förslag, beslutat av Joel 2026-11-21: bygg direkt.* | Luft, buller och dagsljus saknade gemensam geometri, och K9-ändringarna `byggnad_bort`, `byggnad_hojd` och `vegetation` gav fel eftersom K1 saknade byggnadsregister och vegetation. `mark.tif` har byggnader inbrända, så domänerna behöver terrängen separat. Byggnader får stabila id:n som överlever rutgränser. Taket är platt på `takhojd_rh2000` (ändring mot v1 på sluttande mark, se K1 v2). |
+| 2026-11-21 | **Blandade licenser.** Luftdelen (`src/luft/`) licensieras under **MIT** (egen `LICENSE` i mappen, SPDX-rad i varje fil). Kärnan med lånad SFINCS-kod förblir GPL v3. Luft får inte importera SFINCS-härledd kod. | Joels beslut; tillåtande licens underlättar spridning och samarbete, MIT är förenlig med GPL v3. |
+| 2026-11-21 | **Luft startas** som spår L (ersätter "bara vatten först" för luft). 3D krävs: LBM-LES (D3Q19) för vind, linjär spridningsoperator med adjungerad lösning på medelfältet. Se `docs/LUFT.md`. | Joel vill ha 3D-luft och partiklar; separata agenter bygger vatten, buller, dagsljus och gemensam kärna. |
+| 2026-11-21 | **Luftens lösare skrivs mot ett array-API (NumPy/CuPy)** i stället för Rust/wgpu i första versionen. Samma kod körs på CPU i tester och CUDA-GPU på server. | LBM är minnesbandbreddsbunden och enkel att uttrycka vektoriserat; Rust/wgpu kan bli aktuellt när lösaren är validerad. |
 | 2026-11-20 | **Provområde i Hägersten-Älvsjö**, ca 1 km². | Joels arbetsområde och lokalkännedom. |
 
 ## Öppna beslut
@@ -21,3 +25,4 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 - Om och hur stadens tätare laser och baskarta får användas utanför stadens miljö.
 - Leverantör för GPU-tid när full 2D körs i större skala.
 - Vem som är person X (numerik och hydraulik).
+- Dagsljus: kräver K1 v2 (vägrar v1-rutor), standard K = 180 för soltimmar, vegetation av som standard, och `valfria_indataroller` i K21 (additivt). Agentens val i dagsljus fas 1b; se `docs/DAGSLJUS.md`.
