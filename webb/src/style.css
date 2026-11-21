@@ -235,6 +235,70 @@ body {
   border-color: #e6c9c0;
 }
 
+.rutt-panel {
+  background: #fefaf3;
+  border-color: #ead3ac;
+}
+
+.rapport-panel {
+  background: #f4f8f5;
+  border-color: #bfd6c6;
+}
+
+.forlust-block {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.under-rubrik {
+  margin: 0 0 4px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.forlust-rad {
+  align-items: end;
+}
+
+.check-kolumn {
+  padding-bottom: 5px;
+}
+
+.kryss-etikett {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.rutt-bekraftelse {
+  margin-top: 8px;
+}
+
+.varning-ruta {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 0.76rem;
+}
+
+.ladda-ner-knapp {
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
+  margin-top: 6px;
+}
+
 .risk-tabell {
   width: 100%;
   border-collapse: collapse;

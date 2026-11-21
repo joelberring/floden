@@ -4,9 +4,13 @@ import type {
   KorSvar,
   OmradenSvar,
   OmradeLagerSvar,
+  RapportBegaran,
+  RapportSvar,
   RegnKatalogSvar,
   RiskBegaran,
   RiskSvar,
+  RuttBegaran,
+  RuttSvar,
 } from "./types";
 
 const API_BAS = "/api";
@@ -56,6 +60,22 @@ export function korSimulering(begaran: KorBegaran): Promise<KorSvar> {
 
 export function beraknaRisk(begaran: RiskBegaran): Promise<RiskSvar> {
   return lasJson<RiskSvar>(`${API_BAS}/risk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(begaran),
+  });
+}
+
+export function skapaRapport(begaran: RapportBegaran): Promise<RapportSvar> {
+  return lasJson<RapportSvar>(`${API_BAS}/rapport`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(begaran),
+  });
+}
+
+export function beraknaRutt(begaran: RuttBegaran): Promise<RuttSvar> {
+  return lasJson<RuttSvar>(`${API_BAS}/rutt`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(begaran),

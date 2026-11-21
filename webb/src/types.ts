@@ -13,7 +13,8 @@ export type LagerId =
   | "maxdjup"
   | "osakerhet"
   | "differens"
-  | "risk";
+  | "risk"
+  | "rutt";
 
 export interface GatusektionSpec {
   namn: string;
@@ -196,6 +197,27 @@ export interface RegnKatalogSvar {
   forval: RegnForvalInfo[];
 }
 
+export interface ForlusterBegaran {
+  aktivera: boolean;
+  jordart: string;
+  grundvatten: "normal" | "hog";
+  tjale: boolean;
+  initial_mm: number;
+}
+
+export interface ForlusterSammanfattning {
+  jordart: string;
+  grundvatten: string;
+  tjale: boolean;
+  initial_mm: number;
+  brunnar_igensatta_andel: number;
+  brutto_regn_mm: number;
+  initial_forlust_medel_mm: number;
+  infiltration_medel_mm: number;
+  netto_avrinning_medel_mm: number;
+  effektiv_avrinningskoefficient: number;
+}
+
 export interface KorBegaran {
   omrade_id: string;
   intensitet_mm_h?: number;
@@ -210,6 +232,7 @@ export interface KorBegaran {
   gator?: LappGataPayload[];
   byggnader?: LappByggnadPayload[];
   magasin?: LappMagasinPayload[];
+  forluster?: ForlusterBegaran;
 }
 
 export interface RunManifestK0 {
@@ -270,6 +293,7 @@ export interface KorSvar {
     marginal_m: number;
     overstiger_entre: boolean;
   }>;
+  forluster?: ForlusterSammanfattning | null;
   kortid_s: number;
   manifest: RunManifestK0;
   kallor: string[];
@@ -284,6 +308,10 @@ export interface RiskBegaran {
   varaktighet_min?: number;
   regntyp?: RegnTyp;
   aterkomsttider_ar?: number[];
+  jordart?: string;
+  grundvatten?: "normal" | "hog";
+  tjale?: boolean;
+  initial_mm?: number;
 }
 
 export interface RiskRasterData extends RasterBild {
@@ -324,6 +352,83 @@ export interface RiskSvar {
     antal_aterkomsttider: number;
   };
   steg: RiskStegPost[];
+  kortid_s: number;
+  manifest: RunManifestK0;
+  kallor: string[];
+}
+
+export type RapportTyp =
+  | "skyfall_oversikt"
+  | "detaljplan_fore_efter"
+  | "fastighetsagare"
+  | "raddningstjanst"
+  | "klimatanpassning";
+
+export type RapportFormat = "html" | "md" | "docx";
+
+export interface RapportBegaran {
+  omrade_id: string;
+  rapporttyp: RapportTyp;
+  format: RapportFormat;
+  titel?: string;
+  regn_id?: string;
+  aterkomsttid_ar?: number;
+  klimatfaktor?: number;
+  intensitet_mm_h?: number;
+  varaktighet_s?: number;
+  forluster?: ForlusterBegaran;
+}
+
+export interface RapportSvar {
+  omrade_id: string;
+  rapporttyp: string;
+  format: string;
+  filnamn: string;
+  mime_typ: string;
+  innehall_base64: string;
+  storlek_bytes: number;
+  kontroll_godkand: boolean;
+  antal_kontrollerade_tal: number;
+  varningar: string[];
+  kortid_s: number;
+  manifest: RunManifestK0;
+  kallor: string[];
+}
+
+export type FordonTyp = "slacksbil" | "ambulans" | "storskalig";
+
+export interface RuttBegaran {
+  omrade_id: string;
+  fordon_typ: FordonTyp;
+  gransdjup_m: number;
+  max_aterkomsttid_ar: number;
+  klimatfaktor: number;
+  tidshorisont_ar: number;
+  tillat_testvarden: boolean;
+}
+
+export interface RuttKantPost {
+  kant_id: string;
+  kritisk_aterkomsttid_ar: number | null;
+  arlig_overskridande_sannolikhet: number;
+  kumulativ_sannolikhet: number;
+  max_djup_vid_tmax_m: number;
+}
+
+export interface RuttSvar {
+  omrade_id: string;
+  fordon_typ: string;
+  gransdjup_m: number;
+  max_aterkomsttid_ar: number;
+  klimatfaktor: number;
+  tidshorisont_ar: number;
+  testvarden_anvanda: boolean;
+  varning: string;
+  antal_kanter_totalt: number;
+  antal_kanter_med_risk: number;
+  max_kumulativ_kant_sannolikhet: number;
+  kanter: RuttKantPost[];
+  vagnat_geojson: GeoJsonCollection;
   kortid_s: number;
   manifest: RunManifestK0;
   kallor: string[];

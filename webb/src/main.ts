@@ -3,14 +3,18 @@ import "./style.css";
 
 import {
   beraknaRisk,
+  beraknaRutt,
   hamtaHalsa,
   hamtaOmradeLager,
   hamtaOmraden,
   hamtaRegnKatalog,
   korSimulering,
+  skapaRapport,
 } from "./api";
 import { FlodenKartaKontroll, STANDARD_LAGER, type RitLage } from "./karta";
 import type {
+  FordonTyp,
+  ForlusterBegaran,
   JamforLage,
   KorBegaran,
   KorSvar,
@@ -21,11 +25,17 @@ import type {
   OmradeLagerSvar,
   OsakerhetBlock,
   PercentilNyckel,
+  RapportBegaran,
+  RapportFormat,
+  RapportSvar,
+  RapportTyp,
   RegnForvalInfo,
   RegnKatalogSvar,
   RegnTyp,
   RiskBegaran,
   RiskSvar,
+  RuttBegaran,
+  RuttSvar,
 } from "./types";
 
 interface WebbTillstand {
@@ -34,6 +44,9 @@ interface WebbTillstand {
   regnKatalog: RegnKatalogSvar | null;
   resultat: KorSvar | null;
   riskResultat: RiskSvar | null;
+  ruttResultat: RuttSvar | null;
+  rapportResultat: RapportSvar | null;
+  rapportBlobUrl: string | null;
   jamforLage: JamforLage;
   svepProcent: number;
   aktivPercentil: PercentilNyckel;
@@ -51,6 +64,9 @@ const tillstand: WebbTillstand = {
   regnKatalog: null,
   resultat: null,
   riskResultat: null,
+  ruttResultat: null,
+  rapportResultat: null,
+  rapportBlobUrl: null,
   jamforLage: "svep",
   svepProcent: 50,
   aktivPercentil: "p50",
@@ -86,6 +102,10 @@ const varaktighetInput = hämtaEl<HTMLInputElement>("regn-varaktighet");
 const regnAterkomsttidSelect = hämtaEl<HTMLSelectElement>("regn-aterkomsttid");
 const regnKlimatfaktorSelect = hämtaEl<HTMLSelectElement>("regn-klimatfaktor");
 const regnTypSelect = hämtaEl<HTMLSelectElement>("regn-typ");
+const forlustJordartSelect = hämtaEl<HTMLSelectElement>("forlust-jordart");
+const forlustGrundvattenSelect = hämtaEl<HTMLSelectElement>("forlust-grundvatten");
+const forlustInitialInput = hämtaEl<HTMLInputElement>("forlust-initial");
+const forlustTjaleCheck = hämtaEl<HTMLInputElement>("forlust-tjale");
 const lagerLista = hämtaEl<HTMLDivElement>("lager-lista");
 const svepKontroll = hämtaEl<HTMLDivElement>("svep-kontroll");
 const svepReglage = hämtaEl<HTMLInputElement>("svep-reglage");
@@ -109,6 +129,20 @@ const riskKlimatfaktorSelect = hämtaEl<HTMLSelectElement>("risk-klimatfaktor");
 const riskKnapp = hämtaEl<HTMLButtonElement>("risk-knapp");
 const riskStatus = hämtaEl<HTMLParagraphElement>("risk-status");
 const riskResultatDiv = hämtaEl<HTMLDivElement>("risk-resultat");
+const ruttFordonSelect = hämtaEl<HTMLSelectElement>("rutt-fordon");
+const ruttGransdjupInput = hämtaEl<HTMLInputElement>("rutt-gransdjup");
+const ruttMaxAterkomsttidSelect = hämtaEl<HTMLSelectElement>("rutt-max-aterkomsttid");
+const ruttKlimatfaktorSelect = hämtaEl<HTMLSelectElement>("rutt-klimatfaktor");
+const ruttTidshorisontInput = hämtaEl<HTMLInputElement>("rutt-tidshorisont");
+const ruttTestvardenCheck = hämtaEl<HTMLInputElement>("rutt-testvarden-check");
+const ruttKnapp = hämtaEl<HTMLButtonElement>("rutt-knapp");
+const ruttStatus = hämtaEl<HTMLParagraphElement>("rutt-status");
+const ruttResultatDiv = hämtaEl<HTMLDivElement>("rutt-resultat");
+const rapportTypSelect = hämtaEl<HTMLSelectElement>("rapport-typ");
+const rapportFormatSelect = hämtaEl<HTMLSelectElement>("rapport-format");
+const rapportKnapp = hämtaEl<HTMLButtonElement>("rapport-knapp");
+const rapportStatus = hämtaEl<HTMLParagraphElement>("rapport-status");
+const rapportResultatDiv = hämtaEl<HTMLDivElement>("rapport-resultat");
 const osakerhetVarden = hämtaEl<HTMLDivElement>("osakerhet-varden");
 const manifestInfo = hämtaEl<HTMLDivElement>("manifest-info");
 const kallorRad = hämtaEl<HTMLParagraphElement>("kallor-rad");
@@ -320,8 +354,9 @@ function fyllRegnKatalog(katalog: RegnKatalogSvar): void {
   if (katalog.standard_klimatfaktorer.length > 0) {
     const tidigareRegnKf = regnKlimatfaktorSelect.value || "1.24";
     const tidigareRiskKf = riskKlimatfaktorSelect.value || "1.24";
+    const tidigareRuttKf = ruttKlimatfaktorSelect.value || "1.24";
 
-    for (const sel of [regnKlimatfaktorSelect, riskKlimatfaktorSelect]) {
+    for (const sel of [regnKlimatfaktorSelect, riskKlimatfaktorSelect, ruttKlimatfaktorSelect]) {
       sel.innerHTML = "";
       for (const kf of katalog.standard_klimatfaktorer) {
         const opt = document.createElement("option");
@@ -337,9 +372,39 @@ function fyllRegnKatalog(katalog: RegnKatalogSvar): void {
     if (katalog.standard_klimatfaktorer.some((k) => String(k) === tidigareRiskKf)) {
       riskKlimatfaktorSelect.value = tidigareRiskKf;
     }
+    if (katalog.standard_klimatfaktorer.some((k) => String(k) === tidigareRuttKf)) {
+      ruttKlimatfaktorSelect.value = tidigareRuttKf;
+    }
   }
 
   uppdateraRegnKontroller();
+}
+
+function lasForlusterBegaran(): ForlusterBegaran | undefined {
+  const jordart = forlustJordartSelect.value.trim();
+  if (!jordart) {
+    return undefined;
+  }
+  const grundvatten: "normal" | "hog" =
+    forlustGrundvattenSelect.value === "hog" ? "hog" : "normal";
+  const parsedInit = Number(forlustInitialInput.value);
+  const initialMm = Number.isFinite(parsedInit) && parsedInit >= 0 ? parsedInit : 2.0;
+  return {
+    aktivera: true,
+    jordart,
+    grundvatten,
+    tjale: forlustTjaleCheck.checked,
+    initial_mm: initialMm,
+  };
+}
+
+function base64TillBlob(base64Str: string, mimeTyp: string): Blob {
+  const binarText = atob(base64Str);
+  const bytes = new Uint8Array(binarText.length);
+  for (let i = 0; i < binarText.length; i += 1) {
+    bytes[i] = binarText.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mimeTyp });
 }
 
 function renderaObjektLista(): void {
@@ -385,6 +450,12 @@ function renderaOsakerhetOchKallor(): void {
   } else if (tillstand.riskResultat) {
     const m = tillstand.riskResultat.manifest;
     manifestInfo.textContent = `Manifest ${m.kontrakt} · modul: ${m.modul} · kod: ${m.kodversion}`;
+  } else if (tillstand.ruttResultat) {
+    const m = tillstand.ruttResultat.manifest;
+    manifestInfo.textContent = `Manifest ${m.kontrakt} · modul: ${m.modul} · kod: ${m.kodversion}`;
+  } else if (tillstand.rapportResultat) {
+    const m = tillstand.rapportResultat.manifest;
+    manifestInfo.textContent = `Manifest ${m.kontrakt} · modul: ${m.modul} · kod: ${m.kodversion}`;
   } else if (tillstand.omradeLager) {
     manifestInfo.textContent = `Basrecept: ${tillstand.omradeLager.bas_recept_sha256.slice(0, 12)}…`;
   }
@@ -407,8 +478,16 @@ function renderaResultatKort(): void {
     `
       : "";
 
+  const forlustRader = res.forluster
+    ? `
+      <div class="mått-rad"><span>Markförlust (${escapeHtml(res.forluster.jordart)}, ${escapeHtml(res.forluster.grundvatten)}${res.forluster.tjale ? ", tjäle" : ""})</span><strong>${(res.forluster.effektiv_avrinningskoefficient * 100).toFixed(1)} % avrinning</strong></div>
+      <div class="mått-rad"><span>Infiltration / nettoavrinning</span><strong>${res.forluster.infiltration_medel_mm.toFixed(1)} mm / ${res.forluster.netto_avrinning_medel_mm.toFixed(1)} mm</strong></div>
+    `
+    : "";
+
   resultatKort.innerHTML = `
     ${regnRader}
+    ${forlustRader}
     <div class="mått-rad"><span>Maxdjup före</span><strong>${res.fore.max_djup_m.toFixed(3)} m</strong></div>
     <div class="mått-rad"><span>Maxdjup efter</span><strong>${res.efter.max_djup_m.toFixed(3)} m</strong></div>
     <div class="mått-rad"><span>Max djupökning granne</span><strong>${res.max_okning_djup_granne_m.toFixed(3)} m</strong></div>
@@ -468,6 +547,86 @@ function renderaRiskResultat(): void {
   `;
 }
 
+function renderaRuttResultat(): void {
+  const rutt = tillstand.ruttResultat;
+  if (!rutt) {
+    ruttResultatDiv.innerHTML = `<p class="hjalptext">Bekräfta testvärden och klicka "Analysera räddningsrutter" för att bedöma gatuavsnittens framkomlighet.</p>`;
+    return;
+  }
+
+  const kritiskaRader = [...rutt.kanter]
+    .sort((a, b) => b.kumulativ_sannolikhet - a.kumulativ_sannolikhet)
+    .slice(0, 6)
+    .map((k) => {
+      const kritText =
+        k.kritisk_aterkomsttid_ar !== null ? `${k.kritisk_aterkomsttid_ar.toFixed(0)} år` : "—";
+      return `
+        <tr>
+          <td>${escapeHtml(k.kant_id)}</td>
+          <td>${(k.kumulativ_sannolikhet * 100).toFixed(1)} %</td>
+          <td>${escapeHtml(kritText)}</td>
+          <td>${k.max_djup_vid_tmax_m.toFixed(3)} m</td>
+        </tr>
+      `;
+    })
+    .join("");
+
+  ruttResultatDiv.innerHTML = `
+    <div class="varning-ruta">${escapeHtml(rutt.varning)}</div>
+    <div class="mått-rad"><span>Fordon / gränsdjup</span><strong>${escapeHtml(rutt.fordon_typ)} · ${rutt.gransdjup_m.toFixed(2)} m</strong></div>
+    <div class="mått-rad"><span>Gatuavsnitt med risk</span><strong>${rutt.antal_kanter_med_risk} av ${rutt.antal_kanter_totalt} st</strong></div>
+    <div class="mått-rad"><span>Max kumulativ ofarbarhet (${rutt.tidshorisont_ar} år)</span><strong>${(rutt.max_kumulativ_kant_sannolikhet * 100).toFixed(1)} %</strong></div>
+    <table class="risk-tabell" aria-label="Kritiska gatuavsnitt">
+      <thead>
+        <tr>
+          <th>Gatuavsnitt</th>
+          <th>Kum. risk</th>
+          <th>Krit. T</th>
+          <th>Maxdjup</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${kritiskaRader}
+      </tbody>
+    </table>
+  `;
+}
+
+function rensaRapportBlob(): void {
+  if (tillstand.rapportBlobUrl) {
+    URL.revokeObjectURL(tillstand.rapportBlobUrl);
+    tillstand.rapportBlobUrl = null;
+  }
+}
+
+function renderaRapportResultat(): void {
+  const rapp = tillstand.rapportResultat;
+  if (!rapp) {
+    rapportResultatDiv.innerHTML = `<p class="hjalptext">Välj rapportmall och format, klicka "Skapa &amp; kontrollera rapport" för automatisk talkontroll (T08).</p>`;
+    return;
+  }
+
+  rensaRapportBlob();
+  const blob = base64TillBlob(rapp.innehall_base64, rapp.mime_typ);
+  const blobUrl = URL.createObjectURL(blob);
+  tillstand.rapportBlobUrl = blobUrl;
+
+  const statusText = rapp.kontroll_godkand
+    ? `Godkänd (${rapp.antal_kontrollerade_tal} tal kontrollerade)`
+    : "Ej godkänd";
+  const varningHtml =
+    rapp.varningar.length > 0
+      ? `<div class="varning-ruta">${rapp.varningar.map(escapeHtml).join("<br />")}</div>`
+      : "";
+
+  rapportResultatDiv.innerHTML = `
+    <div class="mått-rad"><span>Talkontroll</span><strong>${escapeHtml(statusText)}</strong></div>
+    <div class="mått-rad"><span>Fil</span><strong>${escapeHtml(rapp.filnamn)} (${(rapp.storlek_bytes / 1024).toFixed(1)} KiB)</strong></div>
+    ${varningHtml}
+    <a class="primar-knapp ladda-ner-knapp" href="${escapeHtml(blobUrl)}" download="${escapeHtml(rapp.filnamn)}">Ladda ner ${escapeHtml(rapp.format.toUpperCase())}</a>
+  `;
+}
+
 function uppdateraSidavidBilder(): void {
   const res = tillstand.resultat;
   const omrade = tillstand.omradeLager;
@@ -489,6 +648,9 @@ async function laddaOmrade(omradeId: string): Promise<void> {
   tillstand.omradeLager = lager;
   tillstand.resultat = null;
   tillstand.riskResultat = null;
+  tillstand.ruttResultat = null;
+  tillstand.rapportResultat = null;
+  rensaRapportBlob();
   tillstand.kallor = lager.kallor;
 
   if (regnForvalSelect.value === "manuellt") {
@@ -501,10 +663,15 @@ async function laddaOmrade(omradeId: string): Promise<void> {
 
   kartaKontroll.visaOmrade(lager);
   synkaLagerKryssruta("risk", false);
+  synkaLagerKryssruta("rutt", false);
   uppdateraSidavidBilder();
   renderaResultatKort();
   renderaRiskResultat();
+  renderaRuttResultat();
+  renderaRapportResultat();
   riskStatus.textContent = "";
+  ruttStatus.textContent = "";
+  rapportStatus.textContent = "";
   renderaOsakerhetOchKallor();
   korStatus.textContent = "Område inläst.";
 }
@@ -513,6 +680,8 @@ async function starta(): Promise<void> {
   byggLagerLista();
   renderaResultatKort();
   renderaRiskResultat();
+  renderaRuttResultat();
+  renderaRapportResultat();
 
   const [halsa, omraden, regnKatalog] = await Promise.all([
     hamtaHalsa(),
@@ -716,6 +885,11 @@ korKnapp.addEventListener("click", () => {
     begaran.varaktighet_s = Number(varaktighetInput.value);
   }
 
+  const forluster = lasForlusterBegaran();
+  if (forluster) {
+    begaran.forluster = forluster;
+  }
+
   if (tillstand.landxmlText) {
     begaran.landxml = tillstand.landxmlText;
   }
@@ -775,6 +949,14 @@ riskKnapp.addEventListener("click", () => {
     tidshorisont_ar: Math.round(tidshorisont),
   };
 
+  const forluster = lasForlusterBegaran();
+  if (forluster) {
+    begaran.jordart = forluster.jordart;
+    begaran.grundvatten = forluster.grundvatten;
+    begaran.tjale = forluster.tjale;
+    begaran.initial_mm = forluster.initial_mm;
+  }
+
   void beraknaRisk(begaran)
     .then((risk) => {
       tillstand.riskResultat = risk;
@@ -790,6 +972,124 @@ riskKnapp.addEventListener("click", () => {
     })
     .finally(() => {
       riskKnapp.disabled = false;
+    });
+});
+
+ruttKnapp.addEventListener("click", () => {
+  if (!tillstand.omradeId) {
+    return;
+  }
+
+  if (!ruttTestvardenCheck.checked) {
+    ruttStatus.textContent =
+      "Bekräfta först kryssrutan om att testvärden används (ej fastställda räddningstjänstgränser).";
+    return;
+  }
+
+  const gransdjup = Number(ruttGransdjupInput.value);
+  const maxAterkomsttid = Number(ruttMaxAterkomsttidSelect.value);
+  const klimatfaktor = Number(ruttKlimatfaktorSelect.value);
+  const tidshorisont = Number(ruttTidshorisontInput.value);
+
+  if (!Number.isFinite(gransdjup) || gransdjup <= 0) {
+    ruttStatus.textContent = "Ange ett giltigt gränsdjup (> 0 m).";
+    return;
+  }
+  if (!Number.isFinite(tidshorisont) || tidshorisont < 1) {
+    ruttStatus.textContent = "Ange en giltig tidshorisont (>= 1 år).";
+    return;
+  }
+
+  const fordonRaw = ruttFordonSelect.value;
+  const fordonTyp: FordonTyp =
+    fordonRaw === "ambulans" || fordonRaw === "storskalig" ? fordonRaw : "slacksbil";
+
+  ruttKnapp.disabled = true;
+  ruttStatus.textContent = "Analyserar gatuavsnittens framkomlighet…";
+
+  const begaran: RuttBegaran = {
+    omrade_id: tillstand.omradeId,
+    fordon_typ: fordonTyp,
+    gransdjup_m: gransdjup,
+    max_aterkomsttid_ar: maxAterkomsttid,
+    klimatfaktor,
+    tidshorisont_ar: Math.round(tidshorisont),
+    tillat_testvarden: true,
+  };
+
+  void beraknaRutt(begaran)
+    .then((rutt) => {
+      tillstand.ruttResultat = rutt;
+      tillstand.kallor = rutt.kallor;
+      kartaKontroll.visaRutt(rutt);
+      synkaLagerKryssruta("rutt", true);
+      renderaRuttResultat();
+      renderaOsakerhetOchKallor();
+      ruttStatus.textContent = `Ruttanalys klar på ${rutt.kortid_s.toFixed(2)} s.`;
+    })
+    .catch((err: unknown) => {
+      ruttStatus.textContent = `Fel vid ruttanalys: ${err instanceof Error ? err.message : String(err)}`;
+    })
+    .finally(() => {
+      ruttKnapp.disabled = false;
+    });
+});
+
+rapportKnapp.addEventListener("click", () => {
+  if (!tillstand.omradeId) {
+    return;
+  }
+
+  const typRaw = rapportTypSelect.value;
+  const rapporttyp: RapportTyp =
+    typRaw === "detaljplan_fore_efter" ||
+    typRaw === "fastighetsagare" ||
+    typRaw === "raddningstjanst" ||
+    typRaw === "klimatanpassning"
+      ? typRaw
+      : "skyfall_oversikt";
+
+  const fmtRaw = rapportFormatSelect.value;
+  const format: RapportFormat = fmtRaw === "md" || fmtRaw === "docx" ? fmtRaw : "html";
+
+  rapportKnapp.disabled = true;
+  rapportStatus.textContent = "Genererar rapport och kör automatisk talkontroll…";
+
+  const begaran: RapportBegaran = {
+    omrade_id: tillstand.omradeId,
+    rapporttyp,
+    format,
+  };
+
+  const valtForval = regnForvalSelect.value;
+  if (valtForval && valtForval !== "manuellt") {
+    begaran.regn_id = valtForval;
+  } else if (regnAterkomsttidSelect.value !== "") {
+    begaran.aterkomsttid_ar = Number(regnAterkomsttidSelect.value);
+    begaran.klimatfaktor = Number(regnKlimatfaktorSelect.value);
+  } else {
+    begaran.intensitet_mm_h = Number(intensitetInput.value);
+    begaran.varaktighet_s = Number(varaktighetInput.value);
+  }
+
+  const forluster = lasForlusterBegaran();
+  if (forluster) {
+    begaran.forluster = forluster;
+  }
+
+  void skapaRapport(begaran)
+    .then((rapp) => {
+      tillstand.rapportResultat = rapp;
+      tillstand.kallor = rapp.kallor;
+      renderaRapportResultat();
+      renderaOsakerhetOchKallor();
+      rapportStatus.textContent = `Rapport klar på ${rapp.kortid_s.toFixed(2)} s (${rapp.antal_kontrollerade_tal} tal kontrollerade).`;
+    })
+    .catch((err: unknown) => {
+      rapportStatus.textContent = `Fel vid rapportexport: ${err instanceof Error ? err.message : String(err)}`;
+    })
+    .finally(() => {
+      rapportKnapp.disabled = false;
     });
 });
 

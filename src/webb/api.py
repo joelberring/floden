@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import math
+import tempfile
 import time
 import urllib.parse
 from collections.abc import Mapping
@@ -46,6 +48,23 @@ from lapp.kontrakt import (
 )
 from mark_forluster.koppling import berakna_effektivt_regn_k5
 from mark_forluster.parametrar import ForlustFel
+from rapport.export import RapportExportFel, generera_rapport
+from rapport.kartor import rendera_djupkarta_png
+from rapport.kontroll import RapportKontrollFel
+from rapport.underlag import (
+    GILTIGA_RAPPORTTYPER,
+    KartReferens,
+    RapportUnderlag,
+    RapportUnderlagFel,
+    TabellData,
+)
+from rutt.parametrar import (
+    FordonParametrar,
+    RuttParametrarFel,
+    RuttParametrarK7,
+)
+from rutt.risk import berakna_vag_kumulativ_risk
+from rutt.vagnat import VagKant, VagNat, VagNatFel, VagNod
 from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.typer import (
     SankGraf,
@@ -68,6 +87,7 @@ from webb.rendering import (
     bbox_3011_till_wgs84,
     brytlinjer_till_geojson,
     byggnader_till_geojson,
+    koordinat_3011_till_wgs84,
     rendera_diff_png_base64,
     rendera_djup_png_base64,
     rendera_hillshade_png_base64,
@@ -986,6 +1006,447 @@ class FlodenApiApp:
             "kallor": list(omrade.kallor),
         }
 
+    def generera_webb_rapport(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/rapport`: kör simulering och exporterar verifierad T08-rapport."""
+        t_start = time.perf_counter()
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        alias_map: dict[str, str] = {
+            "skyfall_oversikt": "skyfallsutredning",
+            "detaljplan_fore_efter": "planbeskrivning",
+            "fastighetsagare": "alternativjamforelse",
+            "raddningstjanst": "ruttanalys",
+            "klimatanpassning": "grundvatten_vattenbalans",
+        }
+        raw_typ = str(payload.get("rapporttyp", "skyfall_oversikt")).strip().lower()
+        kanonisk_typ = alias_map.get(raw_typ, raw_typ)
+        if kanonisk_typ not in GILTIGA_RAPPORTTYPER:
+            raise FlodenWebbFel(f"Ogiltig rapporttyp '{raw_typ}'.")
+
+        fmt = str(payload.get("format", "html")).strip().lower()
+        mime_map = {
+            "html": "text/html; charset=utf-8",
+            "md": "text/markdown; charset=utf-8",
+            "docx": (
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            ),
+        }
+        if fmt not in mime_map:
+            raise FlodenWebbFel(f"Ogiltigt exportformat '{fmt}'. Giltiga: html, md, docx.")
+
+        omrade = self.ladda_omrade(omrade_id)
+        regn_tid, regn_int, regn_meta = _tolka_regnserie(
+            payload, omrade.regn_tid_s, omrade.regn_intensitet_mm_h
+        )
+        jordart_val, gw_val, tjale_val, init_mm_val = _tolka_forluster(payload)
+        if jordart_val is not None:
+            try:
+                koppl = berakna_effektivt_regn_k5(
+                    omrade.markslag,
+                    regn_tid,
+                    regn_int,
+                    jordart=jordart_val,
+                    grundvatten=gw_val,
+                    tjale=tjale_val,
+                    initial_mm=init_mm_val,
+                    pixelstorlek_m=float(omrade.geo.pixelstorlek_x),
+                    mark_z=omrade.mark_z,
+                    regn_ref=str(regn_meta.get("regn_id", "webb_regn")),
+                )
+            except ForlustFel as exc:
+                raise FlodenWebbFel(f"Ogiltiga markförlustparametrar: {exc}") from exc
+            regn_tid = koppl.effektiv_regn_tid_s
+            regn_int = koppl.effektiv_regn_intensitet_mm_h
+
+        dyn = kor_dynamik_handelsestyrd(omrade.bas_graf, regn_tid, regn_int)
+        stats = _raster_statistik(dyn.max_djup_m, omrade.geo)
+        titel = str(payload.get("titel") or f"Skyfallsrapport – {omrade.fall.namn}")
+
+        manifest = skapa_manifest(
+            modul="webb_rapport",
+            indata=[
+                FilPost(
+                    roll="bas_recept",
+                    fil=f"{omrade.omrade_id}/indata/recept.json",
+                    sha256=omrade.bas_recept_sha256,
+                )
+            ],
+            parametrar={
+                "omrade_id": omrade.omrade_id,
+                "rapporttyp": kanonisk_typ,
+                "format": fmt,
+                "epsg": EPSG_INTERN,
+            },
+            utdata=[],
+            matvarden={
+                "max_djup_m": round(stats["max_djup_m"], 4),
+                "oversvammad_area_m2": round(stats["oversvammad_area_m2"], 2),
+                "volymfel_rel": float(dyn.volymfel_rel),
+            },
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_rot = Path(tmp_dir)
+            karta_fil = tmp_rot / "max_djup.png"
+            kart_titel = f"Maxdjup - {omrade.fall.namn}".replace("\u2013", "-").replace(
+                "\u2014", "-"
+            )
+            rendera_djupkarta_png(
+                dyn.max_djup_m,
+                karta_fil,
+                titel=kart_titel,
+                kalla=" / ".join(omrade.kallor),
+            )
+            underlag = RapportUnderlag(
+                rapport_typ=kanonisk_typ,
+                titel=titel,
+                omrade=omrade.fall.namn,
+                manifest=manifest,
+                metod=(
+                    "Deterministisk händelsestyrd sänkgrafmodell (T02/T03) i SWEREF 99 18 00 "
+                    "(EPSG:3011) och RH 2000 med automatisk talkontroll (T08)."
+                ),
+                osakerhet_text=(
+                    "Osäkerhet omfattar markmodellens höjdosäkerhet samt regnets "
+                    "intensitets- och infiltrationsantaganden."
+                ),
+                kalla_angivelser=tuple(omrade.kallor),
+                tal={
+                    "max_djup_m": round(stats["max_djup_m"], 4),
+                    "medel_djup_m": round(stats["medel_djup_m"], 4),
+                    "oversvammad_area_m2": round(stats["oversvammad_area_m2"], 2),
+                    "in_m3": round(float(dyn.in_m3), 3),
+                    "lagrat_m3": round(float(dyn.lagrat_m3), 3),
+                    "ut_m3": round(float(dyn.ut_m3), 3),
+                },
+                tabeller=[
+                    TabellData(
+                        titel="Sammanfattning vattenbalans och djup",
+                        kolumner=["Storhet", "Värde", "Enhet"],
+                        rader=[
+                            ["Maxdjup", round(stats["max_djup_m"], 4), "m"],
+                            ["Översvämmad yta", round(stats["oversvammad_area_m2"], 2), "m²"],
+                            ["Inkommande volym", round(float(dyn.in_m3), 3), "m³"],
+                            ["Lagrad volym", round(float(dyn.lagrat_m3), 3), "m³"],
+                            ["Utflöde", round(float(dyn.ut_m3), 3), "m³"],
+                        ],
+                    )
+                ],
+                kartor=[
+                    KartReferens(
+                        kart_id="max_djup",
+                        titel=f"Maximalt vattendjup – {omrade.fall.namn}",
+                        fil="max_djup.png",
+                        kalla=" / ".join(omrade.kallor),
+                    )
+                ],
+            )
+            try:
+                rapp_res = generera_rapport(
+                    underlag,
+                    tmp_rot / "ut",
+                    kart_rot=tmp_rot,
+                    format_lista=(fmt,),
+                )
+            except (RapportUnderlagFel, RapportKontrollFel, RapportExportFel) as exc:
+                raise FlodenWebbFel(f"Rapportgenerering/talkontroll stoppad: {exc}") from exc
+
+            fil_sokvag = rapp_res.filer[fmt]
+            data_bytes = fil_sokvag.read_bytes()
+
+        kortid_s = time.perf_counter() - t_start
+        return {
+            "omrade_id": omrade.omrade_id,
+            "rapporttyp": kanonisk_typ,
+            "format": fmt,
+            "filnamn": f"floden_{omrade.fall.id.lower()}_{kanonisk_typ}.{fmt}",
+            "mime_typ": mime_map[fmt],
+            "innehall_base64": base64.b64encode(data_bytes).decode("ascii"),
+            "storlek_bytes": len(data_bytes),
+            "kontroll_godkand": bool(rapp_res.kontroll.godkand),
+            "antal_kontrollerade_tal": len(rapp_res.kontroll.granskade_tal),
+            "varningar": list(rapp_res.kontroll.avvikelser),
+            "kortid_s": float(kortid_s),
+            "manifest": manifest.till_dict(),
+            "kallor": list(omrade.kallor),
+        }
+
+    def kor_rutt_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/rutt`: kumulativ framkomlighetsrisk för räddningstjänst (T07)."""
+        t_start = time.perf_counter()
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        tillat_test = bool(payload.get("tillat_testvarden", False))
+        if not tillat_test:
+            raise FlodenWebbFel(
+                "Skarpa räddningstjänstgränser (K7) är inte fastställda för detta testområde. "
+                "Bekräfta 'tillat_testvarden: true' för att köra med testvärden."
+            )
+        if "gransdjup_m" not in payload or payload["gransdjup_m"] is None:
+            raise FlodenWebbFel("Obligatoriskt fält 'gransdjup_m' saknas.")
+
+        fordon_typ = str(payload.get("fordon_typ", "slacksbil")).strip().lower()
+        if fordon_typ not in ("slacksbil", "ambulans", "storskalig"):
+            raise FlodenWebbFel(
+                f"Ogiltig fordon_typ '{fordon_typ}'. Giltiga: slacksbil, ambulans, storskalig."
+            )
+
+        try:
+            gransdjup_m = float(payload["gransdjup_m"])
+            max_aterkomsttid_ar = float(payload.get("max_aterkomsttid_ar", 100.0))
+            klimatfaktor = float(payload.get("klimatfaktor", 1.24))
+            tidshorisont_ar = float(payload.get("tidshorisont_ar", 50.0))
+        except (TypeError, ValueError) as exc:
+            raise FlodenWebbFel(f"Ogiltig ruttparameter: {exc}") from exc
+        if not math.isfinite(gransdjup_m) or gransdjup_m <= 0.0:
+            raise FlodenWebbFel(f"Ogiltigt gransdjup_m: {gransdjup_m} (måste vara > 0).")
+
+        omrade = self.ladda_omrade(omrade_id)
+        geo = omrade.geo
+        # Bygg ett deterministiskt syntetiskt gatunät (3 horisontella + 3 vertikala stråk)
+        # över områdets bbox så ruttanalys kan utvärderas även på syntetiska K1-områden.
+        xs = [
+            geo.x_min + (geo.x_max - geo.x_min) * f for f in (0.15, 0.50, 0.85)
+        ]
+        ys = [
+            geo.y_min + (geo.y_max - geo.y_min) * f for f in (0.20, 0.50, 0.80)
+        ]
+        noder: list[VagNod] = []
+        hojd_m, bredd_m = omrade.mark_z.shape
+        for yi, y_val in enumerate(ys):
+            for xi, x_val in enumerate(xs):
+                kol = max(
+                    0,
+                    min(bredd_m - 1, int(math.floor((x_val - geo.x_min) / geo.pixelstorlek_x))),
+                )
+                rad = max(
+                    0,
+                    min(hojd_m - 1, int(math.floor((geo.y_max - y_val) / geo.pixelstorlek_y))),
+                )
+                z_val = float(omrade.mark_z[rad, kol])
+                if not math.isfinite(z_val):
+                    z_val = 0.0
+                noder.append(
+                    VagNod(
+                        nod_id=f"n_{xi}_{yi}",
+                        e_m=float(x_val),
+                        n_m=float(y_val),
+                        z_rh2000=z_val,
+                    )
+                )
+        kanter: list[VagKant] = []
+        for yi in range(3):
+            for xi in range(2):
+                a = f"n_{xi}_{yi}"
+                b = f"n_{xi + 1}_{yi}"
+                langd = float(xs[xi + 1] - xs[xi])
+                kanter.append(
+                    VagKant(
+                        kant_id=f"gata_h_{xi}_{yi}",
+                        fran_nod=a,
+                        till_nod=b,
+                        langd_m=langd,
+                        normal_hastighet_km_h=30.0,
+                        typ="mark",
+                    )
+                )
+        for xi in range(3):
+            for yi in range(2):
+                a = f"n_{xi}_{yi}"
+                b = f"n_{xi}_{yi + 1}"
+                langd = float(ys[yi + 1] - ys[yi])
+                kanter.append(
+                    VagKant(
+                        kant_id=f"gata_v_{xi}_{yi}",
+                        fran_nod=a,
+                        till_nod=b,
+                        langd_m=langd,
+                        normal_hastighet_km_h=30.0,
+                        typ="mark",
+                    )
+                )
+        vagnat = VagNat(
+            noder={n.nod_id: n for n in noder},
+            kanter={k.kant_id: k for k in kanter},
+        )
+
+        try:
+            risk = berakna_kumulativ_oversvamningsrisk(
+                omrade.bas_graf,
+                gransdjup_m=gransdjup_m,
+                max_aterkomsttid_ar=max_aterkomsttid_ar,
+                klimatfaktor=klimatfaktor,
+                tidshorisont_ar=tidshorisont_ar,
+            )
+            kant_djup_per_t: dict[float, dict[str, float]] = {}
+            for steg in risk.steg:
+                djup_arr = np.asarray(steg.dynamik.max_djup_m, dtype=np.float64)
+                hojd, bredd = djup_arr.shape
+                steg_map: dict[str, float] = {}
+                for kant in kanter:
+                    (e0, n0), (e1, n1) = vagnat.kant_koordinater(kant.kant_id)
+                    ts = np.linspace(0.0, 1.0, 15)
+                    es = e0 + ts * (e1 - e0)
+                    ns = n0 + ts * (n1 - n0)
+                    kols = np.clip(
+                        np.floor((es - geo.x_min) / geo.pixelstorlek_x).astype(np.int64),
+                        0,
+                        bredd - 1,
+                    )
+                    rads = np.clip(
+                        np.floor((geo.y_max - ns) / geo.pixelstorlek_y).astype(np.int64),
+                        0,
+                        hojd - 1,
+                    )
+                    steg_map[kant.kant_id] = float(np.max(djup_arr[rads, kols]))
+                kant_djup_per_t[float(steg.aterkomsttid_ar)] = steg_map
+
+            fordon_alias = {
+                "slacksbil": "tung_raddningsbil",
+                "storskalig": "tung_raddningsbil",
+                "ambulans": "ambulans",
+                "personbil": "personbil",
+                "tung_raddningsbil": "tung_raddningsbil",
+            }
+            k7_fordon_typ = fordon_alias[fordon_typ]
+            fordon_spec = {
+                namn: FordonParametrar(
+                    gransdjup_m=gransdjup_m,
+                    hastighet_per_djup=((0.0, 1.0), (gransdjup_m * 0.5, 0.5), (gransdjup_m, 0.0)),
+                )
+                for namn in ("personbil", "ambulans", "tung_raddningsbil")
+            }
+            k7 = RuttParametrarK7(
+                fordon=fordon_spec,
+                entre_gransdjup_m=0.10,
+                gangavstand_max_m=50.0,
+                gangvag_djup_max_m=0.25,
+                gangvag_fara_max_m2_s=0.5,
+                insatstidsmal_min={
+                    "sjukhus": 10.0,
+                    "vardboende": 10.0,
+                    "skola": 10.0,
+                    "forskola": 10.0,
+                },
+                ar_testvarde=True,
+            )
+            vag_risk = berakna_vag_kumulativ_risk(
+                vagnat,
+                kant_djup_per_t,
+                k7,
+                k7_fordon_typ,
+                max_aterkomsttid_ar=max_aterkomsttid_ar,
+                tidshorisont_ar=tidshorisont_ar,
+                skarp=False,
+                tillat_testvarden=True,
+            )
+        except (DynamikFel, RegnFel, RuttParametrarFel, VagNatFel, ValueError) as exc:
+            raise FlodenWebbFel(f"Ruttanalysfel: {exc}", status_kod=400) from exc
+
+        features: list[dict[str, Any]] = []
+        kanter_ut: list[dict[str, Any]] = []
+        for kid in sorted(vag_risk.kanter):
+            kr = vag_risk.kanter[kid]
+            krit_json = (
+                float(kr.kritisk_aterkomsttid_ar)
+                if math.isfinite(kr.kritisk_aterkomsttid_ar)
+                else None
+            )
+            kanter_ut.append(
+                {
+                    "kant_id": kr.kant_id,
+                    "kritisk_aterkomsttid_ar": krit_json,
+                    "arlig_overskridande_sannolikhet": float(kr.arlig_overskridande_sannolikhet),
+                    "kumulativ_sannolikhet": float(kr.kumulativ_sannolikhet),
+                    "max_djup_vid_tmax_m": float(kr.max_djup_vid_tmax_m),
+                }
+            )
+            wgs_coords = [list(koordinat_3011_till_wgs84(e, n)) for e, n in kr.koordinater]
+            features.append(
+                {
+                    "type": "Feature",
+                    "id": kr.kant_id,
+                    "geometry": {"type": "LineString", "coordinates": wgs_coords},
+                    "properties": {
+                        "kant_id": kr.kant_id,
+                        "kritisk_aterkomsttid_ar": krit_json,
+                        "kumulativ_sannolikhet": float(kr.kumulativ_sannolikhet),
+                        "max_djup_vid_tmax_m": float(kr.max_djup_vid_tmax_m),
+                    },
+                }
+            )
+
+        kortid_s = time.perf_counter() - t_start
+        manifest = skapa_manifest(
+            modul="webb_rutt",
+            indata=[
+                FilPost(
+                    roll="bas_recept",
+                    fil=f"{omrade.omrade_id}/indata/recept.json",
+                    sha256=omrade.bas_recept_sha256,
+                )
+            ],
+            parametrar={
+                "omrade_id": omrade.omrade_id,
+                "fordon_typ": fordon_typ,
+                "gransdjup_m": gransdjup_m,
+                "max_aterkomsttid_ar": max_aterkomsttid_ar,
+                "klimatfaktor": klimatfaktor,
+                "tidshorisont_ar": tidshorisont_ar,
+                "ar_testvarden": True,
+            },
+            utdata=[],
+            matvarden={
+                "antal_kanter_med_risk": int(vag_risk.antal_kanter_med_risk),
+                "max_kumulativ_kant_sannolikhet": float(vag_risk.max_kumulativ_kant_sannolikhet),
+            },
+            varningar=["Testvärden och syntetiskt gatunät används (ej skarpa K7/NVDB-data)."],
+        )
+
+        return {
+            "omrade_id": omrade.omrade_id,
+            "fordon_typ": fordon_typ,
+            "gransdjup_m": float(gransdjup_m),
+            "max_aterkomsttid_ar": float(max_aterkomsttid_ar),
+            "klimatfaktor": float(klimatfaktor),
+            "tidshorisont_ar": float(tidshorisont_ar),
+            "testvarden_anvanda": True,
+            "varning": (
+                "Beräkningen använder användarangivna testvärden och syntetiskt rutnät "
+                "(ej fastställda K7-gränser från räddningstjänst eller NVDB)."
+            ),
+            "antal_kanter_totalt": len(vag_risk.kanter),
+            "antal_kanter_med_risk": int(vag_risk.antal_kanter_med_risk),
+            "max_kumulativ_kant_sannolikhet": float(vag_risk.max_kumulativ_kant_sannolikhet),
+            "kanter": kanter_ut,
+            "vagnat_geojson": {"type": "FeatureCollection", "features": features},
+            "kortid_s": float(kortid_s),
+            "manifest": manifest.till_dict(),
+            "kallor": list(omrade.kallor),
+        }
+
     def hantera_forfragan(
         self,
         metod: str,
@@ -1028,6 +1489,12 @@ class FlodenApiApp:
 
             if verb == "POST" and ren_sokvag == "/api/risk":
                 return _json_svar(200, self.kor_kumulativ_risk(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/rapport":
+                return _json_svar(200, self.generera_webb_rapport(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/rutt":
+                return _json_svar(200, self.kor_rutt_analys(kropp))
 
             return _json_svar(
                 404,
