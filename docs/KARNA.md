@@ -4,7 +4,20 @@ För agenter som bygger vatten, luft, buller eller dagsljus. Kärnan (`src/karna
 den ger scenario, cache, spårbarhet och jämförelse A/B. Kontrakt: K9 (scenario) och K10 (fråga) i
 `DATAKONTRAKT.md`.
 
-## Tre steg
+## Två sätt att ansluta
+
+| | Nodgraf (K10, nedan) | Rutvisa lösare (K20–K21, `docs/ANSLUTA_LOSARE.md`) |
+| --- | --- | --- |
+| Passar | Egna beräkningskedjor, vatten via sänkgrafen | Dagsljus, buller, luft: allt med en påverkansradie |
+| Scenario | `Planscenario` (K9) till nodbyggaren | K9 (eller K3) materialiserat på K1-rutor av kärnan |
+| Lokal omräkning | Modulen ansvarar (ta in scenariots nyckel) | Automatisk: nyckel per ruta inom radien |
+| Körs med | `karna.kor_fraga` (Python) | `floden fraga kor fraga.toml` |
+| Jämförelse A/B | Modulens sak | Kärnan för K1-raster (`[[jamforelser]]`) |
+
+Båda delar K9, sha256-nycklar och K0-manifest. Välj rutvisa lösare om resultatet bara beror på
+geometrin inom ett avstånd; då behöver modulen inte själv hålla reda på vad som ändrats.
+
+## Tre steg (nodgraf)
 
 1. **Skriv lösaren** som en vanlig funktion och slå in den i `Losare`. Höj `version` när koden ändras
    så att resultaten kan ändras (annars återanvänds gamla resultat ur cachen).

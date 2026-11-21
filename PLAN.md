@@ -70,6 +70,15 @@ stämmer med de syntetiska fallen i testsviten.
 Ledningsnät kopplat i 1D (SWMM) och radarnederbörd. Kräver data från Stockholm Vatten och Avfall och beslut om
 driftmiljö. Planeras när M4 är klar.
 
+## M8 – Gemensam kärna för alla domäner
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| Fas 0 | Planscenario K9, utredningsfråga K10, beräkningsgraf med cache, påverkansradie (grenen `fas0-2`) | T00 | klar |
+| T20 | Körmotor: K20-frågor i fil, rutvisa lösare K21, K9/K3 på K1-rutor, cache K22, jämförelser, `floden fraga` | Fas 0, T04 | pågår |
+
+Domänerna ansluter enligt `docs/KARNA.md` (nodgraf) eller `docs/ANSLUTA_LOSARE.md` (rutvisa lösare).
+
 ## Rekommenderad fördelning på agenter
 
 - **En agent per uppdrag**, aldrig två i samma uppdrag samtidigt.
