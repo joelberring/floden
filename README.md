@@ -52,14 +52,19 @@ Node.js 20 eller senare och git: `brew install python@3.12 node`.
 
 ```bash
 git clone https://github.com/joelberring/floden.git && cd floden
-python3.12 -m venv .venv && source .venv/bin/activate   # kontrollera: python --version
-pip install -e ".[dev]"          # Flodens Python-paket och verktygen; `.[konto]` räcker för inloggning
-export PYTHONPATH=src            # om `floden` inte hittar paketen
-(cd webb && npm ci)              # webbklientens beroenden (en gång)
-
-floden demo                      # bygger ett påhittat kvarter och kör frågorna: cirka 30 sekunder
-floden webb                      # bygger klienten vid behov och startar servern
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+(cd webb && npm ci)
+floden demo
+floden webb
 ```
+
+I tur och ordning: hämta koden, skapa en Python 3.12-miljö (`python --version` ska visa 3.12),
+installera Floden, installera webbklientens beroenden (en gång), bygg det påhittade kvarteret och
+kör frågorna (cirka 40 sekunder), och starta servern. Låt terminalen vara öppen medan du visar;
+Ctrl+C stänger servern. Nästa gång räcker `source .venv/bin/activate` och `floden webb`.
+Hittas inte `floden`, kör `export PYTHONPATH=src` och `python -m floden.cli demo` respektive
+`python -m floden.cli webb`. Kör inte `npm audit fix --force`.
 
 Öppna sedan **http://localhost:8765** (`floden webb --port 9000` ändrar porten). `floden demo` kan
 köras om utan kostnad: är inget ändrat tar det under en sekund, och `--tvinga` bygger om allt.
