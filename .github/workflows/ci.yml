@@ -24,6 +24,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Bygg lasclip (LAZ, lyft från O-Tid)
+        run: cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml
+
       - name: Lint med ruff
         run: ruff check --output-format=github src tests testsvit
 
