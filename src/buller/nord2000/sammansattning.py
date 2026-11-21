@@ -229,13 +229,17 @@ def gangvagsskillnader_refraktion(
     ekv. (307) för den sekundära skärmens kant (ur delmodell 6:s strålar, ekv. 226–228). I
     homogen atmosfär är alla tre `None` (Δℓ = Δℓ₀).
 
-    För den sekundära kanten T₁₂ ger avsnitt 5.21.3 ingen egen formel ("in the same way").
-    Här används Δℓ₀ också med refraktion (`None`); kanten ligger på samma skärm som T₁, och
-    kriteriet r_Δℓ12 tar ändå det största av Δℓ och Δℓ₀. Se loggen P-S2, Tolkningar.
+    För den sekundära kanten T₁₂ säger avsnitt 5.21.3 att parametrarna räknas "in the same way
+    as for the secondary screen as described in Section 5.21.2 but T2 is replaced by T12", alltså
+    med Δℓ med refraktion som i ekv. (307). Strålarna är delmodell 5:s för kanterna T₁ och T₁₂
+    (ekv. 193–195): ligger T₁₂ på källsidan om T₁ är R′_S = R_S, R′_R = R_M, θ′_S = θ_1S,
+    θ′_R = θ_1R, annars R′_S = R_M, R′_R = R_R, θ′_S = θ_2S, θ′_R = θ_2R (P-S2, tolkning 2;
+    b8bb734 använde Δℓ₀).
 
     När delmodell 6:s strålar inte går att räkna med refraktion för T₂ (en skärmtopp under
     linjen från den andra, P-6 tolkning 11) används Δℓ₀ för T₂; i det läget är r_Δℓ2 redan
-    under 1 med räta strålar, och delmodell 6 ger själv `BullerFel` om den behövs.
+    under 1 med räta strålar, och delmodell 6 ger själv `BullerFel` om den behövs. Samma
+    reservregel gäller T₁₂ när delmodell 5:s strålar inte går att räkna.
     """
     if not atmosfar.har_refraktion or kanter.primar_form is None:
         return None, None, None
@@ -256,7 +260,22 @@ def gangvagsskillnader_refraktion(
             dl2 = st.gangvagsskillnad_andra_m if primar_forst else st.gangvagsskillnad_forsta_m
         except BullerFel:
             dl2 = None
-    return dl1, dl2, None
+    dl12: float | None = None
+    if kanter.sekundar_kant is not None:
+        try:
+            ordnad = d5.tvakantsform(kanter.primar_form, kanter.sekundar_kant.index)
+            st5 = d5.skarmstralar_tva_kanter(profil, ordnad, atmosfar, val.uppat).kanter
+            if ordnad.index_t1 == kanter.sekundar_kant.index:  # T₁₂ närmast källan
+                dl12 = d4.gangvagsskillnad_refraktion_m(
+                    st5.vag_kalla_m, st5.vag_mitten_m, st5.theta_1s_rad, st5.theta_1r_rad
+                )
+            else:
+                dl12 = d4.gangvagsskillnad_refraktion_m(
+                    st5.vag_mitten_m, st5.vag_mottagare_m, st5.theta_2s_rad, st5.theta_2r_rad
+                )
+        except BullerFel:
+            dl12 = None
+    return dl1, dl2, dl12
 
 
 def terrangeffekt(

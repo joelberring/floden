@@ -239,3 +239,72 @@ class TestBesked(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSekundarKantMedRefraktion(unittest.TestCase):
+    """Δℓ för T₁₂ med refraktion (avsnitt 5.21.3, "in the same way" som ekv. 307), P-S2."""
+
+    TJOCK = _profil(
+        [0.0, 14.99, 15.0, 30.0, 30.01, 100.0],
+        [0.0, 0.0, 2.0, 2.0, 0.0, 0.0],
+        [200.0, 20000.0, 20000.0, 20000.0, 200.0],
+    )
+
+    def _dl(self, vader: Vader) -> tuple[float | None, float | None, float | None]:
+        from buller.nord2000.sammansattning import gangvagsskillnader_refraktion
+        from buller.nord2000.terrang_skarmar import valj_skarmkanter
+
+        geo = terranggeometri(self.TJOCK)
+        kanter = valj_skarmkanter(geo)
+        return gangvagsskillnader_refraktion(
+            F, self.TJOCK, kanter, atmosfar_ur_vader(vader), Sammansattningsval()
+        )
+
+    def test_svag_refraktion_ger_rata_strålarnas_dl0(self) -> None:
+        from buller.nord2000.terrang_skarmar import valj_skarmkanter
+
+        geo = terranggeometri(self.TJOCK)
+        kanter = valj_skarmkanter(geo)
+        assert kanter.sekundar_kant is not None
+        _, _, dl12 = self._dl(Vader(dt_dz_k_m=1e-7))
+        assert dl12 is not None
+        # T₁₂ ligger i skärmens ände, så Δℓ₀ mot T₁ och S (eller R) är rätt jämförelse.
+        from buller.nord2000.terrang_skarmar import gangvagsskillnad_sekundar_m
+
+        assert kanter.primar is not None
+        dl0 = gangvagsskillnad_sekundar_m(geo, kanter.primar, kanter.sekundar_kant.index)
+        self.assertAlmostEqual(dl12, dl0, delta=1e-4 * max(abs(dl0), 1e-3))
+
+    def test_homogen_atmosfar_ger_none(self) -> None:
+        self.assertEqual(self._dl(Vader()), (None, None, None))
+
+    def test_medvind_minskar_dl(self) -> None:
+        _, _, utan = self._dl(Vader(dt_dz_k_m=1e-7))
+        _, _, med = self._dl(Vader(vind_m_s=3.0))
+        assert utan is not None and med is not None
+        self.assertLess(med, utan)  # strålar som böjs nedåt går närmare kanten
+
+
+class TestSkuggzonISkarmmodellerna(unittest.TestCase):
+    """Delmodell 4–6 avgör skuggzonen band för band (ekv. 167, 171, 184), P-S2."""
+
+    def test_avgorande_i_skuggzonslasningen_anvands_inte(self) -> None:
+        from dataclasses import replace
+
+        from buller.nord2000.delmodell4 import Segmentvariabler, marksidor_refraktion
+        from buller.nord2000.refraktion_mark import Skuggzonslasning
+
+        variabler = Segmentvariabler(
+            avstand_m=200.0, hojd_kalla_m=0.5, hojd_mottagare_m=2.0, d1_m=0.0, d2_m=200.0
+        )
+        atm = atmosfar_ur_vader(Vader(vind_m_s=-5.0, std_vind_m_s=0.5, **TURBULENS))
+        resultat = []
+        for avgorande in ("per_band", "delat", "oberoende"):
+            lasning = replace(Skuggzonslasning(), avgorande=avgorande)  # type: ignore[arg-type]
+            sidor = marksidor_refraktion(
+                F, variabler, 1.0, 200.0, 0.0, 1.0, atm, skuggzon=lasning
+            )
+            resultat.append([None if s is None else s.skuggzon_db for s in sidor])
+        self.assertEqual(resultat[0], resultat[1])
+        self.assertEqual(resultat[0], resultat[2])
+        self.assertTrue(any(v is not None and v < 0.0 for v in resultat[0]))

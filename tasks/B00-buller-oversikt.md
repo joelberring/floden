@@ -23,7 +23,7 @@ och `rapport` (verifierbart: testfall, manifest, spårbar indata, oberoende jäm
 | B2 | Utvärdering av färdiga komponenter (NoiseModelling, Embree m.fl.) | B3 | redo |
 | B3 | Bullerscen: profilextraktion, markklass → impedansklass, källsegment, fasadpunkter | – | klar (första version) |
 | B4a | Akustiska grundfunktioner och baslinjekärna (inte Nord2000) | – | klar |
-| B4 | Referenskärna Nord2000 punkt-till-punkt | B1, metodrapporter | pågår |
+| B4 | Referenskärna Nord2000 punkt-till-punkt (delmodell 1–9 inkopplade, P-S2) | B1, metodrapporter | pågår |
 | B5 | Källmodell väg ur SP 2006:12 (direktivitet, lutning, maxnivå, dubbdäck återstår) | B1 | pågår |
 | B6 | Banfinnare: direkta och reflekterade banor, korridorindex | B3 | klar (första version) |
 | B7 | Snabbkärna (vektoriserad/GPU), ≤ 0,05 dB mot B4 | B4 | väntar |

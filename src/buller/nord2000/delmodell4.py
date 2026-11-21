@@ -731,16 +731,22 @@ def marksidor_refraktion(
       c₀, d_SZ), Q̂ = Q̂(f, τ₁, 0, Ẑ_G) och den reflekterade strålen ersätts av den direkta
       (p̂₂ = p̂₁ osv., ekv. 184–186); Δτ = 0 och ψ_G = 0 där (avsnitt 5.5.6).
 
-    Vilken profil som avgör skuggzonen, kilens topp i ShadowZoneShielding och gångtiden i Q̂
-    läses som i delmodell 1 (`skuggzon`, `refraktion_mark.Skuggzonslasning`), så att plan mark
-    och mark vid en skärm behandlas lika. F_c räknas med c̄ ur CalcEqSSPGround (ekv. 166) och
+    Skuggzonen avgörs band för band med den frekvensberoende profilen: ekv. (167) och (171)
+    anropar DirectRay med ξ_S(f), c_0S(f), och villkoret d′₁ > 0,95·d_SZ,1 före ekv. (184) gäller
+    det d_SZ,1 som det anropet ger. Fältet `avgorande` i `skuggzon` används därför inte här
+    (P-S2; förvalet "delat" i delmodell 1 är valt med testfall och gäller bara ekv. 116–122).
+    Kilens topp i ShadowZoneShielding, gångtiden i Q̂ och nivåformen läses som i delmodell 1
+    (`skuggzon`, `refraktion_mark.Skuggzonslasning`); de förvalen är valda ur texten (P-R2).
+    F_c räknas med c̄ ur CalcEqSSPGround (ekv. 166) och
     F_r med k₀ = 2πf/c₀ i den frekvensoberoende profilen. Höjder under 0,01 m ersätts med
     0,01 m i strålgången (avsnitt 5.4.1), som i delmodell 1 med refraktion.
     """
     antal = frekvenser_hz.shape[0]
     if hojdfaktor <= 0.0:
         return [None] * antal
-    lasning = Skuggzonslasning() if skuggzon is None else skuggzon
+    lasning = replace(
+        Skuggzonslasning() if skuggzon is None else skuggzon, avgorande="per_band"
+    )  # ekv. (167), (171), (184)–(186): band för band
     d = variabler.avstand_m
     h_s = max(variabler.hojd_kalla_m, MINSTA_HOJD_M)
     h_r = max(variabler.hojd_mottagare_m, MINSTA_HOJD_M)

@@ -116,7 +116,7 @@ Uppdragen och deras status står i `tasks/B00-buller-oversikt.md`; kontrakt i `d
 | B4a | Akustiska grundfunktioner och baslinjekärna (inte Nord2000) | – | klar |
 | B8, B9 | Operatorlager, klustring med felgräns, inkrementell omräkning, lägen och manifest | KB1–KB2 | klar (första version) |
 | B1, B5 | Testfall grupp N (lokalt, ej i repot) och källmodell väg med direktivitet | källmapp | klar (första version) |
-| B4 | Referenskärna Nord2000: plan mark med väder inkopplad (22 av 80 fall); terräng och skärmar återstår | B1, källmapp | pågår |
+| B4 | Referenskärna Nord2000: plan mark, terräng och skärmar (delmodell 1–9) inkopplade med väder (P-S2: 33 av 80 fall godkända, 16 ska utredas, 4 underkända, se `docs/buller/logg/P-S2.md`); skog, reflexer och kurvig väg/stadsgata/årsmedel i köraren återstår; `nord2000_konform = False` | B1, källmapp | pågår |
 | B7, B10–B13 | Snabbkärna, rapport, jämförelse, gradienter, vågfysik | B4 | väntar |
 
 **Klar när:** rapportläget kör med en kärna som passerar testsvit grupp N, och en jämförelse mot en utredning i
