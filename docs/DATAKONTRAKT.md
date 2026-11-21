@@ -146,3 +146,86 @@ säga vilka som saknas. Testkörningar använder `config.toml` → `[rutt_test]`
 | `entreer_nabarhet.parquet` | `entre_id, t_s, status (nabar / langre_gangvag / ej_nabar), gangvag_m` |
 | `kritiska_avsnitt.gpkg` | Gatuavsnitt med `vinst` = antal adresser som blir nåbara om avsnittet hålls öppet |
 | `run.json` | Manifest |
+
+---
+
+## Gemensam kärna (T20)
+
+Kontrakten nedan är nya och bryter inte mot K0–K8. Numreringen börjar på 20 för att inte
+krocka med kontrakt som domänuppdragen lägger till parallellt.
+
+## K20 – Utredningsfråga (v1)
+
+TOML eller JSON. Relativa sökvägar tolkas relativt frågefilen. Okända fält ger fel.
+
+```toml
+kontrakt = "K20/v1"
+fraga_id = "ornsberg2-grannar"          # a–z, 0–9, '-', '_'
+beskrivning = "…"
+
+[scenarier.<id>]
+bas = "…"                               # K1-ruta (mark.tif) eller katalog med K1-rutor mm_E_N/
+lappar = ["…/lapp.json"]                # K3, tillämpas i ordning (valfritt)
+
+[[analyser]]
+id = "…"
+losare = "<doman>.<namn>"               # K21
+scenarier = ["…"]                       # valfritt; utelämnat = alla
+parametrar = { … }                      # valideras av lösaren
+indata = { <roll> = "fil" }             # roller enligt lösarens indataroller
+beror_pa = ["<analys-id>"]              # valfritt; cykler ger fel
+
+[[jamforelser]]                         # valfritt
+analys = "…"
+utdata = "<roll>"                       # GeoTIFF i K1-rutnätet
+fore = "<scenario>"
+efter = "<scenario>"
+troskel = 0.0                           # för ytmåtten
+```
+
+Utdata från `floden fraga kor` i `resultat/<fraga_id>/` (eller `--ut`):
+
+| Fil | Innehåll |
+| --- | --- |
+| `<analys>/<scenario>[/<ruta_id>]/` | Lösarens filer + K0 `run.json` |
+| `jamforelser/<analys>_<roll>_<efter>_minus_<fore>/` | `diff.tif` (globalt) eller `<ruta_id>.tif` |
+| `sammanstallning.json` | Scenarier med rutors hash, alla jobb med nyckel, `fran_cache`, körtid, mätvärden, varningar, jämförelsemått |
+| `run.json` | K0-manifest för hela frågan |
+
+## K21 – Lösare (v1)
+
+Python-gränssnitt `karna.losare.Losare`. Se `docs/ANSLUTA_LOSARE.md`.
+
+| Del | Krav |
+| --- | --- |
+| `namn` | `<doman>.<namn>`, domän ∈ {vatten, luft, buller, dagsljus, geometri, ovrigt} |
+| `version` | Sträng. Höjs när resultatet kan ändras för samma indata. Ingår i nyckeln |
+| `validera_parametrar(p)` | Returnerar fullständiga parametrar med standardvärden; okända ger `LosarFel` |
+| `paverkansradie_m(p)` | `None` = globalt jobb; tal ≥ 0 = rutvisa jobb, nyckeln beror bara på rutor närmare än radien |
+| `kor(kontext)` | Skriver i `kontext.utmapp`, returnerar `LosarUtdata(filer, matvarden, varningar)`. Får parametrarna i kanonisk form (samma som hashades). Rutvisa jobb ser bara rutorna i nyckeln |
+| Registrering | `src/<paket>/floden_losare.py` med `LOSARE: list[Losare]`, upptäcks automatiskt |
+
+**Jobbnyckel** = sha256 av kanonisk JSON (sorterade nycklar, flyttal med `repr`, heltalsvärda
+flyttal som heltal, NaN förbjudet) över: lösarens namn och version, validerade parametrar,
+sha256 för extra indata, radie, ruta, `[ruta_id, rutans innehållshash]` för berörda rutor och
+nycklarna för de jobb man beror på.
+
+**Lappnyckel** (scenario med lapp, per ruta) = sha256 över basrutans hash, `lapp.json`,
+sha256 för varje LandXML-fil lappen pekar på (relativ sökväg tolkas relativt lappfilen) och de
+gatusektioner ur `config.toml` som lappen använder.
+
+**Rutans innehållshash** = sha256 av kanonisk lista `[relativ sökväg, filens sha256]` för alla
+filer i rutans katalog. En lapp som inte ändrar en ruta lämnar dess hash orörd.
+
+## K22 – Resultatcache (v1)
+
+Katalog (standard `data/cache/karna/`, inte i git):
+
+```
+jobb/<nn>/<nyckel>/      nyckel.json, utdata/, utdata.json, run.json, .klar
+scenarier/<nn>/<nyckel>/ ruta/ (K1-ruta med lapp tillämpad) eller bara .klar om lappen inte ändrade rutan
+```
+
+`<nn>` är nyckelns två första hextecken. En post räknas som klar bara om `.klar` finns.
+Poster skrivs i en temporär katalog och flyttas på plats atomärt. Cachen kan raderas när som
+helst; den byggs upp igen från recepten.

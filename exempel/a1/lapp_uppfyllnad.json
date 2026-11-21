@@ -1,0 +1,42 @@
+{
+  "kontrakt": "K3/v1",
+  "lapp_id": "a1-uppfyllnad",
+  "bas_recept": [
+    "b786c0831ab45ed59f43fb68deb2eaef6ab641771908ec77c7585f74bc74b74f"
+  ],
+  "operationer": [
+    {
+      "typ": "hojdyta",
+      "lager": "hojdytor"
+    }
+  ],
+  "beskrivning": "Fyller västra halvan av A1-sänkan till +10,60 (exempel för K20).",
+  "hojdytor": [
+    {
+      "yta_id": "uppfyllnad",
+      "polygon": [
+        [
+          150002.5,
+          6576002.5
+        ],
+        [
+          150007.5,
+          6576002.5
+        ],
+        [
+          150007.5,
+          6576012.5
+        ],
+        [
+          150002.5,
+          6576012.5
+        ]
+      ],
+      "hojd_rh2000": 10.6,
+      "landxml": null,
+      "koordinat_ordning": "NEZ",
+      "osakerhet_m": 0.05,
+      "markslag": null
+    }
+  ]
+}

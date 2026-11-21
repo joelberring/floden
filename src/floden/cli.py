@@ -1304,6 +1304,10 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Skriv ut sammanfattning som JSON.",
     )
 
+    from karna.cli import lagg_till_parser as _lagg_till_fraga
+
+    _lagg_till_fraga(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Flodens lokala HTTP/JSON-API för webbklienten.",
@@ -1357,6 +1361,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _kor_regn_kommando(args)
     if args.kommando == "risk":
         return _kor_risk_kommando(args)
+    if args.kommando == "fraga":
+        from karna.cli import kor_kommando as _kor_fraga
+
+        return _kor_fraga(args)
     if args.kommando == "webb":
         from webb.api import skapa_http_server
 

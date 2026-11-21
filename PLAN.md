@@ -70,6 +70,14 @@ stämmer med de syntetiska fallen i testsviten.
 Ledningsnät kopplat i 1D (SWMM) och radarnederbörd. Kräver data från Stockholm Vatten och Avfall och beslut om
 driftmiljö. Planeras när M4 är klar.
 
+## M8 – Gemensam kärna för alla domäner
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| T20 | Utredningsfrågor (K20), lösarregister (K21), scenario som bas + lapp, innehållscache (K22), jämförelser, `floden fraga` | T00, T04 | pågår |
+
+Domänerna (vatten, luft, buller, dagsljus) ansluter sina lösare enligt `docs/ANSLUTA_LOSARE.md`.
+
 ## Rekommenderad fördelning på agenter
 
 - **En agent per uppdrag**, aldrig två i samma uppdrag samtidigt.

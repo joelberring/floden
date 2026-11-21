@@ -1,0 +1,29 @@
+# Exempel på utredningsfråga (K20/v1). Kör med:
+#   floden fraga plan exempel/a1/fraga.toml
+#   floden fraga kor exempel/a1/fraga.toml
+kontrakt = "K20/v1"
+fraga_id = "a1-uppfyllnad"
+beskrivning = "Hur påverkas vattendjupet i A1-sänkan om västra halvan fylls upp?"
+
+[scenarier.fore]
+bas = "../../testsvit/A1_enkel_sanka/indata"
+
+[scenarier.efter]
+bas = "../../testsvit/A1_enkel_sanka/indata"
+lappar = ["lapp_uppfyllnad.json"]
+
+[[analyser]]
+id = "skyfall"
+losare = "vatten.statisk_fyllning"
+parametrar = { regn_mm = 100.0 }
+
+[[analyser]]
+id = "lutning"
+losare = "geometri.lutning"
+
+[[jamforelser]]
+analys = "skyfall"
+utdata = "max_djup"
+fore = "fore"
+efter = "efter"
+troskel = 0.01

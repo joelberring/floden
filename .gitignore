@@ -31,3 +31,6 @@ runs/
 tmp/
 .DS_Store
 Thumbs.db
+
+# Resultat från utredningsfrågor (floden fraga kor)
+resultat/
