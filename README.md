@@ -70,7 +70,8 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
 **Förslag till visning (5–7 punkter):**
 
 1. Öppna **Frågor**. De tre korten överst är demon: dagsljus, vatten och luft (luft är märkt
-   *Kommer*, den visas när luftmodulen ligger på main).
+   *Ej förkörd*: vindkomfortlösaren finns men en körning tar över tio minuter på CPU, se
+   `exempel/fragor/luft_fore_efter.toml`).
 2. **Dagsljus.** Tryck *Visa resultatet*. Lagret *Soltimmar · höjd − bas* visar var skuggan faller
    när en byggnad görs högre (blått är färre soltimmar). Byt till *nytt hus* för det andra fallet.
 3. **Hovra** över kartan: värdena för bas, scenario och skillnad står under kartan. Grå ytor är

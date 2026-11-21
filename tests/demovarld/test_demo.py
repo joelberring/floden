@@ -64,9 +64,9 @@ def demo() -> Iterator[Demo]:
         shutil.rmtree(rot, ignore_errors=True)
 
 
-def test_demon_skriver_k0_manifest_och_luft_kommer(demo: Demo) -> None:
+def test_demon_skriver_k0_manifest_och_luft_ar_inte_forkord(demo: Demo) -> None:
     sam = demo.forsta
-    assert sam["delar"]["luft"]["status"] == "kommer"
+    assert sam["delar"]["luft"]["status"] == "ej_forkord"
     assert sam["delar"]["demo_dagsljus"]["jobb"] > 0
     assert sam["delar"]["demo_vatten"]["jobb"] == 2
     manifest = las_manifest(demo.varld / "demo.run.json")
@@ -114,7 +114,7 @@ def test_incheckade_demofragor_ar_malletens_utdata() -> None:
 def test_api_demo_ger_oversikt(demo: Demo) -> None:
     status, d = demo.get("/api/demo")
     assert status == 200 and d["finns"] is True
-    assert d["delar"]["luft"]["status"] == "kommer"
+    assert d["delar"]["luft"]["status"] == "ej_forkord"
     assert d["delar"]["demo_vatten"]["korning_id"] == "demo-vatten"
 
 

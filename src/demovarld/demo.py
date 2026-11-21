@@ -177,15 +177,20 @@ def kor_demo(
             f"({delar[namn]['tid_s']:.1f} s) -> körning {status['korning_id']}"
         )
     total = time.perf_counter() - t0
-    # Luft kommer: platsen finns i demons manifest och i webbens demoöversikt (ingen luftkod körs).
+    # Luft är inte förkörd (mätt: över 9 min för hela världen, över 6 min för fokusområdet).
+    # Platsen finns i manifestet och i webbens demoöversikt.
     sammanfattning = {
         "lage": lage.namn,
         "varld": {"byggd": byggd, "nyckel": varld_nyckel(lage), "tid_s": round(t_varld, 3)},
         "delar": {
             **delar,
             "luft": {
-                "status": "kommer",
-                "text": "Luftkvalitet visas här när luftmodulen ligger på main (K1 v2).",
+                "status": "ej_forkord",
+                "text": (
+                    "Vindkomfort (luft.vindkomfort) finns men är inte förkörd: en körning tar "
+                    "mer än tio minuter på CPU, också för bara fokusområdet. Se "
+                    "exempel/fragor/luft_fore_efter.toml."
+                ),
             },
         },
         "total_tid_s": round(total, 3),

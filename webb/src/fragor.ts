@@ -172,7 +172,7 @@ function ritaDemo(): void {
       : "";
   const luft = d.delar.luft
     ? `<article class="demo-kort demo-kommer">
-         <h3>Luft <span class="chip">Kommer</span></h3>
+         <h3>Luft <span class="chip">Ej förkörd</span></h3>
          <p>${esc(d.delar.luft.text)}</p>
        </article>`
     : "";
