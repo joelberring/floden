@@ -37,7 +37,13 @@ viz = [
 laser = [
     "pdal==3.4.5",
 ]
+# Inloggning och konton (src/konto): OIDC-kontroll av ID-token (RS256) kräver cryptography.
+# Läget `inloggning = "av"` (standard) importerar inget av detta.
+konto = [
+    "PyJWT[crypto]==2.15.0",
+]
 dev = [
+    "PyJWT[crypto]==2.15.0",
     "pytest==8.3.4",
     "ruff==0.8.4",
     "mypy==1.14.1",

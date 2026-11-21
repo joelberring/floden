@@ -24,6 +24,7 @@ config.local.toml
 *.local.toml
 data/cache/
 data/intern/
+data/konto/
 data/ledningar/
 
 # Temporära körfiler
