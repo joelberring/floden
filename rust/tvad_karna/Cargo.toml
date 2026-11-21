@@ -1,0 +1,16 @@
+[package]
+name = "tvad_karna"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Flodens 2D-lösare (lokal tröghet, Bates 2010 / de Almeida 2012) – parallell CPU-kärna"
+publish = false
+
+[dependencies]
+rayon = "1.10"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

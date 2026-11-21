@@ -27,6 +27,9 @@ jobs:
       - name: Bygg lasclip (LAZ, lyft från O-Tid)
         run: cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml
 
+      - name: Bygg tvad_karna (2D-lösaren i Rust)
+        run: cargo build --release --locked --manifest-path rust/tvad_karna/Cargo.toml
+
       - name: Lint med ruff
         run: ruff check --output-format=github src tests testsvit
 

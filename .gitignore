@@ -34,3 +34,4 @@ Thumbs.db
 
 # Rust-verktyg
 tools/*/target/
+rust/*/target/
