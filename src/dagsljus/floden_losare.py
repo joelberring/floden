@@ -98,6 +98,7 @@ def _kontrollera_okanda(p: Mapping[str, Any], tillatna: set[str], namn: str) -> 
 
 
 def _radie_m(p: Mapping[str, Any]) -> float:
+    """Sökavstånd för horisonten: H_max / tan(h_min)."""
     return dagsljus_paverkansradie_m(float(p["hojd_max_m"]), float(p["h_min_grader"]))
 
 
@@ -238,7 +239,10 @@ class _DagsljusLosare(Analyslosare):
         return _gemensamma(parametrar, self._standard_k)
 
     def paverkansradie_m(self, parametrar: Mapping[str, Any]) -> float | None:
-        return _radie_m(parametrar)
+        # Horisonten räknas mot cellens närmaste kant, inte dess mitt. Påverkansradien till
+        # kärnan får därför en celldiagonals marginal så att den är konservativ: en punkt exakt
+        # på H/tan(h_min) från en cellkant ändrades annars (0,333 h i fas 1b-mätningen).
+        return _radie_m(parametrar) + math.sqrt(2.0) * float(parametrar["cellstorlek_m"])
 
 
 class Horisont(_DagsljusLosare):

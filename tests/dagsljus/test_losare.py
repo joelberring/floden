@@ -68,9 +68,11 @@ class TestLosare(unittest.TestCase):
         losare = hamta_losare("dagsljus.svf_mark")
         p = losare.validera_parametrar({})
         self.assertAlmostEqual(
-            losare.paverkansradie_m(p) or 0.0, 60.0 / math.tan(math.radians(5.0)), places=9
+            losare.paverkansradie_m(p) or 0.0,
+            60.0 / math.tan(math.radians(5.0)) + math.sqrt(2.0) * float(p["cellstorlek_m"]),
+            places=9,
         )
-        self.assertEqual(losare.paverkansradie_m(p), dagsljus_paverkansradie_m(60.0, 5.0))
+        self.assertGreater(losare.paverkansradie_m(p) or 0.0, dagsljus_paverkansradie_m(60.0, 5.0))
 
     def test_okanda_och_ogiltiga_parametrar_ger_fel(self) -> None:
         for namn, p in (
