@@ -1369,6 +1369,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     _lagg_till_fraga(subparsers)
 
+    from luft.cli import registrera as registrera_luft
+
+    registrera_luft(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Flodens lokala HTTP/JSON-API för webbklienten.",
@@ -1428,6 +1432,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from karna.cli import kor_kommando as _kor_fraga
 
         return _kor_fraga(args)
+    if args.kommando == "luft":
+        from luft.cli import kor as kor_luft
+
+        return kor_luft(args)
     if args.kommando == "webb":
         from webb.api import skapa_http_server
 
