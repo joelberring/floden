@@ -1,6 +1,7 @@
 """Vattenmodulen (skyfall) ovanpå kärnan: blåytor vid X mm, scenario → lapp, lösare i grafen.
 
-Importen anmäler analystypen `blaytor_mm` till kärnans frågelager.
+Importen anmäler analystyperna `blaytor_mm`, `maxdjup_2d`, `fara_2d` och `tid_till_djup`
+till kärnans frågelager.
 """
 
 from __future__ import annotations
@@ -23,11 +24,14 @@ from vatten.losare import (
     registrera_bas,
     registrera_scenarier,
 )
+from vatten.losare_2d import LOSARE_2D, nod_2d, registrera_2d
 from vatten.scenario_lapp import ScenarioLappFel, scenario_till_lapp, tillampa_scenario
 
 registrera()
+registrera_2d()
 
 __all__ = [
+    "LOSARE_2D",
     "LOSARE_BLAYTOR",
     "LOSARE_BLAYTOR_SCENARIO",
     "LOSARE_SANKGRAF",
@@ -37,6 +41,8 @@ __all__ = [
     "ScenarioLappFel",
     "blaytor_nod",
     "blaytor_vid_mm",
+    "nod_2d",
+    "registrera_2d",
     "k1_filer",
     "las_k1",
     "registrera",

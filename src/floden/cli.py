@@ -765,6 +765,14 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
 
 
 def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
+    if grupp is not None and grupp.strip().upper() == "D":
+        from testsvit.hunter import kor_hunter_svit
+
+        _, ok, tabell = kor_hunter_svit()
+        print(tabell)
+        utfall = "GODKAND" if ok else "UNDERKAND"
+        print(f"\nSammanfattning (Grupp D / analytiska 2D-facit): {utfall}.")
+        return 0 if ok else 1
     if grupp is not None and grupp.strip().upper() == "C":
         try:
             ea_res, ea_tabell = kor_alla_ea_testfall()
@@ -1187,7 +1195,7 @@ def bygg_parser() -> argparse.ArgumentParser:
         "--grupp",
         type=str,
         default=None,
-        help="Filtrera på testgrupp, t.ex. A, B eller C.",
+        help="Filtrera på testgrupp, t.ex. A, B, C eller D (analytiska 2D-facit).",
     )
     testsvit_parser.add_argument(
         "--rot",
