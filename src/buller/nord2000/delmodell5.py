@@ -11,14 +11,17 @@ Källor (varje formel avläst från sidbild, se `docs/buller/logg/P-5.md`):
   reflektionskoefficienter Q_avS, Q′_avM och Q_avR. De ersätter Z_S = Z_iSCR,T1−1,
   Z_R = Z_iSCR,T2 och den hårda ovansidan i avsnitt 5.14.2 och 5.7.4.
 
-Vad som räknas, **bara i homogen atmosfär utan fluktuerande refraktion** (räta strålar):
+Vad som räknas:
 
 * skärmens verkan i fritt fält, |p̂_SCR| = |p̂_1,ff|·R_SR (ekv. 192–196),
-* markens verkan utöver skärmen, |p̂_G| (ekv. 197–216 med ξ = 0), vägd över alla par av
-  marksegment före W₁ och efter W₂ (ekv. 220), och ΔL₅ (ekv. 221).
+* markens verkan utöver skärmen, |p̂_G| (ekv. 197–216), vägd över alla par av marksegment
+  före W₁ och efter W₂ (ekv. 220), och ΔL₅ (ekv. 221).
 
-Med refraktion kräver ekv. (193), (198)–(207) och (217)–(219) krökta strålar genom tre
-delsträckor, CalcEqSSPGround, FresnelZoneW med refraktion och ShadowZoneShielding: `BullerFel`.
+I homogen atmosfär utan fluktuerande refraktion räknas räta strålar. Annars (P-S2, formlerna
+avlästa från sidbild s. 82–89) räknas skärmens tre delsträckor med CalcEqSSP och DirectRay
+(ekv. 193–195) och markdelen med krökta strålar som i delmodell 4
+(`delmodell4.marksidor_refraktion`): Δθ i spegelvinklarna (ekv. 198), F_Δτ (ekv. 210–214)
+och skuggzonsfallen (ekv. 217–219).
 
 Mycket är gemensamt med delmodell 4 och hämtas därifrån: SegmentVariables, ImagePoint,
 höjdfaktorerna (ekv. 208–209 = 175–176), marksidans strålar och koherens (ekv. 200–214 =
@@ -38,32 +41,36 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from buller.nord2000.delmodell1 import Ct2Form
 from buller.nord2000.delmodell4 import (
-    Marksida,
     Segmentvariabler,
     Viktregel,
-    _kontrollera_frekvenser,
-    _marksida,
-    _neutral_sida,
-    _per_frekvens,
-    _vinkel_fran_lodlinjen_rad,
     bildpunkt,
+    ekvivalent_skarmhojd_m,
     hojdmodifierare,
+    koherenser_tva_sidor,
+    kontrollera_frekvenser,
     markfaktor_basmodell,
+    marksidor,
+    neutral_sida,
     normerade_vikter,
+    per_frekvens,
     segmentvariabler,
+    skuggzonsfaktor,
     storsta_hojd_m,
+    vinkel_fran_lodlinjen_rad,
 )
 from buller.nord2000.delmodell4_kilben import Kilben, kilben, medelreflektion_kilben
-from buller.nord2000.geometri import langd, normlinje
+from buller.nord2000.geometri import MINSTA_HOJD_M, langd, normlinje
 from buller.nord2000.kildiffraktion_dubbel import (
     TvaKanter,
     Viktigast,
     tjock_skarm_tryck_reflektionskoefficienter,
     tva_kanter_rata_stralar,
 )
-from buller.nord2000.koherens import koherens_bandmedelvarde
-from buller.nord2000.refraktion import Atmosfar
+from buller.nord2000.refraktion import Atmosfar, calc_eq_ssp
+from buller.nord2000.refraktion_mark import Skuggzonslasning
+from buller.nord2000.stralar_krokta import Uppatmetod, direkt_strale
 from buller.nord2000.terrang import Terranggeometri, terranggeometri
 from buller.nord2000.terrang_skarmar import Skarmform
 from buller.typer import BullerFel, Flyttal, Terrangprofil
@@ -164,14 +171,14 @@ def tvakantsvinklar(geo: Terranggeometri, form: Tvakantsform) -> Tvakantsvinklar
     if not geo.x_s_m < x_t1 or not x_t2 < geo.x_r_m:
         raise BullerFel("Skärmkanterna ska ligga mellan källan och mottagaren.")
 
-    beta11 = _vinkel_fran_lodlinjen_rad(z_1 - z_t1, x_t1 - x_1)
-    beta12 = _vinkel_fran_lodlinjen_rad(z_t2 - z_t1, x_t2 - x_t1)
-    theta11 = _vinkel_fran_lodlinjen_rad(geo.z_s_m - z_t1, x_t1 - geo.x_s_m)
-    theta12 = max(beta12, _vinkel_fran_lodlinjen_rad(geo.z_r_m - z_t1, geo.x_r_m - x_t1))
-    beta21 = _vinkel_fran_lodlinjen_rad(z_t1 - z_t2, x_t2 - x_t1)
-    beta22 = _vinkel_fran_lodlinjen_rad(z_2 - z_t2, x_2 - x_t2)
-    theta21 = max(beta21, _vinkel_fran_lodlinjen_rad(geo.z_s_m - z_t2, x_t2 - geo.x_s_m))
-    theta22 = _vinkel_fran_lodlinjen_rad(geo.z_r_m - z_t2, geo.x_r_m - x_t2)
+    beta11 = vinkel_fran_lodlinjen_rad(z_1 - z_t1, x_t1 - x_1)
+    beta12 = vinkel_fran_lodlinjen_rad(z_t2 - z_t1, x_t2 - x_t1)
+    theta11 = vinkel_fran_lodlinjen_rad(geo.z_s_m - z_t1, x_t1 - geo.x_s_m)
+    theta12 = max(beta12, vinkel_fran_lodlinjen_rad(geo.z_r_m - z_t1, geo.x_r_m - x_t1))
+    beta21 = vinkel_fran_lodlinjen_rad(z_t1 - z_t2, x_t2 - x_t1)
+    beta22 = vinkel_fran_lodlinjen_rad(z_2 - z_t2, x_2 - x_t2)
+    theta21 = max(beta21, vinkel_fran_lodlinjen_rad(geo.z_s_m - z_t2, x_t2 - geo.x_s_m))
+    theta22 = vinkel_fran_lodlinjen_rad(geo.z_r_m - z_t2, geo.x_r_m - x_t2)
     return Tvakantsvinklar(
         beta11_rad=beta11,
         beta12_rad=beta12,
@@ -192,53 +199,101 @@ def tvakantsvinklar(geo: Terranggeometri, form: Tvakantsform) -> Tvakantsvinklar
 
 @dataclass(frozen=True)
 class Tvakantsstralar:
-    """Skärmens geometri och strålar för p̂_1,ff, AV 1106/07 ekv. (193)–(195), räta strålar."""
+    """Skärmens geometri och strålar för p̂_1,ff, AV 1106/07 ekv. (193)–(195)."""
 
     form: Tvakantsform
-    vinklar: Tvakantsvinklar
-    kanter: TvaKanter  # indata till p2edge: β, θ, τ_S, τ_M, τ_R, R_S, R_M, R_R
+    vinklar: Tvakantsvinklar  # räta linjer (utan Δθ)
+    kanter: TvaKanter  # indata till p2edge: β, θ (med Δθ), τ_S, τ_M, τ_R, R_S, R_M, R_R
     hojd_over_baslinje_1_m: float  # h_SCR1
     hojd_over_baslinje_2_m: float  # h_SCR2
+    vinkelandring_kalla_rad: float = 0.0  # Δθ_S
+    vinkelandring_mitten_rad: float = 0.0  # Δθ_M
+    vinkelandring_mottagare_rad: float = 0.0  # Δθ_R
 
 
 def skarmstralar_tva_kanter(
-    profil: Terrangprofil, form: Tvakantsform, atmosfar: Atmosfar
+    profil: Terrangprofil,
+    form: Tvakantsform,
+    atmosfar: Atmosfar,
+    uppat: Uppatmetod = "exakt",
 ) -> Tvakantsstralar:
-    """Variablerna för p̂_1,ff, AV 1106/07 avsnitt 5.14.1, ekv. (193)–(195), för ξ = 0.
+    """Variablerna för p̂_1,ff, AV 1106/07 avsnitt 5.14.1, ekv. (193)–(195).
 
     I homogen atmosfär är strålarna räta: R_S = |ST₁|, R_M = |T₁T₂|, R_R = |T₂R|, τ = R/c och
-    Δθ_S = Δθ_M = Δθ_R = 0. Det är gränsvärdet av DirectRay i ekv. (193) (samma val som i
-    delmodell 4 och i `geometri.py`). h_SCR1 och h_SCR2 är kanternas höjder över baslinjen.
+    Δθ_S = Δθ_M = Δθ_R = 0 (gränsvärdet av DirectRay, samma val som i delmodell 4).
+
+    Med refraktion (ekv. 193, avläst från sidbild s. 82–83): profilerna CalcEqSSP(h_Sv, h″_SCR),
+    CalcEqSSP(h″_SCR, h″_SCR) och CalcEqSSP(h_Rv, h″_SCR) är oberoende av frekvensen, och
+    DirectRay ger (τ_S, R_S, Δθ_S) för S–T₁, (τ_M, R_M, Δθ_M) för T₁–T₂ och (τ_R, R_R, Δθ_R) för
+    T₂–R. θ_1S = 2π − θ₁₁ − β₁₂ − Δθ_S, θ_1R = θ₁₂ − β₁₂ + Δθ_M, θ_2S = 2π − θ₂₁ − β₂₂ − Δθ_M och
+    θ_2R = θ₂₂ − β₂₂ + Δθ_R (ekv. 194–195). Strålarna räknas i baslinjens system (vinkelräta
+    höjder över baslinjen, avstånd mellan fotpunkterna), som i `delmodell4.skarmstralar`, och
+    h″_SCR (ekv. 22) räknas för respektive kant, som i `delmodell6.skarmstralar_tva`.
     """
-    if atmosfar.har_refraktion:
-        raise BullerFel(
-            "Delmodell 5 täcker ännu bara räta strålar: ekv. (193) med CalcEqSSP och DirectRay "
-            "för de tre delsträckorna S–T₁, T₁–T₂ och T₂–R är inte implementerad."
-        )
     geo = terranggeometri(profil)
     vinklar = tvakantsvinklar(geo, form)
     x_ps, z_ps = float(profil.x_m[0]), float(profil.z_m[0])
     x_pr, z_pr = float(profil.x_m[-1]), float(profil.z_m[-1])
     x_t1, z_t1 = float(geo.x_m[form.index_t1]), float(geo.z_m[form.index_t1])
     x_t2, z_t2 = float(geo.x_m[form.index_t2]), float(geo.z_m[form.index_t2])
-    _, _, h_scr1 = normlinje(x_ps, z_ps, x_pr, z_pr, x_t1, z_t1)
-    _, _, h_scr2 = normlinje(x_ps, z_ps, x_pr, z_pr, x_t2, z_t2)
+    x10, z10, h_scr1 = normlinje(x_ps, z_ps, x_pr, z_pr, x_t1, z_t1)
+    x20, z20, h_scr2 = normlinje(x_ps, z_ps, x_pr, z_pr, x_t2, z_t2)
     if not (h_scr1 > 0.0 and h_scr2 > 0.0):
         raise BullerFel(
             "En av skärmkanterna ligger inte över terrängens baslinje (h_SCR ≤ 0): den kan inte "
             "vara kant i delmodell 5 (AV 1106/07 avsnitt 5.21.1 och 5.21.3)."
         )
-    kanter = tva_kanter_rata_stralar(
-        vinklar.beta1_rad,
-        vinklar.theta_1s_rad,
-        vinklar.theta_1r_rad,
-        vinklar.beta2_rad,
-        vinklar.theta_2s_rad,
-        vinklar.theta_2r_rad,
-        langd(geo.x_s_m, geo.z_s_m, x_t1, z_t1),
-        langd(x_t1, z_t1, x_t2, z_t2),
-        langd(x_t2, z_t2, geo.x_r_m, geo.z_r_m),
-        atmosfar.c_m_s,
+    r_st1 = langd(geo.x_s_m, geo.z_s_m, x_t1, z_t1)
+    r_t2r = langd(x_t2, z_t2, geo.x_r_m, geo.z_r_m)
+    if not atmosfar.har_refraktion:
+        kanter = tva_kanter_rata_stralar(
+            vinklar.beta1_rad,
+            vinklar.theta_1s_rad,
+            vinklar.theta_1r_rad,
+            vinklar.beta2_rad,
+            vinklar.theta_2s_rad,
+            vinklar.theta_2r_rad,
+            r_st1,
+            langd(x_t1, z_t1, x_t2, z_t2),
+            r_t2r,
+            atmosfar.c_m_s,
+        )
+        return Tvakantsstralar(
+            form=form,
+            vinklar=vinklar,
+            kanter=kanter,
+            hojd_over_baslinje_1_m=h_scr1,
+            hojd_over_baslinje_2_m=h_scr2,
+        )
+
+    xs0, zs0, h_sb = normlinje(x_ps, z_ps, x_pr, z_pr, geo.x_s_m, geo.z_s_m)
+    xr0, zr0, h_rb = normlinje(x_ps, z_ps, x_pr, z_pr, geo.x_r_m, geo.z_r_m)
+    d1 = langd(xs0, zs0, x10, z10)
+    d2 = langd(x10, z10, x20, z20)
+    d3 = langd(x20, z20, xr0, zr0)
+    h_sv = max(profil.kalla_hojd_m, MINSTA_HOJD_M)
+    h_rv = max(profil.mottagare_hojd_m, MINSTA_HOJD_M)
+    h_bis1 = ekvivalent_skarmhojd_m(geo.r_sr_m, r_st1, langd(geo.x_r_m, geo.z_r_m, x_t1, z_t1))
+    h_bis2 = ekvivalent_skarmhojd_m(geo.r_sr_m, langd(geo.x_s_m, geo.z_s_m, x_t2, z_t2), r_t2r)
+    profil_s = calc_eq_ssp(h_sv, h_bis1, atmosfar)
+    profil_m = calc_eq_ssp(h_bis1, h_bis2, atmosfar)
+    profil_r = calc_eq_ssp(h_rv, h_bis2, atmosfar)
+    strale_s = direkt_strale(d1, h_sb, h_scr1, profil_s.xi_per_m, profil_s.c0_m_s, uppat)
+    strale_m = direkt_strale(d2, h_scr1, h_scr2, profil_m.xi_per_m, profil_m.c0_m_s, uppat)
+    strale_r = direkt_strale(d3, h_rb, h_scr2, profil_r.xi_per_m, profil_r.c0_m_s, uppat)
+    kanter = TvaKanter(
+        beta_1_rad=vinklar.beta1_rad,
+        theta_1s_rad=vinklar.theta_1s_rad - strale_s.vinkelandring_rad,
+        theta_1r_rad=vinklar.theta_1r_rad + strale_m.vinkelandring_rad,
+        beta_2_rad=vinklar.beta2_rad,
+        theta_2s_rad=vinklar.theta_2s_rad - strale_m.vinkelandring_rad,
+        theta_2r_rad=vinklar.theta_2r_rad + strale_r.vinkelandring_rad,
+        gangtid_kalla_s=strale_s.gangtid_s,
+        gangtid_mitten_s=strale_m.gangtid_s,
+        gangtid_mottagare_s=strale_r.gangtid_s,
+        vag_kalla_m=strale_s.vagstracka_m,
+        vag_mitten_m=strale_m.vagstracka_m,
+        vag_mottagare_m=strale_r.vagstracka_m,
     )
     return Tvakantsstralar(
         form=form,
@@ -246,6 +301,9 @@ def skarmstralar_tva_kanter(
         kanter=kanter,
         hojd_over_baslinje_1_m=h_scr1,
         hojd_over_baslinje_2_m=h_scr2,
+        vinkelandring_kalla_rad=strale_s.vinkelandring_rad,
+        vinkelandring_mitten_rad=strale_m.vinkelandring_rad,
+        vinkelandring_mottagare_rad=strale_r.vinkelandring_rad,
     )
 
 
@@ -345,11 +403,11 @@ def kilytornas_reflektion_tva_kanter(
     yta). Ett givet `q_kilyta_mitten` ersätter Q_avM; övergången mot hård ovansida
     (ekv. 425–426) tillämpas även då. Returnerar (Q_avS, Q′_avM, Q_avR, Q_avM).
     """
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     antal = frekvenser.shape[0]
-    givet_s = _per_frekvens(q_kilyta_kalla, antal, "q_kilyta_kalla")
-    givet_m = _per_frekvens(q_kilyta_mitten, antal, "q_kilyta_mitten")
-    givet_r = _per_frekvens(q_kilyta_mottagare, antal, "q_kilyta_mottagare")
+    givet_s = per_frekvens(q_kilyta_kalla, antal, "q_kilyta_kalla")
+    givet_m = per_frekvens(q_kilyta_mitten, antal, "q_kilyta_mitten")
+    givet_r = per_frekvens(q_kilyta_mottagare, antal, "q_kilyta_mottagare")
     ben_s, ben_m, ben_r = kilben_tva_kanter(geo, form)
     r12 = relativ_skarmbredd(geo, form)
     c = ljudhastighet_m_s
@@ -385,7 +443,7 @@ def skarmeffekt_tva_kanter_fritt_falt_db(
     Q_avR ur TC-101327 bilaga G.3. Vilken av ekv. (102) och (103) som används följer av
     `form.viktigast`. Bara räta strålar.
     """
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     stralar = skarmstralar_tva_kanter(profil, form, atmosfar)
     geo = terranggeometri(profil)
     q_s, q_m, q_r, _ = kilytornas_reflektion_tva_kanter(
@@ -430,37 +488,6 @@ class Delmodell5Resultat:
 _Sidodata = tuple[Segmentvariabler, float, float, float, float]
 
 
-def _koherenser(
-    frekvens_hz: float, sida_1: Marksida, sida_2: Marksida, koherens_spridningszon: float
-) -> tuple[float, float, float]:
-    """F₂, F₃ och F₄, AV 1106/07 ekv. (210), (212) och (214), med F_Δτ = 1.
-
-    Utan fluktuerande refraktion är Δτ₊ = Δτ och F_Δτ = 1 (avsnitt 5.9.2).
-    """
-    dtau_s, dtau_r = sida_1.gangtidsskillnad_s, sida_2.gangtidsskillnad_s
-    f2 = (
-        koherens_bandmedelvarde(frekvens_hz, dtau_s)
-        * sida_1.koherens_turbulens
-        * sida_1.koherens_rahet
-        * koherens_spridningszon
-    )
-    f3 = (
-        koherens_bandmedelvarde(frekvens_hz, dtau_r)
-        * sida_2.koherens_turbulens
-        * sida_2.koherens_rahet
-        * koherens_spridningszon
-    )
-    f4 = (
-        koherens_bandmedelvarde(frekvens_hz, dtau_s + dtau_r)
-        * sida_1.koherens_turbulens
-        * sida_2.koherens_turbulens
-        * sida_1.koherens_rahet
-        * sida_2.koherens_rahet
-        * koherens_spridningszon
-    )
-    return f2, f3, f4
-
-
 def skarm_tva_kanter(
     frekvenser_hz: Flyttal,
     profil: Terrangprofil,
@@ -475,6 +502,9 @@ def skarm_tva_kanter(
     fullt_koherent: bool = False,
     viktregel: Viktregel = "av1849",
     viktigast: Viktigast | None = None,
+    uppat: Uppatmetod = "exakt",
+    ct2_form: Ct2Form = "kvadrat",
+    skuggzon: Skuggzonslasning | None = None,
 ) -> Delmodell5Resultat:
     """Delmodell 5: ΔL₅(f) för terräng med en skärm med två kanter, AV 1106/07 avsnitt 5.14.
 
@@ -499,19 +529,16 @@ def skarm_tva_kanter(
     ekv. (220) bokstavligt. `viktigast` är till för undersökningar: `None` (förval) låter den
     primära kanten vara den viktigaste, `"forsta"` eller `"andra"` tvingar valet.
 
-    Gäller homogen atmosfär utan fluktuerande refraktion (A = B = s_A = s_B = 0): strålarna är
-    räta och F_Δτ = 1. Annat ger `BullerFel`.
+    I homogen atmosfär utan fluktuerande refraktion är strålarna räta och F_Δτ = 1. Annars
+    räknas skärmens strålar enligt ekv. (193)–(195) och markdelen med krökta strålar på samma
+    sätt som i delmodell 4 (`delmodell4.marksidor_refraktion`; ekv. 199–207 har samma form som
+    ekv. 166–174): spegelvinklarna får Δθ_Si och Δθ_Ri (ekv. 198), F₂–F₄ får F_Δτ
+    (ekv. 210–214), och skuggzonsfallen (ekv. 217–219) räknas som ekv. (184)–(186). `uppat`,
+    `ct2_form` och `skuggzon` läses som i delmodell 1.
     """
-    if atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion:
-        raise BullerFel(
-            "Delmodell 5 täcker ännu bara homogen atmosfär utan fluktuerande refraktion: "
-            "krökta strålar över två kanter (AV 1106/07 ekv. 193, 198) och markdelen med "
-            "refraktion (ekv. 199–207, 217–219) kräver CalcEqSSPGround, FresnelZoneW med "
-            "ekv. (346)–(348) och ShadowZoneShielding, som inte är inkopplade här."
-        )
-    frekvenser = _kontrollera_frekvenser(frekvenser_hz)
+    frekvenser = kontrollera_frekvenser(frekvenser_hz)
     antal = frekvenser.shape[0]
-    f_s_lista = _per_frekvens(koherens_spridningszon, antal, "koherens_spridningszon")
+    f_s_lista = per_frekvens(koherens_spridningszon, antal, "koherens_spridningszon")
     ordnad = tvakantsform(form, index_sekundar_kant)
     if viktigast is not None:
         if viktigast not in ("forsta", "andra"):
@@ -520,10 +547,11 @@ def skarm_tva_kanter(
             ordnad.index_w1, ordnad.index_t1, ordnad.index_t2, ordnad.index_w2, viktigast
         )
     geo = terranggeometri(profil)
-    stralar = skarmstralar_tva_kanter(profil, ordnad, atmosfar)
+    stralar = skarmstralar_tva_kanter(profil, ordnad, atmosfar, uppat)
     vinklar = stralar.vinklar
     kanter = stralar.kanter
     c = atmosfar.c_m_s
+    rata = not (atmosfar.har_refraktion or atmosfar.har_fluktuerande_refraktion)
     n = geo.x_m.shape[0]
     x_t1, z_t1 = float(geo.x_m[ordnad.index_t1]), float(geo.z_m[ordnad.index_t1])
     x_t2, z_t2 = float(geo.x_m[ordnad.index_t2]), float(geo.z_m[ordnad.index_t2])
@@ -543,7 +571,7 @@ def skarm_tva_kanter(
             v.hojd_mottagare_m, h_max1
         )  # r_S1·r_R1, ekv. (208)
         x_bild, z_bild = bildpunkt(xa, za, xb, zb, geo.x_s_m, geo.z_s_m)
-        theta11_bild = _vinkel_fran_lodlinjen_rad(z_bild - z_t1, x_t1 - x_bild)  # ekv. (198)
+        theta11_bild = vinkel_fran_lodlinjen_rad(z_bild - z_t1, x_t1 - x_bild)  # ekv. (198)
         kallsida.append(
             (v, faktor, float(geo.flodesresistivitet_kNsm4[i]), float(geo.rahet_m[i]), theta11_bild)
         )
@@ -556,10 +584,25 @@ def skarm_tva_kanter(
             v.hojd_kalla_m, h_max2
         )  # r_R2·r_S2, ekv. (209)
         x_bild, z_bild = bildpunkt(xa, za, xb, zb, geo.x_r_m, geo.z_r_m)
-        theta22_bild = _vinkel_fran_lodlinjen_rad(z_bild - z_t2, x_bild - x_t2)  # ekv. (198)
+        theta22_bild = vinkel_fran_lodlinjen_rad(z_bild - z_t2, x_bild - x_t2)  # ekv. (198)
         mottagarsida.append(
             (v, faktor, float(geo.flodesresistivitet_kNsm4[i]), float(geo.rahet_m[i]), theta22_bild)
         )
+    # Ekv. (199)–(207): varje segment vid alla frekvenser (räta eller krökta strålar).
+    alla_1 = [
+        marksidor(
+            frekvenser, v, fak, sig, r, th, atmosfar,
+            uppat=uppat, ct2_form=ct2_form, skuggzon=skuggzon,
+        )
+        for v, fak, sig, r, th in kallsida
+    ]  # fmt: skip
+    alla_2 = [
+        marksidor(
+            frekvenser, v, fak, sig, r, th, atmosfar,
+            uppat=uppat, ct2_form=ct2_form, skuggzon=skuggzon,
+        )
+        for v, fak, sig, r, th in mottagarsida
+    ]  # fmt: skip
 
     delta_l = np.empty(antal, dtype=np.float64)
     skarm_db = np.empty(antal, dtype=np.float64)
@@ -576,28 +619,46 @@ def skarm_tva_kanter(
             theta_2r: float,
             vag_s: float,
             vag_r: float,
+            tid_s: float,
+            tid_r: float,
             f: float = f,
             qs: complex = qs,
             qm: complex = qm,
             qr: complex = qr,
         ) -> complex:
-            """p̂ = p2edge(…) med räta strålar, ekv. (192), för ett av trycken p̂₁–p̂₄.
+            """p̂ = p2edge(…), ekv. (192), för ett av trycken p̂₁–p̂₄.
 
-            Bara θ_1S, θ_2R, R_S och R_R skiljer mellan de fyra trycken (ekv. 198); θ_1R, θ_2S
-            och R_M är skärmens egna.
+            Bara θ_1S, θ_2R, R_S, R_R, τ_S och τ_R skiljer mellan de fyra trycken (ekv. 198);
+            θ_1R, θ_2S, R_M och τ_M är skärmens egna. Räta strålar: τ = R/c.
             """
-            geometri = tva_kanter_rata_stralar(
-                vinklar.beta1_rad,
-                theta_1s,
-                vinklar.theta_1r_rad,
-                vinklar.beta2_rad,
-                vinklar.theta_2s_rad,
-                theta_2r,
-                vag_s,
-                kanter.vag_mitten_m,
-                vag_r,
-                c,
-            )
+            if rata:
+                geometri = tva_kanter_rata_stralar(
+                    vinklar.beta1_rad,
+                    theta_1s,
+                    vinklar.theta_1r_rad,
+                    vinklar.beta2_rad,
+                    vinklar.theta_2s_rad,
+                    theta_2r,
+                    vag_s,
+                    kanter.vag_mitten_m,
+                    vag_r,
+                    c,
+                )
+            else:
+                geometri = TvaKanter(
+                    beta_1_rad=kanter.beta_1_rad,
+                    theta_1s_rad=theta_1s,
+                    theta_1r_rad=kanter.theta_1r_rad,
+                    beta_2_rad=kanter.beta_2_rad,
+                    theta_2s_rad=kanter.theta_2s_rad,
+                    theta_2r_rad=theta_2r,
+                    gangtid_kalla_s=tid_s,
+                    gangtid_mitten_s=kanter.gangtid_mitten_s,
+                    gangtid_mottagare_s=tid_r,
+                    vag_kalla_m=vag_s,
+                    vag_mitten_m=kanter.vag_mitten_m,
+                    vag_mottagare_m=vag_r,
+                )
             return tjock_skarm_tryck_reflektionskoefficienter(
                 f, geometri, qs, qm, qr, ordnad.viktigast
             )
@@ -607,10 +668,8 @@ def skarm_tva_kanter(
         )  # ekv. (192)
         p_scr = abs(p_ff) * geo.r_sr_m  # ekv. (196)
 
-        sidor_1 = [_marksida(f, v, fak, sig, r, th, atmosfar) for v, fak, sig, r, th in kallsida]
-        sidor_2 = [
-            _marksida(f, v, fak, sig, r, th, atmosfar) for v, fak, sig, r, th in mottagarsida
-        ]
+        sidor_1 = [segment[nr] for segment in alla_1]
+        sidor_2 = [segment[nr] for segment in alla_2]
         w_prim_1, w_prim_2, w_q1, w_q2 = normerade_vikter(
             [0.0 if s is None else s.vikt_bis for s in sidor_1],
             [0.0 if s is None else s.vikt_bis for s in sidor_2],
@@ -624,25 +683,54 @@ def skarm_tva_kanter(
         par_2 = [(s, w) for s, w in zip(sidor_2, w_prim_2, strict=True) if s and w > 0.0]
         if viktregel == "av1849":
             if not par_1:
-                par_1 = [(_neutral_sida(kanter.vag_kalla_m, vinklar.theta11_rad), 1.0)]
+                par_1 = [
+                    (
+                        neutral_sida(
+                            kanter.vag_kalla_m, vinklar.theta11_rad, kanter.gangtid_kalla_s
+                        ),
+                        1.0,
+                    )
+                ]
             if not par_2:
-                par_2 = [(_neutral_sida(kanter.vag_mottagare_m, vinklar.theta22_rad), 1.0)]
+                par_2 = [
+                    (
+                        neutral_sida(
+                            kanter.vag_mottagare_m, vinklar.theta22_rad, kanter.gangtid_mottagare_s
+                        ),
+                        1.0,
+                    )
+                ]
 
         lg_pg = 0.0  # Σ w′_i1·w′_i2·ln|p̂_G,i1,i2|
-        theta_1s0 = vinklar.theta_1s_rad
-        theta_2r0 = vinklar.theta_2r_rad
+        theta_1s0 = kanter.theta_1s_rad
+        theta_2r0 = kanter.theta_2r_rad
         for s1, w1 in par_1:
-            theta_1si = 2.0 * math.pi - s1.vinkel_bild_rad - vinklar.beta12_rad  # ekv. (198)
+            # Ekv. (198): θ_1Si = 2π − θ₁₁ − β₁₂ − Δθ_Si, dock inte mindre än θ_1S.
+            theta_1si = (
+                2.0 * math.pi
+                - s1.vinkel_bild_rad
+                - vinklar.beta12_rad
+                - s1.vinkelandring_mottagare_rad
+            )
+            if s1.bildvinkel_som_direkt or (not rata and theta_1si < theta_1s0):
+                theta_1si = theta_1s0
+            r1s, r2s = s1.vag_direkt_m, s1.vag_reflekterad_m
+            t1s, t2s = s1.gangtid_direkt_s, s1.gangtid_reflekterad_s
             for s2, w2 in par_2:
-                theta_2ri = s2.vinkel_bild_rad - vinklar.beta22_rad  # ekv. (198)
-                p1 = tryck(theta_1s0, theta_2r0, s1.vag_direkt_m, s2.vag_direkt_m)
-                p2 = tryck(theta_1si, theta_2r0, s1.vag_reflekterad_m, s2.vag_direkt_m)
-                p3 = tryck(theta_1s0, theta_2ri, s1.vag_direkt_m, s2.vag_reflekterad_m)
-                p4 = tryck(theta_1si, theta_2ri, s1.vag_reflekterad_m, s2.vag_reflekterad_m)
+                # Ekv. (198): θ_2Ri = θ₂₂ − β₂₂ + Δθ_Ri, dock inte större än θ_2R.
+                theta_2ri = s2.vinkel_bild_rad - vinklar.beta22_rad + s2.vinkelandring_kalla_rad
+                if s2.bildvinkel_som_direkt or (not rata and theta_2ri > theta_2r0):
+                    theta_2ri = theta_2r0
+                r1r, r2r = s2.vag_direkt_m, s2.vag_reflekterad_m
+                t1r, t2r = s2.gangtid_direkt_s, s2.gangtid_reflekterad_s
+                p1 = tryck(theta_1s0, theta_2r0, r1s, r1r, t1s, t1r)
+                p2 = tryck(theta_1si, theta_2r0, r2s, r1r, t2s, t1r)
+                p3 = tryck(theta_1s0, theta_2ri, r1s, r2r, t1s, t2r)
+                p4 = tryck(theta_1si, theta_2ri, r2s, r2r, t2s, t2r)
                 if fullt_koherent:
                     f2 = f3 = f4 = 1.0
                 else:
-                    f2, f3, f4 = _koherenser(f, s1, s2, f_s)
+                    f2, f3, f4 = koherenser_tva_sidor(f, s1, s2, f_s)  # ekv. (210)–(214)
                 p_g = markfaktor_basmodell(
                     p1,
                     p2,
@@ -658,6 +746,7 @@ def skarm_tva_kanter(
                     s1.inkoherent,
                     s2.inkoherent,
                 )  # ekv. (215)
+                p_g *= skuggzonsfaktor(s1, s2)  # ekv. (217)–(219)
                 if not p_g > 0.0:
                     raise BullerFel(
                         "Markfaktorn |p_G| blev 0 för ett segmentpar: ΔL₅ är inte definierad."

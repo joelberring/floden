@@ -809,13 +809,33 @@ class TestTvaSkarmar(unittest.TestCase):
             self.assertAlmostEqual(kvot, 2.0 / float(valt.viktsumma_kalla[nr]), places=6)
         np.testing.assert_array_equal(tryckt.skarmeffekt_db, valt.skarmeffekt_db)
 
+    def test_svag_refraktion_gar_mot_rata_stralar(self) -> None:
+        """Markdelen med krökta strålar (P-S2, ekv. 231–258) återger räta strålar när ξ = 0."""
+        profil = _tva_tunna(2.0, 3.0)
+        rak = _kor(profil)
+        for vader in (Vader(vind_m_s=1e-6), Vader(vind_m_s=-1e-6), Vader(std_vind_m_s=1e-9)):
+            krokt = d6.tva_skarmar(
+                FREKVENSER, profil, FORSTA, ANDRA, "forsta", atmosfar_ur_vader(vader)
+            )
+            np.testing.assert_allclose(krokt.delta_l_db, rak.delta_l_db, rtol=0, atol=1e-9)
+
+    def test_refraktion_och_fluktuerande_refraktion_raknas(self) -> None:
+        profil = _tva_tunna(2.0, 3.0)
+        rak = _kor(profil)
+        fluktuerande = d6.tva_skarmar(
+            FREKVENSER, profil, FORSTA, ANDRA, "forsta", atmosfar_ur_vader(Vader(std_vind_m_s=0.5))
+        )
+        np.testing.assert_array_equal(fluktuerande.skarmeffekt_db, rak.skarmeffekt_db)
+        self.assertGreater(float(np.max(np.abs(fluktuerande.delta_l_db - rak.delta_l_db))), 0.01)
+        for vind in (3.0, -3.0):
+            r = d6.tva_skarmar(
+                FREKVENSER, profil, FORSTA, ANDRA, "forsta", atmosfar_ur_vader(Vader(vind_m_s=vind))
+            )
+            self.assertTrue(bool(np.all(np.isfinite(r.delta_l_db))))
+            self.assertTrue(bool(np.all(r.markfaktor_pg > 0.0)))
+
     def test_bullerfel(self) -> None:
         profil = _tva_tunna(2.0, 3.0)
-        for vader in (Vader(vind_m_s=1.0), Vader(dt_dz_k_m=0.1), Vader(std_vind_m_s=0.5)):
-            with self.assertRaises(BullerFel):
-                d6.tva_skarmar(
-                    FREKVENSER, profil, FORSTA, ANDRA, "forsta", atmosfar_ur_vader(vader)
-                )
         with self.assertRaises(BullerFel):
             d6.tva_skarmar(FREKVENSER, profil, ANDRA, FORSTA, "forsta", ATM)
         with self.assertRaises(BullerFel):
