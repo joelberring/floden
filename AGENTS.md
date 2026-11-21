@@ -29,7 +29,8 @@ Gäller för alla AI-agenter och människor som arbetar i projektet. Vid konflik
 
 ## Kod
 
-- **Licens:** GPL v3 för hela kärnan (beslut i `docs/BESLUT.md`). Kod från SFINCS får lånas med källhänvisning.
+- **Licens:** GPL v3 för kärnan (beslut i `docs/BESLUT.md`). Kod från SFINCS får lånas med källhänvisning.
+  Undantag: `src/luft/` är MIT och får inte importera SFINCS-härledd kod. Repot som helhet: `GPL-3.0-or-later AND MIT`.
 - **Språk:** Python för prototyper och dataflöden. Rust för beräkningskärnor när en prototyp är validerad.
   TypeScript för webbklienten.
 - **Koordinatsystem:** all intern beräkning i SWEREF 99 18 00 (EPSG:3011), höjder i RH 2000.

@@ -4,9 +4,22 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 
 | Datum | Beslut | Skäl |
 | --- | --- | --- |
+| 2026-11-21 | **Samordning:** när parallella trådar är avslutade ansvarar den samlade tråden för öppna frågor. Den mergar PR:er till `main` när hela sviten (pytest, ruff, mypy, `floden testsvit` alla grupper) är grön och för in beslut här märkta så. Kostnader, extern kontakt och stadens data avgörs alltid av Joel. | Joels uppdrag 2026-11-21: "ta ansvar för alla lösa frågor i denna tråd". |
+| 2026-11-21 | **Kontraktsversioner:** tillägg som inte bryter mot äldre data (nya valfria filer eller kolumner) höjer inte versionen. Därför förblir fas 3:s K2-tilläggsfiler **K2/v1**, och `valfria_indataroller` i K21 förblir K21/v1. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Följer regeln överst i `docs/DATAKONTRAKT.md`: bara brytande ändringar höjer versionen. |
+| 2026-11-21 | **K1 v2:s förval godtas:** platt tak på `takhojd_rh2000` och 10 m ± 5 m för byggnader utan höjdkälla (flaggas i `run.json` och i resultat). Laser klass 6 eller källans höjd går alltid före. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Skillnaden mot v1 syns bara på sluttande mark utan känt tak; standardhöjden är synlig och spårbar, inte tyst. |
+| 2026-11-21 | **Dagsljus:** kräver K1 v2 (vägrar v1-rutor med fast hinderhöjd), standard K = 180 riktningar för soltimmar, vegetation av som standard, påverkansradie H/tan(h_min) plus en celldiagonal. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Mätt mot strålgång (medelfel 0,02 h); vegetationens genomsläpp är okänt och ska inte tyst ge skugga. |
+| 2026-11-21 | **Buller, metodtolkning:** testfallen får **inte** avgöra nya val mellan läsningar av metodtexten. Ordalydelsen och ursprungsrapporten gäller, och avvikelser redovisas som underkända fall med förklaring. De fem tidigare förvalen som valts med testfallen behålls men märks preliminära; **rapportläget förblir spärrat** (`nord2000_konform = False`) tills tolkningarna granskats externt. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Risk för överanpassning (fem diskreta val mot elva fall). Ett rapportläge som klarar testfallen genom anpassade val vore inte verifierbart. |
+| 2026-11-21 | **Buller, förval:** skog av i rapportläget och på i skissläget; metodens språng (byte av viktigaste kant, antal strålar) följs bokstavligt och jämnas inte ut; markslag → impedansklass enligt den preliminära tabellen, flyttad till gemensamma `data/markklasser.toml`. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Rapportläget ska följa metoden; skissläget får vara mer realistiskt. En gemensam markklassning för alla domäner. |
+| 2026-11-21 | **Buller, publicering:** testfallens facit (RL 18-18, Miljøprojekt 1335) ligger inte i det publika repot och importeras lokalt ur källmappen. Metodens tabeller och SP 2006:12-koefficienterna ligger i repot med källa per värde. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Rapporterna och testfallssamlingen är upphovsrättsligt skyddade; enskilda koefficienter är fakta och krävs för att räkna. Tillstånd att publicera facit kan begäras av Referenslaboratoriet. |
+| 2026-11-21 | **Drift (ur `docs/ARKITEKTUR-DRIFT.md` 7, punkt 1, 2, 5, 6, 9):** Floden får egen server och eget kontosystem, kopierat och avskalat ur O-Tid utan Eventor, tävlingar och klubbar. Användare utan SSO (konsulter, forskare) kommer bara in via inbjudan till projekt. Projektbehörighet ges aldrig automatiskt; förvaltning kopplas automatiskt bara via IdP-tenant och IdP-grupp. Resultat lagras på lokal disk tills objektlagring behövs. *Fattat i samlad tråd på Joels uppdrag 2026-11-21; Joel kan ändra.* | Joel 2026-11-21: egen server "tror jag"; förslagen i driftplanen. Arkitekturval som går att ändra senare. |
+| 2026-11-21 | **Alla spår är startade:** vatten (skyfall), luft, buller (Nord2000), dagsljus och en gemensam kärna. Ersätter raden "första spåret är bara vatten och skyfall". | Joels beslut; spåren byggs parallellt av separata agenter över samma geometri. |
+| 2026-11-21 | **Repots befintliga kontrakt behålls:** sha256, COG, EPSG:3011 och 0,25 m. Systemdesignens förslag JAX, Zarr och BLAKE3 införs inte nu. | Joels beslut; kontrakten K0–K8 används redan av alla moduler. |
+| 2026-11-21 | **De två kärnorna slås ihop** (`fas0-2` och `t20-gemensam-karna` → `karna-sammanslagen`). Kontrakten **K9** (planscenario), **K10** (utredningsfråga), **K20–K22** (körbar fråga, rutvis lösare, resultatcache) gäller. | Joels beslut; ett gemensamt API för alla lösare. |
+| 2026-11-21 | **#10–#18 mergade till `main`** via provsammanfogningen `integration-2026-11-21` i beroendeordning, med full testsvit efter varje steg. Därefter #20 (buller), #21 (K1 v2), #22 och #24 (dagsljus) och #23 (rättning av K1-raster) på samma sätt. | Joels beslut: merga om allt är grönt, och fortsätt självständigt om det fungerar (1 545 OK, ruff/mypy rena, testsvit 13/13, grupp E 7/7). |
+| 2026-11-21 | **Bullerspåret har egna kontrakt KB1–KB4** (`docs/buller/KONTRAKT.md`) för att inte krocka med kärnans K-nummer. Gäller när bullergrenen mergas. | Parallellt arbete; kontrakten ska på sikt anslutas till K1 v2. |
 | 2026-11-20 | Kärnan licensieras under **GPL v3**, och kod får lånas från Deltares **SFINCS** (GPL v3). | Öppen kärna krävs för acceptans; SFINCS har en beprövad 2D-lösare med subgrid. GPL gäller vid utlämning, inte vid drift som tjänst. |
 | 2026-11-20 | **Eget repo**, skilt från O-Tid. Delar av O-Tid lyfts ut som paket med källhänvisning. | Klubbplattformen och skyfallsmodellen har olika användare och krav. |
-| 2026-11-20 | Första spåret är **bara vatten och skyfall**. Luft och buller kan komma senare på samma geometri. | Smalt och mätbart; störst brist i dagens verktyg. |
+| 2026-11-20 | *(Ersatt 2026-11-21, se ovan.)* Första spåret är **bara vatten och skyfall**. Luft och buller kan komma senare på samma geometri. | Smalt och mätbart; störst brist i dagens verktyg. |
 | 2026-11-20 | **Karttapullautin används inte.** Höjdmodellen byggs med egen kedja (PDAL, GDAL, egna steg). | Karttapullautin är gjord för orienteringskartor, inte hydraulik. |
 | 2026-11-20 | **Byggnader från baskartans fotavtryck**, inte från laser. Kantstenar och murar som brytlinjer från baskartan. | Lantmäteriets laser (1–2 punkter/m²) ser inte kantstenar. |
 | 2026-11-20 | **Tre nivåer** (graf, hybrid, full 2D) med samma resultatformat. | Snabbhet i skiss, kontroll i utredning, jämförbarhet. |
@@ -19,10 +32,13 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 | 2026-11-21 | **Luftens lösare skrivs mot ett array-API (NumPy/CuPy)** i stället för Rust/wgpu i första versionen. Samma kod körs på CPU i tester och CUDA-GPU på server. | LBM är minnesbandbreddsbunden och enkel att uttrycka vektoriserat; Rust/wgpu kan bli aktuellt när lösaren är validerad. |
 | 2026-11-20 | **Provområde i Hägersten-Älvsjö**, ca 1 km². | Joels arbetsområde och lokalkännedom. |
 
-## Öppna beslut
+## Öppna beslut (Joel)
 
-- Exakt avgränsning av provområdet.
-- Om och hur stadens tätare laser och baskarta får användas utanför stadens miljö.
-- Leverantör för GPU-tid när full 2D körs i större skala.
+- Exakt avgränsning av provområdet (`data/omraden/prov1.gpkg`).
+- Om och hur stadens tätare laser och baskarta får användas utanför stadens miljö; stadens lagernamn för skraffyrer.
+- Officiell IDF-tabell Stockholmsregn 2024 och K7-trösklar från räddningstjänsten.
 - Vem som är person X (numerik och hydraulik).
-- Dagsljus: kräver K1 v2 (vägrar v1-rutor), standard K = 180 för soltimmar, vegetation av som standard, och `valfria_indataroller` i K21 (additivt). Agentens val i dagsljus fas 1b; se `docs/DAGSLJUS.md`.
+- Kostnader: GPU-leverantör och budget (2D, luft), beräkningsserver för stora batcher, VPS (driftplanen 7, punkt 7, 8 och 10), och när hela Stockholm körs (punkt 11).
+- Kontosystem: vilka IdP:er först, vilken kommun/tenant att prova med och vem som är organisationsadmin (driftplanen 7, punkt 3 och 4).
+- Extern kontakt: Kunskapscentrum om buller för granskning av bullrets tolkningar, och Referenslaboratoriet om tillstånd att publicera testfallens facit (utkast till mejl finns i den samlade tråden).
+- Prioritetsordning för markslag (baskarta > belagd yta ur laser > ortofoto > standard), förslag från samlad tråd.
