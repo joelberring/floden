@@ -42,10 +42,15 @@ class Byggnad:
     polygon: tuple[tuple[float, float], ...]
     hinderhojd_m: float = 10.0
     takhoyd_rh2000: float | None = None
+    hal: tuple[tuple[tuple[float, float], ...], ...] = ()
+    """Innergårdar (hål) som ringar; celler i hål räknas inte som byggnad (jämn-udda-regeln)."""
 
     def __post_init__(self) -> None:
         if len(self.polygon) < 3:
             raise HinderOppningFel("En byggnadspolygon måste ha minst 3 hörn.")
+        for ring in self.hal:
+            if len(ring) < 3:
+                raise HinderOppningFel("Ett hål i en byggnadspolygon måste ha minst 3 hörn.")
         if not math.isfinite(self.hinderhojd_m) or self.hinderhojd_m <= 0.0:
             raise HinderOppningFel(f"Ogiltig hinderhöjd: {self.hinderhojd_m}")
         if self.takhoyd_rh2000 is not None and not math.isfinite(self.takhoyd_rh2000):
@@ -120,6 +125,43 @@ def _punkter_i_polygon(
     return innanfor
 
 
+def byggnad_maske(
+    byggnad: Byggnad,
+    ruta: Ruta,
+) -> tuple[NDArray[np.bool_], tuple[int, int, int, int]] | None:
+    """Byggnadens celler som en delmask och dess fönster `(rad0, rad1, kol0, kol1)` i rutan.
+
+    Cellcentrum avgör (strålkastning, jämn-udda-regeln så att innergårdar blir hål). Samma
+    funktion används av markmodellens bygge och av kärnans redigering, så att en byggnad som tas
+    bort lämnar exakt de celler den la till. Returnerar `None` om byggnaden inte träffar någon cell.
+    """
+    e_min_y, n_min_y, e_max_y, n_max_y = ruta.yttre_bbox
+    rader, kolumner = ruta.form_rc
+    pe = [p[0] for p in byggnad.polygon]
+    pn = [p[1] for p in byggnad.polygon]
+    b_emin, b_emax = min(pe), max(pe)
+    b_nmin, b_nmax = min(pn), max(pn)
+
+    if b_emax < e_min_y or b_emin > e_max_y or b_nmax < n_min_y or b_nmin > n_max_y:
+        return None
+
+    kol0 = max(0, int(math.floor((b_emin - e_min_y) / ruta.upplosning_m)) - 1)
+    kol1 = min(kolumner, int(math.ceil((b_emax - e_min_y) / ruta.upplosning_m)) + 1)
+    rad0 = max(0, int(math.floor((n_max_y - b_nmax) / ruta.upplosning_m)) - 1)
+    rad1 = min(rader, int(math.ceil((n_max_y - b_nmin) / ruta.upplosning_m)) + 1)
+    if kol1 <= kol0 or rad1 <= rad0:
+        return None
+
+    e_vektor, n_vektor = ruta.cell_centra_en()
+    sub_e, sub_n = np.meshgrid(e_vektor[kol0:kol1], n_vektor[rad0:rad1])
+    mask = _punkter_i_polygon(sub_e, sub_n, byggnad.polygon)
+    for ring in byggnad.hal:
+        mask &= ~_punkter_i_polygon(sub_e, sub_n, ring)
+    if not np.any(mask):
+        return None
+    return mask, (rad0, rad1, kol0, kol1)
+
+
 def brann_in_byggnader(
     mark_z: NDArray[np.float32],
     markslag: NDArray[np.uint8],
@@ -138,30 +180,11 @@ def brann_in_byggnader(
     if not byggnader:
         return ny_z, ny_slag
 
-    e_vektor, n_vektor = ruta.cell_centra_en()
-    e_min_y, n_min_y, e_max_y, n_max_y = ruta.yttre_bbox
-    rader, kolumner = ruta.form_rc
-
     for byggnad in byggnader:
-        pe = [p[0] for p in byggnad.polygon]
-        pn = [p[1] for p in byggnad.polygon]
-        b_emin, b_emax = min(pe), max(pe)
-        b_nmin, b_nmax = min(pn), max(pn)
-
-        if b_emax < e_min_y or b_emin > e_max_y or b_nmax < n_min_y or b_nmin > n_max_y:
+        traff = byggnad_maske(byggnad, ruta)
+        if traff is None:
             continue
-
-        kol0 = max(0, int(math.floor((b_emin - e_min_y) / ruta.upplosning_m)) - 1)
-        kol1 = min(kolumner, int(math.ceil((b_emax - e_min_y) / ruta.upplosning_m)) + 1)
-        rad0 = max(0, int(math.floor((n_max_y - b_nmax) / ruta.upplosning_m)) - 1)
-        rad1 = min(rader, int(math.ceil((n_max_y - b_nmin) / ruta.upplosning_m)) + 1)
-        if kol1 <= kol0 or rad1 <= rad0:
-            continue
-
-        sub_e, sub_n = np.meshgrid(e_vektor[kol0:kol1], n_vektor[rad0:rad1])
-        mask = _punkter_i_polygon(sub_e, sub_n, byggnad.polygon)
-        if not np.any(mask):
-            continue
+        mask, (rad0, rad1, kol0, kol1) = traff
 
         z_sub = ny_z[rad0:rad1, kol0:kol1]
         slag_sub = ny_slag[rad0:rad1, kol0:kol1]

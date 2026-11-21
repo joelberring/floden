@@ -19,6 +19,7 @@ import numpy as np
 from gemensamt.hash import sha256_fil
 from karna.hashning import nyckel_for as kanonisk_hash
 from karna.resultatcache import ResultatCache
+from karna.scenario import Andring
 from karna.scenario import ScenarioFel as _K9ScenarioFel
 from karna.utredning import ScenarioSpec
 
@@ -93,12 +94,13 @@ class RutScenario:
 
 
 def _las_tiff_utstrackning(fil: Path) -> tuple[float, float, float, float]:
-    """Utsträckning (x_min, y_min, x_max, y_max) för ett K1-GeoTIFF."""
-    from testsvit.k1_io import K1FormatFel, las_geotiff
+    """Utsträckning (x_min, y_min, x_max, y_max) för ett K1-GeoTIFF (okomprimerat eller deflate)."""
+    from karna.geometri.rasterfil import GeometriFel, las_raster
+    from testsvit.k1_io import K1FormatFel
 
     try:
-        _, geo = las_geotiff(fil)
-    except K1FormatFel as exc:
+        _, geo = las_raster(fil)
+    except (K1FormatFel, GeometriFel) as exc:
         raise ScenarioFel(f"Kunde inte läsa georeferens i {fil}: {exc}") from exc
     return (geo.x_min, geo.y_min, geo.x_max, geo.y_max)
 
@@ -152,6 +154,8 @@ class ForberedLapp:
     lapp: ProjektLapp
     sektioner: dict[str, Gatusektion] | None
     nyckel: dict[str, Any]
+    geometri: tuple[Andring, ...] = ()
+    """K9-ändringar som tillämpas av `karna.geometri` på K1 v2-rutor (byggnader, vegetation)."""
 
 
 def forbered_lapp(lapp_fil: Path) -> ForberedLapp:
@@ -202,14 +206,30 @@ def _forbered(lapp: ProjektLapp, kalla: Path, kallnyckel: dict[str, Any]) -> For
 
 
 def _tillampa_lapp_pa_ruta(ruta: Ruta, forberedd: ForberedLapp, ut: Path) -> bool:
-    """Tillämpar en K3-lapp på en ruta och skriver resultatet i `ut`.
+    """Tillämpar en K3-lapp (och K9-geometri på v2-rutor) på en ruta, resultatet skrivs i `ut`.
 
     Returnerar False (och skriver inget) om lappen inte ändrar rutan.
     """
+    from karna.geometri.lasa import k1_version
+
+    if k1_version(ruta.mapp) >= 2:
+        from karna.geometri.tillampa import tillampa_pa_v2_ruta
+
+        recept = ruta.mapp / "recept.json"
+        return tillampa_pa_v2_ruta(
+            ruta.mapp,
+            ut,
+            lapp=forberedd.lapp,
+            sektioner=forberedd.sektioner,
+            geometri=forberedd.geometri,
+            bas_recept_sha256=sha256_fil(recept) if recept.is_file() else ruta.hash,
+        )
+    if forberedd.geometri:
+        raise ScenarioFel(f"Rutan {ruta.ruta_id} är K1 v1 men scenariot har geometriändringar.")
+    from karna.geometri.rasterfil import las_raster as las_geotiff
     from lapp.tillampa import tillampa_lapp
     from sankgraf.typer import las_brytlinjer_fran_gpkg, las_oppningar_fran_gpkg
     from testsvit.k1_io import (
-        las_geotiff,
         skriv_brytlinjer_gpkg,
         skriv_geotiff,
         skriv_oppningar_gpkg,
@@ -283,11 +303,32 @@ def _forbered_k9(spec: ScenarioSpec, rutor: list[Ruta]) -> ForberedLapp:
             f"Scenario '{spec.id}': K9-scenariot '{k9.scenario_id}' bygger på recept som inte "
             f"finns i basen {spec.bas}: {[s[:12] for s in saknas]}. Fel bas eller ändrad bas?"
         )
-    return _forbered(k9_till_lapp(andringar, k9), spec.k9[-1], {"k9": k9_nyckel})
+    from karna.geometri.tillampa import (
+        GEOMETRI_VERSION,
+        valj_k1_version,
+        verifiera_byggnadsreferenser,
+    )
+    from karna.k9_till_k1 import dela_andringar
+
+    version = valj_k1_version([r.mapp for r in rutor])
+    k3_andringar, geometri = dela_andringar(andringar, version, k9.scenario_id)
+    if version >= 2:
+        verifiera_byggnadsreferenser([r.mapp for r in rutor], geometri)
+    kallnyckel: dict[str, Any] = {"k9": k9_nyckel}
+    if geometri:
+        kallnyckel["geometri"] = {
+            "version": GEOMETRI_VERSION,
+            "andringar": sorted((a.till_dict() for a in geometri), key=lambda d: d["andring_id"]),
+        }
+    forberedd = _forbered(k9_till_lapp(k3_andringar, k9), spec.k9[-1], kallnyckel)
+    return replace(forberedd, geometri=geometri)
 
 
 def materialisera_scenario(spec: ScenarioSpec, cache: ResultatCache) -> RutScenario:
     """Bygger scenariot: läser basen och tillämpar lapparna ruta för ruta, med cache."""
+    from karna.geometri.lasa import k1_version
+    from karna.geometri.tillampa import GEOMETRI_VERSION
+
     rutor = list(las_bas(spec.bas))
     steg: list[ForberedLapp] = []
     if spec.k9:
@@ -299,14 +340,15 @@ def materialisera_scenario(spec: ScenarioSpec, cache: ResultatCache) -> RutScena
     for forberedd in steg:
         nya: list[Ruta] = []
         for ruta in rutor:
-            nyckel = kanonisk_hash(
-                {
-                    "slag": "lapp_pa_ruta",
-                    "version": MATERIALISERING_VERSION,
-                    "ruta": ruta.hash,
-                    "lapp": forberedd.nyckel,
-                }
-            )
+            nyckel_data: dict[str, Any] = {
+                "slag": "lapp_pa_ruta",
+                "version": MATERIALISERING_VERSION,
+                "ruta": ruta.hash,
+                "lapp": forberedd.nyckel,
+            }
+            if k1_version(ruta.mapp) >= 2:
+                nyckel_data["k1_v2"] = GEOMETRI_VERSION  # v2-rutor tillämpas av karna.geometri
+            nyckel = kanonisk_hash(nyckel_data)
 
             def skrivare(
                 tmp: Path, _ruta: Ruta = ruta, _lapp: ForberedLapp = forberedd

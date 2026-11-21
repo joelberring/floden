@@ -10,6 +10,8 @@ from typing import Any
 from gemensamt.hash import sha256_bytes
 
 KONTRAKT_K1 = "K1/v1"
+KONTRAKT_K1_V2 = "K1/v2"
+GILTIGA_KONTRAKT_K1: frozenset[str] = frozenset({KONTRAKT_K1, KONTRAKT_K1_V2})
 
 
 class ReceptFel(Exception):
@@ -58,9 +60,10 @@ class MarkmodellRecept:
     kontrakt: str = KONTRAKT_K1
 
     def __post_init__(self) -> None:
-        if self.kontrakt != KONTRAKT_K1:
+        if self.kontrakt not in GILTIGA_KONTRAKT_K1:
             raise ReceptFel(
-                f"Ogiltigt receptkontrakt '{self.kontrakt}', förväntade '{KONTRAKT_K1}'."
+                f"Ogiltigt receptkontrakt '{self.kontrakt}', förväntade "
+                f"{' eller '.join(sorted(GILTIGA_KONTRAKT_K1))}."
             )
         if not self.ruta_namn.strip():
             raise ReceptFel("ruta_namn får inte vara tom.")
