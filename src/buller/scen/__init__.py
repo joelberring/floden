@@ -2,6 +2,13 @@
 
 from buller.scen.bullerscen import Bullerscen, Vag, Vaggtabell, bullerscen_fran_k1_ruta
 from buller.scen.fasad import Fasadpunkter, fasadpunkter
+from buller.scen.k1v2 import (
+    K1v2Scen,
+    bullerscen_fran_k1_v2,
+    k1v2_scen,
+    mottagar_id,
+    mottagare_fran_k11,
+)
 from buller.scen.kallsegment import (
     Forfining,
     Vagdel,
@@ -22,6 +29,7 @@ __all__ = [
     "Bullerscen",
     "Fasadpunkter",
     "Forfining",
+    "K1v2Scen",
     "Markklass",
     "Markklasstabell",
     "Profilbatch",
@@ -29,12 +37,16 @@ __all__ = [
     "Vagdel",
     "Vaggtabell",
     "bullerscen_fran_k1_ruta",
+    "bullerscen_fran_k1_v2",
     "dela_vagar",
     "extrahera_profil",
     "fasadpunkter",
     "forfina_for_mottagare",
     "kallsegment_fran_vagar",
+    "k1v2_scen",
     "las_markklasstabell",
+    "mottagar_id",
+    "mottagare_fran_k11",
     "profiler_batch",
     "profiler_langs_polylinjer",
     "standardtabell",

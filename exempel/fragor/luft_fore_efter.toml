@@ -1,0 +1,35 @@
+# Vindkomfort på gånghöjd före/efter på det syntetiska demokvarteret (K1 v2 + K9), kontrakt K20/v1.
+#
+# Bygg kvarteret först (samma som dagsljus; skriver data/cache/exempel/dagsljus-kvarter/):
+#   floden dagsljus demo --fore-efter
+# Planera och kör sedan frågan (CPU: räkna med minuter per scenario, 4 m celler, 4 riktningar):
+#   floden fraga plan exempel/fragor/luft_fore_efter.toml
+#   floden fraga kor exempel/fragor/luft_fore_efter.toml
+#
+# Scenarier: bas och `hojd` (K9 byggnad_hojd: det låga huset höjs från 4 till 21 m). Luftlösaren är
+# global (påverkansradie None): ett jobb per scenario över alla rutor. Jämförelsen ger efter minus
+# före i vindförstärkning U_lok/U_ref på gånghöjd. Vädret är TESTVÄRDEN (luft_vader_testvarde.csv),
+# inte mätdata; resultatet visar att kedjan fungerar, inte hur vinden verkligen blåser.
+kontrakt = "K20/v1"
+fraga_id = "luft-fore-efter"
+beskrivning = "Vindkomfort (NEN 8100) före/efter att ett lågt hus höjs; syntetiskt väder (testvärden)."
+
+[scenarier.bas]
+bas = "../../data/cache/exempel/dagsljus-kvarter/bas"
+
+[scenarier.hojd]
+bas = "../../data/cache/exempel/dagsljus-kvarter/bas"
+k9 = ["../../data/cache/exempel/dagsljus-kvarter/k9_hojd.json"]
+
+[[analyser]]
+id = "komfort"
+losare = "luft.vindkomfort"
+parametrar = { dx_m = 4.0, riktningar = 4, kriterium = "nen8100", buffert_uppstroms_m = 80.0, buffert_nedstroms_m = 160.0, buffert_sidor_m = 60.0 }
+indata = { vader = "luft_vader_testvarde.csv" }
+
+[[jamforelser]]
+analys = "komfort"
+utdata = "forstarkning"
+fore = "bas"
+efter = "hojd"
+troskel = 0.01

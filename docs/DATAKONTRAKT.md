@@ -84,7 +84,13 @@ fel i stället för gissning om en v1-ruta har byggnadsceller, se nedan). En rut
   terräng + vegetationshöjd)` och har **inga** öppningar (en port genom ett hus är ingen öppning i dagsljus/buller).
 - **Markklass per domän:** `data/markklasser.toml` har per markslagskod `namn` och tabellerna `[vatten]`, `[luft]`,
   `[buller]`, `[dagsljus]`. Vatten har `initial_faktor` och `ksat_faktor` (samma som `mark_forluster`, ett test håller
-  dem lika); de andra är tomma tills respektive domän lägger till egna kolumner. `Markklasstabell.raster(markslag,
+  dem lika). **Buller** har `impedansklass` och `rahetsklass` (klassbokstäver; Nord2000-tabellerna står under
+  `[buller.impedansklass]` och `[buller.rahetsklass]` på toppnivå) och de härledda kolumnerna
+  `flodesresistivitet_kNsm4` och `rahet_m`. **Luft** har `z0_m` (råhetslängd, Davenport–Wieringa) och `lad_m2_m3`
+  (bladytetäthet där vegetation står). Dagsljus har inga kolumner än. Buller och luft är märkta
+  **preliminära** (`[buller]`/`[luft]` `preliminar = true`; bullers version `markklass/v1`): klassvalen per markslag är
+  egna val, inte ur källa. Kod 0 (okänt) har med flit inga värden för buller och luft (flaggas, gissas inte).
+  Kolumntillägget höjer inte `version` (bakåtkompatibelt). `Markklasstabell.raster(markslag,
   doman, kolumn)` ger ett rasterlager; saknad kolumn för en förekommande kod ger fel. Filens sha256 hör hemma i recept.
 
 ## K2 – Sänkgraf (v1)

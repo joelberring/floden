@@ -21,7 +21,7 @@ from buller.typer import BullerFel
 class TestStandardtabell(unittest.TestCase):
     def test_struktur(self) -> None:
         tabell = standardtabell()
-        self.assertEqual(tabell.version, "markklass/v1")
+        self.assertEqual(tabell.version, "markklass/v1")  # buller-versionsmärkningen är kvar
         self.assertTrue(tabell.preliminar, "översättningen ska vara märkt preliminär")
         self.assertEqual(sorted(tabell.impedansklasser_kNsm4), list("ABCDEFGH"))
         self.assertEqual(sorted(tabell.rahetsklasser_m), ["L", "M", "N", "S"])
@@ -39,22 +39,22 @@ class TestStandardtabell(unittest.TestCase):
         tabell = standardtabell()
         sigma, rahet = tabell.uppslag()
         for kod in K1_MARKSLAGSKODER:
-            post = ra["markslag"][str(kod)]
-            self.assertEqual(sigma[kod], ra["impedansklass"][post["impedansklass"]])
-            self.assertEqual(rahet[kod], ra["rahetsklass"][post["rahetsklass"]])
+            post = ra["markklass"][str(kod)]["buller"]
+            self.assertEqual(sigma[kod], ra["buller"]["impedansklass"][post["impedansklass"]])
+            self.assertEqual(rahet[kod], ra["buller"]["rahetsklass"][post["rahetsklass"]])
             self.assertEqual(tabell.klass(kod).impedansklass, post["impedansklass"])
         self.assertTrue(bool(np.isnan(sigma[0])), "kod 0 (okänt) får inte ha något värde")
         self.assertTrue(bool(np.all(np.isnan(sigma[10:]))))
         self.assertEqual(
             tabell.byggnadsyta.flodesresistivitet_kNsm4,
-            ra["impedansklass"][ra["byggnadsyta"]["impedansklass"]],
+            ra["buller"]["impedansklass"][ra["buller"]["byggnadsyta"]["impedansklass"]],
         )
 
     def test_filen_anger_kalla_och_verifiering(self) -> None:
         ra = tomllib.loads(STANDARDTABELL.read_text(encoding="utf-8"))
         for nyckel in ("dokument", "url", "impedansklasser", "rahetsklasser", "verifierad"):
-            self.assertTrue(ra["kalla"][nyckel], nyckel)
-        self.assertIn("Table 10", ra["kalla"]["impedansklasser"])
+            self.assertTrue(ra["buller"]["kalla"][nyckel], nyckel)
+        self.assertIn("Table 10", ra["buller"]["kalla"]["impedansklasser"])
 
     def test_okand_kod_ger_fel(self) -> None:
         for kod in (0, 10, 255):
@@ -83,11 +83,16 @@ class TestTrasigaTabeller(unittest.TestCase):
             (g_rad, ""),  # klassen saknas men används
             ('version = "markklass/v1"', ""),
             ("preliminar = true", ""),
-            ("[markslag.7]", "[markslag.0]"),  # kod 0 får inte översättas, och 7 saknas
-            ("[markslag.7]", "[markslag.700]"),
-            ("[markslag.7]", "[markslag.sju]"),
+            # kod 0 (okänt) får inte översättas
+            (
+                "[markklass.0.buller]\n",
+                '[markklass.0.buller]\nimpedansklass = "D"\nrahetsklass = "N"\n',
+            ),
+            # kod 7 saknar översättning
+            ('[markklass.7.buller]\nimpedansklass = "F"\nrahetsklass = "N"\n', ""),
+            ('impedansklass = "F"', 'impedansklass = "Z"'),  # okänd klass
             ('dokument = "', 'dokument_saknas = "'),
-            ("\n[byggnadsyta]\n", "\n[annat]\n"),
+            ("\n[buller.byggnadsyta]\n", "\n[buller.annat]\n"),
         ]
         for gammalt, nytt in andringar:
             self.assertIn(gammalt, original)

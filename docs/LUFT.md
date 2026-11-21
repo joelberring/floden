@@ -240,9 +240,80 @@ slutsatser på gånghöjd – visar bara att kedjan fungerar). Testvärden.*
 | L-g | Emissionsmodell för vägdamm (NORTRIP-typ: slitage, dubbdäck, fukt, sandning, salt) och avgaser | modell klar (2026-11-21), kalibrering kräver trafik- och mätdata |
 | L-k | Vindkomfort och vindfara (NEN 8100, Lawson), före/efter för höga hus | klar (2026-11-21) |
 | L-h | Validering mot mätstationer (t.ex. Hornsgatan) med bakgrundshalter | kräver data |
-| L-i | Koppling till gemensam geometrikärna (när den finns) och till frågelager/webb | väntar |
+| L-i | Koppling till gemensam geometrikärna och till frågelager/webb | geometri och K20-lösare klara (2026-11-21, avsnitt 10); webb väntar |
 | L-j | Lagrangepartiklar för PM-episoder och korttidsutsläpp | senare |
 
 ## 9. Öppna frågor
 - Vilka väderdata (SMHI timdata, Bromma/Observatoriekullen) och bakgrundshalter (SLB-analys) ska användas?
 - Emissionsdata för trafik: ÅDT, tunga andelen, dubbdäcksandel per gata.
+
+## 10. Gemensam geometri (K1 v2, K9, markklasser)
+
+Luften bygger sitt voxelrutnät ur samma K1 v2-rutor som dagsljus och buller (`byggnader.gpkg`, `terrang.tif`,
+`vegetation.tif`, `markslag.tif`), efter att kärnan tillämpat ett K9-scenario (`byggnad_ny`, `byggnad_hojd`,
+`byggnad_bort`, `vegetation`). Det gamla gränssnittet (handbyggt höjdraster → `Domanspec`/`voxelisera`) är
+oförändrat och används av alla syntetiska fall.
+
+### 10.1 Licensgräns
+
+`src/luft/` är MIT; kärnan (`src/karna/`) är GPL v3. Därför går beroendet bara åt ett håll:
+
+- `src/luft/` importerar **inget** ur `karna`, `markmodell`, `testsvit` eller `vatten`/`tvad`/`dynamik`
+  (SFINCS-härledd kod ligger i `tvad`). Det enda utanför luft som importeras är de neutrala
+  hjälpmodulerna `gemensamt.hash` och `gemensamt.manifest` (sha256 och K0-manifest; redan före
+  den här ändringen), som inte är SFINCS-härledda. Ändringen i luft är två additiva delar:
+  `voxelisera(lad_m2_m3=...)` accepterar även ett raster, och `Domanspec` har fältet `lad_m2_m3`.
+- Allt som läser K1 ligger i kärnan: `karna.geometri.mosaik` (rutor → grövre rutnät),
+  `karna.geometri.luftgeometri` (`Ytmosaik` → `Domanspec`) och `karna.luft_losare` (K21-lösarna).
+  Kärnan (GPL) importerar luft (MIT), vilket licenserna tillåter; luftpaketet saknar medvetet
+  `floden_losare.py`, eftersom det skulle få en fil i `src/luft/` att importera `karna.analyslosare` (GPL).
+  Lösarna registreras i stället via `karna.inbyggda`. Test: `grep -rn "karna\|markmodell\|testsvit" src/luft`
+  ska bara ge träffar i kommentarer och i den här texten.
+
+### 10.2 Vad som förs över
+
+| K1 v2 | Luftens indata | Anmärkning |
+| --- | --- | --- |
+| `las_ytmodell(vegetation=False)` − `las_terrang` | `Domanspec.hojd_over_mark_m` | byggnadshöjd över terräng per cell; 0 utanför byggnader; platt tak (K1 v2) |
+| `vegetation.tif` (1 m) | `Domanspec.vegetation_hojd_m` | av som standard (`vegetation = false`); saknad fil ger fel, aldrig tyst nolla |
+| `markslag.tif` + `data/markklasser.toml` `[luft]` | `Domanspec.lad_m2_m3` (raster) | bladytetäthet per markslag där vegetationen står |
+| `markslag.tif` + `[luft]` `z0_m` | `markens_z0_m(...)` | logaritmiskt medel över markceller utanför byggnader; förslag till `z0_vagg_m` (`vaggmodell = "loglag"`) |
+
+Omsampling till luftens rastercell (`raster_cell_m`, standard `dx_m`, en heltalsmultipel av K1:s 0,25 m):
+byggnadshöjd och vegetation med `medel` (bevarar volymen, standard) eller `max` (konservativt för vindhinder),
+terräng med medel, markslag med vanligaste koden. Rutnätets ursprung ligger på en multipel av cellstorleken,
+så före- och efterscenarier får identiska rutnät.
+
+**Begränsningar (redovisas i lösarens varningar och mätvärden):** luftens voxelrutnät har plan mark
+(`voxelisera`), så terrängens form förs inte över och en byggnad på sluttande mark får sin höjd över lokal mark
+(varning när terrängen varierar mer än en halv cell). K1 v1-rutor vägras. Celler utanför de rutor som ingår räknas
+som tom mark och redovisas. Okänt markslag (kod 0) får ingen vegetation och flaggas. Inflödets z0 är en
+parameter (`z0_m`, uppströms råhet), inte en markslagsegenskap: markens z0 beskriver ytan i sig och staden ligger
+redan i geometrin.
+
+### 10.3 Lösare för K20
+
+`luft.vindkomfort` (vindkomfort och vindfara på gånghöjd, NEN 8100 eller Lawson) och `luft.halt` (årsmedelhalt
+från vägar). Båda: indata `vader` (CSV `tid,vindriktning_grad,vindhastighet_m_s`), `halt` dessutom `vagar`
+(GeoPackage med `emission_g_m_s`, EPSG:3011); parametrar `dx_m` (4), `riktningar` (4), `genomstromningar` (2),
+`hojd_doman_m`, buffertar, `omsampling`, `vegetation`, `u_ref_m_s`, `z_ref_m`, `z0_m`, `vaggmodell`, `z0_vagg_m`
+(okända parametrar ger fel). Utdata är GeoTIFF i EPSG:3011 på rutnätets cellstorlek (`komfortklass`, `faraklass`,
+`forstarkning`; `arsmedel`), så `[[jamforelser]]` fungerar för före/efter. Exempel:
+`exempel/fragor/luft_fore_efter.toml` (testväder, `luft_vader_testvarde.csv`).
+
+**Påverkansradie: `None` (globalt jobb över alla rutor i scenariot).** Inget konservativt mått finns: tryckprojektionen
+i LES är global, kölvattnet når ett tiotal byggnadshöjder nedströms i alla riktningar som ingår i statistiken, och
+halten i en cell beror på alla källor uppströms. En radie vore ett antagande som inte kan visas, och kärnan säger
+"är du osäker, välj `None`". Följden är att en K9-ändring ger ett nytt jobb för hela scenariot (ingen lokal
+omräkning), och att luft bara körs på områden som ryms i minnet (mosaik av rutorna, buffertar utöver det).
+
+### 10.4 Mätt
+
+Syntetiskt K1 v2-kvarter byggt med markmodellens byggare (`dagsljus.exempelkvarter`, platt mark):
+höjdrastret och vegetationsrastret är lika (`array_equal`) med ett handbyggt raster, och `voxelisera` ger identiskt
+`fast` och `lad_m2_m3` för tre vindriktningar. `luft.vindkomfort` på K1 v2 ger exakt samma `forstarkning.tif` som
+`bygg_vindbibliotek` + `berakna_komfort` på det handbyggda rastret. `byggnad_hojd` (b: 20 → 28 m) ändrar bara
+b:s fotavtryck och bara lagren mellan gamla och nya takhöjden (inga voxlar blir luft); `byggnad_ny` lägger till
+exakt 25 celler; `byggnad_bort` ger bas utan huset (`array_equal`). Tester: `tests/karna/test_anslutning_luft.py`,
+`tests/karna/test_luft_losare.py`.
+

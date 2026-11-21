@@ -1,9 +1,72 @@
 # Markklasser (K1 markslagskoder) och deras egenskaper per domän. Läses av karna.geometri.markklass.
+# EN källa för alla domäner: buller (impedans, råhet) och luft (råhetslängd, bladytetäthet) läser härifrån.
 # Kolumnerna per domän läggs till av respektive domänagent; ändra inte andras kolumner.
+# Att lägga till kolumner eller tabeller ändrar inte `version` (bakåtkompatibelt tillägg, BESLUT 2026-11-21).
 # vatten: initial_faktor och ksat_faktor är samma värden som mark_forluster.effektiv_markparametrar
-# använder (ett test håller dem lika). ksat_faktor utelämnas där Ksat kommer från en egen modell
-# (berg, grönt tak) i stället för jordarten. ksat_faktor multiplicerar jordartens Ksat.
+# använder (ett test håller dem lika). ksat_faktor multiplicerar jordartens Ksat.
+# Kod 0 (okänt) har avsiktligt inga värden för buller och luft: okänt markslag ska flaggas, inte gissas
+# (`Markklasstabell.raster` ger då ett tydligt fel om kod 0 förekommer). Dagsljus har ännu inga kolumner.
 version = 1
+
+# --- buller: metadata och klasstabeller (Nord2000) ---------------------------------------------
+# Två delar med olika status:
+# 1. Klasstabellerna [buller.impedansklass] och [buller.rahetsklass] är tabellvärden ur metoddokumentet,
+#    verifierade mot källan (se [buller.kalla]).
+# 2. Översättningen markslag -> klass ([markklass.N.buller] nedan och [buller.byggnadsyta]) är ett EGET
+#    VAL i buller paket B3 och finns inte i någon källa. Den är preliminär tills Joel stämt av den
+#    (docs/buller/logg/B3-B6.md, "Tolkningar som behöver stämmas av"; BESLUT 2026-11-21).
+# Råhetsklass N (ingen råhet) är satt överallt eftersom K1 inte bär någon uppgift om råhet.
+[buller]
+version = "markklass/v1"
+preliminar = true
+
+[buller.kalla]
+dokument = "User's Guide Nord2000 Road, DELTA AV 1171/06 (Kragh, Jonasson, Plovsing, Sarinen), maj 2006"
+url = "https://egra.cedex.es/EGRA-ingles/I-Documentacion/National_Methods/Users_Guide_Nord2000_Road.pdf"
+impedansklasser = "Avsnitt 3.2.2 Propagation Path (Ground Type), Table 10 'Classification of ground type', s. 23"
+rahetsklasser = "Avsnitt 3.2.2 Propagation Path (Ground Roughness), Table 12 'Classification of ground roughness', s. 25"
+enhet_flodesresistivitet = "kNs/m4 (källan skriver kPas/m2, samma enhet)"
+verifierad = "2026-11-21: två hämtningar av PDF:en med var sin utläsning av tabellerna, alla värden lika"
+
+# Representativ flödesresistivitet per impedansklass, kNs/m4 (Table 10).
+[buller.impedansklass]
+A = 12.5
+B = 31.5
+C = 80.0
+D = 200.0
+E = 500.0
+F = 2000.0
+G = 20000.0
+H = 200000.0
+
+# Representativ markråhet per råhetsklass, meter (Table 12, kolumnen "Ground roughness").
+[buller.rahetsklass]
+N = 0.0
+S = 0.25
+M = 0.5
+L = 1.0
+
+# Yta på byggnader som läggs in i profilen från byggnadspolygoner (tak och väggkrön).
+[buller.byggnadsyta]
+impedansklass = "H"
+rahetsklass = "N"
+
+# Härledda kolumner som `Markklasstabell` lägger till per markslagskod (ingen dubblering i filen):
+# buller.flodesresistivitet_kNsm4 (ur impedansklass) och buller.rahet_m (ur rahetsklass).
+
+# --- luft: metadata (råhetslängd och bladytetäthet) ---------------------------------------------
+# z0_m: aerodynamisk råhetslängd för markytan (m). Klasserna är Davenport-Wieringa (Wieringa 1992) enligt
+# WMO:s kodregister (https://codes.wmo.int/wmdr/SurfaceRoughnessDavenport, hämtat 2026-11-21): sea 0,0002,
+# smooth 0,005, open 0,03, roughly open 0,10, rough 0,25, very rough 0,5, closed 1,0, chaotic >= 2.
+# Vilken klass som hör till vilket markslag är ETT EGET VAL (preliminärt, inte ur någon källa).
+# z0_m beskriver markytan i sig; staden (byggnaderna) ligger i geometrin och ska inte räknas in igen.
+# lad_m2_m3: bladytetäthet (m2/m3) för vegetation som står på markslaget; tillämpas där vegetation.tif
+# anger vegetation. 1,0 är luftdelens standardvärde (`luft.geometri.voxelisera`, ett testvärde);
+# 0 där vegetation inte kan stå (tak, vatten, byggnad) eller är lägre än 0,5 m (grönt tak).
+[luft]
+version = "markklass-luft/v1"
+preliminar = true
+kalla = "Davenport-Wieringa-klasserna ur WMO:s register; markslagsvalen är egna"
 
 [markklass.0]
 namn = "okant"
@@ -26,8 +89,12 @@ initial_faktor = 1.0
 ksat_faktor = 0.0
 
 [markklass.1.luft]
+z0_m = 0.005
+lad_m2_m3 = 1.0
 
 [markklass.1.buller]
+impedansklass = "G"
+rahetsklass = "N"
 
 [markklass.1.dagsljus]
 
@@ -39,8 +106,12 @@ initial_faktor = 1.0
 ksat_faktor = 0.0
 
 [markklass.2.luft]
+z0_m = 0.005
+lad_m2_m3 = 0.0
 
 [markklass.2.buller]
+impedansklass = "H"
+rahetsklass = "N"
 
 [markklass.2.dagsljus]
 
@@ -51,8 +122,12 @@ namn = "gront_tak"
 initial_faktor = 1.0
 
 [markklass.3.luft]
+z0_m = 0.03
+lad_m2_m3 = 0.0
 
 [markklass.3.buller]
+impedansklass = "D"
+rahetsklass = "N"
 
 [markklass.3.dagsljus]
 
@@ -64,8 +139,12 @@ initial_faktor = 1.0
 ksat_faktor = 1.0
 
 [markklass.4.luft]
+z0_m = 0.03
+lad_m2_m3 = 1.0
 
 [markklass.4.buller]
+impedansklass = "D"
+rahetsklass = "N"
 
 [markklass.4.dagsljus]
 
@@ -77,8 +156,12 @@ initial_faktor = 1.5
 ksat_faktor = 1.5
 
 [markklass.5.luft]
+z0_m = 1.0
+lad_m2_m3 = 1.0
 
 [markklass.5.buller]
+impedansklass = "D"
+rahetsklass = "N"
 
 [markklass.5.dagsljus]
 
@@ -89,8 +172,12 @@ namn = "berg"
 initial_faktor = 1.0
 
 [markklass.6.luft]
+z0_m = 0.03
+lad_m2_m3 = 1.0
 
 [markklass.6.buller]
+impedansklass = "H"
+rahetsklass = "N"
 
 [markklass.6.dagsljus]
 
@@ -102,8 +189,12 @@ initial_faktor = 1.0
 ksat_faktor = 1.5
 
 [markklass.7.luft]
+z0_m = 0.005
+lad_m2_m3 = 1.0
 
 [markklass.7.buller]
+impedansklass = "F"
+rahetsklass = "N"
 
 [markklass.7.dagsljus]
 
@@ -115,8 +206,12 @@ initial_faktor = 0.0
 ksat_faktor = 0.0
 
 [markklass.8.luft]
+z0_m = 0.0002
+lad_m2_m3 = 0.0
 
 [markklass.8.buller]
+impedansklass = "H"
+rahetsklass = "N"
 
 [markklass.8.dagsljus]
 
@@ -128,7 +223,11 @@ initial_faktor = 1.0
 ksat_faktor = 0.0
 
 [markklass.9.luft]
+z0_m = 0.005
+lad_m2_m3 = 0.0
 
 [markklass.9.buller]
+impedansklass = "H"
+rahetsklass = "N"
 
 [markklass.9.dagsljus]

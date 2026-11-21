@@ -435,13 +435,85 @@ class TestMarkklass(unittest.TestCase):
             if "ksat_faktor" in v and kod != 7:  # grus har golv på 15 mm/h i mark_forluster
                 gras = effektiv_markparametrar(4, "sand").ksat_mm_h
                 self.assertAlmostEqual(e.ksat_mm_h, v["ksat_faktor"] * gras)
-        self.assertEqual(t.egenskaper_for(1, "buller"), {})
+        self.assertEqual(t.egenskaper_for(1, "dagsljus"), {})
         slag = np.array([[1, 4], [5, 8]], dtype=np.uint8)
         np.testing.assert_array_equal(
             t.raster(slag, "vatten", "initial_faktor"), [[1.0, 1.0], [1.5, 0.0]]
         )
         with self.assertRaises(GeometriFel):
             t.raster(slag, "luft", "ruhet")
+
+    def test_vattenkolumnerna_ar_oforandrade(self) -> None:
+        """Värdena som fanns före bullrets och luftens kolumner (G1), kod för kod."""
+        forvantat = {
+            0: {"initial_faktor": 0.5, "ksat_faktor": 0.0},
+            1: {"initial_faktor": 1.0, "ksat_faktor": 0.0},
+            2: {"initial_faktor": 1.0, "ksat_faktor": 0.0},
+            3: {"initial_faktor": 1.0},
+            4: {"initial_faktor": 1.0, "ksat_faktor": 1.0},
+            5: {"initial_faktor": 1.5, "ksat_faktor": 1.5},
+            6: {"initial_faktor": 1.0},
+            7: {"initial_faktor": 1.0, "ksat_faktor": 1.5},
+            8: {"initial_faktor": 0.0, "ksat_faktor": 0.0},
+            9: {"initial_faktor": 1.0, "ksat_faktor": 0.0},
+        }
+        t = las_markklasser()
+        for kod, v in forvantat.items():
+            self.assertEqual(dict(t.egenskaper_for(kod, "vatten")), v, kod)
+
+    def test_alla_forekommande_markslag_har_varden_for_alla_doman(self) -> None:
+        """Varje kod 1-9 har alla kolumner för buller och luft; kod 0 (okänt) saknar dem med
+        flit."""
+        t = las_markklasser()
+        kolumner = {
+            "vatten": ("initial_faktor",),
+            "buller": ("impedansklass", "rahetsklass", "flodesresistivitet_kNsm4", "rahet_m"),
+            "luft": ("z0_m", "lad_m2_m3"),
+        }
+        for kod in range(1, 10):
+            for doman, kol in kolumner.items():
+                e = t.egenskaper_for(kod, doman)
+                for k in kol:
+                    self.assertIn(k, e, f"kod {kod} {doman}.{k}")
+        for doman in ("buller", "luft"):
+            self.assertEqual(dict(t.egenskaper_for(0, doman)), {})
+        slag = np.arange(1, 10, dtype=np.uint8).reshape(3, 3)
+        for doman, kol in (("buller", "flodesresistivitet_kNsm4"), ("buller", "rahet_m"),
+                           ("luft", "z0_m"), ("luft", "lad_m2_m3")):
+            r = t.raster(slag, doman, kol)
+            self.assertTrue(bool(np.all(np.isfinite(r))), (doman, kol))
+        with self.assertRaises(GeometriFel):  # kod 0 flaggas i stället för att gissas
+            t.raster(np.zeros((1, 1), dtype=np.uint8), "buller", "rahet_m")
+
+    def test_markslag_i_syntetisk_ruta_tacks_av_alla_doman(self) -> None:
+        import tempfile
+        from pathlib import Path as P
+
+        from dagsljus.exempelkvarter import bygg_demokvarter
+        from karna.geometri import las_markslag
+
+        t = las_markklasser()
+        with tempfile.TemporaryDirectory() as mapp:
+            kv = bygg_demokvarter(P(mapp))
+            for ruta in sorted(kv["bas"].glob("mm_*")):
+                slag, _ = las_markslag(ruta)
+                for kod in np.unique(slag):
+                    for doman, kol in (("vatten", "initial_faktor"), ("buller", "rahet_m"),
+                                       ("luft", "z0_m")):
+                        if kod == 0:
+                            continue
+                        self.assertIn(kol, t.egenskaper_for(int(kod), doman))
+
+    def test_klasstabellerna_och_markering(self) -> None:
+        t = las_markklasser()
+        self.assertTrue(t.preliminar("buller"))
+        self.assertTrue(t.preliminar("luft"))
+        self.assertEqual(t.domanversion("buller"), "markklass/v1")
+        # en enda siffra per klass: härledda kolumner är lika med klasstabellens värde
+        for kod in range(1, 10):
+            e = t.egenskaper_for(kod, "buller")
+            self.assertEqual(e["flodesresistivitet_kNsm4"],
+                             t.meta["buller"]["impedansklass"][e["impedansklass"]])
 
 
 if __name__ == "__main__":
