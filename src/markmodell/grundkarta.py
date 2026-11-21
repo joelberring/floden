@@ -557,19 +557,19 @@ def stang_husliv_till_byggnader(
                 continue
 
             # Kontrollera att cykeln inte bara är en fram-och-tillbaka-slits över samma kanter
-            ring_pts: list[tuple[float, float]] = []
+            cykel_pts: list[tuple[float, float]] = []
             for h in cykel_halv:
                 h_pts = halv_punkter[h]
-                if not ring_pts:
-                    ring_pts.extend(h_pts)
+                if not cykel_pts:
+                    cykel_pts.extend(h_pts)
                 else:
-                    ring_pts.extend(h_pts[1:])
+                    cykel_pts.extend(h_pts[1:])
 
             # Endast moturs begränsade ytor (positiv signerad area) utgör byggnader;
             # yttre omslutande yta har negativ area och hoppas över.
-            area = _signerad_area(ring_pts)
+            area = _signerad_area(cykel_pts)
             if area > _MIN_BYGGNAD_AREA_M2:
-                bygg = _bygg_sluten_byggnad(ring_pts, hinderhojd_m)
+                bygg = _bygg_sluten_byggnad(cykel_pts, hinderhojd_m)
                 if bygg is not None:
                     byggnader.append(bygg)
                     for h in cykel_halv:
@@ -1297,11 +1297,13 @@ def hojdsatt_brytlinjer_fran_laser(
         med_v = float(np.median(z_lokal[v_mask])) if antal_v > 0 else None
         med_h = float(np.median(z_lokal[h_mask])) if antal_h > 0 else None
 
+        sprang: float | None
         if antal_v >= 3 and antal_h >= 3 and med_v is not None and med_h is not None:
-            sprang = abs(med_v - med_h)
+            sprang_val = abs(med_v - med_h)
+            sprang = sprang_val
             osaker = False
             uppdaterade.append(
-                Brytlinje(typ=linje.typ, hojd_m=sprang, punkter=linje.punkter)
+                Brytlinje(typ=linje.typ, hojd_m=sprang_val, punkter=linje.punkter)
             )
         else:
             sprang = abs(med_v - med_h) if (med_v is not None and med_h is not None) else None
