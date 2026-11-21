@@ -37,7 +37,7 @@ export class OinloggadFel extends Error {
   }
 }
 
-async function lasJson<T>(url: string, init?: RequestInit): Promise<T> {
+export async function lasJson<T>(url: string, init?: RequestInit): Promise<T> {
   // Alla POST bär CSRF-huvudet (docs/KONTO.md avsnitt 8). Utan inloggning finns ingen kaka
   // och då skickas inget huvud.
   const metod = (init?.method ?? "GET").toUpperCase();

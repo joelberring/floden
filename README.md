@@ -115,6 +115,19 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
    *Teknisk information* (lösare, versioner, regnets parametrar) är hopfälld.
 3. **Karta.** Välj vy (dagsljus höjt hus, dagsljus nytt hus, vatten nytt hus) och läge: *Före*, *Efter*,
    *Skillnad*, *Svep* (dra reglaget) eller *Sida vid sida*. Rutan *Så läser du kartan* förklarar färgerna.
+   Till höger ligger **lagerpanelen** (Underlag, Geometri, Planförslag, Resultat): tänd och släck lager,
+   ändra täckning, dra eller flytta lager med pilarna, fäll ihop grupper. Valen sparas i webbläsaren per
+   projekt. Ortofoto finns bara om du hämtat det lokalt (`floden data lantmateriet`); en WMS-tjänst kan
+   läggas till under *Lägg till underlag från en tjänst* (ingen är förvald, servern hämtar bilderna).
+   **Prova själv: rita ett hus.** Välj *Rita hus* (W), klicka husets hörn (hörn och kanter på befintliga
+   byggnader fäster, en orange ring visar var; *Rät vinkel* låser 45 och 90 grader), dubbelklicka eller
+   tryck Enter. Ange höjden i panelen (yta och uppskattad bruttoarea visas, 3 m per våning), tryck
+   *Räkna före och efter*: planen visar vad som räknas om, påverkansradie och uppskattad tid, och
+   *Starta beräkningen* kör samma beräkningar som resten av Floden. Resultatet kommer i samma karta,
+   gruppen *Resultat*. *Markera* (Q) väljer ett hus: ändra höjd, riv en befintlig byggnad, flytta ett nytt
+   hus eller dess hörn. Ångra är Z, gör om Shift+Z. *Spara förslaget* skriver en fil på din dator
+   (`data/lokal/kartverktyg/`, inte i git); förslag kan öppnas, få nytt namn och tas bort. Ett hus utanför
+   kvarteret, ett som korsar sig självt eller en höjd över 200 m nekas med ett tydligt besked.
 4. **Hovra** över kartan: värdena för före, efter och skillnad står under kartan. Grå ytor är byggnader
    (tak, inte mark). Byggnadslagret och värden på tak slås av och på under kartan.
 5. **Utredningsfrågor.** Demokorten överst går att köra direkt (resultatet finns redan i cachen).
@@ -131,4 +144,6 @@ inloggning på visas en *Logga in med Google*-knapp och, när du är inloggad, d
 
 Skärmbilder (bred 1440 px och smal 800 px med `-smal`): `docs/bilder/demo-start.png`,
 `demo-projekt.png`, `demo-karta.png` (+ `demo-karta-vatten.png`), `demo-fragor.png`, `demo-dagsljus.png`,
-`demo-vatten.png` (`python tools/webb_skarmbild.py --demo`).
+`demo-vatten.png` (`python tools/webb_skarmbild.py --demo`). Kartverktyget: `docs/bilder/kartverktyg-lager.png`,
+`kartverktyg-rita.png` (mitt i ritningen, med fästmarkör), `kartverktyg-hojd.png` och `kartverktyg-resultat.png`
+(före och efter efter en körning; `python tools/webb_skarmbild.py --kartverktyg`, kräver Chrome).
