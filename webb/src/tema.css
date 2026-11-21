@@ -1,0 +1,51 @@
+/*
+ * Flodens tema – designtoken som CSS-variabler.
+ * Sobert: vitt, svart (#111111), hårfina linjer, raka hörn. Färg används bara i kartdata.
+ * Andra moduler (luft, buller, dagsljus) återanvänder variablerna i stället för egna färger.
+ */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&display=swap");
+
+:root {
+  /* Grund */
+  --f-bakgrund: #ffffff;
+  --f-yta-dampad: #f2f2f2;
+  --f-text: #111111;
+  --f-text-sekundar: #333333;
+  --f-text-dampad: #6b6b6b; /* 5,3:1 mot vitt */
+  --f-text-inaktiv: #767676; /* 4,5:1 mot vitt */
+  --f-linje: #d9d9d9;
+  --f-linje-stark: #111111;
+  --f-linje-svag: #ededed;
+  --f-karta-bas: #efefef;
+
+  /* Kartdata (endast här finns färg) */
+  --f-vatten-1: #c9d9ea; /* 0,1–0,2 m */
+  --f-vatten-2: #7fa3c8; /* 0,2–0,3 m */
+  --f-vatten-3: #4f7daa; /* 0,3–0,5 m */
+  --f-vatten-4: #2b5d8c; /* > 0,5 m */
+  --f-buller: #b4462b;
+  --f-buller-ljus: #d9895f;
+  --f-skugga: #bdbdbd;
+  --f-djupare: #d9895f;
+  --f-grundare: #9db7d2;
+  --f-varning: #b4462b;
+
+  /* Typografi */
+  --f-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-font-rubrik: "Inter Tight", "Inter", system-ui, sans-serif;
+  --f-font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --f-etikett-storlek: 11px;
+  --f-etikett-sparr: 0.12em;
+
+  /* Mått */
+  --f-sidbredd: 1344px;
+  --f-marginal: 48px;
+  --f-huvud-hojd: 72px;
+  --f-mal-yta: 44px; /* minsta klickyta */
+}
+
+@media (max-width: 720px) {
+  :root {
+    --f-marginal: 20px;
+  }
+}
