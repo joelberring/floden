@@ -1,7 +1,17 @@
 # Arkitektur för drift: konton och server framför beräknings-API:t
 
-Status: **förslag** (2026-11-21). Inga beslut är fattade här; de står i `BESLUT.md` och fattas av Joel.
+Status: **förslag** (2026-11-21, uppdaterad samma dag efter Joels inriktning i avsnitt 0). Inga beslut är fattade här; de står i `BESLUT.md` och fattas av Joel.
 Källa för det som återanvänds: O-Tid (github.com/joelberring/otid, MIT, © 2026 Joel Berring), läst vid commit `1d63297`.
+
+## 0. Ny inriktning (Joel 2026-11-21)
+
+> "floden ska ha en egen server tror jag. kopiera otids system med ingen eventor-koppling. kommuner är
+> användare så jag tänker att sso-inloggningar bör fungera på sikt."
+
+- **Egen server** för Floden, skild från O-Tids.
+- **O-Tids kontosystem kopieras och skalas av** (variant av alternativ B, avsnitt 2): ingen delad inloggning med O-Tid, ingen Eventor.
+- **Användarna är kommuner:** organisation → förvaltning → projekt (avsnitt 3a), SSO på sikt (avsnitt 3b), automatisk koppling till förvaltning (avsnitt 3c).
+- Rekommendationen i avsnitt 3 är ändrad efter detta. Förslag till beslutsrader står i avsnitt 7; `BESLUT.md` ändras bara av Joel.
 
 ## 1. Läget i dag
 
@@ -48,34 +58,120 @@ Hårt. Kontokoden är inte ett eget paket:
 | Stadens miljö | Svår att motivera om Floden körs hos staden: inloggning via en privat klubbtjänst. | Fungerar, men staden vill troligen ha sin egen IdP (Entra ID) ändå. | Som (B). |
 | Licens | Ingen kod lånas. | MIT → GPL v3 går, MIT-notisen bevaras. | Ingen kod lånas. |
 
-## 3. Rekommendation
+## 3. Rekommendation (ändrad 2026-11-21)
 
-**(A) nu, byggt som en generell OIDC/OAuth-klient i Floden – inte som en O-Tid-integration.** Inte (B) eller (C).
+**(B) som "kopiera och skala av":** O-Tids kontokod kopieras in i Floden med källhänvisning och skalas av till konton + organisationer. Den körs i en tunn TS-tjänst (`konton/`) framför Python-API:t, på Flodens egen server. (A) var förra rekommendationen; den faller med beslutet om egen server och kommuner som användare.
 
-- **BESLUT 2026-11-20 "Eget repo … delar lyfts ut som paket":** kontokoden är inte en avgränsad del (avsnitt 1); att lyfta den kräver att O-Tids domän skärs isär. Det mönster som går att återanvända är OAuth-servern, och den kan användas utan att kopieras.
-- **Olika användare:** Floden lagrar inga lösenord och inga O-Tid-data. Floden har en egen liten tabell `medlem(konto_id, projekt/område, roll)`, så behörighet per projekt och provområde ligger i Floden.
-- **Byt IdP senare:** klienten pratar standard (OIDC discovery, PKCE, `sub`/`email`). Ska Floden köras hos staden pekar man om den mot stadens IdP (Entra ID) utan kodändring; O-Tid är bara första IdP:n.
-- **Säkerhetskrav ur `AGENTS.md`:**
-  - Loggar: bara konto-id (uuid) och jobb-id, aldrig e-post eller namn; inga indata i loggar.
-  - Ledningsdata och stadens interna data laddas aldrig upp till den publika servern. De körs lokalt eller i stadens miljö (samma Floden, egen instans, egen IdP). Servern tar bara öppna data och påhittade projekt tills avtal finns.
-  - Behörighet kontrolleras i Python-API:t per projekt/område vid varje anrop, inte bara vid inloggning.
-  - Resultat och recept är filer med `run.json` (K0); databasen innehåller inga beräkningsresultat.
+### Tas med (från O-Tid, commit `1d63297`)
 
-Ändringar som krävs i O-Tid (eget arbete där, egen ADR):
+| Del | Källa i O-Tid | Anpassning |
+| --- | --- | --- |
+| Konton, profil, namn, ta bort konto | `schema/accounts.ts` (`user_account`), `account-self-service.ts` | Utan `map_quota_mb`, `geo_tiles_per_month`, `guest_expires_at`; borttagning rör bara Flodens medlemskap |
+| Sessioner (hashad hemlighet, CSRF, logga ut överallt) | `user-account.ts`, `user_account_session*`, `apps/web/src/lib/organizer-account-cookies.ts` | Kakornas namn `__Host-floden-*` |
+| Lösenord (scrypt-verifierare, byte) | `user-account.ts` (`scryptVerifier`, `user_account_password_verifier`) | Oförändrat; bara för konton utan SSO |
+| Inloggnings- och förfrågningsspärrar (HMAC av IP) | `account-throttle.ts`, `user_account_login_throttle`, `account_request_throttle` | Oförändrat |
+| Lösenordsåterställning, e-postverifiering | `password-reset.ts`, `email-verification.ts` | Oförändrat |
+| Google OIDC (PKCE) | `google-oidc.ts`, `google-login.ts`, `google-link.ts`, `user_account_google_identity` | **Mallen** för generell OIDC: en tabell `extern_identitet(idp, issuer, sub)` i stället för bara Google |
+| Superadmin och logg | `superadmin.ts`, `superadmin-log.ts`, `superadmin_action`, `scripts/account-superadmin.ts` | Oförändrat |
+| Organisation + medlemskap (mönster) | `schema/affiliations.ts` (`organisation`, `account_club_membership`) | Blir `organisation`, `forvaltning`, `medlemskap` (avsnitt 3a); Eventor-fälten bort |
+| OAuth-servern (AI-koppling/MCP) | `oauth.ts`, `api/oauth/*`, `schema/oauth.ts` | **Senare, om värt det:** scope t.ex. `floden-las` för Claude mot egna projekt. Inte i första steget |
+| Drift | `deploy/` (Caddy, `db-roles.sh`, `backup.sh`, `monitor.sh`), `docker-compose.prod.yml`, ghcr-flödet (ADR-0195) | Se avsnitt 4 |
+| Beräkningsarbetare | `scripts/geo-worker.ts`, `geo-server.ts`, `geo-server-runner.ts` | Mönstret, se avsnitt 4–5 |
 
-1. Scope `floden` i `OAUTH_SCOPES`, och Floden som förregistrerad konfidentiell klient (inte dynamisk registrering).
-2. En `userinfo`- eller introspektionsändpunkt (RFC 7662) så att Floden kan kontrollera nyckeln utan att läsa O-Tids databas.
-3. Spärrade konton och återkallade kopplingar gäller direkt (finns redan i `authenticateOauthAccess`).
+### Skärs bort
+
+- **Eventor:** `packages/eventor`, `eventor-link.ts`, `eventor-secret.ts`, `eventor-sync-diff.ts`, `club-eventor.ts`, `club_eventor_*`.
+- **Tävlingar:** `events`/`races`, `event_administration_*` (i `schema/accounts.ts`), `race-person-invitations.ts`, `deleteAccountWithOwnedEvents` och `ownedEvents` (`account-self-service.ts`).
+- **Klubbar** (`clubs.ts`, `club-*.ts`, `club-invitations.ts`, `training-group-invitations.ts`): ersätts av organisation/förvaltning.
+- **`acceptOnLogin`** (`account-arrival.ts`): ersätts av Flodens koppling till förvaltning (avsnitt 3c).
+- **Gästkonton och demotävling** (`guest-account.ts`), kartkvoter, kartkällor.
+- **Migrationskedjan 0000–0131:** Floden börjar om med `0000_konton.sql` som bara har kvarvarande tabeller.
+
+### Nackdelar (ärligt)
+
+- **Två kopior av kontokod att hålla säkra.** En säkerhetsrättelse i O-Tid måste föras över för hand. Motåtgärd: `konton/KALLA.md` listar varje kopierad fil med O-Tid-commit, och en kontroll vid varje O-Tid-ADR som rör konton.
+- Avskalningen är ett eget arbete (beroenden till `events`/`races` måste lösas upp, avsnitt 1); risk att ett skydd tappas. Motåtgärd: O-Tids tester för konton, sessioner och spärrar följer med och ska gå igenom.
+- Ett TS-lager till framför Python-API:t (två språk i driften). Alternativ: porta till Python (C) när koden är stabil.
+
+### Säkerhetskrav ur `AGENTS.md` (gäller oavsett alternativ)
+
+- Loggar: bara konto-id (uuid) och jobb-id, aldrig e-post, namn eller IdP-anspråk; inga indata i loggar.
+- Ledningsdata och stadens interna data laddas aldrig upp till den publika servern; de körs lokalt eller i stadens miljö (egen instans, kommunens IdP).
+- Behörighet kontrolleras i Python-API:t per projekt vid varje anrop (konto-id och roller kommer från kontotjänsten i en signerad header eller via sessionsuppslag), inte bara vid inloggning.
+- Resultat och recept är filer med `run.json` (K0); databasen har inga beräkningsresultat.
+
+## 3a. Datamodell för organisationer
+
+```
+organisation (kommun; ev. region, kommunalt bolag, konsultfirma)
+  └─ forvaltning (enhet, t.ex. stadsbyggnadskontoret)
+       └─ projekt / område (provområde, detaljplan, utredning)
+
+konto ──< medlemskap(organisation, forvaltning?, roll, kalla, bekraftad_av, bekraftad_tid)
+konto ──< projektbehorighet(projekt, roll)
+```
+
+| Roll | Får |
+| --- | --- |
+| Läsare | Se projekt hen har behörighet till, resultat och rapporter |
+| Utredare | Som läsare + skapa lappar, köra scenarier, beställa små körningar i sina projekt |
+| Organisationsadmin | Hantera förvaltningar, mappningsregler (3c), medlemskap och projekt i sin organisation; beställa batchkörningar inom organisationens budget |
+| Superadmin | Allt, plus organisationer, IdP-registreringar och servrar (Joel) |
+
+- **Förvaltning ≠ projektbehörighet.** Medlemskap i en förvaltning ger bara rätt att se förvaltningens projektlista och be om behörighet; data i ett projekt kräver `projektbehorighet`.
+- `kalla` säger hur medlemskapet uppstod (`idp-grupp`, `attribut`, `domän`, `manuell`) så att det kan omprövas.
+
+## 3b. SSO på sikt
+
+| Steg | Vad | Anmärkning |
+| --- | --- | --- |
+| 1 | Lösenord + Google (som O-Tid) | Fungerar direkt; för Joel, konsulter och test |
+| 2 | **OIDC** generellt, med Microsoft Entra ID först | Många kommuner kör Entra ID (att kontrollera per kommun). En multitenant-app: varje kommun godkänner appen i sin tenant; Floden registrerar `issuer`/tenant-id → organisation |
+| 3 | **SAML 2.0** | För kommuner utan OIDC |
+| 4 | Svensk offentlig identitetsfederation (t.ex. Sambi) | **Att kontrollera:** krav, kostnad och anslutning är inte utredda |
+| – | Provisionering | **Just-in-time** vid första inloggning (konto + medlemskap enligt 3c); senare **SCIM** så att kommunen själv lägger till och tar bort användare |
+
+- Kontotabellen kopplas till IdP via `extern_identitet(idp, issuer, sub)`; `sub` + `issuer` är nyckeln, aldrig e-post.
+- Lagra bara anspråk som behövs (dataminimering, GDPR): `sub`, `issuer`, namn, e-post och, tillfälligt vid inloggning, grupp/attribut för 3c. Råa anspråk sparas inte.
+- Ett konto som SSO-kommunen tar bort (SCIM eller misslyckad inloggning) spärras; sessioner återkallas (finns i O-Tid: `revokeAllUserAccountSessions`).
+
+## 3c. Automatisk koppling till rätt förvaltning
+
+Ja, det går, men bara delvis säkert. Signalerna i ordning av tillförlitlighet:
+
+| # | Signal | Ger | Tillförlitlighet | Hantering |
+| --- | --- | --- | --- | --- |
+| 1 | IdP-tenant / `issuer` | **Organisation** | Hög: registreras av kommunens admin tillsammans med superadmin | Automatiskt |
+| 2 | Gruppanspråk (`groups`, `roles`) från IdP | **Förvaltning** (och ev. roll) | Hög om kommunen underhåller grupperna | Automatiskt via mappningstabell som organisationsadmin äger |
+| 3 | Attribut: `department`, `companyName`, `officeLocation`, `extensionAttribute*` | Förslag på förvaltning | Låg: fritext, stavas olika, inaktuellt | Normaliseras och mappas; **kräver bekräftelse** |
+| 4 | E-postdomän | Bara organisation | Medel, bara för **verifierade** domäner (t.ex. `stockholm.se` säger inte förvaltning) | Automatiskt för organisation, aldrig för förvaltning |
+| 5 | Ingen träff | – | – | Förslag i gränssnittet; användaren väljer, organisationsadmin bekräftar |
+
+- **Omprövning vid varje inloggning:** byter någon förvaltning i IdP flyttas medlemskapet (`kalla` = `idp-grupp`/`attribut`), med logg (konto-uuid, gammal och ny förvaltning, regel-id). Manuella medlemskap ändras inte automatiskt.
+- **Aldrig behörighet till projektdata på enbart en opålitlig signal** (3–5). Signal 1–2 ger förvaltning, inte projekt.
+- Mappningsreglerna är data i Floden (tabell `mappningsregel`), versionsförda, med vem som ändrade och när.
+
+Exempel på mappningsregler (**påhittade**, inte verkliga grupp- eller lagernamn):
+
+| Organisation | Signal | Villkor | Ger | Bekräftelse |
+| --- | --- | --- | --- | --- |
+| Exempelkommun | `groups` | innehåller `0b1c…-sbk-alla` (grupp-id) | Förvaltning: Stadsbyggnad, roll läsare | Nej |
+| Exempelkommun | `groups` | innehåller `…-floden-utredare` | Roll utredare (i förvaltningen ovan) | Nej |
+| Exempelkommun | `department` | normaliserat börjar med `stadsbyggnad` | Förslag: Stadsbyggnad | Ja, organisationsadmin |
+| Exempelkommun | e-postdomän | `exempelkommun.se` (verifierad) | Organisation | Nej |
 
 ## 4. Drift
 
 ```mermaid
 flowchart LR
   B[Webbläsare<br/>webb/ TypeScript] -->|HTTPS| C[Caddy<br/>deploy/Caddyfile från O-Tid]
-  C -->|/api/*| P[Floden API<br/>Python, egen session + behörighet]
+  C -->|/konto/*, inloggning| K[Kontotjänst konton/<br/>kopierad ur O-Tid, TS]
+  C -->|/api/*| P[Floden API<br/>Python, behörighet per projekt]
+  K -->|konto-id + roller| P
+  K -->|OIDC/SAML| I[Kommunens IdP<br/>t.ex. Entra ID]
+  K --> D
   C -->|statiska filer| S[webb/ bygge]
-  P -->|OIDC/PKCE, userinfo| O[O-Tid<br/>inloggningsserver]
-  P --> D[(Postgres<br/>konton-id, medlemmar, jobb)]
+  P --> D[(Postgres<br/>konton, organisationer, medlemskap, jobb)]
   P --> F[(Filer: recept, cache, K6 + run.json<br/>objektlagring)]
   W[Beräkningsarbetare<br/>SFINCS, full 2D, markmodell] -->|HTTPS pull + token| P
   W --> F
@@ -87,10 +183,10 @@ flowchart LR
 | --- | --- | --- |
 | Caddy | `deploy/Caddyfile`: HTTPS, HSTS, zstd/gzip, body-gränser per sökväg | Gränser för LAZ (rutor ca 50–200 MB), DWG (≤ 80 MB som O-Tid), GeoTIFF/LandXML. Python-API:ts 25 MB-spärr höjs bara för de uppladdningssökvägarna. Valfritt `forward_auth` mot API:ts sessionskontroll för statiska resultatfiler. |
 | Avbildningar | ADR-0195: bygg i GitHub Actions efter grön CI, hämta från ghcr.io, `TAG` låser version | En avbildning för API + webb, en för arbetaren (SFINCS, PDAL, lasclip, dwgread). |
-| Postgres | Version låst, roller ägare/app (ADR-0186, `db-roles.sh`) | Bara konto-id, medlemskap, jobb och kö. Liten databas → enkel backup. |
+| Postgres | Version låst, roller ägare/app (ADR-0186, `db-roles.sh`) | Konton, organisationer, förvaltningar, medlemskap, mappningsregler, jobb och kö. Inga beräkningsresultat → liten databas, enkel backup. |
 | Backup | `deploy/backup.sh`: timdump + restic utanför servern | Dump av Postgres + restic av recept/resultat. Cachad öppen data säkerhetskopieras inte (kan hämtas igen). |
 | Bevakning | `deploy/monitor.sh`, ADR-0216 | Disk (resultat växer), köns ålder, arbetarens budget. |
-| Server (API) | Vanlig VPS (ADR-0168) | API:t räknar bara graf och hybrid (sekunder). Allt tyngre går till arbetaren. |
+| Server (API + konton) | Vanlig VPS (ADR-0168) | **Egen server**, inte O-Tids. API:t räknar bara graf och hybrid (sekunder). Allt tyngre går till arbetaren. |
 
 ### Beräkningsarbetaren (geo-arbetarens mönster)
 
@@ -151,26 +247,30 @@ Antagande: Stockholms kommun ca **190 km² land**. K1-ruta 500 × 500 m med 25 m
 | # | Steg | Visas med | Omfattning |
 | --- | --- | --- | --- |
 | 1 | Docker Compose lokalt: Caddy + Floden API + webb, utan inloggning | `https://localhost` visar webbklienten | ½ dag |
-| 2 | Floden: generell OIDC-klient (PKCE), egen session (hashad hemlighet + CSRF som O-Tid), `medlem`-tabell, behörighet per område i API:t | Test: utan session 401, fel område 403 | 2–3 dagar |
-| 3 | O-Tid: scope `floden`, förregistrerad klient, userinfo/introspektion (egen ADR i O-Tid) | Logga in i Floden med O-Tid-konto lokalt | 1–2 dagar |
-| 4 | Jobbkö i Floden (Postgres) + arbetare som tar `full2d` över HTTPS med token | A1/EA1 körs via kön och ger samma `run.json` som lokalt | 2 dagar |
-| 5 | Avbildningar i CI (ghcr.io), backup och bevakning från `deploy/` | Grön CI bygger två avbildningar; dump + återställning provad | 1–2 dagar |
-| 6 | Arbetare vid behov (Hetzner: start/radera, budget, tomgång) | Väntande jobb startar en server som raderas efter tomgång | 2 dagar |
-| 7 | Mät provområdet (1 km²): tid, minne och disk per ruta, 2D-tid per km² | Mätvärden i `STATUS.md` som ersätter uppskattningarna i avsnitt 5 | ½ dag |
-| 8 | Batchkörning på stor maskin: kö för hela staden, rutcache, budgettak per körning | En stadsdel (t.ex. Hägersten-Älvsjö) körd i en batch | 2–3 dagar |
-| 9 | Hela Stockholm (markmodell + sänkgraf + graf-dynamik, sedan 2D per delområde) | Karta över hela staden med `run.json` | beror på steg 7–8 |
-| 10 | (Senare) Byt IdP till stadens om Floden körs hos staden | Inloggning med stadens konto | beror på staden |
+| 2 | `konton/`: kopiera O-Tids kontokod (avsnitt 3), skala bort Eventor/tävlingar/klubbar, ny migration `0000_konton.sql`, `KALLA.md` | O-Tids konto-, sessions- och spärrtester går igenom i Floden | 3–5 dagar |
+| 3 | Organisation, förvaltning, medlemskap, projektbehörighet; Python-API:t kontrollerar per projekt | Test: utan session 401, fel projekt 403, förvaltning ger inte projektdata | 2–3 dagar |
+| 4 | Generell OIDC (från Google-mallen) + Entra ID multitenant mot en testtenant; JIT-provisionering; mappningsregler 3c (signal 1, 2, 4) | Inloggning med testtenant hamnar i rätt påhittad förvaltning; byte av grupp flyttar medlemskapet | 3–4 dagar |
+| 5 | Jobbkö i Floden (Postgres) + arbetare som tar `full2d` över HTTPS med token | A1/EA1 via kön ger samma `run.json` som lokalt | 2 dagar |
+| 6 | Avbildningar i CI (ghcr.io), backup och bevakning från `deploy/`; egen VPS | Grön CI bygger avbildningar; dump + återställning provad | 1–2 dagar |
+| 7 | Arbetare vid behov (start/radera, budget, tomgång) | Väntande jobb startar en server som raderas efter tomgång | 2 dagar |
+| 8 | Mät provområdet (1 km²): tid, minne och disk per ruta, 2D-tid per km² | Mätvärden i `STATUS.md` som ersätter uppskattningarna i avsnitt 5 | ½ dag |
+| 9 | Batchkörning på stor maskin, rutcache, budgettak per körning | En stadsdel (t.ex. Hägersten-Älvsjö) i en batch | 2–3 dagar |
+| 10 | Hela Stockholm | Karta över hela staden med `run.json` | beror på 8–9 |
+| 11 | (Senare) SAML 2.0, attributmappning (signal 3) med bekräftelse, SCIM, ev. identitetsfederation | En andra kommun loggar in utan kodändring | beror på kommunerna |
 
 ## 7. Beslut som Joel behöver fatta
 
-1. **Konton:** (A) O-Tid som inloggningsserver med generell OIDC-klient, (B) eget kontopaket, eller (C) Python-port.
-2. **Var Floden körs först:** egen VPS (öppna data, påhittade projekt) eller stadens miljö (då stadens IdP och inga externa tjänster).
-3. **Delad eller egen server med O-Tid:** samma VPS är billigare men gör att en Floden-körning kan störa en tävling. Förslag: egen server.
-4. **GPU och SFINCS:** leverantör för arbetaren (Hetzner CPU per timme först; GPU-leverantör senare), och budget per månad.
-5. **Lagring av resultat:** lokal disk eller objektlagring (O-Tid ADR-0224), och hur länge resultat sparas.
-6. **Vem får konto:** öppen registrering, inbjudan per projekt, eller bara konton som Joel lägger till.
-7. **Beräkningsserver för stora batcher:** maskintyp (dedikerad CPU, ca 48 kärnor), budgettak per körning och per månad, vem som får beställa en körning.
-8. **Hela Stockholm:** när (efter mätning på provområdet), vilken data (bara Lantmäteriets öppna laser och öppen baskarta, eller stadens interna – då i stadens miljö), och vilken 2D-upplösning.
+1. **Egen server bekräftad?** (Joel 2026-11-21: "tror jag".) Förslag till beslutsrad: *"Floden har egen server och eget kontosystem, kopierat och avskalat ur O-Tid (utan Eventor, tävlingar och klubbar)."*
+2. **Konton:** (B) kopiera och skala av (rekommenderas nu) eller (A) O-Tid som inloggningsserver.
+3. **Vilka IdP:er först:** lösenord + Google nu; Entra ID multitenant som första SSO? Vilken kommun/tenant att prova med?
+4. **Vem är organisationsadmin i en kommun**, och hur utses hen (superadmin lägger till, eller kommunens IdP-grupp)?
+5. **Användare utan SSO** (lösenord/Google) – tillåtet för konsulter och forskare? I så fall: alltid bara via inbjudan till projekt, aldrig automatisk förvaltning.
+6. **Hur förvaltningsmappningen godkänns:** automatiskt på IdP-grupp (signal 2), bekräftelse på attribut (signal 3), domän bara till organisation. Förslag till beslutsrad: *"Projektbehörighet ges aldrig automatiskt; förvaltning kopplas automatiskt bara via IdP-tenant och IdP-grupp."*
+7. **Var Floden körs först:** egen VPS (öppna data, påhittade projekt) eller stadens miljö.
+8. **GPU och SFINCS:** leverantör för arbetaren och budget per månad.
+9. **Lagring av resultat:** lokal disk eller objektlagring, och hur länge resultat sparas.
+10. **Beräkningsserver för stora batcher:** maskintyp, budgettak per körning och per månad, vem som får beställa (förslag: organisationsadmin inom organisationens budget).
+11. **Hela Stockholm:** när (efter mätning på provområdet), med vilken data och vilken 2D-upplösning.
 
 ## 8. Licens
 
