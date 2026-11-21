@@ -14,3 +14,40 @@ ledningar_mapp = ""
 # Mapp med Nord2000-rapporter och testfallens Excel-filer (checkas aldrig in).
 [buller]
 kallmapp = ""
+
+# Konton och inloggning (docs/KONTO.md). Standard är "av": allt fungerar som förut, utan inloggning.
+# Hemligheter hellre i miljön än här:
+#   FLODEN_KONTO_GOOGLE_KLIENT_ID, FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET
+#   FLODEN_KONTO_ENTRA_KLIENT_ID,  FLODEN_KONTO_ENTRA_KLIENT_HEMLIGHET
+[konto]
+inloggning = "av"                      # "av" (lokal körning, tester) eller "pa"
+databas = "data/konto/konto.sqlite"    # SQLite på lokal disk (ignoreras av git)
+offentlig_url = "https://floden.example.se"   # ger redirect-URI: <url>/konto/callback/<leverantör>
+cookie_secure = true                   # false bara på localhost (http://localhost:8765)
+sessionstimmar = 12
+nya_konton = "inbjudan"                # "inbjudan": nytt konto kräver inbjudan, tenant eller intygad domän
+oppna_sokvagar = ["/api/halsa"]        # nås utan inloggning
+
+[konto.leverantorer.google]
+aktiv = true
+klient_id = ""                         # OAuth-klient i Google Cloud Console (webbapplikation)
+klient_hemlighet = ""
+
+# Microsoft Entra ID (multitenant). Förberett men av tills en kommun ska in (docs/KONTO.md).
+[konto.leverantorer.entra]
+aktiv = false
+klient_id = ""
+klient_hemlighet = ""
+# discovery_url = "https://login.microsoftonline.com/organizations/v2.0/.well-known/openid-configuration"
+
+# Generisk OIDC (annan IdP): typ = "oidc". E-postadressen litas inte på om inte epost_betrodd = true.
+# [konto.leverantorer.annan]
+# typ = "oidc"
+# aktiv = false
+# discovery_url = "https://sso.example.se/.well-known/openid-configuration"
+# scopes = ["openid", "email", "profile", "groups"]
+# flertenant = false
+# epost_betrodd = false
+# [konto.leverantorer.annan.claims]
+# grupper = "groups"
+# tenant = "tid"

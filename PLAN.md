@@ -121,3 +121,11 @@ Uppdragen och deras status står i `tasks/B00-buller-oversikt.md`; kontrakt i `d
 
 **Klar när:** rapportläget kör med en kärna som passerar testsvit grupp N, och en jämförelse mot en utredning i
 etablerad programvara är redovisad.
+
+## Drift – konton (D)
+
+Se `docs/ARKITEKTUR-DRIFT.md` och `docs/KONTO.md`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| D1 Konton | Google-inloggning nu, SSO förberett: `src/konto/` (OIDC med PKCE, SQLite-konton, organisation/förvaltning/projekt, sessioner med CSRF, HTTP-adapter, läge `inloggning = "av"`); Entra/generisk OIDC finns men är inte på | BESLUT "Drift" | klar i paketet (falsk leverantör); anslutning till `src/webb/api.py` och riktig Google-klient återstår |

@@ -1,0 +1,366 @@
+"""Konton, organisationer, förvaltningar, medlemskap, projekt och inbjudningar.
+
+Modellen och dess regler (docs/ARKITEKTUR-DRIFT.md 3a-3c, BESLUT 2026-11-21 "Drift"):
+
+- IdP-tenant ger organisation. IdP-grupp ger förvaltning. E-postdomän ger bara organisation och
+  bara när leverantören intygar domänen (Googles `hd`).
+- Projektbehörighet ges aldrig automatiskt: bara genom en inbjudan som tas emot med en verifierad
+  e-postadress, eller genom en uttrycklig tilldelning av en organisationsadmin/superadmin.
+  Medlemskap i organisation eller förvaltning, och rollen superadmin, ger ingen läsrätt till data.
+- Loggar och `handelse` innehåller konto-id och regel-id, aldrig e-post eller namn.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import sqlite3
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from konto.databas import Databas
+
+logg = logging.getLogger("konto")
+
+PROJEKTROLLER = ("lasare", "utredare")  # stigande behörighet
+INBJUDAN_GILTIG_DAGAR = 14
+_EPOST = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class BehorighetFel(Exception):
+    """Åtgärden kräver en roll som utföraren inte har."""
+
+
+class RegisterFel(Exception):
+    """Ogiltig indata till registret (okänt id, fel roll, ogiltig adress)."""
+
+
+def normalisera_epost(epost: str) -> str:
+    """Gemener och trimmad; vägrar det som inte liknar en adress."""
+    ren = epost.strip().lower()
+    if len(ren) > 254 or not _EPOST.match(ren):
+        raise RegisterFel("Ogiltig e-postadress")
+    return ren
+
+
+def _roll_niva(roll: str) -> int:
+    if roll not in PROJEKTROLLER:
+        raise RegisterFel(f"Okänd projektroll {roll!r}")
+    return PROJEKTROLLER.index(roll)
+
+
+@dataclass(frozen=True)
+class Konto:
+    id: str
+    epost: str | None
+    epost_verifierad: bool
+    namn: str
+    superadmin: bool
+    sparrad: bool
+
+
+def _ny_id() -> str:
+    return uuid.uuid4().hex
+
+
+class Register:
+    """Alla läs- och skrivfunktioner mot kontodatabasen."""
+
+    def __init__(self, db: Databas, klocka: Callable[[], float] = time.time) -> None:
+        self.db = db
+        self._klocka = klocka
+
+    def nu(self) -> int:
+        return int(self._klocka())
+
+    # --- logg -----------------------------------------------------------------------------
+
+    def notera(
+        self, c: sqlite3.Connection, handelse: str, konto_id: str | None, detalj: str = ""
+    ) -> None:
+        """Skriver en händelse. `detalj` får bara innehålla id:n och regel-nummer."""
+        c.execute(
+            "INSERT INTO handelse (tid, konto_id, handelse, detalj) VALUES (?, ?, ?, ?)",
+            (self.nu(), konto_id, handelse, detalj),
+        )
+        logg.info("handelse=%s konto=%s %s", handelse, konto_id or "-", detalj)
+
+    # --- uppslag --------------------------------------------------------------------------
+
+    @staticmethod
+    def _konto_fran_rad(rad: sqlite3.Row) -> Konto:
+        return Konto(
+            id=rad["id"],
+            epost=rad["epost"],
+            epost_verifierad=bool(rad["epost_verifierad"]),
+            namn=rad["namn"],
+            superadmin=bool(rad["superadmin"]),
+            sparrad=rad["sparrad"] is not None,
+        )
+
+    def konto(self, konto_id: str) -> Konto | None:
+        with self.db.transaktion() as c:
+            rad = c.execute("SELECT * FROM konto WHERE id = ?", (konto_id,)).fetchone()
+        return self._konto_fran_rad(rad) if rad else None
+
+    def konto_via_epost(self, epost: str) -> Konto | None:
+        """Första kontot med adressen (administration/CLI; aldrig för inloggning)."""
+        with self.db.transaktion() as c:
+            rad = c.execute(
+                "SELECT * FROM konto WHERE epost = ? ORDER BY skapad LIMIT 1",
+                (normalisera_epost(epost),),
+            ).fetchone()
+        return self._konto_fran_rad(rad) if rad else None
+
+    # --- organisation, förvaltning, regler (systemnivå: CLI/superadmin) ---------------------
+
+    def skapa_organisation(self, namn: str) -> str:
+        org_id = _ny_id()
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO organisation (id, namn, skapad) VALUES (?, ?, ?)",
+                (org_id, namn.strip(), self.nu()),
+            )
+            self.notera(c, "organisation-skapad", None, f"organisation={org_id}")
+        return org_id
+
+    def registrera_tenant(self, organisation_id: str, leverantor: str, tenant: str) -> None:
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO organisation_tenant (leverantor, tenant, organisation_id)"
+                " VALUES (?, ?, ?)",
+                (leverantor, tenant.strip().lower(), organisation_id),
+            )
+            self.notera(c, "tenant-registrerad", None, f"organisation={organisation_id}")
+
+    def registrera_doman(self, organisation_id: str, doman: str) -> None:
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO organisation_doman (doman, organisation_id) VALUES (?, ?)",
+                (doman.strip().lower(), organisation_id),
+            )
+            self.notera(c, "doman-registrerad", None, f"organisation={organisation_id}")
+
+    def skapa_forvaltning(self, organisation_id: str, namn: str) -> str:
+        forv_id = _ny_id()
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO forvaltning (id, organisation_id, namn) VALUES (?, ?, ?)",
+                (forv_id, organisation_id, namn.strip()),
+            )
+        return forv_id
+
+    def mappa_grupp(
+        self, organisation_id: str, forvaltning_id: str, grupp: str, andrad_av: str | None = None
+    ) -> int:
+        """Regel: medlemmar i IdP-gruppen `grupp` tillhör förvaltningen. Returnerar regel-id."""
+        with self.db.transaktion() as c:
+            forv = c.execute(
+                "SELECT 1 FROM forvaltning WHERE id = ? AND organisation_id = ?",
+                (forvaltning_id, organisation_id),
+            ).fetchone()
+            if not forv:
+                raise RegisterFel("Förvaltningen hör inte till organisationen")
+            c.execute(
+                "INSERT INTO forvaltning_grupp"
+                " (organisation_id, grupp, forvaltning_id, andrad_av, andrad_tid)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (organisation_id, grupp, forvaltning_id, andrad_av, self.nu()),
+            )
+            regel = int(c.execute("SELECT last_insert_rowid()").fetchone()[0])
+            self.notera(c, "grupp-mappad", andrad_av, f"regel={regel}")
+        return regel
+
+    def ge_superadmin(self, konto_id: str) -> None:
+        with self.db.transaktion() as c:
+            if c.execute("UPDATE konto SET superadmin = 1 WHERE id = ?", (konto_id,)).rowcount != 1:
+                raise RegisterFel("Okänt konto")
+            self.notera(c, "superadmin-beviljad", konto_id)
+
+    def forbered_konto(self, epost: str, namn: str | None = None) -> str:
+        """Skapar ett konto utan identitet (t.ex. för den första superadmin). Det kopplas till
+        leverantörens identitet första gången samma adress loggar in med en verifierad adress."""
+        ren = normalisera_epost(epost)
+        konto_id = _ny_id()
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO konto (id, epost, epost_verifierad, namn, skapad)"
+                " VALUES (?, ?, 0, ?, ?)",
+                (konto_id, ren, namn or ren.split("@")[0], self.nu()),
+            )
+            self.notera(c, "konto-forberett", konto_id)
+        return konto_id
+
+    def gor_organisationsadmin(self, konto_id: str, organisation_id: str) -> None:
+        """Manuellt medlemskap på organisationsnivå med rollen organisationsadmin."""
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO medlemskap (konto_id, organisation_id, forvaltning_id, roll, kalla,"
+                " skapad) VALUES (?, ?, NULL, 'organisationsadmin', 'manuell', ?)"
+                " ON CONFLICT (konto_id, organisation_id, COALESCE(forvaltning_id, ''))"
+                " DO UPDATE SET roll = 'organisationsadmin', kalla = 'manuell'",
+                (konto_id, organisation_id, self.nu()),
+            )
+            self.notera(c, "orgadmin-beviljad", konto_id, f"organisation={organisation_id}")
+
+    def lagg_till_medlem(
+        self, konto_id: str, organisation_id: str, forvaltning_id: str | None, bekraftad_av: str
+    ) -> None:
+        """Manuellt medlemskap (ändras aldrig av inloggningens omprövning)."""
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT OR IGNORE INTO medlemskap (konto_id, organisation_id, forvaltning_id, roll,"
+                " kalla, skapad, bekraftad_av) VALUES (?, ?, ?, 'medlem', 'manuell', ?, ?)",
+                (konto_id, organisation_id, forvaltning_id, self.nu(), bekraftad_av),
+            )
+            self.notera(c, "medlemskap-manuellt", konto_id, f"organisation={organisation_id}")
+
+    def skapa_projekt(
+        self, organisation_id: str, namn: str, forvaltning_id: str | None = None
+    ) -> str:
+        projekt_id = _ny_id()
+        with self.db.transaktion() as c:
+            c.execute(
+                "INSERT INTO projekt (id, organisation_id, forvaltning_id, namn, skapad)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (projekt_id, organisation_id, forvaltning_id, namn.strip(), self.nu()),
+            )
+            self.notera(c, "projekt-skapat", None, f"projekt={projekt_id}")
+        return projekt_id
+
+    # --- behörighet -------------------------------------------------------------------------
+
+    def _far_administrera(self, c: sqlite3.Connection, utforare: str, organisation_id: str) -> bool:
+        rad = c.execute(
+            "SELECT superadmin, sparrad FROM konto WHERE id = ?", (utforare,)
+        ).fetchone()
+        if not rad or rad["sparrad"] is not None:
+            return False
+        if rad["superadmin"]:
+            return True
+        return (
+            c.execute(
+                "SELECT 1 FROM medlemskap WHERE konto_id = ? AND organisation_id = ?"
+                " AND roll = 'organisationsadmin'",
+                (utforare, organisation_id),
+            ).fetchone()
+            is not None
+        )
+
+    def projektroll(self, konto_id: str, projekt_id: str) -> str | None:
+        """Kontots uttryckliga roll i projektet, annars None. Inget annat ger projektdata."""
+        with self.db.transaktion() as c:
+            rad = c.execute(
+                "SELECT p.roll FROM projektbehorighet p JOIN konto k ON k.id = p.konto_id"
+                " WHERE p.konto_id = ? AND p.projekt_id = ? AND k.sparrad IS NULL",
+                (konto_id, projekt_id),
+            ).fetchone()
+        return str(rad["roll"]) if rad else None
+
+    def har_projektroll(self, konto_id: str, projekt_id: str, minst: str = "lasare") -> bool:
+        roll = self.projektroll(konto_id, projekt_id)
+        return roll is not None and _roll_niva(roll) >= _roll_niva(minst)
+
+    def ge_projektroll(self, utforare: str, konto_id: str, projekt_id: str, roll: str) -> None:
+        """Uttrycklig tilldelning (organisationsadmin i projektets organisation, superadmin)."""
+        _roll_niva(roll)
+        with self.db.transaktion() as c:
+            org = c.execute(
+                "SELECT organisation_id FROM projekt WHERE id = ?", (projekt_id,)
+            ).fetchone()
+            if not org:
+                raise RegisterFel("Okänt projekt")
+            if not self._far_administrera(c, utforare, org["organisation_id"]):
+                raise BehorighetFel("Kräver organisationsadmin")
+            c.execute(
+                "INSERT INTO projektbehorighet (konto_id, projekt_id, roll, kalla, beviljad_av,"
+                " skapad) VALUES (?, ?, ?, 'manuell', ?, ?)"
+                " ON CONFLICT (konto_id, projekt_id) DO UPDATE SET roll = excluded.roll,"
+                " kalla = 'manuell', beviljad_av = excluded.beviljad_av",
+                (konto_id, projekt_id, roll, utforare, self.nu()),
+            )
+            self.notera(c, "projektroll-beviljad", konto_id, f"projekt={projekt_id} roll={roll}")
+
+    def aterkalla_projektroll(self, utforare: str, konto_id: str, projekt_id: str) -> None:
+        with self.db.transaktion() as c:
+            org = c.execute(
+                "SELECT organisation_id FROM projekt WHERE id = ?", (projekt_id,)
+            ).fetchone()
+            if not org or not self._far_administrera(c, utforare, org["organisation_id"]):
+                raise BehorighetFel("Kräver organisationsadmin")
+            c.execute(
+                "DELETE FROM projektbehorighet WHERE konto_id = ? AND projekt_id = ?",
+                (konto_id, projekt_id),
+            )
+            self.notera(c, "projektroll-aterkallad", konto_id, f"projekt={projekt_id}")
+
+    def bjud_in(
+        self,
+        utforare: str,
+        projekt_id: str,
+        epost: str,
+        roll: str = "lasare",
+        giltig_dagar: int = INBJUDAN_GILTIG_DAGAR,
+    ) -> str:
+        """Inbjudan till ett projekt, bunden till en e-postadress. Tas emot först när personen
+        loggar in med en verifierad adress (`tilldelning.tillampa_inbjudningar`)."""
+        _roll_niva(roll)
+        ren = normalisera_epost(epost)
+        inbjudan_id = _ny_id()
+        with self.db.transaktion() as c:
+            org = c.execute(
+                "SELECT organisation_id FROM projekt WHERE id = ?", (projekt_id,)
+            ).fetchone()
+            if not org:
+                raise RegisterFel("Okänt projekt")
+            if not self._far_administrera(c, utforare, org["organisation_id"]):
+                raise BehorighetFel("Kräver organisationsadmin")
+            c.execute(
+                "INSERT INTO projektinbjudan (id, projekt_id, epost, roll, skapad_av, skapad,"
+                " giltig_till) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    inbjudan_id,
+                    projekt_id,
+                    ren,
+                    roll,
+                    utforare,
+                    self.nu(),
+                    self.nu() + giltig_dagar * 86400,
+                ),
+            )
+            self.notera(c, "inbjudan-skapad", utforare, f"inbjudan={inbjudan_id} roll={roll}")
+        return inbjudan_id
+
+    # --- sammanfattning till /konto/jag -------------------------------------------------------
+
+    def sammanfattning(self, konto_id: str) -> dict[str, object]:
+        with self.db.transaktion() as c:
+            org = c.execute(
+                "SELECT m.organisation_id AS id, o.namn, m.roll, m.kalla, m.forvaltning_id,"
+                " f.namn AS forvaltning FROM medlemskap m"
+                " JOIN organisation o ON o.id = m.organisation_id"
+                " LEFT JOIN forvaltning f ON f.id = m.forvaltning_id"
+                " WHERE m.konto_id = ? ORDER BY o.namn, f.namn",
+                (konto_id,),
+            ).fetchall()
+            proj = c.execute(
+                "SELECT p.id, p.namn, b.roll FROM projektbehorighet b"
+                " JOIN projekt p ON p.id = b.projekt_id WHERE b.konto_id = ? ORDER BY p.namn",
+                (konto_id,),
+            ).fetchall()
+        return {
+            "medlemskap": [
+                {
+                    "organisation_id": r["id"],
+                    "organisation": r["namn"],
+                    "forvaltning_id": r["forvaltning_id"],
+                    "forvaltning": r["forvaltning"],
+                    "roll": r["roll"],
+                    "kalla": r["kalla"],
+                }
+                for r in org
+            ],
+            "projekt": [{"id": r["id"], "namn": r["namn"], "roll": r["roll"]} for r in proj],
+        }
