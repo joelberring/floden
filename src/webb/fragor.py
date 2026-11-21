@@ -50,6 +50,7 @@ from webb.resultatlager import (
     rita_bild,
     sammanfoga,
     tak_mask,
+    takkalla_for_roll,
     teckenforklaring,
     varde_intervall,
 )
@@ -57,7 +58,7 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
-LAGER_VERSION = 4
+LAGER_VERSION = 5
 
 
 _SCENARIOTEXT = {"fore": "före", "hojd": "höjd"}
@@ -654,7 +655,7 @@ class FragaTjanst:
                     mappar = [
                         mapp for sid in scen for mapp in rutor_per_scenario.get(sid, {}).values()
                     ]
-                    tak = tak_mask(m, mappar)
+                    tak = tak_mask(m, mappar, takkalla_for_roll(p["roll"]))
                 except (LagerFel, OSError, ValueError) as exc:
                     varningar.append(f"Takmasken för {p['id']} kunde inte byggas: {exc}")
             har_tak = tak is not None and bool(tak.any())

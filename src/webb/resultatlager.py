@@ -22,7 +22,9 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
 
-from markmodell.hinder_oppningar import BYGGNAD
+from karna.geometri.lasa import las_byggnader
+from karna.geometri.rasterfil import ruta_fran_geo
+from markmodell.hinder_oppningar import BYGGNAD, brann_in_byggnader
 from testsvit.k1_io import las_geotiff
 
 MAX_PX = 2048
@@ -48,6 +50,19 @@ _SKILLNAD_OKNING = "#b4462b"
 
 MASKADE_ROLLER = frozenset({"soltimmar", "svf", "max_djup"})
 """Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
+
+TAKKALLA_FOTAVTRYCK = "fotavtryck"
+TAKKALLA_MARKSLAG = "markslag"
+
+
+def takkalla_for_roll(roll: str) -> str:
+    """Vad som är "tak" för rollen.
+
+    Dagsljus (soltimmar, himmelsandel) räknas på ytmodellen, där en port i ett hus är täckt av
+    taket: byggnadens fotavtryck (`byggnader.gpkg`) är tak. Vatten räknas på marken, där en port
+    är öppen och vattnet rinner: bara det som är byggnad i markslaget är tak.
+    """
+    return TAKKALLA_MARKSLAG if roll == "max_djup" else TAKKALLA_FOTAVTRYCK
 
 ETIKETTER: dict[str, tuple[str, str]] = {
     "soltimmar": ("Soltimmar på marken", "h"),
@@ -279,11 +294,28 @@ def rita_bild(
     return Bild(buf.getvalue(), int(v.shape[1]), int(v.shape[0]), faktor, bbox)
 
 
-def tak_mask(mosaik: Mosaik, rutor: Sequence[Path]) -> NDArray[np.bool_]:
-    """Celler i `mosaik` som är byggnadens fotavtryck (markslag 9) i någon av K1-rutorna `rutor`.
+def _fotavtryck(mapp: Path, geo: Any) -> NDArray[np.bool_]:
+    """Byggnadernas fotavtryck i en K1-ruta, inbrända som i `ytmodell_fran` (även portar)."""
+    nollor = np.zeros((geo.hojd, geo.bredd), dtype=np.uint8)
+    _, slag = brann_in_byggnader(
+        np.zeros(nollor.shape, dtype=np.float32),
+        nollor,
+        ruta_fran_geo(geo),
+        [b.till_byggnad() for b in las_byggnader(mapp)],
+    )
+    return np.asarray(slag == BYGGNAD)
+
+
+def tak_mask(
+    mosaik: Mosaik, rutor: Sequence[Path], kalla: str = TAKKALLA_MARKSLAG
+) -> NDArray[np.bool_]:
+    """Celler i `mosaik` som är tak i någon av K1-rutorna `rutor`.
 
     På byggnadens celler visar ett markraster byggnadens tak, inte mark: soltimmar på ett tak
-    och djup i en byggnad är inte markvärden. Läser bara `markslag.tif`; ingenting räknas om.
+    och djup i en byggnad är inte markvärden. `kalla` är `markslag` (celler med markslag 9 i
+    `markslag.tif`; en port i huset är öppen och räknas som mark) eller `fotavtryck` (byggnadernas
+    polygoner i `byggnader.gpkg`, samma som dagsljusets ytmodell; en port är täckt och räknas som
+    tak). Ingenting räknas om utöver att polygonerna rastreras.
     Ligger rutorna på ett finare rutnät än mosaiken slås cellerna ihop (en cell är tak om någon
     av dess delceller är det).
     """
@@ -302,7 +334,12 @@ def tak_mask(mosaik: Mosaik, rutor: Sequence[Path]) -> NDArray[np.bool_]:
                 f"{fil}: cellstorleken {geo.pixelstorlek_x} m passar inte lagrets {px} m."
             )
         fi = round(f)
-        fot = np.asarray(arr) == BYGGNAD
+        if kalla == TAKKALLA_FOTAVTRYCK:
+            fot = _fotavtryck(mapp, geo)
+        elif kalla == TAKKALLA_MARKSLAG:
+            fot = np.asarray(arr) == BYGGNAD
+        else:
+            raise LagerFel(f"Okänd takkälla '{kalla}'.")
         hh, bb = (fot.shape[0] // fi) * fi, (fot.shape[1] // fi) * fi
         if fi > 1:
             fot = fot[:hh, :bb].reshape(hh // fi, fi, bb // fi, fi).any(axis=(1, 3))

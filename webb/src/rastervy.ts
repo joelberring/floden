@@ -383,6 +383,9 @@ export class RasterVy {
     }
     for (let n = Math.ceil(n0 / steg) * steg; n <= n1; n += steg) {
       const [, y] = this.tillSkarm(0, n);
+      // Skalstocken ligger nere till vänster (rutan y - 18 .. y + 14 kring this.hojd - 20): en
+      // koordinatetikett som skulle hamna under den lämnas ute, linjen finns kvar.
+      if (y + 14 > this.hojd - 40 && y + 2 < this.hojd - 4) continue;
       c.fillText(formatTal(n), 3, y + 3);
     }
   }
