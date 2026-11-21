@@ -6,7 +6,7 @@ import json
 import math
 import struct
 import urllib.parse
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -117,10 +117,7 @@ def sok_lantmateriet_stac(
         )
     else:
         eff_cache = LokalDataCache(hamtare=hamtare)
-        if hamtare is None:
-            raw = eff_cache._hamtare(url, headers)
-        else:
-            raw = hamtare(url, headers)
+        raw = eff_cache._hamtare(url, headers) if hamtare is None else hamtare(url, headers)
         try:
             tolkat = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
