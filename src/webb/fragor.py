@@ -40,7 +40,7 @@ from karna.resultatcache import CacheFel, ResultatCache
 from karna.rutscenario import ScenarioFel, materialisera_scenario
 from karna.utredning import FragaFel, KorbarFraga, las_fraga
 from webb.fel import FlodenWebbFel
-from webb.moduler import losarinfo
+from webb.moduler import losarinfo, visningsnamn
 from webb.resultatlager import (
     MASKADE_ROLLER,
     LagerFel,
@@ -57,7 +57,15 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
-LAGER_VERSION = 2
+LAGER_VERSION = 4
+
+
+_SCENARIOTEXT = {"fore": "före", "hojd": "höjd"}
+
+
+def _scen(scenario_id: str) -> str:
+    """Scenario-id som läsbar text (`nytt_hus` blir `nytt hus`)."""
+    return _SCENARIOTEXT.get(scenario_id, scenario_id).replace("_", " ")
 
 
 def _nu() -> str:
@@ -212,6 +220,7 @@ class FragaTjanst:
                     "id": a.id,
                     "losare": a.losare,
                     "doman": None if info is None else info["doman"],
+                    "visningsnamn": visningsnamn(a.losare),
                     "scenarier": list(a.scenarier),
                     "parametrar": dict(a.parametrar),
                     "beror_pa": list(a.beror_pa),
@@ -273,9 +282,18 @@ class FragaTjanst:
         return {"finns": True, **d}
 
     def lista_fragor(self) -> dict[str, Any]:
+        demo_refs = {
+            r
+            for r, d in self.demo().get("delar", {}).items()
+            if isinstance(d, dict) and "jobb" in d
+        }
+        fragor = [
+            {**self._beskriv(ref, fil), "i_demon": ref in demo_refs}
+            for ref, fil in self._fragefiler().items()
+        ]
         return {
             "fragemappar": [self._visa(m) for m in self.fragemappar],
-            "fragor": [self._beskriv(ref, fil) for ref, fil in self._fragefiler().items()],
+            "fragor": fragor,
         }
 
     def hamta_fraga(self, ref: str) -> dict[str, Any]:
@@ -623,10 +641,10 @@ class FragaTjanst:
             if p["skillnad"]:
                 lo, hi = varde_intervall([m.raster])
                 lo, hi = 0.0, max(abs(lo), abs(hi))
-                namn = f"{etikett} · {p['efter']} − {p['fore']}"
+                namn = f"{etikett} · {_scen(p['efter'])} − {_scen(p['fore'])}"
             else:
                 lo, hi = skalor[(p["analys"], p["roll"])]
-                namn = f"{etikett} · {p['scenario']}"
+                namn = f"{etikett} · {_scen(p['scenario'])}"
             # Byggnadernas tak är inte mark: maskas i markrastren (soltimmar, SVF, djup). Skillnaden
             # maskar fotavtrycket i före och efter, så att ett nytt hus inte syns som ändrad mark.
             tak: Any = None

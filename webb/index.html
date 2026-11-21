@@ -9,16 +9,16 @@
     <a class="hoppa-till" href="#vy-sida">Hoppa till innehållet</a>
     <header id="sidhuvud" class="sidhuvud"></header>
 
-    <!-- Startsida, översikt, projekt och förvaltning ritas av router.ts här. -->
+    <!-- Startsida, projekt, karta, frågor och om-sidan ritas av router.ts här. -->
     <main id="vy-sida" class="vy-sida" tabindex="-1"></main>
 
     <!--
-      Kartsidan: arbetsbänken (main.ts) behåller sina element mellan sidbyten, så att kartan
+      Arbetsbänken för kontrollfallen (main.ts) behåller sina element mellan sidbyten, så att kartan
       och pågående ritningar finns kvar. Element-id:n används av main.ts och får inte ändras.
     -->
     <div id="vy-karta" class="vy-karta" hidden>
       <div class="karta-verktygsrad">
-        <a id="karta-tillbaka" class="karta-tillbaka" href="#/oversikt">← Tillbaka</a>
+        <a id="karta-tillbaka" class="karta-tillbaka" href="#/om">← Om beräkningarna</a>
         <div class="knapp-rad vy-vaxlare" role="group" aria-label="Visningsläge före och efter">
           <button type="button" class="flik-knapp" data-jamfor="fore">Före</button>
           <button type="button" class="flik-knapp" data-jamfor="efter">Efter</button>
@@ -36,7 +36,7 @@
 
       <div id="app" class="app-skal">
         <aside class="sidopanel sidopanel-vanster" aria-label="Moduler, lager och verktyg">
-          <div id="modul-vaxlare" class="modul-vaxlare" role="group" aria-label="Modul"></div>
+          <p class="hjalptext arbetsbank-not">Arbetsbänk för kontrollfallen: syntetiska områden med känt svar. Här prövas modellen; det är inte projekt.</p>
 
           <section class="panel-sektion">
             <h2>Lager</h2>
@@ -176,7 +176,7 @@
         <aside class="sidopanel sidopanel-hoger" aria-label="Scenario och körning">
           <section class="panel-sektion">
             <h2>Scenario</h2>
-            <label class="falt-etikett" for="omrade-valjare">Område (K1)</label>
+            <label class="falt-etikett" for="omrade-valjare">Kontrollfall</label>
             <select id="omrade-valjare" class="kontroll"></select>
 
             <label class="falt-etikett" for="regn-forval">Regn</label>

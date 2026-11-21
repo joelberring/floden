@@ -11,6 +11,7 @@ export interface FragaAnalys {
   id: string;
   losare: string;
   doman: string | null;
+  visningsnamn?: string;
   scenarier: string[];
   parametrar: Record<string, unknown>;
   beror_pa: string[];
@@ -43,6 +44,7 @@ export interface FragaPost {
   analyser?: FragaAnalys[];
   jamforelser?: FragaJamforelse[];
   indata_saknas?: string[];
+  i_demon?: boolean;
 }
 
 export interface FragorSvar {

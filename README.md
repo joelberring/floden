@@ -73,30 +73,32 @@ köras om utan kostnad: är inget ändrat tar det under en sekund, och `--tvinga
 Kvarteret är **syntetiskt**: ett påhittat område med fyra kvarter, gator, gårdar och en skålformad
 sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkliga byggnader.
 
-**Förslag till visning (5–7 punkter):**
+**Förslag till visning (följ menyn: Start, Projekt, Karta, Utredningsfrågor, Om beräkningarna):**
 
-1. Öppna **Frågor**. De tre korten överst är demon: dagsljus, vatten och luft (luft är märkt
-   *Ej förkörd*: vindkomfortlösaren finns men en körning tar över tio minuter på CPU, se
-   `exempel/fragor/luft_fore_efter.toml`).
-2. **Dagsljus.** Tryck *Visa resultatet*. Lagret *Soltimmar · höjd − bas* visar var skuggan faller
-   när en byggnad görs högre (blått är färre soltimmar). Byt till *nytt hus* för det andra fallet.
-3. **Hovra** över kartan: värdena för bas, scenario och skillnad står under kartan. Grå ytor är
-   byggnader (*tak, inte mark*): där visas inget markvärde. Slå på *Visa värden på tak* om du vill
-   se dem ändå.
-4. **Vatten.** Tryck *Visa resultatet* på vattenkortet. Rutan *Antaganden* överst visar regnet
-   som lösaren faktiskt använde: Stockholmsregn 2024, 100 år, 360 min, klimatfaktor 1,4. Källa och
-   faktor är körningens egna, inte webbens.
-5. Skillnadslagret visar var vattnet dämms upp när det nya huset byggs. Växla mellan *Bas*,
-   *Scenario* och *Skillnad* och jämför djupen.
-6. **Varningar** står överst i resultatet. Där står bara det lösarna själva varnat för; en rad som
-   *Inga varningar från lösarna* är ett verkligt besked.
-7. Frågan om *hur det räknades*: allt går att följa till `run.json` per jobb (K0-manifest), och
-   samma fråga ger samma svar (cachen, K22).
+1. **Start.** Tre steg: välj ett exempel, se före och efter, läs av värden. Under dem står vad Floden
+   kan räkna på, med ärlig status per del: *Vatten* och *Dagsljus* finns i demon; *Luft* finns men en
+   beräkning tar mer än tio minuter och är inte förberäknad i demon; *Buller* är under utveckling
+   (metodkontroll pågår, 33 av 80 officiella testfall godkända). Statusen kommer från `GET /api/moduler`.
+2. **Projekt.** Öppna *Demokvarteret*, ett tydligt märkt påhittat kvarter. Sidan visar vad som ändras
+   (höjt hus, nytt hus) och siffror ur körningarnas egna resultat: soltimmar på mark och skyfall före
+   och efter. Byggnadernas tak räknas inte som mark. Ett mått som inte går att räkna visas inte.
+   *Teknisk information* (lösare, versioner, regnets parametrar) är hopfälld.
+3. **Karta.** Välj vy (dagsljus höjt hus, dagsljus nytt hus, vatten nytt hus) och läge: *Före*, *Efter*,
+   *Skillnad*, *Svep* (dra reglaget) eller *Sida vid sida*. Rutan *Så läser du kartan* förklarar färgerna.
+4. **Hovra** över kartan: värdena för före, efter och skillnad står under kartan. Grå ytor är byggnader
+   (tak, inte mark). Byggnadslagret och värden på tak slås av och på under kartan.
+5. **Utredningsfrågor.** Demokorten överst går att köra direkt (resultatet finns redan i cachen).
+   *Fler exempel (kräver egna data)* är hopfälld: de frågorna kan inte köras i demon.
+6. **Om beräkningarna.** Modulerna, och *Kontroll av beräkningarna*: syntetiska fall med känt svar som
+   modellen prövas mot.
 
-**Inloggning med Google** är avslagen som standard. Den slås på i `config.local.toml`
+**Inloggning med Google** är avslagen som standard och då visas varken förvaltningssida eller
+organisationsväljare. De dyker upp först när inloggningen är på och kontoservern har uppgifter för
+kontot. Den slås på i `config.local.toml`
 (`inloggning = "pa"` plus Googles klient-id och hemlighet) och beskrivs steg för steg i
 `docs/KONTO.md` (avsnitt 2 för Google-klienten, avsnitt 8 för hur den är kopplad i webben). Med
-inloggning på visas en *Logga in med Google*-knapp, *Inloggad som …* och *Logga ut* i sidhuvudet.
+inloggning på visas en *Logga in med Google*-knapp och, när du är inloggad, ditt namn och *Logga ut*.
 
-Skärmbilder: `docs/bilder/demo-start.png`, `demo-dagsljus.png`, `demo-vatten.png`
-(`python tools/webb_skarmbild.py --demo`).
+Skärmbilder (bred 1440 px och smal 800 px med `-smal`): `docs/bilder/demo-start.png`,
+`demo-projekt.png`, `demo-karta.png` (+ `demo-karta-vatten.png`), `demo-fragor.png`, `demo-dagsljus.png`,
+`demo-vatten.png` (`python tools/webb_skarmbild.py --demo`).

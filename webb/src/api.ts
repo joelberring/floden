@@ -4,6 +4,8 @@ import type {
   KorSvar,
   ModulerSvar,
   OmradenSvar,
+  ProjektListaSvar,
+  ProjektSvar,
   OmradeLagerSvar,
   RapportBegaran,
   RapportSvar,
@@ -115,6 +117,14 @@ export function beraknaRutt(begaran: RuttBegaran): Promise<RuttSvar> {
 
 export function hamtaModuler(): Promise<ModulerSvar> {
   return lasJson<ModulerSvar>(`${API_BAS}/moduler`);
+}
+
+export function hamtaProjektLista(): Promise<ProjektListaSvar> {
+  return lasJson<ProjektListaSvar>(`${API_BAS}/projekt`);
+}
+
+export function hamtaProjekt(id: string): Promise<ProjektSvar> {
+  return lasJson<ProjektSvar>(`${API_BAS}/projekt/${encodeURIComponent(id)}`);
 }
 
 /* ---------- Utredningsfrågor (K20) ---------- */

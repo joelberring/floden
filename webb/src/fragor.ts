@@ -8,6 +8,7 @@ import {
   hamtaAvlasning,
   hamtaDemo,
   hamtaFragor,
+  hamtaModuler,
   hamtaKorning,
   hamtaKorningar,
   hamtaResultat,
@@ -30,7 +31,10 @@ import type {
 } from "./fragor-typer";
 import { kontoNotis, vidKontoandring } from "./konto";
 import { RasterVy, type VyByggnad, type VyLager } from "./rastervy";
-import { esc } from "./sidor";
+import { lagerTekniskHtml, teckenforklaringHtml } from "./teckenforklaring";
+import { lasKartanText } from "./kartforklaring";
+import { esc, PROJEKT_ID } from "./sidor";
+import type { ModulInfo } from "./types";
 
 const OSM_MALL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const LAGRING_BAKGRUND = "floden.bakgrund";
@@ -51,6 +55,7 @@ interface Tillstand {
   fleraLager: boolean;
   visaTak: boolean;
   demo: DemoSvar | null;
+  moduler: ModulInfo[];
   opacitet: number;
   forhandsvisning: { ref: DataTabellRef; kolumner: string[]; rader: Array<Record<string, unknown>>; antal: number } | null;
 }
@@ -70,6 +75,7 @@ const t: Tillstand = {
   fleraLager: false,
   visaTak: false,
   demo: null,
+  moduler: [],
   opacitet: 1,
   forhandsvisning: null,
 };
@@ -113,9 +119,10 @@ export function visaFragor(container: HTMLElement, ref: string | null): void {
     container.innerHTML = `
       <div class="sidbredd innehall fragor-sida">
         <div class="rubrikrad">
-          <h1 class="sidrubrik">Frågor</h1>
+          <h1 class="sidrubrik">Utredningsfrågor</h1>
           <p class="dampad fragor-notis" id="fr-notis">${esc(kontoNotis())}</p>
         </div>
+        <p class="ingress fragor-ingress">Välj en fråga, se vad som ska beräknas, beräkna och läs resultatet. Exemplen gäller det påhittade demokvarteret.</p>
         <section id="fr-demo" aria-labelledby="fr-demo-rubrik" hidden></section>
         <section id="fr-val" aria-labelledby="fr-val-rubrik"></section>
         <section id="fr-plan" aria-labelledby="fr-plan-rubrik" hidden></section>
@@ -142,15 +149,24 @@ vidKontoandring(() => {
 });
 
 async function laddaDemo(): Promise<void> {
-  if (t.demo) return;
-  try {
-    t.demo = await hamtaDemo();
-  } catch {
-    t.demo = null; // Demon är valfri: utan den visas bara frågelistan.
+  if (!t.demo) {
+    try {
+      t.demo = await hamtaDemo();
+    } catch {
+      t.demo = null; // Demon är valfri: utan den visas bara frågelistan.
+    }
+  }
+  if (t.moduler.length === 0) {
+    try {
+      t.moduler = (await hamtaModuler()).moduler;
+    } catch {
+      t.moduler = [];
+    }
   }
   ritaDemo();
 }
 
+/** Demokorten: vad som finns förkört, och ärligt vad som inte gör det (statusen kommer från /api/moduler). */
 function ritaDemo(): void {
   const sek = el("fr-demo");
   if (!sek) return;
@@ -167,24 +183,26 @@ function ritaDemo(): void {
            <h3>${esc(rubrik)}</h3>
            <p>${esc(text)}</p>
            <button type="button" class="knapp knapp-svart" data-demo="${esc(del.ref)}">Visa resultatet</button>
-           <span class="dampad liten-text">${del.jobb} jobb</span>
          </article>`
       : "";
-  const luft = d.delar.luft
-    ? `<article class="demo-kort demo-kommer">
-         <h3>Luft <span class="chip">Ej förkörd</span></h3>
-         <p>${esc(d.delar.luft.text)}</p>
-       </article>`
-    : "";
+  const ovriga = t.moduler
+    .filter((m) => m.status !== "finns_i_demon")
+    .map(
+      (m) => `<article class="demo-kort demo-kommer">
+         <h3>${esc(m.namn)}</h3>
+         <p>${esc(m.status_text)}</p>
+       </article>`,
+    )
+    .join("");
   sek.innerHTML = `
     <div class="sektionsrad linje-under-stark">
-      <h2 class="etikett" id="fr-demo-rubrik">Demo</h2>
+      <h2 class="etikett" id="fr-demo-rubrik">Exempel i demokvarteret</h2>
       <span class="dampad">Ett påhittat kvarter. Inga verkliga data, inga verkliga byggnader.</span>
     </div>
     <div class="demo-rad">
-      ${kort(d.delar.demo_dagsljus, "Dagsljus", "Soltimmar på marken före och efter: en höjd byggnad och ett nytt hus.")}
-      ${kort(d.delar.demo_vatten, "Vatten", "Blåytor och maxdjup vid ett skyfall, före och efter ett nytt hus.")}
-      ${luft}
+      ${kort(d.delar.demo_dagsljus, "Dagsljus", "Soltimmar på marken före och efter: ett höjt hus och ett nytt hus.")}
+      ${kort(d.delar.demo_vatten, "Vatten", "Var vattnet blir stående vid ett skyfall, före och efter ett nytt hus.")}
+      ${ovriga}
     </div>`;
   for (const knapp of Array.from(sek.querySelectorAll<HTMLButtonElement>("[data-demo]"))) {
     knapp.addEventListener("click", () => {
@@ -212,19 +230,33 @@ async function laddaFragor(): Promise<void> {
 function ritaVal(): void {
   let innehall: string;
   if (t.fel) {
-    innehall = `<p class="fel-text" role="alert">Kunde inte hämta frågorna: ${esc(t.fel)}. Starta API:t med <code>PYTHONPATH=src python -m webb.api</code>.</p>`;
+    innehall = `<p class="fel-text" role="alert">Frågorna gick inte att hämta: ${esc(t.fel)}. Är servern igång? Starta den med <code>floden webb</code>.</p>`;
   } else if (!t.fragor) {
     innehall = `<p class="dampad tom">Hämtar frågor …</p>`;
   } else if (t.fragor.length === 0) {
-    innehall = `<p class="dampad tom">Inga frågefiler i ${t.fragemappar.map(esc).join(", ") || "frågemappen"}. Sätt <code>[webb] fragemappar</code> i config.toml.</p>`;
+    innehall = `<p class="dampad tom">Det finns inga frågor än.</p>`;
   } else {
-    innehall = `<ul class="fraga-lista">${t.fragor.map(fragaRad).join("")}</ul>`;
+    const demo = t.fragor.filter((f) => f.i_demon);
+    const egna = t.fragor.filter((f) => !f.i_demon && (f.indata_saknas?.length ?? 0) > 0);
+    const kontroll = t.fragor.filter((f) => !f.i_demon && (f.indata_saknas?.length ?? 0) === 0);
+    const lista = (poster: FragaPost[]): string => `<ul class="fraga-lista">${poster.map(fragaRad).join("")}</ul>`;
+    innehall = `
+      ${demo.length > 0 ? lista(demo) : `<p class="dampad tom">Demokvarteret är inte byggt på den här datorn än. Kör <code>floden demo</code> i en terminal och ladda om sidan.</p>`}
+      ${
+        egna.length > 0
+          ? `<details class="fler-exempel"><summary>Fler exempel (kräver egna data)</summary>${lista(egna)}</details>`
+          : ""
+      }
+      ${
+        kontroll.length > 0
+          ? `<details class="fler-exempel"><summary>Kontrollfrågor (syntetiska fall med känt svar)</summary>${lista(kontroll)}</details>`
+          : ""
+      }`;
   }
   satt(
     "fr-val",
     `<div class="sektionsrad linje-under-stark">
        <h2 class="etikett" id="fr-val-rubrik">1 · Välj fråga</h2>
-       <span class="dampad">Frågefiler (K20) i ${t.fragemappar.map(esc).join(", ") || "…"}</span>
      </div>${innehall}`,
   );
   for (const knapp of Array.from(rot?.querySelectorAll<HTMLButtonElement>("[data-fraga]") ?? [])) {
@@ -237,19 +269,20 @@ function ritaVal(): void {
 
 function fragaRad(f: FragaPost): string {
   const vald = t.vald?.ref === f.ref;
-  const analyser = (f.analyser ?? []).map((a) => `<span class="chip">${esc(a.losare)}</span>`).join("");
-  const scen = f.scenarier ? `${f.scenarier.length} scenarier` : "";
+  const analyser = (f.analyser ?? [])
+    .map((a) => `<span class="chip">${esc(a.visningsnamn ?? a.losare)}</span>`)
+    .join("");
+  const kravEgnaData = (f.indata_saknas?.length ?? 0) > 0;
   const problem = !f.giltig
-    ? `<span class="fel-text">Kan inte köras: ${esc(f.fel ?? "okänt fel")}</span>`
-    : (f.indata_saknas?.length ?? 0) > 0
-      ? `<span class="dampad">Indata saknas (${f.indata_saknas?.length}): frågan kan inte köras förrän den byggts. Se hjälptexten när frågan är vald.</span>`
+    ? `<span class="fel-text">Den här frågan kan inte köras: ${esc(f.fel ?? "okänt fel")}</span>`
+    : kravEgnaData
+      ? `<span class="dampad">Den här frågan kräver egna data och kan inte köras i demon.</span>`
       : "";
   return `
     <li>
       <button type="button" class="fraga-rad${vald ? " vald" : ""}" data-fraga="${esc(f.ref)}" aria-pressed="${vald}" ${f.giltig ? "" : "disabled"}>
-        <span class="lista-titel">${esc(f.fraga_id)}</span>
-        <span class="dampad">${esc(f.beskrivning)}</span>
-        <span class="fraga-meta">${analyser}<span class="dampad">${esc(scen)} · ${esc(f.fil)}</span></span>
+        <span class="lista-titel">${esc(f.beskrivning || f.fraga_id)}</span>
+        <span class="fraga-meta">${analyser}</span>
         ${problem}
       </button>
     </li>`;
@@ -308,16 +341,20 @@ function ritaPlan(): void {
   sek.hidden = t.vald === null;
   if (!t.vald) return;
   const v = t.vald;
-  const hjalp =
-    (v.indata_saknas?.length ?? 0) > 0
-      ? `<div class="hjalp-ruta" role="note">
-           <strong>Indata saknas:</strong> ${(v.indata_saknas ?? []).map((s) => `<code>${esc(s)}</code>`).join(", ")}
+  const saknas = (v.indata_saknas?.length ?? 0) > 0;
+  const hjalp = saknas
+    ? `<div class="hjalp-ruta" role="note">
+         <strong>Den här frågan kräver egna data och kan inte köras i demon.</strong>
+         <details class="teknisk"><summary>Teknisk information</summary>
+           <p>Indata som saknas:</p>
+           <ul class="enkel-lista">${(v.indata_saknas ?? []).map((x) => `<li><code>${esc(x)}</code></li>`).join("")}</ul>
            ${v.hjalp ? `<pre>${esc(v.hjalp)}</pre>` : ""}
-         </div>`
-      : "";
+         </details>
+       </div>`
+    : "";
   let kropp: string;
   if (t.planFel) {
-    kropp = `${hjalp}<p class="fel-text" role="alert">${esc(t.planFel)}</p>`;
+    kropp = `${hjalp}${saknas ? "" : `<p class="fel-text" role="alert">${esc(t.planFel)}</p>`}`;
   } else if (!t.plan) {
     kropp = `<p class="dampad tom">Planerar …</p>`;
   } else {
@@ -325,8 +362,8 @@ function ritaPlan(): void {
   }
   sek.innerHTML = `
     <div class="sektionsrad linje-under-stark">
-      <h2 class="etikett" id="fr-plan-rubrik">2 · Plan</h2>
-      <span class="dampad">${esc(v.fraga_id)}</span>
+      <h2 class="etikett" id="fr-plan-rubrik">2 · Vad som beräknas</h2>
+      <span class="dampad">${esc(v.beskrivning)}</span>
     </div>${kropp}`;
   el<HTMLButtonElement>("kor-fraga")?.addEventListener("click", () => void kor());
   ritaKorStatus();
@@ -334,38 +371,46 @@ function ritaPlan(): void {
 
 function planInnehall(p: PlanSvar, hjalp: string): string {
   const s = p.sammanfattning;
+  const analysnamn = (id: string): string =>
+    t.vald?.analyser?.find((a) => a.id === id)?.visningsnamn ?? id;
   const rader = Object.entries(p.per_analys)
     .map(([analys, a]) => {
       const j = p.jobb.find((x) => x.analys === analys);
       const radie = j?.radie_m == null ? "global" : `${HELTAL.format(j.radie_m)} m`;
-      return `<tr><td class="mono">${esc(analys)}</td><td class="mono">${esc(j?.losare ?? "")}@${esc(j?.version ?? "")}</td>
+      return `<tr><td>${esc(analysnamn(analys))}</td><td class="mono">${esc(j?.losare ?? "")}@${esc(j?.version ?? "")}</td>
         <td class="hoger">${a.jobb}</td><td class="hoger">${a.i_cache}</td><td class="hoger">${a.att_kora}</td><td class="hoger">${esc(radie)}</td></tr>`;
     })
     .join("");
   const u = p.utbredning;
   const rutor = p.scenarier[0]?.antal_rutor ?? 0;
+  const allt = s.att_kora === 0;
   return `
     ${hjalp}
     <div class="plan-rad">
       <div class="plan-tal">
-        <div class="tal-kort"><span class="tal stor-tal">${s.jobb}</span><span class="etikett-liten">Jobb</span></div>
-        <div class="tal-kort"><span class="tal stor-tal">${s.i_cache}</span><span class="etikett-liten">Finns i cachen</span></div>
-        <div class="tal-kort"><span class="tal stor-tal">${s.att_kora}</span><span class="etikett-liten">Att köra</span></div>
+        <div class="tal-kort"><span class="tal stor-tal">${s.jobb}</span><span class="etikett-liten">Beräkningar</span></div>
+        <div class="tal-kort"><span class="tal stor-tal">${s.i_cache}</span><span class="etikett-liten">Redan beräknade</span></div>
+        <div class="tal-kort"><span class="tal stor-tal">${s.att_kora}</span><span class="etikett-liten">Kvar att beräkna</span></div>
       </div>
+      <p class="dampad plan-text">${allt ? "Allt är redan beräknat och sparat; resultatet visas direkt." : "Beräkningen delas upp i delområden. Det som redan är beräknat sparas och används igen."}</p>
+    </div>
+    <details class="teknisk">
+      <summary>Teknisk information</summary>
       <div class="plan-karta">
         ${planKartaSvg(p)}
-        <p class="dampad liten-text">${rutor} rutor${u ? ` · E ${HELTAL.format(u.x_min)}–${HELTAL.format(u.x_max)} · N ${HELTAL.format(u.y_min)}–${HELTAL.format(u.y_max)} (SWEREF 99 18 00)` : ""}.
-          Mörk ruta: alla jobb finns i cachen. Streckad: delvis. Vit: ska köras. Ljusgrå med prickad kant: omgivning, ingen beräkning.</p>
+        <p class="dampad liten-text">${rutor} delområden${u ? ` · E ${HELTAL.format(u.x_min)}–${HELTAL.format(u.x_max)} · N ${HELTAL.format(u.y_min)}–${HELTAL.format(u.y_max)} (SWEREF 99 18 00, EPSG:3011)` : ""}.
+          Mörk ruta: allt finns i cachen. Streckad: delvis. Vit: ska beräknas. Ljusgrå med prickad kant: omgivning, ingen beräkning.</p>
       </div>
-    </div>
-    <div class="tabell-ruta">
-      <table class="data-tabell">
-        <thead><tr><th>Analys</th><th>Lösare</th><th class="hoger">Jobb</th><th class="hoger">I cache</th><th class="hoger">Att köra</th><th class="hoger">Påverkansradie</th></tr></thead>
-        <tbody>${rader}</tbody>
-      </table>
-    </div>
+      <div class="tabell-ruta">
+        <table class="data-tabell">
+          <thead><tr><th>Beräkning</th><th>Lösare</th><th class="hoger">Antal</th><th class="hoger">I cache</th><th class="hoger">Kvar</th><th class="hoger">Påverkansradie</th></tr></thead>
+          <tbody>${rader}</tbody>
+        </table>
+      </div>
+      <p class="dampad liten-text">Fil: <span class="mono">${esc(t.vald?.fil ?? "")}</span></p>
+    </details>
     <div class="kor-rad">
-      <button type="button" id="kor-fraga" class="knapp knapp-svart">${s.att_kora === 0 ? "Hämta från cachen" : "Kör frågan"}</button>
+      <button type="button" id="kor-fraga" class="knapp knapp-svart">${allt ? "Visa resultatet" : "Beräkna"}</button>
       <div id="kor-status" class="kor-status" role="status" aria-live="polite"></div>
     </div>`;
 }
@@ -479,11 +524,11 @@ function ritaKorStatus(): void {
   const { klara, totalt } = k.framsteg;
   if (pagar) {
     status.innerHTML = `<progress max="${Math.max(totalt, 1)}" value="${klara}" aria-label="Framsteg"></progress>
-      <span>${k.status === "ko" ? "I kö" : "Kör"}: ${klara} av ${totalt} jobb</span>`;
+      <span>${k.status === "ko" ? "I kö" : "Beräknar"}: ${klara} av ${totalt} beräkningar</span>`;
   } else if (k.status === "fel") {
-    status.innerHTML = `<span class="fel-text" role="alert">Körningen misslyckades: ${esc(k.fel ?? "okänt fel")}</span>`;
+    status.innerHTML = `<span class="fel-text" role="alert">Beräkningen misslyckades: ${esc(k.fel ?? "okänt fel")}</span>`;
   } else {
-    status.innerHTML = `<span>Klar: ${totalt} jobb. Körning <span class="mono">${esc(k.korning_id)}</span></span>`;
+    status.innerHTML = `<span>Klar: ${totalt} beräkningar.</span>`;
   }
 }
 
@@ -531,18 +576,20 @@ function ritaResultat(): void {
       <p class="fel-text" role="alert">${esc(t.resultatFel ?? "")}</p>`;
     return;
   }
-  const s = r.sammanfattning;
+  const kartlank = t.vald?.i_demon
+    ? `<a class="textlank" href="#/karta/${PROJEKT_ID}">Öppna på kartan med före, efter och svep →</a>`
+    : "";
   sek.innerHTML = `
     <div class="sektionsrad linje-under-stark">
       <h2 class="etikett" id="fr-resultat-rubrik">3 · Resultat</h2>
-      <span class="dampad">${esc(r.fraga_id)} · ${s.jobb} jobb, ${s.i_cache} från cache, ${s.att_kora} körda på ${TAL.format(s.total_tid_s)} s · <span class="mono">${esc(r.korning.korning_id)}</span></span>
+      ${kartlank}
     </div>
     ${antagandenHtml(r)}
     ${varningarHtml(r.varningar)}
     <div class="resultat-karta">
       <div class="vy-kolumn">
         <div class="vy-verktyg">
-          <span id="markor-rad" class="mono dampad">EPSG:3011 · SWEREF 99 18 00</span>
+          <span id="markor-rad" class="mono dampad"></span>
           <span class="knapp-par">
             <button type="button" class="knapp knapp-liten" id="vy-in" aria-label="Zooma in">+</button>
             <button type="button" class="knapp knapp-liten" id="vy-ut" aria-label="Zooma ut">−</button>
@@ -552,81 +599,57 @@ function ritaResultat(): void {
         <div id="vy-yta" class="vy-yta"></div>
         <div id="avlasning" class="avlasning" role="status"><span class="dampad">Håll markören över kartan för att läsa värden.</span></div>
         <details class="installningar">
-          <summary class="etikett-liten">Inställningar</summary>
-          <label class="kryss-rad"><input type="checkbox" id="bakgrund-pa" ${lasBakgrund() ? "checked" : ""}/> Bakgrundskarta (hämtar plattor från en extern tjänst; av som standard)</label>
-          <label class="falt-rad">Plattmall <input type="text" id="bakgrund-url" class="kontroll" value="${esc(localStorage.getItem(LAGRING_BAKGRUND_URL) ?? OSM_MALL)}"/></label>
-          <p class="dampad liten-text">Bakgrunden är bara en orientering. Syntetiska rutor har inga verkliga koordinater, så den stämmer bara för rutor som ligger på riktig plats. Källa: © OpenStreetMap-bidragsgivare när standardmallen används.</p>
+          <summary class="etikett-liten">Bakgrundskarta (valfritt)</summary>
+          <label class="kryss-rad"><input type="checkbox" id="bakgrund-pa" ${lasBakgrund() ? "checked" : ""}/> Visa en bakgrundskarta (hämtas från en extern tjänst, av som standard)</label>
+          <label class="falt-rad">Adress till kartplattor <input type="text" id="bakgrund-url" class="kontroll" value="${esc(localStorage.getItem(LAGRING_BAKGRUND_URL) ?? OSM_MALL)}"/></label>
+          <p class="dampad liten-text">Bakgrunden är bara en orientering. Påhittade områden har inga verkliga koordinater, så den stämmer bara för områden som ligger på riktig plats. Källa: © OpenStreetMap-bidragsgivare när standardadressen används.</p>
         </details>
       </div>
       <aside class="lager-kolumn" id="lager-panel"></aside>
     </div>
-    <div id="matvarden" class="resultat-block"></div>
-    <div id="jamforelser" class="resultat-block"></div>
-    <div id="datatabeller" class="resultat-block"></div>`;
+    <div id="tekniskt" class="resultat-block"></div>`;
   startaVy(r);
   ritaLagerPanel();
-  ritaMatvarden(r);
-  ritaJamforelser(r);
-  ritaDatatabeller(r);
+  ritaTekniskt(r);
 }
 
-/** Parametrar som visas i sammanfattningen (resten finns i jobbens run.json). */
-const PARAMETERTEXT: Record<string, [string, string]> = {
-  azimutriktningar: ["riktningar", ""],
-  h_min_grader: ["lägsta solhöjd", "°"],
-  hojd_max_m: ["högsta höjd i terrängen", "m"],
-  cellstorlek_m: ["cellstorlek", "m"],
-};
-
+/** Regnet som användes, ur jobbens manifest. Webben räknar inget: allt här är lösarens egna värden. */
 const REGNTYP: Record<string, string> = { block: "blockregn", cds: "CDS-regn" };
 
-/** Antaganden ur jobbens manifest (run.json). Webben räknar inget: allt här är lösarens egna värden. */
 function antagandenHtml(r: ResultatSvar): string {
   const a = r.antaganden;
   if (!a) return "";
   const rader: string[] = [];
-  const medRegn = new Set<string>();
   for (const g of a.regn) {
-    medRegn.add(g.analys);
     const delar: string[] = [];
     if (g.kalla) {
       delar.push(`${esc(g.rapport ?? g.kalla)}${g.tabell ? ` (${esc(g.tabell)})` : ""}`);
-      if (g.aterkomsttid_ar != null) delar.push(`${TAL.format(g.aterkomsttid_ar)} års återkomsttid`);
+      if (g.aterkomsttid_ar != null) delar.push(`${TAL.format(g.aterkomsttid_ar)} år`);
       if (g.varaktighet_min != null) {
         const typ = g.regntyp ? `, ${esc(REGNTYP[g.regntyp] ?? g.regntyp)}` : "";
         delar.push(`${TAL.format(g.varaktighet_min)} min${typ}`);
       }
     } else {
-      delar.push("Regn angivet direkt (ingen IDF-källa)");
+      delar.push("Regn angivet direkt");
     }
     if (g.klimatfaktor != null) {
       delar.push(`klimatfaktor ${TAL.format(g.klimatfaktor)}${g.klimatfaktor_ingar_i_tabell ? " (ingår i tabellen)" : ""}`);
     }
     if (g.regn_mm != null) delar.push(`${DEC1.format(g.regn_mm)} mm regn totalt`);
-    rader.push(`<li><span class="etikett-liten">Regn</span> <span>${delar.join(" · ")}</span></li>`);
-  }
-  for (const an of a.analyser) {
-    if (medRegn.has(an.analys)) continue;
-    const par = Object.entries(PARAMETERTEXT)
-      .filter(([k]) => an.parametrar[k] !== null && an.parametrar[k] !== undefined)
-      .map(([k, [namn, enhet]]) => `${esc(namn)} ${esc(String(an.parametrar[k]))}${enhet ? ` ${enhet}` : ""}`)
-      .join(" · ");
-    rader.push(
-      `<li><span class="etikett-liten">${esc(an.analys)}</span> <span>${esc(an.losare)}@${esc(an.version)}${par ? ` · ${par}` : ""}</span></li>`,
-    );
+    rader.push(`<li><span class="etikett-liten">Regn som användes</span> <span>${delar.join(" · ")}</span></li>`);
   }
   if (rader.length === 0) return "";
-  return `<div class="antaganden" aria-label="Antaganden"><span class="etikett-liten">Antaganden</span><ul>${rader.join("")}</ul></div>`;
+  return `<div class="antaganden" aria-label="Antaganden"><ul>${rader.join("")}</ul></div>`;
 }
 
 function varningarHtml(v: VarningPost[]): string {
   if (v.length === 0) {
-    return `<div class="varning-ruta ingen" role="status"><span class="etikett-liten">Varningar</span> Inga varningar från lösarna.</div>`;
+    return `<div class="varning-ruta ingen" role="status"><span class="etikett-liten">Varningar</span> Inga varningar från beräkningarna.</div>`;
   }
   const rader = v
     .map((w) => {
       const var_ = [
-        w.antal_jobb > 0 ? `${w.antal_jobb} jobb` : "webben",
+        w.antal_jobb > 0 ? `${w.antal_jobb} beräkningar` : "webben",
         w.analyser.join(", "),
         w.scenarier.join(", "),
       ]
@@ -635,7 +658,7 @@ function varningarHtml(v: VarningPost[]): string {
       const varianter =
         w.varianter.length > 0
           ? `<details><summary class="liten-text">${w.varianter.length} varianter (olika tal)</summary><ul class="varianter">${w.varianter
-              .map((x) => `<li>${esc(x.text)} <span class="dampad">(${x.antal_jobb} jobb)</span></li>`)
+              .map((x) => `<li>${esc(x.text)} <span class="dampad">(${x.antal_jobb} beräkningar)</span></li>`)
               .join("")}</ul></details>`
           : "";
       return `<li><span>${esc(w.text)}</span><span class="dampad liten-text">${esc(var_)}</span>${varianter}</li>`;
@@ -658,10 +681,7 @@ function startaVy(r: ResultatSvar): void {
   vy.onMarkor = (e, n) => {
     const rad = el("markor-rad");
     if (rad) {
-      rad.textContent =
-        e === null || n === null
-          ? "EPSG:3011 · SWEREF 99 18 00"
-          : `E ${HELTAL.format(e)} · N ${HELTAL.format(n)} · EPSG:3011`;
+      rad.textContent = e === null || n === null ? "" : `E ${HELTAL.format(e)} · N ${HELTAL.format(n)}`;
     }
     planeraAvlasning(e, n);
   };
@@ -764,7 +784,7 @@ function visaAvlasning(a: AvlasningSvar | null): void {
       if (x.tak && !t.visaTak) text = "tak – inte mark";
       else if (x.varde === null) text = "inget värde";
       else text = formateraAvlasning(x.varde, x.enhet, x.typ) + (x.tak ? " (tak)" : "");
-      return `<span class="avl-post"><span class="etikett-liten">${esc(x.typ === "bas" ? "Bas" : `${TYP_ETIKETT[x.typ]} ${x.scenario}`)}</span> <span class="mono">${esc(text)}</span></span>`;
+      return `<span class="avl-post"><span class="etikett-liten">${esc(x.typ === "bas" ? "Före" : `${TYP_ETIKETT[x.typ]} ${x.scenario.replace(/_/g, " ")}`)}</span> <span class="mono">${esc(text)}</span></span>`;
     });
   ruta.innerHTML = delar.join("");
 }
@@ -794,10 +814,11 @@ function uppdateraByggnader(): void {
 }
 
 const TYP_ETIKETT: Record<LagerPost["typ"], string> = {
-  bas: "Bas",
-  scenario: "Scenario",
+  bas: "Före",
+  scenario: "Efter",
   skillnad: "Skillnad",
 };
+
 
 function ritaLagerPanel(): void {
   const r = t.resultat;
@@ -807,7 +828,7 @@ function ritaLagerPanel(): void {
   const flikar = analyser
     .map(
       (a) =>
-        `<button type="button" class="flik${a === t.aktivAnalys ? " vald" : ""}" data-analys="${esc(a)}" aria-pressed="${a === t.aktivAnalys}">${esc(a)}</button>`,
+        `<button type="button" class="flik${a === t.aktivAnalys ? " vald" : ""}" data-analys="${esc(a)}" aria-pressed="${a === t.aktivAnalys}">${esc(analysnamn(a))}</button>`,
     )
     .join("");
   const lager = r.lager.filter((l) => l.analys === t.aktivAnalys && (t.fleraLager || l.primar));
@@ -824,10 +845,14 @@ function ritaLagerPanel(): void {
     .join("");
   const aktivt = r.lager.find((l) => l.id === t.aktivtLager) ?? null;
   panel.innerHTML = `
+    <section class="lasruta" aria-labelledby="las-rubrik">
+      <h3 class="etikett-liten" id="las-rubrik">Så läser du kartan</h3>
+      <p>${esc(lasKartanText(aktivt, t.vald?.i_demon === true))}</p>
+    </section>
     <h3 class="etikett-liten">Lager</h3>
     <div class="flikar" role="group" aria-label="Analys">${flikar}</div>
     <div class="lager-lista" role="radiogroup" aria-label="Lager">${rader || '<p class="dampad">Inga rasterlager.</p>'}</div>
-    ${finnsFler ? `<label class="kryss-rad"><input type="checkbox" id="fler-lager" ${t.fleraLager ? "checked" : ""}/> Visa fler lager (flaggor, kontroller)</label>` : ""}
+    ${finnsFler ? `<label class="kryss-rad"><input type="checkbox" id="fler-lager" ${t.fleraLager ? "checked" : ""}/> Visa kontrolllager (flaggor)</label>` : ""}
     ${aktivt?.tak_maskat ? `<label class="kryss-rad"><input type="checkbox" id="visa-tak" ${t.visaTak ? "checked" : ""}/> Visa värden på tak (${HELTAL.format(aktivt.tak_yta_m2)} m² byggnadsyta)</label>` : ""}
     <label class="falt-rad">Opacitet <input type="range" id="opacitet" min="10" max="100" value="${Math.round(t.opacitet * 100)}"/></label>
     ${aktivt ? teckenforklaringHtml(aktivt) : ""}
@@ -877,49 +902,56 @@ function byggnadsforklaring(l: LagerPost | null): string {
   </div>`;
 }
 
-function teckenforklaringHtml(l: LagerPost): string {
-  const tf = l.teckenforklaring;
-  const enhet = l.enhet ? ` ${esc(l.enhet)}` : "";
-  let skala: string;
-  if (tf.typ === "kontinuerlig") {
-    skala = `<div class="skala-rad"><span class="mono">${TAL.format(tf.min)}</span>
-      <span class="skala-band" style="background:linear-gradient(to right, ${tf.stopp.join(",")})"></span>
-      <span class="mono">${TAL.format(tf.max)}${enhet}</span></div>`;
-  } else if (tf.typ === "klasser") {
-    skala = `<ul class="klass-lista">${tf.klasser
-      .map(
-        (k) =>
-          `<li><span class="ruta" style="background:${k.farg}"></span><span class="mono">${esc(k.etikett)}${enhet}</span></li>`,
-      )
-      .join("")}</ul>`;
-  } else {
-    skala = `<div class="skala-rad"><span class="mono">−${TAL.format(tf.max)}</span>
-      <span class="skala-band" style="background:linear-gradient(to right, ${tf.farg_minskning}, #f5f5f5, ${tf.farg_okning})"></span>
-      <span class="mono">+${TAL.format(tf.max)}${enhet}</span></div>
-      <p class="dampad liten-text">Blå: minskning, röd: ökning (efter − före). Genomskinligt: skillnad ≤ ${TAL.format(tf.troskel)}${enhet}.</p>`;
-  }
-  const delar = l.typ === "skillnad" ? "" : `<p class="dampad liten-text">Samma skala för bas och scenario.</p>`;
-  const nedsamplat = l.nedsampling > 1 ? `<p class="varn-text liten-text">Förhandsvisningen är nedsamplad ${l.nedsampling} gånger.</p>` : "";
-  const filer = l.geotiff
-    .map((f) => `<li><a href="${esc(f.url)}" download>${esc(f.ruta ?? "hela området")}</a></li>`)
-    .join("");
-  return `
-    <div class="teckenforklaring">
-      <h3 class="etikett-liten">${esc(l.namn)}</h3>
-      ${skala}${delar}${nedsamplat}
-      <details><summary class="liten-text">GeoTIFF (${l.geotiff.length}, full upplösning)</summary><ul class="fil-lista">${filer}</ul></details>
-    </div>`;
-}
-
 /* ---------- Tabeller ---------- */
 
 function ritaMatvarden(r: ResultatSvar): void {
   const delar = r.tabeller.map(matvardeTabell).join("");
   satt(
     "matvarden",
-    `<div class="sektionsrad linje-under-stark"><h3 class="etikett">Mätvärden</h3>
-       <span class="dampad">Ett värde per jobb (scenario och ruta), som lösaren lämnat dem.</span></div>${delar || '<p class="dampad tom">Inga mätvärden.</p>'}`,
+    `<div class="sektionsrad linje-under-stark"><h4 class="etikett">Mätvärden</h4>
+       <span class="dampad">Ett värde per beräkning (scenario och delområde), som lösaren lämnat dem.</span></div>${delar || '<p class="dampad tom">Inga mätvärden.</p>'}`,
   );
+}
+
+function analysnamn(id: string): string {
+  return t.vald?.analyser?.find((a) => a.id === id)?.visningsnamn ?? id;
+}
+
+/** All teknisk information om resultatet, hopfälld: lösare, versioner, parametrar, tabeller, filer. */
+function ritaTekniskt(r: ResultatSvar): void {
+  const s = r.sammanfattning;
+  const analyser = (r.antaganden?.analyser ?? [])
+    .map((a) => {
+      const par = Object.entries(a.parametrar)
+        .filter(([, v]) => v !== null && v !== undefined)
+        .map(([k, v]) => `${esc(k)} ${esc(String(v))}`)
+        .join(" · ");
+      return `<li>${esc(analysnamn(a.analys))}: <span class="mono">${esc(a.losare)}</span>, version ${esc(a.version)}${par ? ` · ${par}` : ""}</li>`;
+    })
+    .join("");
+  const filer = r.lager
+    .filter((l) => l.primar)
+    .map((l) => lagerTekniskHtml(l))
+    .join("");
+  satt(
+    "tekniskt",
+    `<details class="teknisk">
+       <summary>Teknisk information</summary>
+       <ul class="enkel-lista">
+         <li>Fråga <span class="mono">${esc(r.fraga_id)}</span>, körning <span class="mono">${esc(r.korning.korning_id)}</span></li>
+         <li>${s.jobb} beräkningar: ${s.i_cache} hämtade ur cachen, ${s.att_kora} körda på ${TAL.format(s.total_tid_s)} s</li>
+         <li>Koordinatsystem: SWEREF 99 18 00 (EPSG:3011). Varje beräkning har ett manifest (run.json) i körningens resultatmapp.</li>
+         ${analyser}
+         ${filer}
+       </ul>
+       <div id="matvarden" class="resultat-block"></div>
+       <div id="jamforelser" class="resultat-block"></div>
+       <div id="datatabeller" class="resultat-block"></div>
+     </details>`,
+  );
+  ritaMatvarden(r);
+  ritaJamforelser(r);
+  ritaDatatabeller(r);
 }
 
 function matvardeTabell(tab: MatvardeTabell): string {
@@ -929,14 +961,14 @@ function matvardeTabell(tab: MatvardeTabell): string {
     .map(
       (x) => `<tr><td>${esc(x.scenario)}</td>${rutvisa ? `<td class="mono">${esc(x.ruta ?? "–")}</td>` : ""}
         ${tab.kolumner.map((k) => `<td class="hoger">${esc(formateraVarde(x.varden[k]))}</td>`).join("")}
-        <td class="dampad">${x.fran_cache ? "cache" : `körd, ${TAL.format(x.kortid_s)} s`}</td></tr>`,
+        <td class="dampad">${x.fran_cache ? "cache" : `beräknad, ${TAL.format(x.kortid_s)} s`}</td></tr>`,
     )
     .join("");
   return `
-    <h4 class="tabell-rubrik"><span class="mono">${esc(tab.analys)}</span> <span class="dampad">${esc(tab.losare)}</span></h4>
+    <h5 class="tabell-rubrik">${esc(analysnamn(tab.analys))} <span class="dampad mono">${esc(tab.losare)}</span></h5>
     <div class="tabell-ruta rullbar">
       <table class="data-tabell">
-        <thead><tr><th>Scenario</th>${rutvisa ? "<th>Ruta</th>" : ""}${huvud}<th>Källa</th></tr></thead>
+        <thead><tr><th>Scenario</th>${rutvisa ? "<th>Delområde</th>" : ""}${huvud}<th>Källa</th></tr></thead>
         <tbody>${rader}</tbody>
       </table>
     </div>`;
@@ -957,11 +989,11 @@ function ritaJamforelser(r: ResultatSvar): void {
     .join("");
   satt(
     "jamforelser",
-    `<div class="sektionsrad linje-under-stark"><h3 class="etikett">Före och efter</h3>
-       <span class="dampad">Skillnad (efter − före) enligt kärnans jämförelse.</span></div>
+    `<div class="sektionsrad linje-under-stark"><h4 class="etikett">Före och efter</h4>
+       <span class="dampad">Skillnad (efter minus före) enligt kärnans jämförelse; ytorna räknar alla celler, tak inräknade.</span></div>
      <div class="tabell-ruta"><table class="data-tabell">
        <thead><tr><th>Analys</th><th>Jämförelse</th><th class="hoger">Största ökning</th><th class="hoger">Största minskning</th>
-         <th class="hoger">Yta ökning (m²)</th><th class="hoger">Yta minskning (m²)</th><th class="hoger">Tröskel</th><th class="hoger">Rutor oförändrade</th></tr></thead>
+         <th class="hoger">Yta ökning (m²)</th><th class="hoger">Yta minskning (m²)</th><th class="hoger">Tröskel</th><th class="hoger">Oförändrade delområden</th></tr></thead>
        <tbody>${rader}</tbody></table></div>`,
   );
 }
@@ -987,7 +1019,7 @@ function ritaDatatabeller(r: ResultatSvar): void {
     : "";
   satt(
     "datatabeller",
-    `<div class="sektionsrad linje-under-stark"><h3 class="etikett">Datatabeller</h3>
+    `<div class="sektionsrad linje-under-stark"><h4 class="etikett">Datatabeller</h4>
        <span class="dampad">Filer från lösarna (CSV, Parquet).</span></div>
      <details><summary class="liten-text">${r.datatabeller.length} filer</summary><ul class="tabell-filer">${rader}</ul></details>${tabell}`,
   );

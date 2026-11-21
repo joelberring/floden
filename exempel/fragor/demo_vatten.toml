@@ -17,7 +17,7 @@
 # Vatten som rinner över rutans kant räknas som utflöde (ut_m3 i mätvärdena).
 kontrakt = "K20/v1"
 fraga_id = "demo-vatten"
-beskrivning = "Blåytor (maxdjup) vid Stockholmsregn 2024, 100 år, klimatfaktor 1.4, före/efter ett nytt hus."
+beskrivning = "Största vattendjup vid Stockholmsregn 2024 (100 år, klimatfaktor 1,4), före och efter ett nytt hus."
 
 [scenarier.fore]
 bas = "../../data/demo/varld/vatten/bas"

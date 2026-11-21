@@ -513,7 +513,11 @@ export interface RuttSvar {
   kallor: string[];
 }
 
-export type ModulStatus = "i_drift" | "kommande";
+export type ModulStatus =
+  | "finns_i_demon"
+  | "finns_ej_forberaknad"
+  | "finns"
+  | "under_utveckling";
 
 export interface ModulInfo {
   modul_id: string;
@@ -521,6 +525,9 @@ export interface ModulInfo {
   namn: string;
   beskrivning: string;
   status: ModulStatus;
+  /** Färdig text för statusen; samma text visas överallt. */
+  status_text: string;
+  finns_i_karnan: boolean;
   analystyper: string[];
   losare?: ModulLosare[];
   kartfarg: string;
@@ -528,6 +535,7 @@ export interface ModulInfo {
 
 export interface ModulLosare {
   namn: string;
+  visningsnamn: string;
   version: string;
   doman: string;
   beskrivning: string;
@@ -540,4 +548,81 @@ export interface ModulLosare {
 
 export interface ModulerSvar {
   moduler: ModulInfo[];
+}
+
+/* ---------- Projekt (demokvarteret) ---------- */
+
+export interface ProjektMatt {
+  namn: string;
+  enhet: string;
+  decimaler: number;
+  varden: Record<string, number>;
+}
+
+export interface ProjektRegn {
+  kalla: string;
+  aterkomsttid_ar: number | null;
+  varaktighet_min: number | null;
+  klimatfaktor: number | null;
+  regn_mm: number;
+  text: string;
+}
+
+export interface ProjektTeknisk {
+  fraga_id: string;
+  korning_id: string;
+  fraga_fil: string | null;
+  losare: Array<{ visningsnamn: string; namn: string; version: string; kodversion: string | null }>;
+  jobb: number;
+  fran_cache: number;
+  korda: number;
+  total_tid_s: number;
+  koordinatsystem: string;
+  manifest: string;
+}
+
+export interface ProjektAvsnitt {
+  id: string;
+  rubrik: string;
+  ingress: string;
+  kolumner: Array<{ id: string; rubrik: string }>;
+  matt: ProjektMatt[];
+  regn?: ProjektRegn | null;
+  teknisk: ProjektTeknisk;
+}
+
+export interface ProjektVy {
+  id: string;
+  avsnitt: string;
+  rubrik: string;
+  mattnamn: string;
+  korning_id: string;
+  fore_lager: string | null;
+  efter_lager: string | null;
+  skillnad_lager: string;
+  efter_namn: string;
+  /** Vad som ändras i efter-läget (ur scenariofilen). */
+  andring: string;
+}
+
+export interface ProjektSvar {
+  id: string;
+  namn: string;
+  undertitel: string;
+  paahittat: boolean;
+  paahittat_text: string;
+  beskrivning: string;
+  andringar: Array<{ id: string; rubrik: string; text: string }>;
+  avsnitt: ProjektAvsnitt[];
+  vyer: ProjektVy[];
+}
+
+export interface ProjektListaSvar {
+  projekt: Array<{
+    id: string;
+    namn: string;
+    undertitel: string;
+    paahittat: boolean;
+    beskrivning: string;
+  }>;
 }

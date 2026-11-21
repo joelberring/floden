@@ -1,0 +1,17 @@
+# Modulstatus som visas i webben (GET /api/moduler) och som inte går att läsa ur kärnans
+# lösarregister. Allt annat (vilka lösare som finns, vad som är förkört i demon) läses ur kärnan
+# och demon. Ett test (tests/webb/test_moduler.py) jämför siffrorna här med källan.
+
+[luft]
+# Vindkomfortlösaren finns men en körning tar mer än tio minuter på CPU (mätt: över 9 min för
+# hela demovärlden och över 6 min för bara fokusområdet), så luft är inte förberäknad i demon.
+status = "finns_ej_forberaknad"
+kalla = "STATUS.md, posten Demo 1 (Mätt)"
+
+[buller]
+# Nord2000-kärnan körs mot de officiella testfallen (grupp N i testsviten). Buller är inte
+# kopplat som körbar utredningsfråga i webben.
+status = "under_utveckling"
+testfall_godkanda = 33
+testfall_totalt = 80
+kalla = "docs/buller/logg/P-S2.md"

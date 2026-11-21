@@ -22,6 +22,7 @@ KLIMATFAKTOR = 1.4
 VARAKTIGHET_MIN = 360.0
 
 
+KLIMATFAKTOR_TEXT = f"{KLIMATFAKTOR:g}".replace(".", ",")
 RADIE_M = HOJD_MAX_M / math.tan(math.radians(H_MIN_GRADER))
 
 
@@ -56,7 +57,7 @@ def text_dagsljus(v: DemoVarld, fragedir: Path, varld_dir: Path, *, riktningar: 
 #   byggnader {RADIE_M:.0f} m bort. Vegetation ingår inte (standard, se docs/DAGSLJUS.md avsnitt 12).
 kontrakt = "K20/v1"
 fraga_id = "demo-dagsljus"
-beskrivning = "Soltimmar vid vårdagjämning och VSC på fasader före/efter: höjt hus och nytt hus."
+beskrivning = "Soltimmar på marken och dagsljus på fasader före och efter: ett höjt hus och ett nytt hus."
 
 [scenarier.bas]
 bas = "{bas}"
@@ -120,7 +121,7 @@ def text_vatten(v: DemoVarld, fragedir: Path, varld_dir: Path) -> str:
 # Vatten som rinner över rutans kant räknas som utflöde (ut_m3 i mätvärdena).
 kontrakt = "K20/v1"
 fraga_id = "demo-vatten"
-beskrivning = "Blåytor (maxdjup) vid Stockholmsregn 2024, {ATERKOMSTTID_AR:g} år, klimatfaktor {KLIMATFAKTOR:g}, före/efter ett nytt hus."
+beskrivning = "Största vattendjup vid Stockholmsregn 2024 ({ATERKOMSTTID_AR:g} år, klimatfaktor {KLIMATFAKTOR_TEXT}), före och efter ett nytt hus."
 
 [scenarier.fore]
 bas = "{bas}"

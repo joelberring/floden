@@ -50,12 +50,12 @@ MASKADE_ROLLER = frozenset({"soltimmar", "svf", "max_djup"})
 """Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
 
 ETIKETTER: dict[str, tuple[str, str]] = {
-    "soltimmar": ("Soltimmar", "h"),
-    "max_djup": ("Maxdjup, blåytor", "m"),
-    "svf": ("Himmelsfaktor (SVF)", ""),
+    "soltimmar": ("Soltimmar på marken", "h"),
+    "max_djup": ("Största vattendjup", "m"),
+    "svf": ("Andel himmel som syns", ""),
     "lutning": ("Lutning", "grader"),
-    "trunkering": ("Trunkerad horisont", ""),
-    "standardhojd": ("Byggnad med standardhöjd", ""),
+    "trunkering": ("Kontroll: avskuren horisont", ""),
+    "standardhojd": ("Kontroll: byggnad utan känd höjd", ""),
 }
 
 
