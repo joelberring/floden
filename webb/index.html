@@ -73,6 +73,43 @@
               </select>
             </div>
           </div>
+
+          <div class="forlust-block">
+            <h3 class="under-rubrik">Markförluster (T06)</h3>
+            <div class="grid-tva">
+              <div>
+                <label class="falt-etikett" for="forlust-jordart">Jordart</label>
+                <select id="forlust-jordart" class="kontroll">
+                  <option value="">Ingen (100 % avrinning)</option>
+                  <option value="moran">Morän</option>
+                  <option value="sand">Sand</option>
+                  <option value="lera">Lera</option>
+                  <option value="silt">Silt</option>
+                  <option value="berg">Berg</option>
+                  <option value="torv">Torv</option>
+                </select>
+              </div>
+              <div>
+                <label class="falt-etikett" for="forlust-grundvatten">Grundvatten</label>
+                <select id="forlust-grundvatten" class="kontroll">
+                  <option value="normal">Normal</option>
+                  <option value="hog">Högt</option>
+                </select>
+              </div>
+            </div>
+            <div class="grid-tva forlust-rad">
+              <div>
+                <label class="falt-etikett" for="forlust-initial">Initial magasinering (mm)</label>
+                <input id="forlust-initial" class="kontroll" type="number" min="0" max="50" step="0.5" value="2.0" />
+              </div>
+              <div class="check-kolumn">
+                <label class="kryss-etikett" for="forlust-tjale">
+                  <input id="forlust-tjale" type="checkbox" />
+                  <span>Tjäle i marken</span>
+                </label>
+              </div>
+            </div>
+          </div>
         </section>
 
         <section class="panel-sektion">
@@ -189,6 +226,87 @@
           </button>
           <p id="risk-status" class="status-text" role="status"></p>
           <div id="risk-resultat" class="resultat-kort"></div>
+        </section>
+
+        <section class="panel-sektion rutt-panel" aria-label="Räddningstjänst och framkomlighet">
+          <h2>Räddningstjänst &amp; framkomlighet (T07)</h2>
+          <div class="grid-tva">
+            <div>
+              <label class="falt-etikett" for="rutt-fordon">Fordon</label>
+              <select id="rutt-fordon" class="kontroll">
+                <option value="slacksbil">Släckbil</option>
+                <option value="ambulans">Ambulans</option>
+                <option value="storskalig">Storskaligt fordon</option>
+              </select>
+            </div>
+            <div>
+              <label class="falt-etikett" for="rutt-gransdjup">Gränsdjup (m)</label>
+              <input id="rutt-gransdjup" class="kontroll" type="number" min="0.05" max="2" step="0.05" value="0.30" />
+            </div>
+          </div>
+          <div class="grid-tre">
+            <div>
+              <label class="falt-etikett" for="rutt-max-aterkomsttid">Max återkomsttid</label>
+              <select id="rutt-max-aterkomsttid" class="kontroll">
+                <option value="100" selected>100 år</option>
+                <option value="200">200 år</option>
+                <option value="500">500 år</option>
+              </select>
+            </div>
+            <div>
+              <label class="falt-etikett" for="rutt-klimatfaktor">Klimatfaktor</label>
+              <select id="rutt-klimatfaktor" class="kontroll">
+                <option value="1.0">1.00</option>
+                <option value="1.2">1.20</option>
+                <option value="1.24" selected>1.24</option>
+                <option value="1.25">1.25</option>
+                <option value="1.3">1.30</option>
+                <option value="1.4">1.40</option>
+              </select>
+            </div>
+            <div>
+              <label class="falt-etikett" for="rutt-tidshorisont">Horisont (år)</label>
+              <input id="rutt-tidshorisont" class="kontroll" type="number" min="1" max="500" step="1" value="50" />
+            </div>
+          </div>
+          <label class="kryss-etikett rutt-bekraftelse" for="rutt-testvarden-check">
+            <input id="rutt-testvarden-check" type="checkbox" />
+            <span>Bekräfta att testvärden används (ej fastställda räddningstjänstgränser)</span>
+          </label>
+          <button type="button" id="rutt-knapp" class="primar-knapp fullbredd">
+            Analysera räddningsrutter
+          </button>
+          <p id="rutt-status" class="status-text" role="status"></p>
+          <div id="rutt-resultat" class="resultat-kort"></div>
+        </section>
+
+        <section class="panel-sektion rapport-panel" aria-label="Rapport med talkontroll">
+          <h2>Rapport med talkontroll (T08)</h2>
+          <div class="grid-tva">
+            <div>
+              <label class="falt-etikett" for="rapport-typ">Rapportmall</label>
+              <select id="rapport-typ" class="kontroll">
+                <option value="skyfall_oversikt">Skyfallsöversikt</option>
+                <option value="detaljplan_fore_efter">Detaljplan (före/efter)</option>
+                <option value="fastighetsagare">Fastighetsägare</option>
+                <option value="raddningstjanst">Räddningstjänst</option>
+                <option value="klimatanpassning">Klimatanpassning</option>
+              </select>
+            </div>
+            <div>
+              <label class="falt-etikett" for="rapport-format">Exportformat</label>
+              <select id="rapport-format" class="kontroll">
+                <option value="html">HTML</option>
+                <option value="md">Markdown (.md)</option>
+                <option value="docx">Word (.docx)</option>
+              </select>
+            </div>
+          </div>
+          <button type="button" id="rapport-knapp" class="primar-knapp fullbredd">
+            Skapa &amp; kontrollera rapport
+          </button>
+          <p id="rapport-status" class="status-text" role="status"></p>
+          <div id="rapport-resultat" class="resultat-kort"></div>
         </section>
 
         <section class="panel-sektion osakerhet-panel" aria-label="Osäkerhet och källor">

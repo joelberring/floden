@@ -11,6 +11,7 @@ import type {
   OmradeLagerSvar,
   PercentilNyckel,
   RiskSvar,
+  RuttSvar,
 } from "./types";
 
 const REF_E_M = 150000.0;
@@ -39,6 +40,7 @@ export const STANDARD_LAGER: LagerTillstand[] = [
   { id: "osakerhet", namn: "Osäkerhet (P10/P50/P90)", synlig: false, opacitet: 0.8 },
   { id: "differens", namn: "Differens (efter − före)", synlig: false, opacitet: 0.85 },
   { id: "risk", namn: "Kumulativ risk", synlig: false, opacitet: 0.85 },
+  { id: "rutt", namn: "Räddningstjänst (vägrisk)", synlig: false, opacitet: 0.95 },
 ];
 
 export function wgs84Till3011(lon: number, lat: number): [number, number] {
@@ -84,6 +86,7 @@ export class FlodenKartaKontroll {
   private aktuelltOmrade: OmradeLagerSvar | null = null;
   private aktuelltResultat: KorSvar | null = null;
   private aktuellRisk: RiskSvar | null = null;
+  private aktuellRutt: RuttSvar | null = null;
   private jamforLage: JamforLage = "svep";
   private svepAndel = 0.5;
   private aktivPercentil: PercentilNyckel = "p50";
@@ -136,6 +139,9 @@ export class FlodenKartaKontroll {
       }
       if (this.aktuellRisk) {
         this.uppdateraRiskData(this.aktuellRisk);
+      }
+      if (this.aktuellRutt) {
+        this.uppdateraRuttData(this.aktuellRutt);
       }
       this.appliceraSynlighetOchOpacitet();
     });
@@ -192,6 +198,7 @@ export class FlodenKartaKontroll {
     this.karta.addSource("src-brytlinjer", { type: "geojson", data: TOM_FC as never });
     this.karta.addSource("src-flodesvagar", { type: "geojson", data: TOM_FC as never });
     this.karta.addSource("src-sankor", { type: "geojson", data: TOM_FC as never });
+    this.karta.addSource("src-rutt", { type: "geojson", data: TOM_FC as never });
     this.karta.addSource("src-lapp-skiss", { type: "geojson", data: TOM_FC as never });
 
     this.karta.addLayer({
@@ -261,6 +268,23 @@ export class FlodenKartaKontroll {
       },
     });
     this.karta.addLayer({
+      id: "lyr-rutt",
+      type: "line",
+      source: "src-rutt",
+      paint: {
+        "line-color": [
+          "case",
+          [">=", ["coalesce", ["get", "kumulativ_sannolikhet"], 0], 0.25],
+          "#b91c1c",
+          [">", ["coalesce", ["get", "kumulativ_sannolikhet"], 0], 0],
+          "#d97706",
+          "#15803d",
+        ],
+        "line-width": 4,
+        "line-opacity": 0.95,
+      },
+    });
+    this.karta.addLayer({
       id: "lyr-sankor",
       type: "circle",
       source: "src-sankor",
@@ -288,9 +312,14 @@ export class FlodenKartaKontroll {
     this.aktuelltOmrade = omrade;
     this.aktuelltResultat = null;
     this.aktuellRisk = null;
+    this.aktuellRutt = null;
     const riskStatus = this.lagerStatus.get("risk");
     if (riskStatus) {
       this.lagerStatus.set("risk", { ...riskStatus, synlig: false });
+    }
+    const ruttStatus = this.lagerStatus.get("rutt");
+    if (ruttStatus) {
+      this.lagerStatus.set("rutt", { ...ruttStatus, synlig: false });
     }
     if (this.laddad) {
       this.uppdateraOmradeData(omrade);
@@ -318,6 +347,18 @@ export class FlodenKartaKontroll {
     }
   }
 
+  public visaRutt(rutt: RuttSvar): void {
+    this.aktuellRutt = rutt;
+    const nu = this.lagerStatus.get("rutt");
+    if (nu) {
+      this.lagerStatus.set("rutt", { ...nu, synlig: true });
+    }
+    if (this.laddad) {
+      this.uppdateraRuttData(rutt);
+      this.appliceraSynlighetOchOpacitet();
+    }
+  }
+
   private uppdateraOmradeData(omrade: OmradeLagerSvar): void {
     const coords = bboxWgs84TillImageCoordinates(omrade.bbox_wgs84);
     this.uppdateraBildKalla("src-hillshade", omrade.hillshade.data_uri, coords);
@@ -335,6 +376,7 @@ export class FlodenKartaKontroll {
     this.uppdateraGeoJsonKalla("src-brytlinjer", omrade.brytlinjer);
     this.uppdateraGeoJsonKalla("src-flodesvagar", omrade.flodesvagar);
     this.uppdateraGeoJsonKalla("src-sankor", omrade.sankor);
+    this.uppdateraGeoJsonKalla("src-rutt", TOM_FC);
 
     const [minLon, minLat, maxLon, maxLat] = omrade.bbox_wgs84;
     this.karta.fitBounds(
@@ -367,6 +409,10 @@ export class FlodenKartaKontroll {
   private uppdateraRiskData(risk: RiskSvar): void {
     const coords = bboxWgs84TillImageCoordinates(risk.bbox_wgs84);
     this.uppdateraBildKalla("src-risk", risk.kumulativ_risk_karta.data_uri, coords);
+  }
+
+  private uppdateraRuttData(rutt: RuttSvar): void {
+    this.uppdateraGeoJsonKalla("src-rutt", rutt.vagnat_geojson);
   }
 
   private uppdateraBildKalla(
@@ -442,6 +488,10 @@ export class FlodenKartaKontroll {
     const risk = get("risk");
     this.setLayerVis("lyr-risk", risk.synlig);
     this.karta.setPaintProperty("lyr-risk", "raster-opacity", risk.opacitet);
+
+    const rutt = get("rutt");
+    this.setLayerVis("lyr-rutt", rutt.synlig);
+    this.karta.setPaintProperty("lyr-rutt", "line-opacity", rutt.opacitet);
 
     const djup = get("maxdjup");
     const diff = get("differens");

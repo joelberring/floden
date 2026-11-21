@@ -326,6 +326,70 @@ class TestWebbApiOchKlient(unittest.TestCase):
         rr = json.loads(k_risk.decode("utf-8"))
         self.assertEqual(rr["gransdjup_m"], 0.20)
 
+    def test_post_rapport_med_talkontroll_och_export(self) -> None:
+        for fmt in ("html", "md", "docx"):
+            payload = {
+                "omrade_id": "A3_tva_sankor_sammanslagning",
+                "rapporttyp": "skyfall_oversikt",
+                "format": fmt,
+                "regn_id": "stockholm_cds_6h_100ar_kf124",
+            }
+            status, _, kropp = self.app.hantera_forfragan(
+                "POST", "/api/rapport", json.dumps(payload).encode("utf-8")
+            )
+            self.assertEqual(status, 200, f"format={fmt}: {kropp.decode('utf-8')}")
+            res = json.loads(kropp.decode("utf-8"))
+            self.assertTrue(res["kontroll_godkand"])
+            self.assertGreater(res["antal_kontrollerade_tal"], 0)
+            self.assertGreater(res["storlek_bytes"], 100)
+            raw = base64.b64decode(res["innehall_base64"])
+            self.assertEqual(len(raw), res["storlek_bytes"])
+            if fmt == "docx":
+                self.assertTrue(raw.startswith(b"PK"))
+
+    def test_post_rutt_kumulativ_vagrisk_och_testvardessparr(self) -> None:
+        # Utan bekräftade testvärden måste skarp spärr returnera 400
+        s_sparr, _, k_sparr = self.app.hantera_forfragan(
+            "POST",
+            "/api/rutt",
+            json.dumps(
+                {
+                    "omrade_id": "A3_tva_sankor_sammanslagning",
+                    "fordon_typ": "slacksbil",
+                    "gransdjup_m": 0.25,
+                    "tillat_testvarden": False,
+                }
+            ).encode("utf-8"),
+        )
+        self.assertEqual(s_sparr, 400)
+        self.assertIn("tillat_testvarden", json.loads(k_sparr.decode("utf-8"))["fel"])
+
+        # Med bekräftade testvärden returneras kumulativ vägrisk och GeoJSON
+        s_ok, _, k_ok = self.app.hantera_forfragan(
+            "POST",
+            "/api/rutt",
+            json.dumps(
+                {
+                    "omrade_id": "A3_tva_sankor_sammanslagning",
+                    "fordon_typ": "slacksbil",
+                    "gransdjup_m": 0.20,
+                    "max_aterkomsttid_ar": 100.0,
+                    "klimatfaktor": 1.24,
+                    "tidshorisont_ar": 50.0,
+                    "tillat_testvarden": True,
+                }
+            ).encode("utf-8"),
+        )
+        self.assertEqual(s_ok, 200)
+        res = json.loads(k_ok.decode("utf-8"))
+        self.assertTrue(res["testvarden_anvanda"])
+        self.assertEqual(res["antal_kanter_totalt"], 12)
+        self.assertGreater(res["antal_kanter_med_risk"], 0)
+        self.assertEqual(res["vagnat_geojson"]["type"], "FeatureCollection")
+        self.assertEqual(len(res["vagnat_geojson"]["features"]), 12)
+        manifest = RunManifest.fran_dict(res["manifest"])
+        self.assertEqual(manifest.kontrakt, KONTRAKT_K0)
+
     def test_webbklientens_filer_finns_och_har_giltig_struktur(self) -> None:
         webb_rot = _REPO_ROT / "webb"
         pkg = json.loads((webb_rot / "package.json").read_text(encoding="utf-8"))

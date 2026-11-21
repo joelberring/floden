@@ -3,41 +3,728 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
+import shutil
 import sys
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
+from PIL import Image
 
-from dynamik.nodmodell import DynamikFel
+from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
+from dynamik.nodmodell import DynamikFel, DynamikResultat, skriv_dynamik_resultat_k6
 from dynamik.risk import berakna_kumulativ_oversvamningsrisk
+from gemensamt.hash import sha256_fil
+from gemensamt.manifest import FilPost, las_manifest, skriv_manifest
 from gemensamt.regn import (
     STANDARD_CDS_TOPPFAKTOR,
     STANDARD_TIDSSTEG_MIN,
     STANDARD_VARAKTIGHET_MIN,
     RegnFel,
+    RegnSerieK4,
+    las_regn_k4_csv,
     lista_regnforval,
     skapa_regn_fran_spec,
     skriv_regn_k4_csv,
 )
+from mark_forluster.koppling import ForlustKopplingResultat, berakna_effektivt_regn_k5
+from mark_forluster.parametrar import ForlustFel
+from markmodell.brytlinjer import Brytlinje, BrytlinjeFel
+from markmodell.grundkarta import GrundkartaFel, interpolera_med_brytlinjer, las_baskarta_dxf
+from markmodell.hinder_oppningar import BYGGNAD, OKANT, Byggnad, HinderOppningFel, Oppning
+from markmodell.interpolering import InterpoleringFel
+from markmodell.k1_skrivare import K1SkrivFel
+from markmodell.k1_skrivare import skriv_geotiff as skriv_k1_geotiff
+from markmodell.ortofoto import (
+    OrtofotoFel,
+    klassificera_ortofoto,
+    kombinera_ortofoto_med_markmodell,
+)
+from markmodell.pipeline import PipelineFel, bygg_markmodell_ruta
+from markmodell.recept import KallPost
+from markmodell.rutnat import Ruta, RutnatFel
 from sankgraf.hierarki import bygg_sankgraf
-from sankgraf.typer import SankGrafFel, las_brytlinjer_fran_gpkg, las_oppningar_fran_gpkg
+from sankgraf.persistens import filtrera_persistens
+from sankgraf.typer import (
+    SankGrafFel,
+    las_brytlinjer_fran_gpkg,
+    las_oppningar_fran_gpkg,
+    skriv_sankgraf_k2,
+)
 from testsvit.ea_fall import EaBenchmarkFel, kor_alla_ea_testfall
 from testsvit.k1_io import K1FormatFel, las_geotiff
 from testsvit.korare import TestsvitFel, hitta_testfall, kor_testsvit
+from tvad.hybrid import kor_hybrid_2d_graf
+from tvad.lokal_troghet import TvadFel, TvadResultat, kor_2d_lokal_troghet, skriv_tvad_resultat_k6
 
 
-def _hamta_ej_implementerad_meddelande(kommando: str, uppdrag: str) -> str:
-    return (
-        f"Kommandot 'floden {kommando}' är ett skelett och implementeras i uppdrag {uppdrag}."
+def _las_laser_csv(
+    sokvag: Path,
+) -> tuple[
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.float64],
+    NDArray[np.int32] | None,
+]:
+    """Läser laserpunktmoln från CSV (`e_m,n_m,z_m[,klass]` eller `e,n,z[,klass]`)."""
+    if not sokvag.is_file():
+        raise PipelineFel(f"Laser-CSV hittades inte: {sokvag}")
+
+    with sokvag.open("r", encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames is None:
+            raise PipelineFel(f"Laser-CSV {sokvag} saknar kolumnrubriker.")
+        falt = [f.strip() for f in reader.fieldnames]
+        reader.fieldnames = falt
+
+        if {"e_m", "n_m", "z_m"}.issubset(falt):
+            e_kol, n_kol, z_kol = "e_m", "n_m", "z_m"
+        elif {"e", "n", "z"}.issubset(falt):
+            e_kol, n_kol, z_kol = "e", "n", "z"
+        else:
+            raise PipelineFel(
+                f"Laser-CSV {sokvag} måste ha kolumner 'e_m,n_m,z_m' eller 'e,n,z', "
+                f"fick {falt}."
+            )
+
+        har_klass = "klass" in falt
+        e_lista: list[float] = []
+        n_lista: list[float] = []
+        z_lista: list[float] = []
+        k_lista: list[int] = []
+
+        for rad_nr, row in enumerate(reader, start=2):
+            try:
+                e_val = float(row[e_kol])
+                n_val = float(row[n_kol])
+                z_val = float(row[z_kol])
+                if har_klass:
+                    k_val = int(float(row["klass"]))
+                    k_lista.append(k_val)
+            except (TypeError, ValueError) as exc:
+                raise PipelineFel(f"Ogiltigt tal på rad {rad_nr} i {sokvag}: {row}") from exc
+            if not (math.isfinite(e_val) and math.isfinite(n_val) and math.isfinite(z_val)):
+                raise PipelineFel(f"Icke-ändlig koordinat på rad {rad_nr} i {sokvag}.")
+            e_lista.append(e_val)
+            n_lista.append(n_val)
+            z_lista.append(z_val)
+
+    if not e_lista:
+        raise PipelineFel(f"Laser-CSV {sokvag} innehåller inga punkter.")
+
+    pe = np.asarray(e_lista, dtype=np.float64)
+    pn = np.asarray(n_lista, dtype=np.float64)
+    pz = np.asarray(z_lista, dtype=np.float64)
+    klasser = np.asarray(k_lista, dtype=np.int32) if har_klass else None
+    return pe, pn, pz, klasser
+
+
+def _las_ortofoto_rgb(sokvag: Path, form_rc: tuple[int, int]) -> NDArray[np.uint8]:
+    """Läser ortofoto (PNG/TIFF) som RGB-uint8 och skalar vid behov till `form_rc`."""
+    if not sokvag.is_file():
+        raise OrtofotoFel(f"Ortofotofil hittades inte: {sokvag}")
+    rader, kolumner = form_rc
+    with Image.open(sokvag) as img:
+        rgb = img.convert("RGB")
+        if rgb.size != (kolumner, rader):
+            rgb = rgb.resize((kolumner, rader), Image.Resampling.BILINEAR)
+        return np.asarray(rgb, dtype=np.uint8)
+
+
+def _kor_markmodell_kommando(args: argparse.Namespace) -> int:
+    try:
+        if args.grund_tif is None and args.laser_csv is None:
+            raise PipelineFel("Ange minst en höjdkälla: --grund-tif eller --laser-csv.")
+        if not math.isfinite(args.upplosning_m) or args.upplosning_m <= 0.0:
+            raise PipelineFel(f"upplosning_m måste vara > 0, fick {args.upplosning_m}.")
+
+        extra_kallor: list[KallPost] = []
+        grund_z: NDArray[np.float32] | None = None
+        ruta: Ruta | None = None
+
+        if args.grund_tif is not None:
+            grund_fil = Path(args.grund_tif)
+            grund_raw, geo = las_geotiff(grund_fil)
+            if geo.hojd != geo.bredd:
+                raise PipelineFel(
+                    f"Grund-GeoTIFF måste vara kvadratisk för Ruta, fick {geo.hojd}x{geo.bredd}."
+                )
+            if not math.isclose(geo.pixelstorlek_x, geo.pixelstorlek_y, rel_tol=0.0, abs_tol=1e-9):
+                raise PipelineFel(
+                    "Grund-GeoTIFF måste ha kvadratiska pixlar, fick "
+                    f"{geo.pixelstorlek_x}x{geo.pixelstorlek_y}."
+                )
+            grund_z = np.asarray(grund_raw, dtype=np.float32)
+            ruta = Ruta(
+                e_min_m=geo.x_min,
+                n_min_m=geo.y_min,
+                storlek_m=geo.bredd * geo.pixelstorlek_x,
+                overlapp_m=0.0,
+                upplosning_m=geo.pixelstorlek_x,
+            )
+            extra_kallor.append(
+                KallPost(
+                    roll="grund_tif",
+                    kalla=grund_fil.name,
+                    sha256=sha256_fil(grund_fil),
+                )
+            )
+
+        pe: NDArray[np.float64] | None = None
+        pn: NDArray[np.float64] | None = None
+        pz: NDArray[np.float64] | None = None
+        klasser: NDArray[np.int32] | None = None
+
+        if args.laser_csv is not None:
+            laser_fil = Path(args.laser_csv)
+            pe, pn, pz, klasser = _las_laser_csv(laser_fil)
+            extra_kallor.append(
+                KallPost(
+                    roll="laser_csv",
+                    kalla=laser_fil.name,
+                    sha256=sha256_fil(laser_fil),
+                )
+            )
+            if ruta is None:
+                uppl = float(args.upplosning_m)
+                e_lo = float(np.min(pe))
+                e_hi = float(np.max(pe))
+                n_lo = float(np.min(pn))
+                n_hi = float(np.max(pn))
+                e_min = math.floor(e_lo / uppl) * uppl
+                n_min = math.floor(n_lo / uppl) * uppl
+                n_kol = math.floor((e_hi - e_min) / uppl) + 1
+                n_rad = math.floor((n_hi - n_min) / uppl) + 1
+                n_celler = max(4, n_kol, n_rad)
+                ruta = Ruta(
+                    e_min_m=e_min,
+                    n_min_m=n_min,
+                    storlek_m=n_celler * uppl,
+                    overlapp_m=0.0,
+                    upplosning_m=uppl,
+                )
+
+        assert ruta is not None
+
+        brytlinjer: tuple[Brytlinje, ...] = ()
+        byggnader: tuple[Byggnad, ...] = ()
+        oppningar: tuple[Oppning, ...] = ()
+        dxf_varningar: list[str] = []
+
+        if args.dxf is not None:
+            dxf_fil = Path(args.dxf)
+            baskarta = las_baskarta_dxf(dxf_fil)
+            brytlinjer = baskarta.brytlinjer
+            byggnader = baskarta.byggnader
+            oppningar = baskarta.oppningar
+            dxf_varningar = list(baskarta.varningar)
+            extra_kallor.append(
+                KallPost(
+                    roll="baskarta_dxf",
+                    kalla=dxf_fil.name,
+                    sha256=sha256_fil(dxf_fil),
+                )
+            )
+
+        avstand_karta: NDArray[np.float32] | None = None
+        anvand_barriar_idw = bool(
+            args.barriar_idw
+            and pe is not None
+            and pn is not None
+            and pz is not None
+            and len(brytlinjer) > 0
+        )
+        if anvand_barriar_idw:
+            assert pe is not None and pn is not None and pz is not None
+            barriar_res = interpolera_med_brytlinjer(
+                pe,
+                pn,
+                pz,
+                ruta,
+                brytlinjer,
+                klasser=klasser,
+            )
+            if grund_z is None:
+                grund_z = barriar_res.mark_z
+            avstand_karta = barriar_res.avstand_m
+            if barriar_res.antal_blockerade_celler > 0:
+                dxf_varningar.append(
+                    f"{barriar_res.antal_blockerade_celler} celler saknade oskuren "
+                    "markpunkt vid barriär-IDW."
+                )
+
+        markslag_grund: NDArray[np.uint8] | None = None
+        ortofoto_bild: NDArray[np.uint8] | None = None
+        if args.ortofoto is not None:
+            ortofoto_fil = Path(args.ortofoto)
+            ortofoto_bild = _las_ortofoto_rgb(ortofoto_fil, ruta.form_rc)
+            markslag_grund = np.full(ruta.form_rc, OKANT, dtype=np.uint8)
+            extra_kallor.append(
+                KallPost(
+                    roll="ortofoto",
+                    kalla=ortofoto_fil.name,
+                    sha256=sha256_fil(ortofoto_fil),
+                )
+            )
+
+        mal_ut = Path(args.ut)
+        mal_ut.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            res = bygg_markmodell_ruta(
+                ruta,
+                tmp_dir,
+                grund_z=grund_z,
+                mark_punkter_e=pe,
+                mark_punkter_n=pn,
+                mark_punkter_z=pz,
+                laser_klasser=klasser,
+                brytlinjer=brytlinjer,
+                byggnader=byggnader,
+                oppningar=oppningar,
+                markslag_grund=markslag_grund,
+                avstand_till_punkt_m=avstand_karta,
+                extra_kallor=extra_kallor,
+            )
+
+            slut_markslag = res.markslag
+            slut_osakerhet = res.osakerhet_z
+
+            if ortofoto_bild is not None:
+                klassning = klassificera_ortofoto(
+                    ortofoto_bild,
+                    byggnad_mask=(res.markslag == BYGGNAD),
+                )
+                slut_markslag, slut_osakerhet = kombinera_ortofoto_med_markmodell(
+                    res.markslag,
+                    res.osakerhet_z,
+                    klassning,
+                )
+                skriv_k1_geotiff(
+                    res.katalog / "markslag.tif",
+                    slut_markslag,
+                    ruta,
+                    nodata=0,
+                )
+                skriv_k1_geotiff(
+                    res.katalog / "osakerhet.tif",
+                    slut_osakerhet,
+                    ruta,
+                    nodata=-9999.0,
+                )
+
+            manifest = las_manifest(res.katalog / "run.json")
+            manifest.parametrar["ruta_id"] = args.ruta_id
+            manifest.parametrar["barriar_idw"] = anvand_barriar_idw
+            manifest.parametrar["ortofoto"] = ortofoto_bild is not None
+            if dxf_varningar:
+                manifest.varningar.extend(dxf_varningar)
+            manifest.matvarden["osakerhet_medel_m"] = round(float(np.mean(slut_osakerhet)), 4)
+            manifest.matvarden["osakerhet_max_m"] = round(float(np.max(slut_osakerhet)), 4)
+            manifest.utdata = [
+                FilPost(
+                    roll=post.roll,
+                    fil=post.fil,
+                    sha256=sha256_fil(res.katalog / post.fil),
+                )
+                for post in manifest.utdata
+            ]
+            skriv_manifest(manifest, res.katalog / "run.json")
+
+            slut_filer: dict[str, Path] = {}
+            for roll, kalla in res.filer.items():
+                mal_fil = mal_ut / kalla.name
+                shutil.move(str(kalla), str(mal_fil))
+                slut_filer[roll] = mal_fil
+
+        varningar = [*res.varningar, *dxf_varningar]
+        rader, kolumner = ruta.form_rc
+        osak_medel = float(np.mean(slut_osakerhet))
+        osak_max = float(np.max(slut_osakerhet))
+
+        payload: dict[str, Any] = {
+            "ruta_id": args.ruta_id,
+            "ruta_namn": ruta.namn,
+            "katalog": str(mal_ut),
+            "form_rc": [rader, kolumner],
+            "upplosning_m": float(ruta.upplosning_m),
+            "barriar_idw": anvand_barriar_idw,
+            "ortofoto": ortofoto_bild is not None,
+            "antal_brytlinjer": len(brytlinjer),
+            "antal_byggnader": len(byggnader),
+            "antal_oppningar": len(oppningar),
+            "osakerhet_medel_m": osak_medel,
+            "osakerhet_max_m": osak_max,
+            "recept_sha256": res.recept_sha256,
+            "varningar": varningar,
+            "filer": {k: str(v) for k, v in slut_filer.items()},
+        }
+
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0
+
+        print(f"Markmodell byggd: {args.ruta_id} ({ruta.namn}) -> {mal_ut}")
+        print(f"Rutnät: {kolumner}x{rader} celler ({ruta.upplosning_m:g} m upplösning)")
+        print(
+            f"Vektorlager: {len(brytlinjer)} brytlinjer, "
+            f"{len(byggnader)} byggnader, {len(oppningar)} öppningar"
+        )
+        print(
+            f"Osäkerhet: medel {osak_medel:.4f} m, max {osak_max:.4f} m "
+            f"(barriär-IDW: {'ja' if anvand_barriar_idw else 'nej'})"
+        )
+        print(f"Recept SHA-256: {res.recept_sha256}")
+        return 0
+    except (
+        PipelineFel,
+        GrundkartaFel,
+        InterpoleringFel,
+        BrytlinjeFel,
+        HinderOppningFel,
+        OrtofotoFel,
+        K1SkrivFel,
+        K1FormatFel,
+        RutnatFel,
+        ValueError,
+        OSError,
+    ) as exc:
+        print(f"Fel i markmodellkommando: {exc}", file=sys.stderr)
+        return 2
+
+
+def _kor_sankgraf_kommando(args: argparse.Namespace) -> int:
+    try:
+        indata = _hitta_omrade_mapp(args.k1, args.rot)
+        mark_raw, geo = las_geotiff(indata / "mark.tif")
+        osak_raw, _ = las_geotiff(indata / "osakerhet.tif")
+        slag_raw, _ = las_geotiff(indata / "markslag.tif")
+        mark_z = np.asarray(mark_raw, dtype=np.float32)
+        osak_z = np.asarray(osak_raw, dtype=np.float32)
+        markslag = np.asarray(slag_raw, dtype=np.uint8)
+
+        bryt_fil = indata / "brytlinjer.gpkg"
+        brytlinjer = tuple(las_brytlinjer_fran_gpkg(bryt_fil)) if bryt_fil.is_file() else ()
+        opp_fil = indata / "oppningar.gpkg"
+        oppningar = tuple(las_oppningar_fran_gpkg(opp_fil)) if opp_fil.is_file() else ()
+
+        graf = bygg_sankgraf(
+            mark_z,
+            osak_z,
+            markslag,
+            geo,
+            brytlinjer=brytlinjer,
+            oppningar=oppningar,
+        )
+        if args.persistens_faktor is not None:
+            graf = filtrera_persistens(graf, faktor=args.persistens_faktor)
+
+        lovnoder = graf.lovnoder()
+        max_sankvolym_m3 = max((n.max_volym_m3 for n in graf.noder.values()), default=0.0)
+
+        skrivna_filer: dict[str, Path] = {}
+        if args.ut is not None:
+            indata_poster = [
+                FilPost(roll="mark", fil="mark.tif", sha256=sha256_fil(indata / "mark.tif")),
+                FilPost(
+                    roll="osakerhet",
+                    fil="osakerhet.tif",
+                    sha256=sha256_fil(indata / "osakerhet.tif"),
+                ),
+                FilPost(
+                    roll="markslag",
+                    fil="markslag.tif",
+                    sha256=sha256_fil(indata / "markslag.tif"),
+                ),
+            ]
+            if bryt_fil.is_file():
+                indata_poster.append(
+                    FilPost(roll="brytlinjer", fil="brytlinjer.gpkg", sha256=sha256_fil(bryt_fil))
+                )
+            if opp_fil.is_file():
+                indata_poster.append(
+                    FilPost(roll="oppningar", fil="oppningar.gpkg", sha256=sha256_fil(opp_fil))
+                )
+            skrivna_filer = skriv_sankgraf_k2(
+                graf,
+                args.ut,
+                indata=indata_poster,
+                parametrar={"k1_mapp": str(indata)},
+            )
+
+        payload: dict[str, Any] = {
+            "k1_mapp": str(indata),
+            "antal_noder": len(graf.noder),
+            "antal_lovnoder": len(lovnoder),
+            "antal_rotnoder": len(graf.rotnoder()),
+            "antal_flodesvagar": len(graf.flodesvagar),
+            "max_sankvolym_m3": float(max_sankvolym_m3),
+            "filtrerad": graf.filtrerad,
+            "persistens_faktor": graf.persistens_faktor,
+            "ut_filer": {k: str(v) for k, v in skrivna_filer.items()},
+        }
+
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0
+
+        print(f"Sänkgraf byggd från: {indata}")
+        print(
+            f"Noder: {len(graf.noder)} (lövnoder: {len(lovnoder)}, "
+            f"flödesvägar: {len(graf.flodesvagar)})"
+        )
+        print(f"Max sänkvolym: {max_sankvolym_m3:.3f} m³")
+        if graf.filtrerad:
+            print(f"Persistensfilter: faktor {graf.persistens_faktor:g}")
+        if args.ut is not None:
+            print(f"Skrev K2-utdata till: {args.ut}")
+        return 0
+    except (TestsvitFel, K1FormatFel, SankGrafFel, ValueError, OSError) as exc:
+        print(f"Fel i sankgrafkommando: {exc}", file=sys.stderr)
+        return 2
+
+
+def _ladda_regn_for_kor(args: argparse.Namespace, indata: Path) -> tuple[RegnSerieK4, Path | None]:
+    har_csv = args.regn_csv is not None
+    har_spec = args.regn_id is not None or args.aterkomsttid_ar is not None
+    if har_csv and har_spec:
+        raise RegnFel("Ange inte både --regn-csv och --regn-id/--aterkomsttid-ar samtidigt.")
+
+    if har_csv:
+        regn_fil = Path(args.regn_csv)
+        return las_regn_k4_csv(regn_fil), regn_fil
+
+    if har_spec:
+        serie = skapa_regn_fran_spec(
+            regn_id=args.regn_id,
+            aterkomsttid_ar=args.aterkomsttid_ar,
+            klimatfaktor=args.klimatfaktor,
+            varaktighet_min=args.varaktighet_min,
+            typ=args.regntyp,
+        )
+        return serie, None
+
+    k1_regn = indata / "regn.csv"
+    if k1_regn.is_file():
+        return las_regn_k4_csv(k1_regn), k1_regn
+
+    raise RegnFel(
+        "Inget regn angavs (--regn-id, --regn-csv eller --aterkomsttid-ar) "
+        f"och '{k1_regn}' saknas."
     )
 
 
-def _kor_skelettkommando(kommando: str, uppdrag: str) -> int:
-    print(_hamta_ej_implementerad_meddelande(kommando, uppdrag))
-    return 0
+def _kor_kor_kommando(args: argparse.Namespace) -> int:
+    try:
+        indata = _hitta_omrade_mapp(args.k1, args.rot)
+        mark_raw, geo = las_geotiff(indata / "mark.tif")
+        osak_raw, _ = las_geotiff(indata / "osakerhet.tif")
+        slag_raw, _ = las_geotiff(indata / "markslag.tif")
+        mark_z = np.asarray(mark_raw, dtype=np.float32)
+        osak_z = np.asarray(osak_raw, dtype=np.float32)
+        markslag = np.asarray(slag_raw, dtype=np.uint8)
+
+        bryt_fil = indata / "brytlinjer.gpkg"
+        brytlinjer = tuple(las_brytlinjer_fran_gpkg(bryt_fil)) if bryt_fil.is_file() else ()
+        opp_fil = indata / "oppningar.gpkg"
+        oppningar = tuple(las_oppningar_fran_gpkg(opp_fil)) if opp_fil.is_file() else ()
+
+        graf = bygg_sankgraf(
+            mark_z,
+            osak_z,
+            markslag,
+            geo,
+            brytlinjer=brytlinjer,
+            oppningar=oppningar,
+        )
+
+        serie, regn_fil = _ladda_regn_for_kor(args, indata)
+
+        koppl: ForlustKopplingResultat | None = None
+        if args.jordart is not None:
+            koppl = berakna_effektivt_regn_k5(
+                graf.markslag,
+                serie.tid_s,
+                serie.intensitet_mm_h,
+                jordart=args.jordart,
+                grundvatten=args.grundvatten,
+                tjale=args.tjale,
+                initial_mm=args.initial_mm,
+                pixelstorlek_m=float(geo.pixelstorlek_x),
+                mark_z=graf.mark_z,
+                regn_ref=serie.regn_id,
+            )
+            regn_tid_s: Sequence[float] = koppl.effektiv_regn_tid_s
+            regn_intensitet_mm_h: Sequence[float] = koppl.effektiv_regn_intensitet_mm_h
+        else:
+            regn_tid_s = serie.tid_s
+            regn_intensitet_mm_h = serie.intensitet_mm_h
+
+        indata_poster = [
+            FilPost(roll="mark", fil="mark.tif", sha256=sha256_fil(indata / "mark.tif")),
+            FilPost(
+                roll="osakerhet",
+                fil="osakerhet.tif",
+                sha256=sha256_fil(indata / "osakerhet.tif"),
+            ),
+            FilPost(
+                roll="markslag",
+                fil="markslag.tif",
+                sha256=sha256_fil(indata / "markslag.tif"),
+            ),
+        ]
+        if regn_fil is not None:
+            indata_poster.append(
+                FilPost(roll="regn", fil=regn_fil.name, sha256=sha256_fil(regn_fil))
+            )
+
+        parametrar: dict[str, Any] = {
+            "modell": args.modell,
+            "regn_id": serie.regn_id,
+            "brutto_regn_mm": float(serie.total_djup_mm),
+            "subgrid_faktor": int(args.subgrid_faktor),
+        }
+        if koppl is not None:
+            parametrar["t06"] = koppl.till_dict()
+
+        skrivna_filer: dict[str, Path] = {}
+        res_graf: DynamikResultat | None = None
+        res_tvad: TvadResultat | None = None
+
+        if args.modell == "graf":
+            res_graf = kor_dynamik_handelsestyrd(graf, regn_tid_s, regn_intensitet_mm_h)
+            if args.ut is not None:
+                skrivna_filer = skriv_dynamik_resultat_k6(
+                    res_graf,
+                    graf,
+                    args.ut,
+                    indata=indata_poster,
+                    parametrar=parametrar,
+                )
+            max_djup_m = float(np.max(res_graf.max_djup_m)) if res_graf.max_djup_m.size > 0 else 0.0
+            in_m3 = float(res_graf.in_m3)
+            lagrat_m3 = float(res_graf.lagrat_m3)
+            ut_m3 = float(res_graf.ut_m3)
+            volymfel_rel = float(res_graf.volymfel_rel)
+            kortid_s = float(res_graf.kortid_s)
+            metod = res_graf.metod
+        elif args.modell == "2d":
+            res_tvad = kor_2d_lokal_troghet(
+                graf.mark_z,
+                graf.markslag,
+                geo,
+                regn_tid_s,
+                regn_intensitet_mm_h,
+                subgrid_faktor=args.subgrid_faktor,
+            )
+            if args.ut is not None:
+                skrivna_filer = skriv_tvad_resultat_k6(
+                    res_tvad,
+                    geo,
+                    args.ut,
+                    indata=indata_poster,
+                    parametrar=parametrar,
+                )
+            max_djup_m = float(np.max(res_tvad.max_djup_m)) if res_tvad.max_djup_m.size > 0 else 0.0
+            in_m3 = float(res_tvad.in_m3)
+            lagrat_m3 = float(res_tvad.lagrat_m3)
+            ut_m3 = float(res_tvad.ut_m3)
+            volymfel_rel = float(res_tvad.volymfel_rel)
+            kortid_s = float(res_tvad.kortid_s)
+            metod = res_tvad.niva
+        else:
+            res_tvad = kor_hybrid_2d_graf(
+                graf.mark_z,
+                graf.markslag,
+                geo,
+                regn_tid_s,
+                regn_intensitet_mm_h,
+                graf=graf,
+                subgrid_faktor=args.subgrid_faktor,
+            )
+            if args.ut is not None:
+                skrivna_filer = skriv_tvad_resultat_k6(
+                    res_tvad,
+                    geo,
+                    args.ut,
+                    indata=indata_poster,
+                    parametrar=parametrar,
+                )
+            max_djup_m = float(np.max(res_tvad.max_djup_m)) if res_tvad.max_djup_m.size > 0 else 0.0
+            in_m3 = float(res_tvad.in_m3)
+            lagrat_m3 = float(res_tvad.lagrat_m3)
+            ut_m3 = float(res_tvad.ut_m3)
+            volymfel_rel = float(res_tvad.volymfel_rel)
+            kortid_s = float(res_tvad.kortid_s)
+            metod = res_tvad.niva
+
+        payload: dict[str, Any] = {
+            "k1_mapp": str(indata),
+            "modell": args.modell,
+            "metod": metod,
+            "regn_id": serie.regn_id,
+            "brutto_regn_mm": float(serie.total_djup_mm),
+            "max_djup_m": max_djup_m,
+            "in_m3": in_m3,
+            "lagrat_m3": lagrat_m3,
+            "ut_m3": ut_m3,
+            "volymfel_rel": volymfel_rel,
+            "kortid_s": kortid_s,
+            "ut_filer": {k: str(v) for k, v in skrivna_filer.items()},
+        }
+        if koppl is not None:
+            payload["t06"] = koppl.till_dict()
+        if res_tvad is not None:
+            payload["subgrid_faktor"] = int(args.subgrid_faktor)
+            payload["max_hastighet_m_s"] = (
+                float(np.max(res_tvad.max_hastighet_m_s))
+                if res_tvad.max_hastighet_m_s.size > 0
+                else 0.0
+            )
+            payload["max_fara_m2_s"] = (
+                float(np.max(res_tvad.fara_m2_s)) if res_tvad.fara_m2_s.size > 0 else 0.0
+            )
+
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+            return 0
+
+        print(f"Körning ({args.modell} / {metod}): {indata}")
+        print(f"Regn: {serie.namn} ({serie.regn_id}), brutto {serie.total_djup_mm:.2f} mm")
+        if koppl is not None:
+            print(
+                f"T06 markförluster ({koppl.jordart}): "
+                f"nettoavrinning {koppl.netto_avrinning_medel_mm:.2f} mm "
+                f"(C={koppl.effektiv_avrinningskoefficient:.3f})"
+            )
+        print(f"Maxdjup: {max_djup_m:.4f} m")
+        print(
+            f"Volym: in={in_m3:.3f} m³, lagrat={lagrat_m3:.3f} m³, "
+            f"ut={ut_m3:.3f} m³ (fel={volymfel_rel:.4%})"
+        )
+        print(f"Körtid: {kortid_s:.4f} s")
+        if args.ut is not None:
+            print(f"Skrev K6-resultat till: {args.ut}")
+        return 0
+    except (
+        TestsvitFel,
+        K1FormatFel,
+        SankGrafFel,
+        DynamikFel,
+        TvadFel,
+        RegnFel,
+        ForlustFel,
+        ValueError,
+        OSError,
+    ) as exc:
+        print(f"Fel i korkommando: {exc}", file=sys.stderr)
+        return 2
 
 
 def _kor_testsvit_kommando(rot: str, grupp: str | None) -> int:
@@ -241,20 +928,200 @@ def bygg_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="kommando", metavar="KOMMANDO")
 
-    subparsers.add_parser(
+    mm_parser = subparsers.add_parser(
         "markmodell",
-        help="Bygg markmodell-ruta (K1). Skelett – implementeras i T01.",
-        description="Bygg markmodell-ruta enligt kontrakt K1 (skelett, implementeras i T01).",
+        help="Bygg markmodell-ruta (K1/v1) från laser/GeoTIFF, DXF-baskarta och ortofoto.",
+        description="Bygg komplett K1-markmodellruta i EPSG:3011 med recept.json och run.json.",
     )
-    subparsers.add_parser(
+    mm_parser.add_argument(
+        "--ut",
+        type=str,
+        required=True,
+        help="Målkatalog för K1-utdata (mark.tif, osakerhet.tif, recept.json, run.json m.m.).",
+    )
+    mm_parser.add_argument(
+        "--grund-tif",
+        type=str,
+        default=None,
+        help="Valfri GeoTIFF med grundhöjder i EPSG:3011.",
+    )
+    mm_parser.add_argument(
+        "--laser-csv",
+        type=str,
+        default=None,
+        help="Valfri CSV med laserpunkter (kolumner e_m,n_m,z_m eller e,n,z[,klass]).",
+    )
+    mm_parser.add_argument(
+        "--dxf",
+        type=str,
+        default=None,
+        help="Valfri ASCII-DXF baskarta (brytlinjer, byggnader, öppningar).",
+    )
+    mm_parser.add_argument(
+        "--ortofoto",
+        type=str,
+        default=None,
+        help="Valfri PNG/TIFF RGB-bild för ortofotoklassning av markslag och skuggosäkerhet.",
+    )
+    mm_parser.add_argument(
+        "--barriar-idw",
+        action="store_true",
+        help="Använd ensidig barriär-IDW när både laserpunkter och brytlinjer finns.",
+    )
+    mm_parser.add_argument(
+        "--ruta-id",
+        type=str,
+        default="ruta_01",
+        help="Rutas identifikator (standard: ruta_01).",
+    )
+    mm_parser.add_argument(
+        "--upplosning-m",
+        type=float,
+        default=0.25,
+        help="Pixelupplösning i meter vid punktmolnsinterpolering (standard: 0.25).",
+    )
+    mm_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Skriv ut sammanfattning som JSON.",
+    )
+
+    sg_parser = subparsers.add_parser(
         "sankgraf",
-        help="Bygg sänkgraf från markmodell (K2). Skelett – implementeras i T02.",
-        description="Bygg sänkgraf enligt kontrakt K2 (skelett, implementeras i T02).",
+        help="Bygg sänkgraf från K1-markmodell och exportera valfritt K2.",
+        description="Bygg sänkhierarki och flödesvägar enligt K2/v1 från K1-indata.",
     )
-    subparsers.add_parser(
+    sg_parser.add_argument(
+        "--k1",
+        type=str,
+        required=True,
+        help="K1-indatamapp eller testfalls-ID (t.ex. A3).",
+    )
+    sg_parser.add_argument(
+        "--ut",
+        type=str,
+        default=None,
+        help="Valfri målkatalog för K2-export.",
+    )
+    sg_parser.add_argument(
+        "--persistens-faktor",
+        type=float,
+        default=None,
+        help="Valfri persistensfaktor för brusfiltrering (t.ex. 2.0).",
+    )
+    sg_parser.add_argument(
+        "--rot",
+        type=str,
+        default="testsvit",
+        help="Rotmapp för testsviten vid testfalls-ID (standard: testsvit).",
+    )
+    sg_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Skriv ut sammanfattning som JSON.",
+    )
+
+    kor_parser = subparsers.add_parser(
         "kor",
-        help="Kör skyfallsberäkning (K6). Skelett – implementeras i T03.",
-        description="Kör skyfallsberäkning enligt kontrakt K6 (skelett, implementeras i T03).",
+        help="Kör skyfallsberäkning (graf, 2d eller hybrid) till K6.",
+        description="Kör dynamisk graf-, 2D- eller hybridmodell och exportera K6-resultat.",
+    )
+    kor_parser.add_argument(
+        "--k1",
+        type=str,
+        required=True,
+        help="K1-indatamapp eller testfalls-ID (t.ex. A3).",
+    )
+    kor_parser.add_argument(
+        "--modell",
+        type=str,
+        default="graf",
+        choices=("graf", "2d", "hybrid"),
+        help="Beräkningsmodell: 'graf' (standard), '2d' eller 'hybrid'.",
+    )
+    kor_parser.add_argument(
+        "--regn-id",
+        type=str,
+        default=None,
+        help="Inbyggt regnförval, t.ex. stockholm_cds_6h_100ar_kf124.",
+    )
+    kor_parser.add_argument(
+        "--regn-csv",
+        type=str,
+        default=None,
+        help="Sökväg till punktregn i K4-CSV-format.",
+    )
+    kor_parser.add_argument(
+        "--aterkomsttid-ar",
+        type=float,
+        default=None,
+        help="Återkomsttid i år för syntetiskt regn (t.ex. 100).",
+    )
+    kor_parser.add_argument(
+        "--klimatfaktor",
+        type=float,
+        default=1.0,
+        help="Klimatfaktor (standard: 1.0).",
+    )
+    kor_parser.add_argument(
+        "--varaktighet-min",
+        type=float,
+        default=STANDARD_VARAKTIGHET_MIN,
+        help="Regnvaraktighet i minuter (standard: 360.0).",
+    )
+    kor_parser.add_argument(
+        "--regntyp",
+        type=str,
+        default="cds",
+        choices=("cds", "block"),
+        help="Regntyp: 'cds' (standard) eller 'block'.",
+    )
+    kor_parser.add_argument(
+        "--jordart",
+        type=str,
+        default=None,
+        help="Aktivera T06 Green–Ampt-infiltration för jordart (t.ex. sand, moran, lera).",
+    )
+    kor_parser.add_argument(
+        "--grundvatten",
+        type=str,
+        default="normal",
+        choices=("normal", "hog"),
+        help="Grundvattenläge vid T06-infiltration: 'normal' (standard) eller 'hog'.",
+    )
+    kor_parser.add_argument(
+        "--tjale",
+        action="store_true",
+        help="Aktivera tjäle vid T06-infiltration.",
+    )
+    kor_parser.add_argument(
+        "--initial-mm",
+        type=float,
+        default=2.0,
+        help="Initial ytmagasinering i mm vid T06-infiltration (standard: 2.0).",
+    )
+    kor_parser.add_argument(
+        "--subgrid-faktor",
+        type=int,
+        default=2,
+        help="Subgrid-aggregeringsfaktor för '2d' och 'hybrid' (standard: 2).",
+    )
+    kor_parser.add_argument(
+        "--ut",
+        type=str,
+        default=None,
+        help="Valfri målkatalog för K6-export (max_djup.tif, run.json m.m.).",
+    )
+    kor_parser.add_argument(
+        "--rot",
+        type=str,
+        default="testsvit",
+        help="Rotmapp för testsviten vid testfalls-ID (standard: testsvit).",
+    )
+    kor_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Skriv ut sammanfattning som JSON.",
     )
 
     testsvit_parser = subparsers.add_parser(
@@ -448,11 +1315,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
     if args.kommando == "markmodell":
-        return _kor_skelettkommando("markmodell", "T01")
+        return _kor_markmodell_kommando(args)
     if args.kommando == "sankgraf":
-        return _kor_skelettkommando("sankgraf", "T02")
+        return _kor_sankgraf_kommando(args)
     if args.kommando == "kor":
-        return _kor_skelettkommando("kor", "T03")
+        return _kor_kor_kommando(args)
     if args.kommando == "testsvit":
         return _kor_testsvit_kommando(rot=args.rot, grupp=args.grupp)
     if args.kommando == "regn":
