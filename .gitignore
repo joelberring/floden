@@ -31,3 +31,6 @@ runs/
 tmp/
 .DS_Store
 Thumbs.db
+
+# Rust-verktyg
+tools/*/target/
