@@ -203,10 +203,11 @@ def berakna_effektivt_regn_k5(
             ksat_mm_h=eff_p.ksat_mm_h,
             psi_m=eff_p.psi_m,
             delta_theta=eff_p.delta_theta,
-            initial_mm=scenario.forluster.initial_mm,
+            initial_mm=scenario.forluster.initial_mm * eff_p.initial_faktor,
             max_lagring_m=max_lagring_m,
         )
-        netto_steg_m += vikt * ga.netto_regn_serie_m
+        ga_steg_m = np.diff(ga.netto_regn_serie_m, prepend=0.0)
+        netto_steg_m += vikt * ga_steg_m
 
     # Skala mjukt om rumsligt DTW-tak avviker något från klassmedelvärdet så att
     # totalvolymen matchar cellvis `forlust_res.netto_regn_m` exakt.

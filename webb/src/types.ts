@@ -218,6 +218,73 @@ export interface ForlusterSammanfattning {
   effektiv_avrinningskoefficient: number;
 }
 
+export interface OppnaPassagePayload {
+  passage_id: string;
+  typ: "bro" | "trumma" | "port";
+  linje: Array<[number, number]>;
+  bredd_m: number;
+  botten_rh2000?: number | null;
+  aktiv: boolean;
+}
+
+export interface HojdRattningPayload {
+  rattning_id: string;
+  polygon: Array<[number, number]>;
+  utjamna_fran_rand?: boolean;
+  delta_z_m?: number | null;
+  ta_bort_byggnad?: boolean;
+  aktiv: boolean;
+}
+
+export interface GrundmodellRattningPayload {
+  rattning_id?: string;
+  passager?: OppnaPassagePayload[];
+  hojd_rattningar?: HojdRattningPayload[];
+}
+
+export interface DikeAtgardPayload {
+  atgard_id: string;
+  linje: Array<[number, number]>;
+  botten_bredd_m: number;
+  slantslutning: number;
+  djup_m: number;
+  aktiv: boolean;
+}
+
+export interface VallAtgardPayload {
+  atgard_id: string;
+  linje: Array<[number, number]>;
+  kron_bredd_m: number;
+  slantslutning: number;
+  hojd_over_mark_m: number;
+  aktiv: boolean;
+}
+
+export interface GataHojdsattningPayload {
+  atgard_id: string;
+  linje: Array<[number, number]>;
+  bredd_m: number;
+  delta_z_m: number;
+  tvarfall: number;
+  kantsten_hojd_m: number;
+  aktiv: boolean;
+}
+
+export interface MarkJusteringPayload {
+  atgard_id: string;
+  polygon: Array<[number, number]>;
+  delta_z_m: number;
+  aktiv: boolean;
+}
+
+export interface ExperimentAtgarderPayload {
+  experiment_id?: string;
+  diken?: DikeAtgardPayload[];
+  vallar?: VallAtgardPayload[];
+  gator?: GataHojdsattningPayload[];
+  mark_justeringar?: MarkJusteringPayload[];
+}
+
 export interface KorBegaran {
   omrade_id: string;
   intensitet_mm_h?: number;
@@ -233,6 +300,8 @@ export interface KorBegaran {
   byggnader?: LappByggnadPayload[];
   magasin?: LappMagasinPayload[];
   forluster?: ForlusterBegaran;
+  grundmodell_rattning?: GrundmodellRattningPayload;
+  experiment?: ExperimentAtgarderPayload;
 }
 
 export interface RunManifestK0 {
@@ -294,6 +363,16 @@ export interface KorSvar {
     overstiger_entre: boolean;
   }>;
   forluster?: ForlusterSammanfattning | null;
+  grundmodell_rattning?: {
+    antal_aktiva_rattningar: number;
+    antal_andrade_celler: number;
+  } | null;
+  experiment?: {
+    antal_aktiva_atgarder: number;
+    antal_andrade_celler: number;
+    schakt_volym_m3: number;
+    fyll_volym_m3: number;
+  } | null;
   kortid_s: number;
   manifest: RunManifestK0;
   kallor: string[];

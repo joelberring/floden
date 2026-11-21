@@ -233,13 +233,11 @@ def hamta_jordart(
 
 
 def validera_markslag(markslag: int) -> int:
-    """Validerar en K1-markslagskod (`1..9`); okänd kod `0` eller utanför intervallet ger fel."""
+    """Validerar en K1-markslagskod (`0..9`); koder utanför intervallet ger fel."""
     if not isinstance(markslag, int) or isinstance(markslag, bool):
         raise ForlustFel(f"Markslag måste vara ett heltal, fick {type(markslag).__name__}.")
     if markslag not in GILTIGA_MARKSLAG:
         raise ForlustFel(f"Ogiltig markslagskod {markslag}. Giltiga enligt K1/v1: 0..9.")
-    if markslag == OKANT:
-        raise ForlustFel("Okänt markslag (kod 0) saknar infiltrationsparametrar.")
     return markslag
 
 
@@ -254,6 +252,7 @@ def effektiv_markparametrar(
     """Kopplar K1-markslag och SGU-jordart till effektiva Green–Ampt-parametrar.
 
     Regler:
+    - Okänt (0): konservativt hårdgjort (0 infiltration, 0,5x initial ytmagasinering).
     - Hårdgjort (1), tak (2), byggnad (9): 0 infiltration, full initial ytmagasinering.
     - Vatten (8): 0 infiltration, 0 initial ytmagasinering (allt regn blir direkt avrinning).
     - Berg i dagen (6): mycket låg infiltration enligt `berg`, oberoende av djupjordart.
@@ -267,6 +266,14 @@ def effektiv_markparametrar(
     kod = validera_markslag(markslag)
     jord = hamta_jordart(jordart, tabell=tabell)
 
+    if kod == OKANT:
+        return EffektivMarkParametrar(
+            ksat_mm_h=0.0,
+            psi_m=0.0,
+            delta_theta=0.0,
+            initial_faktor=0.5,
+            porositet=0.0,
+        )
     if kod in (HARDGJORT, TAK, BYGGNAD):
         return EffektivMarkParametrar(
             ksat_mm_h=0.0,

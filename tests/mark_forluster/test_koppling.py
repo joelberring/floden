@@ -74,6 +74,27 @@ class TestMarkForlusterKoppling(unittest.TestCase):
         self.assertEqual(t, [0.0, 300.0, 600.0])
         self.assertEqual(i, [20.0, 80.0, 80.0])
 
+    def test_cds_intensitetstopp_ligger_nara_r_037_inte_sista_steget(self) -> None:
+        regn = hamta_regnforval("stockholm_cds_6h_100ar_kf124").generera()
+        markslag = np.full((8, 8), GRAS, dtype=np.uint8)
+        markslag[:, :4] = HARDGJORT
+
+        res = berakna_effektivt_regn_k5(
+            markslag,
+            regn.tid_s,
+            regn.intensitet_mm_h,
+            jordart="moran",
+            grundvatten="normal",
+            initial_mm=2.0,
+        )
+        max_idx = int(np.argmax(res.effektiv_regn_intensitet_mm_h))
+        t_topp = res.effektiv_regn_tid_s[max_idx]
+        t_slut = res.effektiv_regn_tid_s[-1]
+        r_topp = t_topp / t_slut
+        self.assertGreater(r_topp, 0.25)
+        self.assertLess(r_topp, 0.50)
+        self.assertLess(max_idx, len(res.effektiv_regn_intensitet_mm_h) - 2)
+
 
 if __name__ == "__main__":
     unittest.main()

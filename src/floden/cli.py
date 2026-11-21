@@ -913,6 +913,7 @@ def _kor_risk_kommando(args: argparse.Namespace) -> int:
         SankGrafFel,
         DynamikFel,
         RegnFel,
+        ForlustFel,
         ValueError,
         OSError,
     ) as exc:
@@ -1303,6 +1304,36 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Skriv ut sammanfattning som JSON.",
     )
 
+    webb_parser = subparsers.add_parser(
+        "webb",
+        help="Starta Flodens lokala HTTP/JSON-API för webbklienten.",
+        description="Startar det lokala HTTP/JSON-API:t på angiven värd och port.",
+    )
+    webb_parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Värdadress (standard: 127.0.0.1).",
+    )
+    webb_parser.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="TCP-port (standard: 8765).",
+    )
+    webb_parser.add_argument(
+        "--rot",
+        type=str,
+        default="testsvit",
+        help="Rotmapp för K1-områden/testsvit (standard: testsvit).",
+    )
+    webb_parser.add_argument(
+        "--konfig",
+        type=str,
+        default="config.toml",
+        help="Sökväg till config.toml (standard: config.toml).",
+    )
+
     return parser
 
 
@@ -1326,6 +1357,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _kor_regn_kommando(args)
     if args.kommando == "risk":
         return _kor_risk_kommando(args)
+    if args.kommando == "webb":
+        from webb.api import skapa_http_server
+
+        server = skapa_http_server(
+            host=args.host,
+            port=args.port,
+            testsvit_rot=args.rot,
+            konfig_fil=args.konfig,
+        )
+        print(f"Floden API lyssnar på http://{args.host}:{args.port}")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
+        return 0
 
     parser.print_help()
     return 2

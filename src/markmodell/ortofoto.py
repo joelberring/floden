@@ -188,11 +188,11 @@ def _normalisera_ortofoto(
     return norm, har_nir
 
 
-def berakna_vegetationsindex(
-    bild: NDArray[np.floating[Any]] | NDArray[np.uint8],
-) -> tuple[NDArray[np.float32], bool]:
-    """Beräknar `NDVI` om NIR-band finns (4 band), annars normaliserad `ExG` (3 band)."""
-    norm, har_nir = _normalisera_ortofoto(bild)
+def _vegetationsindex_fran_norm(
+    norm: NDArray[np.float64],
+    har_nir: bool,
+) -> NDArray[np.float32]:
+    """Beräknar `NDVI` eller normaliserad `ExG` från en redan normaliserad array."""
     r = norm[:, :, 0]
     g = norm[:, :, 1]
     b = norm[:, :, 2]
@@ -203,7 +203,15 @@ def berakna_vegetationsindex(
     else:
         index = (2.0 * g - r - b) / (r + g + b + 1e-6)
 
-    return np.asarray(index, dtype=np.float32), har_nir
+    return np.asarray(index, dtype=np.float32)
+
+
+def berakna_vegetationsindex(
+    bild: NDArray[np.floating[Any]] | NDArray[np.uint8],
+) -> tuple[NDArray[np.float32], bool]:
+    """Beräknar `NDVI` om NIR-band finns (4 band), annars normaliserad `ExG` (3 band)."""
+    norm, har_nir = _normalisera_ortofoto(bild)
+    return _vegetationsindex_fran_norm(norm, har_nir), har_nir
 
 
 def klassificera_ortofoto(
@@ -216,7 +224,7 @@ def klassificera_ortofoto(
     """Klassificerar RGB eller RGB+NIR ortofoto deterministiskt till K1-markslag."""
     p = parametrar if parametrar is not None else OrtofotoParametrar()
     norm, har_nir = _normalisera_ortofoto(bild)
-    veg_idx, _ = berakna_vegetationsindex(bild)
+    veg_idx = _vegetationsindex_fran_norm(norm, har_nir)
     veg = veg_idx.astype(np.float64)
 
     rader, kolumner = norm.shape[:2]

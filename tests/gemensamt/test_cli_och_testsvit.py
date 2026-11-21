@@ -292,6 +292,13 @@ class TestCliOchTestsvit(unittest.TestCase):
         self.assertIn("EA8A", text)
         self.assertIn("3/3", text)
 
+    def test_cli_webb_hjalp(self) -> None:
+        ut = io.StringIO()
+        with redirect_stdout(ut), self.assertRaises(SystemExit) as ctx:
+            main(["webb", "--help"])
+        self.assertEqual(ctx.exception.code, 0)
+        self.assertIn("--port", ut.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
