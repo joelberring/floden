@@ -238,7 +238,7 @@ def voxelisera(
     buffert_nedstroms_m: float,
     buffert_sidor_m: float,
     vegetation_hojd_m: npt.ArrayLike | None = None,
-    lad_m2_m3: float = 1.0,
+    lad_m2_m3: float | npt.ArrayLike = 1.0,
     vindriktning_grad: float = 270.0,
     origo_z_m: float = 0.0,
 ) -> Voxelgrid:
@@ -252,7 +252,9 @@ def voxelisera(
             övre vänstra hörn (EPSG:3011, nordorienterat).
         buffert_*: tom mark runt rastrets roterade utbredning (m).
         vegetation_hojd_m: valfritt raster (samma form) med vegetationshöjd.
-        lad_m2_m3: bladytetäthet i vegetationsceller.
+        lad_m2_m3: bladytetäthet i vegetationsceller: ett tal, eller ett raster med samma
+            form som ``hojd_over_mark_m`` (t.ex. per markslag, ``karna``-adaptern) som samplas
+            med närmaste granne som övriga raster.
         vindriktning_grad: meteorologisk riktning vinden kommer ifrån.
         origo_z_m: markplanets nivå i RH 2000.
 
@@ -280,8 +282,18 @@ def voxelisera(
     ):
         if not (math.isfinite(varde) and varde >= 0):
             raise LuftFel(f"{namn} måste vara icke-negativ.")
-    if lad_m2_m3 < 0 or not math.isfinite(lad_m2_m3):
-        raise LuftFel("lad_m2_m3 måste vara icke-negativ.")
+    lad_raster: FloatArray | None = None
+    if np.ndim(lad_m2_m3) == 0:
+        lad_tal = float(np.asarray(lad_m2_m3))
+        if lad_tal < 0 or not math.isfinite(lad_tal):
+            raise LuftFel("lad_m2_m3 måste vara icke-negativ.")
+    else:
+        lad_raster = np.asarray(lad_m2_m3, dtype=np.float64)
+        if lad_raster.shape != hojd.shape:
+            raise LuftFel("lad_m2_m3 som raster måste ha samma form som hojd_over_mark_m.")
+        if not np.all(np.isfinite(lad_raster)) or np.any(lad_raster < 0):
+            raise LuftFel("lad_m2_m3 måste vara ändlig och icke-negativ.")
+        lad_tal = float(lad_raster.max())
 
     nz = math.ceil(hojd_doman_m / dx_m - _TOL_INDEX)
     tak_m = nz * dx_m
@@ -318,10 +330,14 @@ def voxelisera(
     z = (np.arange(nz, dtype=np.float64) + 0.5) * dx_m
     fast = z[None, None, :] < h_kol[:, :, None]
     lad: FloatArray = np.zeros((nx, ny, nz), dtype=np.float64)
-    if veg is not None and lad_m2_m3 > 0:
+    if veg is not None and lad_tal > 0:
         v_kol = _sampla_raster_narmast(veg, ruta, xs, ys)
         veg_cell = (z[None, None, :] < v_kol[:, :, None]) & ~fast
-        lad[veg_cell] = lad_m2_m3
+        if lad_raster is None:
+            lad[veg_cell] = lad_tal
+        else:
+            lad_kol = _sampla_raster_narmast(lad_raster, ruta, xs, ys)
+            lad = np.where(veg_cell, lad_kol[:, :, None], 0.0)
 
     return Voxelgrid(
         dx_m=float(dx_m),

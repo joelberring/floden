@@ -3,6 +3,8 @@
 - `vatten.statisk_fyllning`: global; sänkgraf + statisk fyllning (T02) på en K1-ruta.
   Finns som referens för hur en befintlig domänmodul kopplas in. Vattendomänen kan
   ersätta eller komplettera den med egna lösare i `<paket>/floden_losare.py`.
+- `luft.vindkomfort`, `luft.halt`: globala lösare på K1 v2 (`karna/luft_losare.py`; luftdelen är
+  MIT).
 - `geometri.lutning`: rutvis med kort påverkansradie; lutning i grader ur markmodellen.
   Visar och testar den lokala omräkningen.
 """
@@ -16,6 +18,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from karna.analyslosare import Analyslosare, LosarFel, LosarKontext, LosarUtdata
+from karna.luft_losare import LOSARE as _LUFT_LOSARE  # luftimporterna i den filen är lata
 
 
 def _tal(parametrar: Mapping[str, Any], namn: str, *, minst: float | None = None) -> float:
@@ -120,4 +123,4 @@ class Lutning(Analyslosare):
         )
 
 
-LOSARE: list[Analyslosare] = [StatiskFyllning(), Lutning()]
+LOSARE: list[Analyslosare] = [StatiskFyllning(), Lutning(), *_LUFT_LOSARE]

@@ -18,6 +18,12 @@ K9-ändringarna för byggnader och vegetation (`byggnad_ny`, `byggnad_bort`, `by
 K1 v2-rutor; de tillämpas av `karna.geometri` och läses via samma API (`las_byggnader`, `las_terrang`,
 `las_ytmodell`, `las_vegetation`, `fasadpunkter`, `las_markklasser`). Se K1 v2 och K11 i `DATAKONTRAKT.md`.
 
+Domänernas anslutning till gemensam geometri (G1-uppföljning): luft läser K1 v2 via `karna.geometri.mosaik` och
+`karna.geometri.luftgeometri` och har K20-lösarna `luft.vindkomfort`/`luft.halt` (`src/karna/luft_losare.py`, globala,
+se `docs/LUFT.md` avsnitt 10 för licensgränsen MIT/GPL); buller bygger sin scen ur K1 v2 och K11 med
+`buller.scen.k1v2` (se `docs/buller/KONTRAKT.md`). Markslag → egenskaper per domän (buller, luft) ligger i
+`data/markklasser.toml` och läses av `karna.geometri.las_markklasser`.
+
 Båda delar K9, sha256-nycklar och K0-manifest. Välj rutvisa lösare om resultatet bara beror på
 geometrin inom ett avstånd; då behöver modulen inte själv hålla reda på vad som ändrats.
 
