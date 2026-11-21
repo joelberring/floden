@@ -1,0 +1,71 @@
+{
+  "paket": "B3/B6",
+  "datum": "2026-11-21",
+  "miljo": {
+    "python": "3.13.18",
+    "numpy": "2.5.3",
+    "shapely": "2.2.0",
+    "plattform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39",
+    "processorer": 2,
+    "anm": "en tråd, ingen GPU"
+  },
+  "scen": {
+    "typ": "buller.scen.syntetisk.syntetisk_scen",
+    "sida_m": 1000.0,
+    "cell_m": 0.5,
+    "rasterceller": 4000000,
+    "tomt_m": 50.0,
+    "fro": 2026,
+    "byggnader": 435,
+    "vaggar": 1890,
+    "vagar": 38,
+    "tid_bygga_scen_s": 0.866
+  },
+  "profiler": {
+    "antal_snitt": 88909,
+    "snitt_per_anrop": 20000,
+    "steg_m": 1.0,
+    "snittlangd_m": [
+      10.0,
+      300.0
+    ],
+    "medellangd_m": 143.3,
+    "punkter_per_profil": 132.0,
+    "andel_snitt_genom_byggnad": 0.721,
+    "tid_batch_s": 9.312,
+    "tid_terrangprofil_objekt_s": 0.973,
+    "profiler_per_s_batch": 9548,
+    "profiler_per_s_med_objekt": 8645
+  },
+  "banor": {
+    "mottagare": 60,
+    "kallsegment": 3800,
+    "kallsegment_maxlangd_m": 10.0,
+    "maxradie_m": 300.0,
+    "steg_m": 1.0,
+    "antal_banor": 127947,
+    "varav_direkta": 48331,
+    "varav_reflex": 79616,
+    "tid_s": 24.993,
+    "banor_per_s": 5119,
+    "bara_direkta_antal": 48331,
+    "bara_direkta_tid_s": 7.161,
+    "bara_direkta_banor_per_s": 6749
+  },
+  "korridorindex": {
+    "halvbredd_m": 5.0,
+    "cell_m": 25.0,
+    "tid_bygga_s": 1.102,
+    "antal_rutor": 200,
+    "rutsidor_m": [
+      5.0,
+      20.0,
+      50.0
+    ],
+    "tid_per_fraga_ms": 0.954,
+    "berorda_banor_exakt": 282616,
+    "berorda_banor_index": 282616,
+    "missade": 0,
+    "andel_falska_traffar": 0.0
+  }
+}

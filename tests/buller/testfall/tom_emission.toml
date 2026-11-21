@@ -1,0 +1,102 @@
+# Källmodell för vägtrafik, Nord2000 Road – dataversion 1.
+#
+# STATUS: TOM. Koefficienttabellerna är inte ifyllda, eftersom de inte står i User's Guide
+# Nord2000 Road (DELTA AV 1171/06). Guiden hänvisar till referens [4]: H. G. Jonasson,
+# "Acoustic Source Modelling of Nordic Road Vehicles", SP Rapport 2006:12, som inte gick att
+# hämta från byggmiljön. Se docs/buller/logg/B1-B5.md och docs/buller/kontroll/emission_tabeller.md
+# för exakt vad som ska matas in.
+#
+# Regel: inget tal här får skrivas ur minnet. Varje tabell ska ha dokument, tabell och sida.
+
+[meta]
+namn = "nord2000_road"
+dataversion = "1"
+syntetisk = false
+verifierad_av_manniska = false
+
+[[meta.kallor]]
+id = "UG"
+dokument = "User's Guide Nord2000 Road, DELTA AV 1171/06 (Kragh, Jonasson, Plovsing, Sarinen 2006)"
+url = "https://egra.cedex.es/EGRA-ingles/I-Documentacion/National_Methods/Users_Guide_Nord2000_Road.pdf"
+
+[[meta.kallor]]
+id = "SP"
+dokument = "H. G. Jonasson, Acoustic Source Modelling of Nordic Road Vehicles, SP Rapport 2006:12"
+url = ""
+
+# Delkällornas höjder över vägbanan. Avläst två gånger ur UG avsnitt 3.1.1 (s. 12), lika.
+# Samma avsnitt anger en extra källa på 3,5 m för tunga fordon med högt avgasrör och att alla
+# källor ligger 1 m från fordonets mittlinje. Den extra källan är inte införd (fördelningen
+# saknas).
+[delkallor]
+hojder_m = [0.01, 0.30, 0.75]
+kalla = "UG avsnitt 3.1.1, s. 12"
+antal_avlasningar = 2
+hojd_hogt_avgasror_m = 3.5
+sidoforskjutning_fran_fordonets_mittlinje_m = 1.0
+
+# Fordonskategorier. Benämningarna är avlästa två gånger ur Miljøprojekt 1335/2010 kapitel 2
+# (lika). UG tabell 2 (s. 13) och bilaga 3, tabell 16 (s. 40) har den fullständiga
+# indelningen och ska kontrolleras.
+#
+# För varje kategori och bullertyp (rull, drivlina) ska fyllas i:
+#   formtyp               hur nivån beror av hastigheten; se `buller.emission.modell.FORMTYPER`.
+#                         Ska väljas efter SP 2006:12. De former koden erbjuder är allmänna
+#                         funktionsformer och inte avlästa ur något dokument.
+#   referenshastighet_km_h
+#   a_db, b_db            27 värden var (25 Hz – 10 kHz), ljudeffektnivå per fordon, dB re 1 pW
+#   fordelning            andel av ljudeffekten per delkälla (samma ordning som hojder_m,
+#                         summa 1), antingen en lista med ett tal per delkälla eller en lista
+#                         av listor med 27 tal per delkälla om fördelningen beror av frekvens
+#   kalla                 dokument, tabell och sida
+
+[kategorier.1]
+namn = "personbilar och lätta lastbilar (cars and vans)"
+
+[kategorier.1.rull]
+formtyp = ""
+a_db = []
+b_db = []
+fordelning = []
+kalla = ""
+
+[kategorier.1.drivlina]
+formtyp = ""
+a_db = []
+b_db = []
+fordelning = []
+kalla = ""
+
+[kategorier.2]
+namn = "tunga fordon med två axlar"
+
+[kategorier.2.rull]
+formtyp = ""
+a_db = []
+b_db = []
+fordelning = []
+kalla = ""
+
+[kategorier.2.drivlina]
+formtyp = ""
+a_db = []
+b_db = []
+fordelning = []
+kalla = ""
+
+[kategorier.3]
+namn = "tunga fordon med fler än två axlar"
+
+[kategorier.3.rull]
+formtyp = ""
+a_db = []
+b_db = []
+fordelning = []
+kalla = ""
+
+[kategorier.3.drivlina]
+formtyp = ""
+a_db = []
+b_db = []
+fordelning = []
+kalla = ""

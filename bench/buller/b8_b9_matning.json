@@ -1,0 +1,97 @@
+{
+  "paket": "B8-B9",
+  "beskrivning": "Syntetisk scen (buller.operator.syntetisk), inte Nord2000.",
+  "scen": {
+    "antal_mottagare": 200,
+    "antal_kallor": 5000,
+    "antal_par": 1000000,
+    "antal_vaderklasser": 1,
+    "antal_band": 27,
+    "sida_m": 2000.0,
+    "kallor": "10 raka vägar i rutnät, jämnt fördelade punktkällor",
+    "byggnad_m": [
+      940.0,
+      985.0,
+      1060.0,
+      1015.0
+    ]
+  },
+  "miljo": {
+    "python": "3.13.18",
+    "numpy": "2.5.3",
+    "maskin": "x86_64",
+    "tidmatning": "bästa av 3 körningar, en tråd"
+  },
+  "full_korning": {
+    "tid_s": 0.6841536950000773,
+    "parkostnad_syntetisk_s": 6.841536950000773e-07,
+    "antal_par_i_lager": 1000000
+  },
+  "omkombination_andrad_emission": {
+    "tid_s": 0.6699308770000698,
+    "tid_per_par_s": 6.699308770000698e-07,
+    "andel_av_full_korning_syntetisk": 0.9792110777096572,
+    "storsta_avvikelse_mot_rak_summering_db": 1.4210854715202004e-14
+  },
+  "klustring": [
+    {
+      "felgrans_db": 0.1,
+      "andel_beraknade_par": 0.401218,
+      "antal_beraknade_par": 401218,
+      "antal_parberakningsanrop": 483,
+      "antal_restnoder": 59170,
+      "storsta_uppmatta_fel_db": 0.0960133611171301,
+      "minsta_uppmatta_fel_db": 0.0038173167489929938,
+      "storsta_garanterade_grans_db": 0.09999927464288334,
+      "tid_s": 2.900951791000125,
+      "tidsvinst_syntetisk_parberaknare": 0.23583766442537474,
+      "tid_omkombination_s": 0.25561674499999754,
+      "tid_felgrans_s": 0.2760111439999946,
+      "harlett": {
+        "forklaring": "Härlett ur mätningarna, inte mätt: fast kostnad = tid_s - andel * tid för full körning. Tidsvinsten med en parberäknare som kostar c sekunder per par är N*c / (fast + andel*N*c) och går mot 1/andel.",
+        "fast_kostnad_s": 2.626457013799584,
+        "fast_kostnad_per_mottagare_s": 0.013132285068997919,
+        "brytpunkt_parkostnad_s": 4.386332611534055e-06,
+        "storsta_mojliga_tidsvinst": 2.4924106096934833,
+        "tidsvinst_vid_parkostnad_1_ms": 2.4762008803944764
+      }
+    },
+    {
+      "felgrans_db": 0.5,
+      "andel_beraknade_par": 0.141369,
+      "antal_beraknade_par": 141369,
+      "antal_parberakningsanrop": 496,
+      "antal_restnoder": 42619,
+      "storsta_uppmatta_fel_db": 0.4640919079608068,
+      "minsta_uppmatta_fel_db": 0.01945428774125446,
+      "storsta_garanterade_grans_db": 0.49999876705980667,
+      "tid_s": 1.4654665350001324,
+      "tidsvinst_syntetisk_parberaknare": 0.4668504388604244,
+      "tid_omkombination_s": 0.0879140350000398,
+      "tid_felgrans_s": 0.10832499100001769,
+      "harlett": {
+        "forklaring": "Härlett ur mätningarna, inte mätt: fast kostnad = tid_s - andel * tid för full körning. Tidsvinsten med en parberäknare som kostar c sekunder per par är N*c / (fast + andel*N*c) och går mot 1/andel.",
+        "fast_kostnad_s": 1.3687484112916664,
+        "fast_kostnad_per_mottagare_s": 0.006843742056458332,
+        "brytpunkt_parkostnad_s": 1.5941055136509936e-06,
+        "storsta_mojliga_tidsvinst": 7.0736865932418,
+        "tidsvinst_vid_parkostnad_1_ms": 7.005855221413119
+      }
+    }
+  ],
+  "inkrementell_flyttad_byggnad": {
+    "andrad_yta_m": [
+      940.0,
+      985.0,
+      1210.0,
+      1115.0
+    ],
+    "antal_omraknade_par": 157634,
+    "andel_omraknade_par": 0.157634,
+    "tid_s": 0.8498476849999861,
+    "tid_korridorindex_syntetiskt_s": 0.05429366399994251,
+    "tid_full_omrakning_s": 0.7279177539999182,
+    "tidsvinst_syntetisk_parberaknare": 0.856527312891286,
+    "lika_med_full_omrakning": true
+  }
+}

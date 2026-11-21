@@ -1,0 +1,93 @@
+# Markklass v1: K1:s markslagskoder -> Nord2000:s impedansklass och råhetsklass.
+#
+# Två delar med olika status:
+#
+# 1. Klasstabellerna ([impedansklass], [rahetsklass]) är tabellvärden ur metoddokumentet
+#    och är verifierade mot källan (se [kalla]).
+# 2. Översättningen markslag -> klass ([markslag.*], [byggnadsyta]) är ett EGET VAL i
+#    paket B3 och finns inte i någon källa. Den är preliminär tills Joel har stämt av den
+#    (se docs/buller/logg/B3-B6.md, "Tolkningar som behöver stämmas av").
+
+version = "markklass/v1"
+kontrakt_markslag = "K1/v1"
+preliminar = true
+
+[kalla]
+dokument = "User's Guide Nord2000 Road, DELTA AV 1171/06 (Kragh, Jonasson, Plovsing, Sarinen), maj 2006"
+url = "https://egra.cedex.es/EGRA-ingles/I-Documentacion/National_Methods/Users_Guide_Nord2000_Road.pdf"
+impedansklasser = "Avsnitt 3.2.2 Propagation Path (Ground Type), Table 10 'Classification of ground type', s. 23"
+rahetsklasser = "Avsnitt 3.2.2 Propagation Path (Ground Roughness), Table 12 'Classification of ground roughness', s. 25"
+enhet_flodesresistivitet = "kNs/m4 (källan skriver kPas/m2, samma enhet)"
+verifierad = "2026-11-21: två hämtningar av PDF:en med var sin utläsning av tabellerna, alla värden lika"
+
+# Representativ flödesresistivitet per impedansklass, kNs/m4 (Table 10).
+[impedansklass]
+A = 12.5
+B = 31.5
+C = 80.0
+D = 200.0
+E = 500.0
+F = 2000.0
+G = 20000.0
+H = 200000.0
+
+# Representativ markråhet per råhetsklass, meter (Table 12, kolumnen "Ground roughness").
+[rahetsklass]
+N = 0.0
+S = 0.25
+M = 0.5
+L = 1.0
+
+# --- Preliminär översättning (eget val, ej ur källa) -------------------------------------
+# Kod 0 (okänt) saknas avsiktligt: okänt markslag ska flaggas, inte gissas.
+# Råhetsklass N (ingen råhet) är satt överallt eftersom K1 inte bär någon uppgift om råhet.
+
+[markslag.1]
+namn = "hårdgjort"
+impedansklass = "G"
+rahetsklass = "N"
+
+[markslag.2]
+namn = "tak"
+impedansklass = "H"
+rahetsklass = "N"
+
+[markslag.3]
+namn = "grönt tak"
+impedansklass = "D"
+rahetsklass = "N"
+
+[markslag.4]
+namn = "gräs"
+impedansklass = "D"
+rahetsklass = "N"
+
+[markslag.5]
+namn = "skog"
+impedansklass = "D"
+rahetsklass = "N"
+
+[markslag.6]
+namn = "berg i dagen"
+impedansklass = "H"
+rahetsklass = "N"
+
+[markslag.7]
+namn = "grus"
+impedansklass = "F"
+rahetsklass = "N"
+
+[markslag.8]
+namn = "vatten"
+impedansklass = "H"
+rahetsklass = "N"
+
+[markslag.9]
+namn = "byggnad"
+impedansklass = "H"
+rahetsklass = "N"
+
+# Yta på byggnader som läggs in i profilen från byggnadspolygoner (tak och väggkrön).
+[byggnadsyta]
+impedansklass = "H"
+rahetsklass = "N"

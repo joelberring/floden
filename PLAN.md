@@ -103,3 +103,19 @@ Separat spår, licens MIT (`src/luft/`). Detaljer, matematik och färdplan i `do
 | L-g | Emissionsmodell vägdamm (NORTRIP-typ) och avgaser | L-a | klar (kalibrering väntar på data) |
 | L-k | Vindkomfort och vindfara för höga hus (NEN 8100, Lawson), före/efter | L-a | klar |
 | L-h | Validering mot mätstationer | L-c, L-g | väntar |
+
+## M8 – Buller enligt Nord2000 (parallellt spår, gren `buller-nord2000`)
+
+Uppdragen och deras status står i `tasks/B00-buller-oversikt.md`; kontrakt i `docs/buller/KONTRAKT.md`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| B3, B6 | Bullerscen, profiler, källsegment, fasadpunkter, banfinnare | – | klar (första version) |
+| B4a | Akustiska grundfunktioner och baslinjekärna (inte Nord2000) | – | klar |
+| B8, B9 | Operatorlager, klustring med felgräns, inkrementell omräkning, lägen och manifest | KB1–KB2 | klar (första version) |
+| B1, B5 | Testfall grupp N (lokalt, ej i repot) och källmodell väg med direktivitet | källmapp | klar (första version) |
+| B4 | Referenskärna Nord2000: plan mark med väder inkopplad (22 av 80 fall); terräng och skärmar återstår | B1, källmapp | pågår |
+| B7, B10–B13 | Snabbkärna, rapport, jämförelse, gradienter, vågfysik | B4 | väntar |
+
+**Klar när:** rapportläget kör med en kärna som passerar testsvit grupp N, och en jämförelse mot en utredning i
+etablerad programvara är redovisad.
