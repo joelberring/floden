@@ -468,6 +468,7 @@ class KartverktygTjanst:
         return d
 
     def lista_scenarier(self, projekt: str) -> dict[str, Any]:
+        self._kravs_projekt(projekt)
         ut: list[dict[str, Any]] = []
         mapp = self._scenariomapp(projekt)
         if mapp.is_dir():
@@ -594,7 +595,8 @@ class KartverktygTjanst:
             k9_fil = self.mapp / projekt / "k9" / f"{namn_slug}__{kort}.json"
             skriv_scenario(sc, k9_fil)
             self.fragedir.mkdir(parents=True, exist_ok=True)
-            fraga_id = f"rita-{namn_slug}-{kort}"[:60]
+            max_slug = 60 - len("rita-") - 1 - len(kort)
+            fraga_id = f"rita-{namn_slug[:max_slug]}-{kort}"
             fil = self.fragedir / f"{fraga_id}.json"
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser, avtappning_mm_h=avtappning_mm_h
@@ -827,11 +829,18 @@ class KartverktygTjanst:
         except OSError as exc:
             raise _fel(f"Adressen {delar.hostname} går inte att nå: {exc}", 502) from exc
         for t in traffar:
-            ip = ipaddress.ip_address(t[4][0])
-            if ip.is_link_local or ip.is_multicast or ip.is_unspecified:
+            raw_ip = ipaddress.ip_address(t[4][0])
+            ip = (
+                raw_ip.ipv4_mapped
+                if isinstance(raw_ip, ipaddress.IPv6Address) and raw_ip.ipv4_mapped is not None
+                else raw_ip
+            )
+            if ip.is_loopback:
+                if not self.tillat_loopback:
+                    raise _fel("Adresser på den här datorn är inte tillåtna som underlag.", 400)
+                continue
+            if not ip.is_global:
                 raise _fel("Den adressen är inte tillåten.", 400)
-            if ip.is_loopback and not self.tillat_loopback:
-                raise _fel("Adresser på den här datorn är inte tillåtna som underlag.", 400)
         return delar
 
     def _hamta(self, url: str, max_bytes: int) -> tuple[bytes, str]:
@@ -993,9 +1002,11 @@ class KartverktygTjanst:
             (delar.scheme, delar.netloc, delar.path, urllib.parse.urlencode(fraga), "")
         )
         data, typ = self._hamta(mal, MAX_WMS_BYTES)
-        if not typ.startswith("image/"):
-            text = data[:300].decode("utf-8", errors="replace")
-            raise _fel(f"Tjänsten svarade inte med en bild: {text}", 502)
+        if typ.lower() not in ("image/png", "image/jpeg", "image/webp"):
+            raise _fel(
+                f"Tjänsten svarade inte med en tillåten rasterbild (fick {typ!r}).",
+                502,
+            )
         return data, typ
 
     # ------------------------------------------------------------------ geometri (visning)

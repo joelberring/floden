@@ -160,19 +160,33 @@ class Databas:
         anslutning = sqlite3.connect(self.sokvag, timeout=10, isolation_level=None)
         anslutning.row_factory = sqlite3.Row
         anslutning.execute("PRAGMA foreign_keys = ON")
-        anslutning.execute("PRAGMA journal_mode = WAL")
         return anslutning
 
     def _migrera(self) -> None:
-        with self._lock, self.transaktion() as c:
-            version = int(c.execute("PRAGMA user_version").fetchone()[0])
-            if version > len(MIGRERINGAR):
-                raise RuntimeError("Kontodatabasen är nyare än koden")
-            for nr, skript in enumerate(MIGRERINGAR[version:], start=version + 1):
-                for sats in skript.split(";\n"):
-                    if sats.strip():
-                        c.execute(sats)
-                c.execute(f"PRAGMA user_version = {nr}")
+        with self._lock:
+            c0 = self._anslut()
+            try:
+                c0.execute("PRAGMA journal_mode = WAL")
+            finally:
+                c0.close()
+            with self.transaktion() as c:
+                version = int(c.execute("PRAGMA user_version").fetchone()[0])
+                if version > len(MIGRERINGAR):
+                    raise RuntimeError("Kontodatabasen är nyare än koden")
+                for nr, skript in enumerate(MIGRERINGAR[version:], start=version + 1):
+                    for sats in skript.split(";\n"):
+                        if sats.strip():
+                            c.execute(sats)
+                    c.execute(f"PRAGMA user_version = {nr}")
+
+    @contextmanager
+    def lasning(self) -> Iterator[sqlite3.Connection]:
+        """Läsande anslutning utan skrivlås (parallell under WAL)."""
+        c = self._anslut()
+        try:
+            yield c
+        finally:
+            c.close()
 
     @contextmanager
     def transaktion(self) -> Iterator[sqlite3.Connection]:

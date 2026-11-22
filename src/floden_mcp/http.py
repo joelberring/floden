@@ -43,7 +43,15 @@ class KontoSkydd:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        rubriker = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        rubriker: dict[str, str] = {}
+        for k_b, v_b in scope["headers"]:
+            kl = k_b.decode("latin-1").lower()
+            v = v_b.decode("latin-1")
+            if kl in rubriker:
+                sep = "; " if kl == "cookie" else ", "
+                rubriker[kl] = f"{rubriker[kl]}{sep}{v}"
+            else:
+                rubriker[kl] = v
         req = Forfragan(
             metod=str(scope["method"]).upper(),
             sokvag=str(scope["path"]),

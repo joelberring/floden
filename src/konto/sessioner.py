@@ -159,7 +159,7 @@ class Sessioner:
         sid = traff.group(1) if traff else "0" * 32
         hemlighet = traff.group(2) if traff else None
         nu = self._register.nu()
-        with self._register.db.transaktion() as c:
+        with self._register.db.lasning() as c:
             rad = c.execute(
                 "SELECT s.*, k.namn, k.epost, k.superadmin, k.sparrad FROM session s"
                 " JOIN konto k ON k.id = s.konto_id WHERE s.id = ?",

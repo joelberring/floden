@@ -117,9 +117,12 @@ def las_konto_konfig(
             namn=namn,
             typ=str(inst.get("typ", namn if namn in ("google", "entra") else "oidc")),
             aktiv=inst.get("aktiv", False) is True,
-            klient_id=miljo.get(_env_namn(namn, "KLIENT_ID"), str(inst.get("klient_id", ""))),
-            hemlighet=miljo.get(
-                _env_namn(namn, "KLIENT_HEMLIGHET"), str(inst.get("klient_hemlighet", ""))
+            klient_id=(
+                miljo.get(_env_namn(namn, "KLIENT_ID")) or str(inst.get("klient_id", ""))
+            ),
+            hemlighet=(
+                miljo.get(_env_namn(namn, "KLIENT_HEMLIGHET"))
+                or str(inst.get("klient_hemlighet", ""))
             ),
             extra=extra,
         )

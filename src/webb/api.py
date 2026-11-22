@@ -2044,7 +2044,13 @@ class FlodenApiApp:
         verb = metod.upper()
         req = Forfragan.fran_ra(verb, ra_sokvag, rubriker)
         if self.konto.ager_sokvag(req.sokvag):
-            kropp_in = las_kropp() if verb in ("POST", "PUT", "PATCH", "DELETE") else b""
+            try:
+                kropp_in = las_kropp() if verb in ("POST", "PUT", "PATCH", "DELETE") else b""
+            except FlodenWebbFel as exc:
+                status, headers, kropp = _json_svar(
+                    exc.status_kod, {"fel": str(exc), "status": exc.status_kod}
+                )
+                return status, list(headers.items()), kropp
             return self.konto.hantera_konto(verb, req.sokvag, req.query, req.headers, kropp_in)
         if verb in ("GET", "HEAD") and not req.sokvag.startswith("/api"):
             statisk = self._statisk(req.sokvag, verb == "HEAD")
@@ -2180,8 +2186,16 @@ def skapa_http_server(
             return self.rfile.read(langd) if langd > 0 else b""
 
         def _hantera(self, metod: str) -> None:
+            rubriker: dict[str, str] = {}
+            for k, v in self.headers.items():
+                kl = k.lower()
+                if kl in rubriker:
+                    sep = "; " if kl == "cookie" else ", "
+                    rubriker[kl] = f"{rubriker[kl]}{sep}{v}"
+                else:
+                    rubriker[kl] = v
             status, headers, kropp = app.hantera_http(
-                metod, self.path, dict(self.headers.items()), self._las_kropp
+                metod, self.path, rubriker, self._las_kropp
             )
             self._skicka(status, headers, kropp, huvud=metod == "HEAD")
 
