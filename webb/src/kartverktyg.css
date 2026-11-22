@@ -1,5 +1,13 @@
 /* Kartverktyg: verktygsrad, lagerpanel, höjdpanel och planförslag. Nykter stil, ingen färg utöver kartdata. */
 
+@media (min-width: 901px) {
+  .karta-rad .vy-kolumn {
+    position: sticky;
+    top: 16px;
+    align-self: flex-start;
+  }
+}
+
 .prova-sjalv {
   border: 1px solid var(--f-linje-stark);
   padding: 14px 18px;

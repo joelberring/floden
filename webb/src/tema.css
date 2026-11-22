@@ -2,8 +2,8 @@
  * Flodens tema – designtoken som CSS-variabler.
  * Sobert: vitt, svart (#111111), hårfina linjer, raka hörn. Färg används bara i kartdata.
  * Andra moduler (luft, buller, dagsljus) återanvänder variablerna i stället för egna färger.
+ * Inga externa typsnittsanrop (uppfyller löftet om att inget skickas till tredje part).
  */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@500;600;700&display=swap");
 
 :root {
   /* Grund */

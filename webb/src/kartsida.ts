@@ -78,7 +78,7 @@ interface Sida {
   planFel: string | null;
   /** Avtappning för körningen (mm/h); null = standard 0 mm/h (ledningsnätet antas fullt). */
   avtappning: number | null;
-  korning: { slug: string; text: string; klar: boolean; fel: string | null; forklaring?: string | null; varningar?: string[] } | null;
+  korning: { slug: string; text: string; klar: boolean; fel: string | null; forklaring?: string | null; varningar?: string[]; startadMs?: number } | null;
   pollTimer: number | null;
   kontrollTimer: number | null;
   ritaBegard: number;
@@ -176,6 +176,15 @@ function byggSida(container: HTMLElement, p: ProjektSvar, info: ProjektInfo): vo
       meddela: (m) => {
         if (s) s.meddelande = m;
         visaMeddelande();
+      },
+      husSkapat: () => {
+        window.requestAnimationFrame(() => {
+          const falt = el<HTMLInputElement>("hojd-falt");
+          if (falt && !falt.disabled) {
+            falt.focus();
+            falt.select();
+          }
+        });
       },
     },
   );
@@ -1122,13 +1131,15 @@ function ritaRakna(): void {
   else if (sida.plan) planHtml = planUtseende(sida.plan.fragor);
   let korHtml = "";
   const k = sida.korning;
+  const pagar = Boolean(k && !k.klar);
+  rot.setAttribute("aria-busy", String(pagar));
   if (k?.forklaring) korHtml = felHtml(k.fel, k.forklaring);
   else if (k) korHtml = `<p class="${k.fel ? "fel-text" : ""}" role="${k.fel ? "alert" : "status"}">${esc(k.fel ?? k.text)}</p>${korVarningarHtml(k.varningar)}`;
   rot.innerHTML = `
     <p class="dampad liten-text">Räknar om det du ritat och jämför med läget före, med samma beräkningar som resten av Floden.</p>
     <div class="kryss-grupp">${analyser}</div>
     <label class="falt-rad">Avtappning till ledningsnätet (mm/h, valfritt) <input type="number" min="0" step="any" id="rakna-avtappning" class="kontroll" placeholder="0 – ledningsnätet antas fullt" value="${sida.avtappning === null ? "" : esc(String(sida.avtappning))}"/></label>
-    <div class="knapp-rad"><button type="button" class="knapp" id="rakna-plan" ${giltig && !k?.text?.startsWith("Beräknar") ? "" : "disabled"}>Räkna före och efter</button></div>
+    <div class="knapp-rad"><button type="button" class="knapp" id="rakna-plan" ${giltig && !pagar ? "" : "disabled"}>Räkna före och efter</button></div>
     ${antal === 0 ? `<p class="dampad liten-text">Rita först ett hus eller ändra en byggnad.</p>` : !giltig && sida.kontroll ? `<p class="dampad liten-text">Rätta felen ovan först.</p>` : ""}
     ${planHtml}${korHtml}`;
   rot.querySelector<HTMLInputElement>("#rakna-avtappning")?.addEventListener("change", (e) => {
@@ -1199,7 +1210,8 @@ async function startaKorning(): Promise<void> {
   const sc = sida.scenario;
   if (!plan || !sc) return;
   sida.plan = null;
-  sida.korning = { slug: sc.slug, text: "Beräknar …", klar: false, fel: null };
+  const startadMs = Date.now();
+  sida.korning = { slug: sc.slug, text: "Beräknar … (0 s)", klar: false, fel: null, startadMs };
   ritaRakna();
   try {
     await korScenario(PROJEKT_ID, sc.slug, plan.valda, sida.avtappning);
@@ -1221,19 +1233,21 @@ async function kolla(sida: Sida, slug: string): Promise<void> {
     const alla = st.korningar;
     const fel = alla.find((k) => k.status.status === "fel");
     const klara = alla.filter((k) => k.status.status === "klar");
+    const startadMs = sida.korning?.startadMs ?? Date.now();
+    const forflutetS = Math.max(0, Math.round((Date.now() - startadMs) / 1000));
     if (fel) {
       stoppaPoll(sida);
       sida.korning = { slug, text: "", klar: true, fel: fel.status.fel_forklaring ? String(fel.status.fel) : `Beräkningen misslyckades: ${String(fel.status.fel ?? "okänt fel")}`, forklaring: typeof fel.status.fel_forklaring === "string" ? fel.status.fel_forklaring : null };
     } else if (alla.length > 0 && klara.length === alla.length) {
       stoppaPoll(sida);
       const varningar = [...new Set(klara.flatMap((k) => k.varningar ?? []))];
-      sida.korning = { slug, text: "Klart. Resultatet ligger i gruppen Resultat i kartan.", klar: true, fel: null, varningar };
+      sida.korning = { slug, text: `Klart på ${forflutetS} s. Resultatet ligger i gruppen Resultat i kartan.`, klar: true, fel: null, varningar };
       await visaResultatFor(klara.flatMap((k) => k.vyer));
     } else {
       const fr = alla.map((k) => k.status.framsteg as { klara: number; totalt: number } | undefined).filter(Boolean) as Array<{ klara: number; totalt: number }>;
       const k = fr.reduce((x, y) => x + y.klara, 0);
       const tot = fr.reduce((x, y) => x + y.totalt, 0);
-      sida.korning = { slug, text: tot > 0 ? `Beräknar … ${k} av ${tot} delar klara.` : "Beräknar …", klar: false, fel: null };
+      sida.korning = { slug, text: tot > 0 ? `Beräknar … ${k} av ${tot} delar klara (${forflutetS} s).` : `Beräknar … (${forflutetS} s)`, klar: false, fel: null, startadMs };
     }
   } catch (e) {
     stoppaPoll(sida);
