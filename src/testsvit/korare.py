@@ -83,6 +83,14 @@ def las_testfall(fall_mapp: Path) -> Testfall:
     )
 
 
+def _naturlig_nyckel(post: Path) -> tuple[tuple[int, str], ...]:
+    import re
+
+    return tuple(
+        (int(d), "") if d else (0, t) for d, t in re.findall(r"(\d+)|(\D+)", post.name)
+    )
+
+
 def hitta_testfall(rot: str | Path = "testsvit", grupp: str | None = None) -> list[Testfall]:
     """Hittar alla testfall under `rot`, valfritt filtrerat på grupp (t.ex. `A`)."""
     rot_sokvag = Path(rot)
@@ -91,7 +99,8 @@ def hitta_testfall(rot: str | Path = "testsvit", grupp: str | None = None) -> li
 
     grupp_filter = grupp.upper() if grupp is not None else None
     fall_lista: list[Testfall] = []
-    for post in sorted(rot_sokvag.iterdir()):
+    # Naturlig ordning (A9 före A10); för A0–A9 samma ordning som förut.
+    for post in sorted(rot_sokvag.iterdir(), key=_naturlig_nyckel):
         if not post.is_dir():
             continue
         if not (post / "fall.toml").exists():
@@ -188,12 +197,96 @@ def _berakna_statiskt_maxdjupsfel(
             f"(djup={float(np.max(res_full.djup_m)):.3f} m)"
         )
 
+    elif fall_id in {"A10", "A11"}:
+        maxdjupsfel_m, detalj, vfel = _sluten_gard(fall_id, indata_mapp, graf, res_regn, facit)
+        volymfel_rel = max(volymfel_rel, vfel)
+
     if maxdjupsfel_m is not None and maxdjupsfel_m >= 0.01:
         raise TestsvitFel(
             f"Maxdjupsfel {maxdjupsfel_m:.4f} m överskrider A-gränsen 0,01 m"
         )
 
     return volymfel_rel, maxdjupsfel_m, detalj
+
+
+def _sluten_gard(
+    fall_id: str,
+    indata_mapp: Path,
+    graf: Any,
+    res_regn: Any,
+    facit: dict[str, Any],
+) -> tuple[float, str, float]:
+    """A10/A11: sluten gård (slutsänka, K2/v2), graf mot känt svar och mot 2D-lösaren.
+
+    A10: statisk fyllning och 2D (lokal tröghet) ska ge djupet = regnvolym / gårdens area.
+    A11: händelsestyrd dynamik med avtappning ska följa det kända förloppet; 2D med samma
+    avtappning (`tvad.kalltermer.Avtappning`) jämförs i toppdjup och slutdjup.
+    Returnerar (maxdjupsfel mot facit, kommentar, största volymfel).
+    """
+    from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
+    from tvad.kalltermer import Avtappning, Kalltermer
+    from tvad.lokal_troghet import kor_2d_lokal_troghet
+
+    slut = graf.slutsankor()
+    if len(slut) != 1:
+        raise TestsvitFel(f"{fall_id} förväntade 1 slutsänka, fick {len(slut)}")
+    s = slut[0]
+    if abs(float(s.hinder_rh2000) - float(facit["hinder_rh2000"])) > 1e-6:
+        raise TestsvitFel(
+            f"{fall_id}: hinder {s.hinder_rh2000} m, facit {facit['hinder_rh2000']} m"
+        )
+    mask = graf.slutsanka_mask()
+    if int(mask.sum()) != 1600:
+        raise TestsvitFel(f"{fall_id}: gården har {int(mask.sum())} celler, facit 1600")
+    regn = las_regn_csv(indata_mapp / "regn.csv")
+    tider = [t for t, _ in regn]
+    intens = [i for _, i in regn]
+    mark, geo = las_geotiff(indata_mapp / "mark.tif")
+    slag, _ = las_geotiff(indata_mapp / "markslag.tif")
+    mark32 = np.asarray(mark, dtype=np.float32)
+    slag8 = np.asarray(slag, dtype=np.uint8)
+    area = float(facit["gard_area_m2"])
+
+    if fall_id == "A10":
+        djup_facit = float(facit["djup_m"])
+        fel_graf = float(np.max(np.abs(res_regn.djup_m[mask] - djup_facit)))
+        (r,) = res_regn.slutsankor
+        vfel = abs(r.volym_m3 - float(facit["volym_m3"])) / float(facit["volym_m3"])
+        tvad = kor_2d_lokal_troghet(mark32, slag8, geo, tider, intens)
+        d2 = np.asarray(tvad.slut_djup_m, dtype=np.float64)[mask]
+        fel_2d = float(np.max(np.abs(d2 - djup_facit)))
+        skillnad = float(np.max(np.abs(d2 - res_regn.djup_m[mask])))
+        return (
+            max(fel_graf, fel_2d),
+            f"slutsänka {area:.0f} m², hinder {s.hinder_rh2000:.2f} m; graf {fel_graf:.1e} m, "
+            f"2D {fel_2d:.1e} m mot {djup_facit * 1000:.0f} mm; |graf − 2D| ≤ {skillnad:.1e} m",
+            max(vfel, float(tvad.volymfel_rel)),
+        )
+
+    kap = float(facit["avtappning_mm_h"])
+    slut_t = float(facit["slut_tid_s"])
+    t_facit = [float(t) for t in facit["tider_s"]]
+    d_facit = [float(d) for d in facit["djup_m"]]
+    dyn = kor_dynamik_handelsestyrd(
+        graf, tider, intens, slut_tid_s=slut_t, utdata_tider_s=t_facit, avtappning_mm_h=kap
+    )
+    d_graf = [v / area for v in dyn.noder[s.nod_id].volym_m3]
+    fel_graf = max(abs(a - b) for a, b in zip(d_graf, d_facit, strict=True))
+    vfel = abs(dyn.avtappat_m3 - float(facit["avtappat_m3"])) / float(facit["avtappat_m3"])
+    tvad = kor_2d_lokal_troghet(
+        mark32, slag8, geo, tider, intens, slut_tid_s=slut_t,
+        kalltermer=Kalltermer(avtappning=Avtappning.likformig(mark32.shape, kap)),
+    )
+    topp_2d = float(np.max(np.asarray(tvad.max_djup_m, dtype=np.float64)[mask]))
+    slut_2d = float(np.max(np.asarray(tvad.slut_djup_m, dtype=np.float64)[mask]))
+    fel_2d = max(abs(topp_2d - float(facit["max_djup_m"])), slut_2d)
+    return (
+        max(fel_graf, fel_2d),
+        f"avtappning {kap:.0f} mm/h: graf {fel_graf:.1e} m mot förloppet "
+        f"(topp {max(d_graf) * 1000:.1f} mm, tomt {d_graf[-2] * 1000:.1f} mm vid 30 min); "
+        f"2D topp {topp_2d * 1000:.2f} mm, slut {slut_2d * 1000:.2f} mm",
+        max(vfel, float(dyn.volymfel_rel), float(tvad.volymfel_rel)),
+    )
 
 
 def _validera_syntetiskt_fall(fall: Testfall) -> tuple[float, float | None, str]:

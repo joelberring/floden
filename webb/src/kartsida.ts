@@ -36,7 +36,7 @@ import { monteraLagerpanel } from "./karta/lagerpanel";
 import { PlanDok } from "./karta/plandok";
 import { Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "./karta/ritverktyg";
 import { giltigKakelmall, lasUnderlag, sparaUnderlag, vardAv, wmsBrickmall, type Underlag, type WmsSvar } from "./karta/wms";
-import { felHtml } from "./felvisning";
+import { felHtml, informationHtml, korVarningarHtml } from "./felvisning";
 import { esc, formatera, PROJEKT_ID } from "./sidor";
 import { lagerTekniskHtml, skalaHtml } from "./teckenforklaring";
 import type { ProjektSvar, ProjektVy } from "./types";
@@ -73,7 +73,7 @@ interface Sida {
   underlag: Underlag[];
   plan: { fragor: PlanPost[]; valda: string[] } | null;
   planFel: string | null;
-  korning: { slug: string; text: string; klar: boolean; fel: string | null; forklaring?: string | null } | null;
+  korning: { slug: string; text: string; klar: boolean; fel: string | null; forklaring?: string | null; varningar?: string[] } | null;
   pollTimer: number | null;
   kontrollTimer: number | null;
   ritaBegard: number;
@@ -455,6 +455,7 @@ function uppdateraResultatLager(): void {
     ["skillnad", `Skillnad · ${vy.mattnamn}`, lagerPost(r, vy.skillnad_lager)],
     ["efter", `Efter: ${vy.efter_namn.toLowerCase()} · ${vy.mattnamn}`, lagerPost(r, vy.efter_lager)],
     ["fore", `Före · ${vy.mattnamn}`, lagerPost(r, vy.fore_lager)],
+    ["slutet", "Slutna områden: vattnet har ingen väg ut", vy.markering_lager ? lagerPost(r, vy.markering_lager) : null],
   ];
   for (const [id, namn, lp] of rader) {
     if (!lp) continue;
@@ -462,7 +463,8 @@ function uppdateraResultatLager(): void {
       id: `res:${id}`,
       grupp: "resultat",
       namn,
-      synlig: false,
+      // Slutna områden märks alltid (de styrs inte av läget före/efter/skillnad).
+      synlig: id === "slutet",
       opacitet: 0.85,
       data: { url: t.visaTak && lp.png_med_tak ? lp.png_med_tak : lp.png, utbredning: lp.utbredning, skarpa: true },
     });
@@ -513,6 +515,8 @@ function rasterLista(sida: Sida, motor: "a" | "b"): RasterLager[] {
 function resultatSynligt(id: string, motor: "a" | "b", panel: boolean): boolean {
   const delat = t.lage === "svep" || t.lage === "sidavid";
   if (!delat) return panel;
+  // Slutna områden hör till efter-läget: i svep och sida vid sida visas de på efter-sidan.
+  if (id === "res:slutet") return panel && motor === "b";
   if (motor === "a") return id === "res:fore";
   return id === "res:efter";
 }
@@ -765,7 +769,7 @@ function kontrollHtml(): string {
   if (!k) return "";
   const fel = k.fel.map((f) => `<p class="fel-text" role="alert">${esc(f)}</p>`).join("");
   const varn = k.varningar.map((f) => `<p class="varnings-text" role="note">${esc(f)}</p>`).join("");
-  return fel + varn;
+  return fel + varn + informationHtml(k.information);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -971,7 +975,7 @@ function ritaRakna(): void {
   let korHtml = "";
   const k = sida.korning;
   if (k?.forklaring) korHtml = felHtml(k.fel, k.forklaring);
-  else if (k) korHtml = `<p class="${k.fel ? "fel-text" : ""}" role="${k.fel ? "alert" : "status"}">${esc(k.fel ?? k.text)}</p>`;
+  else if (k) korHtml = `<p class="${k.fel ? "fel-text" : ""}" role="${k.fel ? "alert" : "status"}">${esc(k.fel ?? k.text)}</p>${korVarningarHtml(k.varningar)}`;
   rot.innerHTML = `
     <p class="dampad liten-text">Räknar om det du ritat och jämför med läget före, med samma beräkningar som resten av Floden.</p>
     <div class="kryss-grupp">${analyser}</div>
@@ -1066,7 +1070,8 @@ async function kolla(sida: Sida, slug: string): Promise<void> {
       sida.korning = { slug, text: "", klar: true, fel: fel.status.fel_forklaring ? String(fel.status.fel) : `Beräkningen misslyckades: ${String(fel.status.fel ?? "okänt fel")}`, forklaring: typeof fel.status.fel_forklaring === "string" ? fel.status.fel_forklaring : null };
     } else if (alla.length > 0 && klara.length === alla.length) {
       stoppaPoll(sida);
-      sida.korning = { slug, text: "Klart. Resultatet ligger i gruppen Resultat i kartan.", klar: true, fel: null };
+      const varningar = [...new Set(klara.flatMap((k) => k.varningar ?? []))];
+      sida.korning = { slug, text: "Klart. Resultatet ligger i gruppen Resultat i kartan.", klar: true, fel: null, varningar };
       await visaResultatFor(klara.flatMap((k) => k.vyer));
     } else {
       const fr = alla.map((k) => k.status.framsteg as { klara: number; totalt: number } | undefined).filter(Boolean) as Array<{ klara: number; totalt: number }>;

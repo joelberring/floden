@@ -71,6 +71,7 @@ ETIKETTER: dict[str, tuple[str, str]] = {
     "lutning": ("Lutning", "grader"),
     "trunkering": ("Kontroll: avskuren horisont", ""),
     "standardhojd": ("Kontroll: byggnad utan känd höjd", ""),
+    "slutsanka": ("Kontroll: slutet område, vattnet har ingen väg ut", ""),
 }
 
 

@@ -9,6 +9,8 @@ och fulla sänkor rinner över i trädet. När trädet finns tar varje X bara mi
 Begränsningar, avsiktliga i förhandsvisningen:
 - ingen tid: allt regn har nått sina sänkor (inga ledningar, ingen avdunstning);
 - regn på byggnadsceller (markslag 9) räknas inte (som i `statisk_fyllning`);
+- ett område som helt omges av byggnader är en slutsänka (K2/v2): vattnet blir stående där
+  tills det når hindret, och resultatet får varningen och `slutsanka.tif`;
 - förluster bara som initialförlust i mm per markslag, och bara om de anges uttryckligen.
 
 Resultatet skrivs K6-likt: `max_djup.tif` + `run.json` (K0), plus `blaytor.json` per sänka.
@@ -40,6 +42,8 @@ from sankgraf.typer import (
     las_brytlinjer_fran_gpkg,
     las_oppningar_fran_gpkg,
     skriv_statiskt_resultat_k6,
+    slutsanka_matvarden,
+    slutsanka_varningar,
 )
 from testsvit.k1_io import BrytlinjePost, GeoTransformInfo, OppningPost, las_geotiff
 
@@ -144,6 +148,13 @@ class BlaytorResultat:
             "max_djup_m": float(np.max(self.djup_m)) if self.djup_m.size else 0.0,
             "antal_fyllda_sankor": sum(1 for s in self.sankor if s.fylld),
             "kortid_s": self.kortid_s,
+            # Slutna områden (K2/v2), bara när de finns: se `sankgraf.typer.SLUTSANKA_VARNING`.
+            **slutsanka_matvarden(self.fyllning.slutsankor),
+            **(
+                {"varningar": list(slutsanka_varningar(self.fyllning.slutsankor))}
+                if self.fyllning.slutsankor
+                else {}
+            ),
         }
 
 

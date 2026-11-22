@@ -10,6 +10,7 @@ from numpy.typing import NDArray
 from sankgraf.hierarki import berakna_kurvor_for_celler
 from sankgraf.typer import (
     HAV_NOD_ID,
+    TYP_SLUTSANKA,
     FlodesVag,
     SankGraf,
     SankGrafFel,
@@ -98,6 +99,10 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
         nid: graf.overfall_celler.get(nid, ()) for nid, n in graf.noder.items()
     }
     botten: dict[int, float] = {nid: n.botten_rh2000 for nid, n in graf.noder.items()}
+    # Slutsänkor (K2/v2): typ och hinder följer rotens plats i trädet, och en slutsänka filtreras
+    # aldrig bort som rotlöv (vattnet har ingen mottagare; det skulle försvinna ur modellen).
+    typ: dict[int, str] = {nid: n.typ for nid, n in graf.noder.items()}
+    hinder: dict[int, float | None] = {nid: n.hinder_rh2000 for nid, n in graf.noder.items()}
 
     # Spårar var varje ursprunglig lövnods celler hamnar efter filtrering
     ursprungliga_lov = [nid for nid, n in graf.noder.items() if n.ar_lov]
@@ -106,7 +111,7 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
     while True:
         kandidat: tuple[float, int] | None = None
         for nid in sorted(aktiva):
-            if barn[nid]:
+            if barn[nid] or typ[nid] == TYP_SLUTSANKA:
                 continue
             pers = overfall_z[nid] - botten[nid]
             troskel = faktor * osakerhet[nid]
@@ -145,6 +150,8 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
             ut_till[s] = ut_till[p]
             ut_lov[s] = ut_lov[p]
             overfall_celler[s] = overfall_celler[p]
+            typ[s] = typ[p]
+            hinder[s] = hinder[p]
             botten[s] = min(botten[s], botten[x])
 
             if gp is not None:
@@ -294,6 +301,8 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
             osakerhet_m=osakerhet[nid],
             botten_rh2000=bot_z,
             cell_antal=cell_antal,
+            typ=typ[nid],
+            hinder_rh2000=hinder[nid],
         )
 
     # Uppdatera flödesvägarnas mottagande nod_id utan att mutera ursprungliga objekt
