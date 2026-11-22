@@ -105,6 +105,16 @@ export function startaRouter(krokar: RouterKrokar): void {
     if (rutt.sida !== "karta") avslutaKarta();
     if (rutt.sida !== "fragor") avslutaFragor();
 
+    const fokuseraRubrik = (): void => {
+      window.requestAnimationFrame(() => {
+        const h1 = vySida.querySelector<HTMLElement>("h1");
+        if (h1) {
+          if (!h1.hasAttribute("tabindex")) h1.setAttribute("tabindex", "-1");
+          h1.focus({ preventScroll: true });
+        }
+      });
+    };
+
     if (rutt.sida === "forvaltning" && kontoLage().lage !== "okand" && !forvaltningSynlig()) {
       window.location.replace("#/");
       return;
@@ -127,11 +137,13 @@ export function startaRouter(krokar: RouterKrokar): void {
       // Frågesidan håller sitt eget tillstånd och ritas inte om vid adressbyte.
       visaFragor(vySida, rutt.id);
       window.scrollTo(0, 0);
+      fokuseraRubrik();
       return;
     }
     if (rutt.sida === "karta") {
       void visaKarta(vySida, rutt.parametrar.get("vy"));
       window.scrollTo(0, 0);
+      fokuseraRubrik();
       return;
     }
     switch (rutt.sida) {
@@ -149,6 +161,7 @@ export function startaRouter(krokar: RouterKrokar): void {
         break;
     }
     window.scrollTo(0, 0);
+    fokuseraRubrik();
   };
 
   // Inloggningsläget kommer från /konto/jag och kan ändra meny, hälsning och förvaltningssidan.

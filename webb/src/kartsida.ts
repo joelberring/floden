@@ -253,6 +253,7 @@ function byggSida(container: HTMLElement, p: ProjektSvar, info: ProjektInfo): vo
     sida.plan = null;
     sida.planFel = null;
     planeraKontroll();
+    sida.vy3d?.uppdatera?.();
   });
   const tangent = (h: KeyboardEvent): void => {
     const m = h.target as HTMLElement | null;
@@ -292,15 +293,15 @@ function sidHtml(p: ProjektSvar): string {
         <a class="textlank" href="#/projekt/${PROJEKT_ID}">← Till projektet</a>
       </div>
 
-      <section class="prova-sjalv" aria-labelledby="prova-rubrik">
-        <h2 class="etikett-liten" id="prova-rubrik">Prova själv</h2>
+      <details class="prova-sjalv" open aria-labelledby="prova-rubrik">
+        <summary class="etikett-liten" id="prova-rubrik">Prova själv</summary>
         <ol class="prova-steg">
           <li>Välj <strong>Rita hus</strong> (W) och klicka husets hörn i kartan. Dubbelklicka eller tryck Enter när formen är klar.</li>
           <li>Ange husets höjd i panelen till höger.</li>
           <li>Tryck <strong>Räkna före och efter</strong>. Du ser först vad som räknas om, sedan resultatet i samma karta.</li>
         </ol>
         <p class="dampad liten-text">Det du ritar sparas som ett lokalt förslag på din dator, inte i projektets filer.</p>
-      </section>
+      </details>
 
       <div class="flikar flikrad" role="group" aria-label="Välj resultat" id="vyval">${vyKnappar}</div>
       <p class="andring-text" id="andring-text" hidden></p>
@@ -727,12 +728,13 @@ function stallLage(): void {
   const par = el("karta-par");
   par?.classList.remove("tva");
   const svepRad = el("svep-rad");
-  if (svepRad) svepRad.hidden = !(delat && t.lage === "svep");
+  if (svepRad) svepRad.hidden = !(t.lage === "svep" && (delat || Boolean(sida.vy3d)));
   const b = el("vy-yta-b");
   const stapel = b?.parentElement;
   stapel?.classList.toggle("svep", delat && t.lage === "svep");
   stapel?.classList.toggle("sida", delat && t.lage === "sidavid");
   stallSvep();
+  sida.vy3d?.uppdatera?.();
   const nyckel = `${t.lage}|${delat}`;
   if (nyckel === senastLage) return;
   senastLage = nyckel;
@@ -748,9 +750,11 @@ function stallLage(): void {
 
 function stallSvep(): void {
   const b = el("vy-yta-b");
-  if (!b) return;
-  if (t.lage === "svep") b.style.clipPath = `inset(0 0 0 ${Math.round(t.svep * 1000) / 10}%)`;
-  else b.style.clipPath = "";
+  if (b) {
+    if (t.lage === "svep") b.style.clipPath = `inset(0 0 0 ${Math.round(t.svep * 1000) / 10}%)`;
+    else b.style.clipPath = "";
+  }
+  s?.vy3d?.uppdatera?.();
 }
 
 function notis(): string | null {

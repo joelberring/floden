@@ -278,3 +278,22 @@ def test_mcp_sessionstillstand_isolerar_http_sessioner() -> None:
         assert st.roll == "roll-a"
     finally:
         st.aterstall(t1b)
+
+
+def test_webb_api_analys_bifurkationer_och_felindikator(tmp_path: Path) -> None:
+    """POST /api/analys/bifurkationer ska returnera bifurkationer och 2D-felindikator."""
+    repo = Path(__file__).resolve().parents[1]
+    app = FlodenApiApp(
+        testsvit_rot=repo / "testsvit",
+        konfig_fil=repo / "config.toml",
+        fragemappar=[tmp_path / "fragor"],
+        cachemapp=tmp_path / "cache",
+        korningsmapp=tmp_path / "korningar",
+    )
+    kropp_in = json.dumps({"omrade_id": "A1_enkel_sanka", "referensregn_mm": 50.0}).encode("utf-8")
+    status, _, kropp = app.hantera_forfragan("POST", "/api/analys/bifurkationer", kropp_in)
+    assert status == 200
+    data = json.loads(kropp)
+    assert data["format"] == "floden-bifurkation-felindikator/v1"
+    assert data["omrade_id"] == "A1_enkel_sanka"
+    assert data["felindikator"]["andel_2d_yta"] == 0.0

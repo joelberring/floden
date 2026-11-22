@@ -82,6 +82,8 @@ from rutt.parametrar import (
 )
 from rutt.risk import berakna_vag_kumulativ_risk
 from rutt.vagnat import VagKant, VagNat, VagNatFel, VagNod
+from sankgraf.bifurkation import detektera_bifurkationer
+from sankgraf.fyllning import statisk_fyllning
 from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.takvatten import med_takvatten_graf
 from sankgraf.typer import (
@@ -99,6 +101,7 @@ from testsvit.k1_io import (
     las_regn_csv,
 )
 from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
+from tvad.felindikator import berakna_2d_felindikator
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
 from webb.kartverktyg import KartverktygTjanst
@@ -879,6 +882,55 @@ class FlodenApiApp:
             },
             "gatusektioner": [sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())],
             "kallor": list(omrade.kallor),
+        }
+
+    def kor_bifurkation_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/bifurkationer`: bifurkationspunkter + 2D-felindikator."""
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        k_sigma = float(payload.get("k_sigma", 2.0))
+        referensregn_mm = float(payload.get("referensregn_mm", 100.0))
+        omrade = self.ladda_omrade(omrade_id)
+
+        punkter = detektera_bifurkationer(
+            omrade.bas_graf,
+            osakerhet_m=omrade.osakerhet_z,
+            k_sigma=k_sigma,
+            referensregn_mm=referensregn_mm,
+        )
+        stat = statisk_fyllning(omrade.bas_graf, regn_m=referensregn_mm / 1000.0)
+        ind = berakna_2d_felindikator(
+            omrade.mark_z,
+            omrade.markslag,
+            omrade.geo,
+            omrade.bas_graf,
+            stat,
+            topp_regn_mm_h=referensregn_mm,
+        )
+        return {
+            "format": "floden-bifurkation-felindikator/v1",
+            "omrade_id": omrade_id,
+            "k_sigma": k_sigma,
+            "referensregn_mm": referensregn_mm,
+            "antal_instabila": len(punkter),
+            "punkter": [p.till_dict() for p in punkter],
+            "felindikator": {
+                "andel_2d_yta": ind.andel_2d_yta,
+                "antal_2d_celler": ind.antal_2d_celler,
+                "antal_aktiva_celler": ind.antal_aktiva_celler,
+                "antal_noder_2d": ind.antal_noder_2d,
+                "antal_noder_totalt": ind.antal_noder_totalt,
+            },
         }
 
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
@@ -2002,6 +2054,9 @@ class FlodenApiApp:
 
             if verb == "POST" and ren_sokvag == "/api/rutt":
                 return _json_svar(200, self.kor_rutt_analys(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/bifurkationer":
+                return _json_svar(200, self.kor_bifurkation_analys(kropp))
 
             return _json_svar(
                 404,
