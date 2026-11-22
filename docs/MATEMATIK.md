@@ -25,7 +25,23 @@ Hur stort är felet när djupa samlingar räknas som noder med plan vattenyta oc
 ## Q4 – Inkrementell omräkning
 
 Vilka datastrukturer gör att en lapp bara kräver omräkning av ett delträd och det som ligger nedströms?
+- **Hierarkisk rutkomprimering via randportar & dynamiska träd:** *Top trees* / dynamiska sammanslagningsträd kombinerat med ett *Schur-komplement*-tänk per 500 × 500 m-ruta (där varje ruta endast exponerar sina randportar över rutgränsen) för helstadsskalning (hela Stockholm) med lokal omräkning av projektlappar på sekunder.
 Ägare: öppen.
+
+## Q5 – Fysikbevarande modellreduktion för 2D-realtid (M7)
+
+Kan en masskonserverande *Reduced Basis / POD*-modell för 2D-delzoner (deterministisk, med känd *a posteriori* felgräns) ge realtidsrespons för kritiska gator utan svart-låda-AI för djup/flöden (`AGENTS.md` regel 1)?
+Ägare: öppen (person X / forskningsspår M7).
+
+## Fördjupade forskningsspår (tillägg 2026-11-22)
+
+- **Q1 – Network Calculus / min-plus-algebra i sänkträdet:**
+  - Exakthetsvillkor och tidskomplexitet för händelsestyrd fyllning i min-plus-semiringen (*Network Calculus*: sänka = buffert, flödesväg = fördröjning, överfall = kapacitetsbegränsning).
+  - Felgräns mellan min-plus-modellen och det fulla olinjära ODE-systemet med bredskronsöverfall $Q \propto (h - h_{\text{öv}})^{3/2}$ (*multirate*-växling på enstaka olinjära noder).
+- **Q2 – Full 2-parameterpersistens över $k[x, y]$ (Samuels huvudspår):**
+  - Utöver den praktiska bigraderade bifurkationsdetektorn (`src/sankgraf/bifurkation.py`): minimala fria upplösningar, Hilbertfunktioner och Betti-tal ($\beta_0, \beta_1, \beta_2$) för $H_0(G_{h,\sigma}; k)$.
+  - Bevisbar felgräns i interleaving-avstånd / maxdjup vid grafförenkling.
+  - `sankgraf.bifurkation.exportera_bifiltrering_json(...)` exporterar nu ett rent, GIS-fritt JSON-dataset (noder + 4-grannsadelkanter med höjd och osäkerhet) så att Samuel kan köra $k[x, y]$-experiment direkt i Python eller Macaulay2 på ett litet Stockholms-exempel.
 
 ## Observationer från data
 
