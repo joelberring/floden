@@ -118,6 +118,7 @@ export class Kartmotor {
   private rit: RitVy = TOM_RITVY;
   private lyssnare: PekarLyssnare | null = null;
   private dragPan = true;
+  private readonly slappLyssnare: () => void;
   private notisEl: HTMLElement;
   private etikettEl: HTMLElement;
   private slut = false;
@@ -201,7 +202,10 @@ export class Kartmotor {
       }
       this.lyssnare?.upp();
     };
+    this.slappLyssnare = slapp;
     this.karta.on("mouseup", slapp);
+    window.addEventListener("mouseup", slapp);
+    window.addEventListener("blur", slapp);
     this.karta.on("moveend", (e) => {
       if ((e as { originalEvent?: unknown }).originalEvent) this.onVyAndrad?.();
     });
@@ -213,6 +217,8 @@ export class Kartmotor {
 
   avsluta(): void {
     this.slut = true;
+    window.removeEventListener("mouseup", this.slappLyssnare);
+    window.removeEventListener("blur", this.slappLyssnare);
     this.karta.remove();
     this.notisEl.remove();
     this.etikettEl.remove();

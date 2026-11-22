@@ -98,6 +98,10 @@ let avlasningTimer: number | null = null;
 
 const el = <T extends HTMLElement>(id: string): T | null => (s?.rot.querySelector(`#${id}`) as T | null) ?? null;
 
+export function avslutaKarta(): void {
+  avsluta();
+}
+
 function avsluta(): void {
   if (!s) return;
   s.vy3d?.avmontera();

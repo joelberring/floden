@@ -6,8 +6,8 @@
  */
 import { forvaltningSynlig, kontoLage, laddaKonto, vidKontoandring } from "./konto";
 import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
-import { visaFragor } from "./fragor";
-import { visaKarta } from "./kartsida";
+import { avslutaFragor, visaFragor } from "./fragor";
+import { avslutaKarta, visaKarta } from "./kartsida";
 import {
   PROJEKT_ID,
   sidaForvaltning,
@@ -101,6 +101,9 @@ export function startaRouter(krokar: RouterKrokar): void {
     const rutt = tolkaHash(window.location.hash);
     document.title = SIDTITLAR[rutt.sida];
     document.body.dataset.sida = rutt.sida;
+
+    if (rutt.sida !== "karta") avslutaKarta();
+    if (rutt.sida !== "fragor") avslutaFragor();
 
     if (rutt.sida === "forvaltning" && kontoLage().lage !== "okand" && !forvaltningSynlig()) {
       window.location.replace("#/");

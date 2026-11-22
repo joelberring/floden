@@ -563,6 +563,10 @@ function valjStandardLager(lager: LagerPost[], analys: string): string | null {
   return (a.find((l) => l.typ === "skillnad") ?? a[0])?.id ?? null;
 }
 
+export function avslutaFragor(): void {
+  avslutaVy();
+}
+
 function avslutaVy(): void {
   vy?.avsluta();
   vy = null;

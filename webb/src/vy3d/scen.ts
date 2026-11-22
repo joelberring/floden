@@ -483,6 +483,22 @@ export class Vy3d {
 
   // ------------------------------------------------------------------ byggnader
 
+  private rensaByggnader(sida: Sida): void {
+    for (const barn of sida.bygg.children) {
+      if (barn instanceof Mesh || barn instanceof LineSegments) {
+        barn.geometry.dispose();
+        const mat = barn.material;
+        if (Array.isArray(mat)) {
+          for (const m of mat) m.dispose();
+        } else {
+          mat.dispose();
+        }
+      }
+    }
+    sida.bygg.clear();
+    sida.byggnader = [];
+  }
+
   private async byggByggnader(sida: Sida, cfg: SidKonfig | null, t: Tillstand): Promise<void> {
     const korning = t.korning && cfg?.scen ? t.korning : null;
     const scen = cfg?.scen ?? null;
@@ -490,12 +506,7 @@ export class Vy3d {
     if (sida.byggNyckel === nyckel && sida.byggnader.length > 0) return;
     const b = await this.hamtare.byggnader(korning, scen);
     const buf = byggnaderFran(b);
-    for (const p of sida.byggnader) {
-      sida.bygg.remove(p.mesh);
-      p.mesh.geometry.dispose();
-    }
-    sida.bygg.clear();
-    sida.byggnader = [];
+    this.rensaByggnader(sida);
     sida.byggBuf = buf;
     sida.byggNyckel = nyckel;
     const grupper: Array<{ namn: string; urval: (i: number) => boolean; farg: number; kant: number; genomskinlig: boolean; opacitet: number }> = [
@@ -843,6 +854,14 @@ export class Vy3d {
     this.terrangCache.clear();
     for (const s of this.sidor) {
       for (const d of s.rutor.values()) this.slappOverlay(s, d);
+      this.rensaByggnader(s);
+      if (s.fasadPunkter) {
+        s.fasad.remove(s.fasadPunkter);
+        s.fasadPunkter.geometry.dispose();
+        (s.fasadPunkter.material as PointsMaterial).dispose();
+        s.fasadPunkter = null;
+        s.fasadData = null;
+      }
       s.basMat.dispose();
     }
     this.renderer.dispose();

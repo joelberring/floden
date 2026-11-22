@@ -36,3 +36,13 @@ Mål: köra så mycket som möjligt lokalt på användarens egen GPU (**WebGPU /
   - `luft_lbm_d3q19.wgsl`: avvikelselagring $\bar{f}_i = f_i - w_i$ (minimerar avrundningsfel i `f32` vid låga Machtal), fuserad pull-stream, Smagorinsky-LES enligt Hou (1996) och exakt implicit kvadratisk vegetationsdämpning.
 - **Tydlig märkning i `run.json`:** Klientkörningar i `f32` ska märkas med `berakningsplats: "klient_webgpu_f32"` och `verifierad_f64: false` tills användaren kör slutverifiering i `f64`.
 - **Säkerhet:** Skyddsklassad data (t.ex. ledningsnät) skickas aldrig till webbläsaren.
+
+---
+
+## 4. 3D-hantering och modellering av den byggda miljön (Zero-copy GPU)
+
+1. **Delad GPU-buffert mellan fysik och Three.js `WebGPURenderer`:** Fysik-shaders (`dagsljus_horisont.wgsl`, `vatten_2d.wgsl`, `luft_lbm_d3q19.wgsl`, `partikel_spar.wgsl`) skriver direkt till samma storage buffers/texturer som 3D-scenen renderar (0 kopiering via CPU).
+2. **GPU-rasterisering av redigerade hus:** När användaren ändrar ett hus renderas förslagshusen ortografiskt rakt uppifrån till `z_m` (< 1 ms på GPU), vilket matar dagsljus- och vattenshadern direkt utan serveranrop.
+3. **Statisk stad + redigerbart förslag:** Omgivande kvarter hålls i en enda sammanslagen buffert (1 draw call); bara planförslagets 1–20 hus är separat redigerbara (höjddragning via `scale.y` utan CPU-extrudering).
+4. **Terräng-LOD & instancing:** Statisk rutnätsmesh med vertex-displacement från `r32float`-höjdtextur + `InstancedMesh` för fasadpunkter, träd (`lad_m2_m3`) och 50 000 animerade partikelspår (`partikel_spar.wgsl`).
+

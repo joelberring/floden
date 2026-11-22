@@ -26,6 +26,7 @@ def test_alla_wgsl_shaders_har_giltig_grundstruktur_och_inga_f64() -> None:
         "dagsljus_horisont.wgsl": ["berakna_svf_och_soltimmar"],
         "vatten_2d.wgsl": ["uppdatera_qx", "uppdatera_qy", "begransa_och_volym"],
         "luft_lbm_d3q19.wgsl": ["steg_pull_kollidera"],
+        "partikel_spar.wgsl": ["advektera_partiklar"],
     }
     for filnamn, entry_points in forvantade.items():
         kod = _las_shader(filnamn)
