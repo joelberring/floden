@@ -720,13 +720,17 @@ class Lbm3d:
 
         if self.vaggceller:
             # Väggskjuvning ur log-lagen som volymkraft i första cellen (Δ = 1):
-            # F = −ρ u_τ² û_t = −ρ (κ/ln((½+z₀)/z₀))² |u_t| u_t per vägg, explicit i u*.
+            # Löst implicit i u_t (samma kvadratiska form som vegetationen) så att
+            # grova råa väggar aldrig överskjuter eller vänder hastigheten.
             fvagg = xp.zeros((3, self.n), dtype=np.float32)
             for a, idx, prov, koef in self.vaggceller:
-                ut_t = u[:, prov]
+                ut_t = u[:, prov].copy()
                 ut_t[a] = 0.0
                 fart_t = xp.sqrt((ut_t * ut_t).sum(axis=0))
-                fvagg[:, idx] -= (koef * rho[idx] * fart_t) * ut_t
+                skala_w = 2.0 / (1.0 + xp.sqrt(1.0 + 2.0 * koef * fart_t))
+                ut_eff = ut_t * skala_w
+                fart_eff = fart_t * skala_w
+                fvagg[:, idx] -= (koef * rho[idx] * fart_eff) * ut_eff
             u = u + fvagg / (2.0 * rho)
             kraft = fvagg if kraft is None else kraft + fvagg
 

@@ -397,6 +397,43 @@ def vattenniva_fran_volym(
     return zs
 
 
+def kant_flode_geometri_u(
+    grova_zs: NDArray[np.floating[Any]],
+    subgrid: SubgridTabell,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Beräknar `(h_eff, bredd_andel)` över grova u-kanter.
+
+    `h_eff` är areaviktat flödesdjup (tvärsnittsarea per grov breddenhet) och
+    `bredd_andel` är andelen öppna våta delkanter (`alpha` i [0, 1]), så att
+    verkligt djup i gränden är `h_vat = h_eff / alpha` och friktion/Froude skalar rätt.
+    """
+    if subgrid.bredd_grov <= 1:
+        tom = np.zeros((subgrid.hojd_grov, 0), dtype=np.float64)
+        return tom, tom.copy()
+    zs_kant = np.maximum(grova_zs[:, :-1], grova_zs[:, 1:])
+    diff = np.maximum(0.0, zs_kant[:, :, None] - subgrid.kant_par_z_u)
+    diff = np.where(subgrid.kant_par_oppen_u, diff, 0.0)
+    h_eff = np.asarray(np.mean(diff, axis=2), dtype=np.float64)
+    bredd_andel = np.asarray(np.mean(diff > 0.0, axis=2), dtype=np.float64)
+    return h_eff, bredd_andel
+
+
+def kant_flode_geometri_v(
+    grova_zs: NDArray[np.floating[Any]],
+    subgrid: SubgridTabell,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Beräknar `(h_eff, bredd_andel)` över grova v-kanter."""
+    if subgrid.hojd_grov <= 1:
+        tom = np.zeros((0, subgrid.bredd_grov), dtype=np.float64)
+        return tom, tom.copy()
+    zs_kant = np.maximum(grova_zs[:-1, :], grova_zs[1:, :])
+    diff = np.maximum(0.0, zs_kant[:, :, None] - subgrid.kant_par_z_v)
+    diff = np.where(subgrid.kant_par_oppen_v, diff, 0.0)
+    h_eff = np.asarray(np.mean(diff, axis=2), dtype=np.float64)
+    bredd_andel = np.asarray(np.mean(diff > 0.0, axis=2), dtype=np.float64)
+    return h_eff, bredd_andel
+
+
 def kant_flodesdjup_u(
     grova_zs: NDArray[np.floating[Any]],
     subgrid: SubgridTabell,
@@ -406,12 +443,7 @@ def kant_flodesdjup_u(
     Beaktar varje enskild fin delkant längs den grova cellgränsen: byggnadsceller
     ger bidrag 0, så en helt täckt vägg (`oppningsgrad_u == 0`) ger exakt 0 flödesdjup.
     """
-    if subgrid.bredd_grov <= 1:
-        return np.zeros((subgrid.hojd_grov, 0), dtype=np.float64)
-    zs_kant = np.maximum(grova_zs[:, :-1], grova_zs[:, 1:])
-    diff = np.maximum(0.0, zs_kant[:, :, None] - subgrid.kant_par_z_u)
-    diff = np.where(subgrid.kant_par_oppen_u, diff, 0.0)
-    return np.asarray(np.mean(diff, axis=2), dtype=np.float64)
+    return kant_flode_geometri_u(grova_zs, subgrid)[0]
 
 
 def kant_flodesdjup_v(
@@ -419,12 +451,7 @@ def kant_flodesdjup_v(
     subgrid: SubgridTabell,
 ) -> NDArray[np.float64]:
     """Beräknar effektivt subgrid-flödesdjup (m) över grova v-kanter."""
-    if subgrid.hojd_grov <= 1:
-        return np.zeros((0, subgrid.bredd_grov), dtype=np.float64)
-    zs_kant = np.maximum(grova_zs[:-1, :], grova_zs[1:, :])
-    diff = np.maximum(0.0, zs_kant[:, :, None] - subgrid.kant_par_z_v)
-    diff = np.where(subgrid.kant_par_oppen_v, diff, 0.0)
-    return np.asarray(np.mean(diff, axis=2), dtype=np.float64)
+    return kant_flode_geometri_v(grova_zs, subgrid)[0]
 
 
 def _expandera_grovt_raster(

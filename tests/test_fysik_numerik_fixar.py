@@ -8,10 +8,13 @@ import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 
+from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from gemensamt.koordinater import EPSG_INTERN
 from karna.graf import Berakningsgraf, Cache
+from mark_forluster.grundvatten import berakna_grundvattentak
 from rutt.dijkstra import _interpolera_tidserie
 from rutt.kritiska import hitta_kritiska_avsnitt
 from rutt.parametrar import FordonParametrar, RuttParametrarK7
@@ -19,7 +22,7 @@ from rutt.vagnat import VagKant, VagNat, VagNod
 from sankgraf.hierarki import bygg_sankgraf
 from testsvit.k1_io import GeoTransformInfo
 from tvad.hybrid import kor_hybrid_2d_graf
-from tvad.lokal_troghet import kor_2d_lokal_troghet
+from tvad.lokal_troghet import kor_2d_lokal_troghet, uppdatera_bates_flode_1d
 
 
 def _geo(nx: int, ny: int, dx: float = 1.0) -> GeoTransformInfo:
@@ -246,3 +249,44 @@ def test_karna_katalognyckel_ignorerar_ds_store() -> None:
         (p / ".DS_Store").write_bytes(b"junk")
         k2 = graf._katalognyckel(p)
         assert k1 == k2
+
+
+def test_subgrid_konveyans_smal_grand_exakt_manning() -> None:
+    """Smal gränd (alpha=0.25, h_vat=0.4 m) ska ge exakt Manning-flöde vid stationärt tillstånd."""
+    alpha = 0.25
+    h_vat = 0.4
+    h_eff = alpha * h_vat
+    manning_n = 0.03
+    lutning = -0.01  # faller åt +x -> positivt flöde
+    q_facit = alpha * (1.0 / manning_n) * (h_vat ** (5.0 / 3.0)) * math.sqrt(abs(lutning))
+
+    q = np.array([0.0], dtype=np.float64)
+    for _ in range(400):
+        q = uppdatera_bates_flode_1d(
+            q,
+            np.array([h_eff]),
+            np.array([lutning]),
+            np.array([manning_n]),
+            0.5,
+            1e-4,
+            bredd_andel=np.array([alpha]),
+        )
+    assert math.isclose(float(q[0]), q_facit, rel_tol=1e-4)
+
+
+def test_grundvattentak_dranerbar_porositet() -> None:
+    """Grundvattentak med fukthalt ska använda dränerbar porositet (porositet - fukthalt)."""
+    tak_torr = berakna_grundvattentak(1.0, 0.45)
+    tak_vat_lera = berakna_grundvattentak(1.0, 0.45, fukthalt=0.42)
+    assert math.isclose(float(tak_torr), 0.45, rel_tol=1e-6)
+    assert math.isclose(float(tak_vat_lera), 0.03, rel_tol=1e-5)
+
+
+def test_solposition_lon_validering_och_cache() -> None:
+    """dygnsfonster_utc validerar lon_grader och lat_lon_fran_3011 ger exakt resultat."""
+    lat, lon = lat_lon_fran_3011(150000.0, 6580000.0)
+    assert 59.0 < lat < 60.0
+    assert math.isclose(lon, 18.0, abs_tol=1e-5)
+    with pytest.raises(SolFel):
+        dygnsfonster_utc("2026-03-20", 999.0, 10.0)
+

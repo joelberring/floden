@@ -45,8 +45,8 @@ from tvad.lokal_troghet import (
 from tvad.subgrid import (
     SubgridTabell,
     bygg_subgrid_tabell,
-    kant_flodesdjup_u,
-    kant_flodesdjup_v,
+    kant_flode_geometri_u,
+    kant_flode_geometri_v,
     projicera_djup_till_fin,
     projicera_falt_till_fin,
     vattenniva_fran_volym,
@@ -623,14 +623,14 @@ def kor_hybrid_2d_graf(
             if n_u_akt == 0:
                 qx.fill(0.0)
             else:
-                h_u = (
-                    kant_flodesdjup_u(zs_2d, subgrid)
-                    if subgrid is not None
-                    else np.asarray(
+                if subgrid is not None:
+                    h_u, ba_u = kant_flode_geometri_u(zs_2d, subgrid)
+                else:
+                    h_u = np.asarray(
                         np.maximum(0.0, np.maximum(zs_2d[:, :-1], zs_2d[:, 1:]) - z_kant_fin_u),
                         dtype=np.float64,
                     )
-                )
+                    ba_u = None
                 sx = np.asarray((zs_2d[:, 1:] - zs_2d[:, :-1]) / dx, dtype=np.float64)
                 qx_bar = utjamna_flode_x(qx, u_giltig, theta)
                 if gles_front and n_u_akt < (u_akt.size // 2):
@@ -643,6 +643,7 @@ def kor_hybrid_2d_graf(
                         dt,
                         min_djup_m,
                         q_bar=qx_bar[ur, uc],
+                        bredd_andel=ba_u[ur, uc] if ba_u is not None else None,
                     )
                     qx.fill(0.0)
                     qx[ur, uc] = q_ny_u
@@ -655,6 +656,7 @@ def kor_hybrid_2d_graf(
                         dt,
                         min_djup_m,
                         q_bar=qx_bar.ravel(),
+                        bredd_andel=ba_u.ravel() if ba_u is not None else None,
                     )
                     qx = q_ny_u.reshape((hojd, bredd - 1))
 
@@ -664,14 +666,14 @@ def kor_hybrid_2d_graf(
             if n_v_akt == 0:
                 qy.fill(0.0)
             else:
-                h_v = (
-                    kant_flodesdjup_v(zs_2d, subgrid)
-                    if subgrid is not None
-                    else np.asarray(
+                if subgrid is not None:
+                    h_v, ba_v = kant_flode_geometri_v(zs_2d, subgrid)
+                else:
+                    h_v = np.asarray(
                         np.maximum(0.0, np.maximum(zs_2d[:-1, :], zs_2d[1:, :]) - z_kant_fin_v),
                         dtype=np.float64,
                     )
-                )
+                    ba_v = None
                 sy = np.asarray((zs_2d[1:, :] - zs_2d[:-1, :]) / dy, dtype=np.float64)
                 qy_bar = utjamna_flode_y(qy, v_giltig, theta)
                 if gles_front and n_v_akt < (v_akt.size // 2):
@@ -684,6 +686,7 @@ def kor_hybrid_2d_graf(
                         dt,
                         min_djup_m,
                         q_bar=qy_bar[vr, vc],
+                        bredd_andel=ba_v[vr, vc] if ba_v is not None else None,
                     )
                     qy.fill(0.0)
                     qy[vr, vc] = q_ny_v
@@ -696,6 +699,7 @@ def kor_hybrid_2d_graf(
                         dt,
                         min_djup_m,
                         q_bar=qy_bar.ravel(),
+                        bredd_andel=ba_v.ravel() if ba_v is not None else None,
                     )
                     qy = q_ny_v.reshape((hojd - 1, bredd))
 

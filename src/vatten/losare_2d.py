@@ -38,6 +38,7 @@ from karna.scenario import Andring, Planscenario
 from lapp.tillampa import tillampa_lapp
 from sankgraf.avtappning import avtappning_raster, validera_omraden
 from sankgraf.avtappning import beskrivning as avtappning_beskrivning
+from sankgraf.hierarki import _applicera_oppningar
 from sankgraf.takvatten import TAKVATTEN_AV_ANTAGANDE, bygg_takvatten
 from tvad.kalltermer import Avtappning, Infiltration2D, Kalltermer
 from tvad.lokal_troghet import kor_2d_lokal_troghet, skriv_tvad_resultat_k6
@@ -67,6 +68,7 @@ def _regn(p: Mapping[str, Any]) -> tuple[list[float], list[float]]:
 def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[str, Any]:
     k1 = las_k1({r: indata[r] for r in K1_ROLLER if r in indata})
     mark_z, markslag = k1.mark_z, k1.markslag
+    oppningar = k1.oppningar
     andrade = 0
     if p.get("andringar"):
         scenario = Planscenario(
@@ -82,6 +84,8 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         )
         mark_z, markslag = t.mark_z, t.markslag
         andrade = int(np.count_nonzero(t.andrad_mask))
+    if oppningar:
+        mark_z, markslag = _applicera_oppningar(mark_z, markslag, k1.geo, oppningar)
 
     avt_mm_h = float(p.get("avtappning_mm_h", 0.0))
     omr = validera_omraden(p.get("avtappning_omraden"))
@@ -107,7 +111,11 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
     if p.get("infiltration") is not None:
         inf = p["infiltration"]
         infiltration = Infiltration2D.fran_markslag(
-            markslag, inf["jordart"], initial_mm=float(inf["initial_mm"])
+            markslag,
+            inf["jordart"],
+            initial_mm=float(inf["initial_mm"]),
+            hog_markfukt=bool(inf.get("hog_markfukt", False)),
+            tjale=bool(inf.get("tjale", False)),
         )
     termer = Kalltermer(avtappning=avtappning, infiltration=infiltration)
     tider, mm_h = _regn(p)

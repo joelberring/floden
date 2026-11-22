@@ -12,6 +12,7 @@ Noggrannhet (uppmätt mot NREL SPA via pvlib, se `docs/DAGSLJUS.md` och
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -112,13 +113,18 @@ def _refraktion_rad(hojd_rad: Falt) -> Falt:
     return np.asarray(np.where(ok, np.radians(bagminuter / 60.0), 0.0), dtype=np.float64)
 
 
-def lat_lon_fran_3011(e_m: float, n_m: float) -> tuple[float, float]:
-    """(lat, lon) i WGS84-grader för en punkt i EPSG:3011 (SWEREF 99 18 00, e/n i meter)."""
+@lru_cache(maxsize=1)
+def _transformer_3011_till_wgs84() -> Any:
     try:
         from pyproj import Transformer
     except ImportError as exc:  # pragma: no cover - pyproj är ett beroende i pyproject.toml
         raise KoordinatFel("Paketet 'pyproj' krävs för att få lat/lon ur EPSG:3011.") from exc
-    omv: Any = Transformer.from_crs(f"EPSG:{EPSG_INTERN}", "EPSG:4326", always_xy=True)
+    return Transformer.from_crs(f"EPSG:{EPSG_INTERN}", "EPSG:4326", always_xy=True)
+
+
+def lat_lon_fran_3011(e_m: float, n_m: float) -> tuple[float, float]:
+    """(lat, lon) i WGS84-grader för en punkt i EPSG:3011 (SWEREF 99 18 00, e/n i meter)."""
+    omv = _transformer_3011_till_wgs84()
     lon, lat = omv.transform(e_m, n_m)
     return float(lat), float(lon)
 
@@ -129,6 +135,8 @@ def dygnsfonster_utc(datum: str, lon_grader: float, steg_min: float) -> NDArray[
     Dygnet börjar vid lokal medelsolmidnatt (00:00 UTC minus lon/15 h), så att inget
     dagsljus delas av en dygnsgräns. Antalet steg är 1440/steg_min och måste vara heltal.
     """
+    if not (math.isfinite(lon_grader) and -180.0 <= lon_grader <= 180.0):
+        raise SolFel(f"lon_grader måste ligga i [-180, 180], fick {lon_grader}.")
     if not (math.isfinite(steg_min) and steg_min > 0):
         raise SolFel(f"steg_min måste vara > 0, fick {steg_min}.")
     antal = 1440.0 / steg_min

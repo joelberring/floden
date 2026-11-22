@@ -45,11 +45,13 @@ def berakna_grundvattentak(
     *,
     lage: str = "normal",
     hog_faktor: float = 0.5,
+    fukthalt: NDArray[np.float32] | NDArray[np.float64] | float = 0.0,
 ) -> NDArray[np.float32]:
     """Beräknar tillgänglig marklagringskapacitet (grundvattentak) i meter.
 
-    Tillgänglig lagring = `porositet * justerad_dtw_m`, där `justerad_dtw_m` vid
-    `lage="hog"` multipliceras med `hog_faktor` (t.ex. 0.5).
+    Tillgänglig lagring = `max(0, porositet - fukthalt) * justerad_dtw_m`, där
+    `justerad_dtw_m` vid `lage="hog"` multipliceras med `hog_faktor` (t.ex. 0.5).
+    Utan angiven `fukthalt` (0.0) ger formeln `porositet * justerad_dtw_m`.
     """
     norm_lage = lage.strip().lower()
     if norm_lage not in GILTIGA_GRUNDVATTENLAGEN:
@@ -61,17 +63,21 @@ def berakna_grundvattentak(
 
     dtw_arr = np.asarray(dtw_m, dtype=np.float64)
     por_arr = np.asarray(porositet, dtype=np.float64)
+    fukt_arr = np.asarray(fukthalt, dtype=np.float64)
 
     if not np.all(np.isfinite(dtw_arr)):
         raise ForlustFel("dtw_m får inte innehålla NaN eller oändliga värden.")
     if not np.all(np.isfinite(por_arr)) or np.any(por_arr < 0.0) or np.any(por_arr > 1.0):
         raise ForlustFel("porositet måste ligga i [0, 1] utan NaN/inf.")
+    if not np.all(np.isfinite(fukt_arr)) or np.any(fukt_arr < 0.0) or np.any(fukt_arr > 1.0):
+        raise ForlustFel("fukthalt måste ligga i [0, 1] utan NaN/inf.")
 
     justerad_dtw = np.maximum(0.0, dtw_arr)
     if norm_lage == "hog":
         justerad_dtw = justerad_dtw * float(hog_faktor)
 
-    tak = np.maximum(0.0, por_arr * justerad_dtw)
+    dranerbar_porositet = np.maximum(0.0, por_arr - fukt_arr)
+    tak = np.maximum(0.0, dranerbar_porositet * justerad_dtw)
     return np.asarray(tak, dtype=np.float32)
 
 

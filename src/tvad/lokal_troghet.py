@@ -32,8 +32,8 @@ from tvad.kalltermer import Kalltermer, SanktermTillstand
 from tvad.subgrid import (
     SubgridTabell,
     bygg_subgrid_tabell,
-    kant_flodesdjup_u,
-    kant_flodesdjup_v,
+    kant_flode_geometri_u,
+    kant_flode_geometri_v,
     projicera_djup_till_fin,
     projicera_falt_till_fin,
     vattenniva_fran_volym,
@@ -422,8 +422,14 @@ def uppdatera_bates_flode_1d(
     min_djup_m: float,
     *,
     q_bar: NDArray[np.float64] | None = None,
+    bredd_andel: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
-    """Bates (2010) / de Almeida (2012) lokala tröghetsekvation på aktiva kanter."""
+    """Bates (2010) / de Almeida (2012) lokala tröghetsekvation på aktiva kanter.
+
+    När `bredd_andel` (`alpha` i (0, 1]) anges från subgrid skalas friktionen och
+    Froude-taket efter det faktiska vattendjupet i den öppna delen (`h_vat = h_flode / alpha`)
+    så att smala gränder får exakt Manning-konveyans.
+    """
     g = GRAVITATION_M_S2
     vat = h_flode > min_djup_m
     if not bool(np.any(vat)):
@@ -436,12 +442,18 @@ def uppdatera_bates_flode_1d(
     sv = lutning[vat]
     nv = manning_n[vat]
 
-    h_73 = np.power(hv, 7.0 / 3.0)
-    namnare = 1.0 + g * dt * (nv * nv) * np.abs(qv) / h_73
-    q_ny = (q_tr - g * hv * dt * sv) / namnare
+    if bredd_andel is not None:
+        ba = np.maximum(bredd_andel[vat], 1e-6)
+        h_vat = hv / ba
+        namnare = 1.0 + g * dt * (nv * nv) * np.abs(qv) / (ba * np.power(h_vat, 7.0 / 3.0))
+        q_ny = (q_tr - g * hv * dt * sv) / namnare
+        q_max = FROUDE_MAX * hv * np.sqrt(g * h_vat)
+    else:
+        h_73 = np.power(hv, 7.0 / 3.0)
+        namnare = 1.0 + g * dt * (nv * nv) * np.abs(qv) / h_73
+        q_ny = (q_tr - g * hv * dt * sv) / namnare
+        q_max = FROUDE_MAX * hv * np.sqrt(g * hv)
 
-    # Fysikalisk Froude-begränsning för stabilitet vid branta trappsteg
-    q_max = FROUDE_MAX * hv * np.sqrt(g * hv)
     ut[vat] = np.clip(q_ny, -q_max, q_max)
     return ut
 
@@ -769,14 +781,14 @@ def kor_2d_lokal_troghet(
             if n_u_akt == 0:
                 qx.fill(0.0)
             else:
-                h_u = (
-                    kant_flodesdjup_u(zs, subgrid)
-                    if subgrid is not None
-                    else np.asarray(
+                if subgrid is not None:
+                    h_u, ba_u = kant_flode_geometri_u(zs, subgrid)
+                else:
+                    h_u = np.asarray(
                         np.maximum(0.0, np.maximum(zs[:, :-1], zs[:, 1:]) - z_kant_fin_u),
                         dtype=np.float64,
                     )
-                )
+                    ba_u = None
                 sx = np.asarray((zs[:, 1:] - zs[:, :-1]) / dx, dtype=np.float64)
                 qx_bar = utjamna_flode_x(qx, u_giltig, theta)
                 if gles_front and n_u_akt < (u_akt.size // 2):
@@ -789,6 +801,7 @@ def kor_2d_lokal_troghet(
                         dt,
                         min_djup_m,
                         q_bar=qx_bar[ur, uc],
+                        bredd_andel=ba_u[ur, uc] if ba_u is not None else None,
                     )
                     qx.fill(0.0)
                     qx[ur, uc] = q_ny_u
@@ -801,6 +814,7 @@ def kor_2d_lokal_troghet(
                         dt,
                         min_djup_m,
                         q_bar=qx_bar.ravel(),
+                        bredd_andel=ba_u.ravel() if ba_u is not None else None,
                     )
                     qx = q_ny_u.reshape((hojd, bredd - 1))
 
@@ -810,14 +824,14 @@ def kor_2d_lokal_troghet(
             if n_v_akt == 0:
                 qy.fill(0.0)
             else:
-                h_v = (
-                    kant_flodesdjup_v(zs, subgrid)
-                    if subgrid is not None
-                    else np.asarray(
+                if subgrid is not None:
+                    h_v, ba_v = kant_flode_geometri_v(zs, subgrid)
+                else:
+                    h_v = np.asarray(
                         np.maximum(0.0, np.maximum(zs[:-1, :], zs[1:, :]) - z_kant_fin_v),
                         dtype=np.float64,
                     )
-                )
+                    ba_v = None
                 sy = np.asarray((zs[1:, :] - zs[:-1, :]) / dy, dtype=np.float64)
                 qy_bar = utjamna_flode_y(qy, v_giltig, theta)
                 if gles_front and n_v_akt < (v_akt.size // 2):
@@ -830,6 +844,7 @@ def kor_2d_lokal_troghet(
                         dt,
                         min_djup_m,
                         q_bar=qy_bar[vr, vc],
+                        bredd_andel=ba_v[vr, vc] if ba_v is not None else None,
                     )
                     qy.fill(0.0)
                     qy[vr, vc] = q_ny_v
@@ -842,6 +857,7 @@ def kor_2d_lokal_troghet(
                         dt,
                         min_djup_m,
                         q_bar=qy_bar.ravel(),
+                        bredd_andel=ba_v.ravel() if ba_v is not None else None,
                     )
                     qy = q_ny_v.reshape((hojd - 1, bredd))
 

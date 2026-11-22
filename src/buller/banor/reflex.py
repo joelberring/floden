@@ -22,6 +22,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.spatial import cKDTree
 
 from buller.scen.bullerscen import Bullerscen, Heltal
 from buller.typer import BullerFel, Flyttal
@@ -78,28 +79,43 @@ def forsta_ordningens_reflexer(
     if vaggar.antal and kalla_e_m.shape[0]:
         de = (vaggar.b_e_m - vaggar.a_e_m) / vaggar.langd_m
         dn = (vaggar.b_n_m - vaggar.a_n_m) / vaggar.langd_m
+        kalla_trad = cKDTree(np.column_stack((kalla_e_m, kalla_n_m)))
+        vagg_mitt_e = 0.5 * (vaggar.a_e_m + vaggar.b_e_m)
+        vagg_mitt_n = 0.5 * (vaggar.a_n_m + vaggar.b_n_m)
+        max_halv_langd = 0.5 * float(np.max(vaggar.langd_m))
+        vagg_trad = cKDTree(np.column_stack((vagg_mitt_e, vagg_mitt_n)))
+        vagg_sokradie = maxradie_m + max_halv_langd + 1e-9
+
         for m in range(antal_m):
             re, rn = float(mottagare_e_m[m]), float(mottagare_n_m[m])
-            # Källor som alls kan ge en bana inom maxradien.
-            ki = np.flatnonzero(np.hypot(kalla_e_m - re, kalla_n_m - rn) <= maxradie_m)
-            if ki.size == 0:
+            # Källor som alls kan ge en bana inom maxradien (rumsligt index).
+            ki_lista = kalla_trad.query_ball_point((re, rn), r=maxradie_m)
+            if not ki_lista:
                 continue
+            ki = np.asarray(sorted(ki_lista), dtype=np.intp)
+            # Väggar vars mittpunkt kan nås inom maxradien (rumsligt index).
+            vc_lista = vagg_trad.query_ball_point((re, rn), r=vagg_sokradie)
+            if not vc_lista:
+                continue
+            vc = np.asarray(sorted(vc_lista), dtype=np.intp)
             # Väggar med mottagaren på utsidan och inom räckhåll.
-            avst_r = (re - vaggar.a_e_m) * vaggar.normal_e + (rn - vaggar.a_n_m) * vaggar.normal_n
-            langs_r = np.clip(
-                (re - vaggar.a_e_m) * de + (rn - vaggar.a_n_m) * dn, 0.0, vaggar.langd_m
-            )
-            till_vagg = np.hypot(vaggar.a_e_m + langs_r * de - re, vaggar.a_n_m + langs_r * dn - rn)
-            mojlig = (avst_r > SIDOTOLERANS_M) & (till_vagg <= maxradie_m)
+            ae_c, an_c = vaggar.a_e_m[vc], vaggar.a_n_m[vc]
+            ne_c, nn_c = vaggar.normal_e[vc], vaggar.normal_n[vc]
+            de_c, dn_c, l_c = de[vc], dn[vc], vaggar.langd_m[vc]
+            avst_r_c = (re - ae_c) * ne_c + (rn - an_c) * nn_c
+            langs_r = np.clip((re - ae_c) * de_c + (rn - an_c) * dn_c, 0.0, l_c)
+            till_vagg = np.hypot(ae_c + langs_r * de_c - re, an_c + langs_r * dn_c - rn)
+            mojlig = (avst_r_c > SIDOTOLERANS_M) & (till_vagg <= maxradie_m)
             if utesluten_byggnad is not None and utesluten_byggnad[m] >= 0:
-                mojlig &= vaggar.byggnad_index != utesluten_byggnad[m]
-            vi = np.flatnonzero(mojlig)
-            if vi.size == 0:
+                mojlig &= vaggar.byggnad_index[vc] != utesluten_byggnad[m]
+            v_sel = np.flatnonzero(mojlig)
+            if v_sel.size == 0:
                 continue
+            vi = vc[v_sel]
             # Matris (vägg, källa).
             ae, an = vaggar.a_e_m[vi, None], vaggar.a_n_m[vi, None]
             ne, nn = vaggar.normal_e[vi, None], vaggar.normal_n[vi, None]
-            d_r = avst_r[vi, None]
+            d_r = avst_r_c[v_sel, None]
             spegel_e = re - 2.0 * d_r * ne
             spegel_n = rn - 2.0 * d_r * nn
             ke, kn = kalla_e_m[None, ki], kalla_n_m[None, ki]
