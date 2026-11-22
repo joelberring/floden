@@ -24,7 +24,12 @@ from data_inlasning.smhi import (
     tolka_smhi_timdata,
 )
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
-from gemensamt.koordinater import EPSG_INTERN
+from gemensamt.koordinater import (
+    EPSG_INTERN,
+    SWEREF99_ZONER,
+    transformera,
+    valj_sweref99_zon,
+)
 from karna.graf import Berakningsgraf, Cache
 from luft.emission import (
     Trafikprofil,
@@ -710,6 +715,26 @@ def test_smhi_metobs_tolkning_till_vaderserie_och_nortrip() -> None:
     assert math.isclose(float(nt.temperatur_c[1]), 4.0, rel_tol=1e-12)
     assert math.isclose(float(nt.nederbord_mm_h[0]), 0.4, rel_tol=1e-12)
     assert float(nt.nederbord_mm_h[1]) == 0.0
+
+
+def test_alla_svenska_sweref99_zoner_val_och_rundgang() -> None:
+    """valj_sweref99_zon och transformera stöder alla 13 svenska SWEREF 99-zoner."""
+    assert len(SWEREF99_ZONER) == 13
+    assert valj_sweref99_zon(11.9746, 57.7089).epsg == 3007  # Göteborg
+    assert valj_sweref99_zon(13.0038, 55.6050).epsg == 3008  # Malmö
+    assert valj_sweref99_zon(18.0686, 59.3293).epsg == 3011  # Stockholm
+    assert valj_sweref99_zon(20.2630, 63.8258).epsg == 3016  # Umeå
+    assert valj_sweref99_zon(22.1567, 65.5848).epsg == 3017  # Luleå
+
+    # Rundgång WGS84 -> lokal zon -> WGS84 för alla 13 zoner inom 1e-8 grader (<1 mm)
+    for epsg, zon in SWEREF99_ZONER.items():
+        lat0 = 0.5 * (zon.lat_min_grader + zon.lat_max_grader)
+        lon0 = zon.mittmeridian_grader + 0.15
+        e, n = transformera(lon0, lat0, 4326, epsg)
+        lon1, lat1 = transformera(e, n, epsg, 4326)
+        assert math.isclose(lon1, lon0, abs_tol=1e-8)
+        assert math.isclose(lat1, lat0, abs_tol=1e-8)
+
 
 
 
