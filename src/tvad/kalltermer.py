@@ -303,12 +303,18 @@ class SanktermTillstand:
         )
 
     def tillampa(
-        self, volym: NDArray[np.float64], area: NDArray[np.float64], dt: float
+        self,
+        volym: NDArray[np.float64],
+        area: NDArray[np.float64],
+        dt: float,
+        *,
+        vat_area: NDArray[np.float64] | None = None,
     ) -> None:
         """Tar bort vatten ur `volym` (m³, ändras på plats) under `dt` sekunder.
 
         Ordning: initial ytmagasinering → infiltration → avtappning. Varje steg begränsas av
-        vattnet som finns kvar i cellen, så volymen blir aldrig negativ.
+        vattnet som finns kvar i cellen, så volymen blir aldrig negativ. När `vat_area` anges
+        (subgrid) verkar sänkorna enbart över den faktiskt våta delarean i varje grov cell.
         """
         if (
             self.initial_tak_m is None
@@ -316,8 +322,13 @@ class SanktermTillstand:
             and self.kap_m_s is None
         ):
             return
-        aktiv = area > 0.0
-        safe = np.where(aktiv, area, 1.0)
+        eff_area = (
+            area
+            if vat_area is None
+            else np.minimum(area, np.maximum(vat_area, 0.0))
+        )
+        aktiv = eff_area > 0.0
+        safe = np.where(aktiv, eff_area, 1.0)
         djup = np.where(aktiv, volym / safe, 0.0)
 
         if self.initial_tak_m is not None:
@@ -325,7 +336,7 @@ class SanktermTillstand:
             d = np.minimum(djup, ledigt)
             self.initial_fylld_m += d
             djup -= d
-            self.initial_m3 += float(np.sum(d * area))
+            self.initial_m3 += float(np.sum(d * eff_area))
 
         if self.ksat_m_s is not None and self.psi_dtheta_m is not None:
             m = (self.ksat_m_s > 0.0) & (djup > 0.0)
@@ -338,11 +349,11 @@ class SanktermTillstand:
                 d = np.maximum(d, 0.0)
                 self.infiltrerat_m[m] = f0 + d
                 djup[m] -= d
-                self.infiltrerat_m3 += float(np.sum(d * area[m]))
+                self.infiltrerat_m3 += float(np.sum(d * eff_area[m]))
 
         if self.kap_m_s is not None:
             d = np.minimum(djup, self.kap_m_s * dt)
             djup -= d
-            self.avtappat_m3 += float(np.sum(d * area))
+            self.avtappat_m3 += float(np.sum(d * eff_area))
 
-        volym[...] = np.where(aktiv, np.maximum(djup, 0.0) * area, volym)
+        volym[...] = np.where(aktiv, np.maximum(djup, 0.0) * eff_area, volym)

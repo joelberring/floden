@@ -18,10 +18,12 @@ from mark_forluster.grundvatten import berakna_grundvattentak
 from rutt.dijkstra import _interpolera_tidserie
 from rutt.kritiska import hitta_kritiska_avsnitt
 from rutt.parametrar import FordonParametrar, RuttParametrarK7
+from rutt.risk import berakna_kumulativ_sannolikhet
 from rutt.vagnat import VagKant, VagNat, VagNod
 from sankgraf.hierarki import bygg_sankgraf
-from testsvit.k1_io import GeoTransformInfo
+from testsvit.k1_io import BrytlinjePost, GeoTransformInfo
 from tvad.hybrid import kor_hybrid_2d_graf
+from tvad.kalltermer import Avtappning, Kalltermer, SanktermTillstand
 from tvad.lokal_troghet import kor_2d_lokal_troghet, uppdatera_bates_flode_1d
 
 
@@ -289,4 +291,56 @@ def test_solposition_lon_validering_och_cache() -> None:
     assert math.isclose(lon, 18.0, abs_tol=1e-5)
     with pytest.raises(SolFel):
         dygnsfonster_utc("2026-03-20", 999.0, 10.0)
+
+
+def test_2d_brytlinje_stoppar_flode() -> None:
+    """En 0,30 m brytlinje (kantsten/mur) tvärs ett lutande plan ska dämma upp vatten i 2D."""
+    ny, nx = 6, 12
+    x = np.arange(nx, dtype=np.float32)
+    z = np.broadcast_to(12.0 - 0.02 * x, (ny, nx)).copy()
+    markslag = np.ones((ny, nx), dtype=np.uint8)
+    geo = _geo(nx, ny, 1.0)
+    # Nord-sydlig mur mellan kolumn 5 och 6
+    x_mur = geo.x_min + 6.0
+    mur = BrytlinjePost(
+        typ="mur",
+        hojd_m=0.30,
+        koordinater=((x_mur, geo.y_max), (x_mur, geo.y_max - ny)),
+    )
+    res_utan = kor_2d_lokal_troghet(
+        z, markslag, geo, [0.0, 60.0], [120.0, 120.0], slut_tid_s=120.0
+    )
+    res_med = kor_2d_lokal_troghet(
+        z, markslag, geo, [0.0, 60.0], [120.0, 120.0], slut_tid_s=120.0, brytlinjer=[mur]
+    )
+    # 120 mm/h i 60 s = 2 mm regn; med muren däms uppströms (kolumn 5) upp >3x djupare
+    d_med = float(np.mean(res_med.max_djup_m[:, 5]))
+    d_utan = float(np.mean(res_utan.max_djup_m[:, 5]))
+    assert d_med > 3.0 * d_utan
+    assert float(np.mean(res_med.slut_djup_m[:, 5])) > 0.005
+    assert res_med.volymfel_rel < 1e-9
+
+
+def test_subgrid_kalltermer_skalar_med_vat_area() -> None:
+    """Sänkor i delvis våt subgrid-cell ska bara avtappa över den våta delarean."""
+    kap = np.array([[36.0]], dtype=np.float64)  # 36 mm/h = 1e-5 m/s
+    sank = SanktermTillstand.bygg(
+        Kalltermer(avtappning=Avtappning(kap)),
+        (1, 1),
+    )
+    volym = np.array([[1.0]], dtype=np.float64)
+    area = np.array([[16.0]], dtype=np.float64)
+    vat_area = np.array([[4.0]], dtype=np.float64)  # 25 % våt
+    sank.tillampa(volym, area, dt=100.0, vat_area=vat_area)
+    # 1e-5 m/s * 100 s * 4.0 m² = 0.004 m³ (inte 0.016 m³)
+    assert math.isclose(sank.avtappat_m3, 0.004, rel_tol=1e-12)
+    assert math.isclose(float(volym[0, 0]), 0.996, rel_tol=1e-12)
+
+
+def test_rutt_risk_expm1_utan_kancellation() -> None:
+    """berakna_kumulativ_sannolikhet ska undvika kancellation för små p."""
+    # 1 - (1 - 1e-12)^100 ≈ 1e-10
+    kum = berakna_kumulativ_sannolikhet(1e-12, 100.0)
+    assert math.isclose(kum, 1e-10, rel_tol=1e-9)
+
 

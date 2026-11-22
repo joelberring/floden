@@ -25,12 +25,14 @@ from numpy.typing import NDArray
 from gemensamt.hash import sha256_fil
 from gemensamt.manifest import FilPost, skapa_manifest, skriv_manifest
 from sankgraf.flodesvagar import MANNING_N_PER_MARKSLAG
+from sankgraf.hierarki import _berakna_kantbarriarer
 from sankgraf.takvatten import TakvattenFordelning
 from sankgraf.typer import MARKSLAG_BYGGNAD
-from testsvit.k1_io import GeoTransformInfo, skriv_geotiff
+from testsvit.k1_io import BrytlinjePost, GeoTransformInfo, skriv_geotiff
 from tvad.kalltermer import Kalltermer, SanktermTillstand
 from tvad.subgrid import (
     SubgridTabell,
+    area_fran_vattenniva,
     bygg_subgrid_tabell,
     kant_flode_geometri_u,
     kant_flode_geometri_v,
@@ -588,6 +590,7 @@ def kor_2d_lokal_troghet(
     theta: float = 0.9,
     kalltermer: Kalltermer | None = None,
     takvatten: TakvattenFordelning | None = None,
+    brytlinjer: Sequence[BrytlinjePost] = (),
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -695,6 +698,15 @@ def kor_2d_lokal_troghet(
     z_kant_fin_v = (
         np.maximum(z_bed[:-1, :], z_bed[1:, :]) if hojd > 1 else np.zeros((0, bredd))
     )
+    if subgrid is None and brytlinjer:
+        barriarer = _berakna_kantbarriarer(z_bed.ravel(), aktiv.ravel(), geo, brytlinjer)
+        for (u_idx, v_idx), kant_z in barriarer.items():
+            r0, c0 = divmod(u_idx, bredd)
+            r1, c1 = divmod(v_idx, bredd)
+            if r0 == r1 and c1 == c0 + 1 and bredd > 1:
+                z_kant_fin_u[r0, c0] = max(float(z_kant_fin_u[r0, c0]), kant_z)
+            elif c0 == c1 and r1 == r0 + 1 and hojd > 1:
+                z_kant_fin_v[r0, c0] = max(float(z_kant_fin_v[r0, c0]), kant_z)
 
     rand_konfig = berakna_rand_utflode_konfig(
         z_bed, aktiv, dx, dy, oppna_rander=oppna_rander, subgrid=subgrid
@@ -764,7 +776,8 @@ def kor_2d_lokal_troghet(
 
         # 1b. Sänktermer per cell (initial förlust, infiltration, avtappning)
         if sank is not None:
-            sank.tillampa(volym, aktiv_area, dt)
+            vat_area_sank = area_fran_vattenniva(zs, subgrid) if subgrid is not None else None
+            sank.tillampa(volym, aktiv_area, dt, vat_area=vat_area_sank)
             h_eff = np.where(aktiv, volym / safe_area, 0.0)
             zs = vattenniva_fran_volym(volym, subgrid) if subgrid is not None else z_bed + h_eff
 

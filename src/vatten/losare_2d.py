@@ -69,6 +69,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
     k1 = las_k1({r: indata[r] for r in K1_ROLLER if r in indata})
     mark_z, markslag = k1.mark_z, k1.markslag
     oppningar = k1.oppningar
+    brytlinjer = list(k1.brytlinjer)
     andrade = 0
     if p.get("andringar"):
         scenario = Planscenario(
@@ -83,6 +84,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             bas_brytlinjer=k1.brytlinjer, bas_oppningar=k1.oppningar,
         )
         mark_z, markslag = t.mark_z, t.markslag
+        brytlinjer.extend(t.kantstens_brytlinjer)
         andrade = int(np.count_nonzero(t.andrad_mask))
     if oppningar:
         mark_z, markslag = _applicera_oppningar(mark_z, markslag, k1.geo, oppningar)
@@ -125,6 +127,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         subgrid_faktor=int(p.get("subgrid_faktor", 1)),
         kalltermer=termer,
         takvatten=takvatten,
+        brytlinjer=brytlinjer,
     )
     skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar={"losare": "vatten.2d"})
     return {

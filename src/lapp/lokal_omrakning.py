@@ -938,9 +938,23 @@ def uppdatera_sankgraf_lokalt(
             if lid in lokal_overfall_celler:
                 ny_overfall_celler[global_id] = lokal_overfall_celler[lid]
 
-    # Bevara flödesvägar för oförändrade noder + lägg till nya för det omräknade delområdet
+    # Bevara flödesvägar för oförändrade noder samt oförändrade HAV-vägar + lägg till nya
+    omrakna_set = set(omrakna_indices)
+
+    def _hav_vag_oforandrad(vag: FlodesVag) -> bool:
+        if vag.nod_id != HAV_NOD_ID or not vag.koordinater:
+            return False
+        e0, n0 = vag.koordinater[0]
+        c0 = int(math.floor((e0 - geo.x_min) / geo.pixelstorlek_x))
+        r0 = int(math.floor((geo.y_max - n0) / geo.pixelstorlek_y))
+        if not (0 <= r0 < hojd and 0 <= c0 < bredd):
+            return True
+        return (r0 * bredd + c0) not in omrakna_set
+
     bevarade_vagar = [
-        vag for vag in bas_graf.flodesvagar if vag.nod_id in bevarade_noder
+        vag
+        for vag in bas_graf.flodesvagar
+        if vag.nod_id in bevarade_noder or _hav_vag_oforandrad(vag)
     ]
     nya_lokala_vagar = _bygg_lokala_flodesvagar(
         z_flat,

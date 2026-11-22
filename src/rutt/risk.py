@@ -223,7 +223,7 @@ def berakna_kumulativ_sannolikhet(
         return 0.0
     if p == 1.0:
         return 1.0
-    kum = 1.0 - math.pow(1.0 - p, horisont)
+    kum = -math.expm1(horisont * math.log1p(-p))
     return min(1.0, max(0.0, kum))
 
 
