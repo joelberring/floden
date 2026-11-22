@@ -1224,3 +1224,44 @@ details.panel-sektion > summary h2 {
     padding: 0 12px;
   }
 }
+
+/* Rapporter på projektsidan (R1) */
+.rapport-lista li.rapport-rad {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--f-linje-svag);
+}
+.rapport-lista .dampad {
+  display: block;
+  font-size: 13px;
+}
+.rapport-hoger {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+.rapport-status {
+  font-size: 13px;
+  padding-left: 16px;
+  position: relative;
+}
+.rapport-status::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--f-text-inaktiv);
+}
+.rapport-status.ok::before {
+  background: #2e7d32;
+}
+.rapport-status.fel::before {
+  background: var(--f-varning);
+}

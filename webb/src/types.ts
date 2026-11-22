@@ -619,6 +619,24 @@ export interface ProjektSvar {
   andringar: Array<{ id: string; rubrik: string; text: string }>;
   avsnitt: ProjektAvsnitt[];
   vyer: ProjektVy[];
+  /** Projektets rapporter (R1), senaste först. Saknas i äldre svar. */
+  rapporter?: RapportRad[];
+}
+
+/** En rapport i projektets lista: kontrollens utfall och nedladdningsbara filer. */
+export interface RapportRad {
+  rapport_id: string;
+  titel: string;
+  projekt: string;
+  amne: string;
+  niva: number;
+  skapad: string;
+  antal_pastaenden: number;
+  antal_fragor: number;
+  korningar: string[];
+  kontroll: { godkand: boolean; tid: string | null; antal_fel: number } | null;
+  filer: { word?: string | null; pdf?: string | null };
+  dataklass: string;
 }
 
 export interface ProjektListaSvar {

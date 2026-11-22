@@ -109,7 +109,11 @@ def test_verktygslistan_har_alla_verktyg_med_beskrivning_och_schema(mcp: Mcp) ->
         ) or t.name == "session_deklarera"
     uris = {str(r.uri) for r in resurser.resources}
     assert {"floden://metod/vatten", "floden://metod/dagsljus", "floden://kontrakt/k9"} <= uris
-    assert {p.name for p in promptar.prompts} == {"utforska_demokvarteret", "prova_nytt_hus"}
+    assert {p.name for p in promptar.prompts} == {
+        "utforska_demokvarteret",
+        "prova_nytt_hus",
+        "skissunderlag_skyfall",
+    }
 
 
 def test_resurser_och_promptar_gar_att_lasa(mcp: Mcp) -> None:
