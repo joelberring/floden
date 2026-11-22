@@ -54,7 +54,7 @@ pub fn bates_flode(
     if !(h_flode > min_djup) {
         return 0.0;
     }
-    let h_73 = h_flode.powf(7.0 / 3.0);
+    let h_73 = (h_flode * h_flode) * h_flode.cbrt();
     let q_rhs = q_bar - G * h_flode * dt * lutning;
     let c_frikt = G * dt * (manning_n * manning_n) / h_73;
     let q_ny = (2.0 * q_rhs) / (1.0 + (1.0 + 4.0 * c_frikt * q_rhs.abs()).sqrt());
@@ -76,7 +76,7 @@ pub fn rand_flode(h: f64, manning_n: f64, oppen: bool, lutning: f64, bredd_andel
     if !(oppen && h > min_djup) {
         return 0.0;
     }
-    let q_man = (1.0 / manning_n) * h.powf(5.0 / 3.0) * lutning.sqrt();
+    let q_man = (1.0 / manning_n) * (h * (h * h).cbrt()) * lutning.sqrt();
     let q_krit = h * (G * h).sqrt();
     bredd_andel * np_min(q_man, q_krit)
 }

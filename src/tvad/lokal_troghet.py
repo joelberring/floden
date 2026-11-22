@@ -449,11 +449,12 @@ def uppdatera_bates_flode_1d(
     if bredd_andel is not None:
         ba = np.maximum(bredd_andel[vat], 1e-6)
         h_vat = hv / ba
-        c_frikt = g * dt * (nv * nv) / (ba * np.power(h_vat, 7.0 / 3.0))
+        h_73 = (h_vat * h_vat) * np.cbrt(h_vat)
+        c_frikt = g * dt * (nv * nv) / (ba * h_73)
         q_ny = (2.0 * q_rhs) / (1.0 + np.sqrt(1.0 + 4.0 * c_frikt * np.abs(q_rhs)))
         q_max = FROUDE_MAX * hv * np.sqrt(g * h_vat)
     else:
-        h_73 = np.power(hv, 7.0 / 3.0)
+        h_73 = (hv * hv) * np.cbrt(hv)
         c_frikt = g * dt * (nv * nv) / h_73
         q_ny = (2.0 * q_rhs) / (1.0 + np.sqrt(1.0 + 4.0 * c_frikt * np.abs(q_rhs)))
         q_max = FROUDE_MAX * hv * np.sqrt(g * hv)
@@ -751,6 +752,10 @@ def kor_2d_lokal_troghet(
     min_dx = min(dx, dy)
     safe_area = np.where(aktiv, aktiv_area, 1.0)
     u_max = 0.0
+    # Förallokerade arbetsbuffertar i tidsloopen (undviker heap-allokering per steg)
+    ut_vol = np.zeros((hojd, bredd), dtype=np.float64)
+    q_cell_x = np.zeros((hojd, bredd), dtype=np.float64)
+    q_cell_y = np.zeros((hojd, bredd), dtype=np.float64)
 
     while t_nu < t_slut - 1e-12:
         h_max = float(np.max(h_eff)) if h_eff.size > 0 else 0.0
@@ -912,7 +917,7 @@ def kor_2d_lokal_troghet(
         )
 
         # 5. Massbevarande och positivitetsbevarande flödesbegränsare
-        ut_vol = np.zeros((hojd, bredd), dtype=np.float64)
+        ut_vol.fill(0.0)
         if bredd > 1:
             ut_vol[:, :-1] += np.maximum(0.0, qx) * (dy * dt)
             ut_vol[:, 1:] += np.maximum(0.0, -qx) * (dy * dt)
@@ -986,14 +991,14 @@ def kor_2d_lokal_troghet(
         np.maximum(max_zs, zs, out=max_zs)
         np.maximum(max_djup_grov, h_eff, out=max_djup_grov)
 
-        q_cell_x = np.zeros((hojd, bredd), dtype=np.float64)
+        q_cell_x.fill(0.0)
         if bredd > 1:
             q_cell_x[:, :-1] += 0.5 * qx
             q_cell_x[:, 1:] += 0.5 * qx
         q_cell_x[:, 0] -= 0.5 * q_vast
         q_cell_x[:, -1] += 0.5 * q_ost
 
-        q_cell_y = np.zeros((hojd, bredd), dtype=np.float64)
+        q_cell_y.fill(0.0)
         if hojd > 1:
             q_cell_y[:-1, :] += 0.5 * qy
             q_cell_y[1:, :] += 0.5 * qy
