@@ -116,6 +116,7 @@ from webb.rendering import (
     sankgraf_flodesvagar_till_geojson,
     sankgraf_noder_till_geojson,
 )
+from webb.vy3d import Vy3dTjanst
 
 API_VERSION = "0.1.0"
 _ENSEMBLE_FAKTORER: tuple[tuple[str, float, float], ...] = (
@@ -542,6 +543,7 @@ class FlodenApiApp:
     ) -> None:
         self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
         self._kartverktyg: KartverktygTjanst | None = None
+        self._vy3d: Vy3dTjanst | None = None
         self.testsvit_rot = Path(testsvit_rot)
         self.konfig_fil = Path(konfig_fil)
         self.konto = konto if konto is not None else _skapa_konto(self.konfig_fil)
@@ -570,6 +572,16 @@ class FlodenApiApp:
                     self.konfig_fil, fragor, *self._kartkonfig
                 )
             return self._kartverktyg
+
+    @property
+    def vy3d(self) -> Vy3dTjanst:
+        """3D-vyns buffertar (terräng, byggnader, resultat). Skapas vid första användning."""
+        kv = self.kartverktyg
+        fragor = self.fragor
+        with self._lock:
+            if self._vy3d is None:
+                self._vy3d = Vy3dTjanst(fragor, kv)
+            return self._vy3d
 
     @property
     def projekt(self) -> ProjektTjanst:
@@ -1775,6 +1787,49 @@ class FlodenApiApp:
                 return _json_svar(200, kv.status(projekt, namn))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
 
+    def _hantera_3d(
+        self, verb: str, sokvag: str, query: Mapping[str, list[str]]
+    ) -> tuple[int, dict[str, str], bytes]:
+        """`/api/3d/<projekt>/...`: terräng, byggnader, resultat och fasadpunkter som buffertar."""
+        delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
+        ej = _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
+        if verb != "GET" or not delar:
+            return ej
+        projekt, rest = delar[0], delar[1:]
+        v = self.vy3d
+
+        def heltal(text: str, namn: str) -> int:
+            try:
+                return int(text)
+            except ValueError as exc:
+                raise FlodenWebbFel(f"{namn} måste vara ett heltal.", status_kod=400) from exc
+
+        def buffert(data: bytes) -> tuple[int, dict[str, str], bytes]:
+            status, huvud, ut = _binart_svar(200, data, "application/octet-stream")
+            huvud["Cache-Control"] = "private, max-age=300"
+            return status, huvud, ut
+
+        def q(namn: str) -> str | None:
+            v = query.get(namn)
+            return v[0] if v else None
+
+        if not rest:
+            return _json_svar(200, v.info(projekt))
+        if rest[0] == "terrang" and len(rest) == 4:
+            return buffert(
+                v.terrang_ruta(projekt, *(heltal(x, "Rutindex") for x in rest[1:]))
+            )
+        if rest[0] == "byggnader" and len(rest) == 1:
+            return buffert(v.byggnader(projekt, q("korning"), q("scenario")))
+        if rest[0] == "mark" and len(rest) == 6:
+            lod, tx, ty = (heltal(x, "Rutindex") for x in rest[3:])
+            return buffert(v.mark_ruta(projekt, rest[1], rest[2], lod, tx, ty))
+        if rest[0] == "fasad" and len(rest) == 3:
+            return buffert(v.fasad(projekt, rest[1], rest[2], q("analys") or "vsc", q("jamfor")))
+        if rest[0] == "korning" and len(rest) == 2:
+            return _json_svar(200, v.korningsinfo(projekt, rest[1]))
+        return ej
+
     def _hantera_korningar(
         self, verb: str, sokvag: str, query: Mapping[str, list[str]] | None = None
     ) -> tuple[int, dict[str, str], bytes]:
@@ -1846,6 +1901,9 @@ class FlodenApiApp:
 
             if ren_sokvag.startswith("/api/kartverktyg/"):
                 return self._hantera_kartverktyg(verb, ren_sokvag, kropp, query)
+
+            if ren_sokvag.startswith("/api/3d/"):
+                return self._hantera_3d(verb, ren_sokvag, query)
 
             if verb == "GET" and ren_sokvag == "/api/demo":
                 return _json_svar(200, self.fragor.demo())

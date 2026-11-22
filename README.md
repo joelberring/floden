@@ -128,6 +128,14 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
    hus eller dess hörn. Ångra är Z, gör om Shift+Z. *Spara förslaget* skriver en fil på din dator
    (`data/lokal/kartverktyg/`, inte i git); förslag kan öppnas, få nytt namn och tas bort. Ett hus utanför
    kvarteret, ett som korsar sig självt eller en höjd över 200 m nekas med ett tydligt besked.
+   **Se kvarteret i 3D.** Under resultatflikarna väljer du *Visa som: 3D* (eller *Visa 3D* på lagret 3D-vy i
+   panelen). Terräng, byggnader, ditt ritade förslag och resultaten ligger i samma lagerpanel som i kartan:
+   soltimmar på marken, dagsljus (VSC) som färgade punkter på fasaderna, vattenytan med maxdjup, före, efter,
+   skillnad, svep eller sida vid sida. Dra för att rotera, högerknapp för att flytta, rulla för att zooma;
+   *Rakt uppifrån*, *Snett*, *Norr uppåt* och *Hela kvarteret* ställer kameran. Allt som färgas är beräknat av
+   Floden (inga skuggor räknas av grafikkortet); ett hus du ritar i kartan syns direkt i 3D. Luft och buller
+   har inget 3D-resultat och visas som otillgängliga med förklaring. Ett ritverktyg tar dig tillbaka till
+   kartan. Se `docs/WEBB3D.md`.
 4. **Hovra** över kartan: värdena för före, efter och skillnad står under kartan. Grå ytor är byggnader
    (tak, inte mark). Byggnadslagret och värden på tak slås av och på under kartan.
 5. **Utredningsfrågor.** Demokorten överst går att köra direkt (resultatet finns redan i cachen).
@@ -147,3 +155,5 @@ Skärmbilder (bred 1440 px och smal 800 px med `-smal`): `docs/bilder/demo-start
 `demo-vatten.png` (`python tools/webb_skarmbild.py --demo`). Kartverktyget: `docs/bilder/kartverktyg-lager.png`,
 `kartverktyg-rita.png` (mitt i ritningen, med fästmarkör), `kartverktyg-hojd.png` och `kartverktyg-resultat.png`
 (före och efter efter en körning; `python tools/webb_skarmbild.py --kartverktyg`, kräver Chrome).
+3D: `docs/bilder/3d-soltimmar-fore.png`, `3d-soltimmar-efter.png`, `3d-vsc-fasader.png`, `3d-vatten.png` och
+`3d-ritat-hus.png` (`python tools/webb_skarmbild.py --3d`).
