@@ -1,0 +1,19 @@
+{
+  "fall_id": "A12",
+  "typ": "slutsanka_takvatten",
+  "gard_area_m2": 100.0,
+  "gard_celler": 1600,
+  "tak_area_m2": 224.0,
+  "regn_mm": 50.0,
+  "regn_pa_tak_raknas": true,
+  "regel": "ring: hälften av taket till innersidan (gården), hälften till yttersidan",
+  "volym_m3": 10.600000000000001,
+  "djup_m": 0.10600000000000001,
+  "hinder_rh2000": 16.0,
+  "slut_tid_2d_s": 1800.0,
+  "forklaring": "Som A10 men med takvatten (Joels beslut 2026-11-22): kvarteret är en ringformad byggnad, så hälften av takets regn rinner till gården. Djup = (gårdens regn + halva takets regn) / gårdens area = (5,0 + 5,6) m³ / 100 m² = 106 mm.",
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

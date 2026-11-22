@@ -82,6 +82,7 @@ from rutt.parametrar import (
 from rutt.risk import berakna_vag_kumulativ_risk
 from rutt.vagnat import VagKant, VagNat, VagNatFel, VagNod
 from sankgraf.hierarki import bygg_sankgraf
+from sankgraf.takvatten import med_takvatten_graf
 from sankgraf.typer import (
     SankGraf,
     SankGrafFel,
@@ -700,7 +701,7 @@ class FlodenApiApp:
             regn_intensitet_mm_h=regn_int,
             bas_recept_sha256=bas_sha,
             kallor=DEFAULT_KALLOR,
-            bas_graf=bas_graf,
+            bas_graf=med_takvatten_graf(bas_graf),
         )
         with self._lock:
             self._omrade_cache[omrade_id] = laddat
@@ -879,6 +880,7 @@ class FlodenApiApp:
                         brytlinjer=omrade.brytlinjer,
                         oppningar=omrade.oppningar,
                     )
+                    bas_graf = med_takvatten_graf(bas_graf)
             if raw_experiment is not None:
                 experiment = ExperimentAtgarder.fran_dict(raw_experiment)
         except (ExperimentFel, SankGrafFel) as exc:
@@ -997,6 +999,7 @@ class FlodenApiApp:
                     brytlinjer=efter_brytlinjer,
                     oppningar=omrade.oppningar,
                 )
+                efter_graf = med_takvatten_graf(efter_graf)
                 efter_dyn = kor_dynamik_handelsestyrd(efter_graf, regn_tid, regn_int)
                 diff_arr = (efter_dyn.max_djup_m - fore_dyn.max_djup_m).astype(np.float32)
                 cell_area = float(omrade.geo.pixelstorlek_x) * float(omrade.geo.pixelstorlek_y)
@@ -1778,11 +1781,13 @@ class FlodenApiApp:
                 return _json_svar(200, kv.byt_namn(projekt, namn, nytt_namn))
             if verb == "POST" and tail == ["ta-bort"]:
                 return _json_svar(200, kv.ta_bort_scenario(projekt, namn))
-            valda = [str(x) for x in json_kropp().get("analyser", [])] if verb == "POST" else []
+            kropp_d = json_kropp() if verb == "POST" else {}
+            valda = [str(x) for x in kropp_d.get("analyser", [])]
+            avt = kropp_d.get("avtappning_mm_h")
             if verb == "POST" and tail == ["plan"]:
-                return _json_svar(200, kv.planera(projekt, namn, valda))
+                return _json_svar(200, kv.planera(projekt, namn, valda, avt))
             if verb == "POST" and tail == ["kor"]:
-                return _json_svar(202, kv.kor(projekt, namn, valda))
+                return _json_svar(202, kv.kor(projekt, namn, valda, avt))
             if verb == "GET" and tail == ["status"]:
                 return _json_svar(200, kv.status(projekt, namn))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})

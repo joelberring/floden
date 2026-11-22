@@ -1,0 +1,19 @@
+{
+  "fall_id": "A13",
+  "typ": "takvatten_sidor",
+  "tak_area_m2": 72.0,
+  "regn_mm": 50.0,
+  "regel": "okänd takform = sadeltak med nock längs längdaxeln: hälften till varje långsida",
+  "takvatten_m3": {
+    "norr": 1.8,
+    "soder": 1.8,
+    "vast": 0.0,
+    "ost": 0.0
+  },
+  "slut_tid_2d_s": 1800.0,
+  "forklaring": "Taket (72 m², okänd takform) avvattnas som sadeltak: 1,8 m³ av 3,6 m³ till vardera långsidans tråg (norr, söder), inget till gavlarna. Tråget får dessutom sitt eget regn (avrinningsytan i sänkgrafen).",
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

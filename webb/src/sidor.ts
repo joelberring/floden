@@ -211,6 +211,9 @@ export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): 
       const regn = a.regn
         ? `<p class="regn-rad"><span class="etikett-liten">Regn som användes</span> ${esc(a.regn.text)}</p>`
         : "";
+      const antaganden = (a.antaganden ?? [])
+        .map((t) => `<p class="regn-rad"><span class="etikett-liten">Antagande</span> ${esc(t)}</p>`)
+        .join("");
       return `
       <section class="projekt-avsnitt" id="avsnitt-${esc(a.id)}">
         <div class="sektionsrad linje-under-stark">
@@ -220,6 +223,7 @@ export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): 
         <p class="avsnitt-ingress">${esc(a.ingress)}</p>
         ${matttabell(a)}
         ${regn}
+        ${antaganden}
         ${tekniskInfo(a)}
       </section>`;
     })

@@ -65,6 +65,20 @@ ORTOFOTO_MAX_PX = 2048
 _PROJEKT_ID = "demokvarteret"
 
 
+_LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
+
+
+def _avtappning(v: Any) -> float | None:
+    """Avtappning ur kartverktyget (mm/h, >= 0), eller None (lösarens standard 0 mm/h)."""
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(float(v)):
+        raise _fel(f"Avtappningen måste vara ett tal i mm/h, fick {v!r}.", 400)
+    if float(v) < 0.0:
+        raise _fel("Avtappningen får inte vara negativ.", 400)
+    return float(v)
+
+
 def slug(namn: str) -> str:
     """Filnamn och scenario-id ur ett namn (a-z, 0-9, bindestreck). Åäö blir aao."""
     s = namn.strip().lower()
@@ -548,7 +562,11 @@ class KartverktygTjanst:
     # ------------------------------------------------------------------ frågor och körning
 
     def _skriv_fragor(
-        self, projekt: str, namn_slug: str, valda: Sequence[str]
+        self,
+        projekt: str,
+        namn_slug: str,
+        valda: Sequence[str],
+        avtappning_mm_h: float | None = None,
     ) -> list[dict[str, Any]]:
         """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster."""
         mallar = self._kravs_projekt(projekt)
@@ -578,7 +596,9 @@ class KartverktygTjanst:
             self.fragedir.mkdir(parents=True, exist_ok=True)
             fraga_id = f"rita-{namn_slug}-{kort}"[:60]
             fil = self.fragedir / f"{fraga_id}.json"
-            innehall = self._k20(m, fil, k9_fil, fraga_id, d["namn"], analyser)
+            innehall = self._k20(
+                m, fil, k9_fil, fraga_id, d["namn"], analyser, avtappning_mm_h=avtappning_mm_h
+            )
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             ref = self._ref_for(fil)
             poster.append(
@@ -607,6 +627,8 @@ class KartverktygTjanst:
         fraga_id: str,
         scenarionamn: str,
         analyser: Sequence[str],
+        *,
+        avtappning_mm_h: float | None = None,
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
         valda = [a for a in m.fraga.analyser if a.id in analyser]
@@ -618,6 +640,8 @@ class KartverktygTjanst:
                 "scenarier": ["fore", "ritat"],
                 "parametrar": dict(a.parametrar),
             }
+            if avtappning_mm_h is not None and a.losare in _LOSARE_MED_AVTAPPNING:
+                post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
             if a.beror_pa:
@@ -662,9 +686,17 @@ class KartverktygTjanst:
                         tider.setdefault(str(j["losare"]), []).append(float(j["kortid_s"]))
         return {k: float(np.median(v)) for k, v in tider.items() if v}
 
-    def planera(self, projekt: str, namn_slug: str, valda: Sequence[str]) -> dict[str, Any]:
+    def planera(
+        self,
+        projekt: str,
+        namn_slug: str,
+        valda: Sequence[str],
+        avtappning_mm_h: float | None = None,
+    ) -> dict[str, Any]:
         """Planen för att räkna före och efter: vad som räknas om, radie och uppskattad tid."""
-        poster = self._skriv_fragor(projekt, namn_slug, valda)
+        poster = self._skriv_fragor(
+            projekt, namn_slug, valda, avtappning_mm_h=_avtappning(avtappning_mm_h)
+        )
         tider = self._tid_per_losare()
         ut: list[dict[str, Any]] = []
         for p in poster:
@@ -694,8 +726,18 @@ class KartverktygTjanst:
             )
         return {"slug": namn_slug, "fragor": ut}
 
-    def kor(self, projekt: str, namn_slug: str, valda: Sequence[str]) -> dict[str, Any]:
-        poster = self._skriv_fragor(projekt, namn_slug, valda)
+    def kor(
+        self,
+        projekt: str,
+        namn_slug: str,
+        valda: Sequence[str],
+        avtappning_mm_h: float | None = None,
+    ) -> dict[str, Any]:
+        """Startar körningen. `avtappning_mm_h` (valfri) gäller vattnets analyser i körningen;
+        utan den gäller standard 0 mm/h (ledningsnätet antas fullt)."""
+        poster = self._skriv_fragor(
+            projekt, namn_slug, valda, avtappning_mm_h=_avtappning(avtappning_mm_h)
+        )
         d = self._las(projekt, namn_slug)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
         ut: list[dict[str, Any]] = []

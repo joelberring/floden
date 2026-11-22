@@ -85,10 +85,11 @@ export const bytScenarioNamn = (p: string, slug: string, namn: string): Promise<
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/byt-namn`, { namn });
 export const taBortScenario = (p: string, slug: string): Promise<{ borttaget: boolean }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/ta-bort`, {});
-export const planeraScenario = (p: string, slug: string, analyser: string[]): Promise<{ slug: string; fragor: PlanPost[] }> =>
-  post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/plan`, { analyser });
-export const korScenario = (p: string, slug: string, analyser: string[]): Promise<{ slug: string; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
-  post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/kor`, { analyser });
+/** `avtappning_mm_h` null = lösarens standard 0 mm/h (ledningsnätet antas fullt). */
+export const planeraScenario = (p: string, slug: string, analyser: string[], avtappning_mm_h: number | null = null): Promise<{ slug: string; fragor: PlanPost[] }> =>
+  post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/plan`, { analyser, avtappning_mm_h });
+export const korScenario = (p: string, slug: string, analyser: string[], avtappning_mm_h: number | null = null): Promise<{ slug: string; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
+  post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/kor`, { analyser, avtappning_mm_h });
 export const scenarioStatus = (p: string, slug: string): Promise<{ slug: string; korningar: KorningPost[] }> =>
   lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/status`);
 export const lasWmsLager = (url: string): Promise<WmsSvar> => post(`${BAS}/wms/lager`, { url });

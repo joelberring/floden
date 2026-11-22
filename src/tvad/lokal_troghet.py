@@ -25,6 +25,7 @@ from numpy.typing import NDArray
 from gemensamt.hash import sha256_fil
 from gemensamt.manifest import FilPost, skapa_manifest, skriv_manifest
 from sankgraf.flodesvagar import MANNING_N_PER_MARKSLAG
+from sankgraf.takvatten import TakvattenFordelning
 from sankgraf.typer import MARKSLAG_BYGGNAD
 from testsvit.k1_io import GeoTransformInfo, skriv_geotiff
 from tvad.kalltermer import Kalltermer, SanktermTillstand
@@ -74,6 +75,60 @@ class TvadResultat:
     """Kumulativ infiltration per cell (lösarens rutnät) när infiltration är påslagen."""
     sanktermer: dict[str, Any] | None = None
     """Vilka käll-/sänktermer som användes (`Kalltermer.beskrivning`); None = inga."""
+    regn_mark_m3: float = 0.0
+    regn_tak_m3: float = 0.0
+    takvatten: bool = False
+    takvatten_ut_rand_m3: float = 0.0
+    takvatten_till_ledning_m3: float = 0.0
+
+    def volymbalans(self) -> dict[str, float | bool]:
+        """Regn på hela rutan (mark + tak) mot lagrat, utflöde, infiltration, avtappning och
+        takvatten till ledningsnät (se `sankgraf.typer.volymbalans_dict`). Initial förlust
+        räknas som infiltration. Tvingat djup (randvillkor) ingår inte."""
+        from sankgraf.typer import volymbalans_dict
+
+        return volymbalans_dict(
+            regn_mark_m3=self.regn_mark_m3,
+            regn_tak_m3=self.regn_tak_m3,
+            takvatten=self.takvatten,
+            lagrat_m3=self.lagrat_m3,
+            ut_m3=self.ut_m3,
+            infiltrerat_m3=self.infiltrerat_m3 + self.initial_forlust_m3,
+            avtappat_m3=self.avtappat_m3,
+            tak_ledning_m3=self.takvatten_till_ledning_m3,
+        )
+
+
+def takvatten_regnyta(
+    takvatten: TakvattenFordelning | None,
+    markslag: NDArray[np.uint8],
+    mark_z: NDArray[np.float32],
+    cell_area_fin_m2: float,
+    subgrid_faktor: int,
+    form_losare: tuple[int, int],
+) -> tuple[NDArray[np.float64], float, float, float]:
+    """Takyta per lösarcell som regnet läggs på utöver cellens egen yta (`sankgraf.takvatten`).
+
+    Returnerar `(extra_m2, ut_ur_rutan_m2, till_ledning_m2, takyta_m2)`; med subgrid summeras de
+    fina cellerna blockvis (samma utfyllnad som `tvad.subgrid`).
+    """
+    tak_m2 = float(np.count_nonzero(markslag == MARKSLAG_BYGGNAD)) * cell_area_fin_m2
+    if takvatten is None:
+        return np.zeros(form_losare, dtype=np.float64), 0.0, 0.0, tak_m2
+    takvatten.kontrollera_mot(markslag, mark_z)
+    extra = takvatten.extra_area_m2
+    if subgrid_faktor > 1:
+        f = int(subgrid_faktor)
+        hg, bg = form_losare
+        pad = np.zeros((hg * f, bg * f), dtype=np.float64)
+        pad[: extra.shape[0], : extra.shape[1]] = extra
+        extra = pad.reshape(hg, f, bg, f).sum(axis=(1, 3))
+    return (
+        np.asarray(extra, dtype=np.float64),
+        float(takvatten.ut_area_m2),
+        float(takvatten.ledning_area_m2),
+        tak_m2,
+    )
 
 
 @dataclass(frozen=True)
@@ -520,6 +575,7 @@ def kor_2d_lokal_troghet(
     z_nivaer: int = 24,
     theta: float = 0.9,
     kalltermer: Kalltermer | None = None,
+    takvatten: TakvattenFordelning | None = None,
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -542,6 +598,9 @@ def kor_2d_lokal_troghet(
         kalltermer: Valfria käll-/sänktermer per cell (`tvad.kalltermer`): initial förlust,
             Green–Ampt-infiltration, avtappning och tvingat djup. `None` ger exakt samma
             beräkning som utan termerna.
+        takvatten: Takvattnets fördelning (`sankgraf.takvatten`) byggd för `mark_z` och
+            `markslag`: regnet på byggnadscellerna läggs som källterm i markcellerna utanför
+            fasaderna. `None` = regn på tak räknas inte (som före 2026-11-22).
 
     Returns:
         `TvadResultat` med K6-raster, massbalans, tidssteg och gles frontstatistik.
@@ -607,6 +666,14 @@ def kor_2d_lokal_troghet(
         geo.pixelstorlek_y
     )
     total_aktiv_area = float(np.sum(aktiv_area))
+    tak_extra, tak_ut_m2, tak_ledning_m2, tak_m2 = takvatten_regnyta(
+        takvatten, markslag, mark_z, float(geo.pixelstorlek_x) * float(geo.pixelstorlek_y),
+        subgrid_faktor, (hojd, bredd),
+    )
+    har_tak = takvatten is not None and not takvatten.tom
+    regn_area = aktiv_area + tak_extra if har_tak else aktiv_area
+    total_regn_area = float(np.sum(regn_area)) + tak_ut_m2 if har_tak else total_aktiv_area
+    regn_summa_m = 0.0
 
     manning_u = 0.5 * (manning[:, :-1] + manning[:, 1:]) if bredd > 1 else np.zeros((hojd, 0))
     manning_v = 0.5 * (manning[:-1, :] + manning[1:, :]) if hojd > 1 else np.zeros((0, bredd))
@@ -671,9 +738,11 @@ def kor_2d_lokal_troghet(
 
         # 1. Regntillskott under [t_nu, t_nu + dt]
         regn_m = integrera_regn_m(t_nu, t_nu + dt, tider, intens_m_s)
-        if regn_m > 0.0 and total_aktiv_area > 0.0:
-            volym += aktiv_area * regn_m
-            in_m3 += total_aktiv_area * regn_m
+        regn_summa_m += regn_m
+        if regn_m > 0.0 and total_regn_area > 0.0:
+            volym += regn_area * regn_m
+            in_m3 += total_regn_area * regn_m
+            ut_m3 += tak_ut_m2 * regn_m
             if subgrid is not None:
                 zs = vattenniva_fran_volym(volym, subgrid)
                 h_eff = np.where(aktiv, volym / safe_area, 0.0)
@@ -969,6 +1038,11 @@ def kor_2d_lokal_troghet(
             else None
         ),
         sanktermer=kalltermer.beskrivning() if kalltermer is not None else None,
+        regn_mark_m3=total_aktiv_area * regn_summa_m,
+        regn_tak_m3=tak_m2 * regn_summa_m,
+        takvatten=takvatten is not None,
+        takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
+        takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
     )
 
 

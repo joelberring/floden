@@ -244,9 +244,20 @@ export interface AnalysAntagande {
   parametrar: Record<string, unknown>;
 }
 
+/** Takvatten och avtappning per analys, med lösarens egna texter (webben räknar inget). */
+export interface VattenAntagande {
+  analys: string;
+  takvatten: boolean | null;
+  takvatten_text: string | null;
+  avtappning_mm_h: number | null;
+  avtappning_kalla: string | null;
+  avtappning_text: string | null;
+}
+
 export interface Antaganden {
   regn: RegnAntagande[];
   analyser: AnalysAntagande[];
+  vatten?: VattenAntagande[];
 }
 
 export interface AvlasningVarde {

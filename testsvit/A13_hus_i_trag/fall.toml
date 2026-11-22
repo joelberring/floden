@@ -1,0 +1,7 @@
+id = "A13"
+namn = "Hus i tråg (takvatten)"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Hus 12 x 6 m med ett tråg vid varje fasad: halva taket till varje långsida."
+status = "redo"
+takvatten = true

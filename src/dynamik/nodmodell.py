@@ -113,6 +113,37 @@ class DynamikResultat:
     """Del av `ut_m3` som lämnat via brunnar eller avtappning (fas 3), inte över ytan."""
     slutsankor: tuple[int, ...] = ()
     """Slutsänkornas nod-id (K2/v2); de som svämmat över har nått sitt hinder."""
+    regn_mark_m3: float = 0.0
+    regn_tak_m3: float = 0.0
+    takvatten: bool = False
+    takvatten_till_ledning_m3: float = 0.0
+
+    def volymbalans(self) -> dict[str, float | bool]:
+        """Regn på mark + tak mot lagrat, utflöde, avtappning och tak till ledning
+        (`sankgraf.typer.volymbalans_dict`; `ut_m3` innehåller avtappningen)."""
+        from sankgraf.typer import volymbalans_dict
+
+        return volymbalans_dict(
+            regn_mark_m3=self.regn_mark_m3,
+            regn_tak_m3=self.regn_tak_m3,
+            takvatten=self.takvatten,
+            lagrat_m3=self.lagrat_m3,
+            ut_m3=self.ut_m3 - self.avtappat_m3,
+            infiltrerat_m3=0.0,
+            avtappat_m3=self.avtappat_m3,
+            tak_ledning_m3=self.takvatten_till_ledning_m3,
+        )
+
+
+def regn_ytor_m2(graf: SankGraf) -> tuple[float, float, float]:
+    """`(markyta, takyta, takyta till ledning)` i m² för volymbalansen."""
+    z64 = np.asarray(graf.mark_z, dtype=np.float64)
+    cell = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
+    mark = float(np.count_nonzero((graf.markslag != MARKSLAG_BYGGNAD) & np.isfinite(z64))) * cell
+    tak = float(np.count_nonzero(graf.markslag == MARKSLAG_BYGGNAD)) * cell
+    tv = graf.takvatten
+    ledning = float(tv.ledning_area_m2) if tv is not None and not tv.tom else 0.0
+    return mark, tak, ledning
 
 
 @dataclass(frozen=True)
@@ -408,6 +439,33 @@ def berakna_doman_areor(graf: SankGraf) -> tuple[float, float, dict[int, float]]
     if lov_summa > 0.0 and abs(total_aktiv_area - hav_area - lov_summa) > 1e-6:
         hav_area = max(0.0, total_aktiv_area - lov_summa)
         total_aktiv_area = lov_summa + hav_area
+
+    # Takvatten (`sankgraf.takvatten`): takytan som avvattnas till varje markcell läggs på
+    # cellens nod (eller på randutloppet), takyta med fasad utanför rutan på randutloppet.
+    tv = graf.takvatten
+    if tv is not None and not tv.tom:
+        tv.kontrollera_mot(graf.markslag, graf.mark_z)
+        extra = tv.extra_area_m2
+        har = extra > 0.0
+        if np.any(har & ~aktiv):
+            raise DynamikFel("Takvatten till en cell som inte är aktiv mark.")
+        ct_har = ct[har]
+        ex_har = extra[har]
+        okanda = (ct_har < 0) & (ct_har != HAV_NOD_ID)
+        if np.any(okanda):
+            raise DynamikFel("Takvatten till celler utan nod i sänkgrafen.")
+        hav_extra = float(np.sum(ex_har[ct_har == HAV_NOD_ID])) + tv.ut_area_m2
+        till_nod = ct_har >= 0
+        if np.any(till_nod):
+            per = np.bincount(ct_har[till_nod], weights=ex_har[till_nod])
+            for nid in np.flatnonzero(per > 0.0):
+                n = int(nid)
+                if n not in lov_areor:
+                    hav_extra += float(per[n])
+                else:
+                    lov_areor[n] += float(per[n])
+        hav_area += hav_extra
+        total_aktiv_area += float(np.sum(ex_har)) + tv.ut_area_m2
     return total_aktiv_area, hav_area, lov_areor
 
 

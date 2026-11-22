@@ -22,6 +22,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sankgraf.hierarki import bygg_sankgraf
+from sankgraf.takvatten import TakvattenFordelning
 from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf, SankNod
 from testsvit.k1_io import GeoTransformInfo
 from tvad.lokal_troghet import (
@@ -336,8 +337,12 @@ def kor_hybrid_2d_graf(
     dt_max_s: float = 5.0,
     z_nivaer: int = 24,
     theta: float = 0.9,
+    takvatten: TakvattenFordelning | None = None,
 ) -> TvadResultat:
     """Kör hybrid 2D + sänkgraf med massbevarande kantkoppling till K6-format.
+
+    `takvatten` (eller grafens `graf.takvatten` om argumentet saknas) lägger regnet på
+    byggnadscellerna i markcellerna utanför fasaderna, både i 2D-celler och i grafnoder.
 
     Djupa sänkor (`persistens_m >= nod_persistens_grans_m`) ur `SankGraf` räknas
     som grafnoder med plan vattenyta, medan övriga celler (sluttningar, gator,
@@ -480,6 +485,30 @@ def kor_hybrid_2d_graf(
     total_aktiv_2d_area = float(np.sum(aktiv_area_2d))
     nod_areor = np.asarray([n.area_m2 for n in noder], dtype=np.float64)
     total_nod_area = float(np.sum(nod_areor))
+    regn_mark_area = total_aktiv_2d_area + total_nod_area
+    regn_area_2d = aktiv_area_2d
+    tv = takvatten if takvatten is not None else graf.takvatten
+    har_tak = tv is not None and not tv.tom
+    tak_ut_m2 = tak_ledning_m2 = 0.0
+    tak_m2 = float(np.count_nonzero(eff_slag == MARKSLAG_BYGGNAD)) * cell_area_fin
+    if tv is not None and har_tak:
+        tv.kontrollera_mot(eff_slag, eff_z_f32)
+        extra_fin = tv.extra_area_m2
+        tak_ut_m2, tak_ledning_m2 = float(tv.ut_area_m2), float(tv.ledning_area_m2)
+        nod_areor = nod_areor + np.asarray(
+            [float(np.sum(extra_fin[n.cell_rader, n.cell_kolumner])) for n in noder],
+            dtype=np.float64,
+        )
+        extra_2d = np.where(cell_till_hyb_nod < 0, extra_fin, 0.0)
+        if subgrid_faktor > 1:
+            f = int(subgrid_faktor)
+            pad = np.zeros((hojd * f, bredd * f), dtype=np.float64)
+            pad[:hojd_fin, :bredd_fin] = extra_2d
+            extra_2d = pad.reshape(hojd, f, bredd, f).sum(axis=(1, 3))
+        regn_area_2d = aktiv_area_2d + extra_2d
+        total_aktiv_2d_area = float(np.sum(regn_area_2d))
+        total_nod_area = float(np.sum(nod_areor))
+    regn_summa_m = 0.0
 
     manning_u = 0.5 * (manning_2d[:, :-1] + manning_2d[:, 1:]) if bredd > 1 else np.zeros((hojd, 0))
     manning_v = 0.5 * (manning_2d[:-1, :] + manning_2d[1:, :]) if hojd > 1 else np.zeros((0, bredd))
@@ -540,9 +569,13 @@ def kor_hybrid_2d_graf(
 
         # 3.1 Direkt regn till 2D-celler och grafnoder
         regn_m = integrera_regn_m(t_nu, t_nu + dt, tider, intens_m_s)
+        regn_summa_m += regn_m
         if regn_m > 0.0:
+            if har_tak and tak_ut_m2 > 0.0:
+                in_m3 += tak_ut_m2 * regn_m
+                ut_m3 += tak_ut_m2 * regn_m
             if total_aktiv_2d_area > 0.0:
-                volym_2d += aktiv_area_2d * regn_m
+                volym_2d += regn_area_2d * regn_m
                 in_m3 += total_aktiv_2d_area * regn_m
                 if subgrid is not None:
                     zs_2d = vattenniva_fran_volym(volym_2d, subgrid)
@@ -938,6 +971,11 @@ def kor_hybrid_2d_graf(
         kortid_s=kortid_s,
         niva="hybrid",
         aktiv_cell_andel=aktiv_cell_andel,
+        regn_mark_m3=regn_mark_area * regn_summa_m,
+        regn_tak_m3=tak_m2 * regn_summa_m,
+        takvatten=tv is not None,
+        takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
+        takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
     )
 
 

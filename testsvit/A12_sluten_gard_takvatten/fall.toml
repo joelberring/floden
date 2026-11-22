@@ -1,0 +1,7 @@
+id = "A12"
+namn = "Sluten gård med takvatten"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "Som A10 med takvatten: ringhus, halva taket till gården, djup 106 mm."
+status = "redo"
+takvatten = true

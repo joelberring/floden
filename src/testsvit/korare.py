@@ -38,6 +38,9 @@ class Testfall:
     beskrivning: str
     status: str
     mapp: Path
+    takvatten: bool = True
+    """Regn på tak räknas (`sankgraf.takvatten`, standard på); `takvatten = false` i fall.toml
+    där fallets definition säger att taken inte räknas (A10, A11)."""
 
 
 @dataclass(frozen=True)
@@ -80,6 +83,7 @@ def las_testfall(fall_mapp: Path) -> Testfall:
         beskrivning=str(data["beskrivning"]),
         status=str(data["status"]),
         mapp=fall_mapp,
+        takvatten=bool(data.get("takvatten", True)),
     )
 
 
@@ -120,13 +124,16 @@ def _berakna_statiskt_maxdjupsfel(
     fall_id: str,
     indata_mapp: Path,
     facit: dict[str, Any],
+    takvatten: bool = True,
 ) -> tuple[float, float | None, str]:
     """Kör T02 statisk fyllning och beräknar volymfel och maxdjupsfel mot facit."""
     from sankgraf.fyllning import kor_statisk_k1_mapp, statisk_fyllning
 
     persistens_faktor = 2.0 if fall_id == "A9" else None
-    graf, res_regn = kor_statisk_k1_mapp(indata_mapp, persistens_faktor=persistens_faktor)
-    volymfel_rel = res_regn.volymfel_rel
+    graf, res_regn = kor_statisk_k1_mapp(
+        indata_mapp, persistens_faktor=persistens_faktor, takvatten=takvatten
+    )
+    volymfel_rel = max(res_regn.volymfel_rel, float(res_regn.volymbalans()["volymfel_rel"]))
 
     if volymfel_rel >= 0.001:
         raise TestsvitFel(
@@ -196,6 +203,10 @@ def _berakna_statiskt_maxdjupsfel(
             f"T02: {len(graf_ofilt.noder)} -> 1 sänka "
             f"(djup={float(np.max(res_full.djup_m)):.3f} m)"
         )
+
+    elif fall_id in {"A12", "A13"}:
+        maxdjupsfel_m, detalj, vfel = _takvatten_fall(fall_id, indata_mapp, graf, res_regn, facit)
+        volymfel_rel = max(volymfel_rel, vfel)
 
     elif fall_id in {"A10", "A11"}:
         maxdjupsfel_m, detalj, vfel = _sluten_gard(fall_id, indata_mapp, graf, res_regn, facit)
@@ -289,6 +300,94 @@ def _sluten_gard(
     )
 
 
+def _takvatten_fall(
+    fall_id: str,
+    indata_mapp: Path,
+    graf: Any,
+    res_regn: Any,
+    facit: dict[str, Any],
+) -> tuple[float, str, float]:
+    """A12/A13: takvatten (Joels beslut 2026-11-22) mot känt svar, graf mot 2D.
+
+    A12: ringformat kvarter runt sluten gård, hälften av taket till gården: djupet i gården =
+    (gårdens regn + halva takets regn) / gårdens area, i statisk fyllning, händelsestyrd
+    dynamik och 2D (vid `slut_tid_2d_s`, när vattnet hunnit lägga sig).
+    A13: rektangulärt hus med ett tråg vid varje fasad: varje trågs volym = eget regn
+    (avrinningsytan) + takvatten enligt regeln (sadel: hälften till varje långsida, inget till
+    gavlarna). Graf och 2D jämförs i trågens volymer.
+    Returnerar (största fel i meter, kommentar, största volymfel).
+    """
+    from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
+    from tvad.lokal_troghet import kor_2d_lokal_troghet
+
+    regn = las_regn_csv(indata_mapp / "regn.csv")
+    tider = [t for t, _ in regn]
+    intens = [i for _, i in regn]
+    mark, geo = las_geotiff(indata_mapp / "mark.tif")
+    slag, _ = las_geotiff(indata_mapp / "markslag.tif")
+    mark32 = np.asarray(mark, dtype=np.float32)
+    slag8 = np.asarray(slag, dtype=np.uint8)
+    regn_m = float(facit["regn_mm"]) / 1000.0
+    cell = float(geo.pixelstorlek_x) * float(geo.pixelstorlek_y)
+    if graf.takvatten is None:
+        raise TestsvitFel(f"{fall_id} kräver takvatten")
+    slut_2d = float(facit["slut_tid_2d_s"])
+    tvad = kor_2d_lokal_troghet(
+        mark32, slag8, geo, tider, intens, slut_tid_s=slut_2d, takvatten=graf.takvatten
+    )
+    dyn = kor_dynamik_handelsestyrd(graf, tider, intens, slut_tid_s=slut_2d)
+    vfel = max(
+        float(tvad.volymfel_rel),
+        float(tvad.volymbalans()["volymfel_rel"]),
+        float(dyn.volymfel_rel),
+        float(dyn.volymbalans()["volymfel_rel"]),
+    )
+    if fall_id == "A12":
+        mask = graf.slutsanka_mask()
+        area = float(facit["gard_area_m2"])
+        if int(mask.sum()) * cell != area:
+            raise TestsvitFel(f"A12: gården har {int(mask.sum())} celler")
+        d_facit = float(facit["djup_m"])
+        fel_graf = float(np.max(np.abs(res_regn.djup_m[mask] - d_facit)))
+        fel_dyn = float(np.max(np.abs(dyn.max_djup_m[mask] - d_facit)))
+        d2 = np.asarray(tvad.slut_djup_m, dtype=np.float64)[mask]
+        fel_2d = float(np.max(np.abs(d2 - d_facit)))
+        v2 = float(np.sum(d2)) * cell
+        (r,) = res_regn.slutsankor
+        vfel = max(vfel, abs(r.volym_m3 - float(facit["volym_m3"])) / float(facit["volym_m3"]))
+        return (
+            max(fel_graf, fel_dyn, fel_2d),
+            f"gård {d_facit * 1000:.1f} mm = ({area * regn_m:.1f} + "
+            f"{0.5 * float(facit['tak_area_m2']) * regn_m:.1f}) m³ / {area:.0f} m²; graf "
+            f"{fel_graf:.1e} m, dynamik {fel_dyn:.1e} m, 2D {fel_2d:.1e} m "
+            f"(2D-volym {v2:.4f} m³ mot {float(facit['volym_m3']):.4f})",
+            vfel,
+        )
+
+    from testsvit.syntetiska import A13_TRAG
+
+    fel = 0.0
+    delar = []
+    d2 = np.asarray(tvad.slut_djup_m, dtype=np.float64)
+    for sida, (rr, cc) in A13_TRAG.items():
+        m = np.zeros(graf.cell_till_nod.shape, dtype=np.bool_)
+        m[rr, cc] = True
+        noder = {int(x) for x in np.unique(graf.cell_till_nod[m])}
+        if len(noder) != 1 or min(noder) < 0:
+            raise TestsvitFel(f"A13: tråget {sida} är inte en nod ({sorted(noder)})")
+        (nid,) = noder
+        eget = float(graf.noder[nid].avrinningsyta_m2) * regn_m
+        facit_m3 = eget + float(facit["takvatten_m3"][sida])
+        graf_m3 = float(np.sum(res_regn.djup_m[m])) * cell
+        tv_m3 = float(np.sum(d2[m])) * cell
+        trag_area = float(m.sum()) * cell
+        fel = max(fel, abs(graf_m3 - facit_m3) / trag_area)
+        delar.append(
+            f"{sida} {graf_m3:.4f}/{facit_m3:.4f} m³ (2D {tv_m3 - facit_m3:+.4f})"
+        )
+    return fel, "tråg graf/facit: " + ", ".join(delar), vfel
+
+
 def _validera_syntetiskt_fall(fall: Testfall) -> tuple[float, float | None, str]:
     """Validerar K1-indata, K4-regn, recept-sha256, storlek < 1 MB och kör T02 statisk fysik."""
     indata_mapp = fall.mapp / "indata"
@@ -356,8 +455,10 @@ def _validera_syntetiskt_fall(fall: Testfall) -> tuple[float, float | None, str]
         raise TestsvitFel("facit.json måste vara ett JSON-objekt")
 
     volymfel_rel, maxdjupsfel_m, detalj = _berakna_statiskt_maxdjupsfel(
-        fall.id, indata_mapp, facit
+        fall.id, indata_mapp, facit, takvatten=fall.takvatten
     )
+    if fall.id in {"A8", "A10", "A11", "A12", "A13"}:
+        detalj += f"; takvatten {'på' if fall.takvatten else 'av'}"
     kommentar = f"K1 OK ({mark.shape[1]}x{mark.shape[0]}, {total_bytes // 1024} KB); {detalj}"
     return volymfel_rel, maxdjupsfel_m, kommentar
 

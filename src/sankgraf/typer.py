@@ -12,7 +12,7 @@ import struct
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -30,6 +30,9 @@ from testsvit.k1_io import (
     las_gpkg_tabell,
     skriv_geotiff,
 )
+
+if TYPE_CHECKING:
+    from sankgraf.takvatten import TakvattenFordelning
 
 KONTRAKT_K2 = "K2/v1"
 KONTRAKT_K2_V2 = "K2/v2"
@@ -290,6 +293,9 @@ class SankGraf:
     markslag: NDArray[np.uint8]
     ut_lov_id: dict[int, int | None] = field(default_factory=dict)
     overfall_celler: dict[int, tuple[tuple[int, int], ...]] = field(default_factory=dict)
+    takvatten: TakvattenFordelning | None = None
+    """Takvattnets fördelning (`sankgraf.takvatten`, Joels beslut 2026-11-22), eller None om
+    regn på tak inte räknas. Skrivs inte i K2: lösarna bygger den ur rastret och byggnaderna."""
 
     def lovnoder(self) -> list[SankNod]:
         """Returnerar alla lövnoder i deterministisk `nod_id`-ordning."""
@@ -405,6 +411,69 @@ class StatiskFyllningResultat:
     utflodes_celler: list[tuple[int, int]]
     slutsankor: tuple[SlutsankaResultat, ...] = ()
     slutsanka_mask: NDArray[np.bool_] | None = None
+    regn_mark_m3: float = 0.0
+    """Regn på markceller (aktiva celler). `in_m3` = detta + takvatten till mark och ut ur rutan."""
+    regn_tak_m3: float = 0.0
+    """Regn på byggnadsceller. Med takvatten av ingår det inte i `in_m3` (redovisas ändå)."""
+    takvatten: bool = False
+    takvatten_till_mark_m3: float = 0.0
+    takvatten_ut_rand_m3: float = 0.0
+    takvatten_till_ledning_m3: float = 0.0
+    avtappat_m3: float = 0.0
+    """Avtappning till ledningsnätet (`avtappning_mm_h` × varaktighet, per löv högst dess
+    direkta tillrinning)."""
+
+    def volymbalans(self) -> dict[str, float | bool]:
+        """Regn på hela rutan (mark + tak) = lagrat + utflöde + avtappning + tak till ledning
+        (+ tak som inte räknas när takvattnet är av). Infiltration ingår i nettoregnet."""
+        return volymbalans_dict(
+            regn_mark_m3=self.regn_mark_m3,
+            regn_tak_m3=self.regn_tak_m3,
+            takvatten=self.takvatten,
+            lagrat_m3=self.lagrat_m3,
+            ut_m3=self.ut_m3,
+            infiltrerat_m3=0.0,
+            avtappat_m3=self.avtappat_m3,
+            tak_ledning_m3=self.takvatten_till_ledning_m3,
+        )
+
+
+def volymbalans_dict(
+    *,
+    regn_mark_m3: float,
+    regn_tak_m3: float,
+    takvatten: bool,
+    lagrat_m3: float,
+    ut_m3: float,
+    infiltrerat_m3: float,
+    avtappat_m3: float,
+    tak_ledning_m3: float,
+) -> dict[str, float | bool]:
+    """Gemensam volymbalans för vattnets lösare (`docs/VATTEN.md`).
+
+    `regn_totalt_m3` = regn på mark + tak. Ut ur balansen: lagrat, utflöde (över rutkant eller
+    slutsänkans hinder), infiltration, avtappning, takvatten till ledningsnät och, med takvatten
+    av, regnet på taken (räknas inte). `volymfel_rel` = |regn − summan| / regn.
+    """
+    regn = float(regn_mark_m3) + float(regn_tak_m3)
+    bortsett = 0.0 if takvatten else float(regn_tak_m3)
+    summa = (
+        float(lagrat_m3) + float(ut_m3) + float(infiltrerat_m3) + float(avtappat_m3)
+        + float(tak_ledning_m3) + bortsett
+    )
+    return {
+        "regn_totalt_m3": regn,
+        "regn_mark_m3": float(regn_mark_m3),
+        "regn_tak_m3": float(regn_tak_m3),
+        "takvatten": bool(takvatten),
+        "tak_ej_raknat_m3": bortsett,
+        "lagrat_m3": float(lagrat_m3),
+        "utflode_m3": float(ut_m3),
+        "infiltrerat_m3": float(infiltrerat_m3),
+        "avtappat_m3": float(avtappat_m3),
+        "tak_till_ledning_m3": float(tak_ledning_m3),
+        "volymfel_rel": abs(regn - summa) / regn if regn > 0.0 else 0.0,
+    }
 
 
 def avkoda_gp_wkb(blob: bytes | bytearray) -> tuple[tuple[float, float], ...]:

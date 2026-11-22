@@ -10,8 +10,9 @@ Läs filerna i den här ordningen:
 5. `docs/BESLUT.md` – beslut som redan är fattade och inte ska omprövas utan en människa.
 6. `docs/DATA.md` – datakällor, koordinatsystem och vad som är känsligt.
 7. `docs/VALIDERING.md` – testsvit, mått och facit.
-8. `tasks/Txx-*.md` – en uppdragsbeskrivning per arbetsområde. En agent tar ett uppdrag i taget.
-9. `STATUS.md` – logg som varje agent fyller på när den avslutar ett arbetspass.
+8. `docs/VATTEN.md` – takvatten (regn på tak) och avtappning till ledningsnätet: regler och antaganden.
+9. `tasks/Txx-*.md` – en uppdragsbeskrivning per arbetsområde. En agent tar ett uppdrag i taget.
+10. `STATUS.md` – logg som varje agent fyller på när den avslutar ett arbetspass.
 
 ## Vad som byggs, i en mening
 

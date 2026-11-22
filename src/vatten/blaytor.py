@@ -8,7 +8,8 @@ och fulla sänkor rinner över i trädet. När trädet finns tar varje X bara mi
 
 Begränsningar, avsiktliga i förhandsvisningen:
 - ingen tid: allt regn har nått sina sänkor (inga ledningar, ingen avdunstning);
-- regn på byggnadsceller (markslag 9) räknas inte (som i `statisk_fyllning`);
+- regn på byggnadsceller (markslag 9) avrinner till marken längs fasaderna (takvatten, standard
+  på; `sankgraf.takvatten`, okänd takform = brutet tak); med `takvatten=False` räknas det inte;
 - ett område som helt omges av byggnader är en slutsänka (K2/v2): vattnet blir stående där
   tills det når hindret, och resultatet får varningen och `slutsanka.tif`;
 - förluster bara som initialförlust i mm per markslag, och bara om de anges uttryckligen.
@@ -22,7 +23,7 @@ import json
 import math
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ from gemensamt.manifest import FilPost
 from sankgraf.fyllning import statisk_fyllning
 from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.persistens import filtrera_persistens
+from sankgraf.takvatten import TAKVATTEN_AV_ANTAGANDE, med_takvatten, med_takvatten_graf
 from sankgraf.typer import (
     MARKSLAG_BYGGNAD,
     SankGraf,
@@ -133,6 +135,7 @@ class BlaytorResultat:
     volymfel_rel: float
     kortid_s: float
     fyllning: StatiskFyllningResultat
+    takvatten_matvarden: dict[str, Any] = field(default_factory=dict)
 
     def blayta_m2_for(self, cell_area_m2: float, min_djup_m: float = 0.0) -> float:
         return float(np.count_nonzero(self.djup_m > min_djup_m)) * cell_area_m2
@@ -150,6 +153,8 @@ class BlaytorResultat:
             "kortid_s": self.kortid_s,
             # Slutna områden (K2/v2), bara när de finns: se `sankgraf.typer.SLUTSANKA_VARNING`.
             **slutsanka_matvarden(self.fyllning.slutsankor),
+            **self.takvatten_matvarden,
+            "volymbalans": self.fyllning.volymbalans(),
             **(
                 {"varningar": list(slutsanka_varningar(self.fyllning.slutsankor))}
                 if self.fyllning.slutsankor
@@ -189,9 +194,19 @@ def blaytor_vid_mm(
     regn_mm: float,
     *,
     initialforlust_mm: Mapping[int, float] | None = None,
+    takvatten: bool = True,
+    takvatten_andel_ledning: float = 0.0,
 ) -> BlaytorResultat:
-    """Vilka sänkor fylls, och hur djupt, när `regn_mm` mm har runnit av (K2 in, K6-likt ut)."""
+    """Vilka sänkor fylls, och hur djupt, när `regn_mm` mm har runnit av (K2 in, K6-likt ut).
+
+    `takvatten` (standard på): bygger takvattnet ur grafens raster om grafen inte redan bär det
+    (byggnader som cellgrupper, okänd takform); `False` = regn på tak räknas inte.
+    """
     t0 = time.perf_counter()
+    if not takvatten:
+        graf = med_takvatten(graf, None)
+    elif graf.takvatten is None:
+        graf = med_takvatten_graf(graf, andel_ledning=takvatten_andel_ledning)
     netto = netto_regn_mm(graf.markslag, regn_mm, initialforlust_mm)
     fyll = statisk_fyllning(graf, netto / 1000.0)
     sankor = tuple(
@@ -219,6 +234,11 @@ def blaytor_vid_mm(
         volymfel_rel=fyll.volymfel_rel,
         kortid_s=time.perf_counter() - t0,
         fyllning=fyll,
+        takvatten_matvarden=(
+            graf.takvatten.sammanfattning()
+            if graf.takvatten is not None
+            else {"takvatten": False, "takvatten_antagande": TAKVATTEN_AV_ANTAGANDE}
+        ),
     )
 
 
@@ -232,12 +252,21 @@ class Blaytemodell:
 
     @classmethod
     def fran_k1_mapp(cls, mapp: str | Path, persistens_faktor: float | None = None) -> Blaytemodell:
-        return cls(bygg_graf(las_k1(k1_filer(mapp)), persistens_faktor))
+        # Takvattnet med rutans byggnader (byggnader.gpkg om K1 v2); `vid_mm(takvatten=False)`
+        # räknar utan.
+        graf = bygg_graf(las_k1(k1_filer(mapp)), persistens_faktor)
+        return cls(med_takvatten_graf(graf, mapp))
 
     def vid_mm(
-        self, regn_mm: float, *, initialforlust_mm: Mapping[int, float] | None = None
+        self,
+        regn_mm: float,
+        *,
+        initialforlust_mm: Mapping[int, float] | None = None,
+        takvatten: bool = True,
     ) -> BlaytorResultat:
-        return blaytor_vid_mm(self.graf, regn_mm, initialforlust_mm=initialforlust_mm)
+        return blaytor_vid_mm(
+            self.graf, regn_mm, initialforlust_mm=initialforlust_mm, takvatten=takvatten
+        )
 
 
 def skriv_blaytor(

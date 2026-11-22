@@ -89,6 +89,16 @@ fn kor(args: &[String]) -> Result<(), Fel> {
         total_aktiv_area: p[8],
         total_doman_area: p[9],
         gles_front: p[10] != 0.0,
+        regn_area: if kat.join("regn_area.npy").is_file() {
+            Some(las_f64(kat, "regn_area.npy", n)?)
+        } else {
+            None
+        },
+        tak_ut_area: if kat.join("tak_ut.npy").is_file() {
+            las_f64(kat, "tak_ut.npy", 1)?[0]
+        } else {
+            0.0
+        },
     };
 
     let start = Instant::now();
