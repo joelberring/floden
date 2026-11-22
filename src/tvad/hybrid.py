@@ -154,6 +154,7 @@ class _NodTillNodKanter:
     ds: NDArray[np.float64]
     dl: NDArray[np.float64]
     manning: NDArray[np.float64]
+    grad_nn: NDArray[np.float64]
 
     @property
     def antal(self) -> int:
@@ -306,13 +307,31 @@ def _bygg_kopplingskanter(
         dir_x=np.asarray(dx_dir_l, dtype=np.float64),
         dir_y=np.asarray(dy_dir_l, dtype=np.float64),
     )
+    nn_k1_arr = np.asarray(nn_k1, dtype=np.intp)
+    nn_k2_arr = np.asarray(nn_k2, dtype=np.intp)
+    if nn_k1_arr.size > 0:
+        par_antal: dict[tuple[int, int], int] = {}
+        for a, b in zip(nn_k1, nn_k2, strict=True):
+            nyckel = (a, b) if a <= b else (b, a)
+            par_antal[nyckel] = par_antal.get(nyckel, 0) + 1
+        grad_nn = np.asarray(
+            [
+                float(par_antal[(a, b) if a <= b else (b, a)])
+                for a, b in zip(nn_k1, nn_k2, strict=True)
+            ],
+            dtype=np.float64,
+        )
+    else:
+        grad_nn = np.zeros(0, dtype=np.float64)
+
     nn = _NodTillNodKanter(
-        k1=np.asarray(nn_k1, dtype=np.intp),
-        k2=np.asarray(nn_k2, dtype=np.intp),
+        k1=nn_k1_arr,
+        k2=nn_k2_arr,
         z_kant=np.asarray(nn_zk, dtype=np.float64),
         ds=np.asarray(nn_ds, dtype=np.float64),
         dl=np.asarray(nn_dl, dtype=np.float64),
         manning=np.asarray(nn_man, dtype=np.float64),
+        grad_nn=grad_nn,
     )
     return kop, nn
 
@@ -772,7 +791,15 @@ def kor_hybrid_2d_graf(
                 dv_fys_nn = dt * np.minimum(q_man_nn, q_froude_nn)
                 a1 = nod_akt_area[nn_kop.k1[akt_nn]]
                 a2 = nod_akt_area[nn_kop.k2[akt_nn]]
-                dv_eq_nn = ((a1 * a2) / np.maximum(a1 + a2, 1e-12)) * abs_dzn
+                givare_over_nn = np.where(
+                    dzn > 0.0,
+                    np.maximum(0.0, z1[akt_nn] - nn_kop.z_kant[akt_nn]),
+                    np.maximum(0.0, z2[akt_nn] - nn_kop.z_kant[akt_nn]),
+                )
+                dz_eff_nn = np.minimum(abs_dzn, givare_over_nn)
+                dv_eq_nn = (
+                    ((a1 * a2) / np.maximum(a1 + a2, 1e-12)) * dz_eff_nn / nn_kop.grad_nn[akt_nn]
+                )
                 safe_eq_nn = np.maximum(dv_eq_nn, 1e-18)
                 dv_nn[akt_nn] = np.sign(dzn) * dv_eq_nn * (1.0 - np.exp(-dv_fys_nn / safe_eq_nn))
 
@@ -860,6 +887,7 @@ def kor_hybrid_2d_graf(
         np.maximum(nod_volym, 0.0, out=nod_volym)
 
         # 3.8 Uppdatera vattennivåer, djup, hastighet, fara och ankomsttider
+        h_fore_2d = h_eff_2d
         if subgrid is not None:
             zs_2d = vattenniva_fran_volym(volym_2d, subgrid)
             h_eff_2d = np.where(aktiv_2d, volym_2d / safe_area_2d, 0.0)
@@ -902,12 +930,14 @@ def kor_hybrid_2d_graf(
             np.add.at(q_cell_y, (kop.rg, kop.cg), q_kop_y)
 
         q_mag = np.hypot(q_cell_x, q_cell_y)
-        vat_nu = aktiv_2d & (h_eff_2d > min_djup_m)
+        h_vel_2d = np.maximum(h_fore_2d, h_eff_2d)
+        vat_nu = aktiv_2d & (h_vel_2d > min_djup_m)
         if bool(np.any(vat_nu)):
             hast = np.zeros((hojd, bredd), dtype=np.float64)
-            hast[vat_nu] = q_mag[vat_nu] / h_eff_2d[vat_nu]
+            hast[vat_nu] = q_mag[vat_nu] / h_vel_2d[vat_nu]
             np.maximum(max_hast_2d, hast, out=max_hast_2d)
-            np.maximum(max_fara_2d, q_mag, out=max_fara_2d)
+            fara_steg = np.where(vat_nu, q_mag, 0.0)
+            np.maximum(max_fara_2d, fara_steg, out=max_fara_2d)
 
         if subgrid_ankomst is not None:
             subgrid_ankomst.uppdatera(zs_2d, t_nu)

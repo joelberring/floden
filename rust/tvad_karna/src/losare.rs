@@ -150,6 +150,7 @@ pub fn kor(ind: &Indata) -> Utdata {
 
     let mut volym = vec![0.0f64; n];
     let mut h_eff = vec![0.0f64; n];
+    let mut h_fore = vec![0.0f64; n];
     let mut zs = ind.z_bed.clone();
     let mut qx = vec![0.0f64; h * wu];
     let mut qy = vec![0.0f64; hv * w];
@@ -178,6 +179,10 @@ pub fn kor(ind: &Indata) -> Utdata {
     let mut q_ost = vec![0.0; h];
     let mut q_norr = vec![0.0; w];
     let mut q_soder = vec![0.0; w];
+    let mut dv_v = vec![0.0; h];
+    let mut dv_o = vec![0.0; h];
+    let mut dv_n = vec![0.0; w];
+    let mut dv_s = vec![0.0; w];
 
     let antal_aktiv = ind.aktiv.iter().filter(|&&a| a).count();
     // Regn på aktiva celler, sedan djup, vattenyta och våta celler i samma pass.
@@ -420,13 +425,13 @@ pub fn kor(ind: &Indata) -> Utdata {
             let (qv, qo, qn, qs) = (&q_vast, &q_ost, &q_norr, &q_soder);
             volym
                 .par_chunks_mut(w)
-                .zip(h_eff.par_chunks_mut(w))
+                .zip(h_eff.par_chunks_mut(w).zip(h_fore.par_chunks_mut(w)))
                 .zip(zs.par_chunks_mut(w))
                 .zip(max_djup.par_chunks_mut(w))
                 .zip(tid_01.par_chunks_mut(w).zip(tid_02.par_chunks_mut(w)))
                 .zip(vat.par_chunks_mut(w))
                 .enumerate()
-                .map(|(r, (((((vr, hr), zr), mr), (t1r, t2r)), war))| {
+                .map(|(r, (((((vr, (hr, hfr)), zr), mr), (t1r, t2r)), war))| {
                     let mut vat_rad = false;
                     let mut hmax_rad = 0.0f64;
                     for c in 0..w {
@@ -465,6 +470,8 @@ pub fn kor(ind: &Indata) -> Utdata {
                         let akt = ind.aktiv[i];
                         let v = if akt { x } else { 0.0 };
                         vr[c] = v;
+                        let hf = hr[c];
+                        hfr[c] = hf;
                         let he = if akt { v / safe_area[i] } else { 0.0 };
                         hr[c] = he;
                         zr[c] = ind.z_bed[i] + he;
@@ -472,7 +479,7 @@ pub fn kor(ind: &Indata) -> Utdata {
                         hmax_rad = hmax_rad.max(he);
                         war[c] = akt && he > min_d;
                         if akt {
-                            if he > min_d {
+                            if np_max(hf, he) > min_d {
                                 vat_rad = true;
                             }
                             if t1r[c].is_nan() && he >= 0.1 {
@@ -488,10 +495,14 @@ pub fn kor(ind: &Indata) -> Utdata {
                 .reduce(|| (false, 0.0f64), |a, b| (a.0 || b.0, a.1.max(b.1)))
         };
         h_max = ny_h_max;
-        let dv_v: Vec<f64> = q_vast.iter().map(|q| q * dydt).collect();
-        let dv_o: Vec<f64> = q_ost.iter().map(|q| q * dydt).collect();
-        let dv_n: Vec<f64> = q_norr.iter().map(|q| q * dxdt).collect();
-        let dv_s: Vec<f64> = q_soder.iter().map(|q| q * dxdt).collect();
+        for r in 0..h {
+            dv_v[r] = q_vast[r] * dydt;
+            dv_o[r] = q_ost[r] * dydt;
+        }
+        for c in 0..w {
+            dv_n[c] = q_norr[c] * dxdt;
+            dv_s[c] = q_soder[c] * dxdt;
+        }
         ut_m3 += ((np_sum(&dv_v) + np_sum(&dv_o)) + np_sum(&dv_n)) + np_sum(&dv_s);
         t_nu += dt;
         antal_steg += 1;
@@ -499,7 +510,7 @@ pub fn kor(ind: &Indata) -> Utdata {
         // Hastighet och fara uppdateras bara när någon cell är våt (som i Python). Celler där
         // båda cellflödena är noll hoppas över: max med 0 ändrar inget.
         if nagon_vat {
-            let (qx_r, qy_r, he) = (&qx, &qy, &h_eff);
+            let (qx_r, qy_r, he, hf) = (&qx, &qy, &h_eff, &h_fore);
             let (qv, qo, qn, qs) = (&q_vast, &q_ost, &q_norr, &q_soder);
             max_hast
                 .par_chunks_mut(w)
@@ -542,10 +553,11 @@ pub fn kor(ind: &Indata) -> Utdata {
                             continue;
                         }
                         let q_mag = qcx.hypot(qcy);
-                        let hi = he[i];
-                        let hast = if ind.aktiv[i] && hi > min_d { q_mag / hi } else { 0.0 };
-                        mh[c] = np_max(mh[c], hast);
-                        mf[c] = np_max(mf[c], q_mag);
+                        let hv = np_max(hf[i], he[i]);
+                        if ind.aktiv[i] && hv > min_d {
+                            mh[c] = np_max(mh[c], q_mag / hv);
+                            mf[c] = np_max(mf[c], q_mag);
+                        }
                     }
                 });
         }

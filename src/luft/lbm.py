@@ -664,7 +664,12 @@ class Lbm3d:
         u = xp.asarray(u_in, dtype=np.float32).reshape(3, ny * nz)
         u = u * self._luft0
         self.inflode_u = u
-        self.inflode_f = self.jamvikt(xp.zeros(ny * nz, dtype=np.float32), u).reshape(19, ny, nz)
+        if self.inflodesrand == "extrapolation":
+            self.inflode_f = None
+        else:
+            self.inflode_f = self.jamvikt(xp.zeros(ny * nz, dtype=np.float32), u).reshape(
+                19, ny, nz
+            )
 
     def _icke_jamvikt_extrapolation(self, f_inre: Any, u_rand: Any | None) -> Any:
         """Guo, Zheng & Shi (2002): `f = f^eq(ρ_inre, u_rand) + (f_inre − f^eq(ρ_inre, u_inre))`.
@@ -793,11 +798,11 @@ class Lbm3d:
                 fn[:, -1] = ut_plan * self._luft_ut.reshape(1, *self.form[1:])
             else:
                 fn[:, -1] = fn[:, -2]
-            if self.inflode_f is not None:
+            if self.inflode_u is not None:
                 if self.inflodesrand == "extrapolation":
                     in_plan = self._icke_jamvikt_extrapolation(fn[:, 1], self.inflode_u)
                     fn[:, 0] = in_plan * self._luft0.reshape(1, *self.form[1:])
-                else:
+                elif self.inflode_f is not None:
                     fn[:, 0] = self.inflode_f
         self._fbuf = self.f
         self.f = fn

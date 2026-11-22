@@ -938,7 +938,8 @@ def kor_2d_lokal_troghet(
             ut_m3 += float(np.sum(np.maximum(-diff, 0.0)))
             volym = np.where(tvingat.mask & aktiv, mal_v, volym)
 
-        # 7. Uppdatera vattenyta och effektivt djup
+        # 7. Uppdatera vattenyta och effektivt djup (spara h_fore för hastighetsberäkning)
+        h_fore = h_eff
         if subgrid is not None:
             zs = vattenniva_fran_volym(volym, subgrid)
             h_eff = np.where(aktiv, volym / safe_area, 0.0)
@@ -968,12 +969,14 @@ def kor_2d_lokal_troghet(
         q_cell_y[-1, :] += 0.5 * q_soder
 
         q_mag = np.hypot(q_cell_x, q_cell_y)
-        vat_nu = aktiv & (h_eff > min_djup_m)
+        h_vel = np.maximum(h_fore, h_eff)
+        vat_nu = aktiv & (h_vel > min_djup_m)
         if bool(np.any(vat_nu)):
             hast = np.zeros((hojd, bredd), dtype=np.float64)
-            hast[vat_nu] = q_mag[vat_nu] / h_eff[vat_nu]
+            hast[vat_nu] = q_mag[vat_nu] / h_vel[vat_nu]
             np.maximum(max_hast_grov, hast, out=max_hast_grov)
-            np.maximum(max_fara_grov, q_mag, out=max_fara_grov)
+            fara_steg = np.where(vat_nu, q_mag, 0.0)
+            np.maximum(max_fara_grov, fara_steg, out=max_fara_grov)
 
         if subgrid_ankomst is not None:
             subgrid_ankomst.uppdatera(zs, t_nu)

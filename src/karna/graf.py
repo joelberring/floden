@@ -94,7 +94,12 @@ class Berakningsgraf:
 
     def _katalognyckel(self, katalog: Path) -> str:
         """En katalog (t.ex. en K1-mapp) som indata: sha256 av (relativ sökväg, filens sha256)."""
-        filer = sorted(p for p in katalog.rglob("*") if p.is_file())
+        filer = sorted(
+            p
+            for p in katalog.rglob("*")
+            if p.is_file()
+            and not any(del_.startswith(".") for del_ in p.relative_to(katalog).parts)
+        )
         if not filer:
             raise GrafFel(f"Indatakatalogen är tom: '{katalog}'.")
         return nyckel_for(

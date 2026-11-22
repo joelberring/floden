@@ -176,52 +176,82 @@ def _berakna_effektiva_areor(
     brunn_per_nod: dict[int, float],
     r_c: float,
     s_lutn: float,
-) -> tuple[dict[int, float], dict[int, float], float, float]:
+) -> tuple[dict[int, float], dict[int, float], float, float, list[tuple[float, float]]]:
     """Beräknar effektiv avrinningsarea och brunnsavdrag per aktiv ej-full nod samt randutlopp.
 
-    Returnerar `(eff_area, eff_drain, ut_area, ut_drain_direkt)`.
+    Utvärderar i topologisk ordning (uppströms före nedströms) så att en full nod med brunnar
+    aldrig suger lagrat vatten ur en nedströms nod, och returnerar `(eff_area, eff_drain,
+    ut_area, ut_drain_direkt, full_villkor)` där `full_villkor` innehåller `(a_tot, d_tot)` för
+    aktiva fulla noder som kan släppa sitt full-tillstånd vid fallande regn.
     """
+    aktiva_noder = [nid for nid in cache.sorterade_noder if aktiv[nid]]
+    mottagare: dict[int, int | None] = {}
+    indegree: dict[int, int] = {nid: 0 for nid in aktiva_noder}
+    for nid in aktiva_noder:
+        if not full[nid]:
+            mottagare[nid] = None
+            continue
+        mott = hitta_mottagare(graf, aktiv, mergad, nid)
+        mottagare[nid] = mott
+        if mott is not None and mott in indegree:
+            indegree[mott] += 1
+
+    ko = [nid for nid in aktiva_noder if indegree[nid] == 0]
+    topo_noder: list[int] = []
+    idx_ko = 0
+    while idx_ko < len(ko):
+        nid = ko[idx_ko]
+        idx_ko += 1
+        topo_noder.append(nid)
+        mott = mottagare[nid]
+        if mott is not None and mott in indegree:
+            indegree[mott] -= 1
+            if indegree[mott] == 0:
+                ko.append(mott)
+    if len(topo_noder) < len(aktiva_noder):
+        sedda = set(topo_noder)
+        topo_noder.extend(nid for nid in aktiva_noder if nid not in sedda)
+
     eff_area: dict[int, float] = {}
     eff_drain: dict[int, float] = {}
+    in_area: dict[int, float] = {}
+    in_drain: dict[int, float] = {}
     ut_area = cache.hav_area_m2
     ut_drain_direkt = 0.0
+    full_villkor: list[tuple[float, float]] = []
 
-    for nid in cache.sorterade_noder:
-        if not aktiv[nid]:
-            continue
-        a_dir = cache.direkt_area_m2[nid]
+    for nid in topo_noder:
+        a_tot = cache.direkt_area_m2[nid] + in_area.get(nid, 0.0)
+        d_up = in_drain.get(nid, 0.0)
         d_dir = brunn_per_nod[nid]
+        d_tot = d_up + d_dir
 
         if not full[nid]:
-            eff_area[nid] = eff_area.get(nid, 0.0) + a_dir
-            eff_drain[nid] = eff_drain.get(nid, 0.0) + d_dir
+            eff_area[nid] = a_tot
+            eff_drain[nid] = d_tot
             continue
 
-        # Om en full nod tappas av brunnar snabbare än direktregnet släpper den sitt full-tillstånd
-        if d_dir > 0.0 and a_dir * r_c < d_dir - 1e-18 and s_lutn <= 0.0:
+        # Om en full nod tappas av brunnar snabbare än sitt totala inflöde (direktregn +
+        # uppströms överfall) släpper den sitt full-tillstånd.
+        q_net = a_tot * r_c - d_tot
+        if d_tot > 0.0 and (q_net < -1e-18 or (abs(q_net) <= 1e-18 and a_tot * s_lutn < -1e-18)):
             full[nid] = False
-            eff_area[nid] = eff_area.get(nid, 0.0) + a_dir
-            eff_drain[nid] = eff_drain.get(nid, 0.0) + d_dir
+            eff_area[nid] = a_tot
+            eff_drain[nid] = d_tot
             continue
 
-        # Full nod skickar sitt överskott vidare genom full-kedjan till första ej-fulla mottagare
-        curr: int | None = nid
-        besokta: set[int] = set()
-        while curr is not None and full[curr]:
-            if curr in besokta:
-                curr = None
-                break
-            besokta.add(curr)
-            curr = hitta_mottagare(graf, aktiv, mergad, curr)
+        if d_tot > 0.0 and a_tot > 0.0:
+            full_villkor.append((a_tot, d_tot))
 
-        if curr is None:
-            ut_area += a_dir
-            ut_drain_direkt += d_dir
+        mott = mottagare[nid]
+        if mott is None:
+            ut_area += a_tot
+            ut_drain_direkt += d_tot
         else:
-            eff_area[curr] = eff_area.get(curr, 0.0) + a_dir
-            eff_drain[curr] = eff_drain.get(curr, 0.0) + d_dir
+            in_area[mott] = in_area.get(mott, 0.0) + a_tot
+            in_drain[mott] = in_drain.get(mott, 0.0) + d_tot
 
-    return eff_area, eff_drain, ut_area, ut_drain_direkt
+    return eff_area, eff_drain, ut_area, ut_drain_direkt, full_villkor
 
 
 def _berakna_nod_ogonblicksbild(
@@ -502,16 +532,34 @@ def _kor_handelsestyrd_karna(
             if noll_kand and (r_c > 0.0 or s_lutn > 0.0):
                 _hantera_fulla_och_sammanslagningar(t_cur, noll_kand)
 
-            eff_area, eff_drain, ut_area, _ = _berakna_effektiva_areor(
+            eff_area, eff_drain, ut_area, ut_drain_direkt, full_villkor = _berakna_effektiva_areor(
                 graf, cache, aktiv, full, mergad, brunn_per_nod, r_c, s_lutn
             )
 
-            # Hitta minsta tid till nästa diskreta händelse (fyllning eller tömning)
+            # Hitta minsta tid till nästa diskreta händelse (fyllning, tömning eller nollgenomgång)
             u_min = dt_kvar
+            if s_lutn < 0.0:
+                for a_tot_f, d_tot_f in full_villkor:
+                    u_slapp = (a_tot_f * r_c - d_tot_f) / (-a_tot_f * s_lutn)
+                    if _TID_TOL_S < u_slapp < u_min:
+                        u_min = u_slapp
+
             for nid, a_eff in eff_area.items():
                 d_eff = eff_drain.get(nid, 0.0)
                 a_kv = 0.5 * a_eff * s_lutn
                 b_kv = a_eff * r_c - d_eff
+
+                # Nollgenomgång för torr nod som börjar fyllas (stigande regn) eller inre topp
+                # vid avtagande regn så att varken avtappning eller toppvärde förvanskas.
+                if d_eff > 0.0 and a_eff > 0.0:
+                    if s_lutn > 0.0 and volym[nid] <= _VOLYM_TOL_M3 and b_kv < -1e-18:
+                        u_start = -b_kv / (a_eff * s_lutn)
+                        if _TID_TOL_S < u_start < u_min:
+                            u_min = u_start
+                    elif s_lutn < 0.0 and b_kv > 1e-18:
+                        u_topp = -b_kv / (a_eff * s_lutn)
+                        if _TID_TOL_S < u_topp < u_min:
+                            u_min = u_topp
 
                 v_kvar = cache.max_volym_m3[nid] - volym[nid]
                 if v_kvar > _VOLYM_TOL_M3:
@@ -552,6 +600,8 @@ def _kor_handelsestyrd_karna(
             # Avancera till t_ny med exakt massbalans
             dr = r_c * u_min + 0.5 * s_lutn * u_min * u_min
             ut_m3 += ut_area * dr
+            if ut_drain_direkt > 0.0:
+                avtappat_m3 += min(ut_area * dr, ut_drain_direkt * u_min)
 
             nyfulla: list[int] = []
             for nid, a_eff in eff_area.items():

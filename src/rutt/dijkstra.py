@@ -44,23 +44,28 @@ def _interpolera_tidserie(
     varden_per_tid: Mapping[float, Mapping[str, float]],
     kant_id: str,
     tid_s: float,
+    saknat_varde: float | None = None,
 ) -> float | None:
-    """Slår upp eller linjärinterpolerar ett kantvärde vid `tid_s`."""
+    """Slår upp eller linjärinterpolerar ett kantvärde vid `tid_s`.
+
+    När `saknat_varde` anges (t.ex. `0.0` för markdjup på en torr kant som utelämnats ur
+    en gles ordbok) används det i stället för att hoppa direkt till grannpunktens värde.
+    """
     if not tidpunkter:
-        return None
+        return saknat_varde
     if tid_s <= tidpunkter[0]:
-        return varden_per_tid[tidpunkter[0]].get(kant_id)
+        return varden_per_tid[tidpunkter[0]].get(kant_id, saknat_varde)
     if tid_s >= tidpunkter[-1]:
-        return varden_per_tid[tidpunkter[-1]].get(kant_id)
+        return varden_per_tid[tidpunkter[-1]].get(kant_id, saknat_varde)
 
     hi = bisect.bisect_right(tidpunkter, tid_s)
     t0 = tidpunkter[hi - 1]
     t1 = tidpunkter[hi]
     if t0 == tid_s:
-        return varden_per_tid[t0].get(kant_id)
+        return varden_per_tid[t0].get(kant_id, saknat_varde)
 
-    v0 = varden_per_tid[t0].get(kant_id)
-    v1 = varden_per_tid[t1].get(kant_id)
+    v0 = varden_per_tid[t0].get(kant_id, saknat_varde)
+    v1 = varden_per_tid[t1].get(kant_id, saknat_varde)
     if v0 is None:
         return v1
     if v1 is None or t1 <= t0:
@@ -79,7 +84,9 @@ def _kant_restid_s(
     niva_tider: Sequence[float],
 ) -> float | None:
     """Beräknar restid (s) på `kant` vid avresetid `tid_s`, eller `None` om ofarbar."""
-    mark_djup = _interpolera_tidserie(sorterade_tider, kant_djup_per_tid, kant.kant_id, tid_s)
+    mark_djup = _interpolera_tidserie(
+        sorterade_tider, kant_djup_per_tid, kant.kant_id, tid_s, saknat_varde=0.0
+    )
     eff_mark_djup = 0.0 if mark_djup is None else float(mark_djup)
 
     vattenniva = (

@@ -1,0 +1,248 @@
+"""Regressionstester med kända svar för fysik-, numerik- och prestandafixar."""
+
+from __future__ import annotations
+
+import math
+import tempfile
+import time
+from pathlib import Path
+
+import numpy as np
+
+from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
+from gemensamt.koordinater import EPSG_INTERN
+from karna.graf import Berakningsgraf, Cache
+from rutt.dijkstra import _interpolera_tidserie
+from rutt.kritiska import hitta_kritiska_avsnitt
+from rutt.parametrar import FordonParametrar, RuttParametrarK7
+from rutt.vagnat import VagKant, VagNat, VagNod
+from sankgraf.hierarki import bygg_sankgraf
+from testsvit.k1_io import GeoTransformInfo
+from tvad.hybrid import kor_hybrid_2d_graf
+from tvad.lokal_troghet import kor_2d_lokal_troghet
+
+
+def _geo(nx: int, ny: int, dx: float = 1.0) -> GeoTransformInfo:
+    return GeoTransformInfo(
+        bredd=nx,
+        hojd=ny,
+        x_min=150000.0,
+        y_max=6580000.0 + ny * dx,
+        pixelstorlek_x=dx,
+        pixelstorlek_y=dx,
+        epsg=EPSG_INTERN,
+        dtype="float32",
+    )
+
+
+def _enkel_sanka_graf(djup_m: float = 0.5) -> tuple[object, int]:
+    """Bygger en 6x6-terräng med en 2x2-sänka i mitten och utlopp över randen."""
+    z = np.full((6, 6), 10.0, dtype=np.float32)
+    z[2:4, 2:4] = np.float32(10.0 - djup_m)
+    osak = np.zeros((6, 6), dtype=np.float32)
+    markslag = np.ones((6, 6), dtype=np.uint8)
+    graf = bygg_sankgraf(z, osak, markslag, _geo(6, 6, 1.0))
+    nod_id = next(iter(graf.noder))
+    return graf, nod_id
+
+
+def test_handelsestyrd_rotnod_avtappning_raknas_in() -> None:
+    """En full rotnod med avtappning ska redovisa avtappat_m3 exakt i volymbalansen."""
+    graf, nod_id = _enkel_sanka_graf(djup_m=0.1)  # V_max = 4 * 0.1 = 0.4 m³
+    # Regn 100 mm/h i 3600 s -> fyller snabbt sänkan, sedan full rotnod med avtappning 20 mm/h
+    res = kor_dynamik_handelsestyrd(
+        graf,  # type: ignore[arg-type]
+        [0.0, 3600.0],
+        [100.0, 100.0],
+        avtappning_mm_h=20.0,
+    )
+    nod = graf.noder[nod_id]  # type: ignore[attr-defined]
+    # Hela nodens avrinningsarea tappas med 20 mm/h under hela timmen (r = 100 > 20 mm/h)
+    forvantat_avtappat = nod.avrinningsyta_m2 * (20.0 / 1000.0)
+    assert math.isclose(res.avtappat_m3, forvantat_avtappat, rel_tol=1e-9)
+    bal = res.volymbalans()
+    assert abs(float(bal["volymfel_rel"])) < 1e-11
+    assert float(bal["avtappat_m3"]) == res.avtappat_m3
+
+
+def test_handelsestyrd_stigande_och_fallande_regn_exakt() -> None:
+    """Stigande regn på torr nod bär inte torr-avtappning; fallande regn fångar inre topp."""
+    graf, nod_id = _enkel_sanka_graf(djup_m=2.0)  # stor sänka (8 m³), blir inte full
+    nod = graf.noder[nod_id]  # type: ignore[attr-defined]
+    area = nod.avrinningsyta_m2
+    # Regn: 0 -> 120 mm/h under 0..600 s, sedan 120 -> 0 mm/h under 600..1200 s
+    # Avtappning: 60 mm/h. Nettotillflöde > 0 enbart för t in [300, 900] s!
+    # Analytisk toppvolym vid t = 900 s: integralen av (r(t) - 60 mm/h) över [300, 900] s
+    # Triangel med bas 600 s och höjd 60 mm/h -> 0.5 * 600 * (60 / 3.6e6) * area = 0.005 * area m³
+    forvantad_topp_m3 = 0.005 * area
+
+    res = kor_dynamik_handelsestyrd(
+        graf,  # type: ignore[arg-type]
+        [0.0, 600.0, 1200.0],
+        [0.0, 120.0, 0.0],
+        avtappning_mm_h=60.0,
+    )
+    assert math.isclose(max(res.noder[nod_id].volym_m3), forvantad_topp_m3, rel_tol=1e-9)
+    assert res.volymfel_rel < 1e-12
+
+
+def test_handelsestyrd_uppstroms_brunn_suger_inte_nedstroms() -> None:
+    """En full uppströmsnod med brunn får aldrig suga lagrat vatten ur en nedströmsnod."""
+    # Två sänkor i serie: vänster (botten 11.0, sadel 11.1) -> höger (botten 10.0, sadel 10.8)
+    z = np.full((6, 10), 12.0, dtype=np.float32)
+    z[2:4, 2:4] = 11.0  # vänster sänka (4 m², överfall vid 11.1 till höger)
+    z[2:4, 4] = 11.1  # sadel mellan vänster och höger
+    z[2:4, 5:7] = 10.0  # höger sänka (4 m², överfall vid 10.8 mot randen)
+    z[2:4, 7:10] = 10.8  # utlopp till östra randen
+    osak = np.zeros((6, 10), dtype=np.float32)
+    markslag = np.ones((6, 10), dtype=np.uint8)
+    geo = _geo(10, 6, 1.0)
+    graf = bygg_sankgraf(z, osak, markslag, geo)
+
+    lov = sorted((n for n in graf.noder.values() if n.ar_lov), key=lambda n: n.botten_rh2000)
+    assert len(lov) >= 2
+    nedstroms = lov[0]
+
+    # Placera en kraftig avtappning (200 mm/h) ENDAST i uppströmsnoden (celler [2:4, 2:4])
+    avt_raster = np.zeros((6, 10), dtype=np.float64)
+    avt_raster[2:4, 2:4] = 200.0
+
+    # Kraftigt regn (0..300 s) som fyller uppströms, sedan fallande regn till 0 (300..900 s)
+    res_med_brunn = kor_dynamik_handelsestyrd(
+        graf, [0.0, 300.0, 900.0], [360.0, 360.0, 0.0], avtappning_mm_h=avt_raster
+    )
+    # Nedströmsnoden har ingen egen brunn, så dess slutvolym får inte minska under toppvolymen
+    assert res_med_brunn.volymfel_rel < 1e-12
+    ned_vol = res_med_brunn.noder[nedstroms.nod_id].volym_m3
+    assert ned_vol[-1] >= max(ned_vol) - 1e-9
+
+
+def test_2d_inga_hastighetsspikar_vid_urtappning() -> None:
+    """Snabb urtappning på lutande plan får inte ge ofysikaliska hastighetsspikar."""
+    ny, nx = 10, 20
+    x = np.arange(nx, dtype=np.float32)
+    z = np.broadcast_to(20.0 - 0.1 * x, (ny, nx)).copy()
+    markslag = np.ones((ny, nx), dtype=np.uint8)
+    res = kor_2d_lokal_troghet(
+        z,
+        markslag,
+        _geo(nx, ny, 1.0),
+        [0.0, 30.0, 31.0, 120.0],
+        [180.0, 180.0, 0.0, 0.0],
+        slut_tid_s=120.0,
+    )
+    # Med 10 % lutning och tunt skiktflöde ska max_hastighet ligga väl under 5 m/s
+    assert float(np.nanmax(res.max_hastighet_m_s)) < 5.0
+    assert res.volymfel_rel < 1e-9
+
+
+def test_hybrid_nod_till_nod_utan_overskjutning() -> None:
+    """Två angränsande djupa grafnoder med flera delade kanter utjämnas stabilt."""
+    ny, nx = 14, 24
+    z = np.full((ny, nx), 12.0, dtype=np.float32)
+    # Två angränsande 8x8-bassänger åtskilda av en låg tröskel på 11.4 m
+    z[3:11, 3:11] = 10.0
+    z[3:11, 11:19] = 10.5
+    z[3:11, 11] = 11.4
+    markslag = np.ones((ny, nx), dtype=np.uint8)
+    res = kor_hybrid_2d_graf(
+        z,
+        markslag,
+        _geo(nx, ny, 1.0),
+        [0.0, 180.0],
+        [150.0, 150.0],
+        slut_tid_s=240.0,
+        nod_persistens_grans_m=0.15,
+    )
+    assert res.volymfel_rel < 1e-9
+    assert float(np.nanmax(res.max_hastighet_m_s)) < 10.0
+
+
+def test_rutt_interpolera_gles_ordbok_fran_noll() -> None:
+    """Saknad kant vid t0 i gles djupordbok ska interpoleras från 0.0, inte hoppa till v1."""
+    v = _interpolera_tidserie(
+        [0.0, 100.0],
+        {0.0: {}, 100.0: {"k1": 0.5}},
+        "k1",
+        50.0,
+        saknat_varde=0.0,
+    )
+    assert v is not None
+    assert math.isclose(v, 0.25, rel_tol=1e-12)
+
+
+def test_rutt_kritiska_avsnitt_snabb_och_exakt() -> None:
+    """Verifierar både riktad/oriktad korrekthet och snabbhet på ett 20x20-vägnät."""
+    nx, ny = 20, 20
+    noder = [
+        VagNod(f"n_{r}_{c}", 150000.0 + c * 50.0, 6580000.0 + r * 50.0, 10.0)
+        for r in range(ny)
+        for c in range(nx)
+    ]
+    kanter: list[VagKant] = []
+    kant_djup: dict[str, float] = {}
+    for r in range(ny):
+        for c in range(nx):
+            if c + 1 < nx:
+                kid = f"h_{r}_{c}"
+                kanter.append(VagKant(kid, f"n_{r}_{c}", f"n_{r}_{c + 1}", 50.0, 50.0))
+                # En översvämmad nord-sydlig korridor vid kolumn 9
+                if c == 9:
+                    kant_djup[kid] = 0.60
+                else:
+                    kant_djup[kid] = 0.05  # våt men farbar
+            if r + 1 < ny:
+                kid = f"v_{r}_{c}"
+                kanter.append(VagKant(kid, f"n_{r}_{c}", f"n_{r + 1}_{c}", 50.0, 50.0))
+                kant_djup[kid] = 0.05
+
+    vagnat = VagNat.fran_komponenter(noder, kanter)
+    fordon_def = FordonParametrar(
+        gransdjup_m=0.30,
+        hastighet_per_djup=((0.0, 1.0), (0.30, 0.0)),
+    )
+    params = RuttParametrarK7(
+        fordon={
+            "personbil": fordon_def,
+            "ambulans": fordon_def,
+            "tung_raddningsbil": fordon_def,
+        },
+        entre_gransdjup_m=0.10,
+        gangavstand_max_m=100.0,
+        gangvag_djup_max_m=0.20,
+        gangvag_fara_max_m2_s=0.50,
+        insatstidsmal_min={"sjukhus": 10.0, "vardboende": 10.0, "skola": 10.0, "forskola": 10.0},
+        ar_testvarde=True,
+    )
+    stationer = {"S1": "n_0_0"}
+    adresser = {f"A_{r}_{c}": f"n_{r}_{c}" for r in range(ny) for c in range(10, nx)}
+
+    t0 = time.perf_counter()
+    valda = hitta_kritiska_avsnitt(
+        vagnat,
+        stationer,
+        adresser,
+        0.0,
+        kant_djup,
+        params,
+        "tung_raddningsbil",
+        max_avsnitt=3,
+        skarp=False,
+        tillat_testvarden=True,
+    )
+    dt = time.perf_counter() - t0
+    assert len(valda) == 1
+    assert valda[0].vinst == 200  # hela östra halvan (20x10) blir nåbar av 1 öppnad kant
+    assert dt < 0.2
+
+
+def test_karna_katalognyckel_ignorerar_ds_store() -> None:
+    """macOS .DS_Store får inte ogiltigförklara katalogens cache-nyckel."""
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp)
+        (p / "mark.tif").write_bytes(b"data")
+        graf = Berakningsgraf(Cache(p / "cache"))
+        k1 = graf._katalognyckel(p)
+        (p / ".DS_Store").write_bytes(b"junk")
+        k2 = graf._katalognyckel(p)
+        assert k1 == k2

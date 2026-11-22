@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import math
+from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from rutt.dijkstra import tidsberoende_dijkstra
-from rutt.parametrar import RuttParametrarFel, RuttParametrarK7, validera_parametrar
+from rutt.parametrar import (
+    RuttParametrarFel,
+    RuttParametrarK7,
+    berakna_hastighetsfaktor,
+    validera_parametrar,
+)
 from rutt.vagnat import VagNat, VagNatFel, effektivt_vagdjup_m
 
 
@@ -22,38 +27,28 @@ class KritisktAvsnitt:
     normal_hastighet_km_h: float
 
 
-def _nabor_adresser(
-    vagnat: VagNat,
-    stationer: Mapping[str, str],
-    adresser: Mapping[str, str],
-    t_s: float,
-    kant_djup: Mapping[str, float],
-    parametrar: RuttParametrarK7,
-    fordon_typ: str,
-    vattenniva: Mapping[str, float] | None,
+def _nabara_noder_bfs(
+    grannar: Mapping[str, list[str]],
+    start_noder: Sequence[str],
+    redan_nabara: set[str] | None = None,
 ) -> set[str]:
-    fordon = parametrar.fordon[fordon_typ]
-    djup_serie: dict[float, Mapping[str, float]] = {float(t_s): kant_djup}
-    niva_serie: dict[float, Mapping[str, float]] | None = (
-        {float(t_s): vattenniva} if vattenniva is not None else None
-    )
-
-    nabara: set[str] = set()
-    ankomster: dict[str, dict[str, float]] = {
-        st_id: tidsberoende_dijkstra(
-            vagnat,
-            st_nod,
-            float(t_s),
-            djup_serie,
-            fordon,
-            vattenniva_per_tid=niva_serie,
-        )
-        for st_id, st_nod in stationer.items()
-    }
-    for adr_id, adr_nod in adresser.items():
-        if any(math.isfinite(ankomster[st_id][adr_nod]) for st_id in stationer):
-            nabara.add(adr_id)
-    return nabara
+    """Flerkällors BFS över farbara kanter. Hoppar över `redan_nabara` om angivet."""
+    besokta: set[str] = set()
+    ko: deque[str] = deque()
+    for s in start_noder:
+        if redan_nabara is not None and s in redan_nabara:
+            continue
+        if s not in besokta:
+            besokta.add(s)
+            ko.append(s)
+    while ko:
+        u = ko.popleft()
+        for v in grannar.get(u, ()):
+            if v in besokta or (redan_nabara is not None and v in redan_nabara):
+                continue
+            besokta.add(v)
+            ko.append(v)
+    return besokta
 
 
 def hitta_kritiska_avsnitt(
@@ -76,6 +71,10 @@ def hitta_kritiska_avsnitt(
     (antal adresser som går från onåbara till nåbara) om avsnittet hålls
     öppet (`djup = 0.0`, och eventuell vattennivå tas bort på kanten), tills
     `max_avsnitt` uppnåtts eller ingen ytterligare vinst > 0 finns.
+
+    Endast ofarbara snittkanter (med ena änden nåbar och andra onåbar) kan ge
+    vinst > 0; i oriktade vägnät utvärderas varje kandidat i O(1) via
+    sammanhängande komponenter i stället för att köra Dijkstra per kandidat.
     """
     validera_parametrar(
         parametrar,
@@ -102,67 +101,97 @@ def hitta_kritiska_avsnitt(
     gransdjup = fordon.gransdjup_m
     if gransdjup is None:
         raise RuttParametrarFel(f"Fordon '{fordon_typ}' saknar gransdjup_m.")
+    if berakna_hastighetsfaktor(fordon, 0.0) <= 0.0:
+        return []
 
-    aktuellt_djup: dict[str, float] = dict(kant_djup)
-    aktuell_niva: dict[str, float] | None = (
-        dict(vattenniva) if vattenniva is not None else None
-    )
+    # Adresser per vägnätsnod för O(1)-räkning av nyvunna adresser
+    adr_per_nod: dict[str, int] = {}
+    for adr_nod in adresser.values():
+        adr_per_nod[adr_nod] = adr_per_nod.get(adr_nod, 0) + 1
 
-    bas_nabara = _nabor_adresser(
-        vagnat,
-        stationer,
-        adresser,
-        t_s,
-        aktuellt_djup,
-        parametrar,
-        fordon_typ,
-        aktuell_niva,
-    )
+    # Bygg farbar grannlista och lista på ofarbara kandidatkanter i deterministisk ordning
+    grannar: dict[str, list[str]] = {nod_id: [] for nod_id in vagnat.noder}
+    kvarvarande: list[str] = []
+    har_enkelriktad = False
 
-    # Kandidatkanter är alla kanter vars effektiva djup > 0 eller >= gränsdjup
-    kandidater: list[str] = []
     for kant_id in sorted(vagnat.kanter):
         kant = vagnat.kanter[kant_id]
+        if kant.enkelriktad:
+            har_enkelriktad = True
         eff = effektivt_vagdjup_m(
             kant,
-            aktuellt_djup.get(kant_id, 0.0),
-            aktuell_niva.get(kant_id) if aktuell_niva is not None else None,
+            kant_djup.get(kant_id, 0.0),
+            vattenniva.get(kant_id) if vattenniva is not None else None,
         )
-        if eff > 0.0 or eff >= gransdjup:
-            kandidater.append(kant_id)
+        if berakna_hastighetsfaktor(fordon, eff) > 0.0:
+            grannar[kant.fran_nod].append(kant.till_nod)
+            if not kant.enkelriktad:
+                grannar[kant.till_nod].append(kant.fran_nod)
+        else:
+            kvarvarande.append(kant_id)
 
+    start_noder = list(stationer.values())
+    nabara_noder = _nabara_noder_bfs(grannar, start_noder)
     valda: list[KritisktAvsnitt] = []
-    kvarvarande = list(kandidater)
 
     for _ in range(max_avsnitt):
+        if not kvarvarande:
+            break
+
         basta_kant: str | None = None
         basta_vinst = 0
-        basta_nabara: set[str] | None = None
 
-        for kant_id in kvarvarande:
-            test_djup = dict(aktuellt_djup)
-            test_djup[kant_id] = 0.0
-            test_niva = dict(aktuell_niva) if aktuell_niva is not None else None
-            if test_niva is not None:
-                test_niva.pop(kant_id, None)
+        if not har_enkelriktad:
+            # Oriktad graf: beräkna sammanhängande komponenter av onåbara noder en gång
+            komp_id: dict[str, int] = {}
+            komp_vinst: list[int] = []
+            for nod_id in vagnat.noder:
+                if nod_id in nabara_noder or nod_id in komp_id:
+                    continue
+                cid = len(komp_vinst)
+                noder_i_komp = _nabara_noder_bfs(grannar, (nod_id,), redan_nabara=nabara_noder)
+                vinst_komp = 0
+                for n in noder_i_komp:
+                    komp_id[n] = cid
+                    vinst_komp += adr_per_nod.get(n, 0)
+                komp_vinst.append(vinst_komp)
 
-            nya_nabara = _nabor_adresser(
-                vagnat,
-                stationer,
-                adresser,
-                t_s,
-                test_djup,
-                parametrar,
-                fordon_typ,
-                test_niva,
-            )
-            vinst = len(nya_nabara - bas_nabara)
-            if vinst > basta_vinst:
-                basta_vinst = vinst
-                basta_kant = kant_id
-                basta_nabara = nya_nabara
+            for kant_id in kvarvarande:
+                kant = vagnat.kanter[kant_id]
+                u_in = kant.fran_nod in nabara_noder
+                v_in = kant.till_nod in nabara_noder
+                if u_in == v_in:
+                    continue
+                dst = kant.till_nod if u_in else kant.fran_nod
+                vinst = komp_vinst[komp_id[dst]]
+                if vinst > basta_vinst:
+                    basta_vinst = vinst
+                    basta_kant = kant_id
+        else:
+            # Riktad graf: cacha onåbar del-BFS per mål-nod
+            vinst_cache: dict[str, int] = {}
+            for kant_id in kvarvarande:
+                kant = vagnat.kanter[kant_id]
+                mal_nod: str | None = None
+                if kant.fran_nod in nabara_noder and kant.till_nod not in nabara_noder:
+                    mal_nod = kant.till_nod
+                elif (
+                    not kant.enkelriktad
+                    and kant.till_nod in nabara_noder
+                    and kant.fran_nod not in nabara_noder
+                ):
+                    mal_nod = kant.fran_nod
+                if mal_nod is None:
+                    continue
+                if mal_nod not in vinst_cache:
+                    ny_komp = _nabara_noder_bfs(grannar, (mal_nod,), redan_nabara=nabara_noder)
+                    vinst_cache[mal_nod] = sum(adr_per_nod.get(n, 0) for n in ny_komp)
+                vinst = vinst_cache[mal_nod]
+                if vinst > basta_vinst:
+                    basta_vinst = vinst
+                    basta_kant = kant_id
 
-        if basta_kant is None or basta_vinst <= 0 or basta_nabara is None:
+        if basta_kant is None or basta_vinst <= 0:
             break
 
         kant = vagnat.kanter[basta_kant]
@@ -180,10 +209,14 @@ def hitta_kritiska_avsnitt(
                 normal_hastighet_km_h=float(kant.normal_hastighet_km_h),
             )
         )
-        aktuellt_djup[basta_kant] = 0.0
-        if aktuell_niva is not None:
-            aktuell_niva.pop(basta_kant, None)
-        bas_nabara = basta_nabara
+        # Öppna vald kant och expandera nåbara noder inkrementellt
+        grannar[kant.fran_nod].append(kant.till_nod)
+        if not kant.enkelriktad:
+            grannar[kant.till_nod].append(kant.fran_nod)
+        ny_start = [
+            n for n in (kant.fran_nod, kant.till_nod) if n not in nabara_noder
+        ]
+        nabara_noder |= _nabara_noder_bfs(grannar, ny_start, redan_nabara=nabara_noder)
         kvarvarande.remove(basta_kant)
 
     return valda
