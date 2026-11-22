@@ -1,8 +1,9 @@
 /*
  * SWEREF 99 18 00 (EPSG:3011) <-> WGS 84, Gauss–Krüger enligt Lantmäteriets formler
  * (transversell Mercator, GRS 80, mittmeridian 18°, k0 = 1, X0 = 150 000 m).
- * Används bara för den valfria bakgrundskartan: rastren ritas i SWEREF-koordinater och
- * beräkningarna i Floden görs i EPSG:3011 (AGENTS.md), aldrig i klienten.
+ * Används av kartmotorn (karta/kartmotor.ts) för att lägga allt som ritas, rasterbilder och
+ * ritade hus, på rätt plats i kartan. Beräkningarna i Floden görs i EPSG:3011 (AGENTS.md), aldrig i
+ * klienten. Kontrollerad mot pyproj i sweref.test.ts.
  */
 
 const A = 6378137.0;

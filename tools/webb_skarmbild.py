@@ -9,6 +9,9 @@ Förutsätter att API:t och klienten körs och att demokvarteret är byggt:
 
 Argument: --url (klientens adress), --chrome (sökväg till Chrome/Chromium).
 
+Med `--kartverktyg` tas docs/bilder/kartverktyg-*.png (lagerpanel, ritning med fästmarkör,
+höjdpanel, före och efter) mot `floden webb`; scenariot som ritas sparas lokalt.
+
 Med `--demo` tas i stället docs/bilder/demo-*.png (start, projekt, karta bred och smal,
 frågesidan) mot `floden webb` (som serverar klienten själv, standard
 http://127.0.0.1:8765) efter `floden demo`. Inget körs om: resultaten läses ur cachen.
@@ -113,16 +116,92 @@ def _demo(webblasare: Browser, url: str) -> None:
     _resultat_med_varningar(sida, UT / "demo-dagsljus.png")
 
 
+def _kartverktyg(webblasare: Browser, url: str) -> None:
+    """kartverktyg-*.png: lagerpanel, ritning med fästmarkör, höjdpanel, före och efter."""
+    sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
+    sida.goto(f"{url}/#/karta/demokvarteret")
+    sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
+    sida.wait_for_timeout(2500)
+    sida.click('[data-lage="fore"]')
+    sida.wait_for_timeout(800)
+    sida.evaluate("document.querySelector('#verktygsrad').scrollIntoView()")
+    sida.wait_for_timeout(300)
+    ruta = sida.locator("#vy-yta").bounding_box()
+    assert ruta is not None
+
+    def pa(fx: float, fy: float) -> tuple[float, float]:
+        return ruta["x"] + ruta["width"] * fx, ruta["y"] + ruta["height"] * fy
+
+    sida.locator(".lager-kolumn .panel").first.screenshot(path=str(UT / "kartverktyg-lager.png"))
+    sida.keyboard.press("w")
+    for fx, fy in ((0.30, 0.15), (0.38, 0.15), (0.38, 0.22)):
+        x, y = pa(fx, fy)
+        sida.mouse.move(x, y)
+        sida.mouse.click(x, y)
+    x, y = pa(0.247, 0.118)  # nära ett hörn på kvarterets innervägg: fästmarkören syns
+    sida.mouse.move(x, y, steps=5)
+    sida.wait_for_timeout(500)
+    sida.screenshot(
+        path=str(UT / "kartverktyg-rita.png"),
+        clip={
+            "x": max(0, ruta["x"] - 10),
+            "y": max(0, ruta["y"] - 150),
+            "width": ruta["width"] + 20,
+            "height": ruta["height"] + 180,
+        },
+    )
+    x, y = pa(0.30, 0.22)
+    sida.mouse.click(x, y)
+    sida.keyboard.press("Enter")
+    sida.wait_for_selector("#hojd-falt")
+    sida.fill("#hojd-falt", "18")
+    sida.press("#hojd-falt", "Tab")
+    sida.wait_for_timeout(1200)
+    sida.locator("#hojdpanel").screenshot(path=str(UT / "kartverktyg-hojd.png"))
+    sida.click("#rakna-plan")
+    sida.wait_for_selector("#rakna-starta", timeout=60_000)
+    sida.click("#rakna-starta")
+    sida.wait_for_function(
+        "document.querySelector('#rakna')?.textContent.includes('Klart')", timeout=900_000
+    )
+    sida.wait_for_timeout(2000)
+    sida.click('[data-lage="sidavid"]')
+    sida.wait_for_timeout(3000)
+    sida.evaluate("document.querySelector('#verktygsrad').scrollIntoView()")
+    sida.wait_for_timeout(500)
+    sida.screenshot(
+        path=str(UT / "kartverktyg-resultat.png"),
+        clip={"x": 0, "y": 0, "width": 1440, "height": 1000},
+    )
+    sida.close()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--demo", action="store_true", help="ta demo-*.png mot floden webb")
+    ap.add_argument(
+        "--kartverktyg", action="store_true", help="ta kartverktyg-*.png mot floden webb"
+    )
     ap.add_argument("--url", default=None)
     ap.add_argument("--chrome", default="/usr/bin/google-chrome")
     args = ap.parse_args()
-    url = args.url or ("http://127.0.0.1:8765" if args.demo else "http://127.0.0.1:5173")
+    url = args.url or ("http://127.0.0.1:8765" if args.demo or args.kartverktyg else "http://127.0.0.1:5173")
     UT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
-        webblasare = p.chromium.launch(executable_path=args.chrome, args=["--no-sandbox"])
+        # Kartan är MapLibre (WebGL): utan grafikkort används programvaruritning.
+        webblasare = p.chromium.launch(
+            executable_path=args.chrome,
+            args=[
+                "--no-sandbox",
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader",
+            ],
+        )
+        if args.kartverktyg:
+            _kartverktyg(webblasare, url)
+            webblasare.close()
+            return
         if args.demo:
             _demo(webblasare, url)
             webblasare.close()

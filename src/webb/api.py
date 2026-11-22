@@ -99,6 +99,7 @@ from testsvit.k1_io import (
 from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
+from webb.kartverktyg import KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import ProjektTjanst
 from webb.rendering import (
@@ -435,6 +436,8 @@ STANDARD_CACHEMAPP = "data/cache/karna"
 STANDARD_KORNINGSMAPP = "data/cache/webb/korningar"
 STANDARD_DEMOMAPP = "data/demo/varld"
 STANDARD_KLIENTMAPP = "webb/dist"
+STANDARD_KARTVERKTYGSMAPP = "data/lokal/kartverktyg"
+STANDARD_DATAMAPPAR = ["data/lokal"]
 
 
 def _skapa_fragetjanst(
@@ -472,6 +475,39 @@ def _skapa_fragetjanst(
     )
 
 
+def _skapa_kartverktyg(
+    konfig_fil: Path,
+    fragor: FragaTjanst,
+    mapp: str | Path | None,
+    datamappar: Sequence[str | Path] | None,
+    tillat_loopback: bool,
+) -> KartverktygTjanst:
+    """Kartverktyget: lokal mapp för scenarier och ritade frågor (inte i git) och datamappar."""
+    rot = konfig_fil.resolve().parent
+    webb: dict[str, Any] = {}
+    if konfig_fil.is_file():
+        with konfig_fil.open("rb") as fh:
+            webb = dict(tomllib.load(fh).get("webb", {}))
+
+    def abs_(p: str | Path) -> Path:
+        pp = Path(p).expanduser()
+        return pp if pp.is_absolute() else rot / pp
+
+    if datamappar is None:
+        miljo = os.environ.get("FLODEN_DATAMAPPAR")
+        datamappar = (
+            [m for m in miljo.split(os.pathsep) if m]
+            if miljo
+            else list(webb.get("datamappar", STANDARD_DATAMAPPAR))
+        )
+    return KartverktygTjanst(
+        fragor,
+        abs_(mapp or webb.get("kartverktygsmapp", STANDARD_KARTVERKTYGSMAPP)),
+        datamappar=[abs_(m) for m in datamappar],
+        tillat_loopback=tillat_loopback,
+    )
+
+
 def _binart_svar(
     status_kod: int, innehall: bytes, content_type: str
 ) -> tuple[int, dict[str, str], bytes]:
@@ -500,7 +536,12 @@ class FlodenApiApp:
         korningsmapp: str | Path | None = None,
         konto: KontoAdapter | None = None,
         klientmapp: str | Path | None = None,
+        kartverktygsmapp: str | Path | None = None,
+        datamappar: Sequence[str | Path] | None = None,
+        tillat_loopback_underlag: bool = False,
     ) -> None:
+        self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
+        self._kartverktyg: KartverktygTjanst | None = None
         self.testsvit_rot = Path(testsvit_rot)
         self.konfig_fil = Path(konfig_fil)
         self.konto = konto if konto is not None else _skapa_konto(self.konfig_fil)
@@ -518,6 +559,17 @@ class FlodenApiApp:
             if self._fragor is None:
                 self._fragor = _skapa_fragetjanst(self.konfig_fil, *self._fragekonfig)
             return self._fragor
+
+    @property
+    def kartverktyg(self) -> KartverktygTjanst:
+        """Kartverktyget (rita planförslag). Skapas vid första användning."""
+        fragor = self.fragor
+        with self._lock:
+            if self._kartverktyg is None:
+                self._kartverktyg = _skapa_kartverktyg(
+                    self.konfig_fil, fragor, *self._kartkonfig
+                )
+            return self._kartverktyg
 
     @property
     def projekt(self) -> ProjektTjanst:
@@ -1654,6 +1706,75 @@ class FlodenApiApp:
             return _json_svar(202, svar)
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
 
+    def _hantera_kartverktyg(
+        self,
+        verb: str,
+        sokvag: str,
+        kropp: bytes,
+        query: Mapping[str, list[str]],
+    ) -> tuple[int, dict[str, str], bytes]:
+        """`/api/kartverktyg/...`: underlag (WMS, ortofoto) och ritade planförslag."""
+        delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
+        kv = self.kartverktyg
+
+        def json_kropp() -> dict[str, Any]:
+            if not kropp:
+                return {}
+            try:
+                d = json.loads(kropp.decode("utf-8"))
+            except ValueError as exc:
+                raise FlodenWebbFel("Anropet är inte giltig JSON.", status_kod=400) from exc
+            if not isinstance(d, dict):
+                raise FlodenWebbFel("Anropet måste vara ett JSON-objekt.", status_kod=400)
+            return d
+
+        if delar[:1] == ["wms"]:
+            if verb == "POST" and delar == ["wms", "lager"]:
+                return _json_svar(200, kv.wms_lager(json_kropp()))
+            if verb == "GET" and delar == ["wms", "bild"]:
+                data, typ = kv.wms_bild(query)
+                return _binart_svar(200, data, typ)
+            return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
+        if not delar:
+            return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
+        projekt, rest = delar[0], delar[1:]
+        if verb == "GET" and not rest:
+            return _json_svar(200, kv.projektinfo(projekt))
+        if verb == "GET" and rest == ["ortofoto.png"]:
+            png, extra = kv.ortofoto_png(projekt)
+            status, huvud, ut = _binart_svar(200, png, "image/png")
+            return status, {**huvud, **extra}, ut
+        if verb == "GET" and len(rest) == 2 and rest[0] == "geometri" and rest[1].endswith(".png"):
+            png, extra = kv.geometri_png(projekt, rest[1].removesuffix(".png"))
+            status, huvud, ut = _binart_svar(200, png, "image/png")
+            return status, {**huvud, **extra}, ut
+        if verb == "POST" and rest == ["validera"]:
+            return _json_svar(200, kv.validera(projekt, json_kropp()))
+        if verb == "GET" and rest == ["scenarier"]:
+            return _json_svar(200, kv.lista_scenarier(projekt))
+        if verb == "POST" and rest == ["scenarier"]:
+            return _json_svar(200, kv.spara_scenario(projekt, None, json_kropp()))
+        if len(rest) >= 2 and rest[0] == "scenarier":
+            namn = rest[1]
+            tail = rest[2:]
+            if verb == "GET" and not tail:
+                return _json_svar(200, kv.hamta_scenario(projekt, namn))
+            if verb == "POST" and not tail:
+                return _json_svar(200, kv.spara_scenario(projekt, namn, json_kropp()))
+            if verb == "POST" and tail == ["byt-namn"]:
+                nytt_namn = str(json_kropp().get("namn", ""))
+                return _json_svar(200, kv.byt_namn(projekt, namn, nytt_namn))
+            if verb == "POST" and tail == ["ta-bort"]:
+                return _json_svar(200, kv.ta_bort_scenario(projekt, namn))
+            valda = [str(x) for x in json_kropp().get("analyser", [])] if verb == "POST" else []
+            if verb == "POST" and tail == ["plan"]:
+                return _json_svar(200, kv.planera(projekt, namn, valda))
+            if verb == "POST" and tail == ["kor"]:
+                return _json_svar(202, kv.kor(projekt, namn, valda))
+            if verb == "GET" and tail == ["status"]:
+                return _json_svar(200, kv.status(projekt, namn))
+        return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
+
     def _hantera_korningar(
         self, verb: str, sokvag: str, query: Mapping[str, list[str]] | None = None
     ) -> tuple[int, dict[str, str], bytes]:
@@ -1722,6 +1843,9 @@ class FlodenApiApp:
 
             if ren_sokvag == "/api/fragor" or ren_sokvag.startswith("/api/fragor/"):
                 return self._hantera_fragor(verb, ren_sokvag)
+
+            if ren_sokvag.startswith("/api/kartverktyg/"):
+                return self._hantera_kartverktyg(verb, ren_sokvag, kropp, query)
 
             if verb == "GET" and ren_sokvag == "/api/demo":
                 return _json_svar(200, self.fragor.demo())

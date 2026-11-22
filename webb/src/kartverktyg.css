@@ -1,0 +1,306 @@
+/* Kartverktyg: verktygsrad, lagerpanel, höjdpanel och planförslag. Nykter stil, ingen färg utöver kartdata. */
+
+.prova-sjalv {
+  border: 1px solid var(--f-linje-stark);
+  padding: 14px 18px;
+  background: var(--f-yta-dampad);
+}
+.prova-steg {
+  margin: 6px 0 8px;
+  padding-left: 20px;
+  display: grid;
+  gap: 2px;
+  font-size: 14px;
+}
+.liten-text {
+  font-size: 12px;
+}
+
+.verktygsrad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding-bottom: 8px;
+}
+.verktyg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--f-linje-stark);
+  background: #fff;
+  color: var(--f-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.verktyg:hover:not(:disabled) {
+  background: var(--f-yta-dampad);
+}
+.verktyg.vald,
+.verktyg[aria-pressed="true"] {
+  background: var(--f-text);
+  color: #fff;
+}
+.verktyg:disabled {
+  color: var(--f-text-inaktiv);
+  border-color: var(--f-linje);
+  cursor: default;
+}
+.verktyg:focus-visible,
+.ikonknapp:focus-visible {
+  outline: 2px solid var(--f-text);
+  outline-offset: 2px;
+}
+.verktyg .vk {
+  font-family: var(--f-font-mono);
+  font-size: 11px;
+  border: 1px solid currentColor;
+  padding: 0 4px;
+  opacity: 0.75;
+}
+.verktyg-skil {
+  width: 1px;
+  height: 24px;
+  background: var(--f-linje);
+  margin: 0 4px;
+}
+.verktyg-zoom {
+  margin-left: auto;
+}
+.verktygshjalp {
+  min-height: 22px;
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--f-text-sekundar);
+}
+.verktygshjalp.fel {
+  color: var(--f-varning);
+  font-weight: 600;
+}
+
+.vy-stapel {
+  position: relative;
+}
+.vy-stapel .vy-b {
+  position: absolute;
+  inset: 0;
+  height: auto;
+  min-height: 0;
+  border: 0;
+}
+.vy-stapel .vy-b[hidden] {
+  display: none;
+}
+.vy-stapel.sida {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.vy-stapel.sida .vy-b {
+  position: relative;
+  border: 1px solid var(--f-linje-stark);
+}
+.vyval-etikett {
+  align-self: center;
+  margin-right: 12px;
+}
+.kartmotor .maplibregl-canvas {
+  outline: none;
+}
+.kartnotis,
+.kartetikett {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--f-text);
+  font: 11px var(--f-font-mono);
+  padding: 4px 8px;
+  border: 1px solid var(--f-linje-stark);
+}
+.kartnotis {
+  right: 8px;
+  bottom: 36px;
+}
+.kartetikett {
+  white-space: nowrap;
+}
+.kartmotor .maplibregl-ctrl-scale {
+  font-family: var(--f-font-mono);
+  border-color: var(--f-text);
+  color: var(--f-text);
+}
+
+.panel {
+  border: 1px solid var(--f-linje);
+  padding: 12px 14px;
+  background: #fff;
+  display: grid;
+  gap: 8px;
+}
+.panel[hidden] {
+  display: none;
+}
+.lagerpanel {
+  display: grid;
+  gap: 8px;
+}
+.lager-grupp {
+  border-top: 1px solid var(--f-linje);
+  padding-top: 6px;
+}
+.lager-grupp:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.lager-grupp-rubrik {
+  margin: 0;
+  font-size: 13px;
+}
+.lager-fall {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  color: var(--f-text);
+}
+.lager-pil {
+  display: inline-block;
+  width: 14px;
+  font-family: var(--f-font-mono);
+}
+.kl-lista,
+.scen-lista {
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.kl-rad {
+  display: block;
+  min-height: 0;
+  grid-template-columns: none;
+  border: 1px solid var(--f-linje-svag);
+  padding: 6px 8px;
+  background: #fff;
+}
+.kl-rad input[type="range"] {
+  accent-color: var(--f-text);
+}
+.kl-rad[draggable="true"] {
+  cursor: grab;
+}
+.kl-rad.otillganglig {
+  color: var(--f-text-inaktiv);
+}
+.kl-topp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kl-namn {
+  flex: 1;
+  font-size: 13px;
+}
+.kl-knappar {
+  display: inline-flex;
+  gap: 4px;
+}
+.ikonknapp {
+  min-width: 28px;
+  min-height: 28px;
+  border: 1px solid var(--f-linje);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--f-text);
+}
+.ikonknapp:disabled {
+  color: var(--f-text-inaktiv);
+  cursor: default;
+}
+.ikonknapp[aria-pressed="true"] {
+  background: var(--f-text);
+  color: #fff;
+}
+.kl-opacitet {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding-top: 2px;
+}
+.kl-opacitet input {
+  width: 100%;
+  min-height: 24px;
+}
+.kl-hjalp {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--f-text-dampad);
+}
+
+.matt-lista {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.matt-lista > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--f-linje-svag);
+  padding: 3px 0;
+  font-size: 13px;
+}
+.matt-lista dt {
+  color: var(--f-text-sekundar);
+}
+.matt-lista dd {
+  margin: 0;
+  font-family: var(--f-font-mono);
+}
+.knapp-rad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.scen-rad {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  align-items: center;
+  border: 1px solid var(--f-linje-svag);
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.scen-rad.aktivt {
+  border-color: var(--f-linje-stark);
+}
+.planruta {
+  border: 1px solid var(--f-linje-stark);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+}
+.varnings-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--f-text-sekundar);
+  border-left: 3px solid var(--f-linje-stark);
+  padding-left: 8px;
+}

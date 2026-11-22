@@ -30,13 +30,13 @@ import type {
   VarningPost,
 } from "./fragor-typer";
 import { kontoNotis, vidKontoandring } from "./konto";
-import { RasterVy, type VyByggnad, type VyLager } from "./rastervy";
+import { Kartmotor, type RasterLager, type VyByggnad } from "./karta/kartmotor";
+import { giltigKakelmall } from "./karta/wms";
 import { lagerTekniskHtml, teckenforklaringHtml } from "./teckenforklaring";
 import { lasKartanText } from "./kartforklaring";
 import { esc, PROJEKT_ID } from "./sidor";
 import type { ModulInfo } from "./types";
 
-const OSM_MALL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
 const LAGRING_BAKGRUND = "floden.bakgrund";
 const LAGRING_BAKGRUND_URL = "floden.bakgrund.url";
 
@@ -80,9 +80,18 @@ const t: Tillstand = {
   forhandsvisning: null,
 };
 
-let vy: RasterVy | null = null;
-let vyLager = new Map<string, VyLager>();
-let vyBilder = new Map<string, { png: HTMLImageElement; tak: HTMLImageElement | null }>();
+let vy: Kartmotor | null = null;
+interface VyLagerPost {
+  id: string;
+  png: string;
+  tak: string | null;
+  utbredning: Utbredning;
+  synlig: boolean;
+  opacitet: number;
+  visaTak: boolean;
+}
+let vyLager = new Map<string, VyLagerPost>();
+let bakgrund: string | null = null;
 let avlasningSeq = 0;
 let avlasningTimer: number | null = null;
 let timer: number | null = null;
@@ -556,7 +565,6 @@ function avslutaVy(): void {
   vy?.avsluta();
   vy = null;
   vyLager = new Map();
-  vyBilder = new Map();
   avlasningSeq += 1;
   if (avlasningTimer !== null) {
     window.clearTimeout(avlasningTimer);
@@ -600,9 +608,9 @@ function ritaResultat(): void {
         <div id="avlasning" class="avlasning" role="status"><span class="dampad">Håll markören över kartan för att läsa värden.</span></div>
         <details class="installningar">
           <summary class="etikett-liten">Bakgrundskarta (valfritt)</summary>
-          <label class="kryss-rad"><input type="checkbox" id="bakgrund-pa" ${lasBakgrund() ? "checked" : ""}/> Visa en bakgrundskarta (hämtas från en extern tjänst, av som standard)</label>
-          <label class="falt-rad">Adress till kartplattor <input type="text" id="bakgrund-url" class="kontroll" value="${esc(localStorage.getItem(LAGRING_BAKGRUND_URL) ?? OSM_MALL)}"/></label>
-          <p class="dampad liten-text">Bakgrunden är bara en orientering. Påhittade områden har inga verkliga koordinater, så den stämmer bara för områden som ligger på riktig plats. Källa: © OpenStreetMap-bidragsgivare när standardadressen används.</p>
+          <label class="kryss-rad"><input type="checkbox" id="bakgrund-pa" ${lasBakgrund() ? "checked" : ""}/> Visa kartplattor från adressen nedan (hämtas från den tjänst du anger, inget är förvalt)</label>
+          <label class="falt-rad">Adress till kartplattor <input type="text" id="bakgrund-url" class="kontroll" placeholder="https://…/{z}/{x}/{y}.png" value="${esc(localStorage.getItem(LAGRING_BAKGRUND_URL) ?? "")}"/></label>
+          <p class="dampad liten-text">Bakgrunden är bara en orientering. Påhittade områden har inga verkliga koordinater, så den stämmer bara för områden som ligger på riktig plats. Ange adressen själv, med {z}, {x} och {y}.</p>
         </details>
       </div>
       <aside class="lager-kolumn" id="lager-panel"></aside>
@@ -677,7 +685,7 @@ function startaVy(r: ResultatSvar): void {
   const yta = el("vy-yta");
   if (!yta) return;
   avslutaVy();
-  vy = new RasterVy(yta);
+  vy = new Kartmotor(yta);
   vy.onMarkor = (e, n) => {
     const rad = el("markor-rad");
     if (rad) {
@@ -686,17 +694,7 @@ function startaVy(r: ResultatSvar): void {
     planeraAvlasning(e, n);
   };
   for (const l of r.lager) {
-    const png = new Image();
-    png.onload = () => vy?.rita();
-    png.src = l.png;
-    let tak: HTMLImageElement | null = null;
-    if (l.png_med_tak) {
-      tak = new Image();
-      tak.onload = () => vy?.rita();
-      tak.src = l.png_med_tak;
-    }
-    vyBilder.set(l.id, { png, tak });
-    vyLager.set(l.id, { id: l.id, bild: png, utbredning: l.utbredning, opacitet: 1, synlig: false });
+    vyLager.set(l.id, { id: l.id, png: l.png, tak: l.png_med_tak, utbredning: l.utbredning, synlig: false, opacitet: 1, visaTak: false });
   }
   anpassaTillResultat();
   uppdateraVyLager();
@@ -708,7 +706,8 @@ function startaVy(r: ResultatSvar): void {
   const uppdateraBakgrund = (): void => {
     localStorage.setItem(LAGRING_BAKGRUND, paKryss?.checked ? "1" : "0");
     if (url) localStorage.setItem(LAGRING_BAKGRUND_URL, url.value);
-    vy?.settBakgrund({ paa: paKryss?.checked ?? false, urlMall: url?.value ?? OSM_MALL });
+    bakgrund = paKryss?.checked && url && giltigKakelmall(url.value) ? url.value : null;
+    uppdateraVyLager();
   };
   paKryss?.addEventListener("change", uppdateraBakgrund);
   url?.addEventListener("change", uppdateraBakgrund);
@@ -790,13 +789,14 @@ function visaAvlasning(a: AvlasningSvar | null): void {
 }
 
 function uppdateraVyLager(): void {
+  const lista: RasterLager[] = [];
+  if (bakgrund) lista.push({ id: "bakgrund", opacitet: 0.9, synlig: true, kalla: { slag: "kakel", mall: bakgrund, kalla: "Kartplattor från adressen du angav" } });
   for (const [id, l] of vyLager) {
     l.synlig = id === t.aktivtLager;
     l.opacitet = t.opacitet;
-    const b = vyBilder.get(id);
-    if (b) l.bild = t.visaTak && b.tak ? b.tak : b.png;
+    lista.push({ id, opacitet: l.opacitet, synlig: l.synlig, kalla: { slag: "bild", url: t.visaTak && l.tak ? l.tak : l.png, utbredning: l.utbredning, skarpa: true } });
   }
-  vy?.settLager(Array.from(vyLager.values()));
+  vy?.settLager(lista);
   uppdateraByggnader();
 }
 
@@ -810,7 +810,7 @@ function uppdateraByggnader(): void {
   const byggnader: VyByggnad[] = poster.map((b) => ({ ring: b.ring, hal: b.hal, status: b.status }));
   vy.settByggnader(byggnader);
   const maskat = l.tak_maskat && !t.visaTak;
-  vy.settNotis(maskat ? "Grå yta: tak, inte mark" : null);
+  vy.settNotis(maskat ? "Ljusgrå yta: tak, inte mark" : null);
 }
 
 const TYP_ETIKETT: Record<LagerPost["typ"], string> = {

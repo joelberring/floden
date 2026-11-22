@@ -41,55 +41,31 @@ Vattenfrågan (`vatten_a1_uppfyllnad.toml`) använder testsvitens A1 och behöve
    (`efter − före`) och förhandsvisning av CSV/Parquet-filer. Till varje lager finns länkar till
    GeoTIFF-filerna (full upplösning, en per ruta).
 
-Kartvyn (`src/rastervy.ts`) ritar rastren direkt i **SWEREF 99 18 00 (EPSG:3011)** på en duk, med
-koordinatnät och skalstock. Ingen kartbakgrund hämtas som standard: de syntetiska rutorna har inga
-verkliga koordinater att lägga en bakgrundskarta mot. Under *Inställningar* under kartan kan man slå på
-en bakgrundskarta (OpenStreetMap-plattor, plattmallen kan ändras); då hämtas kartplattor från den
-tjänsten. Valet sparas i webbläsaren. Omräkningen SWEREF till WGS 84 (`src/sweref.ts`) görs bara för
-att placera plattorna; Flodens beräkningar sker i EPSG:3011 i kärnan, aldrig i klienten.
+## Kartan (`src/karta/`)
 
-## API
+Det finns **en** kartmotor: MapLibre GL (`src/karta/kartmotor.ts`), vald framför den tidigare egna
+canvas-vyn (`rastervy.ts`, borttagen) för att den ger sanna koordinater, zoom, överlägg, pekarhändelser
+och WMS/WMTS utan egen kod. Allt som ritas ligger i **SWEREF 99 18 00 (EPSG:3011)** och räknas om till
+WGS 84 med den exakta Gauss-Krüger-omräkningen i `src/sweref.ts` (kontrollerad mot pyproj med 40 punkter,
+avvikelse under 1 cm kravet, några mikrometer uppmätt); den linjära approximationen i `karta.ts` är
+borttagen. Rasterbilderna från servern läggs med sina fyra hörn omräknade. Ingen kartbakgrund hämtas från
+någon extern tjänst som standard.
 
-Allt läser via kärnans API (`karna.utredning`, `karna.korplan`, `karna.resultatcache`,
-`karna.analyslosare`); webben har ingen egen beräkningslogik.
-
-| Metod och adress | Svar |
+| Fil | Innehåll |
 | --- | --- |
-| `GET /api/moduler` | De fyra produktmodulerna (vatten, luft, buller, dagsljus) med en enda statuskälla: `status` (`finns_i_demon`, `finns_ej_forberaknad`, `under_utveckling`) och färdig `status_text`. Kärnans lösare och demons körningar avgör vatten och dagsljus; luft och buller läses ur `data/webb/modulstatus.toml` (bullrets testfallstal med källa `docs/buller/logg/P-S2.md`, kontrollerat av ett test). Lösare har `visningsnamn`. |
-| `GET /api/projekt`, `GET /api/projekt/<id>` | Demokvarteret: mått ur körningarnas resultat (mark utan tak), regn, vyer och teknisk information. Mått som inte går att räkna utelämnas. |
-| `GET /api/fragor` | K20-frågorna i frågemapparna: analyser, scenarier, jämförelser, saknad indata, felmeddelande. |
-| `GET /api/fragor/<ref>` | En fråga. `ref` är filnamnet utan ändelse. |
-| `POST /api/fragor/<ref>/plan` | Plan: `sammanfattning` (jobb, i_cache, att_kora), `per_analys`, `scenarier` med rutor och utbredning, `jobb`. 422 med kärnans felmeddelande vid fel (t.ex. saknad bas). |
-| `POST /api/fragor/<ref>/kor` | 202 med `korning_id`. Planeras direkt (fel ger 422), körs sedan i bakgrunden. Har frågan redan en pågående körning returneras den (`ateranvand: true`). |
-| `GET /api/korningar`, `GET /api/korningar/<id>` | Status `ko`/`kor`/`klar`/`fel`, `framsteg {klara, totalt}`, `fel`. |
-| `GET /api/korningar/<id>/resultat` | `tabeller` (mätvärden per jobb), `jamforelser`, `varningar` (grupperade, med var de uppstod), `lager`, `datatabeller`. 409 om körningen inte är klar. |
-| `GET /api/korningar/<id>/lager/<lager_id>.png` | PNG-förhandsvisning (transparent RGBA, nordkant överst, rutnätets egna koordinater). Ritas på servern ur resultatrastren. |
-| `GET /api/korningar/<id>/fil/<sökväg>` | En fil i resultatmappen (GeoTIFF, CSV, JSON). Inget utanför resultatmappen går att läsa. |
-| `GET /api/korningar/<id>/tabell/<sökväg>` | De första 200 raderna ur en CSV- eller Parquet-fil. |
+| `kartmotor.ts` | MapLibre-omslaget: rasterlager i ordning, byggnader, ritlager, pekarhändelser, vy |
+| `lager.ts`, `lagerpanel.ts` | Lagermodell (grupper, synlighet, täckning, ordning, hopfällning, sparat per projekt, lager som egen vy för en kommande 3D-vy) och panelen |
+| `wms.ts` | Underlag från WMS/kakelmall (servern är proxy, `POST /api/kartverktyg/wms/lager`) |
+| `snap.ts`, `hit.ts`, `formedit.ts`, `historik.ts`, `geom.ts` | Porterade ritalgoritmer (fäst, träff, hörnredigering, ångra/gör om) |
+| `plandok.ts` | Planförslagets dokument: nya hus, höjdändringar, rivningar, som K9-ändringar |
+| `ritverktyg.ts` | Styrenhet för verktygen och kortkommandona (testbar utan webbläsare) |
+| `kartapi.ts` | Anrop till `/api/kartverktyg/...` |
 
-Ett lager (`lager[]`) har `id` (`<analys>.<scenario>.<roll>` eller `skillnad.<jämförelse>`), `typ`
-(`bas`/`scenario`/`skillnad`), `primar` (lösarens första utdataroll; övriga är flaggor och kontroller),
-`utbredning` i EPSG:3011, `skala`, `teckenforklaring`, `png` och `geotiff[]`. Förhandsvisningen
-nedsamplas om den är större än 2048 px; det anges i lagret och som varning.
-
-### Konfiguration
-
-`[webb]` i `config.toml` (relativa sökvägar räknas från repots rot):
-
-```toml
-[webb]
-fragemappar = ["exempel/fragor"]            # kan åsidosättas med FLODEN_FRAGEMAPPAR eller --fragemapp
-cachemapp = "data/cache/karna"              # kärnans resultatcache (samma som `floden fraga`)
-korningsmapp = "data/cache/webb/korningar"  # webbens körningar: korning.json, resultat/, webb/ (PNG)
-```
-
-Körningar ligger kvar på disken och läses in igen när servern startas om; en körning som pågick när
-servern stoppades markeras som misslyckad. Inget rensas automatiskt.
-
-## Tema
-
-`src/tema.css` har alla designtoken som CSS-variabler (svartvitt, hårfina linjer, raka hörn,
-Inter/Inter Tight; färg bara i kartdata och varningar). `src/fragor.css` använder bara variablerna.
+Klienten ritar bara geometri. Kontrollen (giltig form, höjd över 0 och högst 200 m, ligger inom K1-rutorna),
+K9, K20 och körningen görs av servern (`src/webb/kartverktyg.py`, `src/karna/ritat.py`). Porterad logik
+står med "Logik porterad från O-Tid (MIT, joelberring/otid @ 4a446af, ...)" i filhuvudet. Kortkommandon:
+Q markera, W rita hus, A lägg till hörn, S ta bort hörn, T fäst, R rät vinkel, Z ångra, Shift+Z gör om,
+Enter avslutar, Esc avbryter, Backsteg tar bort senaste punkten, Delete tar bort det markerade.
 
 ## Övriga sidor
 
@@ -97,7 +73,7 @@ Inter/Inter Tight; färg bara i kartdata och varningar). `src/fragor.css` använ
 | --- | --- |
 | `#/` | Start: tre steg och modulernas status (`GET /api/moduler`) |
 | `#/projekt` (alias `#/oversikt`) | Demokvarteret med siffror ur körningarna (`GET /api/projekt`) |
-| `#/karta/<projekt>?vy=<vy>` | Kartan: före, efter, skillnad, svep, sida vid sida, avläsning och byggnadslager |
+| `#/karta/<projekt>?vy=<vy>` | Kartan: lagerpanel, rita planförslag, före, efter, skillnad, svep, sida vid sida, avläsning |
 | `#/fragor` och `#/fragor/<ref>` | Utredningsfrågor (se ovan) |
 | `#/om` | Om beräkningarna: modulerna och *Kontroll av beräkningarna* (A1–A9) |
 | `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om beräkningarna* |
@@ -112,7 +88,7 @@ hakparentes eller påhittade tal; ett test (`tests/webb/test_klient_platshallare
 ```bash
 npm ci                # exakt enligt package-lock.json (CI gör likadant)
 npm run typecheck
-npm test              # Nodes testkörare: SWEREF-omräkningen mot pyproj (1 mm)
+npm test              # Nodes testkörare: SWEREF-omräkningen mot pyproj och ritalgoritmerna
 npm run build
 ```
 

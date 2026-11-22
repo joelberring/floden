@@ -1,4 +1,5 @@
 import maplibregl from "maplibre-gl";
+import { swerefTillWgs84, wgs84TillSweref } from "./sweref";
 import type {
   BboxTuple,
   DikeAtgardPayload,
@@ -21,13 +22,6 @@ import type {
   RuttSvar,
   VallAtgardPayload,
 } from "./types";
-
-const REF_E_M = 150000.0;
-const REF_N_M = 6580000.0;
-const REF_LON_DEG = 18.0;
-const REF_LAT_DEG = 59.33;
-const METERS_PER_DEG_LAT = 111390.0;
-const METERS_PER_DEG_LON = 111320.0 * Math.cos((REF_LAT_DEG * Math.PI) / 180.0);
 
 export type RitLage =
   | "ingen"
@@ -70,17 +64,9 @@ export const STANDARD_LAGER: LagerTillstand[] = [
   { id: "rutt", namn: "Räddningstjänst (vägrisk)", synlig: false, opacitet: 0.95 },
 ];
 
-export function wgs84Till3011(lon: number, lat: number): [number, number] {
-  const e = REF_E_M + (lon - REF_LON_DEG) * METERS_PER_DEG_LON;
-  const n = REF_N_M + (lat - REF_LAT_DEG) * METERS_PER_DEG_LAT;
-  return [Number(e.toFixed(2)), Number(n.toFixed(2))];
-}
-
-export function e3011TillWgs84(e: number, n: number): [number, number] {
-  const lon = REF_LON_DEG + (e - REF_E_M) / METERS_PER_DEG_LON;
-  const lat = REF_LAT_DEG + (n - REF_N_M) / METERS_PER_DEG_LAT;
-  return [lon, lat];
-}
+/** Exakt omräkning (Gauss-Krüger, se sweref.ts); ersätter den tidigare linjära approximationen. */
+export const wgs84Till3011 = wgs84TillSweref;
+export const e3011TillWgs84 = swerefTillWgs84;
 
 function bboxWgs84TillImageCoordinates(
   bbox: BboxTuple,
@@ -148,7 +134,7 @@ export class FlodenKartaKontroll {
           },
         ],
       },
-      center: [REF_LON_DEG, REF_LAT_DEG],
+      center: swerefTillWgs84(150000, 6580000),
       zoom: 17,
       attributionControl: false,
     });
