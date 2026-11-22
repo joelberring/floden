@@ -439,21 +439,23 @@ def uppdatera_bates_flode_1d(
 
     ut = np.zeros_like(q_nu, dtype=np.float64)
     hv = h_flode[vat]
-    qv = q_nu[vat]
-    q_tr = q_bar[vat] if q_bar is not None else qv
+    q_tr = q_bar[vat] if q_bar is not None else q_nu[vat]
     sv = lutning[vat]
     nv = manning_n[vat]
 
+    # Punkt-implicit kvadratisk Manning-friktion: q + c*|q|*q = q_rhs
+    # Löses exakt utan kancellation via q = 2*q_rhs / (1 + sqrt(1 + 4*c*|q_rhs|)).
+    q_rhs = q_tr - g * hv * dt * sv
     if bredd_andel is not None:
         ba = np.maximum(bredd_andel[vat], 1e-6)
         h_vat = hv / ba
-        namnare = 1.0 + g * dt * (nv * nv) * np.abs(qv) / (ba * np.power(h_vat, 7.0 / 3.0))
-        q_ny = (q_tr - g * hv * dt * sv) / namnare
+        c_frikt = g * dt * (nv * nv) / (ba * np.power(h_vat, 7.0 / 3.0))
+        q_ny = (2.0 * q_rhs) / (1.0 + np.sqrt(1.0 + 4.0 * c_frikt * np.abs(q_rhs)))
         q_max = FROUDE_MAX * hv * np.sqrt(g * h_vat)
     else:
         h_73 = np.power(hv, 7.0 / 3.0)
-        namnare = 1.0 + g * dt * (nv * nv) * np.abs(qv) / h_73
-        q_ny = (q_tr - g * hv * dt * sv) / namnare
+        c_frikt = g * dt * (nv * nv) / h_73
+        q_ny = (2.0 * q_rhs) / (1.0 + np.sqrt(1.0 + 4.0 * c_frikt * np.abs(q_rhs)))
         q_max = FROUDE_MAX * hv * np.sqrt(g * hv)
 
     ut[vat] = np.clip(q_ny, -q_max, q_max)
@@ -748,10 +750,11 @@ def kor_2d_lokal_troghet(
     t_nu = t_start
     min_dx = min(dx, dy)
     safe_area = np.where(aktiv, aktiv_area, 1.0)
+    u_max = 0.0
 
     while t_nu < t_slut - 1e-12:
         h_max = float(np.max(h_eff)) if h_eff.size > 0 else 0.0
-        vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max, min_djup_m))
+        vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max, min_djup_m)) + u_max
         dt_cfl = cfl * min_dx / vaghast
         nasta_t = nasta_regnbrytpunkt(t_nu, tider, t_slut)
         dt = min(dt_cfl, dt_max_s, nasta_t - t_nu)
@@ -1003,9 +1006,12 @@ def kor_2d_lokal_troghet(
         if bool(np.any(vat_nu)):
             hast = np.zeros((hojd, bredd), dtype=np.float64)
             hast[vat_nu] = q_mag[vat_nu] / h_vel[vat_nu]
+            u_max = float(np.max(hast))
             np.maximum(max_hast_grov, hast, out=max_hast_grov)
             fara_steg = np.where(vat_nu, q_mag, 0.0)
             np.maximum(max_fara_grov, fara_steg, out=max_fara_grov)
+        else:
+            u_max = 0.0
 
         if subgrid_ankomst is not None:
             subgrid_ankomst.uppdatera(zs, t_nu)

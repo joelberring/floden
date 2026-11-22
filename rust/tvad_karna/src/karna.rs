@@ -43,7 +43,7 @@ pub fn utjamnat_flode(q: f64, q_fore: f64, q_efter: f64, theta: f64) -> f64 {
 #[inline]
 #[allow(clippy::neg_cmp_op_on_partial_ord)] // NaN ska räknas som torrt, som i NumPy-masken
 pub fn bates_flode(
-    q_nu: f64,
+    _q_nu: f64,
     q_bar: f64,
     h_flode: f64,
     lutning: f64,
@@ -55,8 +55,9 @@ pub fn bates_flode(
         return 0.0;
     }
     let h_73 = h_flode.powf(7.0 / 3.0);
-    let namnare = 1.0 + G * dt * (manning_n * manning_n) * q_nu.abs() / h_73;
-    let q_ny = (q_bar - G * h_flode * dt * lutning) / namnare;
+    let q_rhs = q_bar - G * h_flode * dt * lutning;
+    let c_frikt = G * dt * (manning_n * manning_n) / h_73;
+    let q_ny = (2.0 * q_rhs) / (1.0 + (1.0 + 4.0 * c_frikt * q_rhs.abs()).sqrt());
     let q_max = FROUDE_MAX * h_flode * (G * h_flode).sqrt();
     // np.clip(x, lo, hi) = min(max(x, lo), hi)
     np_min(np_max(q_ny, -q_max), q_max)

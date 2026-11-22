@@ -243,26 +243,40 @@ def _kubisk(u: float, xi: float, p: float, q: float) -> float:
 
 
 def _nollstalle(xi: float, p: float, q: float, u_a: float, u_b: float) -> float:
-    """Nollstället till 2ξu³ + pu + q i [u_a, u_b] med intervallhalvering (teckenbyte krävs)."""
-    f_a = _kubisk(u_a, xi, p, q)
-    f_b = _kubisk(u_b, xi, p, q)
+    """Nollstället till 2ξu³ + pu + q i [u_a, u_b] med säkrad Newton–Raphson + halvering."""
+    two_xi = 2.0 * xi
+    six_xi = 6.0 * xi
+    f_a = (two_xi * u_a * u_a + p) * u_a + q
+    f_b = (two_xi * u_b * u_b + p) * u_b + q
     if f_a == 0.0:
         return u_a
     if f_b == 0.0:
         return u_b
     if (f_a > 0.0) == (f_b > 0.0):
         raise BullerFel("Reflexpunktens ekvation (49) saknar teckenbyte i sökintervallet.")
-    for _ in range(200):
+    fa_pos = f_a > 0.0
+    u = 0.5 * (u_a + u_b)
+    for _ in range(100):
+        f_u = (two_xi * u * u + p) * u + q
+        if f_u == 0.0:
+            return u
+        if (f_u > 0.0) == fa_pos:
+            u_a = u
+        else:
+            u_b = u
+        # Säkrad Newton-steg inom (u_a, u_b), annars intervallhalvering
+        df = six_xi * u * u + p
+        if df != 0.0:
+            u_ny = u - f_u / df
+            if u_a < u_ny < u_b and abs(u_ny - u) <= 0.5 * (u_b - u_a):
+                if abs(u_ny - u) <= 1e-15 * max(1.0, abs(u_ny)):
+                    return u_ny
+                u = u_ny
+                continue
         u_m = 0.5 * (u_a + u_b)
         if u_m in (u_a, u_b):
-            break
-        f_m = _kubisk(u_m, xi, p, q)
-        if f_m == 0.0:
             return u_m
-        if (f_m > 0.0) == (f_a > 0.0):
-            u_a, f_a = u_m, f_m
-        else:
-            u_b = u_m
+        u = u_m
     return 0.5 * (u_a + u_b)
 
 

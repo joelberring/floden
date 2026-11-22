@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from buller.nord2000.stralar_krokta import reflexpunkter_m
 from dagsljus.matt import MattFel, SoltimmarAckumulator
 from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011, solposition
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
@@ -389,6 +390,43 @@ def test_vindkomfort_log_lag_enhetlig() -> None:
     )
     forvantat = 5.0 * math.log((2.0 + z0) / z0) / math.log((10.0 + z0) / z0)
     assert math.isclose(float(u[0]), forvantat, rel_tol=1e-12)
+
+
+def test_punkt_implicit_friktion_exakt_fran_vila() -> None:
+    """Punkt-implicit kvadratisk friktion dämpar direkt från vila och löser q + c|q|q = q_rhs."""
+    h = np.array([0.05], dtype=np.float64)
+    s = np.array([-0.10], dtype=np.float64)  # brant lutning 10 %
+    n = np.array([0.04], dtype=np.float64)
+    dt = 0.5
+    q_ny = uppdatera_bates_flode_1d(np.array([0.0]), h, s, n, dt, 1e-4)
+    q = float(q_ny[0])
+    q_rhs = -9.81 * 0.05 * dt * (-0.10)
+    c = 9.81 * dt * (0.04**2) / (0.05 ** (7.0 / 3.0))
+    # Uppfyller exakt q + c|q|q = q_rhs (och är strikt mindre än friktionsfria q_rhs)
+    assert 0.0 < q < q_rhs
+    assert math.isclose(q + c * abs(q) * q, q_rhs, rel_tol=1e-12)
+
+
+def test_nord2000_reflexpunkter_newton_exakt_kubisk_rot() -> None:
+    """reflexpunkter_m löser ekv. (49) till maskinprecision för både med- och motvind."""
+    for d, hs, hr, xi in (
+        (100.0, 0.3, 1.5, 1.0 / 2000.0),   # medvind (1 rot)
+        (800.0, 1.0, 1.5, 1.0 / 500.0),    # stark medvind (flera rötter)
+        (100.0, 1.0, 2.0, -1.0 / 3000.0),  # motvind (1 rot)
+    ):
+        rotter = reflexpunkter_m(d, hs, hr, xi)
+        assert len(rotter) >= 1
+        bs = hs * (2.0 + xi * hs)
+        br = hr * (2.0 + xi * hr)
+        p = bs + br - 0.5 * xi * d * d
+        q = 0.5 * d * (br - bs)
+        for x in rotter:
+            assert 0.0 <= x <= d
+            u = x - 0.5 * d
+            rest = (2.0 * xi * u * u + p) * u + q
+            skala = max(1.0, abs(p * u), abs(q))
+            assert abs(rest) <= 1e-12 * skala
+
 
 
 

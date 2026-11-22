@@ -35,6 +35,7 @@ from buller.typer import BullerFel
 
 EPSILON_RAD = 1.0e-8  # AV 1106/07 avsnitt 5.7.1, stycket efter tabell 5
 _VINKELTOLERANS_RAD = 1.0e-12  # avrundning i vinklar som anroparen räknat fram
+_PI_DIV_SQRT2_EXP_I_PI4 = (math.pi / math.sqrt(2.0)) * cmath.exp(1j * math.pi / 4.0)
 
 # AV 1106/07 tabell 4: koefficienter a₀ … a₁₂ i polynomet för f(x), x < 5 (ekv. 85).
 _F_KOEFFICIENTER: tuple[float, ...] = (
@@ -265,22 +266,13 @@ def _a_ganger_e(a: float, nu: float, omega: float, kil: Kil) -> complex:
     tau_s = kil.gangtid_kalla_s
     tau_r = kil.gangtid_mottagare_s
     tau = kil.gangtid_s
-    cos_a = math.cos(abs(a))
+    cos_a = math.cos(a)
     tidsfaktor = 2.0 * tau_s * tau_r / (tau * tau) + 0.5
-    b = (
-        math.sqrt(4.0 * omega * tau_s * tau_r / (math.pi * tau))
-        * cos_a
-        / math.sqrt(nu * nu + tidsfaktor * cos_a * cos_a)
-    )  # ekv. (83)
-    a_d = tecken(b) * complex(fresnel_f(abs(b)), -fresnel_g(abs(b)))  # ekv. (84)
-    return (
-        math.pi
-        / math.sqrt(2.0)
-        * math.sin(a)
-        * cmath.exp(1j * math.pi / 4.0)
-        / math.sqrt(1.0 + tidsfaktor * cos_a * cos_a / (nu * nu))
-        * a_d
-    )  # A·E_ν, ekv. (81)
+    rot_nu = math.sqrt(nu * nu + tidsfaktor * cos_a * cos_a)
+    b = math.sqrt(4.0 * omega * tau_s * tau_r / (math.pi * tau)) * cos_a / rot_nu  # ekv. (83)
+    abs_b = abs(b)
+    a_d = tecken(b) * complex(fresnel_f(abs_b), -fresnel_g(abs_b))  # ekv. (84)
+    return _PI_DIV_SQRT2_EXP_I_PI4 * (math.sin(a) * nu / rot_nu) * a_d  # A·E_ν, ekv. (81)
 
 
 def _cosinussats(a: float, b: float, vinkel_rad: float) -> float:

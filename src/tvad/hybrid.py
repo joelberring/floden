@@ -574,10 +574,11 @@ def kor_hybrid_2d_graf(
     min_dx = min(dx, dy)
     safe_area_2d = np.where(aktiv_2d, aktiv_area_2d, 1.0)
     sqrt_g = math.sqrt(GRAVITATION_M_S2)
+    u_max_2d = 0.0
 
     while t_nu < t_slut - 1e-12:
         h_max_2d = float(np.max(h_eff_2d)) if h_eff_2d.size > 0 else 0.0
-        vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max_2d, min_djup_m))
+        vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max_2d, min_djup_m)) + u_max_2d
         dt_cfl = cfl * min_dx / vaghast
         nasta_t = nasta_regnbrytpunkt(t_nu, tider, t_slut)
         dt = min(dt_cfl, dt_max_s, nasta_t - t_nu)
@@ -939,9 +940,12 @@ def kor_hybrid_2d_graf(
         if bool(np.any(vat_nu)):
             hast = np.zeros((hojd, bredd), dtype=np.float64)
             hast[vat_nu] = q_mag[vat_nu] / h_vel_2d[vat_nu]
+            u_max_2d = float(np.max(hast))
             np.maximum(max_hast_2d, hast, out=max_hast_2d)
             fara_steg = np.where(vat_nu, q_mag, 0.0)
             np.maximum(max_fara_2d, fara_steg, out=max_fara_2d)
+        else:
+            u_max_2d = 0.0
 
         if subgrid_ankomst is not None:
             subgrid_ankomst.uppdatera(zs_2d, t_nu)

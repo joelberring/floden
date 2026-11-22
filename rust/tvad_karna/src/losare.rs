@@ -205,9 +205,10 @@ pub fn kor(ind: &Indata) -> Utdata {
     };
 
     let mut h_max = 0.0f64;
+    let mut u_max = 0.0f64;
     while t_nu < ind.t_slut - 1e-12 {
-        // h_max kommer från passet som senast uppdaterade djupet (h_eff innehåller aldrig NaN).
-        let vaghast = (G * np_max(h_max, min_d)).sqrt();
+        // h_max och u_max kommer från passet som senast uppdaterade djup/hastighet.
+        let vaghast = (G * np_max(h_max, min_d)).sqrt() + u_max;
         let dt_cfl = ind.cfl * min_dx / vaghast;
         let nasta_t = nasta_brytpunkt(t_nu, &ind.tider, ind.t_slut);
         let mut dt = py_min3(dt_cfl, ind.dt_max, nasta_t - t_nu);
@@ -512,11 +513,12 @@ pub fn kor(ind: &Indata) -> Utdata {
         if nagon_vat {
             let (qx_r, qy_r, he, hf) = (&qx, &qy, &h_eff, &h_fore);
             let (qv, qo, qn, qs) = (&q_vast, &q_ost, &q_norr, &q_soder);
-            max_hast
+            u_max = max_hast
                 .par_chunks_mut(w)
                 .zip(max_fara.par_chunks_mut(w))
                 .enumerate()
-                .for_each(|(r, (mh, mf))| {
+                .map(|(r, (mh, mf))| {
+                    let mut umax_rad = 0.0f64;
                     for c in 0..w {
                         let i = r * w + c;
                         let mut qcx = 0.0f64;
@@ -555,11 +557,19 @@ pub fn kor(ind: &Indata) -> Utdata {
                         let q_mag = qcx.hypot(qcy);
                         let hv = np_max(hf[i], he[i]);
                         if ind.aktiv[i] && hv > min_d {
-                            mh[c] = np_max(mh[c], q_mag / hv);
+                            let u_cell = q_mag / hv;
+                            if u_cell > umax_rad {
+                                umax_rad = u_cell;
+                            }
+                            mh[c] = np_max(mh[c], u_cell);
                             mf[c] = np_max(mf[c], q_mag);
                         }
                     }
-                });
+                    umax_rad
+                })
+                .reduce(|| 0.0f64, |a, b| a.max(b));
+        } else {
+            u_max = 0.0;
         }
     }
 

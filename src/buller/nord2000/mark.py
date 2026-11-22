@@ -18,6 +18,11 @@ from buller.typer import BullerFel
 
 _ROT_PI = math.sqrt(math.pi)
 _H_STEG = 0.8  # ekv. (65)
+_PI_DIV_H = math.pi / _H_STEG
+_H_DIV_PI = _H_STEG / math.pi
+_W_TERMER: tuple[tuple[float, float], ...] = tuple(
+    (n * n * _H_STEG * _H_STEG, math.exp(-(n * n * _H_STEG * _H_STEG))) for n in range(1, 6)
+)
 _POLAVSTAND = 1.0e-3  # närmare än så till en pol i ekv. (70)–(73) används inte närmemetoden
 
 
@@ -60,24 +65,33 @@ def _w_stora_argument(rho_plus: complex) -> complex:
 
 def _w_sma_argument(x: float, y: float) -> complex:
     """w(ρ) för |x| ≤ 3,9 och |y| ≤ 3, AV 1106/07 avsnitt 5.6.3, ekv. (65)–(74)."""
-    h = _H_STEG
-    a1 = math.cos(2.0 * x * y)
-    b1 = math.sin(2.0 * x * y)
-    c1 = math.exp(-2.0 * y * math.pi / h) - math.cos(2.0 * x * math.pi / h)
-    d1 = math.sin(2.0 * x * math.pi / h)
+    two_xy = 2.0 * x * y
+    a1 = math.cos(two_xy)
+    b1 = math.sin(two_xy)
+    two_y_pi_h = 2.0 * y * _PI_DIV_H
+    two_x_pi_h = 2.0 * x * _PI_DIV_H
+    c1 = math.exp(-two_y_pi_h) - math.cos(two_x_pi_h)
+    d1 = math.sin(two_x_pi_h)
     namnare = c1 * c1 + d1 * d1
-    forfaktor = 2.0 * math.exp(-(x * x + 2.0 * y * math.pi / h - y * y))
-    p2 = forfaktor * (a1 * c1 - b1 * d1) / namnare
-    q2 = forfaktor * (a1 * d1 + b1 * c1) / namnare
+    x2 = x * x
+    y2 = y * y
+    forfaktor = 2.0 * math.exp(-(x2 + two_y_pi_h - y2))
+    inv_namnare = forfaktor / namnare
+    p2 = inv_namnare * (a1 * c1 - b1 * d1)
+    q2 = inv_namnare * (a1 * d1 + b1 * c1)
+    x2py2 = x2 + y2
+    y2mx2 = y2 - x2
+    f4x2y2 = 4.0 * x2 * y2
     summa_h = 0.0
     summa_k = 0.0
-    for n in range(1, 6):
-        n2h2 = n * n * h * h
-        gemensam = math.exp(-n2h2) / ((y * y - x * x + n2h2) ** 2 + 4.0 * x * x * y * y)
-        summa_h += gemensam * (x * x + y * y + n2h2)
-        summa_k += gemensam * (x * x + y * y - n2h2)
-    stor_h = h * y / (math.pi * (x * x + y * y)) + 2.0 * y * h / math.pi * summa_h
-    stor_k = h * x / (math.pi * (x * x + y * y)) + 2.0 * x * h / math.pi * summa_k
+    for n2h2, exp_neg in _W_TERMER:
+        d = y2mx2 + n2h2
+        gemensam = exp_neg / (d * d + f4x2y2)
+        summa_h += gemensam * (x2py2 + n2h2)
+        summa_k += gemensam * (x2py2 - n2h2)
+    inv_x2py2 = 1.0 / x2py2
+    stor_h = _H_DIV_PI * y * (inv_x2py2 + 2.0 * summa_h)
+    stor_k = _H_DIV_PI * x * (inv_x2py2 + 2.0 * summa_k)
     return complex(stor_h + p2, stor_k - q2)
 
 
