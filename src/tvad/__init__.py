@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from tvad.felindikator import (
+    FelindikatorResultat,
+    NodFelindikator,
+    berakna_2d_felindikator,
+)
 from tvad.hybrid import HybridJamforelse, jamfor_hybrid_mot_full2d, kor_hybrid_2d_graf
 from tvad.lokal_troghet import (
     GRAVITATION_M_S2,
@@ -42,7 +47,9 @@ __all__ = [
     "SFINCS_MASK_AKTIV",
     "SFINCS_MASK_INAKTIV",
     "SFINCS_MASK_OPPEN_RAND",
+    "FelindikatorResultat",
     "HybridJamforelse",
+    "NodFelindikator",
     "SfincsKonfig",
     "SfincsSaknasFel",
     "SubgridFel",
@@ -50,6 +57,7 @@ __all__ = [
     "TvadFel",
     "TvadResultat",
     "area_fran_vattenniva",
+    "berakna_2d_felindikator",
     "bygg_subgrid_tabell",
     "jamfor_hybrid_mot_full2d",
     "kant_flodesdjup_u",

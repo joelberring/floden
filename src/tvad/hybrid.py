@@ -25,6 +25,7 @@ from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.takvatten import TakvattenFordelning
 from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf, SankNod
 from testsvit.k1_io import GeoTransformInfo
+from tvad.felindikator import FelindikatorResultat, berakna_2d_felindikator
 from tvad.lokal_troghet import (
     FROUDE_MAX,
     GRAVITATION_M_S2,
@@ -357,6 +358,8 @@ def kor_hybrid_2d_graf(
     z_nivaer: int = 24,
     theta: float = 0.9,
     takvatten: TakvattenFordelning | None = None,
+    automatisk_2d_zonvaljare: bool = False,
+    felindikator: FelindikatorResultat | None = None,
 ) -> TvadResultat:
     """Kör hybrid 2D + sänkgraf med massbevarande kantkoppling till K6-format.
 
@@ -418,11 +421,27 @@ def kor_hybrid_2d_graf(
     cell_area_fin = dx_fin * dy_fin
 
     # 1. Välj djupa lövsänkor som grafnoder (garanterat disjunkta fotavtryck)
+    aktiv_indikator = felindikator
+    if automatisk_2d_zonvaljare and aktiv_indikator is None:
+        topp_mm_h = max((float(x) for x in regn_intensitet_mm_h), default=0.0)
+        aktiv_indikator = berakna_2d_felindikator(
+            eff_z_f32,
+            eff_slag,
+            geo,
+            graf,
+            topp_regn_mm_h=topp_mm_h,
+            varaktighet_s=max(1.0, t_slut - t_start),
+        )
+
     cell_till_hyb_nod = np.full((hojd_fin, bredd_fin), -1, dtype=np.int64)
     noder: list[_NodTillstand] = []
     for nod in graf.lovnoder():
         if nod.persistens_m < nod_persistens_grans_m or nod.cell_antal <= 0:
             continue
+        if aktiv_indikator is not None:
+            nod_ind = aktiv_indikator.nod_indikator.get(nod.nod_id)
+            if nod_ind is not None and nod_ind.kraver_2d:
+                continue
         nod_mask = (
             aktiv_tot_fin
             & (graf.cell_till_nod == nod.nod_id)
