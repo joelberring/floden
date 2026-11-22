@@ -107,8 +107,15 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     from docx.shared import Mm, Pt, RGBColor
 
     us = dok.utseende
-    brod = us.typsnitt_brodtext.familj if us.typsnitt_brodtext else "Arial"
-    rubr = us.typsnitt_rubriker.familj if us.typsnitt_rubriker else brod
+    # Förval: serif i brödtexten (Georgia), sans i rubriker, tabeller och småtext (Arial).
+    # Gelasio och Liberation Sans i PDF:en har samma teckenbredder som Georgia och Arial.
+    brod = us.typsnitt_brodtext.familj if us.typsnitt_brodtext else "Georgia"
+    rubr = (
+        us.typsnitt_rubriker.familj
+        if us.typsnitt_rubriker
+        else (brod if us.typsnitt_brodtext else "Arial")
+    )
+    sans = rubr
 
     d = Document()
     sek = d.sections[0]
@@ -158,6 +165,12 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     normal.font.color.rgb = farg(_TEXTFARG)
     satt_typsnitt(normal.element, brod)
     satt_sprak(normal.element.get_or_add_rPr())
+    # Versala (lining) siffror i brödtexten: Georgia har gemena siffror som förval, som är svåra
+    # att läsa i tal och mått. Word 2010 och senare läser w14:numForm, äldre hoppar över det.
+    w14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+    numform = normal.element.get_or_add_rPr().makeelement(f"{{{w14}}}numForm", {})
+    numform.set(f"{{{w14}}}val", "lining")
+    normal.element.get_or_add_rPr().append(numform)
     normal.paragraph_format.space_after = Pt(6)
     normal.paragraph_format.line_spacing = 1.2
     for niva, storlek, fore in ((1, 15, 20), (2, 12, 14), (3, 10.5, 10)):
@@ -209,8 +222,12 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                 it.text = f" {text} "
                 r._r.append(it)
 
+    def sans_run(r: Any) -> Any:
+        satt_typsnitt(r._r, sans)
+        return r
+
     def liten_run(p: Any, text: str) -> None:
-        r = p.add_run(text)
+        r = sans_run(p.add_run(text))
         r.font.size = Pt(8)
         r.font.color.rgb = farg(_SVAG)
 
@@ -320,13 +337,13 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                 v = tab.cell(0, 0).add_paragraph()
                 v.paragraph_format.space_after = Pt(0)
         if th.avsandare:
-            r = v.add_run(th.avsandare)
+            r = sans_run(v.add_run(th.avsandare))
             r.bold = True
             r.font.size = Pt(11)
         h = tab.cell(0, 1).paragraphs[0]
         h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         h.paragraph_format.space_after = Pt(1)
-        r = h.add_run(th.dokumenttyp)
+        r = sans_run(h.add_run(th.dokumenttyp))
         r.bold = True
         r.font.size = Pt(10)
         r.font.color.rgb = farg(_RUBRIKFARG)
@@ -335,7 +352,7 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
             h.paragraph_format.space_after = Pt(0)
             liten_run(h, f"{etikett} ")
-            rv = h.add_run(varde)
+            rv = sans_run(h.add_run(varde))
             rv.font.size = Pt(8.5)
         sep = d.add_paragraph()
         sep.paragraph_format.left_indent = Mm(-_UTSTICK_MM)
@@ -359,6 +376,7 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                 run.font.size = Pt(11.5)
                 p.paragraph_format.space_after = Pt(12)
             elif b.stil in ("liten", "notis"):
+                sans_run(run)
                 run.font.size = Pt(8.5)
                 run.font.color.rgb = farg(_SVAG)
                 if b.stil == "notis":
@@ -399,13 +417,13 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                         and cell_text in LJUSFARG
                     ):
                         hexa, _namn = LJUSFARG[cell_text]
-                        prick = p.add_run("● ")
+                        prick = sans_run(p.add_run("● "))
                         prick.font.color.rgb = farg(hexa)
                         prick.font.size = Pt(11)
-                        r = p.add_run(_ljustext(dok, cell_text))
+                        r = sans_run(p.add_run(_ljustext(dok, cell_text)))
                         r.font.size = storlek
                         continue
-                    r = p.add_run(cell_text)
+                    r = sans_run(p.add_run(cell_text))
                     r.font.size = storlek
                     if huvud or (b.kolumner is None and j == 0):
                         r.bold = True
@@ -458,9 +476,11 @@ def _normalisera_docx(fil: Path) -> None:
 
 
 def _registrera_vera() -> None:
-    """Förvalt typsnitt: Liberation Sans (SIL OFL 1.1, följer med i src/rapport/typsnitt).
+    """Förvalda typsnitt (SIL OFL 1.1, följer med i src/rapport/typsnitt):
 
-    Samma teckenbredder som Arial, som är förvalet i Word: PDF och Word ser likadana ut.
+    - Gelasio (serif) för brödtexten – samma teckenbredder som Georgia, förvalet i Word.
+    - Liberation Sans för rubriker, tabeller och småtext – samma teckenbredder som Arial.
+
     (Funktionsnamnet och de interna namnen "FlodenVera" är kvar av historiska skäl.)
     """
     from reportlab.lib.fonts import addMapping
@@ -480,6 +500,19 @@ def _registrera_vera() -> None:
         addMapping("FlodenVera", 1, 0, "FlodenVera-Bold")
         addMapping("FlodenVera", 0, 1, "FlodenVera-Italic")
         addMapping("FlodenVera", 1, 1, "FlodenVera-BoldItalic")
+    if "FlodenSerif" not in pdfmetrics.getRegisteredFontNames():
+        mapp = Path(__file__).parent / "typsnitt"
+        for namn, fil in (
+            ("FlodenSerif", "Gelasio-Regular.ttf"),
+            ("FlodenSerif-Bold", "Gelasio-Bold.ttf"),
+            ("FlodenSerif-Italic", "Gelasio-Italic.ttf"),
+            ("FlodenSerif-BoldItalic", "Gelasio-BoldItalic.ttf"),
+        ):
+            pdfmetrics.registerFont(TTFont(namn, str(mapp / fil)))
+        addMapping("FlodenSerif", 0, 0, "FlodenSerif")
+        addMapping("FlodenSerif", 1, 0, "FlodenSerif-Bold")
+        addMapping("FlodenSerif", 0, 1, "FlodenSerif-Italic")
+        addMapping("FlodenSerif", 1, 1, "FlodenSerif-BoldItalic")
 
 
 def _registrera_lokalt(t: Typsnitt, vad: str) -> str:
@@ -500,14 +533,25 @@ def _registrera_lokalt(t: Typsnitt, vad: str) -> str:
     return namn
 
 
-def _registrera_typsnitt(dok: Dokument) -> tuple[str, str, str, str]:
-    """(brödtext, fet, kursiv, rubriker) som namn registrerade i reportlab."""
+def _registrera_typsnitt(dok: Dokument) -> tuple[str, str, str, str, str]:
+    """(brödtext, fet, kursiv, rubriker, sans) som namn registrerade i reportlab.
+
+    sans används i tabeller, småtext, titelhuvud, sidhuvud och sidfot. Förval: serif (Gelasio)
+    i brödtexten och Liberation Sans i resten. Med ett lokalt typsnitt för brödtexten används
+    det också i tabeller och småtext (som tidigare), om inget lokalt rubriktypsnitt anges.
+    """
     from reportlab.lib.fonts import addMapping
 
     _registrera_vera()
     us = dok.utseende
     if us.typsnitt_brodtext is None and us.typsnitt_rubriker is None:
-        return "FlodenVera", "FlodenVera-Bold", "FlodenVera-Italic", "FlodenVera-Bold"
+        return (
+            "FlodenSerif",
+            "FlodenSerif-Bold",
+            "FlodenSerif-Italic",
+            "FlodenVera-Bold",
+            "FlodenVera",
+        )
     brod = (
         _registrera_lokalt(us.typsnitt_brodtext, "brödtext")
         if us.typsnitt_brodtext
@@ -525,7 +569,8 @@ def _registrera_typsnitt(dok: Dokument) -> tuple[str, str, str, str]:
         addMapping(brod, 1, 0, fet)
         addMapping(brod, 0, 1, kursiv)
         addMapping(brod, 1, 1, fet)
-    return brod, fet, kursiv, rubr
+    sans = brod if us.typsnitt_brodtext else "FlodenVera"
+    return brod, fet, kursiv, rubr, sans
 
 
 _UPPHOJT_TILL: Final[dict[str, str]] = dict(zip("⁻⁰¹²³⁴⁵⁶⁷⁸⁹", "−0123456789", strict=True))
@@ -564,7 +609,8 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     )
 
     us = dok.utseende
-    typsnitt, fet, kursiv, rubriktyp = _registrera_typsnitt(dok)
+    typsnitt, fet, kursiv, rubriktyp, sans = _registrera_typsnitt(dok)
+    sans_fet = "FlodenVera-Bold" if sans == "FlodenVera" else fet
     text_c = colors.HexColor("#" + _TEXTFARG)
     svag_c = colors.HexColor("#" + _SVAG)
     linje_c = colors.HexColor("#" + _LINJE)
@@ -583,9 +629,17 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     stilar = {
         "normal": bas,
         "ingress": ParagraphStyle("ingress", parent=bas, fontSize=11, leading=15.5, spaceAfter=12),
-        "liten": ParagraphStyle("liten", parent=bas, fontSize=8, leading=10.8, textColor=svag_c),
+        "liten": ParagraphStyle(
+            "liten", parent=bas, fontName=sans, fontSize=8, leading=10.8, textColor=svag_c
+        ),
         "notis": ParagraphStyle(
-            "notis", parent=bas, fontSize=8, leading=10.8, textColor=svag_c, spaceAfter=10
+            "notis",
+            parent=bas,
+            fontName=sans,
+            fontSize=8,
+            leading=10.8,
+            textColor=svag_c,
+            spaceAfter=10,
         ),
         "titel": ParagraphStyle(
             "titel",
@@ -597,9 +651,11 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             textColor=rubrik_c,
             leftIndent=utsk,
         ),
-        "cell": ParagraphStyle("cell", parent=bas, fontSize=8.5, leading=11, spaceAfter=0),
+        "cell": ParagraphStyle(
+            "cell", parent=bas, fontName=sans, fontSize=8.5, leading=11, spaceAfter=0
+        ),
         "cell_liten": ParagraphStyle(
-            "cell_liten", parent=bas, fontSize=7.3, leading=9.3, spaceAfter=0
+            "cell_liten", parent=bas, fontName=sans, fontSize=7.3, leading=9.3, spaceAfter=0
         ),
         "bildtext": ParagraphStyle(
             "bildtext",
@@ -610,9 +666,17 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             textColor=svag_c,
             spaceAfter=14,
         ),
-        "huvud_v": ParagraphStyle("huvud_v", parent=bas, fontName=fet, fontSize=11, leading=14),
+        "huvud_v": ParagraphStyle(
+            "huvud_v", parent=bas, fontName=sans_fet, fontSize=11, leading=14
+        ),
         "huvud_h": ParagraphStyle(
-            "huvud_h", parent=bas, fontSize=8.5, leading=11.5, alignment=TA_RIGHT, spaceAfter=0
+            "huvud_h",
+            parent=bas,
+            fontName=sans,
+            fontSize=8.5,
+            leading=11.5,
+            alignment=TA_RIGHT,
+            spaceAfter=0,
         ),
     }
     rubrikstilar = {
@@ -665,7 +729,8 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             vanster.append(para(th.avsandare, stilar["huvud_v"]))
         hoger: list[Any] = [
             Paragraph(
-                f'<font name="{fet}" color="#{_RUBRIKFARG}">{_pdf_text(th.dokumenttyp)}</font>',
+                f'<font name="{sans_fet}" color="#{_RUBRIKFARG}">'
+                f"{_pdf_text(th.dokumenttyp)}</font>",
                 ParagraphStyle("dt", parent=stilar["huvud_h"], fontSize=10, leading=13),
             )
         ]
@@ -718,7 +783,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         elif isinstance(b, Tabell):
             cst = stilar["cell_liten"] if b.liten else stilar["cell"]
             tbredd = hel if b.liten else bredd
-            hst = ParagraphStyle("huvud", parent=cst, fontName=fet)
+            hst = ParagraphStyle("huvud", parent=cst, fontName=sans_fet)
             data: list[list[Any]] = []
             if b.kolumner:
                 data.append([para(k, hst) for k in b.kolumner])
@@ -817,7 +882,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
 
         def _rita_ram(self, antal: int) -> None:
             self.saveState()
-            self.setFont(typsnitt, 7.5)
+            self.setFont(sans, 7.5)
             self.setFillColor(svag_c)
             if self._pageNumber > 1 or th is None:
                 self.drawString(marg_v, A4[1] - 12 * mm, dok.sidhuvud)

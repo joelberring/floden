@@ -108,7 +108,7 @@ samma fil. Fältet är valfritt; en äldre rapport utan fältet får förvalen.
 | `handlaggare` | `""` | i titelhuvudet. Inga riktiga namn i exempel; skriv "Anges av beställaren" eller lämna tomt |
 | `accentfarg` | `"#000000"` | linjen under titelhuvudet (rubrikerna är alltid svarta) |
 | `logotyp` | ingen | lokal PNG/JPEG; ingen logotyp om ingen anges |
-| `typsnitt_brodtext`, `typsnitt_rubriker` | Liberation Sans (PDF), Arial (Word) | lokala TTF/OTF-filer, t.ex. Stockholm Type |
+| `typsnitt_brodtext`, `typsnitt_rubriker` | brödtext Gelasio (PDF) / Georgia (Word); rubriker, tabeller och småtext Liberation Sans / Arial | lokala TTF/OTF-filer, t.ex. Stockholm Type |
 
 **Filer.** Logotyp och typsnitt anges med lokal sökväg. Floden kontrollerar filen och lägger en
 kopia i rapportens mapp (`resurser/<sha256>.<ändelse>`, under `data/lokal/`, utanför git).
@@ -193,9 +193,11 @@ AI-stöd (modell) … Körloggen finns som bilaga." och ansvarig utredare (valfr
 **Export:** Word med python-docx och PDF med reportlab, båda ren Python (`pip install -e
 ".[rapport]"`, ingår i `dev` och `mcp`), samma block i båda. PDF-vägen valdes för att den saknar
 systemberoenden (ingen LibreOffice), fungerar likadant på Mac och har ett medföljande typsnitt
-(Liberation Sans 2.1.5, SIL OFL 1.1, i `src/rapport/typsnitt/` med licensen) med svenska tecken,
-², ³, − och smalt hårt mellanslag. Liberation Sans har samma teckenbredder som Arial, så PDF och
-Word ser likadana ut; `invariant` och fasta tider i
+med serif i brödtexten och sans i rubriker, tabeller, småtext, sidhuvud och sidfot: Gelasio
+(SIL OFL 1.1, samma teckenbredder som Georgia, siffrorna ändrade till versala) och Liberation
+Sans 2.1.5 (SIL OFL 1.1, samma teckenbredder som Arial). Båda ligger med licenser i
+`src/rapport/typsnitt/`. Word-filen använder Georgia och Arial, så PDF och Word ser likadana ut;
+Word får versala siffror via `w14:numForm`; `invariant` och fasta tider i
 docx-zip gör samma rapport och inställningar till samma fil. Word använder Arial (eller det lokala
 typsnittets familjenamn), Words inbyggda rubrikformat (Rubrik 1–3, så att innehållsförteckning
 och navigeringsfönstret fungerar), svenska som språk (stavningskontrollen) och sidfoten
