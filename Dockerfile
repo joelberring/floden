@@ -34,7 +34,7 @@ RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin floden
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN pip install -e ".[konto,mcp]"
+RUN pip install -e ".[konto,mcp,rapport]"
 COPY . .
 COPY --from=webb /src/webb/dist ./webb/dist
 COPY --from=rust /src/tools/lasclip/target/release/lasclip /usr/local/bin/lasclip
