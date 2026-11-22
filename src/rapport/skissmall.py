@@ -115,7 +115,7 @@ class Typsnitt:
 
 @dataclass(frozen=True)
 class Utseende:
-    accent: str = "1F4E79"
+    accent: str = "000000"
     sidnummer: str = "Sida {sida} ({antal})"
     ljus: dict[str, str] = field(default_factory=dict)
     """Text vid trafikljuset per fördjupningsvärde (nej, ja, kan_inte_avgoras)."""
@@ -444,7 +444,7 @@ def bygg_dokument(
         Tabell(
             ("Fråga", "Svar i underlaget" if sbk else "Status", "Fördjupning"),
             tuple(sam_rader),
-            (0.56, 0.2, 0.24) if sbk else (0.56, 0.17, 0.27),
+            (0.48, 0.26, 0.26) if sbk else (0.56, 0.17, 0.27),
             ljus_kolumn=2,
         )
     )
@@ -704,7 +704,7 @@ def bygg_dokument(
             Tabell(
                 ("", "Adress", "Värde", "Mått, statistik, tid", "Nämnare", "Körning, fil"),
                 tuple(brader),
-                (0.05, 0.19, 0.15, 0.27, 0.14, 0.2),
+                (0.06, 0.19, 0.14, 0.27, 0.14, 0.2),
                 liten=True,
             )
         )

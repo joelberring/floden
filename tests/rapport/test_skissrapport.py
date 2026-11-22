@@ -164,7 +164,8 @@ def test_pdf_har_sidor_och_text(exporterad: dict[str, Any]) -> None:
     for i, t in enumerate(texter, start=1):
         assert f"Sida {i} ({sidor})" in t
     forsta_bilaga = next(i for i, t in enumerate(texter) if "Bilaga 1 Belägg" in t)
-    assert forsta_bilaga <= 6, "skissunderlaget ska vara högst sex sidor före bilagorna"
+    # smal textspalt (svensk rapportlayout) ger något fler sidor än full bredd
+    assert forsta_bilaga <= 7, "skissunderlaget ska vara högst sju sidor före bilagorna"
     assert "Skissunderlag skyfall" in allt
     for p in exporterad["rapport"].pastaenden:
         # pdf-texten bryter rader; jämför första tolv orden

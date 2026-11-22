@@ -24,7 +24,7 @@ from gemensamt.hash import sha256_fil
 
 SPRAKPROFILER: Final[tuple[str, ...]] = ("sbk", "neutral")
 STANDARD_AVSANDARE: Final[str] = "Stadsbyggnadskontoret"
-STANDARD_ACCENT: Final[str] = "1F4E79"
+STANDARD_ACCENT: Final[str] = "000000"
 FILROLLER: Final[dict[str, str]] = {
     "logotyp": "logotypen",
     "typsnitt_brodtext": "typsnittet för brödtext",

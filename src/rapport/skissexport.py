@@ -11,8 +11,9 @@ bilden; sidfot med "Sida 2 (9)". Språket är satt till svenska i båda formaten
   Heading 1–3), så att innehållsförteckning och navigeringsfönstret fungerar. Typsnitt Arial,
   eller familjenamnet för ett lokalt typsnitt (Word bäddar inte in det; det måste finnas på
   datorn som öppnar filen).
-- **PDF:** reportlab (ren Python, inga systemberoenden). Typsnittet är Bitstream Vera Sans, som
-  följer med reportlab, eller ett lokalt TTF/OTF-typsnitt (TrueType-konturer) som bäddas in; dess
+- **PDF:** reportlab (ren Python, inga systemberoenden). Typsnittet är Liberation Sans
+  (SIL OFL 1.1, i src/rapport/typsnitt; samma teckenbredder som Arial i Word), eller ett lokalt
+  TTF/OTF-typsnitt (TrueType-konturer) som bäddas in; dess
   familjenamn och sha256 står då i PDF:ens metadata (nyckelord) och i rapportens exportpost.
   `invariant` gör filen byte-identisk för samma innehåll.
 """
@@ -50,8 +51,15 @@ _TEXTFARG = "1F2933"
 _SVAG = "56616C"
 _LINJE = "C9D1D9"
 _HUVUD_BG = "EEF2F5"
-_MARGINAL_MM = 22.0
-_BREDD_MM = 210.0 - 2 * _MARGINAL_MM
+# Svensk rapportlayout: smal textspalt med hängande rubriker. Huvudrubriker, titel, titelhuvud
+# och breda tabeller börjar vid vänster marginal; brödtext, bilder och smala tabeller står i
+# spalten _UTSTICK_MM längre in.
+_MARGINAL_V_MM = 22.0
+_MARGINAL_H_MM = 28.0
+_UTSTICK_MM = 30.0
+_HEL_MM = 210.0 - _MARGINAL_V_MM - _MARGINAL_H_MM  # 160 mm
+_BREDD_MM = _HEL_MM - _UTSTICK_MM  # 130 mm, textspalten
+_RUBRIKFARG = "000000"
 _FIGUR_MM = 116.0
 
 
@@ -106,7 +114,8 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     sek = d.sections[0]
     sek.orientation = WD_ORIENT.PORTRAIT
     sek.page_width, sek.page_height = Mm(210), Mm(297)
-    sek.left_margin = sek.right_margin = Mm(_MARGINAL_MM)
+    sek.left_margin = Mm(_MARGINAL_V_MM + _UTSTICK_MM)
+    sek.right_margin = Mm(_MARGINAL_H_MM)
     sek.top_margin, sek.bottom_margin = Mm(22), Mm(20)
     sek.header_distance, sek.footer_distance = Mm(10), Mm(9)
 
@@ -157,7 +166,9 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         st.font.size = Pt(storlek)
         st.font.bold = True
         st.font.italic = False
-        st.font.color.rgb = farg(us.accent if niva < 3 else _TEXTFARG)
+        st.font.color.rgb = farg(_RUBRIKFARG)
+        if niva < 3:
+            st.paragraph_format.left_indent = Mm(-_UTSTICK_MM)
         st.paragraph_format.space_before = Pt(fore)
         st.paragraph_format.space_after = Pt(5 if niva == 1 else 3)
         st.paragraph_format.keep_with_next = True
@@ -166,7 +177,8 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     titel_st.font.name = rubr
     titel_st.font.size = Pt(22)
     titel_st.font.bold = True
-    titel_st.font.color.rgb = farg(_TEXTFARG)
+    titel_st.font.color.rgb = farg(_RUBRIKFARG)
+    titel_st.paragraph_format.left_indent = Mm(-_UTSTICK_MM)
     satt_typsnitt(titel_st.element, rubr)
     # Titelformatet i standardmallen har en linje under; den ersätts av titelhuvudets linje.
     ppr = titel_st.element.find(qn("w:pPr"))
@@ -203,6 +215,7 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         r.font.color.rgb = farg(_SVAG)
 
     hp = sek.header.paragraphs[0]
+    hp.paragraph_format.left_indent = Mm(-_UTSTICK_MM)
     liten_run(hp, dok.sidhuvud)
     # Första sidan har titelhuvudet i stället för sidhuvud; sidfoten är densamma på alla sidor.
     sek.different_first_page_header_footer = dok.titelhuvud is not None
@@ -261,6 +274,13 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                 mar.append(el)
             tab._tbl.tblPr.append(mar)
 
+    def utstick(tab: Any) -> None:
+        """Tabellen börjar vid vänster marginal (hänger ut som rubrikerna)."""
+        ind = OxmlElement("w:tblInd")
+        ind.set(qn("w:w"), str(round(-_UTSTICK_MM / 25.4 * 1440)))
+        ind.set(qn("w:type"), "dxa")
+        tab._tbl.tblPr.append(ind)
+
     def rad_hel(rad: Any, rubrikrad: bool) -> None:
         """Raden delas inte mellan sidor; rubrikraden upprepas på varje sida."""
         tr_pr = rad._tr.get_or_add_trPr()
@@ -288,9 +308,10 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         tab.autofit = False
         kanter(tab, synliga=False)
         fast_layout(tab, marginal=False)
+        utstick(tab)
         for j, b in enumerate((0.55, 0.45)):
-            tab.columns[j].width = Mm(_BREDD_MM * b)
-            tab.cell(0, j).width = Mm(_BREDD_MM * b)
+            tab.columns[j].width = Mm(_HEL_MM * b)
+            tab.cell(0, j).width = Mm(_HEL_MM * b)
         v = tab.cell(0, 0).paragraphs[0]
         v.paragraph_format.space_after = Pt(0)
         if us.logotyp is not None:
@@ -308,7 +329,7 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         r = h.add_run(th.dokumenttyp)
         r.bold = True
         r.font.size = Pt(10)
-        r.font.color.rgb = farg(us.accent)
+        r.font.color.rgb = farg(_RUBRIKFARG)
         for etikett, varde in th.rader():
             h = tab.cell(0, 1).add_paragraph()
             h.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -317,6 +338,7 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             rv = h.add_run(varde)
             rv.font.size = Pt(8.5)
         sep = d.add_paragraph()
+        sep.paragraph_format.left_indent = Mm(-_UTSTICK_MM)
         sep.paragraph_format.space_after = Pt(14)
         linje_under(sep)
 
@@ -354,15 +376,18 @@ def skriv_word(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             tab.autofit = False
             kanter(tab)
             fast_layout(tab)
+            tbredd = _HEL_MM if b.liten else _BREDD_MM
+            if b.liten:
+                utstick(tab)
             for j, kol in enumerate(tab.columns):
-                kol.width = Mm(_BREDD_MM * b.bredder[j])
+                kol.width = Mm(tbredd * b.bredder[j])
             storlek = Pt(8) if b.liten else Pt(9)
             for i, wrad in enumerate(tab.rows):
                 rad_hel(wrad, b.kolumner is not None and i == 0)
             for i, rad in enumerate(rader):
                 for j, cell_text in enumerate(rad):
                     cell = tab.cell(i, j)
-                    cell.width = Mm(_BREDD_MM * b.bredder[j])
+                    cell.width = Mm(tbredd * b.bredder[j])
                     p = cell.paragraphs[0]
                     p.paragraph_format.space_after = Pt(0)
                     p.paragraph_format.line_spacing = 1.1
@@ -433,17 +458,24 @@ def _normalisera_docx(fil: Path) -> None:
 
 
 def _registrera_vera() -> None:
-    import reportlab
+    """Förvalt typsnitt: Liberation Sans (SIL OFL 1.1, följer med i src/rapport/typsnitt).
+
+    Samma teckenbredder som Arial, som är förvalet i Word: PDF och Word ser likadana ut.
+    (Funktionsnamnet och de interna namnen "FlodenVera" är kvar av historiska skäl.)
+    """
     from reportlab.lib.fonts import addMapping
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.ttfonts import TTFont
 
     if "FlodenVera" not in pdfmetrics.getRegisteredFontNames():
-        mapp = Path(reportlab.__file__).parent / "fonts"
-        pdfmetrics.registerFont(TTFont("FlodenVera", str(mapp / "Vera.ttf")))
-        pdfmetrics.registerFont(TTFont("FlodenVera-Bold", str(mapp / "VeraBd.ttf")))
-        pdfmetrics.registerFont(TTFont("FlodenVera-Italic", str(mapp / "VeraIt.ttf")))
-        pdfmetrics.registerFont(TTFont("FlodenVera-BoldItalic", str(mapp / "VeraBI.ttf")))
+        mapp = Path(__file__).parent / "typsnitt"
+        for namn, fil in (
+            ("FlodenVera", "LiberationSans-Regular.ttf"),
+            ("FlodenVera-Bold", "LiberationSans-Bold.ttf"),
+            ("FlodenVera-Italic", "LiberationSans-Italic.ttf"),
+            ("FlodenVera-BoldItalic", "LiberationSans-BoldItalic.ttf"),
+        ):
+            pdfmetrics.registerFont(TTFont(namn, str(mapp / fil)))
         addMapping("FlodenVera", 0, 0, "FlodenVera")
         addMapping("FlodenVera", 1, 0, "FlodenVera-Bold")
         addMapping("FlodenVera", 0, 1, "FlodenVera-Italic")
@@ -501,7 +533,7 @@ _UPPHOJT_TILL: Final[dict[str, str]] = dict(zip("⁻⁰¹²³⁴⁵⁶⁷⁸⁹"
 
 def _pdf_text(s: str, storlek: float = 9.5) -> str:
     """Escapar för reportlab, gör upphöjda exponenter till <super> och smalt hårt mellanslag
-    (U+202F, saknas i typsnittet) till ett hårt mellanslag i mindre grad (bryts aldrig)."""
+    (U+202F, saknas i många lokala typsnitt) till ett hårt mellanslag i mindre grad."""
     s = escape(s)
 
     def sup(m: re.Match[str]) -> str:
@@ -520,8 +552,8 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     from reportlab.pdfgen.canvas import Canvas
     from reportlab.platypus import (
         Flowable,
-        HRFlowable,
         Image,
+        Indenter,
         KeepTogether,
         PageBreak,
         Paragraph,
@@ -537,11 +569,13 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     svag_c = colors.HexColor("#" + _SVAG)
     linje_c = colors.HexColor("#" + _LINJE)
     accent_c = colors.HexColor("#" + us.accent)
+    rubrik_c = colors.HexColor("#" + _RUBRIKFARG)
+    utsk = -_UTSTICK_MM * mm  # hängande rubriker
     bas = ParagraphStyle(
         "bas",
         fontName=typsnitt,
-        fontSize=9.5,
-        leading=13.8,
+        fontSize=10,
+        leading=14.5,
         textColor=text_c,
         alignment=TA_LEFT,
         spaceAfter=6,
@@ -554,7 +588,14 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             "notis", parent=bas, fontSize=8, leading=10.8, textColor=svag_c, spaceAfter=10
         ),
         "titel": ParagraphStyle(
-            "titel", parent=bas, fontName=rubriktyp, fontSize=20, leading=24.5, spaceAfter=10
+            "titel",
+            parent=bas,
+            fontName=rubriktyp,
+            fontSize=20,
+            leading=24.5,
+            spaceAfter=10,
+            textColor=rubrik_c,
+            leftIndent=utsk,
         ),
         "cell": ParagraphStyle("cell", parent=bas, fontSize=8.5, leading=11, spaceAfter=0),
         "cell_liten": ParagraphStyle(
@@ -577,15 +618,15 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     rubrikstilar = {
         1: ParagraphStyle(
             "h1", parent=bas, fontName=rubriktyp, fontSize=14, leading=18,
-            textColor=accent_c, spaceBefore=16, spaceAfter=6,
+            textColor=rubrik_c, spaceBefore=18, spaceAfter=6, leftIndent=utsk,
         ),
         2: ParagraphStyle(
             "h2", parent=bas, fontName=rubriktyp, fontSize=11.5, leading=15,
-            textColor=accent_c, spaceBefore=12, spaceAfter=4,
+            textColor=rubrik_c, spaceBefore=13, spaceAfter=4, leftIndent=utsk,
         ),
         3: ParagraphStyle(
-            "h3", parent=bas, fontName=rubriktyp, fontSize=9.5, leading=13,
-            spaceBefore=9, spaceAfter=2,
+            "h3", parent=bas, fontName=rubriktyp, fontSize=10, leading=13.5,
+            textColor=rubrik_c, spaceBefore=9, spaceAfter=2,
         ),
     }  # fmt: skip
 
@@ -605,8 +646,10 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             self.canv.setStrokeColor(self.farg)
             self.canv.circle(1.6 * mm, 1.6 * mm, 1.5 * mm, fill=1, stroke=0)
 
-    marg = _MARGINAL_MM * mm
-    bredd = A4[0] - 2 * marg
+    marg_v = _MARGINAL_V_MM * mm
+    marg_h = _MARGINAL_H_MM * mm
+    bredd = _BREDD_MM * mm  # textspalten
+    hel = _HEL_MM * mm  # från vänster marginal
     flode: list[Any] = []
     th = dok.titelhuvud
     if th is not None:
@@ -615,14 +658,14 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             logo = Image(str(us.logotyp))
             skala = (14 * mm) / logo.imageHeight
             logo.drawHeight = 14 * mm
-            logo.drawWidth = min(logo.imageWidth * skala, bredd * 0.5)
+            logo.drawWidth = min(logo.imageWidth * skala, hel * 0.5)
             logo.hAlign = "LEFT"
             vanster += [logo, Spacer(1, 2 * mm)]
         if th.avsandare:
             vanster.append(para(th.avsandare, stilar["huvud_v"]))
         hoger: list[Any] = [
             Paragraph(
-                f'<font name="{fet}" color="#{us.accent}">{_pdf_text(th.dokumenttyp)}</font>',
+                f'<font name="{fet}" color="#{_RUBRIKFARG}">{_pdf_text(th.dokumenttyp)}</font>',
                 ParagraphStyle("dt", parent=stilar["huvud_h"], fontSize=10, leading=13),
             )
         ]
@@ -633,9 +676,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                     stilar["huvud_h"],
                 )
             )
-        huvud = Table(
-            [[vanster or "", hoger]], colWidths=[bredd * 0.55, bredd * 0.45], hAlign="LEFT"
-        )
+        huvud = Table([[vanster or "", hoger]], colWidths=[hel * 0.55, hel * 0.45], hAlign="LEFT")
         huvud.setStyle(
             TableStyle(
                 [
@@ -643,15 +684,12 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                     ("LEFTPADDING", (0, 0), (-1, -1), 0),
                     ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                     ("TOPPADDING", (0, 0), (-1, -1), 0),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3 * mm),
+                    ("LINEBELOW", (0, 0), (-1, -1), 1.2, accent_c),
                 ]
             )
         )
-        flode += [
-            huvud,
-            Spacer(1, 3 * mm),
-            HRFlowable(width="100%", thickness=1.2, color=accent_c, spaceAfter=7 * mm),
-        ]
+        flode += [Indenter(left=utsk), huvud, Spacer(1, 7 * mm), Indenter(left=-utsk)]
     flode.append(para(dok.titel, stilar["titel"]))
     vantande_figurer: list[Any] = []
 
@@ -679,6 +717,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             flode.append(Spacer(1, 4))
         elif isinstance(b, Tabell):
             cst = stilar["cell_liten"] if b.liten else stilar["cell"]
+            tbredd = hel if b.liten else bredd
             hst = ParagraphStyle("huvud", parent=cst, fontName=fet)
             data: list[list[Any]] = []
             if b.kolumner:
@@ -690,7 +729,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                         hexa, _namn = LJUSFARG[cell_text]
                         inre = Table(
                             [[Prick(hexa), para(_ljustext(dok, cell_text), cst)]],
-                            colWidths=[4.2 * mm, bredd * b.bredder[j] - 4.2 * mm - 8],
+                            colWidths=[4.2 * mm, tbredd * b.bredder[j] - 4.2 * mm - 8],
                         )
                         inre.setStyle(
                             TableStyle(
@@ -710,7 +749,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                 data.append(celler)
             tab = Table(
                 data,
-                colWidths=[bredd * x for x in b.bredder],
+                colWidths=[tbredd * x for x in b.bredder],
                 repeatRows=1 if b.kolumner else 0,
                 hAlign="LEFT",
             )
@@ -726,7 +765,10 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             if b.kolumner:
                 stil_lista.append(("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + _HUVUD_BG)))
             tab.setStyle(TableStyle(stil_lista))
-            flode.append(tab)
+            if b.liten:
+                flode += [Indenter(left=utsk), tab, Indenter(left=-utsk)]
+            else:
+                flode.append(tab)
             flode.append(Spacer(1, 9))
         elif isinstance(b, Figur):
             fil = Path(rapportmapp) / b.fil
@@ -778,13 +820,13 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             self.setFont(typsnitt, 7.5)
             self.setFillColor(svag_c)
             if self._pageNumber > 1 or th is None:
-                self.drawString(marg, A4[1] - 12 * mm, dok.sidhuvud)
+                self.drawString(marg_v, A4[1] - 12 * mm, dok.sidhuvud)
                 self.setStrokeColor(linje_c)
                 self.setLineWidth(0.4)
-                self.line(marg, A4[1] - 13.5 * mm, A4[0] - marg, A4[1] - 13.5 * mm)
-            self.drawString(marg, 11 * mm, dok.sidfot)
+                self.line(marg_v, A4[1] - 13.5 * mm, A4[0] - marg_h, A4[1] - 13.5 * mm)
+            self.drawString(marg_v, 11 * mm, dok.sidfot)
             self.drawRightString(
-                A4[0] - marg, 11 * mm, us.sidnummer.format(sida=self._pageNumber, antal=antal)
+                A4[0] - marg_h, 11 * mm, us.sidnummer.format(sida=self._pageNumber, antal=antal)
             )
             self.restoreState()
 
@@ -793,8 +835,8 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     mall = SimpleDocTemplate(
         str(ut_p),
         pagesize=A4,
-        leftMargin=marg,
-        rightMargin=marg,
+        leftMargin=marg_v + _UTSTICK_MM * mm,
+        rightMargin=marg_h,
         topMargin=20 * mm,
         bottomMargin=19 * mm,
         title=dok.titel,

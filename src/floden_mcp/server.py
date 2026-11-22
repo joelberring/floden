@@ -682,7 +682,7 @@ def _registrera_rapportverktyg(
                 description="Språk och layout (valfritt; förval och config.local.toml [rapport] "
                 "gäller annars): sprakprofil ('sbk' förval eller 'neutral'), numrerade_rubriker, "
                 "numrerade_figurer (förval false), avsandare (förval 'Stadsbyggnadskontoret'), "
-                "diarienummer, handlaggare, accentfarg ('#1F4E79'), logotyp, typsnitt_brodtext, "
+                "diarienummer, handlaggare, accentfarg ('#000000'), logotyp, typsnitt_brodtext, "
                 "typsnitt_rubriker (lokala sökvägar; bara filens sha256 lagras)."
             ),
         ] = None,

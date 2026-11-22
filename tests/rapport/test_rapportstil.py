@@ -61,7 +61,7 @@ def test_forvalen_lagras_i_k33(forval: dict[str, Any]) -> None:
     assert d == {
         "sprakprofil": "sbk", "numrerade_rubriker": False, "numrerade_figurer": False,
         "avsandare": "Stadsbyggnadskontoret", "diarienummer": "", "handlaggare": "",
-        "accentfarg": "1F4E79", "logotyp": None, "typsnitt_brodtext": None, "typsnitt_rubriker": None,
+        "accentfarg": "000000", "logotyp": None, "typsnitt_brodtext": None, "typsnitt_rubriker": None,
     }  # fmt: skip
     assert Rapport.fran_dict(json.loads(json.dumps(r.till_dict()))) == r
 

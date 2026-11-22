@@ -283,3 +283,9 @@ Nästa: T00 (repo och grund), sedan T01 och T09a parallellt.
 ### 2026-11-22 – Granskning av R1 (samordnare)
 - Granskat PR #41 lokalt: pytest 2026 godkända, testsvit 17/17, grupp E 7/7, ruff och mypy rena. Inplanterat fel stoppar exporten. PDF:en genomläst sida för sida; kartor och tal stämmer med körningen (ökningen ligger helt i sydvästra gården).
 - CI föll på `test_forfalskad_eller_trasig_sessionskaka` slumpvis: sista base64-tecknet kan bära oanvända bitar, så en ändrad sessionskaka avkodades till samma bytes och godtogs. Rättat i `konto/sessioner.py` (kräver kanonisk kodning) med ett deterministiskt test.
+
+### 2026-11-22 – Rapportstil: typsnitt, svarta rubriker, smal spalt (samordnare, på Joels begäran)
+- Förvalt typsnitt i PDF är nu Liberation Sans 2.1.5 (SIL OFL 1.1, `src/rapport/typsnitt/` med licens), med samma teckenbredder som Arial som är förvalet i Word. Ersätter Bitstream Vera.
+- Alla rubriker och titeln är svarta; förvald accentfärg (linjen under titelhuvudet) är svart.
+- Svensk rapportlayout: textspalt 130 mm med hängande rubriker. Titel, rubriker nivå 1–2, titelhuvud och breda bilagetabeller börjar vid vänster marginal (22 mm), brödtext, bilder, underrubriker och smala tabeller 30 mm in. Samma i Word (negativt indrag och tabellindrag).
+- Huvuddelen blir 7 sidor före bilagorna (var 6); testet följer med.

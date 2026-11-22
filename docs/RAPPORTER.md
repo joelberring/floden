@@ -106,9 +106,9 @@ samma fil. Fältet är valfritt; en äldre rapport utan fältet får förvalen.
 | `avsandare` | `"Stadsbyggnadskontoret"` | i titelhuvud, sidhuvud och dokumentets författare; tom sträng = ingen avsändare |
 | `diarienummer` | `""` | i titelhuvud och sidhuvud |
 | `handlaggare` | `""` | i titelhuvudet. Inga riktiga namn i exempel; skriv "Anges av beställaren" eller lämna tomt |
-| `accentfarg` | `"#1F4E79"` | rubriker och linjen under titelhuvudet |
+| `accentfarg` | `"#000000"` | linjen under titelhuvudet (rubrikerna är alltid svarta) |
 | `logotyp` | ingen | lokal PNG/JPEG; ingen logotyp om ingen anges |
-| `typsnitt_brodtext`, `typsnitt_rubriker` | Vera (PDF), Arial (Word) | lokala TTF/OTF-filer, t.ex. Stockholm Type |
+| `typsnitt_brodtext`, `typsnitt_rubriker` | Liberation Sans (PDF), Arial (Word) | lokala TTF/OTF-filer, t.ex. Stockholm Type |
 
 **Filer.** Logotyp och typsnitt anges med lokal sökväg. Floden kontrollerar filen och lägger en
 kopia i rapportens mapp (`resurser/<sha256>.<ändelse>`, under `data/lokal/`, utanför git).
@@ -143,7 +143,7 @@ numrerade_rubriker = false
 numrerade_figurer = false
 avsandare = "Stadsbyggnadskontoret"
 handlaggare = "Anges av beställaren"
-accentfarg = "#1F4E79"
+accentfarg = "#000000"
 logotyp = "/Users/<du>/Typsnitt och logotyper/logotyp.png"
 typsnitt_brodtext = "/Users/<du>/Library/Fonts/StockholmType-Regular.ttf"
 typsnitt_rubriker = "/Users/<du>/Library/Fonts/StockholmType-Bold.ttf"
@@ -193,12 +193,19 @@ AI-stöd (modell) … Körloggen finns som bilaga." och ansvarig utredare (valfr
 **Export:** Word med python-docx och PDF med reportlab, båda ren Python (`pip install -e
 ".[rapport]"`, ingår i `dev` och `mcp`), samma block i båda. PDF-vägen valdes för att den saknar
 systemberoenden (ingen LibreOffice), fungerar likadant på Mac och har ett medföljande typsnitt
-(Bitstream Vera Sans i reportlab) med svenska tecken, ², ³ och −; `invariant` och fasta tider i
+(Liberation Sans 2.1.5, SIL OFL 1.1, i `src/rapport/typsnitt/` med licensen) med svenska tecken,
+², ³, − och smalt hårt mellanslag. Liberation Sans har samma teckenbredder som Arial, så PDF och
+Word ser likadana ut; `invariant` och fasta tider i
 docx-zip gör samma rapport och inställningar till samma fil. Word använder Arial (eller det lokala
 typsnittets familjenamn), Words inbyggda rubrikformat (Rubrik 1–3, så att innehållsförteckning
 och navigeringsfönstret fungerar), svenska som språk (stavningskontrollen) och sidfoten
-"Sida 2 (9)" med fälten PAGE och NUMPAGES. Smalt hårt mellanslag saknas i Vera; i PDF:en ritas det
-som ett hårt mellanslag i mindre grad, så att tal aldrig bryts.
+"Sida 2 (9)" med fälten PAGE och NUMPAGES. Lokala typsnitt saknar ofta smalt hårt mellanslag; i
+PDF:en ritas det därför som ett hårt mellanslag i mindre grad, så att tal aldrig bryts.
+
+**Layout.** Svensk rapportlayout med smal textspalt (130 mm) och hängande rubriker: titel,
+huvudrubriker (nivå 1–2), titelhuvud och de breda bilagetabellerna börjar vid vänster marginal
+(22 mm), brödtext, bilder, underrubriker och smala tabeller 30 mm längre in. Alla rubriker är
+svarta och fetstilta, utan nummer som förval.
 
 ## Frågekatalogen: vad Floden kan belägga för skyfall
 
@@ -247,7 +254,7 @@ Floden.
   Rapportmappen kan ändras med `[webb] rapportmapp`.
 
 Exempel: `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter, förvalen:
-språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Vera/Arial).
+språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Liberation Sans/Arial, svarta rubriker, smal spalt).
 
 ## Begränsningar
 
