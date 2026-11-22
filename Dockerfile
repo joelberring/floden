@@ -26,6 +26,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     FLODEN_LASCLIP=/usr/local/bin/lasclip \
     FLODEN_TVAD_KARNA=/usr/local/bin/tvad_karna
+# rasterio:s hjul har GDAL med sig men behöver libexpat från systemet.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libexpat1 \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin floden
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
