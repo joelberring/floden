@@ -27,7 +27,7 @@ export function monteraLagerpanel(rot: HTMLElement, lista: LagerLista, krokar: P
           <input type="checkbox" id="lv-${esc(l.id)}" data-synlig="${esc(l.id)}" ${l.synlig ? "checked" : ""} ${av ? "disabled" : ""}/>
           <label for="lv-${esc(l.id)}" class="kl-namn">${esc(l.namn)}</label>
           <span class="kl-knappar">
-            ${l.egenVy ? `<button type="button" class="ikonknapp" data-vy="${esc(l.id)}" aria-pressed="${lista.aktivVy?.id === l.id}" title="Visa som egen vy">Vy</button>` : ""}
+            ${l.egenVy ? `<button type="button" class="ikonknapp vy-knapp" data-vy="${esc(l.id)}" aria-pressed="${lista.aktivVy?.id === l.id}" title="Byt mellan kartan och ${esc(l.namn)}">${esc(l.egenVy.knapp ? (lista.aktivVy?.id === l.id ? l.egenVy.knapp.pa : l.egenVy.knapp.av) : "Vy")}</button>` : ""}
             <button type="button" class="ikonknapp" data-upp="${esc(l.id)}" aria-label="Flytta ${esc(l.namn)} uppåt" ${forst ? "disabled" : ""}>↑</button>
             <button type="button" class="ikonknapp" data-ned="${esc(l.id)}" aria-label="Flytta ${esc(l.namn)} nedåt" ${sist ? "disabled" : ""}>↓</button>
             ${l.kanTasBort ? `<button type="button" class="ikonknapp" data-bort="${esc(l.id)}" aria-label="Ta bort ${esc(l.namn)}">×</button>` : ""}

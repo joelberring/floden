@@ -304,3 +304,67 @@
   border-left: 3px solid var(--f-linje-stark);
   padding-left: 8px;
 }
+
+/* 3D-vyn (kartsida3d.ts, vy3d/): en egen yta i stället för kartan, samma storlek */
+.vy-vaxel {
+  margin: 0 0 12px;
+}
+.vy-stapel .vy3d-yta {
+  position: relative;
+}
+.vy-stapel .vy3d-yta[hidden] {
+  display: none;
+}
+.vy3d-duk {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.vy3d-laddar {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+}
+.vy3d-knappar {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  z-index: 3;
+}
+.vy3d-hjalp {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  margin: 0;
+  font: 11px var(--f-font-mono);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 2px 6px;
+  z-index: 3;
+  pointer-events: none;
+}
+.vy3d-delare {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--f-linje-stark);
+  pointer-events: none;
+  z-index: 2;
+}
+.vy3d-delare[hidden] {
+  display: none;
+}
+.karta-sida.vy3d-aktiv .verktygsrad .verktyg:not(#v-fast):not(#v-rat),
+.karta-sida.vy3d-aktiv .verktygsrad #v-angra,
+.karta-sida.vy3d-aktiv .verktygsrad #v-gora-om {
+  opacity: 0.55;
+}

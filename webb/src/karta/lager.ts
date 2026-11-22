@@ -9,8 +9,9 @@
  * spara (privat läge, full lagring) fungerar kartan ändå.
  *
  * Ett lager kan vara en egen vy (`egenVy`): då visas det inte som ett MapLibre-lager utan monteras i
- * kartytan i stället för kartan, med en knapp i panelen för att byta. Så kan den beslutade 3D-vyn
- * (Three.js) läggas till som ett lager i samma panel utan att panelen ändras. Ingen 3D byggs här.
+ * kartytan i stället för kartan, med en knapp i panelen för att byta. Så är 3D-vyn (Three.js, se
+ * `vy3d/`) ett lager i samma panel. Ett lager kan höra till bara 2D eller bara 3D (`visning`): panelen
+ * visar de lager som gäller för den vy som är aktiv.
  */
 
 export type GruppId = "underlag" | "geometri" | "planforslag" | "resultat";
@@ -27,8 +28,13 @@ export const GRUPPER: ReadonlyArray<{ id: GruppId; namn: string; hjalp: string }
 export interface EgenVy {
   id: string;
   namn: string;
-  montera(yta: HTMLElement): { avmontera(): void };
+  /** Knapptext i panelen när vyn är av respektive på. */
+  knapp?: { av: string; pa: string };
+  montera(yta: HTMLElement): { avmontera(): void; uppdatera?(): void };
 }
+
+/** Vilken vy ett lager gäller för; utan värde gäller det båda. */
+export type Visning = "2d" | "3d";
 
 export interface LagerDef {
   id: string;
@@ -44,6 +50,8 @@ export interface LagerDef {
   kanTasBort?: boolean;
   /** Visas som en egen vy i stället för som kartlager. */
   egenVy?: EgenVy;
+  /** Bara i 2D-kartan eller bara i 3D-vyn; utan värde i båda. */
+  visning?: Visning;
   /** Fri nyttolast för kartan (t.ex. adress till bild, tjänst, lagernamn). */
   data?: Record<string, unknown>;
 }
@@ -76,6 +84,7 @@ export class LagerLista {
   private lager: LagerDef[] = [];
   private hopfallda = new Set<GruppId>();
   private aktivVyId: string | null = null;
+  private aktuellVisning: Visning = "2d";
   private sparat: Sparat | null = null;
   private lyssnare: Array<() => void> = [];
 
@@ -113,7 +122,7 @@ export class LagerLista {
   private skriv(): void {
     try {
       const ordning: Partial<Record<GruppId, string[]>> = {};
-      for (const g of GRUPPER) ordning[g.id] = this.iGrupp(g.id).map((l) => l.id);
+      for (const g of GRUPPER) ordning[g.id] = this.lager.filter((l) => l.grupp === g.id).map((l) => l.id);
       // Behåll det som sparats för lager som inte finns just nu (t.ex. ett scenario som inte laddats än).
       const gamla = (this.sparat?.lager ?? []).filter((s) => !this.lager.some((l) => l.id === s.id));
       const d: Sparat = {
@@ -183,9 +192,20 @@ export class LagerLista {
     return this.lager;
   }
 
-  /** Lagren i en grupp, översta först (som i panelen). */
+  /** Lagren i en grupp för den aktiva vyn, översta först (som i panelen). */
   iGrupp(g: GruppId): LagerDef[] {
-    return this.lager.filter((l) => l.grupp === g);
+    return this.lager.filter((l) => l.grupp === g && (!l.visning || l.visning === this.aktuellVisning));
+  }
+
+  get visning(): Visning {
+    return this.aktuellVisning;
+  }
+
+  /** Byter vad panelen visar (2D eller 3D). Ger true om något ändrades. Signalerar inte: anroparen ritar om panelen. */
+  sattVisning(v: Visning): boolean {
+    if (v === this.aktuellVisning) return false;
+    this.aktuellVisning = v;
+    return true;
   }
 
   hamta(id: string): LagerDef | undefined {

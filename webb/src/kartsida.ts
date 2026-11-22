@@ -37,6 +37,9 @@ import { PlanDok } from "./karta/plandok";
 import { Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "./karta/ritverktyg";
 import { giltigKakelmall, lasUnderlag, sparaUnderlag, vardAv, wmsBrickmall, type Underlag, type WmsSvar } from "./karta/wms";
 import { esc, formatera, PROJEKT_ID } from "./sidor";
+import { fasadForklaringHtml, skapa3dVy, styrning3d, VY3D_ID, type Kontext3d } from "./kartsida3d";
+import { meterPerPxFranZoom, zoomFranMeterPerPx } from "./vy3d/koord";
+import { swerefTillWgs84, wgs84TillSweref } from "./sweref";
 import { lagerTekniskHtml, skalaHtml } from "./teckenforklaring";
 import type { ProjektSvar, ProjektVy } from "./types";
 
@@ -81,6 +84,8 @@ interface Sida {
   objektUrl: string[];
   wms: WmsSvar | null;
   wmsFel: string | null;
+  vy3d: { avmontera(): void; uppdatera?(): void } | null;
+  ritaPanel: () => void;
 }
 
 let s: Sida | null = null;
@@ -92,6 +97,7 @@ const el = <T extends HTMLElement>(id: string): T | null => (s?.rot.querySelecto
 
 function avsluta(): void {
   if (!s) return;
+  s.vy3d?.avmontera();
   s.a.avsluta();
   s.b?.avsluta();
   for (const f of s.avbryt) f();
@@ -191,12 +197,15 @@ function byggSida(container: HTMLElement, p: ProjektSvar, info: ProjektInfo): vo
     objektUrl: [],
     wms: null,
     wmsFel: null,
+    vy3d: null,
+    ritaPanel: () => undefined,
   };
   const sida = s;
 
   // Lager
   registreraLager(info);
-  monteraLagerpanel(el("lagerpanel") as HTMLElement, lager, {
+  registrera3dVy(info);
+  sida.ritaPanel = monteraLagerpanel(el("lagerpanel") as HTMLElement, lager, {
     andrad: () => {
       synka();
     },
@@ -231,6 +240,10 @@ function byggSida(container: HTMLElement, p: ProjektSvar, info: ProjektInfo): vo
   const tangent = (h: KeyboardEvent): void => {
     const m = h.target as HTMLElement | null;
     if (m && (m.tagName === "INPUT" || m.tagName === "TEXTAREA" || m.tagName === "SELECT" || m.isContentEditable)) return;
+    // Ett ritverktygs kortkommando i 3D tar en tillbaka till kartan först.
+    if (sida.lager.aktivVy && [TANGENTER.valj, TANGENTER.hus, TANGENTER.laggtill, TANGENTER.tabort].some((k) => k.toLowerCase() === h.key.toLowerCase())) {
+      sida.lager.sattAktivVy(null);
+    }
     if (verktyg.tangent(h)) h.preventDefault();
   };
   document.addEventListener("keydown", tangent);
@@ -275,6 +288,12 @@ function sidHtml(p: ProjektSvar): string {
       <div class="flikar flikrad" role="group" aria-label="Välj resultat" id="vyval">${vyKnappar}</div>
       <p class="andring-text" id="andring-text" hidden></p>
 
+      <div class="flikar flikrad vy-vaxel" role="group" aria-label="Visa som" id="vy-vaxel">
+        <span class="etikett-liten vyval-etikett">Visa som</span>
+        <button type="button" class="flik vald" data-visa="2d" aria-pressed="true">Karta</button>
+        <button type="button" class="flik" data-visa="3d" aria-pressed="false">3D</button>
+      </div>
+
       <div class="karta-rad">
         <div class="vy-kolumn">
           <div class="verktygsrad" id="verktygsrad" role="toolbar" aria-label="Ritverktyg">
@@ -301,7 +320,7 @@ function sidHtml(p: ProjektSvar): string {
           <div class="karta-par" id="karta-par">
             <figure class="karta-ruta">
               <figcaption id="rubrik-a" class="karta-bildtext"></figcaption>
-              <div class="vy-stapel"><div id="vy-yta" class="vy-yta"></div><div id="vy-yta-b" class="vy-yta vy-b" hidden></div></div>
+              <div class="vy-stapel"><div id="vy-yta" class="vy-yta"></div><div id="vy-yta-b" class="vy-yta vy-b" hidden></div><div id="vy3d-yta" class="vy-yta vy3d-yta" hidden></div></div>
             </figure>
           </div>
           <div id="svep-rad" class="svep-rad" hidden>
@@ -351,15 +370,22 @@ function kopplaKnappar(_p: ProjektSvar, _info: ProjektInfo): void {
   const sida = s as Sida;
   const rot = sida.rot;
   for (const k of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-verktyg]"))) {
-    k.addEventListener("click", () => sida.verktyg.sattVerktyg(k.dataset.verktyg as Verktyg));
+    k.addEventListener("click", () => {
+      // Ritar man i 3D går man tillbaka till kartan: ritverktygen arbetar i kartans koordinater.
+      if (sida.lager.aktivVy) sida.lager.sattAktivVy(null);
+      sida.verktyg.sattVerktyg(k.dataset.verktyg as Verktyg);
+    });
+  }
+  for (const k of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-visa]"))) {
+    k.addEventListener("click", () => vaxlaVy(k.dataset.visa === "3d"));
   }
   el("v-fast")?.addEventListener("click", () => sida.verktyg.vaxlaFast());
   el("v-rat")?.addEventListener("click", () => sida.verktyg.vaxlaRatVinkel());
   el("v-angra")?.addEventListener("click", () => sida.verktyg.angra());
   el("v-gora-om")?.addEventListener("click", () => sida.verktyg.goraOm());
-  el("vy-in")?.addEventListener("click", () => sida.a.zooma(0.7));
-  el("vy-ut")?.addEventListener("click", () => sida.a.zooma(1 / 0.7));
-  el("vy-anpassa")?.addEventListener("click", () => anpassa());
+  el("vy-in")?.addEventListener("click", () => (styrning3d() ? styrning3d()?.zooma(0.7) : sida.a.zooma(0.7)));
+  el("vy-ut")?.addEventListener("click", () => (styrning3d() ? styrning3d()?.zooma(1 / 0.7) : sida.a.zooma(1 / 0.7)));
+  el("vy-anpassa")?.addEventListener("click", () => (styrning3d() ? styrning3d()?.anpassa() : anpassa()));
   for (const k of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-lage]"))) {
     k.addEventListener("click", () => {
       t.lage = k.dataset.lage as Lage;
@@ -398,10 +424,11 @@ function registreraLager(info: ProjektInfo): void {
     opacitet: 1,
     hjalp: info.ortofoto.finns ? info.ortofoto.kalla : undefined,
     ejTillgangligt: info.ortofoto.finns ? undefined : "Inget ortofoto finns lokalt. Det hämtas med floden data lantmateriet (se README).",
+    visning: "2d",
   } as never);
-  l.registrera({ id: "geo:skuggning", grupp: "geometri", namn: "Terräng (skuggning)", synlig: false, opacitet: 0.9, hjalp: "Skuggad terrängmodell ur projektets höjddata." });
-  l.registrera({ id: "geo:vegetation", grupp: "geometri", namn: "Vegetation", synlig: false, opacitet: 0.9, hjalp: "Växtlighetens höjd ur projektets data." });
-  l.registrera({ id: "geo:byggnader", grupp: "geometri", namn: "Byggnader", synlig: true, opacitet: 1, hjalp: "Byggnadernas fotavtryck." });
+  l.registrera({ id: "geo:skuggning", grupp: "geometri", namn: "Terräng (skuggning)", synlig: false, opacitet: 0.9, hjalp: "Skuggad terrängmodell ur projektets höjddata.", visning: "2d" });
+  l.registrera({ id: "geo:vegetation", grupp: "geometri", namn: "Vegetation", synlig: false, opacitet: 0.9, hjalp: "Växtlighetens höjd ur projektets data.", visning: "2d" });
+  l.registrera({ id: "geo:byggnader", grupp: "geometri", namn: "Byggnader", synlig: true, opacitet: 1, hjalp: "Byggnaderna: fotavtryck i kartan, volymer i 3D." });
   l.registrera({ id: "plan:aktuellt", grupp: "planforslag", namn: "Aktuellt förslag", synlig: true, opacitet: 1, hjalp: "Det du ritar just nu." });
 }
 
@@ -520,6 +547,7 @@ function resultatSynligt(id: string, motor: "a" | "b", panel: boolean): boolean 
 function synka(): void {
   const sida = s;
   if (!sida) return;
+  if (hanteraVyval(sida)) return;
   const delat = (t.lage === "svep" || t.lage === "sidavid") && sida.lager.hamta("res:fore") !== undefined;
   sida.a.settLager(rasterLista(sida, "a"));
   if (delat) {
@@ -545,6 +573,119 @@ function synka(): void {
   uppdateraSidopaneler();
   planeraRitning();
   stallLage();
+}
+
+// ---------------------------------------------------------------------------------------------
+// 3D-vyn som lager (egen vy) i samma panel
+
+function kontext3d(): Kontext3d {
+  const sida = s as Sida;
+  const info = t.info as ProjektInfo;
+  return {
+    projekt: PROJEKT_ID,
+    lager: sida.lager,
+    info,
+    dok: sida.dok,
+    vy: () => t.vy,
+    resultat: () => (t.vy ? t.resultat.get(t.vy.korning_id) : undefined),
+    lage: () => t.lage,
+    svep: () => t.svep,
+    arRitatResultat: () => Boolean(t.vy && t.ritVyer.includes(t.vy)),
+    kartvy: () => {
+      const v = sida.a.hamtaVy();
+      const [e, n] = wgs84TillSweref(v.lng, v.lat);
+      const h = (el("vy-yta") as HTMLElement).clientHeight || (el("vy3d-yta") as HTMLElement).clientHeight || 600;
+      return { e, n, mpp: meterPerPxFranZoom(v.zoom, v.lat), hojdPx: h };
+    },
+    settKartvy: (e, n, mpp) => {
+      const [lng, lat] = swerefTillWgs84(e, n);
+      sida.a.settVy({ lng, lat, zoom: zoomFranMeterPerPx(mpp, lat) });
+    },
+    avlasning: (e, n) => planeraAvlasning(e, n),
+    text: (text) => visaAvlasningText(text),
+    fel: (text) => {
+      sida.meddelande = { text: `3D-vyn: ${text}`, fel: true } as never;
+      visaMeddelande();
+    },
+  };
+}
+
+/** Lagret "3D-vy" i Geometri: en egen vy som ersätter kartan. */
+function registrera3dVy(info: ProjektInfo): void {
+  void info;
+  const sida = s as Sida;
+  sida.lager.registrera({
+    id: VY3D_ID,
+    grupp: "geometri",
+    namn: "3D-vy",
+    synlig: true,
+    opacitet: 1,
+    hjalp: "Kvarteret i 3D: terräng, byggnader, ditt förslag och resultaten. Lagren nedan styr båda vyerna.",
+    egenVy: skapa3dVy(kontext3d()),
+  });
+  // Öppna alltid i kartan, också om 3D var aktiv sist.
+  sida.lager.sattAktivVy(null);
+  sida.lager.sattSynlig(VY3D_ID, true);
+}
+
+function vaxlaVy(till3d: boolean): void {
+  const sida = s;
+  if (!sida) return;
+  sida.lager.sattSynlig(VY3D_ID, true);
+  sida.lager.sattAktivVy(till3d ? VY3D_ID : null);
+}
+
+/**
+ * Byter mellan kartan och 3D när lagerpanelen eller flikarna sagt det. Ger true när 3D är aktiv
+ * (då ritas inte kartan om: den ligger kvar dold och följer med när man går tillbaka).
+ */
+function hanteraVyval(sida: Sida): boolean {
+  const lage3d = sida.lager.aktivVy;
+  const vill3d = lage3d !== null;
+  const rot = sida.rot;
+  const kartYta = el("vy-yta") as HTMLElement;
+  const yta3d = el("vy3d-yta") as HTMLElement;
+  if (vill3d && !sida.vy3d) {
+    // Samma vy i båda: kartans läge läses innan kartan döljs.
+    sida.b?.avsluta();
+    sida.b = null;
+    (el("vy-yta-b") as HTMLElement).hidden = true;
+    yta3d.hidden = false;
+    yta3d.style.height = `${kartYta.clientHeight}px`;
+    kartYta.style.display = "none";
+    sida.lager.sattVisning("3d");
+    sida.vy3d = lage3d.egenVy?.montera(yta3d) ?? null;
+    sida.ritaPanel();
+    rot.querySelector(".karta-sida")?.classList.add("vy3d-aktiv");
+    (rot.querySelector(".karta-sida") ?? rot).classList.add("vy3d-aktiv");
+  } else if (!vill3d && sida.vy3d) {
+    sida.vy3d.avmontera();
+    sida.vy3d = null;
+    yta3d.hidden = true;
+    yta3d.style.height = "";
+    kartYta.style.display = "";
+    sida.lager.sattVisning("2d");
+    sida.ritaPanel();
+    (rot.querySelector(".karta-sida") ?? rot).classList.remove("vy3d-aktiv");
+    senastLage = "";
+    window.requestAnimationFrame(() => {
+      sida.a.matOm();
+      synka();
+    });
+  }
+  for (const k of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-visa]"))) {
+    const pa = (k.dataset.visa === "3d") === vill3d;
+    k.classList.toggle("vald", pa);
+    k.setAttribute("aria-pressed", String(pa));
+  }
+  const hjalp = el("verktygshjalp");
+  if (vill3d && hjalp) hjalp.textContent = "Du tittar i 3D. Välj ett ritverktyg (eller tryck W) för att gå tillbaka till kartan och rita; förslaget syns här direkt.";
+  if (!vill3d) return false;
+  const svepRad = el("svep-rad");
+  if (svepRad) svepRad.hidden = t.lage !== "svep";
+  sida.vy3d?.uppdatera?.();
+  uppdateraSidopaneler();
+  return true;
 }
 
 function ensureB(): void {
@@ -1177,6 +1318,8 @@ function uppdateraSidopaneler(): void {
     const visad = t.lage === "skillnad" ? skillnad : (fore ?? skillnad);
     const rubrik = t.lage === "skillnad" ? "Skillnad" : `${vy?.mattnamn ?? ""}${visad?.enhet ? ` (${visad.enhet})` : ""}`;
     tf.innerHTML = visad && vy && harResultat ? `<div class="teckenforklaring"><h3 class="etikett-liten">${esc(rubrik)}</h3>${skalaHtml(visad)}${t.lage === "skillnad" ? "" : `<p class="dampad liten-text">Samma skala före och efter.</p>`}</div>` : "";
+    const fasadTand = sida.lager.aktivVy && sida.lager.hamta("3d:fasad")?.synlig && !sida.lager.hamta("3d:fasad")?.ejTillgangligt;
+    if (fasadTand) tf.innerHTML += fasadForklaringHtml(t.lage, t.lage === "skillnad");
   }
   const lista = el("teknisk-lista");
   if (lista) {
@@ -1285,6 +1428,12 @@ async function lasAvlasning(vy: ProjektVy, e: number, n: number): Promise<void> 
   } catch {
     if (nr === avlasningSeq) visaAvlasning(null);
   }
+}
+
+function visaAvlasningText(text: string | null): void {
+  const ruta = el("avlasning");
+  if (!ruta || text === null) return;
+  ruta.innerHTML = `<span class="avl-post">${esc(text)}</span>`;
 }
 
 function visaAvlasning(a: AvlasningSvar | null, vy: ProjektVy | null = t.vy): void {

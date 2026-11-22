@@ -79,7 +79,7 @@ test("ett lager kan vara en egen vy (förberett för 3D): visas bara när det ä
   const montera = (): { avmontera(): void } => ({ avmontera: () => undefined });
   l.registrera(def("vy3d", "geometri", { synlig: false, egenVy: { id: "vy3d", namn: "3D-vy", montera } }));
   l.registrera(def("karta", "geometri"));
-  assert.equal(l.aktivVy, null);
+  assert.equal(l.aktivVy === null, true);
   l.sattAktivVy("karta");
   assert.equal(l.aktivVy, null, "ett vanligt lager är ingen egen vy");
   l.sattSynlig("vy3d", true);
@@ -101,4 +101,36 @@ test("underlag: brickmall via servern och kontroll av kakelmall, sparat per proj
   sparaUnderlag("p", [{ id: "u1", typ: "wms", namn: "Orto", url: "https://a.se/wms", lager: "orto", stod: "3857", kalla: "a.se" }], m);
   assert.equal(lasUnderlag("p", m)[0]?.namn, "Orto");
   assert.deepEqual(lasUnderlag("q", m), []);
+});
+
+test("lager kan höra till bara 2D eller bara 3D: panelen visar de som gäller för aktiv vy, och ordningen sparas för båda", () => {
+  const m = minne();
+  const l = new LagerLista("v", m);
+  l.registrera(def("karta-bara", "geometri", { visning: "2d" }));
+  l.registrera(def("bada", "geometri"));
+  l.registrera(def("tre-bara", "geometri", { visning: "3d" }));
+  assert.deepEqual(l.iGrupp("geometri").map((x) => x.id), ["karta-bara", "bada"]);
+  assert.equal(l.sattVisning("3d"), true);
+  assert.equal(l.sattVisning("3d"), false, "ingen ändring ger false");
+  assert.deepEqual(l.iGrupp("geometri").map((x) => x.id), ["bada", "tre-bara"]);
+  l.flytta("tre-bara", -1);
+  assert.deepEqual(l.iGrupp("geometri").map((x) => x.id), ["tre-bara", "bada"]);
+  // Alla lager finns kvar i modellen, och det som sparats gäller också lager i den andra vyn.
+  assert.equal(l.alla().length, 3);
+  const b = new LagerLista("v", m);
+  for (const x of l.alla()) b.registrera({ ...x });
+  b.sattVisning("3d");
+  assert.deepEqual(b.iGrupp("geometri").map((x) => x.id), ["tre-bara", "bada"]);
+});
+
+test("3D-vyn är ett lager med egenVy som kan bli aktiv och släckas", () => {
+  const l = new LagerLista("e", minne());
+  let monterad = 0;
+  l.registrera(def("vy:3d", "geometri", { egenVy: { id: "3d", namn: "3D-vy", montera: () => { monterad++; return { avmontera() {} }; } } }));
+  assert.equal(l.aktivVy === null, true);
+  l.sattAktivVy("vy:3d");
+  assert.equal(l.aktivVy === null ? null : l.aktivVy.id, "vy:3d");
+  l.sattSynlig("vy:3d", false);
+  assert.equal(l.aktivVy, null, "ett släckt lager är ingen aktiv vy");
+  assert.equal(monterad, 0, "montering sker i kartsidan, inte i modellen");
 });
