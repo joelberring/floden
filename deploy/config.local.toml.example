@@ -1,0 +1,17 @@
+# Serverns config.local.toml (kopiera till config.local.toml bredvid docker-compose.prod.yml; aldrig i git).
+# Slås ihop med repots config.toml. Hemligheterna läggs i .env (FLODEN_KONTO_GOOGLE_*), inte här.
+
+[konto]
+inloggning = "pa"
+databas = "data/konto/konto.sqlite"
+offentlig_url = "https://floden.berring.se"   # redirect-URI i Google: https://floden.berring.se/konto/callback/google
+cookie_secure = true
+sessionstimmar = 12
+nya_konton = "inbjudan"
+oppna_sokvagar = ["/api/halsa"]
+
+[konto.leverantorer.google]
+aktiv = true
+
+[konto.leverantorer.entra]
+aktiv = false

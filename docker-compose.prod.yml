@@ -1,0 +1,62 @@
+# Floden på en vanlig VPS (S1, docs/DRIFT.md). Mönstret är O-Tids docker-compose.prod.yml (MIT).
+# Kräver bredvid filen:
+#   .env               FLODEN_DOMAIN (och ev. FLODEN_TAG), se deploy/prod.env.example
+#   config.local.toml  [konto] med inloggning = "pa" m.m., se deploy/config.local.toml.example (aldrig i git)
+#
+# Avbildningen byggs av GitHub Actions efter grön CI på main och hämtas med `docker compose -f docker-compose.prod.yml pull`.
+# FLODEN_TAG väljer version (förval main; en commit-sha låser versionen).
+name: floden
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  floden:
+    logging: *logging
+    image: ${FLODEN_IMAGE:-ghcr.io/joelberring/floden}:${FLODEN_TAG:-main}
+    build: .
+    restart: unless-stopped
+    # Minnestak för en CX23/CAX11 (4 GB): Floden 3 GB, resten till Caddy och systemet. Tunga körningar ska gå till
+    # arbetarna (S5), inte hit.
+    mem_limit: 3g
+    environment:
+      FLODEN_TILLAT_UTAN_INLOGGNING: ${FLODEN_TILLAT_UTAN_INLOGGNING:-0}
+      FLODEN_DEMO: ${FLODEN_DEMO:-1}
+      FLODEN_KONTO_GOOGLE_KLIENT_ID: ${FLODEN_KONTO_GOOGLE_KLIENT_ID:-}
+      FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET: ${FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET:-}
+    volumes:
+      - ./config.local.toml:/app/config.local.toml:ro
+      # Bara på serverns disk tills förrådet (S4) finns. Kontodatabasen är det enda som inte går att räkna om.
+      - ./data/konto:/app/data/konto
+      - ./data/cache:/app/data/cache
+      - ./data/demo:/app/data/demo
+      - ./data/lokal:/app/data/lokal
+    # Ingen port utåt: bara Caddy når Floden.
+    expose:
+      - "8765"
+
+  caddy:
+    logging: *logging
+    image: caddy:2.11.7
+    restart: unless-stopped
+    depends_on:
+      floden:
+        condition: service_healthy
+    mem_limit: 192m
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      FLODEN_DOMAIN: ${FLODEN_DOMAIN:?Sätt FLODEN_DOMAIN i .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,111 @@
+name: Avbildning
+
+# S1 (docs/DRIFT.md): färdig avbildning för servern, mönstret från O-Tid ADR-0195 (MIT).
+# När CI är grön för en push till main byggs Dockerfile för linux/amd64 och läggs i GitHub Container Registry:
+#   ghcr.io/joelberring/floden:<sha>, :<kort sha>, :main
+# Servern hämtar den med `docker compose -f docker-compose.prod.yml pull` och bygger inget själv.
+# På andra grenar byggs avbildningen bara (inget läggs upp) när något som påverkar den ändras.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  push:
+    branches-ignore: [main]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - deploy/**
+      - pyproject.toml
+      - webb/package.json
+      - webb/package-lock.json
+      - tools/lasclip/**
+      - rust/tvad_karna/**
+      - .github/workflows/avbildning.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/joelberring/floden
+
+jobs:
+  # Bara bygge och en röktest av avbildningen, ingen inloggning och ingen skrivrätt till paketen.
+  build:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: floden:prov
+          cache-from: type=gha,scope=floden
+          cache-to: type=gha,mode=max,scope=floden
+      - name: Röktest (start utan inloggning nekas, med provflagga svarar /api/halsa)
+        run: |
+          if docker run --rm floden:prov; then echo "startade utan inloggning" >&2; exit 1; fi
+          docker run -d --name prov -e FLODEN_TILLAT_UTAN_INLOGGNING=1 -e FLODEN_DEMO=0 -p 8765:8765 floden:prov
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8765/api/halsa; then echo; break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8765/ | grep -qi "<html"
+          docker exec prov floden --help > /dev/null
+          docker exec prov tvad_karna --help > /dev/null 2>&1 || docker exec prov test -x /usr/local/bin/tvad_karna
+          docker exec prov test -x /usr/local/bin/lasclip
+          docker logs prov
+          docker rm -f prov
+
+  # Läggs upp bara efter grön CI för en push till main i det här repot (aldrig för en pull request eller en fork).
+  publish:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: avbildning-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      # Taggen main flyttas bara om commiten fortfarande är mains senaste.
+      - id: tags
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          {
+            echo "list<<EOF"
+            echo "$IMAGE:$SHA"
+            echo "$IMAGE:${SHA::7}"
+            if [ "$(git ls-remote origin refs/heads/main | cut -f1)" = "$SHA" ]; then echo "$IMAGE:main"; fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+          cache-from: type=gha,scope=floden
+          cache-to: type=gha,mode=max,scope=floden
