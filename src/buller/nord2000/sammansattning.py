@@ -278,11 +278,41 @@ def gangvagsskillnader_refraktion(
     return dl1, dl2, dl12
 
 
+@dataclass(frozen=True)
+class Profilgeometri:
+    """Väderoberoende förberäkningar för en terrängprofil (delas mellan väderklasser)."""
+
+    geo: Terranggeometri
+    kanter: Skarmkanter
+    over_plan: GeometriOverPlanMark
+    segment: list[Marksegment]
+    plan_avvikelse_m: float
+
+
+def forberakna_profilgeometri(profil: Terrangprofil) -> Profilgeometri:
+    """Förberäknar väderoberoende terränggeometri, skärmkanter och plan-mark-projektion."""
+    geo = terranggeometri(profil)
+    kanter = valj_skarmkanter(geo)
+    plan = ekvivalent_plan_mark(geo.x_m, geo.z_m)
+    over_plan = geometri_over_plan_mark(geo, plan)
+    segment = marksegment_over_plan_mark(geo, over_plan)
+    avvikelse = float(np.max(np.abs(geo.z_m - plan.alfa_m - plan.beta * geo.x_m)))
+    return Profilgeometri(
+        geo=geo,
+        kanter=kanter,
+        over_plan=over_plan,
+        segment=segment,
+        plan_avvikelse_m=avvikelse,
+    )
+
+
 def terrangeffekt(
     frekvenser_hz: Flyttal,
     profil: Terrangprofil,
     atmosfar: Atmosfar,
     val: Sammansattningsval | None = None,
+    *,
+    profilgeometri: Profilgeometri | None = None,
 ) -> Terrangeffekt:
     """ΔL_t utan ΔL₈ för en profil, AV 1106/07 avsnitt 5.21–5.22, ekv. (306)–(319) och (332).
 
@@ -299,9 +329,10 @@ def terrangeffekt(
     För plan mark i flera segment är r_flat = 1 exakt i alla band, och ΔL₃ används då inte.
     """
     val = Sammansattningsval() if val is None else val
-    geo = terranggeometri(profil)
+    pg = forberakna_profilgeometri(profil) if profilgeometri is None else profilgeometri
+    geo = pg.geo
     c = atmosfar.c_m_s
-    kanter = valj_skarmkanter(geo)
+    kanter = pg.kanter
     dl1, dl2, dl12 = gangvagsskillnader_refraktion(frekvenser_hz, profil, kanter, atmosfar, val)
     tolkning = tolka_terrang(
         geo,
@@ -322,9 +353,8 @@ def terrangeffekt(
     noscr_db: Flyttal | None = None
     resultat3: Delmodell3Resultat | None = None
     if bool(np.any(r_scr1 < 1.0)):
-        plan = ekvivalent_plan_mark(geo.x_m, geo.z_m)
-        over_plan = geometri_over_plan_mark(geo, plan)
-        segment = marksegment_over_plan_mark(geo, over_plan)
+        over_plan = pg.over_plan
+        segment = pg.segment
         try:
             plan_db, namn = markeffekt_plan_modell_db(
                 frekvenser_hz, over_plan, segment, atmosfar, val
@@ -332,7 +362,7 @@ def terrangeffekt(
         except BullerFel as fel:
             raise _med_namn("Plan mark (delmodell 1–2)", fel) from fel
         anvanda.append(namn)
-        avvikelse = float(np.max(np.abs(geo.z_m - plan.alfa_m - plan.beta * geo.x_m)))
+        avvikelse = pg.plan_avvikelse_m
         if geo.x_m.shape[0] == 2 or (avvikelse <= PLAN_TOLERANS_M and not val.alltid_delmodell3):
             # Plan mark: r_f = 1 (Δh = 0) och w_con ≤ 1 (segmenten delar en och samma
             # Fresnelzon), så r_flat = 1 enligt ekv. (317)–(318) och ΔL₃ behövs inte.

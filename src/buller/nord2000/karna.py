@@ -19,7 +19,9 @@ att bilda. Läget mot testfallen står i `docs/buller/logg/P-S2.md`; se också `
 from __future__ import annotations
 
 import math
+from collections import OrderedDict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Literal
 
 import numpy as np
@@ -35,14 +37,15 @@ from buller.nord2000.luftabsorption import luftabsorption_db, rentonsdampning_db
 from buller.nord2000.refraktion import atmosfar_ur_vader
 from buller.nord2000.refraktion_mark import Skuggzonslasning
 from buller.nord2000.sammansattning import (
+    Profilgeometri,
     Sammansattningsval,
     Terrangeffekt,
+    forberakna_profilgeometri,
     markeffekt_plan_modell_db,
     marksegment_over_plan_mark,
     terrangeffekt,
 )
 from buller.nord2000.stralar_krokta import Uppatmetod
-from buller.nord2000.terrang import terranggeometri
 from buller.typer import BullerFel, Flyttal, Terrangprofil, Vader
 
 __all__ = [
@@ -91,6 +94,24 @@ class Nord2000Delresultat:
         return summa
 
 
+@lru_cache(maxsize=64)
+def _rentonsdampning_vektor(
+    frekvenser: tuple[float, ...],
+    lufttemperatur_c: float,
+    relativ_fuktighet_procent: float,
+    lufttryck_kpa: float,
+) -> Flyttal:
+    return np.array(
+        [
+            rentonsdampning_db_per_m(
+                f, lufttemperatur_c, relativ_fuktighet_procent, lufttryck_kpa
+            )
+            for f in frekvenser
+        ],
+        dtype=np.float64,
+    )
+
+
 def luftabsorption_monoton_db(
     frekvenser_hz: Flyttal,
     vagstracka_m: float,
@@ -116,17 +137,15 @@ def luftabsorption_monoton_db(
     """
     if vagstracka_m < 0.0:
         raise BullerFel("Vägsträckan får inte vara negativ.")
-    resultat = np.empty(frekvenser_hz.shape[0], dtype=np.float64)
-    for i, f in enumerate(frekvenser_hz):
-        a0 = (
-            rentonsdampning_db_per_m(
-                float(f), lufttemperatur_c, relativ_fuktighet_procent, lufttryck_kpa
-            )
-            * vagstracka_m
-        )
-        a0 = min(a0, STORSTA_A0_BANDFORMEL_DB)
-        resultat[i] = -a0 * (_BANDFORMEL_A - _BANDFORMEL_B * a0) ** _BANDFORMEL_EXPONENT
-    return resultat
+    alpha = _rentonsdampning_vektor(
+        tuple(float(f) for f in frekvenser_hz),
+        lufttemperatur_c,
+        relativ_fuktighet_procent,
+        lufttryck_kpa,
+    )
+    a0 = np.minimum(alpha * vagstracka_m, STORSTA_A0_BANDFORMEL_DB)
+    ut: Flyttal = -a0 * np.power(_BANDFORMEL_A - _BANDFORMEL_B * a0, _BANDFORMEL_EXPONENT)
+    return ut
 
 
 def sfarisk_spridning_db(avstand_m: float) -> float:
@@ -237,6 +256,30 @@ class Nord2000Karna:
             raise BullerFel(f"Okänd form för C_T²-termen: {ct2_form!r} (kvadrat eller tryckt).")
         self.uppat: Uppatmetod = uppat
         self.ct2_form: Ct2Form = ct2_form
+        # Begränsad LRU-cache för väderoberoende profilgeometri (delas mellan väderklasser).
+        self._geo_cache: OrderedDict[
+            tuple[bytes, bytes, bytes, bytes, float, float], Profilgeometri
+        ] = OrderedDict()
+        self._geo_cache_max = 256
+
+    def _profilgeometri(self, profil: Terrangprofil) -> Profilgeometri:
+        nyckel = (
+            np.ascontiguousarray(profil.x_m, dtype=np.float64).tobytes(),
+            np.ascontiguousarray(profil.z_m, dtype=np.float64).tobytes(),
+            np.ascontiguousarray(profil.flodesresistivitet_kNsm4, dtype=np.float64).tobytes(),
+            np.ascontiguousarray(profil.rahet_m, dtype=np.float64).tobytes(),
+            float(profil.kalla_hojd_m),
+            float(profil.mottagare_hojd_m),
+        )
+        pg = self._geo_cache.get(nyckel)
+        if pg is not None:
+            self._geo_cache.move_to_end(nyckel)
+            return pg
+        pg = forberakna_profilgeometri(profil)
+        self._geo_cache[nyckel] = pg
+        if len(self._geo_cache) > self._geo_cache_max:
+            self._geo_cache.popitem(last=False)
+        return pg
 
     def val(self) -> Sammansattningsval:
         """Kärnans val i den form sammansättningen tar dem."""
@@ -265,8 +308,9 @@ class Nord2000Karna:
         """
         atmosfar = atmosfar_ur_vader(vader)
         frekvenser = mittfrekvenser_hz()
-        geo = terranggeometri(profil)
-        effekt = terrangeffekt(frekvenser, profil, atmosfar, self.val())
+        pg = self._profilgeometri(profil)
+        geo = pg.geo
+        effekt = terrangeffekt(frekvenser, profil, atmosfar, self.val(), profilgeometri=pg)
         terrang = effekt.delta_l_db
         delmodell = effekt.beteckning
         # Delmodell 8, ekv. (332): ΔL_t = (…) ⊕ ΔL₈, ytterst och per band. A och B är
