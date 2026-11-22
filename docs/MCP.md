@@ -116,7 +116,8 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 | `korlogg_hamta` | läser körloggen och verifierar hashkedjan |
 | `session_deklarera` | deklarerar modell och roll för sessionen |
 | `fragekatalog_sok` | frågekatalogen (Stockholms utredningsfrågor) med vad Floden kan belägga per skyfallsfråga |
-| `rapport_skapa` | skissunderlag (nivå 1) för skyfall över klara körningar: kartor, metodstatus, frågor, beläggsadresser |
+| `rapport_skapa` | skissunderlag (nivå 1) för skyfall över klara körningar: kartor, metodstatus, frågor, beläggsadresser; valfria `installningar` (språk och layout) |
+| `rapport_installningar` | visar eller ändrar rapportens inställningar: `sprakprofil` (`sbk` förval, `neutral`), `numrerade_rubriker`, `numrerade_figurer`, `avsandare`, `diarienummer`, `handlaggare`, `accentfarg`, `logotyp`, `typsnitt_brodtext`, `typsnitt_rubriker` (lokala sökvägar; bara sha256 lagras och svaras) |
 | `pastaende_lagg_till` | påstående med status, fördjupning, text med platshållare `{{matt:<adress>}}` och belägg; vägras utan giltiga belägg |
 | `rapport_kontrollera` | kontrollen inför export (spårning, scenario, nämnare, mått, osäkerhet, karta, status, dataskydd, metodstatus) |
 | `rapport_exportera` | Word eller PDF efter godkänd kontroll; underkänd kontroll stoppar |
@@ -125,7 +126,9 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 Resurser: `floden://metod/{vatten,dagsljus,luft,karna,validering,mcp}` (metoddokumenten) och
 `floden://kontrakt/{datakontrakt,k0,k1,k9,k10,k11,k20,k21,k22}` och `floden://rapport/{rapport_id}`
 (K33 som JSON). Frågekatalogen nås med `fragekatalog_sok`. Promptar: `utforska_demokvarteret`,
-`prova_nytt_hus` och `skissunderlag_skyfall`. Rapporterna beskrivs i `docs/RAPPORTER.md`.
+`prova_nytt_hus` och `skissunderlag_skyfall`. Rapporterna och deras inställningar beskrivs i
+`docs/RAPPORTER.md`. Sökvägar till logotyp och typsnitt hamnar aldrig i körloggen (argumentvärden
+loggas inte), i svaren eller i rapporten; bara filens sha256.
 
 ## Dataklasser
 
@@ -158,7 +161,7 @@ deklarerad modell och roll (argument, annars `session_deklarera`, annars `FLODEN
 utfall, `svar_sha256`, tid och `rapport_id` (de rapporter anropet rör). **Argumentvärdena skrivs inte**, och inga hemligheter eller
 personuppgifter (med inloggning: bara ett opakt konto-id). Raderna är hashkedjade (`foregaende`,
 `hash`); `korlogg_hamta` och `Korlogg.verifiera()` visar om något ändrats. Kan loggen inte skrivas
-lämnas inget resultat ut. Loggens rader för en rapport och dess körningar är bilaga B i rapporten.
+lämnas inget resultat ut. Loggens rader för en rapport och dess körningar är bilaga 2 i rapporten (bilaga B med språkprofilen neutral).
 
 ## Kända begränsningar
 

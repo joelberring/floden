@@ -260,6 +260,7 @@ def _sparbarhet(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
                 scenario=None if k.typ == "skillnad" else k.scenario,
                 utsnitt=k.meta.get("utsnitt"),
                 max_px=KART_PX,
+                rubrik=k.meta.get("rubrik"),
             )
         except Exception as exc:  # FlodenFel
             fel.append(f"Kartan {k.kart_id} kan inte ritas om ur körningen: {exc}")
@@ -298,7 +299,9 @@ def _scenario(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
 
 
 def _karta(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
+    from rapport.skissmall import bildtext
     from rapport.skissrapport import TOMVARDE_TEXT
+    from rapport.sprak import TOMVARDE_SBK, scenarionamn
 
     fel: list[str] = []
     for k in r.kartor:
@@ -311,16 +314,22 @@ def _karta(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
             fel.append(f"Kartan {k.kart_id}: enheten saknas i teckenförklaringen.")
         if not m.get("skala"):
             fel.append(f"Kartan {k.kart_id}: värdeskalan (teckenförklaringen) saknas.")
-        if TOMVARDE_TEXT not in k.bildtext:
-            fel.append(
-                f"Kartan {k.kart_id}: bildtexten förklarar inte tomvärdet (tak och celler utan "
-                "värde får inte se torra ut)."
-            )
-        scen = k.scenario if k.typ != "skillnad" else ""
-        if scen and scen not in k.bildtext:
-            fel.append(f"Kartan {k.kart_id}: scenariot '{scen}' står inte i bildtexten.")
-        if m.get("enhet") and str(m["enhet"]) not in k.bildtext:
-            fel.append(f"Kartan {k.kart_id}: enheten står inte i bildtexten.")
+        # Bildtexten som Floden lagrade (K33) och bildtexten som står i dokumentet (språkprofil).
+        visad = bildtext(k, r)
+        for text, tomvarde, scen in (
+            (k.bildtext, TOMVARDE_TEXT, k.scenario),
+            (visad, TOMVARDE_SBK if r.installningar.sbk else TOMVARDE_TEXT,
+             scenarionamn(k.scenario) if r.installningar.sbk else k.scenario),
+        ):  # fmt: skip
+            if tomvarde not in text:
+                fel.append(
+                    f"Kartan {k.kart_id}: bildtexten förklarar inte tomvärdet (tak och celler "
+                    "utan värde får inte se torra ut)."
+                )
+            if k.typ != "skillnad" and scen and scen not in text:
+                fel.append(f"Kartan {k.kart_id}: scenariot '{scen}' står inte i bildtexten.")
+            if m.get("enhet") and str(m["enhet"]) not in text:
+                fel.append(f"Kartan {k.kart_id}: enheten står inte i bildtexten.")
     per_jamforelse: dict[str, dict[str, Any]] = {}
     for k in r.kartor:
         if k.typ in ("bas", "scenario"):
@@ -436,7 +445,7 @@ def kontrollera_skissrapport(r: Rapport, tj: RapportTjanst) -> dict[str, Any]:
             try:
                 dok = bygg_dokument(r, tj, korlogg_rader=[])
                 cache["t"] = " ".join(dokumentets_text(dok).split())
-            except (PastaendeFel, KeyError, ValueError) as exc:
+            except (PastaendeFel, KeyError, ValueError, LookupError) as exc:
                 cache["t"] = f"[dokumentet kunde inte byggas: {exc}]"
         return cache["t"]
 

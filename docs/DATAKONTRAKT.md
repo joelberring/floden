@@ -499,7 +499,8 @@ Adresser: `jamforelse.<namn>.<mått>`, `matvarde.<analys>.<scenario>[.<ruta>].<n
 ## K33 – Rapport (v1)
 
 `<rapportmapp>/<rapport_id>/rapport.json` (standard `data/lokal/rapporter/`, utanför git), med
-`kartor/<kart_id>.png` och `export/<rapport_id>.docx|.pdf`. `rapport_id` = `r-` + 12 hex.
+`kartor/<kart_id>.png`, `export/<rapport_id>.docx|.pdf` och `resurser/` (lokal logotyp och lokala
+typsnitt, namngivna efter sha256). `rapport_id` = `r-` + 12 hex.
 
 | Fält | Innehåll |
 | --- | --- |
@@ -509,14 +510,15 @@ Adresser: `jamforelse.<namn>.<mått>`, `matvarde.<analys>.<scenario>[.<ruta>].<n
 | `korningar` | Per körning: `korning_id`, `fraga_id`, `beskrivning`, `kodversion`, `manifest`, `manifest_sha256`, `start`, `analyser` (analys, lösare, scenarier), `jamforelser`, `antaganden`, `scenarier` |
 | `mottagare` | `[{namn, polygon [[e, n], …] EPSG:3011, beskrivning}]` |
 | `pastaenden` | K32 |
-| `kartor` | `{kart_id, korning_id, jamforelse, analys, lager_id, typ (bas/scenario/skillnad), scenario, fil, png_sha256, bildtext, meta {norr, skalstock_m, enhet, skala, cellstorlek_m, kartutsnitt, utsnitt, metodstatus, roll}}` |
+| `kartor` | `{kart_id, korning_id, jamforelse, analys, lager_id, typ (bas/scenario/skillnad), scenario, fil, png_sha256, bildtext, meta {norr, skalstock_m, enhet, skala, cellstorlek_m, kartutsnitt, utsnitt, metodstatus, roll, rubrik (valfri: kartans rubrik i klarspråk)}}`; `bildtext` är Flodens neutrala bildtext; dokumentet visar den i rapportens språkprofil |
 | `metoder` | Per lösare: `losare`, `visningsnamn`, `version`, `status` (skiss/rapport), `underlag`, `anmarkning` |
 | `metodnotis` | `{ai_stod, modeller, ansvarig_utredare}` (ansvarig valfri i nivå 1, krävs i nivå 2) |
 | `dataklass` | Projektets klass enligt policyn; bara `oppet` exporteras i nivå 1 |
 | `handelser` | `{tid, handelse, av, modell, detalj}`: skapad, påstående tillagt/borttaget, kontroll, export |
 | `kontroll` | Senaste kontrollen: `{godkand, tid, punkter: [{id, rubrik, godkand, granskat, fel}]}` |
-| `exporter` | `{format (word/pdf), fil, sha256, tid}` |
+| `exporter` | `{format (word/pdf), fil, sha256, tid, typsnitt (valfri: [{roll, familj, sha256}] för inbäddade lokala typsnitt)}` |
 | `skede`, `revision`, `bedomningsgrunder`, `granskning`, `signering` | Nivå 2 (R3), förberedda |
+| `installningar` | Valfritt (tillagt 2026-11-22, ingen versionsökning: äldre rapporter utan fältet läses med förvalen). `{sprakprofil ("sbk" \| "neutral"), numrerade_rubriker, numrerade_figurer, avsandare, diarienummer, handlaggare, accentfarg (hex utan #), logotyp, typsnitt_brodtext, typsnitt_rubriker}`; filerna som `{sha256, filtyp, familj}` eller null, aldrig sökvägar. Kopian ligger i `resurser/<sha256><filtyp>` i rapportmappen. Se `docs/RAPPORTER.md` |
 
 MCP-körloggens rader får fältet `rapport_id` (lista) när ett anrop rör en rapport
 (tillägg i `floden-korlogg/v1`, äldre rader saknar fältet).

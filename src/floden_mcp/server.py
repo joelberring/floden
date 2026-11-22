@@ -72,7 +72,7 @@ skisser (se metoder_lista); skriv det när du redovisar resultat. (4) Varje svar
 Arbetsgång: projekt_info och geometri_sammanfattning för att förstå området; byggnader_lista för
 byggnads-id; scenario_skapa för ett ritat hus eller en ändring; korplan för att se vad som räknas;
 kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild för att läsa resultatet.
-Rapporter (R1): fragekatalog_sok, rapport_skapa, pastaende_lagg_till (tal bara som platshållare
+Rapporter (R1): fragekatalog_sok, rapport_skapa, rapport_installningar, pastaende_lagg_till (tal bara som platshållare
 {{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_hamta.
 Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
 med session_deklarera; det loggas i körloggen (korlogg_hamta).
@@ -676,6 +676,16 @@ def _registrera_rapportverktyg(
         ansvarig_utredare: Annotated[
             str | None, Field(description="Valfritt i nivå 1; skrivs i metodnotisen.")
         ] = None,
+        installningar: Annotated[
+            dict[str, Any] | None,
+            Field(
+                description="Språk och layout (valfritt; förval och config.local.toml [rapport] "
+                "gäller annars): sprakprofil ('sbk' förval eller 'neutral'), numrerade_rubriker, "
+                "numrerade_figurer (förval false), avsandare (förval 'Stadsbyggnadskontoret'), "
+                "diarienummer, handlaggare, accentfarg ('#000000'), logotyp, typsnitt_brodtext, "
+                "typsnitt_rubriker (lokala sökvägar; bara filens sha256 lagras)."
+            ),
+        ] = None,
         projekt: Projekt = PROJEKT_ID,
         modell: Modell = None,
         roll: Roll = None,
@@ -693,9 +703,11 @@ def _registrera_rapportverktyg(
             modell=modell or tillstand.modell,
             ansvarig_utredare=ansvarig_utredare,
             av=tillstand.session_id,
+            installningar=installningar,
         )
         return {
             **sammanfattning(r, rapporter.arkiv),
+            "installningar": r.installningar.till_dict(),
             "fragor": [
                 {"id": f, "fraga": r.katalog["fragor"][f]["fraga"]} for f in r.fragor
             ],
@@ -709,6 +721,34 @@ def _registrera_rapportverktyg(
                 "underlag_saknas (saknat_underlag), ej_tillampligt (motivering). Fördjupning: nej, "
                 "ja, kan_inte_avgoras. Varje fråga behöver minst ett påstående före export."
             ),
+        }
+
+    @verktyg(
+        "rapport_installningar",
+        "Visar eller ändrar en rapports inställningar för språk och layout. Utan andringar: visar "
+        "dem. Nycklar: sprakprofil ('sbk' = utredningstext från stadsbyggnadskontoret, förval; "
+        "'neutral'), numrerade_rubriker och numrerade_figurer (förval false), avsandare, "
+        "diarienummer, handlaggare, accentfarg (hex), logotyp, typsnitt_brodtext och "
+        "typsnitt_rubriker (lokala sökvägar till PNG/JPEG respektive TTF/OTF; tom sträng tar bort). "
+        "Sökvägarna lagras inte, bara filens sha256. Språkprofilen styr mallens text; redan "
+        "tillagda påståenden ändras inte. Kontrollen behöver göras om efteråt.",
+    )
+    def rapport_installningar(
+        rapport_id: RapportId,
+        andringar: Annotated[
+            dict[str, Any] | None, Field(description="Inställningar att ändra; utelämnat = visa.")
+        ] = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        if andringar:
+            inst = rapporter.andra_installningar(rapport_id, andringar, av=tillstand.session_id)
+        else:
+            inst = rapporter.hamta(rapport_id).installningar
+        return {
+            "rapport_id": rapport_id,
+            "installningar": inst.till_dict(),
+            "anmarkning": "Logotyp och typsnitt anges med sha256; sökvägar lagras inte.",
         }
 
     @verktyg(

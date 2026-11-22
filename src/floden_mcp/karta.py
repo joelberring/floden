@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -129,7 +130,8 @@ def _legend(duk: Image.Image, x: int, y: int, h: int, lager: Mapping[str, Any]) 
         for i, k in enumerate(tf["klasser"]):
             yy = y0 + i * 26
             d.rectangle([x, yy, x + bredd, yy + 20], fill=_farg(k["farg"]), outline=_RAM)
-            _text(duk, (x + bredd + 8, yy + 3), k["etikett"] + (f" {enhet}" if enhet else ""))
+            etikett = re.sub(r"(\d)\.(\d)", r"\1,\2", str(k["etikett"]))  # decimalkomma
+            _text(duk, (x + bredd + 8, yy + 3), etikett + (f" {enhet}" if enhet else ""))
         _text(duk, (x, y0 + len(tf["klasser"]) * 26 + 6), "Under 0,02 m: ej markerat")
         return y0 + len(tf["klasser"]) * 26 + 34
     if tf["typ"] == "kontinuerlig":
@@ -221,6 +223,7 @@ def rendera_karta(
     skiss: bool,
     utsnitt: tuple[float, float, float, float] | None = None,
     max_px: int = 900,
+    rubrik: str | None = None,
 ) -> tuple[bytes, dict[str, Any]]:
     """Ritar lagret som PNG. Returnerar (png, meta) där meta beskriver utsnitt och upplösning."""
     u = lager["utbredning"]
@@ -262,7 +265,8 @@ def rendera_karta(
     typtext = {"bas": "bas", "scenario": "scenario", "skillnad": "skillnad (efter minus före)"}[
         lager["typ"]
     ]
-    rubrik = f"{lager['etikett']}, {typtext}: {scen}".replace("_", " ")
+    if rubrik is None:
+        rubrik = f"{lager['etikett']}, {typtext}: {scen}".replace("_", " ")
     fotrader = [
         (f"Floden {kodversion}. Ritad ur körningens GeoTIFF.", _SVAG),
         ("Ingen AI har räknat eller ritat talen.", _SVAG),
@@ -336,10 +340,13 @@ def rendera_karta(
         _text(duk, (xx - _textbredd(f"{e:.0f}") // 2, rand_t + kart_h + 8), f"{e:.0f}", _SVAG)
         e += steg
     n = math.ceil(y_min / steg) * steg
+    x_rad_topp = rand_t + kart_h + 8  # överkant för etiketterna längs x-axeln
     while n <= y_max:
         yy = rand_t + int(round((y_max - n) * px_per_m))
         d.line([rand_v - 5, yy, rand_v, yy], fill=_RAM)
-        _text(duk, (rand_v - 8 - _textbredd(f"{n:.0f}"), yy - 6), f"{n:.0f}", _SVAG)
+        # Etiketten (ca 22 px hög) får inte gå ned i x-axelns etikettrad i nedre vänstra hörnet.
+        if yy - 6 + 22 <= x_rad_topp:
+            _text(duk, (rand_v - 8 - _textbredd(f"{n:.0f}"), yy - 6), f"{n:.0f}", _SVAG)
         n += steg
 
     # skalstock (liten vit platta, så att den inte döljer mycket av kartan)

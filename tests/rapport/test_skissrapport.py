@@ -38,7 +38,7 @@ class Miljo:
         )
         self.app.fragor.demomapp = demo.varld
         self.tjanst = FlodenTjanst(self.app, rot=REPO, mcp_mapp=rot / "mcp")
-        self.rt = RapportTjanst(self.tjanst)
+        self.rt = RapportTjanst(self.tjanst, lokala_forval={})
 
     def ny_rapport(self, **over: Any) -> Rapport:
         arg: dict[str, Any] = {
@@ -104,7 +104,7 @@ def _text_pdf(fil: Path) -> tuple[int, list[str]]:
 
 
 def _norm(s: str) -> str:
-    return " ".join(s.replace(NB, " ").split())
+    return " ".join(s.replace(NB, " ").replace("\u202f", " ").split())
 
 
 # ------------------------------------------------------------------ K33 och belägg
@@ -149,7 +149,7 @@ def test_word_innehaller_ratt_tal(exporterad: dict[str, Any], m: Miljo) -> None:
     assert _norm(formatera_tal(jamf["max_okning"]["varde"], "m", 0.01)) in text
     for p in exporterad["rapport"].pastaenden:
         assert _norm(p.fylld_text()) in text
-    for rubrik in ("1 Sammanfattning", "Bilaga A Belägg", "Bilaga B Körlogg", "Bilaga C Manifest"):
+    for rubrik in ("Sammanfattning", "Bilaga 1 Belägg", "Bilaga 2 Körlogg", "Bilaga 3 Manifest"):
         assert rubrik in text
     assert "vatten.statisk_fyllning" in text and "skiss" in text
     import docx
@@ -162,9 +162,10 @@ def test_pdf_har_sidor_och_text(exporterad: dict[str, Any]) -> None:
     allt = _norm(" ".join(texter))
     assert 6 <= sidor <= 12
     for i, t in enumerate(texter, start=1):
-        assert f"Sida {i}" in t
-    forsta_bilaga = next(i for i, t in enumerate(texter) if "Bilaga A Belägg" in t)
-    assert forsta_bilaga <= 6, "skissunderlaget ska vara högst sex sidor före bilagorna"
+        assert f"Sida {i} ({sidor})" in t
+    forsta_bilaga = next(i for i, t in enumerate(texter) if "Bilaga 1 Belägg" in t)
+    # smal textspalt (svensk rapportlayout) ger något fler sidor än full bredd
+    assert forsta_bilaga <= 7, "skissunderlaget ska vara högst sju sidor före bilagorna"
     assert "Skissunderlag skyfall" in allt
     for p in exporterad["rapport"].pastaenden:
         # pdf-texten bryter rader; jämför första tolv orden
@@ -333,7 +334,7 @@ def test_mottagare_och_matt_inplanterade_stoppas(m: Miljo) -> None:
     def fn(d: dict[str, Any]) -> None:
         p = next(p for p in d["pastaenden"] if p["fraga_id"] == "SK-01")
         p["belagg"][1]["namnare"] = "markceller i mottagaren garden"
-        p["text"] = p["text"].replace("Största vattendjup", "Högsta vattennivå")
+        p["text"] = p["text"].replace("största vattendjupet", "högsta vattennivån")
 
     m.andra(r, fn)
     assert any("olika nämnare" in f for f in m.fel(r, "mottagare"))

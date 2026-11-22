@@ -2,8 +2,12 @@
 """AI-fritt referensflöde: skissunderlag skyfall för demokvarterets vattenfråga (R1).
 
 Fasta påståenden (inga modeller) för frågorna SK-01 till SK-15, med belägg ur körningen
-`demo-vatten`. Används av `tools/rapport_demo.py` och testerna. Formuleringarna är neutrala:
-riktningen i ett tal (ökar/minskar) skrivs inte i texten, eftersom värdet kommer ur körningen.
+`demo-vatten`. Används av `tools/rapport_demo.py` och testerna. Riktningen i ett tal
+(ökar/minskar) skrivs inte i texten, eftersom värdet kommer ur körningen.
+
+Två språkprofiler (`rapport.sprak`): "sbk" (förval) skriver som en utredningstext från
+stadsbyggnadskontoret – sakligt, opersonligt, slutsatsen först, utan att förvaltningen tar
+ställning – och "neutral" är tonen i R1. Talen är samma platshållare i båda.
 """
 
 from __future__ import annotations
@@ -39,8 +43,12 @@ def _m(adress: str, opt: str = "") -> str:
     return "{{matt:" + adress + (f"|{opt}" if opt else "") + "}}"
 
 
-def pastaenden(analys: str = "skyfall") -> list[Mapping[str, Any]]:
+def pastaenden(analys: str = "skyfall", sprakprofil: str = "sbk") -> list[Mapping[str, Any]]:
     """De fasta påståendena (argument till `RapportTjanst.lagg_till_pastaende`)."""
+    if sprakprofil == "sbk":
+        return _pastaenden_sbk(analys)
+    if sprakprofil != "neutral":
+        raise ValueError(f"Okänd språkprofil '{sprakprofil}'.")
     mv = f"matvarde.{analys}"
     jf = f"jamforelse.{JFR}"
     return [
@@ -219,6 +227,203 @@ def pastaenden(analys: str = "skyfall") -> list[Mapping[str, Any]]:
             "status": "ej_tillampligt",
             "fordjupning": "nej",
             "text": "Skissen omfattar ett beräkningsområde och en utredning.",
+            "motivering": "Ingen sammanvägning av flera delområden eller utredningar behövs.",
+        },
+    ]
+
+
+def _pastaenden_sbk(analys: str) -> list[Mapping[str, Any]]:
+    """Språkprofilen "sbk": samma frågor, status, belägg och platshållare, i utredningsprosa."""
+    mv = f"matvarde.{analys}"
+    jf = f"jamforelse.{JFR}"
+    return [
+        {
+            "fraga_id": "SK-01",
+            "status": "underlag_saknas",
+            "fordjupning": "ja",
+            "text": "Det största vattendjupet i beräkningsområdet är "
+            f"{_m(mv + '.fore.max_djup_m')} före och {_m(mv + '.efter.max_djup_m')} efter "
+            "förslaget. Underlag saknas för att bedöma hur översvämningen påverkar markens "
+            "användning.",
+            "belagg": [f"{mv}.fore.max_djup_m", f"{mv}.efter.max_djup_m"],
+            "saknat_underlag": [
+                "Markanvändning, känsliga byggnader, entréer och riskkällor ingår inte i "
+                "underlaget."
+            ],
+            "ansvarig_funktion": "Beställaren (planhandläggaren)",
+        },
+        {
+            "fraga_id": "SK-02",
+            "status": "villkorat",
+            "fordjupning": "ja",
+            "text": "Sållningen är gjord med Stockholmsregn 2024 (Tabell 7) som blockregn: "
+            f"återkomsttid {_m(mv + '.efter.aterkomsttid_ar')}, varaktighet "
+            f"{_m(mv + '.efter.varaktighet_min')}, klimatfaktor "
+            f"{_m(mv + '.efter.klimatfaktor', 'avrundning=0,1')} och regnmängd "
+            f"{_m(mv + '.efter.regn_mm', 'avrundning=1')}. Vilket regn och vilken "
+            "säkerhetsnivå som ska gälla behöver bestämmas i planarbetet.",
+            "belagg": [
+                f"{mv}.efter.aterkomsttid_ar",
+                f"{mv}.efter.varaktighet_min",
+                f"{mv}.efter.klimatfaktor",
+                f"{mv}.efter.regn_mm",
+            ],
+            "forutsattning": "Beställaren bestämmer dimensionerande regn och säkerhetsnivå, "
+            "med högre nivå om samhällsviktig verksamhet berörs.",
+            "ansvarig_funktion": "Beställaren tillsammans med stadens skyfallsfunktion",
+        },
+        {
+            "fraga_id": "SK-03",
+            "status": "underlag_saknas",
+            "fordjupning": "kan_inte_avgoras",
+            "text": f"Under regnet rinner {_m(mv + '.fore.ut_m3')} vatten ut över "
+            f"beräkningsområdets kant före förslaget och {_m(mv + '.efter.ut_m3')} efter. "
+            "Underlag saknas för att bedöma vart vattnet tar vägen efter plangränsen.",
+            "belagg": [f"{mv}.fore.ut_m3", f"{mv}.efter.ut_m3"],
+            "saknat_underlag": [
+                "Tillrinningsområde, plangräns och mottagare nedströms. Beräkningen låter "
+                "vattnet rinna fritt ut över områdets kant."
+            ],
+        },
+        {
+            "fraga_id": "SK-04",
+            "status": "underlag_saknas",
+            "fordjupning": "kan_inte_avgoras",
+            "text": "Beräkningen redovisar inte höjder och öppningar för enskilda objekt. Frågan "
+            "behöver utredas vidare i planarbetet.",
+            "saknat_underlag": [
+                "Terrängmodell med portar, trummor, kantstenar och trösklar vid entréer i "
+                "höjdsystemet RH 2000, kontrollerad på plats."
+            ],
+        },
+        {
+            "fraga_id": "SK-05",
+            "status": "visat",
+            "fordjupning": "nej",
+            "text": "Beräkningen förutsätter att ledningsnätet är fullt under skyfallet. "
+            f"Avtappningen till nätet är {_m(mv + '.efter.avtappning_mm_h')}. Regnet på taken "
+            "rinner ned till marken längs fasaderna, och andelen takvatten som leds direkt till "
+            f"ledningsnätet är {_m(mv + '.efter.takvatten_andel_ledning')}. Beräkningen tar inte "
+            "hänsyn till infiltration i marken.",
+            "belagg": [f"{mv}.efter.avtappning_mm_h", f"{mv}.efter.takvatten_andel_ledning"],
+        },
+        {
+            "fraga_id": "SK-06",
+            "status": "visat",
+            "fordjupning": "ja",
+            "text": "Med förslaget blir vattnet djupare än tröskelvärdet på "
+            f"{_m(jf + '.yta_okning_m2')} mark. Den största ökningen i en enskild beräkningsruta "
+            f"är {_m(jf + '.max_okning')}. Vattendjupet minskar mer än tröskelvärdet på "
+            f"{_m(jf + '.yta_minskning_m2')} mark. Frågan behöver utredas vidare i "
+            "planarbetet.",
+            "belagg": [f"{jf}.yta_okning_m2", f"{jf}.max_okning", f"{jf}.yta_minskning_m2"],
+            "mottagare": "hela_omradet",
+        },
+        {
+            "fraga_id": "SK-07",
+            "status": "underlag_saknas",
+            "fordjupning": "ja",
+            "text": "Den stående vattenvolymen i lågpunkterna är "
+            f"{_m(mv + '.fore.lagrat_m3')} före och {_m(mv + '.efter.lagrat_m3')} efter "
+            "förslaget. Underlag saknas för att bedöma om skaderisken ökar för grannar eller "
+            "nedströms.",
+            "belagg": [f"{mv}.fore.lagrat_m3", f"{mv}.efter.lagrat_m3"],
+            "saknat_underlag": [
+                "Flöde och varaktighet vid grannar och mottagare nedströms. Beräkningen är "
+                "statisk och visar inget förlopp."
+            ],
+        },
+        {
+            "fraga_id": "SK-07",
+            "status": "visat",
+            "fordjupning": "ja",
+            "mottagare": "garden",
+            "text": "På gården där huset byggs är det största vattendjupet på marken "
+            f"{_m('omrade.garden.' + analys + '.efter.max_djup.max')} efter förslaget. "
+            "Vattendjupet ökar mer än tröskelvärdet på "
+            f"{_m('omrade.garden.skillnad.' + JFR + '.yta_okning_m2')} av gårdens mark.",
+            "belagg": [
+                f"omrade.garden.{analys}.efter.max_djup.max",
+                f"omrade.garden.skillnad.{JFR}.yta_okning_m2",
+            ],
+        },
+        {
+            "fraga_id": "SK-08",
+            "status": "underlag_saknas",
+            "fordjupning": "kan_inte_avgoras",
+            "text": "Framkomligheten är inte bedömd. Underlag saknas för att bedöma när "
+            "tillträdet begränsas.",
+            "saknat_underlag": [
+                "Väg till entréerna, fastställd gräns för hur djupt vatten fordon klarar och "
+                "tidsserie för vattendjup och hastighet."
+            ],
+        },
+        {
+            "fraga_id": "SK-09",
+            "status": "ej_tillampligt",
+            "fordjupning": "nej",
+            "text": "Skissen prövar ingen skyddsåtgärd.",
+            "motivering": "Frågan gäller genomförande och drift av en skyddsåtgärd. Skissen "
+            "prövar bara ett nytt hus utan åtgärd.",
+        },
+        {
+            "fraga_id": "SK-10",
+            "status": "underlag_saknas",
+            "fordjupning": "ja",
+            "text": "Det relativa felet i beräkningens vattenbalans är "
+            f"{_m(mv + '.fore.volymfel_rel', 'format=exp')} före och "
+            f"{_m(mv + '.efter.volymfel_rel', 'format=exp')} efter förslaget. "
+            "Känslighetsberäkningar har inte gjorts.",
+            "belagg": [f"{mv}.fore.volymfel_rel", f"{mv}.efter.volymfel_rel"],
+            "saknat_underlag": [
+                "Känslighetsberäkningar för terräng, regn och avledning, och jämförelse med ett "
+                "oberoende underlag."
+            ],
+        },
+        {
+            "fraga_id": "SK-11",
+            "status": "ej_tillampligt",
+            "fordjupning": "nej",
+            "text": "Underlaget är ingen dagvattenutredning.",
+            "motivering": "Floden räknar inte vardagsregn och rening. Frågan prövas i "
+            "dagvattenutredningen.",
+        },
+        {
+            "fraga_id": "SK-12",
+            "status": "underlag_saknas",
+            "fordjupning": "ja",
+            "text": "Kartorna visar det största vattendjupet i meter, med teckenförklaring och "
+            "förklaring av ytor utan värde. Det största djupet efter förslaget är "
+            f"{_m(mv + '.efter.max_djup_m')}.",
+            "belagg": [f"{mv}.efter.max_djup_m"],
+            "saknat_underlag": [
+                "Vattenytans höjd i höjdsystemet RH 2000, sektioner genom kritiska passager och "
+                "tidsserie."
+            ],
+        },
+        {
+            "fraga_id": "SK-13",
+            "status": "ej_tillampligt",
+            "fordjupning": "nej",
+            "text": "Inga åtgärder utanför beräkningsområdet ingår.",
+            "motivering": "Skissen prövar inga åtgärder utanför området och ingen utbyggnad i "
+            "etapper.",
+        },
+        {
+            "fraga_id": "SK-14",
+            "status": "underlag_saknas",
+            "fordjupning": "kan_inte_avgoras",
+            "text": "Räddningsväg och insatsplats är inte bedömda.",
+            "saknat_underlag": [
+                "Gräns för fordonens framkomlighet ur brandunderlaget och beräkning av "
+                "vattendjup och hastighet längs räddningsvägen."
+            ],
+        },
+        {
+            "fraga_id": "SK-15",
+            "status": "ej_tillampligt",
+            "fordjupning": "nej",
+            "text": "Underlaget omfattar ett beräkningsområde och en utredning.",
             "motivering": "Ingen sammanvägning av flera delområden eller utredningar behövs.",
         },
     ]

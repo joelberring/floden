@@ -16,8 +16,8 @@ from tests.demovarld.test_demo import Demo
 from tests.floden_mcp.test_mcp import Mcp
 
 RAPPORTVERKTYG = {
-    "fragekatalog_sok", "rapport_skapa", "pastaende_lagg_till", "rapport_kontrollera",
-    "rapport_exportera", "rapport_hamta",
+    "fragekatalog_sok", "rapport_skapa", "rapport_installningar", "pastaende_lagg_till",
+    "rapport_kontrollera", "rapport_exportera", "rapport_hamta",
 }  # fmt: skip
 
 
@@ -122,3 +122,44 @@ def test_hela_flodet_via_mcp_och_korloggen(mcp: Mcp) -> None:
     text = " ".join(p.extract_text() or "" for p in pypdf.PdfReader(str(pdf)).pages)
     assert "MCP-körloggen" in text and "pastaende_lagg_till" in text
     assert "AI-stöd (testmodell)" in " ".join(text.split())
+
+
+def test_rapport_installningar_via_mcp_utan_sokvagar(mcp: Mcp, tmp_path: Path) -> None:
+    from PIL import Image
+
+    logo = tmp_path / "hemlig_mapp" / "logotyp.png"
+    logo.parent.mkdir()
+    Image.new("RGB", (60, 20), (20, 60, 120)).save(logo)
+    r = mcp.ok(
+        "rapport_skapa",
+        {"korningar": ["demo-vatten"], "installningar": {"diarienummer": "Dnr 2026-00001"}},
+    )
+    rid = r["rapport_id"]
+    assert r["installningar"]["sprakprofil"] == "sbk"
+    assert r["installningar"]["numrerade_rubriker"] is False
+    assert r["installningar"]["diarienummer"] == "Dnr 2026-00001"
+    visad = mcp.ok("rapport_installningar", {"rapport_id": rid})["installningar"]
+    assert visad["avsandare"] == "Stadsbyggnadskontoret" and visad["logotyp"] is None
+
+    ny = mcp.ok(
+        "rapport_installningar",
+        {
+            "rapport_id": rid,
+            "andringar": {"numrerade_rubriker": True, "avsandare": "", "logotyp": str(logo)},
+        },
+    )["installningar"]
+    assert ny["numrerade_rubriker"] is True and ny["avsandare"] == ""
+    assert len(ny["logotyp"]["sha256"]) == 64
+    fel = mcp.anropa("rapport_installningar", {"rapport_id": rid, "andringar": {"farg": "röd"}})
+    assert fel.is_error and "Okänd inställning" in fel.content[0].text
+    saknas = mcp.anropa(
+        "rapport_installningar",
+        {"rapport_id": rid, "andringar": {"logotyp": str(tmp_path / "hemlig_mapp" / "x.png")}},
+    )
+    assert saknas.is_error and "hemlig_mapp" not in saknas.content[0].text
+
+    # sökvägen finns varken i rapporten, i svaren eller i körloggen
+    h = json.dumps(mcp.ok("rapport_hamta", {"rapport_id": rid}), ensure_ascii=False)
+    assert "hemlig_mapp" not in h and str(tmp_path) not in h
+    logg = json.dumps(list(mcp.logg.las()), ensure_ascii=False)
+    assert "hemlig_mapp" not in logg

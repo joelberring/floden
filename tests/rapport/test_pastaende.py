@@ -24,6 +24,7 @@ from rapport.skisskontroll import mattfel, scenariofel
 
 REPO = Path(__file__).resolve().parents[2]
 NB = " "
+SM = "\u202f"  # smalt hårt mellanslag mellan tusental
 
 
 def belagg(adress: str = "jamforelse.j.yta_okning_m2", **over: object) -> Belagg:
@@ -70,8 +71,11 @@ def pastaende(**over: object) -> Pastaende:
 
 
 def test_svensk_talform_med_enhet_och_precision() -> None:
-    assert formatera_tal(3258.0, "m²", 10) == f"3260{NB}m²"
-    assert formatera_tal(12345.6, "m³", 10) == f"12{NB}350{NB}m³"
+    assert formatera_tal(3258.0, "m²", 10) == f"3{SM}260{NB}m²"
+    assert formatera_tal(7426.17, "m³", 10) == f"7{SM}430{NB}m³"
+    assert formatera_tal(12345.6, "m³", 10) == f"12{SM}350{NB}m³"
+    assert formatera_tal(1234567.0, "m²", 10) == f"1{SM}234{SM}570{NB}m²"
+    assert formatera_tal(999.0, "m²", 1) == f"999{NB}m²"
     assert formatera_tal(0.1590404, "m", 0.01) == f"0,16{NB}m"
     assert formatera_tal(-0.1590404, "m", 0.01) == f"−0,16{NB}m"
     assert formatera_tal(-0.001, "m", 0.01) == f"0,00{NB}m"  # inget minustecken på noll
@@ -91,9 +95,9 @@ def test_standardprecision_foljer_underlaget() -> None:
 def test_platshallare_fylls_ur_belagget() -> None:
     b = belagg()
     assert fyll_text("Yta {{matt:" + b.adress + "|avrundning=100}}.", {b.adress: b}) == (
-        f"Yta 3300{NB}m²."
+        f"Yta 3{SM}300{NB}m²."
     )
-    assert fyll_text("{{matt:" + b.adress + "|enhet=nej}}", {b.adress: b}) == "3260"
+    assert fyll_text("{{matt:" + b.adress + "|enhet=nej}}", {b.adress: b}) == f"3{SM}260"
 
 
 @pytest.mark.parametrize(

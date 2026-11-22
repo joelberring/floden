@@ -63,3 +63,18 @@ klient_hemlighet = ""
 # [konto.leverantorer.annan.claims]
 # grupper = "groups"
 # tenant = "tid"
+
+# Rapporternas språk och layout (docs/RAPPORTER.md). Gäller när en rapport skapas och lagras sedan
+# i rapporten. Logotyp och typsnitt är lokala filer som aldrig checkas in; rapporten lagrar bara
+# deras sha256. Relativa sökvägar räknas från Flodens rot.
+[rapport]
+# sprakprofil = "sbk"                  # "sbk" (utredningstext från stadsbyggnadskontoret) eller "neutral"
+# numrerade_rubriker = false
+# numrerade_figurer = false
+# avsandare = "Stadsbyggnadskontoret"  # tom sträng = ingen avsändare
+# diarienummer = ""
+# handlaggare = ""
+# accentfarg = "#1F4E79"
+# logotyp = "/sökväg/till/logotyp.png"
+# typsnitt_brodtext = "/sökväg/till/StockholmType-Regular.ttf"
+# typsnitt_rubriker = "/sökväg/till/StockholmType-Bold.ttf"
