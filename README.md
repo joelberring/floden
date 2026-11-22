@@ -42,6 +42,15 @@ skillnad), byggnader, varningar och mätvärden. Allt beräknas av kärnan; webb
 på den egna disken. Med `inloggning = "pa"` kopplas kontosystemet in (Google-inloggning, CSRF,
 skyddat API), se `docs/KONTO.md`. Start och API: se `webb/README.md`.
 
+## Styra Floden med AI
+
+`floden mcp` gör Floden till en MCP-server: en AI-klient (Claude Desktop, Claude Code, Codex, lokal
+modell) kan utforska demokvarteret, rita ett hus, köra före/efter och läsa resultaten, via samma kärna
+som webben. Principen: **Floden räknar, AI frågar och skriver men äger aldrig en siffra**; varje tal
+har belägg (körning, fil, cell, mått, enhet), varje anrop loggas i en körlogg och svaren märks med
+dataklass (förval: bara `oppet`). Anslutning, verktyg och policy: `docs/MCP.md`. Kort:
+`pip install -e ".[dev]"`, `floden demo`, sedan `claude mcp add floden -- floden mcp`.
+
 ## Köra ett verkligt område på din dator
 
 Hämtar Lantmäteriets öppna laser, byggnader och ortofoto för ditt provområde och kör dagsljus och vatten på det. Allt

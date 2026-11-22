@@ -18,8 +18,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-import numpy as np
-
 from demovarld.fragor import FRAGA_DAGSLJUS, FRAGA_VATTEN
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
@@ -112,25 +110,7 @@ class ProjektTjanst:
         self, korning_id: str, lager: dict[str, Any], troskel: float
     ) -> dict[str, float] | None:
         """Ytor (m²) och största förändring på mark i ett skillnadslager, utan byggnadernas tak."""
-        k = self.fragor._hamta(korning_id)  # noqa: SLF001 - samma paket
-        fil = k.mapp / "webb" / f"{lager['id']}.npy"
-        if not fil.is_file():
-            return None
-        d = np.asarray(np.load(fil), dtype=np.float64)
-        giltig = np.isfinite(d)
-        takfil = k.mapp / "webb" / f"{lager['id']}.tak.npy"
-        if takfil.is_file():
-            giltig &= ~np.load(takfil)
-        if not giltig.any():
-            return None
-        cell = float(lager["pixelstorlek_m"]) ** 2
-        v = d[giltig]
-        return {
-            "yta_minskning_m2": float(np.count_nonzero(v < -troskel)) * cell,
-            "yta_okning_m2": float(np.count_nonzero(v > troskel)) * cell,
-            "max_minskning": float(max(-v.min(), 0.0)),
-            "max_okning": float(max(v.max(), 0.0)),
-        }
+        return self.fragor.marksiffror(korning_id, lager, troskel)
 
     @staticmethod
     def _skillnadslager(res: dict[str, Any], efter: str) -> dict[str, Any] | None:

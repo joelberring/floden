@@ -1,0 +1,713 @@
+# ruff: noqa: E501
+"""Flodens MCP-server: verktyg, resurser och promptar ovanpå `FlodenTjanst`.
+
+Principer (se `docs/MCP.md`):
+
+1. **AI:n äger inget tal.** Varje tal i ett svar kommer ur en körnings filer och bär ett belägg.
+2. **En sanning.** Verktygen anropar samma kärn-API som webben via `FlodenTjanst`; ingen logik för
+   vatten, dagsljus eller kartor finns här.
+3. **Allt loggas.** En middleware skriver en rad per anrop i körloggen (`floden_mcp.korlogg`) och
+   tillämpar datapolicyn (`floden_mcp.dataklass`) före anropet.
+4. **Dataklass på varje svar.** `dataklass` står först i varje verktygssvar.
+
+Verktygen finns i en tabell längst ned (`VERKTYG`); klassen för varje verktyg är `oppet` i R0.
+"""
+
+import base64
+import functools
+import json
+import os
+import re
+import time
+import uuid
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Annotated, Any
+
+from mcp.server.context import ServerRequestContext
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp_types import CallToolResult, ImageContent, TextContent
+from pydantic import Field
+
+from floden_mcp import MCP_VERSION
+from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad
+from floden_mcp.karna_api import PROJEKT_ID, FlodenFel, FlodenTjanst
+from floden_mcp.korlogg import Korlogg, KorloggFel, hash_av, nu, rensa_text
+
+Modell = Annotated[
+    str | None,
+    Field(
+        description="Valfritt: vilken AI-modell som styr anropet (t.ex. 'claude-opus-5'). "
+        "Loggas i körloggen; påverkar inget resultat."
+    ),
+]
+Roll = Annotated[
+    str | None,
+    Field(
+        description="Valfritt: modellens roll i arbetet (t.ex. 'utforskare', 'skribent'). "
+        "Loggas i körloggen; påverkar inget resultat."
+    ),
+]
+Projekt = Annotated[str, Field(description="Projekt-id. Just nu finns bara 'demokvarteret'.")]
+KorningId = Annotated[str, Field(description="Körnings-id från kor, korningar_lista eller vanta.")]
+Polygon = Annotated[
+    list[list[float]],
+    Field(description="Polygonens hörn som [[e, n], ...] i SWEREF 99 18 00 (EPSG:3011), meter."),
+]
+
+INSTRUKTIONER = """\
+Floden är en öppen modell som räknar skyfall (vatten) och dagsljus på gatunivå, före och efter ett
+planförslag. Du styr den med verktyg; Floden räknar.
+
+Regler: (1) Du äger aldrig ett tal. Skriv bara tal som står i ett verktygssvar, oförändrade och med
+enhet, och ange beläggen (korning_id, fil, mottagare/cell, matt). Räkna inte om, avrunda inte i tysthet,
+gissa inte. Saknas ett tal: kör eller fråga igen. (2) Allt i demokvarteret är påhittat. (3) Metoderna är
+skisser (se metoder_lista); skriv det när du redovisar resultat. (4) Varje svar har en dataklass; bara
+'oppet' lämnas ut som standard.
+
+Arbetsgång: projekt_info och geometri_sammanfattning för att förstå området; byggnader_lista för
+byggnads-id; scenario_skapa för ett ritat hus eller en ändring; korplan för att se vad som räknas;
+kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild för att läsa resultatet.
+Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
+med session_deklarera; det loggas i körloggen (korlogg_hamta).
+"""
+
+_FEL_PREFIX = "[floden]"
+
+
+def _till_dict(r: Any) -> dict[str, Any]:
+    if isinstance(r, Mapping):
+        return dict(r)
+    dump = getattr(r, "model_dump", None)
+    return dict(dump(by_alias=True, exclude_none=False)) if callable(dump) else {}
+
+
+def _hitta_korningar(obj: Any, ut: set[str], djup: int = 0) -> None:
+    """Samlar körnings-id (nycklarna `korning_id` och `korning_ids`) ur ett svar."""
+    if djup > 8:
+        return
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            if k == "korning_id" and isinstance(v, str):
+                ut.add(v)
+            elif k == "korning_ids" and isinstance(v, list):
+                ut.update(x for x in v if isinstance(x, str))
+            else:
+                _hitta_korningar(v, ut, djup + 1)
+    elif isinstance(obj, list):
+        for x in obj[:500]:
+            _hitta_korningar(x, ut, djup + 1)
+
+
+class Sessionstillstand:
+    """Deklarerad modell och roll för servern (en process = en session över stdio)."""
+
+    def __init__(self, miljo: Mapping[str, str] | None = None) -> None:
+        miljo = os.environ if miljo is None else miljo
+        self.session_id = f"s-{uuid.uuid4().hex[:12]}"
+        self.modell = rensa_text(miljo.get("FLODEN_MCP_MODELL"))
+        self.roll = rensa_text(miljo.get("FLODEN_MCP_ROLL"))
+
+
+def _result_fel(text: str) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
+def bygg_server(
+    tjanst: FlodenTjanst,
+    *,
+    policy: Policy | None = None,
+    logg: Korlogg | None = None,
+    miljo: Mapping[str, str] | None = None,
+) -> MCPServer:
+    """Skapar MCP-servern. `policy` standard: bara `oppet`; `logg` standard: data/lokal/mcp."""
+    policy = policy or Policy()
+    logg = logg or Korlogg(tjanst.mcp_mapp / "korlogg.jsonl")
+    tillstand = Sessionstillstand(miljo)
+    server = MCPServer(
+        "floden",
+        title="Floden",
+        description="Skyfall och dagsljus på gatunivå, styrd av AI; Floden räknar.",
+        instructions=INSTRUKTIONER,
+        version=MCP_VERSION,
+    )
+    # Verktygets dataklass (alla öppna i R0) och om det gäller ett projekt.
+    klasser: dict[str, DataKlass] = {}
+    utan_projekt = {"session_deklarera", "korlogg_hamta", "metoder_lista"}
+
+    def verktyg(
+        namn: str, beskrivning: str, *, klass: DataKlass = DataKlass.OPPET
+    ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Registrerar ett verktyg: FlodenFel blir ett klartextfel, och svaret får `dataklass`."""
+        klasser[namn] = klass
+
+        def deko(fn: Callable[..., Any]) -> Callable[..., Any]:
+            @functools.wraps(fn)
+            def inre(*args: Any, **kwargs: Any) -> Any:
+                try:
+                    svar = fn(*args, **kwargs)
+                except FlodenFel as exc:
+                    raise ToolError(f"{exc} {_FEL_PREFIX}{exc.kod}") from exc
+                if isinstance(svar, dict):
+                    projekt = None if namn in utan_projekt else kwargs.get("projekt", PROJEKT_ID)
+                    return {"dataklass": policy.klass_for(klass, projekt).value, **svar}
+                return svar
+
+            server.tool(name=namn, description=beskrivning)(inre)
+            return fn
+
+        return deko
+
+    # ------------------------------------------------------------------ middleware
+    def _klient(ctx: ServerRequestContext[Any, Any]) -> dict[str, str | None]:
+        params = getattr(ctx.session, "client_params", None)
+        info = getattr(params, "client_info", None)
+        if info is None:
+            meta = ctx.params.get("_meta") if ctx.params else None
+            raw = (meta or {}).get("io.modelcontextprotocol/clientInfo") if meta else None
+            if isinstance(raw, Mapping):
+                return {
+                    "namn": rensa_text(raw.get("name")) or "okand",
+                    "version": rensa_text(raw.get("version")),
+                }
+            return {"namn": "okand", "version": None}
+        return {"namn": rensa_text(info.name) or "okand", "version": rensa_text(info.version)}
+
+    def _http(ctx: ServerRequestContext[Any, Any]) -> tuple[str | None, str | None]:
+        """(Mcp-Session-Id, konto-id) när anropet kom över HTTP."""
+        req = ctx.request
+        if req is None:
+            return None, None
+        sid = getattr(req, "headers", {}).get("mcp-session-id")
+        scope = getattr(req, "scope", {})
+        return rensa_text(sid), rensa_text(scope.get("floden_konto"))
+
+    LOGGADE = {"tools/call", "resources/read", "prompts/get"}
+
+    async def mellanvara(
+        ctx: ServerRequestContext[Any, Any],
+        call_next: Callable[[ServerRequestContext[Any, Any]], Awaitable[Any]],
+    ) -> Any:
+        if ctx.method not in LOGGADE:
+            return await call_next(ctx)
+        t0 = time.monotonic()
+        params = ctx.params or {}
+        argument = dict(params.get("arguments") or {})
+        if ctx.method == "tools/call":
+            vilket = str(params.get("name"))
+        elif ctx.method == "resources/read":
+            vilket = "resurs:" + str(params.get("uri"))
+        else:
+            vilket = "prompt:" + str(params.get("name"))
+        klient = _klient(ctx)
+        sid, konto = _http(ctx)
+        modell = rensa_text(argument.pop("modell", None)) or tillstand.modell
+        roll = rensa_text(argument.pop("roll", None)) or tillstand.roll
+        projekt = argument.get("projekt", PROJEKT_ID)
+        klass = klasser.get(vilket, DataKlass.OPPET)
+        effektiv = (
+            klass
+            if vilket in utan_projekt or ctx.method != "tools/call"
+            else policy.klass_for(klass, str(projekt))
+        )
+        post: dict[str, Any] = {
+            "tid": nu(),
+            "session": sid or tillstand.session_id,
+            "klient": klient,
+            "protokoll": ctx.protocol_version,
+            "modell": modell,
+            "roll": roll,
+            "konto": konto,
+            "verktyg": vilket,
+            "indata_hash": hash_av(argument),
+            "indata_nycklar": sorted(argument),
+            "dataklass": effektiv.value,
+        }
+        korningar: set[str] = set()
+        _hitta_korningar(argument, korningar)
+        try:
+            policy.kontrollera(str(klient["namn"]), effektiv)
+        except PolicyNekad as exc:
+            _skriv(logg, post, "nekad_policy", korningar, str(exc), None, t0)
+            return _result_fel(str(exc))
+        try:
+            resultat = await call_next(ctx)
+        except Exception as exc:
+            _skriv(logg, post, "fel", korningar, f"{type(exc).__name__}", None, t0)
+            raise
+        d = _till_dict(resultat)
+        _hitta_korningar(d.get("structuredContent") or d.get("structured_content"), korningar)
+        fel = bool(d.get("isError") or d.get("is_error"))
+        try:
+            _skriv(
+                logg, post, "fel" if fel else "ok", korningar, _felrad(d) if fel else None, d, t0
+            )
+        except KorloggFel as exc:
+            return _result_fel(f"Körloggen kan inte skrivas, så resultatet lämnas inte ut: {exc}")
+        return resultat
+
+    server.middleware.append(mellanvara)
+
+    # ------------------------------------------------------------------ verktyg: session och logg
+    @verktyg(
+        "session_deklarera",
+        "Deklarerar vilken AI-modell och roll som styr den här sessionen. Loggas i körloggen på "
+        "varje följande anrop (om anropet inte anger egna värden). Påverkar inget resultat.",
+    )
+    def session_deklarera(modell: str | None = None, roll: str | None = None) -> dict[str, Any]:
+        tillstand.modell = rensa_text(modell) or tillstand.modell
+        tillstand.roll = rensa_text(roll) or tillstand.roll
+        return {
+            "session": tillstand.session_id,
+            "modell": tillstand.modell,
+            "roll": tillstand.roll,
+            "loggfil": "data/lokal/mcp/korlogg.jsonl",
+        }
+
+    @verktyg(
+        "korlogg_hamta",
+        "Hämtar körloggen: vem (klient, modell, roll) anropade vilket verktyg, med hash av indata, "
+        "körnings-id och utfall. Filtrera på korning_id eller session (standard: den här sessionen). "
+        "Loggen innehåller inga argumentvärden, bara hash.",
+    )
+    def korlogg_hamta(
+        korning_id: Annotated[
+            str | None, Field(description="Bara anrop som rör körningen.")
+        ] = None,
+        session: Annotated[
+            str | None, Field(description="Sessions-id; 'alla' för alla sessioner.")
+        ] = None,
+        senaste: Annotated[int, Field(description="Högst så här många rader (de sista).")] = 50,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        if korning_id is None and session is None:
+            session = tillstand.session_id
+        rader = logg.las(
+            korning_id=korning_id,
+            session=None if session in (None, "alla") else session,
+            senaste=max(1, min(int(senaste), 500)),
+        )
+        ok, antal, fel_rad = logg.verifiera()
+        return {
+            "session": tillstand.session_id,
+            "antal_rader": len(rader),
+            "rader": rader,
+            "hashkedja": {"ok": ok, "rader_kontrollerade": antal, "forsta_fel_rad": fel_rad},
+        }
+
+    # ------------------------------------------------------------------ verktyg: läsa
+    @verktyg("projekt_lista", "Listar projekten Floden kan räkna på (just nu bara demokvarteret).")
+    def projekt_lista(modell: Modell = None, roll: Roll = None) -> dict[str, Any]:
+        return tjanst.projekt_lista()
+
+    @verktyg(
+        "projekt_info",
+        "Projektets K1-utsträckning (EPSG:3011), rutor per bas, antal byggnader, tillgängliga "
+        "analyser (dagsljus.sol, dagsljus.vsc, vatten.skyfall), sparade scenarier och demons läge.",
+    )
+    def projekt_info(
+        projekt: Projekt = PROJEKT_ID, modell: Modell = None, roll: Roll = None
+    ) -> dict[str, Any]:
+        return tjanst.projekt_info(projekt)
+
+    @verktyg(
+        "geometri_sammanfattning",
+        "Sammanfattning av projektets geometri: antal byggnader, fotavtryck, höjdfördelning, takformer, "
+        "höjdkällor och marknivåintervall. Underlag (K1 v2), inga körningsresultat.",
+    )
+    def geometri_sammanfattning(
+        projekt: Projekt = PROJEKT_ID, modell: Modell = None, roll: Roll = None
+    ) -> dict[str, Any]:
+        return tjanst.geometri_sammanfattning(projekt)
+
+    @verktyg(
+        "byggnader_lista",
+        "Byggnader med id, höjd (m), fotavtryck (m²), takform och centrum (EPSG:3011). Filtrera på "
+        "område [e_min, n_min, e_max, n_max]. Byggnads-id behövs för att riva eller ändra höjd.",
+    )
+    def byggnader_lista(
+        projekt: Projekt = PROJEKT_ID,
+        omrade: Annotated[
+            list[float] | None, Field(description="[e_min, n_min, e_max, n_max] i EPSG:3011.")
+        ] = None,
+        max_antal: Annotated[int, Field(description="Högst så många byggnader (1-500).")] = 100,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.byggnader_lista(projekt, omrade, max_antal)
+
+    @verktyg(
+        "fragor_lista",
+        "Utredningsfrågor (K20) som finns: scenarier, analyser, jämförelser och om de går att köra "
+        "här. Frågekatalogen (beställning och mottagare) kommer i R2.",
+    )
+    def fragor_lista(modell: Modell = None, roll: Roll = None) -> dict[str, Any]:
+        return tjanst.fragor_lista()
+
+    @verktyg("korningar_lista", "Körningar (senaste först) med status och framsteg.")
+    def korningar_lista(
+        max_antal: Annotated[int, Field(description="Högst så många (1-100).")] = 20,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.korningar_lista(max_antal)
+
+    @verktyg("korning_status", "Status och framsteg (klara jobb av totalt) för en körning.")
+    def korning_status(
+        korning_id: KorningId, modell: Modell = None, roll: Roll = None
+    ) -> dict[str, Any]:
+        return tjanst.korning_status(korning_id)
+
+    @verktyg(
+        "resultat_sammanfattning",
+        "Mätvärden ur en klar körning, per analys, scenario och ruta, plus körningens jämförelser "
+        "(max ökning/minskning och yta som ändrats), varningar och antaganden (regn, takvatten, "
+        "avtappning). Varje värde har belägg. Filtrera med analys, scenario, ruta.",
+    )
+    def resultat_sammanfattning(
+        korning_id: KorningId,
+        analys: Annotated[str | None, Field(description="T.ex. 'sol' eller 'skyfall'.")] = None,
+        scenario: Annotated[str | None, Field(description="Scenario-id i frågan.")] = None,
+        ruta: Annotated[
+            str | None, Field(description="Rutans id, t.ex. mm_151200_6580200.")
+        ] = None,
+        max_rader: Annotated[int, Field(description="Högst så många tabellrader (1-500).")] = 40,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.resultat_sammanfattning(korning_id, analys, scenario, ruta, max_rader)
+
+    @verktyg(
+        "resultat_varde",
+        "Värdet i en punkt (e, n) eller statistik (min, medel, median, max) i en polygon, för bas, "
+        "scenario och skillnad (efter minus före), med belägg (körnings-id, fil, cell, mått, enhet). "
+        "Byggnadernas tak räknas inte som mark i polygonstatistik.",
+    )
+    def resultat_varde(
+        korning_id: KorningId,
+        analys: Annotated[str, Field(description="Analys-id, t.ex. 'sol' eller 'skyfall'.")],
+        roll_namn: Annotated[
+            str | None,
+            Field(
+                description="Rasterroll, t.ex. 'soltimmar' eller 'max_djup'. Standard: huvudrollen."
+            ),
+        ] = None,
+        e: Annotated[float | None, Field(description="Punktens e (EPSG:3011).")] = None,
+        n: Annotated[float | None, Field(description="Punktens n (EPSG:3011).")] = None,
+        omrade: Annotated[
+            list[list[float]] | None,
+            Field(description="Polygon [[e, n], ...] i stället för punkt."),
+        ] = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.resultat_varde(korning_id, analys, roll_namn, e, n, omrade)
+
+    @verktyg(
+        "metoder_lista",
+        "Lösare (metoder) med version, påverkansradie och valideringsstatus: 'skiss' eller "
+        "'rapport'. Ingen metod är klassad som rapport än.",
+    )
+    def metoder_lista(modell: Modell = None, roll: Roll = None) -> dict[str, Any]:
+        return tjanst.metoder_lista()
+
+    @verktyg(
+        "karta_bild",
+        "Ritar en karta (PNG) av ett resultatlager med fast kartografi: norr uppåt, skalstock, "
+        "koordinatticks, teckenförklaring med enhet, byggnader och körnings-id. Välj typ 'bas', "
+        "'scenario' eller 'skillnad'. Returnerar bilden och dess belägg.",
+    )
+    def karta_bild(
+        korning_id: KorningId,
+        analys: Annotated[str, Field(description="Analys-id, t.ex. 'sol' eller 'skyfall'.")],
+        typ: Annotated[str, Field(description="'bas', 'scenario' eller 'skillnad'.")] = "skillnad",
+        scenario: Annotated[str | None, Field(description="Scenario-id (vid flera).")] = None,
+        roll_namn: Annotated[
+            str | None, Field(description="Rasterroll (standard: huvudrollen).")
+        ] = None,
+        utsnitt: Annotated[
+            list[float] | None,
+            Field(description="Zooma: [e_min, n_min, e_max, n_max] i EPSG:3011."),
+        ] = None,
+        max_px: Annotated[int, Field(description="Längsta kartsida i pixlar (300-2000).")] = 900,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> CallToolResult:
+        try:
+            png, meta = tjanst.karta(korning_id, analys, typ, scenario, roll_namn, utsnitt, max_px)
+        except FlodenFel as exc:
+            raise ToolError(f"{exc} {_FEL_PREFIX}{exc.kod}") from exc
+        meta = {"dataklass": policy.klass_for(DataKlass.OPPET, PROJEKT_ID).value, **meta}
+        return CallToolResult(
+            content=[
+                ImageContent(
+                    type="image", data=base64.b64encode(png).decode("ascii"), mime_type="image/png"
+                ),
+                TextContent(type="text", text=json.dumps(meta, ensure_ascii=False)),
+            ],
+            structured_content=meta,
+        )
+
+    # ------------------------------------------------------------------ verktyg: planera och köra
+    @verktyg(
+        "scenario_skapa",
+        "Skapar ett planscenario (K9) och sparar det lokalt: nya hus (polygon eller rektangel i "
+        "EPSG:3011 plus hojd_m över mark), rivna byggnader (byggnads-id), höjdändringar, eller "
+        "rå K9-ändringar. Kärnans kontroll (giltig form, höjd 0-200 m, inom projektets område, "
+        "byggnadsreferenser) körs; ett ogiltigt scenario sparas inte och felen står i svaret. "
+        "bara_kontroll=true sparar inget.",
+    )
+    def scenario_skapa(
+        namn: Annotated[str, Field(description="Scenariots namn (blir filnamn).")],
+        hus: Annotated[
+            list[dict[str, Any]] | None,
+            Field(
+                description="Nya hus: [{'id'?, 'polygon': [[e,n],...] ELLER 'rektangel': "
+                "[e_min,n_min,e_max,n_max], 'hojd_m': 18, 'takform'?}]."
+            ),
+        ] = None,
+        rivna: Annotated[list[str] | None, Field(description="Byggnads-id att riva.")] = None,
+        hojdandringar: Annotated[
+            list[dict[str, Any]] | None,
+            Field(description="[{'byggnads_id': '...', 'hojd_m': 15}] (ny höjd över mark)."),
+        ] = None,
+        andringar: Annotated[
+            list[dict[str, Any]] | None,
+            Field(description="Rå K9-ändringar (docs/DATAKONTRAKT.md)."),
+        ] = None,
+        beskrivning: str = "",
+        bara_kontroll: Annotated[bool, Field(description="Kontrollera utan att spara.")] = False,
+        projekt: Projekt = PROJEKT_ID,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.scenario_skapa(
+            projekt, namn, hus, rivna, hojdandringar, andringar, beskrivning, bara_kontroll
+        )
+
+    @verktyg(
+        "fraga_skapa",
+        "Skapar en utredningsfråga (K20/v1, som JSON-objekt) och sparar den lokalt efter kärnans "
+        "validering (okända fält, lösare och parametrar). Sökvägar måste ligga i demokvarteret eller "
+        "kartverktygets mapp. Kör sedan korplan och kor med fraga=ref.",
+    )
+    def fraga_skapa(
+        fraga: Annotated[
+            dict[str, Any], Field(description="K20/v1-objekt (docs/DATAKONTRAKT.md).")
+        ],
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.fraga_skapa(fraga)
+
+    @verktyg(
+        "korplan",
+        "Visar vad en körning skulle göra utan att köra: jobb, rutor, vad som redan finns i cachen, "
+        "påverkansradie och uppskattad tid. Ange scenario (sparat) eller fraga (ref). "
+        "analyser: t.ex. ['dagsljus.sol','vatten.skyfall'] (standard: sol och skyfall).",
+    )
+    def korplan(
+        scenario: Annotated[str | None, Field(description="Sparat scenario (slug).")] = None,
+        fraga: Annotated[str | None, Field(description="Frågans ref (fragor_lista).")] = None,
+        analyser: list[str] | None = None,
+        avtappning_mm_h: Annotated[
+            float | None, Field(description="Ledningsnätets avtappning, mm/h (standard 0).")
+        ] = None,
+        detalj: Annotated[bool, Field(description="Lista varje jobb.")] = False,
+        projekt: Projekt = PROJEKT_ID,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.korplan(projekt, scenario, fraga, analyser, avtappning_mm_h, detalj)
+
+    @verktyg(
+        "kor",
+        "Startar en körning i bakgrunden och returnerar körnings-id direkt. Ange scenario (sparat) "
+        "eller fraga (ref). Jobb med oförändrad nyckel hämtas ur cachen. Använd vanta för att "
+        "invänta resultatet.",
+    )
+    def kor(
+        scenario: Annotated[str | None, Field(description="Sparat scenario (slug).")] = None,
+        fraga: Annotated[str | None, Field(description="Frågans ref (fragor_lista).")] = None,
+        analyser: list[str] | None = None,
+        avtappning_mm_h: Annotated[
+            float | None, Field(description="Ledningsnätets avtappning, mm/h (standard 0).")
+        ] = None,
+        projekt: Projekt = PROJEKT_ID,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.kor(projekt, scenario, fraga, analyser, avtappning_mm_h)
+
+    @verktyg(
+        "vanta",
+        "Väntar på att körningarna blir klara (högst tidsgrans_s sekunder, standard 45) och "
+        "returnerar status. Anropa igen om tidsgränsen nåddes.",
+    )
+    def vanta(
+        korning_ids: Annotated[list[str], Field(description="Körnings-id att vänta på.")],
+        tidsgrans_s: Annotated[float, Field(description="Sekunder (0-600).")] = 45.0,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.vanta(korning_ids, tidsgrans_s)
+
+    @verktyg(
+        "jamfor",
+        "Körningens jämförelser före/efter: största ökning och minskning och yta som ändrats "
+        "(över tröskeln), med belägg. Ange omrade (polygon) för statistik inom ett område. "
+        "Andra par än de som står i frågan kräver en ny fråga (fraga_skapa).",
+    )
+    def jamfor(
+        korning_id: KorningId,
+        omrade: Annotated[
+            list[list[float]] | None, Field(description="Valfri polygon [[e, n], ...] (EPSG:3011).")
+        ] = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        return tjanst.jamfor(korning_id, omrade)
+
+    _registrera_resurser(server, tjanst)
+    return server
+
+
+def _felrad(d: Mapping[str, Any]) -> str | None:
+    for c in d.get("content", []) or []:
+        t = c.get("text") if isinstance(c, Mapping) else getattr(c, "text", None)
+        if t:
+            return str(t)[:160]
+    return None
+
+
+def _skriv(
+    logg: Korlogg,
+    post: dict[str, Any],
+    utfall: str,
+    korningar: set[str],
+    fel: str | None,
+    svar: Mapping[str, Any] | None,
+    t0: float,
+) -> None:
+    rad = {
+        **post,
+        "utfall": utfall,
+        "fel": rensa_text(fel),
+        "korning_id": sorted(korningar),
+        "svar_sha256": None if svar is None else hash_av(svar),
+        "tid_ms": int((time.monotonic() - t0) * 1000),
+    }
+    logg.skriv(rad)
+
+
+# ---------------------------------------------------------------------- resurser och promptar
+
+_RESURSER: tuple[tuple[str, str, str, str], ...] = (
+    ("metod/vatten", "VATTEN.md", "Metod: vatten", "Takvatten, avtappning och volymbalans."),
+    (
+        "metod/dagsljus",
+        "DAGSLJUS.md",
+        "Metod: dagsljus",
+        "Soltimmar, SVF och VSC: matematik, facit.",
+    ),
+    ("metod/luft", "LUFT.md", "Metod: luft", "Vindkomfort och luftkvalitet (LES)."),
+    ("metod/karna", "KARNA.md", "Kärnan", "Scenario, cache och jämförelse A/B."),
+    ("metod/validering", "VALIDERING.md", "Validering", "Testsvit, mått och facit."),
+    ("metod/mcp", "MCP.md", "MCP-gränssnittet", "Verktyg, dataklasser och körlogg."),
+)
+
+
+def _kontraktsavsnitt(text: str) -> dict[str, str]:
+    """`## K9 – Planscenario (v1)` -> {'K9': avsnittstexten}."""
+    ut: dict[str, str] = {}
+    delar = re.split(r"^## ", text, flags=re.MULTILINE)
+    for d in delar[1:]:
+        m = re.match(r"(K\d+)\b", d)
+        if m:
+            ut[m.group(1)] = "## " + d.rstrip() + "\n"
+    return ut
+
+
+def _text_fn(text: str) -> Callable[[], str]:
+    def _t() -> str:
+        return text
+
+    return _t
+
+
+def _registrera_resurser(server: MCPServer, tjanst: FlodenTjanst) -> None:
+    docs = tjanst.rot / "docs"
+
+    def las(fil: str) -> Callable[[], str]:
+        def _l() -> str:
+            return (docs / fil).read_text(encoding="utf-8")
+
+        return _l
+
+    for uri, fil, titel, beskr in _RESURSER:
+        if (docs / fil).is_file():
+            server.resource(
+                f"floden://{uri}",
+                name=uri.replace("/", "_"),
+                title=titel,
+                description=beskr,
+                mime_type="text/markdown",
+            )(las(fil))
+    kontrakt = docs / "DATAKONTRAKT.md"
+    if kontrakt.is_file():
+        server.resource(
+            "floden://kontrakt/datakontrakt",
+            name="kontrakt_alla",
+            title="Datakontrakten (K0-K22)",
+            description="Formaten mellan modulerna.",
+            mime_type="text/markdown",
+        )(las("DATAKONTRAKT.md"))
+        for kod, avsnitt in _kontraktsavsnitt(kontrakt.read_text(encoding="utf-8")).items():
+            if kod in {"K0", "K1", "K9", "K10", "K11", "K20", "K21", "K22"}:
+                server.resource(
+                    f"floden://kontrakt/{kod.lower()}",
+                    name=f"kontrakt_{kod.lower()}",
+                    title=f"Kontrakt {kod}",
+                    description=f"Avsnitt {kod} ur datakontrakten.",
+                    mime_type="text/markdown",
+                )(_text_fn(avsnitt))
+
+    @server.prompt(
+        name="utforska_demokvarteret",
+        title="Utforska demokvarteret",
+        description="Lär känna det påhittade demokvarteret och läs de förkörda resultaten.",
+    )
+    def utforska() -> str:
+        return (
+            "Utforska Flodens demokvarter (påhittat). Gör så här och redovisa med belägg:\n"
+            "1. projekt_info och geometri_sammanfattning: hur stort är området, hur många byggnader?\n"
+            "2. korningar_lista: vilka förkörda körningar finns (demo-dagsljus, demo-vatten)?\n"
+            "3. resultat_sammanfattning för varje körning: vad ändras i scenarierna? Citera jämförelsernas "
+            "tal oförändrade med enhet och belägg.\n"
+            "4. karta_bild (typ skillnad) för soltimmar och maxdjup.\n"
+            "5. metoder_lista: skriv att metoderna är skisser.\n"
+            "Du äger inget tal: skriv bara tal som står i verktygssvaren."
+        )
+
+    @server.prompt(
+        name="prova_nytt_hus",
+        title="Pröva ett nytt hus före/efter",
+        description="Rita ett hus, kör före/efter för dagsljus och skyfall och läs skillnaden.",
+    )
+    def prova_hus(
+        hojd_m: str = "18", plats: str = "en öppen yta i södra delen av demokvarteret"
+    ) -> str:
+        return (
+            f"Pröva ett nytt hus ({hojd_m} m högt) på {plats} i demokvarteret.\n"
+            "1. projekt_info (utsträckning) och byggnader_lista (var finns hus redan?).\n"
+            "2. Välj en rektangel för huset inom projektets utsträckning utan att skära befintliga hus; "
+            "scenario_skapa med bara_kontroll=true. Rätta efter kärnans felmeddelanden.\n"
+            "3. scenario_skapa (spara), korplan, kor, vanta.\n"
+            "4. jamfor: redovisa skillnaden i soltimmar och maxdjup med enhet och belägg.\n"
+            "5. karta_bild (typ skillnad) för båda analyserna.\n"
+            "Skriv att allt är påhittade data och att metoderna är skisser. Du äger inget tal."
+        )
+
+
+__all__ = ["INSTRUKTIONER", "bygg_server"]

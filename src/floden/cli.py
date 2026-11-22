@@ -1692,6 +1692,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_lantmateriet(subparsers)
 
+    from floden_mcp.cli import registrera as registrera_mcp
+
+    registrera_mcp(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Floden i webbläsaren: klient och API från samma port.",
@@ -1778,6 +1782,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from lantmateriet.cli import kor as kor_lantmateriet
 
         return kor_lantmateriet(args)
+    if args.kommando == "mcp":
+        from floden_mcp.cli import kor as kor_mcp
+
+        return kor_mcp(args)
     if args.kommando == "webb":
         from webb.api import skapa_http_server
         from webb.klientbygge import KlientByggeFel, sakerstall_klient

@@ -32,7 +32,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rasterio
+from shapely import contains_xy
+from shapely.geometry import Polygon
 
+from gemensamt.hash import sha256_fil
 from karna.analyslosare import LosarFel, hamta_losare
 from karna.geometri import GeometriFel, las_byggnader
 from karna.korplan import Plan, kor_utredning, planera
@@ -952,11 +956,164 @@ class FragaTjanst:
                     "varde": varde,
                     "tak": tak,
                     "inom": inom,
+                    "kalla": self._cellkalla(k, la, e, n) if inom else None,
                 }
             )
         ordning = {"bas": 0, "scenario": 1, "skillnad": 2}
         rader.sort(key=lambda x: (ordning[x["typ"]], x["lager_id"]))
         return {"e": e, "n": n, "analys": valt["analys"], "roll": valt["roll"], "varden": rader}
+
+    def _cellkalla(
+        self, k: Korning, la: dict[str, Any], e: float, n: float
+    ) -> dict[str, Any] | None:
+        """Vilken GeoTIFF i resultatet (och vilken cell) som ger värdet i (e, n): belägget.
+
+        Där rutor överlappar gäller samma regel som när lagret lades ihop (`sammanfoga`): rutan där
+        punkten ligger djupast inne. Filens sha256 tas ur jobbets `run.json` (K0) när den finns där,
+        annars räknas den."""
+        basta: tuple[float, dict[str, Any]] | None = None
+        for g in la["geotiff"]:
+            rel = str(g["url"]).split("/fil/", 1)[1]
+            fil = k.utmapp / rel
+            try:
+                with rasterio.open(fil) as ds:
+                    b = ds.bounds
+                    px = float(ds.transform.a)
+            except (OSError, rasterio.errors.RasterioError):
+                continue
+            inne = min(e - b.left, b.right - e, n - b.bottom, b.top - n)
+            if inne < 0 or (basta is not None and inne <= basta[0]):
+                continue
+            basta = (
+                inne,
+                {
+                    "fil": rel,
+                    "ruta": g["ruta"],
+                    "fil_sha256": self._fil_sha256(fil),
+                    "cell": {
+                        "e_mitt": b.left + (int((e - b.left) // px) + 0.5) * px,
+                        "n_mitt": b.top - (int((b.top - n) // px) + 0.5) * px,
+                        "storlek_m": px,
+                    },
+                },
+            )
+        return None if basta is None else basta[1]
+
+    @staticmethod
+    def _fil_sha256(fil: Path) -> str:
+        """sha256 för en resultatfil: ur K0-manifestet bredvid den, annars räknad."""
+        run = fil.parent / "run.json"
+        try:
+            for p in json.loads(run.read_text(encoding="utf-8")).get("utdata", []):
+                if p.get("fil") == fil.name and p.get("sha256"):
+                    return str(p["sha256"])
+        except (OSError, ValueError):
+            pass
+        return sha256_fil(fil)
+
+    def lager_raster(self, korning_id: str, lager_id: str) -> dict[str, Any]:
+        """Lagrets raster (rad 0 = norr, NaN där värde saknas), utbredning, cellstorlek och takmask.
+
+        Samma raster som visas i kartan; inget räknas om."""
+        k = self._hamta(korning_id)
+        _kontrollera_id(lager_id, "lager-id")
+        lager = self.resultat(korning_id)["lager"]
+        la = next((x for x in lager if x["id"] == lager_id), None)
+        if la is None:
+            raise FlodenWebbFel(f"Okänt lager '{lager_id}'.", status_kod=404)
+        takfil = k.mapp / "webb" / f"{lager_id}.tak.npy"
+        return {
+            "lager": la,
+            "raster": np.load(k.mapp / "webb" / f"{lager_id}.npy"),
+            "tak": np.load(takfil) if takfil.is_file() else None,
+        }
+
+    def marksiffror(
+        self, korning_id: str, lager: dict[str, Any], troskel: float
+    ) -> dict[str, float] | None:
+        """Ytor (m²) och största förändring på **mark** i ett skillnadslager, utan byggnadernas tak.
+
+        Den enda funktionen för dessa mått: projektsidan och MCP-servern använder den. Takmasken är
+        den som kartan ritar bilderna med (`<lager>.tak.npy`); kärnans egen jämförelse räknar alla
+        celler, tak inräknade. `None` om lagret inte har något markvärde."""
+        k = self._hamta(korning_id)
+        fil = k.mapp / "webb" / f"{lager['id']}.npy"
+        if not fil.is_file():
+            return None
+        d = np.asarray(np.load(fil), dtype=np.float64)
+        giltig = np.isfinite(d)
+        takfil = k.mapp / "webb" / f"{lager['id']}.tak.npy"
+        if takfil.is_file():
+            giltig &= ~np.load(takfil)
+        if not giltig.any():
+            return None
+        cell = float(lager["pixelstorlek_m"]) ** 2
+        v = d[giltig]
+        return {
+            "yta_minskning_m2": float(np.count_nonzero(v < -troskel)) * cell,
+            "yta_okning_m2": float(np.count_nonzero(v > troskel)) * cell,
+            "max_minskning": float(max(0.0, -v.min())),
+            "max_okning": float(max(0.0, v.max())),
+        }
+
+    def omradesstatistik(
+        self, korning_id: str, lager_id: str, ring: list[list[float]]
+    ) -> dict[str, Any]:
+        """Min, medel, median och max av lagrets celler vars mittpunkt ligger i polygonen `ring`.
+
+        Byggnadernas tak räknas inte som mark (samma regel som kartan): celler i takmasken
+        utesluts och antalet redovisas. För skillnadslager redovisas även ytan som ökat och
+        minskat över lagrets tröskel (samma regel som jämförelsens ytmått). Polygonen anges i
+        EPSG:3011."""
+        d = self.lager_raster(korning_id, lager_id)
+        la, raster, tak = d["lager"], d["raster"], d["tak"]
+        if len(ring) < 3:
+            raise FlodenWebbFel("Polygonen behöver minst tre hörn.", status_kod=422)
+        try:
+            poly = Polygon([(float(p[0]), float(p[1])) for p in ring])
+        except (TypeError, ValueError, IndexError) as exc:
+            raise FlodenWebbFel("Polygonens hörn ska vara [e, n]-par.", status_kod=422) from exc
+        if not poly.is_valid or poly.area <= 0.0:
+            raise FlodenWebbFel(
+                "Polygonen är ogiltig (korsar sig själv eller har ingen yta).", status_kod=422
+            )
+        u, px = la["utbredning"], float(la["pixelstorlek_m"])
+        rader, kolumner = raster.shape
+        xs = u["x_min"] + (np.arange(kolumner) + 0.5) * px
+        ys = u["y_max"] - (np.arange(rader) + 0.5) * px
+        gx, gy = np.meshgrid(xs, ys)
+        inne = np.asarray(contains_xy(poly, gx, gy), dtype=bool)
+        antal_i_omradet = int(inne.sum())
+        tak_ute = inne & tak if tak is not None else np.zeros_like(inne)
+        giltig = inne & ~tak_ute & np.isfinite(raster)
+        v = raster[giltig].astype(np.float64)
+        ut: dict[str, Any] = {
+            "lager_id": lager_id,
+            "typ": la["typ"],
+            "scenario": la["scenario"],
+            "etikett": la["etikett"],
+            "enhet": la["enhet"],
+            "cellstorlek_m": px,
+            "antal_celler_i_omradet": antal_i_omradet,
+            "antal_celler_tak_uteslutna": int(tak_ute.sum()),
+            "antal_celler_med_varde": int(v.size),
+            "yta_med_varde_m2": float(v.size) * px * px,
+        }
+        if v.size:
+            ut.update(
+                min=float(v.min()),
+                medel=float(v.mean()),
+                median=float(np.median(v)),
+                max=float(v.max()),
+            )
+            if la["typ"] == "skillnad":
+                t = float(la["teckenforklaring"].get("troskel", 0.0))
+                ut["troskel"] = t
+                ut["yta_okning_m2"] = float((v > t).sum()) * px * px
+                ut["yta_minskning_m2"] = float((v < -t).sum()) * px * px
+        else:
+            ut.update(min=None, medel=None, median=None, max=None)
+        return ut
 
     # Filer och tabeller --------------------------------------------------------------------
 

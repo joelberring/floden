@@ -1,0 +1,50 @@
+# Metodstatus för MCP-verktyget `metoder_lista`: har metoden klassats som `skiss` eller `rapport`?
+#
+# `skiss` = duger för att utforska och jämföra alternativ; kartor och svar märks som skiss.
+# `rapport` = en människa har granskat metoden och beslutat att den får ligga till grund för en formell
+# rapport (steg 2, se PLAN.md R3-R4). Ingen metod är klassad som `rapport` än: klassningen är ett
+# beslut för projektets ägare och sätts bara här, aldrig av en agent. Metoder som saknas i filen är `skiss`.
+#
+# `underlag` är det som finns att granska (testsvit, dokument). Det är inget påstående om att
+# underlaget räcker.
+
+[defaults]
+status = "skiss"
+motivering = "Ingen människa har klassat metoden som rapportmetod (beslut om rapportklassning: R4)."
+
+["dagsljus.soltimmar_mark"]
+status = "skiss"
+underlag = ["testsvit grupp E (docs/VALIDERING.md)", "docs/DAGSLJUS.md"]
+
+["dagsljus.vsc_fasad"]
+status = "skiss"
+underlag = ["testsvit grupp E (docs/VALIDERING.md)", "docs/DAGSLJUS.md"]
+
+["dagsljus.svf_mark"]
+status = "skiss"
+underlag = ["testsvit grupp E (docs/VALIDERING.md)", "docs/DAGSLJUS.md"]
+
+["dagsljus.horisont"]
+status = "skiss"
+underlag = ["testsvit grupp E (docs/VALIDERING.md)", "docs/DAGSLJUS.md"]
+
+["vatten.statisk_fyllning"]
+status = "skiss"
+underlag = ["testsvit grupp A (A1-A13, docs/VALIDERING.md)", "docs/VATTEN.md"]
+anmarkning = "Statisk fyllning: maxdjup i sänkor, inget flöde i tid. Regeltolkningen för takvatten granskas av projektets ägare."
+
+["vatten.dynamik"]
+status = "skiss"
+underlag = ["testsvit grupp A (A1-A13, docs/VALIDERING.md)", "docs/VATTEN.md"]
+
+["luft.vindkomfort"]
+status = "skiss"
+underlag = ["docs/LUFT.md avsnitt 6 (L1-L8)"]
+anmarkning = "En körning tar mer än tio minuter på CPU."
+
+["luft.halt"]
+status = "skiss"
+underlag = ["docs/LUFT.md avsnitt 6 (L1-L8)"]
+
+["geometri.lutning"]
+status = "skiss"
