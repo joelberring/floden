@@ -107,7 +107,13 @@ fel i stället för gissning om en v1-ruta har byggnadsceller, se nedan). En rut
   Kolumntillägget höjer inte `version` (bakåtkompatibelt). `Markklasstabell.raster(markslag,
   doman, kolumn)` ger ett rasterlager; saknad kolumn för en förekommande kod ger fel. Filens sha256 hör hemma i recept.
 
-## K2 – Sänkgraf (v1)
+## K2 – Sänkgraf (v2)
+
+**Versioner.** K2/v2 (2026-11-22) lägger till *slutsänkor*. En graf **utan** slutsänkor skrivs som
+K2/v1, byte för byte som förut (samma filer, samma 12 kolumner, `kontrakt = "K2/v1"`). En graf **med** minst en
+slutsänka skrivs som K2/v2. Läsaren (`sankgraf.k2_las.las_sankgraf_k2`) tar båda. Ändringen är brytande för
+läsare som förutsätter att varje rotnod har ett ändligt `overfall_rh2000` (i v2 kan det vara null), därför
+versionshöjningen (se `BESLUT.md` 2026-11-22).
 
 `sankgraf.parquet`, en rad per nod:
 
@@ -116,23 +122,60 @@ fel i stället för gissning om en v1-ruta har byggnadsceller, se nedan). En rut
 | `nod_id` | int64 | Unik inom grafen |
 | `forald_id` | int64 / null | Noden som bildas när denna slås ihop med sin syster |
 | `barn_id` | list<int64> | Tomt för lövsänkor |
-| `overfall_rh2000` | float64 | Nivån där noden svämmar över |
-| `overfall_x`, `overfall_y` | float64 | Överfallspunkten |
-| `ut_till_id` | int64 / null | Noden vattnet rinner till vid överfall (null = ut ur området) |
-| `volymkurva` | list<struct<z, v_m3>> | Volym som funktion av nivå, monotont ökande |
+| `overfall_rh2000` | float64 / null | Nivån där noden svämmar över. **v2:** null för en slutsänka |
+| `overfall_x`, `overfall_y` | float64 | Överfallspunkten; för en slutsänka hindrets cell (se nedan) |
+| `ut_till_id` | int64 / null | Noden vattnet rinner till vid överfall (null = ut ur området; alltid null för en slutsänka) |
+| `volymkurva` | list<struct<z, v_m3>> | Volym som funktion av nivå, monotont ökande; för en slutsänka upp till `hinder_rh2000` |
 | `ytkurva` | list<struct<z, a_m2>> | Vattenytans area som funktion av nivå |
 | `avrinningsyta_m2` | float64 | Yta som rinner direkt till noden |
-| `persistens_m` | float64 | Skillnad mellan överfallsnivå och botten |
-| `osakerhet_m` | float64 | Osäkerhet i överfallsnivån |
+| `persistens_m` | float64 | Skillnad mellan överfallsnivå (för en slutsänka: hindret) och botten |
+| `osakerhet_m` | float64 | Osäkerhet i överfallsnivån (för en slutsänka: i hindrets cell) |
+| `typ` | string | **Bara v2.** `"sanka"` eller `"slutsanka"` |
+| `hinder_rh2000` | float64 / null | **Bara v2.** Slutsänkans hinder; null för övriga noder |
+
+`sankgraf.json` har samma fält per nod (plus `botten_rh2000` och `cell_antal`) och i v2 även `antal_slutsankor`.
+
+**Slutsänka** (`typ = "slutsanka"`). Ett fyrgrannsammanhängande område av aktiva celler som inte når rutans kant,
+eftersom det helt omges av ogenomträngliga celler (byggnader, markslag 9): typiskt ett slutet kvarter med gård.
+Rutans **kant** är där vatten lämnar modellen (HAV); byggnader är hinder, inte utlopp.
+
+- Hela området blir ett träd med en rot: slutsänkan. Den är alltid en rotnod med `forald_id = null`,
+  `ut_till_id = null` och `overfall_rh2000 = null`. Inre sänkor i gården är vanliga noder under den.
+- **Hinder:** `hinder_rh2000` är den lägsta cellen i ringen av ogenomträngliga celler som gränsar (fyrgrannar)
+  till området, med höjden ur `mark.tif` (byggnadens takhöjd). Ligger den under rotens inre sadel används sadeln
+  (trädet förblir monotont). Vägen vidare över taket prövas inte; på platta tak (K1 v2) är det samma nivå.
+  `overfall_x/y` och `overfall_celler` i `sankgraf_topologi.json` pekar på hindrets cell. **Verkliga trösklar,
+  portar och brunnar finns inte i markmodellen**: resultatet ska alltid flaggas (se nedan).
+- **Fyllning:** vatten som når slutsänkan stannar där och fyller den efter volymkurvan. Når nivån hindret räknas
+  överskottet som utflöde ut ur modellen och flaggas (`over_hinder_m3`); modellen beskriver inte vad som händer
+  sedan. I Python (`SankNod`) bär en slutsänka `overfall_rh2000 = hinder_rh2000`, så att statisk fyllning,
+  dynamik och 2D-hybrid räknar så utan särfall.
+- **Avtappning** (fas 3, mm/h per cell, samma storhet som 2D-lösarens `tvad.kalltermer.Avtappning`) är enda vägen
+  ut under hindret: i den händelsestyrda dynamiken (`avtappning_mm_h`) tappas varje nod med summan över sina
+  celler. Utan avtappning stannar vattnet.
+- Ett instängt område vars ring har en cell **utan höjd** (NaN) blir ingen slutsänka: hindret är okänt och
+  `InstangtOmradeFel` kastas.
+- Persistensfiltret tar aldrig bort en slutsänka (vattnet har ingen mottagare).
+
+**Regn på tak.** Regn på byggnadsceller räknas inte i någon av vattnets lösare (graf, dynamik, 2D): det ingår inte
+i `in_m3`. Taken avvattnas alltså inte till gården i dag; en gård får bara sitt eget regn.
+
+**Flaggor i resultat.** När ett resultat innehåller slutsänkor skriver lösarna (K6 `skriv_statiskt_resultat_k6`,
+K21 `vatten.statisk_fyllning`, `vatten.blaytor`) `slutsanka.tif` (float32, 1,0 i slutsänkornas celler, NaN annars),
+mätvärdena `antal_slutsankor`, `slutsanka_area_m2`, `slutsanka_lagrat_m3`, `slutsanka_max_djup_m`,
+`slutsanka_over_hinder_m3` och `slutsankor` (per slutsänka), och varningen *"Slutet område: vattnet har ingen väg ut
+i modellen; i verkligheten avgör brunnar, portar och trösklar."* (`sankgraf.typer.SLUTSANKA_VARNING`). Utan
+slutsänkor skrivs inget av detta och resultaten är oförändrade; därför höjdes inte lösarnas versioner (resultat
+som gick att räkna förut är byte-identiska; det som är nytt gav förut fel och cachades aldrig).
 
 `flodesvagar.gpkg`, lager `flodesvagar`: linjer från varje cellgrupp till sin nod, med `gangtid_s` vid referensdjup.
 `cell_till_nod.tif`: COG int64 med nod-id per cell.
 
 Tilläggsfiler (bakåtkompatibla, 2026-11-21) som `skriv_sankgraf_k2` skriver så att grafen kan läsas
 tillbaka exakt med `sankgraf.k2_las.las_sankgraf_k2`: `sankgraf_topologi.json` (`ut_lov_id`,
-`overfall_celler`), `mark_bearbetad.tif` (markhöjd med brytlinjer och öppningar inbrända, float32)
-och `markslag.tif`. Läsare som bara behöver kontraktets filer kan bortse från dem. Negativa värden i
-`cell_till_nod.tif` är markörer, inte nod-id.
+`overfall_celler`; samma `kontrakt` som `sankgraf.json`), `mark_bearbetad.tif` (markhöjd med brytlinjer och
+öppningar inbrända, float32) och `markslag.tif`. Läsare som bara behöver kontraktets filer kan bortse från dem.
+Negativa värden i `cell_till_nod.tif` är markörer, inte nod-id.
 
 ## K3 – Projektlapp (v1)
 

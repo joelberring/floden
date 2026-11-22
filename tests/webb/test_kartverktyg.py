@@ -602,19 +602,23 @@ def hus_i_porten(aid: str = "hus_i_porten") -> dict[str, Any]:
     }
 
 
-def test_hus_som_stanger_in_vatten_ger_varning_fore_korning(kv: Kv) -> None:
-    from webb.felforklaring import INSTANGT_TEXT
+def test_hus_som_stanger_in_vatten_ger_information_fore_korning(kv: Kv) -> None:
+    from webb.felforklaring import SLUTET_INFO
 
     status, v = kv.json("POST", f"{P}/validera", {"andringar": [hus_i_porten()]})
     assert status == 200 and v["giltig"], v
-    assert INSTANGT_TEXT in v["varningar"]
-    # Det vanliga demohuset stänger inte in något och ger ingen sådan varning.
+    # Sedan K2/v2 är det information, inte varning: beräkningen går och vattnet blir stående.
+    assert v["information"] == [SLUTET_INFO]
+    assert SLUTET_INFO == "Huset stänger in gården – vattnet blir stående där i beräkningen"
+    assert SLUTET_INFO not in v["varningar"]
+    # Det vanliga demohuset stänger inte in något och ger ingen sådan information.
     _, ok = kv.json("POST", f"{P}/validera", {"andringar": [demohus()]})
-    assert INSTANGT_TEXT not in ok["varningar"]
+    assert ok["information"] == []
 
 
-def test_misslyckad_vattenkorning_ger_klarsprak_och_teknisk_text(kv: Kv) -> None:
-    from webb.felforklaring import INSTANGT_TEXT
+def test_hus_i_porten_ger_resultat_med_varning_och_markerade_slutna_omraden(kv: Kv) -> None:
+    """Reproduktionen från #36 (E 151318, N 6580196, 12 x 11 m): förut fel, nu resultat."""
+    from sankgraf.typer import SLUTSANKA_VARNING
 
     status, _ = kv.json(
         "POST", f"{P}/scenarier", {"namn": "instangt", "andringar": [hus_i_porten()]}
@@ -622,22 +626,36 @@ def test_misslyckad_vattenkorning_ger_klarsprak_och_teknisk_text(kv: Kv) -> None
     assert status in (200, 201)
     status, k = kv.json("POST", f"{P}/scenarier/instangt/kor", {"analyser": ["vatten.skyfall"]})
     assert status == 202, k
-    slut = time.monotonic() + 600
-    post: dict[str, Any] = {}
-    while time.monotonic() < slut:
-        _, st = kv.json("GET", f"{P}/scenarier/instangt/status")
-        if st["korningar"] and st["korningar"][0]["status"]["status"] in ("klar", "fel"):
-            post = st["korningar"][0]["status"]
-            break
-        time.sleep(0.5)
-    assert post.get("status") == "fel", post
-    assert post["fel_forklaring"] == INSTANGT_TEXT
-    assert "saknar utloppssadel" in post["fel"]  # tekniska texten finns kvar för "Teknisk information"
+    st = kv.vantaklar("instangt", 1)
+    post = st["korningar"][0]
+    assert post["status"]["status"] == "klar", post
+    assert SLUTSANKA_VARNING in post["varningar"]
+    vy = post["vyer"][0]
+    assert vy["markering_lager"], vy
+    res = kv.app.fragor.resultat(vy["korning_id"])
+    markering = next(x for x in res["lager"] if x["id"] == vy["markering_lager"])
+    assert markering["roll"] == "slutsanka" and markering["scenario"] == "ritat"
+    assert markering["etikett"].startswith("Kontroll: slutet område")
+    # Basen (utan huset) har inget slutet område och därför inget sådant lager.
+    assert not any(
+        x["roll"] == "slutsanka" and x["scenario"] != "ritat" for x in res["lager"]
+    )
+    # Måtten om det slutna området kommer ur lösaren: en slutsänka med lagrat vatten.
+    korning = kv.app.fragor._hamta(vy["korning_id"])  # noqa: SLF001
+    samman = json.loads((korning.utmapp / "sammanstallning.json").read_text(encoding="utf-8"))
+    ritat = [j for j in samman["jobb"] if j["scenario"] == "ritat"]
+    assert ritat
+    for j in ritat:
+        assert j["matvarden"]["antal_slutsankor"] >= 1
+        assert j["matvarden"]["slutsanka_lagrat_m3"] > 0.0
+        assert j["matvarden"]["slutsanka_over_hinder_m3"] == 0.0
 
 
 def test_forklara_fel_okanda_fel_ger_inget_klartext() -> None:
     from webb.felforklaring import INSTANGT_TEXT, forklara_fel
 
+    # Felet finns kvar bara för instängda områden vid mark utan höjd (se InstangtOmradeFel).
+    assert "utan höjduppgift" in INSTANGT_TEXT
     assert forklara_fel(None) is None
     assert forklara_fel("ValueError: något annat") is None
     assert forklara_fel("SankGrafFel: Nod 3 saknar utloppssadel mot randen.") == INSTANGT_TEXT

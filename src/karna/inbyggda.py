@@ -126,6 +126,7 @@ class StatiskFyllning(Analyslosare):
 
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
         from sankgraf.fyllning import kor_statisk_k1_mapp
+        from sankgraf.typer import slutsanka_matvarden, slutsanka_varningar
         from testsvit.k1_io import las_geotiff, skriv_geotiff
 
         rutor = kontext.scenario.rutor
@@ -149,15 +150,25 @@ class StatiskFyllning(Analyslosare):
             y_max=geo.y_max,
             pixelstorlek=geo.pixelstorlek_x,
         )
+        filer = {"max_djup": "max_djup.tif"}
+        # Slutna områden (K2/v2): flaggraster, mått och varning bara när de finns, så att
+        # resultat utan slutsänkor är oförändrade (därför samma lösarversion).
+        if res.slutsankor and res.slutsanka_mask is not None:
+            from sankgraf.typer import SLUTSANKA_FIL, skriv_slutsanka_raster
+
+            skriv_slutsanka_raster(kontext.utmapp / SLUTSANKA_FIL, res.slutsanka_mask, geo)
+            filer["slutsanka"] = SLUTSANKA_FIL
         return LosarUtdata(
-            filer={"max_djup": "max_djup.tif"},
+            filer=filer,
             matvarden={
                 "max_djup_m": float(np.nanmax(res.djup_m)),
                 "lagrat_m3": float(res.lagrat_m3),
                 "ut_m3": float(res.ut_m3),
                 "volymfel_rel": float(res.volymfel_rel),
                 **regn_matvarden,
+                **slutsanka_matvarden(res.slutsankor),
             },
+            varningar=slutsanka_varningar(res.slutsankor),
         )
 
 

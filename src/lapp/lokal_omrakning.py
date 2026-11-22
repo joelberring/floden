@@ -23,6 +23,7 @@ from sankgraf.hierarki import (
     _SADEL_TIE_TOL_M,
     _applicera_oppningar,
     _berakna_kantbarriarer,
+    _instangda_etiketter,
     berakna_kurvor_for_celler,
     bygg_sankgraf,
 )
@@ -377,6 +378,41 @@ def uppdatera_sankgraf_lokalt(
     nod_till_komp, komp_till_noder, rot_overfall = _komponenter_i_graf(bas_graf)
 
     berorda_noder = hitta_berorda_noder(bas_graf, eff_andrad)
+
+    # Slutsänkor (K2/v2): om ändringen rör en slutsänka i basen eller gränsar till ett instängt
+    # område i den nya marken räknas hela grafen om med `bygg_sankgraf`. Resultatet är då per
+    # definition detsamma som en fullständig byggning (slutsänkornas hinder och ringar är
+    # globala egenskaper som den lokala sadelsökningen inte ser). Övriga ändringar återanvänder
+    # basens noder, även bevarade slutsänkor, som förut.
+    slut_bas = {n.nod_id for n in bas_graf.slutsankor()}
+    ny_etiketter, ny_instangda = _instangda_etiketter(aktiv)
+    ny_instangd_vid_andring = bool(ny_instangda) and bool(
+        np.any(
+            np.isin(ny_etiketter, np.asarray(ny_instangda, dtype=np.int32))
+            & _utvidga_4grannar(eff_andrad)
+        )
+    )
+
+    def _full_omrakning() -> LokalOmrakningResultat:
+        full_graf = bygg_sankgraf(
+            ny_mark_z,
+            ny_osakerhet_z,
+            ny_markslag,
+            geo,
+            brytlinjer=brytlinjer,
+            oppningar=oppningar,
+            referensdjup_m=referensdjup_m,
+        )
+        return LokalOmrakningResultat(
+            ny_graf=full_graf,
+            berorda_bas_noder=set(bas_graf.noder.keys()),
+            antal_ateranvanda_noder=0,
+            antal_omraknade_celler=n_celler,
+            kortid_s=time.perf_counter() - t_wall_start,
+        )
+
+    if ny_instangd_vid_andring or (berorda_noder & slut_bas):
+        return _full_omrakning()
     # Säkerställ att alla 4-grannar till eff_andrad som är HAV också ingår i initialt delområde
     utvidgad_andrad = _utvidga_4grannar(eff_andrad)
     uppstroms_hav = _hitta_uppstroms_hav_celler(
@@ -408,23 +444,8 @@ def uppdatera_sankgraf_lokalt(
 
     while True:
         bevarade_noder = set(bas_graf.noder.keys()) - berorda_noder
-        if not bevarade_noder:
-            full_graf = bygg_sankgraf(
-                ny_mark_z,
-                ny_osakerhet_z,
-                ny_markslag,
-                geo,
-                brytlinjer=brytlinjer,
-                oppningar=oppningar,
-                referensdjup_m=referensdjup_m,
-            )
-            return LokalOmrakningResultat(
-                ny_graf=full_graf,
-                berorda_bas_noder=set(bas_graf.noder.keys()),
-                antal_ateranvanda_noder=0,
-                antal_omraknade_celler=n_celler,
-                kortid_s=time.perf_counter() - t_wall_start,
-            )
+        if not bevarade_noder or (berorda_noder & slut_bas):
+            return _full_omrakning()
 
         berorda_lov = [nid for nid in berorda_noder if bas_graf.noder[nid].ar_lov]
         omrakna_mask = np.array(eff_andrad | uppstroms_hav | extra_hav_mask, dtype=bool, copy=True)
@@ -885,6 +906,7 @@ def uppdatera_sankgraf_lokalt(
 
             overfall_z = overfall_z_karta.get(lid)
             if overfall_z is None:
+                # Skydd: instängda områden vid ändringen går till full omräkning ovan.
                 raise LappFel(f"Lokal nod {lid} saknar utloppssadel mot randen.")
 
             vol_kurva, yt_kurva, botten_z, cell_antal = berakna_kurvor_for_celler(

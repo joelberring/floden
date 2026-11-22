@@ -109,6 +109,10 @@ class DynamikResultat:
     volymfel_rel: float
     kortid_s: float
     metod: str
+    avtappat_m3: float = 0.0
+    """Del av `ut_m3` som lämnat via brunnar eller avtappning (fas 3), inte över ytan."""
+    slutsankor: tuple[int, ...] = ()
+    """Slutsänkornas nod-id (K2/v2); de som svämmat över har nått sitt hinder."""
 
 
 @dataclass(frozen=True)

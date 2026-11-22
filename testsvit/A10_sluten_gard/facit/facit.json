@@ -1,0 +1,16 @@
+{
+  "fall_id": "A10",
+  "typ": "slutsanka",
+  "gard_area_m2": 100.0,
+  "gard_celler": 1600,
+  "regn_mm": 50.0,
+  "regn_pa_tak_raknas": false,
+  "volym_m3": 5.0,
+  "djup_m": 0.05,
+  "hinder_rh2000": 16.0,
+  "forklaring": "Gården har ingen väg ut: allt regn på gården (taken räknas inte, regn på byggnadsceller ingår inte i modellen) blir stående. Djup = regnvolym / area.",
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

@@ -19,6 +19,13 @@ Små terränger där svaret kan räknas för hand eller analytiskt.
 | A7 Vägbank med och utan trumma | Falsk damm utan trumma |
 | A8 Port genom byggnad | Att vatten passerar porten |
 | A9 Brus i terrängen | Att persistensfiltret tar bort små falska sänkor men inte verkliga |
+| A10 Sluten gård | Slutsänka (K2/v2): gård 10 × 10 m helt omgiven av byggnader, plant golv, 50 mm regn (300 mm/h i 10 min). Djup = regnvolym / area = 50 mm i alla 1 600 celler, hinder 16,00 m (lägsta taket). Regn på tak räknas inte (taken avvattnas inte till gården i modellen). Graf och 2D (lokal tröghet) mot facit |
+| A11 Sluten gård med avtappning | Som A10, 120 mm/h i 15 min och avtappning 60 mm/h (fas 3): djup (120 − 60) mm/h · t till 15 mm vid 15 min, sedan −60 mm/h, tomt vid 30 min; avtappat 3,0 m³. Händelsestyrd dynamik mot förloppet, 2D med samma avtappning i topp och slutdjup |
+
+A10 och A11 kör både sänkgrafen och 2D-lösaren och redovisar skillnaden i kommentaren. Uppmätt 2026-11-22: A10 graf
+0 m och 2D 7,5e-10 m från 50 mm (|graf − 2D| = 0 i float32), volymfel 0,0000 %; A11 graf 8,3e-16 m från förloppet,
+2D topp 15,00 mm och slutdjup 0,00 mm. På sluttande gårdsgolv (enhetstest `tests/tvad/test_slutsanka_2d.py`) skiljer
+graf och 2D högst 0,14 mm (2D:s kvarvarande film), med samma volym.
 
 ### B. Jämförelse med andra verktyg (T09b)
 

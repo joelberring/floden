@@ -600,6 +600,8 @@ export interface ProjektVy {
   fore_lager: string | null;
   efter_lager: string | null;
   skillnad_lager: string;
+  /** Kontrollraster för slutna områden (vattnet har ingen väg ut) i efter-läget, om det finns. */
+  markering_lager?: string | null;
   efter_namn: string;
   /** Vad som ändras i efter-läget (ur scenariofilen). */
   andring: string;

@@ -32,6 +32,21 @@ from testsvit.k1_io import (
 )
 
 KONTRAKT_K2 = "K2/v1"
+KONTRAKT_K2_V2 = "K2/v2"
+"""K2/v2 (2026-11-22): som v1 men med slutsänkor (rotnod utan överfall, `typ = "slutsanka"`).
+
+En graf utan slutsänkor skrivs som K2/v1, byte för byte som förut; en graf med minst en
+slutsänka skrivs som K2/v2. Läsaren tar båda (`KONTRAKT_K2_LASBARA`)."""
+KONTRAKT_K2_LASBARA = (KONTRAKT_K2, KONTRAKT_K2_V2)
+
+TYP_SANKA = "sanka"
+TYP_SLUTSANKA = "slutsanka"
+SLUTSANKA_VARNING = (
+    "Slutet område: vattnet har ingen väg ut i modellen; i verkligheten avgör brunnar, portar "
+    "och trösklar."
+)
+"""Varningen som lösarna lämnar när resultatet innehåller en slutsänka (se K2/v2)."""
+
 HAV_NOD_ID = -1
 BYGGNAD_NOD_ID = -2
 
@@ -65,12 +80,12 @@ class SankGrafFel(Exception):
 
 
 class InstangtOmradeFel(SankGrafFel):
-    """Ett sammanhängande markområde saknar all väg ut till rasterkanten.
+    """Ett instängt markområde som inte kan bli en slutsänka.
 
-    Bygg- och nodata-celler är ogenomträngliga i modellen, så en sänka som
-    helt omges av dem har ingen utloppssadel och kan inte lösas i K2-grafen
-    (kontraktet kräver ett ändligt överfall för varje rotnod).
-    ``antal_celler`` är områdets storlek, ``rad``/``kol`` en cell i det.
+    Sedan K2/v2 blir ett område som helt omges av byggnader en slutsänka (se
+    `SankNod.typ`). Felet finns kvar för området som (delvis) omges av celler utan höjd
+    (NaN i `mark.tif`): där är hindrets nivå okänd och vattnet kan lika gärna rinna ut,
+    så modellen gissar inte. ``antal_celler`` är områdets storlek, ``rad``/``kol`` en cell i det.
     """
 
     def __init__(self, antal_celler: int, rad: int, kol: int) -> None:
@@ -79,7 +94,7 @@ class InstangtOmradeFel(SankGrafFel):
         self.kol = kol
         super().__init__(
             f"Instängt område: {antal_celler} markceller (t.ex. rad {rad}, kolumn {kol}) "
-            "saknar utloppssadel mot randen."
+            "saknar utloppssadel mot randen och omges delvis av celler utan höjd."
         )
 
 
@@ -101,7 +116,15 @@ class YtPunkt:
 
 @dataclass(frozen=True)
 class SankNod:
-    """En nod i sänkgrafen enligt kontrakt K2/v1 (`docs/DATAKONTRAKT.md`)."""
+    """En nod i sänkgrafen enligt kontrakt K2 (`docs/DATAKONTRAKT.md`).
+
+    **Slutsänka** (`typ == "slutsanka"`, K2/v2): en rotnod vars område helt omges av
+    byggnader. Den har inget överfall i terrängen (`overfall_rh2000` är null i filen) men ett
+    hinder: `hinder_rh2000`, den lägsta hindercellen (byggnadens höjd i `mark.tif`) som gränsar
+    till området. Volymkurvan slutar vid hindret. I Python bär noden `overfall_rh2000 =
+    hinder_rh2000`, så att alla lösare räknar vatten över hindret som utflöde ur modellen
+    (`ut_till_id` är None); lösarna flaggar då att hindret nåtts.
+    """
 
     nod_id: int
     forald_id: int | None
@@ -117,6 +140,24 @@ class SankNod:
     osakerhet_m: float
     botten_rh2000: float
     cell_antal: int
+    typ: str = TYP_SANKA
+    hinder_rh2000: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.typ not in (TYP_SANKA, TYP_SLUTSANKA):
+            raise SankGrafFel(f"Nod {self.nod_id}: okänd nodtyp {self.typ!r}.")
+        if self.typ == TYP_SLUTSANKA:
+            if self.forald_id is not None or self.ut_till_id is not None:
+                raise SankGrafFel(f"Slutsänkan {self.nod_id} måste vara en rotnod utan utlopp.")
+            if self.hinder_rh2000 is None or not math.isfinite(self.hinder_rh2000):
+                raise SankGrafFel(f"Slutsänkan {self.nod_id} saknar ändligt hinder_rh2000.")
+        elif self.hinder_rh2000 is not None:
+            raise SankGrafFel(f"Nod {self.nod_id}: hinder_rh2000 gäller bara slutsänkor.")
+
+    @property
+    def ar_slutsanka(self) -> bool:
+        """True om noden är en slutsänka (K2/v2): rotnod utan överfall i terrängen."""
+        return self.typ == TYP_SLUTSANKA
 
     @property
     def ar_lov(self) -> bool:
@@ -190,13 +231,19 @@ class SankNod:
         idx = bisect.bisect_right(z_varden, z) - 1
         return self.ytkurva[max(0, idx)].a_m2
 
-    def till_k2_dict(self) -> dict[str, Any]:
-        """Serialiserar noden till K2-fälten (plus botten/cell_antal för inspekterbarhet)."""
-        return {
+    def till_k2_dict(self, *, v2: bool = False) -> dict[str, Any]:
+        """Serialiserar noden till K2-fälten (plus botten/cell_antal för inspekterbarhet).
+
+        Med `v2` (K2/v2) får noden `typ` och `hinder_rh2000`, och en slutsänka
+        `overfall_rh2000 = None`. Utan `v2` är fälten exakt K2/v1 (slutsänka ger fel).
+        """
+        if self.ar_slutsanka and not v2:
+            raise SankGrafFel(f"Slutsänkan {self.nod_id} kan inte skrivas som K2/v1.")
+        d: dict[str, Any] = {
             "nod_id": int(self.nod_id),
             "forald_id": int(self.forald_id) if self.forald_id is not None else None,
             "barn_id": [int(b) for b in self.barn_id],
-            "overfall_rh2000": float(self.overfall_rh2000),
+            "overfall_rh2000": None if self.ar_slutsanka else float(self.overfall_rh2000),
             "overfall_x": float(self.overfall_x),
             "overfall_y": float(self.overfall_y),
             "ut_till_id": int(self.ut_till_id) if self.ut_till_id is not None else None,
@@ -208,6 +255,12 @@ class SankNod:
             "botten_rh2000": float(self.botten_rh2000),
             "cell_antal": int(self.cell_antal),
         }
+        if v2:
+            d["typ"] = self.typ
+            d["hinder_rh2000"] = (
+                float(self.hinder_rh2000) if self.hinder_rh2000 is not None else None
+            )
+        return d
 
 
 @dataclass(frozen=True)
@@ -269,6 +322,73 @@ class SankGraf:
         """Summan av avrinningsytor för alla löv under `nod_id`."""
         return sum(self.noder[lid].avrinningsyta_m2 for lid in self.lov_under_nod(nod_id))
 
+    def slutsankor(self) -> list[SankNod]:
+        """Slutsänkorna (K2/v2) i `nod_id`-ordning."""
+        return [self.noder[nid] for nid in sorted(self.noder) if self.noder[nid].ar_slutsanka]
+
+    @property
+    def har_slutsankor(self) -> bool:
+        return any(n.ar_slutsanka for n in self.noder.values())
+
+    @property
+    def kontrakt(self) -> str:
+        """K2-versionen grafen skrivs som: v1 utan slutsänkor, annars v2."""
+        return KONTRAKT_K2_V2 if self.har_slutsankor else KONTRAKT_K2
+
+    def slutsanka_mask(self) -> NDArray[np.bool_]:
+        """Celler som hör till en slutsänka (deras löv ligger under en slutsänkas rot)."""
+        lov = [lid for s in self.slutsankor() for lid in self.lov_under_nod(s.nod_id)]
+        if not lov:
+            return np.zeros(self.cell_till_nod.shape, dtype=np.bool_)
+        return np.asarray(np.isin(self.cell_till_nod, np.asarray(lov, dtype=np.int64)))
+
+
+@dataclass(frozen=True)
+class SlutsankaResultat:
+    """Hur en slutsänka fylldes: nivå, djup och om vattnet nådde hindret."""
+
+    nod_id: int
+    cell_antal: int
+    area_m2: float
+    hinder_rh2000: float
+    niva_rh2000: float
+    max_djup_m: float
+    volym_m3: float
+    over_hinder_m3: float
+
+    @property
+    def nadde_hinder(self) -> bool:
+        return self.over_hinder_m3 > 0.0
+
+    def till_dict(self) -> dict[str, Any]:
+        return {
+            "nod_id": self.nod_id,
+            "cell_antal": self.cell_antal,
+            "area_m2": self.area_m2,
+            "hinder_rh2000": self.hinder_rh2000,
+            "niva_rh2000": self.niva_rh2000,
+            "max_djup_m": self.max_djup_m,
+            "volym_m3": self.volym_m3,
+            "over_hinder_m3": self.over_hinder_m3,
+            "nadde_hinder": self.nadde_hinder,
+        }
+
+
+def slutsanka_varningar(slutsankor: Sequence[SlutsankaResultat]) -> tuple[str, ...]:
+    """Varningstexter för lösarnas utdata (tom om inga slutsänkor finns)."""
+    if not slutsankor:
+        return ()
+    ut = [SLUTSANKA_VARNING]
+    nadda = [s for s in slutsankor if s.nadde_hinder]
+    if nadda:
+        m3 = sum(s.over_hinder_m3 for s in nadda)
+        ut.append(
+            f"Vattnet nådde hindret (lägsta byggnaden runt området) i {len(nadda)} av "
+            f"{len(slutsankor)} slutna områden; {m3:.1f} m³ räknas som utflöde över hindret, "
+            "vilket modellen inte beskriver."
+        )
+    return tuple(ut)
+
 
 @dataclass(frozen=True)
 class StatiskFyllningResultat:
@@ -283,6 +403,8 @@ class StatiskFyllningResultat:
     ut_m3: float
     volymfel_rel: float
     utflodes_celler: list[tuple[int, int]]
+    slutsankor: tuple[SlutsankaResultat, ...] = ()
+    slutsanka_mask: NDArray[np.bool_] | None = None
 
 
 def avkoda_gp_wkb(blob: bytes | bytearray) -> tuple[tuple[float, float], ...]:
@@ -717,7 +839,12 @@ def skriv_flodesvagar_gpkg(
 
 
 def _skriv_sankgraf_parquet(graf: SankGraf, sokvag: Path) -> Path:
-    """Skriver `sankgraf.parquet` med exakt de 12 K2/v1-kolumnerna via `pyarrow`."""
+    """Skriver `sankgraf.parquet` via `pyarrow`.
+
+    Exakt de 12 K2/v1-kolumnerna, eller (K2/v2, grafen har slutsänkor) 14 kolumner: även `typ`
+    och `hinder_rh2000`, och `overfall_rh2000` null för slutsänkor.
+    """
+    v2 = graf.har_slutsankor
     pa: Any = importlib.import_module("pyarrow")
     pq: Any = importlib.import_module("pyarrow.parquet")
 
@@ -738,6 +865,7 @@ def _skriv_sankgraf_parquet(graf: SankGraf, sokvag: Path) -> Path:
             ("persistens_m", pa.float64()),
             ("osakerhet_m", pa.float64()),
         ]
+        + ([("typ", pa.string()), ("hinder_rh2000", pa.float64())] if v2 else [])
     )
 
     sorterade = [graf.noder[nid] for nid in sorted(graf.noder)]
@@ -745,7 +873,9 @@ def _skriv_sankgraf_parquet(graf: SankGraf, sokvag: Path) -> Path:
         "nod_id": [int(n.nod_id) for n in sorterade],
         "forald_id": [int(n.forald_id) if n.forald_id is not None else None for n in sorterade],
         "barn_id": [[int(b) for b in n.barn_id] for n in sorterade],
-        "overfall_rh2000": [float(n.overfall_rh2000) for n in sorterade],
+        "overfall_rh2000": [
+            None if n.ar_slutsanka else float(n.overfall_rh2000) for n in sorterade
+        ],
         "overfall_x": [float(n.overfall_x) for n in sorterade],
         "overfall_y": [float(n.overfall_y) for n in sorterade],
         "ut_till_id": [int(n.ut_till_id) if n.ut_till_id is not None else None for n in sorterade],
@@ -759,6 +889,11 @@ def _skriv_sankgraf_parquet(graf: SankGraf, sokvag: Path) -> Path:
         "persistens_m": [float(n.persistens_m) for n in sorterade],
         "osakerhet_m": [float(n.osakerhet_m) for n in sorterade],
     }
+    if v2:
+        data["typ"] = [n.typ for n in sorterade]
+        data["hinder_rh2000"] = [
+            float(n.hinder_rh2000) if n.hinder_rh2000 is not None else None for n in sorterade
+        ]
 
     tabell = pa.table(data, schema=schema)
     sokvag.parent.mkdir(parents=True, exist_ok=True)
@@ -775,7 +910,12 @@ def skriv_sankgraf_k2(
     kodversion: str | None = None,
     start: str | None = None,
 ) -> dict[str, Path]:
-    """Skriver komplett sänkgraf enligt K2/v1 (`parquet`, `json`, `tif`, `gpkg`, `run.json`)."""
+    """Skriver komplett sänkgraf enligt K2 (`parquet`, `json`, `tif`, `gpkg`, `run.json`).
+
+    Utan slutsänkor K2/v1 (oförändrat), med slutsänkor K2/v2 (`SankGraf.kontrakt`).
+    """
+    kontrakt = graf.kontrakt
+    v2 = kontrakt == KONTRAKT_K2_V2
     mal = Path(ut_mapp)
     mal.mkdir(parents=True, exist_ok=True)
     filer: dict[str, Path] = {}
@@ -789,14 +929,16 @@ def skriv_sankgraf_k2(
         )
 
     json_fil = mal / "sankgraf.json"
-    json_payload = {
-        "kontrakt": KONTRAKT_K2,
+    json_payload: dict[str, Any] = {
+        "kontrakt": kontrakt,
         "epsg": graf.geo.epsg,
         "filtrerad": graf.filtrerad,
         "persistens_faktor": graf.persistens_faktor,
         "antal_noder": len(graf.noder),
-        "noder": [graf.noder[nid].till_k2_dict() for nid in sorted(graf.noder)],
+        "noder": [graf.noder[nid].till_k2_dict(v2=v2) for nid in sorted(graf.noder)],
     }
+    if v2:
+        json_payload["antal_slutsankor"] = len(graf.slutsankor())
     json_fil.write_text(
         json.dumps(json_payload, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -825,7 +967,7 @@ def skriv_sankgraf_k2(
     topo_fil.write_text(
         json.dumps(
             {
-                "kontrakt": KONTRAKT_K2,
+                "kontrakt": kontrakt,
                 "ut_lov_id": {str(k): v for k, v in sorted(graf.ut_lov_id.items())},
                 "overfall_celler": {
                     str(k): [[int(r), int(c)] for r, c in v]
@@ -868,7 +1010,7 @@ def skriv_sankgraf_k2(
     )
 
     param_dict: dict[str, Any] = {
-        "kontrakt_ut": KONTRAKT_K2,
+        "kontrakt_ut": kontrakt,
         "grannskap": 4,
         "filtrerad": graf.filtrerad,
         "persistens_faktor": graf.persistens_faktor,
@@ -885,6 +1027,7 @@ def skriv_sankgraf_k2(
             "antal_noder": len(graf.noder),
             "antal_lovnoder": len(graf.lovnoder()),
             "antal_flodesvagar": len(graf.flodesvagar),
+            **({"antal_slutsankor": len(graf.slutsankor())} if v2 else {}),
         },
         kodversion=kodversion,
         start=start,
@@ -926,20 +1069,64 @@ def skriv_statiskt_resultat_k6(
         param_dict.update(parametrar)
 
     max_djup_varde = float(np.max(resultat.djup_m)) if resultat.djup_m.size > 0 else 0.0
+    utdata = [FilPost(roll="max_djup", fil=djup_fil.name, sha256=sha256_fil(djup_fil))]
+    filer: dict[str, Path] = {"max_djup": djup_fil}
+    matvarden: dict[str, Any] = {
+        "in_m3": float(resultat.in_m3),
+        "lagrat_m3": float(resultat.lagrat_m3),
+        "ut_m3": float(resultat.ut_m3),
+        "volymfel_rel": float(resultat.volymfel_rel),
+        "max_djup_m": max_djup_varde,
+    }
+    # Slutsänkor (K2/v2): flaggraster och mått bara när de finns, så att övriga resultat är
+    # byte-identiska med tiden före K2/v2.
+    if resultat.slutsankor and resultat.slutsanka_mask is not None:
+        flagga = skriv_slutsanka_raster(mal / SLUTSANKA_FIL, resultat.slutsanka_mask, geo)
+        filer["slutsanka"] = flagga
+        utdata.append(FilPost(roll="slutsanka", fil=flagga.name, sha256=sha256_fil(flagga)))
+        matvarden.update(slutsanka_matvarden(resultat.slutsankor))
     manifest = skapa_manifest(
         modul="sankgraf",
         indata=list(indata) if indata is not None else [],
         parametrar=param_dict,
-        utdata=[FilPost(roll="max_djup", fil=djup_fil.name, sha256=sha256_fil(djup_fil))],
-        matvarden={
-            "in_m3": float(resultat.in_m3),
-            "lagrat_m3": float(resultat.lagrat_m3),
-            "ut_m3": float(resultat.ut_m3),
-            "volymfel_rel": float(resultat.volymfel_rel),
-            "max_djup_m": max_djup_varde,
-        },
+        utdata=utdata,
+        matvarden=matvarden,
+        varningar=list(slutsanka_varningar(resultat.slutsankor)),
         kodversion=kodversion,
         start=start,
     )
     run_fil = skriv_manifest(manifest, mal / "run.json")
-    return {"max_djup": djup_fil, "run": run_fil}
+    filer["run"] = run_fil
+    return filer
+
+
+SLUTSANKA_FIL = "slutsanka.tif"
+"""Flaggraster för slutna områden: 1,0 där cellen hör till en slutsänka, NaN annars (float32)."""
+
+
+def skriv_slutsanka_raster(
+    sokvag: str | Path, mask: NDArray[np.bool_], geo: GeoTransformInfo
+) -> Path:
+    """Skriver `slutsanka.tif` (1,0 i slutna områden, NaN annars) på grafens rutnät."""
+    return skriv_geotiff(
+        sokvag,
+        np.where(mask, np.float32(1.0), np.float32(np.nan)).astype(np.float32),
+        x_min=geo.x_min,
+        y_max=geo.y_max,
+        pixelstorlek=geo.pixelstorlek_x,
+        epsg=geo.epsg,
+    )
+
+
+def slutsanka_matvarden(slutsankor: Sequence[SlutsankaResultat]) -> dict[str, Any]:
+    """Mätvärden om slutsänkorna (tomt om inga finns)."""
+    if not slutsankor:
+        return {}
+    return {
+        "antal_slutsankor": len(slutsankor),
+        "slutsanka_area_m2": float(sum(s.area_m2 for s in slutsankor)),
+        "slutsanka_lagrat_m3": float(sum(s.volym_m3 for s in slutsankor)),
+        "slutsanka_max_djup_m": float(max(s.max_djup_m for s in slutsankor)),
+        "slutsanka_over_hinder_m3": float(sum(s.over_hinder_m3 for s in slutsankor)),
+        "slutsankor": [s.till_dict() for s in slutsankor],
+    }
