@@ -845,6 +845,7 @@ class FragaTjanst:
         jobb ger en post."""
         regn: list[dict[str, Any]] = []
         analyser: list[dict[str, Any]] = []
+        vatten: list[dict[str, Any]] = []
         sedda: set[str] = set()
         for j in s["jobb"]:
             if j["analys"] in sedda:
@@ -898,7 +899,18 @@ class FragaTjanst:
                         "klimatfaktor": None,
                     }
                 )
-        return {"regn": regn, "analyser": analyser}
+            if "takvatten_antagande" in mv or "avtappning_antagande" in mv:
+                vatten.append(
+                    {
+                        "analys": j["analys"],
+                        "takvatten": mv.get("takvatten"),
+                        "takvatten_text": mv.get("takvatten_antagande"),
+                        "avtappning_mm_h": mv.get("avtappning_mm_h"),
+                        "avtappning_kalla": mv.get("avtappning_kalla"),
+                        "avtappning_text": mv.get("avtappning_antagande"),
+                    }
+                )
+        return {"regn": regn, "analyser": analyser, "vatten": vatten}
 
     def avlasning(self, korning_id: str, lager_id: str, e: float, n: float) -> dict[str, Any]:
         """Värdena i punkten (e, n) i alla lager för samma analys och roll som `lager_id`.

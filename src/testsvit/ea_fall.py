@@ -31,6 +31,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sankgraf.hierarki import bygg_sankgraf
+from sankgraf.takvatten import bygg_takvatten
 from sankgraf.typer import MARKSLAG_BYGGNAD, MARKSLAG_HARDGJORT
 from testsvit.k1_io import EPSG_SWEREF99_1800, GeoTransformInfo
 from tvad.hybrid import jamfor_hybrid_mot_full2d, kor_hybrid_2d_graf
@@ -664,6 +665,7 @@ def kor_ea_test8a(
     anvand_hybrid: bool = True,
     slut_tid_s: float = 420.0,
     min_djup_m: float = 2e-3,
+    takvatten: bool = True,
 ) -> EaBenchmarkResultat:
     """Kör EA Test 8A (urbant regn & gatuströmning): full 2D mot hybrid-/subgrid-2D."""
     geom = ea_test8a_urbant_regn(
@@ -671,6 +673,10 @@ def kor_ea_test8a(
         slut_tid_s=slut_tid_s,
     )
     manning = {MARKSLAG_HARDGJORT: geom.manning_n, 0: geom.manning_n}
+    # Takvatten på: EA:s Test 8A lägger regnet på hela det modellerade området (bar mark,
+    # byggnader ignoreras). Här står kvarteren som täta byggnader, så regnet på dem når marken
+    # som takvatten (Joels beslut 2026-11-22) och hela områdets regn kommer med.
+    tak = bygg_takvatten(geom.mark_z, geom.markslag, geom.geo) if takvatten else None
 
     res_2d = kor_2d_lokal_troghet(
         geom.mark_z,
@@ -682,6 +688,7 @@ def kor_ea_test8a(
         oppna_rander=False,
         manning_tabell=manning,
         min_djup_m=min_djup_m,
+        takvatten=tak,
     )
 
     if anvand_hybrid:
@@ -704,6 +711,7 @@ def kor_ea_test8a(
             manning_tabell=manning,
             min_djup_m=min_djup_m,
             subgrid_faktor=subgrid_faktor,
+            takvatten=tak,
         )
         metod_etikett = f"hybrid+subgrid(f={subgrid_faktor})"
     else:
@@ -718,6 +726,7 @@ def kor_ea_test8a(
             manning_tabell=manning,
             min_djup_m=min_djup_m,
             subgrid_faktor=subgrid_faktor,
+            takvatten=tak,
         )
         metod_etikett = f"subgrid-2D(f={subgrid_faktor})"
 
@@ -753,7 +762,8 @@ def kor_ea_test8a(
         f"{metod_etikett} vs full 2D: MAE={jamf.maxdjupsfel_mae_m:.4f} m, "
         f"IoU={jamf.traffad_yta_iou:.3f}, uppsnabbning={jamf.speedup_faktor:.2f}x; "
         f"v_max={max_hastighet_m_s:.2f} m/s, fara_max={max_fara_m2_s:.3f} m²/s, "
-        f"byggnader täta={'JA' if byggnader_tata else 'NEJ'}"
+        f"byggnader täta={'JA' if byggnader_tata else 'NEJ'}, "
+        f"takvatten={'på' if tak is not None else 'av'}"
     )
     return EaBenchmarkResultat(
         fall_id="EA8A",

@@ -63,10 +63,14 @@ def test_idf_parametrar_ger_regn_och_manifestfalt() -> None:
         {"idf": "stockholmsregn-2024", "aterkomsttid_ar": 100, "klimatfaktor": 1.0}
     )
     assert p2["klimatfaktor"] == 1.0 and p2["varaktighet_min"] == 60.0
-    # Det gamla sättet är oförändrat.
+    # Det gamla sättet, med takvatten och avtappning som uttryckliga standardvärden (v2).
     assert losare.validera_parametrar({"regn_mm": 30.0}) == {
         "regn_mm": 30.0,
         "persistens_faktor": None,
+        "takvatten": True,
+        "takvatten_andel_ledning": 0.0,
+        "avtappning_mm_h": 0.0,
+        "avtappning_angiven": False,
     }
 
 

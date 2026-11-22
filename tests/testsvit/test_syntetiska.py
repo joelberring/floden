@@ -43,6 +43,8 @@ FORVANTADE_A_FALL = (
     ("A9", "A9_brus_persistens"),
     ("A10", "A10_sluten_gard"),
     ("A11", "A11_sluten_gard_avtappning"),
+    ("A12", "A12_sluten_gard_takvatten"),
+    ("A13", "A13_hus_i_trag"),
 )
 
 
@@ -115,7 +117,7 @@ class TestSyntetiskaFall(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
             mappar1 = generera_alla_syntetiska_fall(tmp1)
             mappar2 = generera_alla_syntetiska_fall(tmp2)
-            self.assertEqual(len(mappar1), 11)
+            self.assertEqual(len(mappar1), 13)
             for m1, m2 in zip(mappar1, mappar2, strict=True):
                 for rel in (
                     "indata/mark.tif",
@@ -213,14 +215,31 @@ class TestSyntetiskaFall(unittest.TestCase):
         self.assertAlmostEqual(f11["max_djup_m"], (120.0 - f11["avtappning_mm_h"]) * 0.25 / 1000)
         self.assertAlmostEqual(f11["tom_efter_s"], 900.0 + f11["max_djup_m"] * 1000 / 60 * 3600)
         self.assertAlmostEqual(f11["avtappat_m3"], f11["gard_area_m2"] * 0.030)
+        # A12: (gårdens regn + halva takets regn) / gårdens area (takvatten, ring)
+        f12 = specs["A12"].facit
+        self.assertTrue(f12["regn_pa_tak_raknas"])
+        self.assertAlmostEqual(f12["tak_area_m2"], 324.0 - 100.0)
+        self.assertAlmostEqual(f12["djup_m"], (100.0 + 0.5 * 224.0) * 0.050 / 100.0)
+        # A13: hälften av taket till varje långsida, inget till gavlarna
+        f13 = specs["A13"].facit["takvatten_m3"]
+        self.assertAlmostEqual(f13["norr"] + f13["soder"], 72.0 * 0.050)
+        self.assertEqual((f13["vast"], f13["ost"]), (0.0, 0.0))
+        # takvatten uttryckligt i fall.toml där definitionen säger något om tak
+        for fid, varde in (("A8", True), ("A10", False), ("A11", False), ("A12", True)):
+            self.assertIs(specs[fid].takvatten, varde)
+        self.assertIsNone(specs["A1"].takvatten)
 
-    def test_kor_testsvit_grupp_a_passerar_alla_tolv(self) -> None:
+    def test_kor_testsvit_grupp_a_passerar_alla_fjorton(self) -> None:
         resultat, tabell = kor_testsvit(rot=TESTSVIT_ROT, grupp="A")
-        self.assertEqual(len(resultat), 12)
+        self.assertEqual(len(resultat), 14)
         self.assertTrue(all(r.godkand for r in resultat), tabell)
         ids = [r.fall.id for r in resultat]
         self.assertEqual(
-            ids, ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11"]
+            ids,
+            [
+                "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A12",
+                "A13",
+            ],
         )
         for r in resultat:
             if r.fall.id != "A0":

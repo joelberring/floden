@@ -345,6 +345,27 @@ def test_k20_ligger_i_lokal_mapp_och_inte_i_repot(kv: Kv) -> None:
     assert k20["scenarier"]["ritat"]["k9"]
 
 
+def test_avtappning_for_en_korning_hamnar_i_vattnets_k20(kv: Kv) -> None:
+    status, _ = kv.json(
+        "POST", f"{P}/scenarier/demohuset/plan",
+        {"analyser": ["vatten.skyfall"], "avtappning_mm_h": 12.5},
+    )
+    assert status == 200
+    (fil,) = (kv.rot / "kartverktyg" / "fragor").glob("rita-demohuset-vatten*.json")
+    k20 = json.loads(fil.read_text(encoding="utf-8"))
+    (a,) = k20["analyser"]
+    assert a["parametrar"]["avtappning_mm_h"] == 12.5
+    # Utan fält: inget i frågan, lösarens standard 0 mm/h gäller.
+    kv.json("POST", f"{P}/scenarier/demohuset/plan", {"analyser": ["vatten.skyfall"]})
+    k20 = json.loads(fil.read_text(encoding="utf-8"))
+    assert "avtappning_mm_h" not in k20["analyser"][0]["parametrar"]
+    fel = kv.json(
+        "POST", f"{P}/scenarier/demohuset/plan",
+        {"analyser": ["vatten.skyfall"], "avtappning_mm_h": -1},
+    )
+    assert fel[0] == 400
+
+
 def test_korning_ger_samma_resultat_som_demons(kv: Kv) -> None:
     status, k = kv.json(
         "POST", f"{P}/scenarier/demohuset/kor", {"analyser": ["dagsljus.sol", "vatten.skyfall"]}

@@ -1,4 +1,5 @@
-"""Deterministisk generator för syntetiska valideringsfall A1–A11 (uppdrag T09a; A10–A11 K2/v2)."""
+"""Deterministisk generator för syntetiska valideringsfall A1–A13 (T09a; A10–A11 K2/v2;
+A12–A13 takvatten)."""
 
 from __future__ import annotations
 
@@ -53,6 +54,9 @@ class SyntetisktFallSpec:
     facit: dict[str, Any]
     parametrar: dict[str, Any]
     tvarsnitt_rad: int | None = None
+    takvatten: bool | None = None
+    """Om fallet räknar regn på tak (`sankgraf.takvatten`). None = standard (på) och skrivs inte
+    i `fall.toml`; sätts uttryckligen där fallets definition säger något om tak."""
 
 
 def _koordinatgrid(
@@ -792,6 +796,7 @@ def _fall_a8_port_byggnad() -> SyntetisktFallSpec:
         facit=facit,
         parametrar={"fall": "A8", "port_bredd_m": 3.0, "byggnad_hinderhojd_m": 10.0},
         tvarsnitt_rad=30,
+        takvatten=True,
     )
 
 
@@ -917,6 +922,7 @@ def _fall_a10_sluten_gard() -> SyntetisktFallSpec:
         facit=facit,
         parametrar={"fall": "A10", "gard_m": 10.0, "hinder_rh2000": 16.0},
         tvarsnitt_rad=44,
+        takvatten=False,
     )
 
 
@@ -964,6 +970,124 @@ def _fall_a11_sluten_gard_avtappning() -> SyntetisktFallSpec:
         facit=facit,
         parametrar={"fall": "A11", "gard_m": 10.0, "avtappning_mm_h": 60.0},
         tvarsnitt_rad=44,
+        takvatten=False,
+    )
+
+
+def _fall_a12_sluten_gard_takvatten() -> SyntetisktFallSpec:
+    mark, markslag, x_min, y_max = _sluten_gard_terrang()
+    n = mark.shape[0]
+    osakerhet = np.full((n, n), 0.02, dtype=np.float32)
+    regn = [(0.0, 300.0), (600.0, 300.0)]  # 50 mm, som A10
+    gard_area_m2 = 40 * 40 * PIXELSTORLEK_M**2
+    tak_area_m2 = float(np.count_nonzero(markslag == MARKSLAG_BYGGNAD)) * PIXELSTORLEK_M**2
+    volym = (gard_area_m2 + 0.5 * tak_area_m2) * 0.050
+    facit = {
+        "fall_id": "A12",
+        "typ": "slutsanka_takvatten",
+        "gard_area_m2": gard_area_m2,
+        "gard_celler": 1600,
+        "tak_area_m2": tak_area_m2,
+        "regn_mm": 50.0,
+        "regn_pa_tak_raknas": True,
+        "regel": "ring: hälften av taket till innersidan (gården), hälften till yttersidan",
+        "volym_m3": volym,
+        "djup_m": volym / gard_area_m2,
+        "hinder_rh2000": 16.0,
+        "slut_tid_2d_s": 1800.0,
+        "forklaring": (
+            "Som A10 men med takvatten (Joels beslut 2026-11-22): kvarteret är en ringformad "
+            "byggnad, så hälften av takets regn rinner till gården. Djup = (gårdens regn + "
+            "halva takets regn) / gårdens area = (5,0 + 5,6) m³ / 100 m² = 106 mm."
+        ),
+        "toleranser": {"volymfel_rel_max": 0.001, "maxdjupsfel_m_max": 0.01},
+    }
+    return SyntetisktFallSpec(
+        mappnamn="A12_sluten_gard_takvatten",
+        id="A12",
+        namn="Sluten gård med takvatten",
+        beskrivning=(
+            "Som A10 med takvatten: ringhus, halva taket till gården, djup 106 mm."
+        ),
+        x_min=x_min,
+        y_max=y_max,
+        mark=mark,
+        osakerhet=osakerhet,
+        markslag=markslag,
+        brytlinjer=[],
+        oppningar=[],
+        regn=regn,
+        facit=facit,
+        parametrar={"fall": "A12", "gard_m": 10.0, "takvatten": True},
+        tvarsnitt_rad=44,
+        takvatten=True,
+    )
+
+
+A13_TRAG = {
+    "norr": (slice(14, 16), slice(12, 60)),
+    "soder": (slice(40, 42), slice(12, 60)),
+    "vast": (slice(16, 40), slice(10, 12)),
+    "ost": (slice(16, 40), slice(60, 62)),
+}
+"""A13: tråget utanför varje fasad (rad, kolumn) i 56 x 72-rastret."""
+
+
+def _fall_a13_hus_i_trag() -> SyntetisktFallSpec:
+    # 72 x 56 celler = 18 x 14 m. Hus 12 x 6 m (rad 16..39, kolumn 12..59), tak 20 m.
+    # Runt varje fasad ett 0,5 m brett tråg (botten 9,00 m) som inte når de andra: hörnen och
+    # marken utanför ligger på 10,00 m och lutar 2 % ut mot rutans kant.
+    hojd, bredd = 56, 72
+    x_min, y_max = BAS_E + 1100.0, BAS_N + hojd * PIXELSTORLEK_M
+    ii, jj = np.meshgrid(np.arange(hojd), np.arange(bredd), indexing="ij")
+    avst = np.maximum(np.maximum(14 - ii, ii - 41), np.maximum(10 - jj, jj - 61))
+    avst = np.maximum(avst, 0).astype(np.float64)
+    mark = (10.0 - 0.02 * avst * PIXELSTORLEK_M).astype(np.float32)
+    markslag = np.full((hojd, bredd), MARKSLAG_HARDGJORT, dtype=np.uint8)
+    markslag[16:40, 12:60] = MARKSLAG_BYGGNAD
+    mark[16:40, 12:60] = np.float32(20.0)
+    for rr, cc in A13_TRAG.values():
+        mark[rr, cc] = np.float32(9.0)
+    osakerhet = np.full((hojd, bredd), 0.02, dtype=np.float32)
+    regn = [(0.0, 300.0), (600.0, 300.0)]  # 50 mm
+    tak_area_m2 = 48 * 24 * PIXELSTORLEK_M**2  # 72 m²
+    facit = {
+        "fall_id": "A13",
+        "typ": "takvatten_sidor",
+        "tak_area_m2": tak_area_m2,
+        "regn_mm": 50.0,
+        "regel": "okänd takform = sadeltak med nock längs längdaxeln: hälften till varje långsida",
+        "takvatten_m3": {
+            "norr": 0.5 * tak_area_m2 * 0.050,
+            "soder": 0.5 * tak_area_m2 * 0.050,
+            "vast": 0.0,
+            "ost": 0.0,
+        },
+        "slut_tid_2d_s": 1800.0,
+        "forklaring": (
+            "Taket (72 m², okänd takform) avvattnas som sadeltak: 1,8 m³ av 3,6 m³ till vardera "
+            "långsidans tråg (norr, söder), inget till gavlarna. Tråget får dessutom sitt eget "
+            "regn (avrinningsytan i sänkgrafen)."
+        ),
+        "toleranser": {"volymfel_rel_max": 0.001, "maxdjupsfel_m_max": 0.01},
+    }
+    return SyntetisktFallSpec(
+        mappnamn="A13_hus_i_trag",
+        id="A13",
+        namn="Hus i tråg (takvatten)",
+        beskrivning="Hus 12 x 6 m med ett tråg vid varje fasad: halva taket till varje långsida.",
+        x_min=x_min,
+        y_max=y_max,
+        mark=mark,
+        osakerhet=osakerhet,
+        markslag=markslag,
+        brytlinjer=[],
+        oppningar=[],
+        regn=regn,
+        facit=facit,
+        parametrar={"fall": "A13", "hus_m": [12.0, 6.0], "takvatten": True},
+        tvarsnitt_rad=28,
+        takvatten=True,
     )
 
 
@@ -1053,7 +1177,7 @@ def _rita_oversiktsbild(spec: SyntetisktFallSpec, sokvag: Path) -> Path:
 
 
 def alla_syntetiska_specifikationer() -> list[SyntetisktFallSpec]:
-    """Returnerar specifikationerna för alla syntetiska fall A1–A11 i ordning."""
+    """Returnerar specifikationerna för alla syntetiska fall A1–A13 i ordning."""
     return [
         _fall_a1_enkel_sanka(),
         _fall_a2_tva_sankor_serie(),
@@ -1066,6 +1190,8 @@ def alla_syntetiska_specifikationer() -> list[SyntetisktFallSpec]:
         _fall_a9_brus_persistens(),
         _fall_a10_sluten_gard(),
         _fall_a11_sluten_gard_avtappning(),
+        _fall_a12_sluten_gard_takvatten(),
+        _fall_a13_hus_i_trag(),
     ]
 
 
@@ -1132,12 +1258,14 @@ def skriv_syntetiskt_fall(spec: SyntetisktFallSpec, rot: str | Path = "testsvit"
         f'beskrivning = "{spec.beskrivning}"\n'
         'status = "redo"\n'
     )
+    if spec.takvatten is not None:
+        toml_innehall += f"takvatten = {'true' if spec.takvatten else 'false'}\n"
     (fall_mapp / "fall.toml").write_text(toml_innehall, encoding="utf-8")
     return fall_mapp
 
 
 def generera_alla_syntetiska_fall(rot: str | Path = "testsvit") -> list[Path]:
-    """Genererar deterministiskt alla syntetiska testfall A1–A11 under `rot`."""
+    """Genererar deterministiskt alla syntetiska testfall A1–A13 under `rot`."""
     mappar: list[Path] = []
     for spec in alla_syntetiska_specifikationer():
         mappar.append(skriv_syntetiskt_fall(spec, rot=rot))

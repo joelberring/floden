@@ -64,3 +64,17 @@ Vilka datastrukturer gör att en lapp bara kräver omräkning av ett delträd oc
   ändringar bevarar slutsänkorna orörda (mätt: noden identisk före och efter, samma fyllning som full omräkning).
   **Fråga (Q4):** finns en lokal regel för när ett nytt hus stänger en port, så att bara de berörda komponenterna
   behöver räknas om?
+
+### 2026-11-22 – Vatten – Takvatten och avtappning i statisk fyllning
+- **Takvatten är en linjär omfördelning:** varje byggnads takvolym flyttas med fasta vikter (summa 1) till
+  markceller. I grafen blir det en extra avrinningsyta per nod, så den händelsestyrda lösningen förblir exakt
+  (mätt: A12 och tråget i A13 till maskinprecision, volymfel < 1e-13). I 2D är det en källterm per cell.
+- **Graf mot 2D (A13):** grafen lägger vattnet direkt i nodens volym; 2D låter det rinna över markcellerna, där en
+  film blir kvar och en del rinner ut över rutkanten innan det når tråget (−1,6 % i långsidornas tråg, −9,9 % i
+  gavlarnas, som bara får eget regn från sluttningarna). Ingen ny teori behövs; observationen hör till Q3.
+- **Avtappning i statisk fyllning (fråga till Samuel, Q1):** utan tid går det inte att veta hur mycket av en nods
+  avtappningskapacitet som hinner användas på vatten som kommer som överfall från andra noder. Vi tappar bara lövens
+  direkta tillrinning (högst kapacitet × varaktighet), vilket är en undre gräns för avtappningen. Finns en exakt
+  statisk motsvarighet (t.ex. ordna överfallen efter den händelsestyrda lösningens tider), eller ska statisk
+  fyllning med avtappning alltid ersättas av dynamiken?
+

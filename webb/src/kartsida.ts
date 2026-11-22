@@ -76,6 +76,8 @@ interface Sida {
   underlag: Underlag[];
   plan: { fragor: PlanPost[]; valda: string[] } | null;
   planFel: string | null;
+  /** Avtappning för körningen (mm/h); null = standard 0 mm/h (ledningsnätet antas fullt). */
+  avtappning: number | null;
   korning: { slug: string; text: string; klar: boolean; fel: string | null; forklaring?: string | null; varningar?: string[] } | null;
   pollTimer: number | null;
   kontrollTimer: number | null;
@@ -189,6 +191,7 @@ function byggSida(container: HTMLElement, p: ProjektSvar, info: ProjektInfo): vo
     underlag: lasUnderlag(PROJEKT_ID),
     plan: null,
     planFel: null,
+    avtappning: null,
     korning: null,
     pollTimer: null,
     kontrollTimer: null,
@@ -1120,9 +1123,14 @@ function ritaRakna(): void {
   rot.innerHTML = `
     <p class="dampad liten-text">Räknar om det du ritat och jämför med läget före, med samma beräkningar som resten av Floden.</p>
     <div class="kryss-grupp">${analyser}</div>
+    <label class="falt-rad">Avtappning till ledningsnätet (mm/h, valfritt) <input type="number" min="0" step="any" id="rakna-avtappning" class="kontroll" placeholder="0 – ledningsnätet antas fullt" value="${sida.avtappning === null ? "" : esc(String(sida.avtappning))}"/></label>
     <div class="knapp-rad"><button type="button" class="knapp" id="rakna-plan" ${giltig && !k?.text?.startsWith("Beräknar") ? "" : "disabled"}>Räkna före och efter</button></div>
     ${antal === 0 ? `<p class="dampad liten-text">Rita först ett hus eller ändra en byggnad.</p>` : !giltig && sida.kontroll ? `<p class="dampad liten-text">Rätta felen ovan först.</p>` : ""}
     ${planHtml}${korHtml}`;
+  rot.querySelector<HTMLInputElement>("#rakna-avtappning")?.addEventListener("change", (e) => {
+    const v = (e.target as HTMLInputElement).value.trim();
+    sida.avtappning = v === "" ? null : Number(v);
+  });
   rot.querySelector("#rakna-plan")?.addEventListener("click", () => void visaPlan());
   rot.querySelector("#rakna-starta")?.addEventListener("click", () => void startaKorning());
   rot.querySelector("#rakna-avbryt")?.addEventListener("click", () => {
@@ -1167,8 +1175,11 @@ async function visaPlan(): Promise<void> {
   const valda = valdaAnalyser();
   try {
     if (valda.length === 0) throw new Error("Välj minst en analys att räkna.");
+    if (sida.avtappning !== null && !(Number.isFinite(sida.avtappning) && sida.avtappning >= 0)) {
+      throw new Error("Avtappningen måste vara ett tal ≥ 0 mm/h (eller tomt för 0).");
+    }
     const sc = await spara();
-    const p = await planeraScenario(PROJEKT_ID, sc.slug, valda);
+    const p = await planeraScenario(PROJEKT_ID, sc.slug, valda, sida.avtappning);
     if (s !== sida) return;
     sida.plan = { fragor: p.fragor, valda };
   } catch (e) {
@@ -1187,7 +1198,7 @@ async function startaKorning(): Promise<void> {
   sida.korning = { slug: sc.slug, text: "Beräknar …", klar: false, fel: null };
   ritaRakna();
   try {
-    await korScenario(PROJEKT_ID, sc.slug, plan.valda);
+    await korScenario(PROJEKT_ID, sc.slug, plan.valda, sida.avtappning);
   } catch (e) {
     sida.korning = { slug: sc.slug, text: "", klar: true, fel: e instanceof Error ? e.message : String(e) };
     ritaRakna();

@@ -36,6 +36,7 @@ import { lagerTekniskHtml, teckenforklaringHtml } from "./teckenforklaring";
 import { lasKartanText } from "./kartforklaring";
 import { felHtml } from "./felvisning";
 import { esc, PROJEKT_ID } from "./sidor";
+import { vattenAntagandenRader } from "./antaganden.ts";
 import type { ModulInfo } from "./types";
 
 const LAGRING_BAKGRUND = "floden.bakgrund";
@@ -647,9 +648,11 @@ function antagandenHtml(r: ResultatSvar): string {
     if (g.regn_mm != null) delar.push(`${DEC1.format(g.regn_mm)} mm regn totalt`);
     rader.push(`<li><span class="etikett-liten">Regn som användes</span> <span>${delar.join(" · ")}</span></li>`);
   }
+  rader.push(...vattenAntagandenRader(a.vatten ?? []));
   if (rader.length === 0) return "";
   return `<div class="antaganden" aria-label="Antaganden"><ul>${rader.join("")}</ul></div>`;
 }
+
 
 function varningarHtml(v: VarningPost[]): string {
   if (v.length === 0) {

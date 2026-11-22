@@ -72,6 +72,9 @@ def _djupaste_lov_i_graf(graf: SankGraf, nod_id: int) -> int:
 def statisk_fyllning(
     graf: SankGraf,
     regn_m: float | NDArray[np.float64],
+    *,
+    avtappning_mm_h: float | NDArray[np.float64] | None = None,
+    varaktighet_s: float | None = None,
 ) -> StatiskFyllningResultat:
     """Kör exakt volymbevarande Fill–Spill–Merge-fyllning för givet regn (meter).
 
@@ -79,6 +82,16 @@ def statisk_fyllning(
         graf: Byggd (ofiltrerad eller persistensfiltrerad) `SankGraf`.
         regn_m: Total regnmängd i meter, antingen skalär eller 2D-raster med samma
             form som `graf.mark_z`.
+
+        avtappning_mm_h: Avtappning till ledningsnätet (mm/h per cell, skalär eller raster;
+            None eller 0 = ingen). Kräver `varaktighet_s`. Varje löv tappas högst
+            `Σ kapacitet × cellyta × varaktighet` av sin direkta tillrinning (regn och takvatten
+            i lövets celler); överfall från andra noder tappas inte (konservativt, se
+            `docs/VATTEN.md`).
+        varaktighet_s: Regnets varaktighet (s), bara för avtappningen.
+
+    Takvattnet (`graf.takvatten`, `sankgraf.takvatten`) flyttar regnet på byggnadscellerna till
+    markcellerna utanför fasaderna innan fyllningen; utan det räknas regn på tak inte.
 
     Returns:
         `StatiskFyllningResultat` med djup, vattennivåer, per-nod-nivåer och volymkontroll.
@@ -104,6 +117,29 @@ def statisk_fyllning(
     cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
     cell_vol_m3 = np.where(aktiv, regn_arr * cell_area_m2, 0.0)
     in_m3 = float(np.sum(cell_vol_m3))
+    regn_mark_m3 = in_m3
+    tak_mask = graf.markslag == MARKSLAG_BYGGNAD
+    tak_regn = np.where(tak_mask, regn_arr, 0.0)
+    if not np.all(np.isfinite(tak_regn)) or np.any(tak_regn < 0.0):
+        raise SankGrafFel("Regnet på taken innehåller NaN/Inf eller negativa värden.")
+    regn_tak_m3 = float(np.sum(tak_regn)) * cell_area_m2
+    tak_mark_m3 = tak_ut_m3 = tak_ledning_m3 = 0.0
+    tv = graf.takvatten
+    if tv is not None and not tv.tom:
+        tv.kontrollera_mot(graf.markslag, graf.mark_z)
+        till_mark, tak_ut_m3, tak_ledning_m3 = tv.fordela(tak_regn * cell_area_m2)
+        tak_mark_m3 = float(np.sum(till_mark))
+        cell_vol_m3 = cell_vol_m3 + till_mark
+        in_m3 = regn_mark_m3 + tak_mark_m3 + tak_ut_m3
+    extra = {
+        "regn_mark_m3": regn_mark_m3,
+        "regn_tak_m3": regn_tak_m3,
+        "takvatten": tv is not None,
+        "takvatten_till_mark_m3": tak_mark_m3,
+        "takvatten_ut_rand_m3": tak_ut_m3,
+        "takvatten_till_ledning_m3": tak_ledning_m3,
+    }
+    kap_m3 = _avtappning_budget_m3(graf, aktiv, avtappning_mm_h, varaktighet_s)
 
     if not graf.noder or in_m3 == 0.0:
         noll_djup = np.zeros((hojd, bredd), dtype=np.float32)
@@ -122,11 +158,12 @@ def statisk_fyllning(
             ut_m3=ut_val,
             volymfel_rel=vol_fel,
             utflodes_celler=[],
+            **extra,  # type: ignore[arg-type]
         )
 
     # Initiera tillrinning per lövnod samt direkt randavrinning (HAV_NOD_ID)
     ct = graf.cell_till_nod
-    ut_m3 = float(np.sum(cell_vol_m3[aktiv & (ct == HAV_NOD_ID)]))
+    ut_m3 = float(np.sum(cell_vol_m3[aktiv & (ct == HAV_NOD_ID)])) + tak_ut_m3
 
     volym: dict[int, float] = {nid: 0.0 for nid in graf.noder}
     max_volym: dict[int, float] = {nid: n.max_volym_m3 for nid, n in graf.noder.items()}
@@ -145,6 +182,13 @@ def statisk_fyllning(
                 volym[nid] = float(v_np)
             else:
                 ut_m3 += float(v_np)
+    avtappat_m3 = 0.0
+    if kap_m3:
+        for nid, budget in kap_m3.items():
+            if nid in volym and budget > 0.0:
+                tappat = min(volym[nid], budget)
+                volym[nid] -= tappat
+                avtappat_m3 += tappat
 
     def _aktiv_forfader(nid: int) -> int:
         curr = nid
@@ -319,7 +363,9 @@ def statisk_fyllning(
         wse_f64[lov_mask] = np.where(cell_djup > 0.0, cell_niva, z64[lov_mask])
 
     lagrat_m3 = float(np.sum(djup_f64) * cell_area_m2)
-    volymfel_rel = abs(in_m3 - ut_m3 - lagrat_m3) / in_m3 if in_m3 > 0.0 else 0.0
+    volymfel_rel = (
+        abs(in_m3 - ut_m3 - lagrat_m3 - avtappat_m3) / in_m3 if in_m3 > 0.0 else 0.0
+    )
     slutsankor, slut_mask = slutsanka_sammanstallning(
         graf, djup_f64, nod_niva_rh2000, over_hinder
     )
@@ -336,7 +382,43 @@ def statisk_fyllning(
         utflodes_celler=utflodes_celler,
         slutsankor=slutsankor,
         slutsanka_mask=slut_mask,
+        avtappat_m3=avtappat_m3,
+        **extra,  # type: ignore[arg-type]
     )
+
+
+def _avtappning_budget_m3(
+    graf: SankGraf,
+    aktiv: NDArray[np.bool_],
+    avtappning_mm_h: float | NDArray[np.float64] | None,
+    varaktighet_s: float | None,
+) -> dict[int, float]:
+    """Avtappad volym som högst per löv: Σ kapacitet (mm/h) × cellyta × varaktighet."""
+    if avtappning_mm_h is None:
+        return {}
+    kap = np.asarray(
+        np.broadcast_to(np.asarray(avtappning_mm_h, dtype=np.float64), graf.mark_z.shape),
+        dtype=np.float64,
+    )
+    kap = np.where(np.isfinite(kap), kap, 0.0)
+    if np.any(kap < 0.0):
+        raise SankGrafFel("avtappning_mm_h får inte vara negativ.")
+    if not np.any(kap > 0.0):
+        return {}
+    if varaktighet_s is None or not math.isfinite(varaktighet_s) or varaktighet_s <= 0.0:
+        raise SankGrafFel(
+            "Avtappning i statisk fyllning kräver regnets varaktighet (varaktighet_s > 0)."
+        )
+    ct = graf.cell_till_nod
+    mask = aktiv & (ct >= 0) & (kap > 0.0)
+    if not np.any(mask):
+        return {}
+    cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
+    per = np.bincount(
+        ct[mask], weights=kap[mask] * cell_area_m2 / 3.6e6 * float(varaktighet_s),
+        minlength=int(ct.max()) + 1,
+    )
+    return {int(n): float(per[n]) for n in np.flatnonzero(per > 0.0)}
 
 
 def slutsanka_sammanstallning(
@@ -414,8 +496,18 @@ def kor_statisk_k1_mapp(
     applicera_brytlinjer: bool = True,
     applicera_oppningar: bool = True,
     referensdjup_m: float = STANDARD_REFERENSDJUP_M,
+    takvatten: bool = True,
+    takvatten_andel_ledning: float = 0.0,
+    avtappning_mm_h: float | NDArray[np.float64] | None = None,
+    varaktighet_s: float | None = None,
 ) -> tuple[SankGraf, StatiskFyllningResultat]:
-    """Läser en K1-indatamapp + K4 `regn.csv`, bygger sänkgraf och kör statisk fyllning."""
+    """Läser en K1-indatamapp + K4 `regn.csv`, bygger sänkgraf och kör statisk fyllning.
+
+    `takvatten` (standard på, Joels beslut 2026-11-22): regn på byggnader avrinner till marken
+    enligt `sankgraf.takvatten` (byggnader ur `byggnader.gpkg` om rutan är K1 v2). Den
+    returnerade grafen bär fördelningen (`graf.takvatten`). Avtappning: se `statisk_fyllning`;
+    utan `varaktighet_s` används regnseriens längd när regnet läses ur `regn.csv`.
+    """
     mapp = Path(k1_indata_mapp)
     if not mapp.is_dir():
         raise SankGrafFel(f"K1-indatamapp saknas: {mapp}")
@@ -444,6 +536,8 @@ def kor_statisk_k1_mapp(
         regn_fil = Path(regn_csv) if regn_csv is not None else (mapp / "regn.csv")
         tidsserie = las_regn_csv(regn_fil)
         total_regn_m = berakna_total_regn_m(tidsserie)
+        if varaktighet_s is None:
+            varaktighet_s = float(tidsserie[-1][0]) - float(tidsserie[0][0])
 
     graf = bygg_sankgraf(
         mark_z,
@@ -456,6 +550,12 @@ def kor_statisk_k1_mapp(
     )
     if persistens_faktor is not None:
         graf = filtrera_persistens(graf, faktor=persistens_faktor)
+    if takvatten:
+        from sankgraf.takvatten import med_takvatten_graf
 
-    resultat = statisk_fyllning(graf, total_regn_m)
+        graf = med_takvatten_graf(graf, mapp, andel_ledning=takvatten_andel_ledning)
+
+    resultat = statisk_fyllning(
+        graf, total_regn_m, avtappning_mm_h=avtappning_mm_h, varaktighet_s=varaktighet_s
+    )
     return graf, resultat

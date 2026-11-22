@@ -80,6 +80,7 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
             markslag=graf.markslag.copy(),
             ut_lov_id={},
             overfall_celler={},
+            takvatten=graf.takvatten,
         )
 
     # Kopiera grafens topologi till muterbara arbetsstrukturer
@@ -330,4 +331,5 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
         markslag=graf.markslag.copy(),
         ut_lov_id=nya_ut_lov,
         overfall_celler=nya_overfall_celler,
+        takvatten=graf.takvatten,
     )

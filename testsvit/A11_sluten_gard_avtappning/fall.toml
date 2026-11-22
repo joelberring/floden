@@ -4,3 +4,4 @@ grupp = "A"
 typ = "syntetisk"
 beskrivning = "Som A10 med avtappning 60 mm/h och 120 mm/h i 15 min: känt förlopp, tomt efter 30 min."
 status = "redo"
+takvatten = false

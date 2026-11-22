@@ -13,6 +13,7 @@ from numpy.typing import NDArray
 from dynamik.nodmodell import (
     DynamikFel,
     RegnIntervall,
+    berakna_doman_areor,
     nod_medel_gangtid_s,
     skapa_regn_intervall,
 )
@@ -106,9 +107,10 @@ def bygg_enhetssvar(
     max_volymer: dict[int, float] = {}
     areor: dict[int, float] = {}
 
+    _, _, lov_areor = berakna_doman_areor(graf)  # med takvatten om grafen bär det
     for lov in graf.lovnoder():
         lid = lov.nod_id
-        area = float(lov.avrinningsyta_m2)
+        area = float(lov_areor[lid])
         tau = float(gangtider.get(lid, 0.0))
         impulssvar[lid] = _diskret_impulssvar(area, tau, dt_val, n_steg)
         max_volymer[lid] = float(lov.max_volym_m3)

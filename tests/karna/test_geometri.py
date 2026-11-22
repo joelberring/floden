@@ -255,6 +255,33 @@ class TestK9PaV2(unittest.TestCase):
         mark, _ = las_float_raster(ny / "mark.tif")
         self.assertGreater(float(mark.max()), MARK_Z + 8.9)
 
+    def test_takvatten_foljer_k9_nya_och_borttagna_hus(self) -> None:
+        # Takvattnet byggs ur scenariots ruta: ett nytt hus får takvatten, ett borttaget inget.
+        from sankgraf.fyllning import kor_statisk_k1_mapp
+
+        def tak(mapp: Path) -> tuple[set[str], float, float]:
+            graf, res = kor_statisk_k1_mapp(mapp, regn_m=0.05)
+            assert graf.takvatten is not None
+            ids = {b.byggnad_id for b in graf.takvatten.byggnader}
+            return ids, graf.takvatten.takyta_m2, float(res.volymbalans()["volymfel_rel"])
+
+        a, b, id2 = (getattr(self, n) for n in ("a", "b", "id2"))  # satta i setUpClass
+        ids0, yta0, fel0 = tak(b)
+        ring = [[150040, 6576002], [150044, 6576002], [150044, 6576006], [150040, 6576006]]
+        geom = {"type": "Polygon", "coordinates": [ring]}
+        ny = Andring("byggnad_ny", "hus9", geom, {"hojd_m": 9})
+        ids1, yta1, fel1 = tak(self._kor(b, [ny]).rutor[0].mapp)
+        self.assertEqual(ids1, ids0 | {"hus9"})
+        self.assertAlmostEqual(yta1 - yta0, 16.0)  # 4 x 4 m
+        ids2, yta2, _ = tak(
+            self._kor(a, [Andring("byggnad_bort", "rv", None, {"byggnads_id": id2})])
+            .rutor[0].mapp
+        )
+        ids_a, yta_a, _ = tak(a)
+        self.assertEqual(ids2, ids_a - {id2})
+        self.assertAlmostEqual(yta_a - yta2, 36.0)  # B2 är 6 x 6 m
+        self.assertLess(max(fel0, fel1), 1e-12)
+
     def test_vegetation_andring(self) -> None:
         ring = [[150004, 6576014], [150008, 6576014], [150008, 6576018], [150004, 6576018]]
         a = Andring("vegetation", "tra", {"type": "Polygon", "coordinates": [ring]}, {"hojd_m": 12})

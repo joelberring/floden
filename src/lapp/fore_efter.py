@@ -17,6 +17,7 @@ from dynamik.nodmodell import (
     DynamikResultat,
     EntrePunkt,
     applicera_initial_forlust,
+    berakna_doman_areor,
     skapa_regn_intervall,
     utvardera_entreer,
 )
@@ -25,6 +26,7 @@ from lapp.kontrakt import Gatusektion, LappFel, ProjektLapp
 from lapp.lokal_omrakning import LokalOmrakningResultat, uppdatera_sankgraf_lokalt
 from lapp.tillampa import LappTillampning, tillampa_lapp
 from sankgraf.hierarki import bygg_sankgraf
+from sankgraf.takvatten import med_takvatten, med_takvatten_graf
 from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf
 from testsvit.k1_io import BrytlinjePost, OppningPost
 
@@ -215,8 +217,9 @@ def _berakna_fordrojningsvolym(
     eff_regn_m = float(netto_regn_m) * float(avrinning_faktor)
     regn_vol_u = 0.0
     lagrat_u = 0.0
+    _, _, lov_areor = berakna_doman_areor(efter_graf)  # med takvatten om grafen bär det
     for rid in u_rotter:
-        regn_vol_u += efter_graf.total_avrinningsyta_m2(rid) * eff_regn_m
+        regn_vol_u += sum(lov_areor[lid] for lid in efter_graf.lov_under_nod(rid)) * eff_regn_m
         if rid in efter.noder and efter.noder[rid].volym_m3:
             lagrat_u += float(efter.noder[rid].volym_m3[-1])
 
@@ -243,6 +246,7 @@ def kor_fore_efter(
     avrinning_faktor: float = 1.0,
     initial_forlust_mm: float = 0.0,
     brunnar_avdrag_m3_s: float = 0.0,
+    takvatten: bool = True,
     djup_tolerans_m: float = _STANDARD_DJUP_TOL_M,
     fore_resultat: DynamikResultat | None = None,
     ut_mapp: str | Path | None = None,
@@ -289,6 +293,16 @@ def kor_fore_efter(
             brytlinjer=tillampning.bas_brytlinjer,
             oppningar=tillampning.oppningar,
         )
+
+    # Takvatten (standard på): ur respektive raster, så att nya, ändrade och borttagna hus
+    # ändrar takvattnet efter lappen.
+    if takvatten:
+        if bas_graf.takvatten is None:
+            bas_graf = med_takvatten_graf(bas_graf)
+        efter_graf = med_takvatten_graf(efter_graf)
+    else:
+        bas_graf = med_takvatten(bas_graf, None)
+        efter_graf = med_takvatten(efter_graf, None)
 
     fore = (
         fore_resultat
@@ -465,6 +479,7 @@ def jamfor_alternativ(
     avrinning_faktor: float = 1.0,
     initial_forlust_mm: float = 0.0,
     brunnar_avdrag_m3_s: float = 0.0,
+    takvatten: bool = True,
     djup_tolerans_m: float = _STANDARD_DJUP_TOL_M,
 ) -> list[AlternativSammanfattning]:
     """Kör flera projektlappar sida vid sida mot samma basfall och regnscenario."""
@@ -472,6 +487,11 @@ def jamfor_alternativ(
         raise LappFel("jamfor_alternativ kräver minst ett projektalternativ.")
 
     # Basfallet räknas exakt en gång och delas mellan alla alternativ
+    if takvatten:
+        if bas_graf.takvatten is None:
+            bas_graf = med_takvatten_graf(bas_graf)
+    else:
+        bas_graf = med_takvatten(bas_graf, None)
     fore_delat = kor_dynamik_handelsestyrd(
         bas_graf,
         regn_tid_s,
@@ -499,6 +519,7 @@ def jamfor_alternativ(
             sektioner=sektioner,
             lokal=lokal,
             slut_tid_s=slut_tid_s,
+            takvatten=takvatten,
             avrinning_faktor=avrinning_faktor,
             initial_forlust_mm=initial_forlust_mm,
             brunnar_avdrag_m3_s=brunnar_avdrag_m3_s,

@@ -4,3 +4,4 @@ grupp = "A"
 typ = "syntetisk"
 beskrivning = "Gård 10 x 10 m helt omgiven av byggnader (lägsta tak 16 m): slutsänka, djup = regn."
 status = "redo"
+takvatten = false

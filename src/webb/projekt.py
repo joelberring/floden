@@ -58,6 +58,16 @@ def _timmar_text(minuter: float) -> str:
     return f"{_sv(minuter, 0)} minuter"
 
 
+
+def _vattenantaganden(res: dict[str, Any]) -> list[str]:
+    """Takvattnets och avtappningens texter ur körningens manifest (lösarens egna)."""
+    ut: list[str] = []
+    for v in res.get("antaganden", {}).get("vatten", []):
+        for t in (v.get("takvatten_text"), v.get("avtappning_text")):
+            if t and t not in ut:
+                ut.append(str(t))
+    return ut
+
 class ProjektTjanst:
     """Demokvarteret som projekt, byggt på frågetjänstens körningar."""
 
@@ -321,7 +331,8 @@ class ProjektTjanst:
             "rubrik": "Vatten: skyfall",
             "ingress": (
                 "Var regnvattnet blir stående vid ett skyfall, före och efter att ett nytt hus "
-                "byggs. Statisk beräkning: maxdjup i sänkor, inget flöde i tid."
+                "byggs. Statisk beräkning: maxdjup i sänkor, inget flöde i tid. Regnet på "
+                "taken rinner ned längs fasaderna."
             ),
             "kolumner": [
                 {"id": fore, "rubrik": "Före"},
@@ -329,6 +340,7 @@ class ProjektTjanst:
             ],
             "matt": rader + andra,
             "regn": regn_ut,
+            "antaganden": _vattenantaganden(res),
             "teknisk": self._teknisk(res, fraga),
         }
         return avsnitt, vyer, regn_ut

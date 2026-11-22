@@ -25,6 +25,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from sankgraf.takvatten import TakvattenFordelning
 from sankgraf.typer import MARKSLAG_BYGGNAD
 from testsvit.k1_io import GeoTransformInfo
 from tvad.lokal_troghet import (
@@ -32,6 +33,8 @@ from tvad.lokal_troghet import (
     TvadResultat,
     berakna_rand_utflode_konfig,
     bygg_manning_raster,
+    integrera_regn_m,
+    takvatten_regnyta,
     validera_regnserie,
 )
 
@@ -87,11 +90,13 @@ def kor_2d_lokal_troghet_rust(
     theta: float = 0.9,
     tradar: int | None = None,
     binar: str | Path | None = None,
+    takvatten: TakvattenFordelning | None = None,
 ) -> TvadResultat:
     """Som `tvad.lokal_troghet.kor_2d_lokal_troghet`, men tidsslingan körs i Rust.
 
     `tradar` = antal trådar (standard: alla kärnor). `z_nivaer` används bara med subgrid och
-    finns med för att signaturen ska vara densamma.
+    finns med för att signaturen ska vara densamma. `takvatten` som i Python-lösaren
+    (`regn_area.npy` och `tak_ut.npy` till kärnan).
     """
     del z_nivaer  # bara för subgrid, som inte stöds än
     t_klocka_0 = time.perf_counter()
@@ -133,6 +138,13 @@ def kor_2d_lokal_troghet_rust(
         geo.pixelstorlek_y
     )
     total_aktiv_area = float(np.sum(aktiv_area))
+    tak_extra, tak_ut_m2, tak_ledning_m2, tak_m2 = takvatten_regnyta(
+        takvatten, markslag, mark_z, dx * dy, 1, (hojd, bredd)
+    )
+    har_tak = takvatten is not None and not takvatten.tom
+    regn_area = aktiv_area + tak_extra if har_tak else aktiv_area
+    total_regn_area = float(np.sum(regn_area)) + tak_ut_m2 if har_tak else total_aktiv_area
+    regn_summa_m = integrera_regn_m(t_start, t_slut, tider, intens_m_s)
     rand = berakna_rand_utflode_konfig(z_bed, aktiv, dx, dy, oppna_rander=oppna_rander)
 
     with tempfile.TemporaryDirectory(prefix="floden-tvad-") as tmp:
@@ -152,13 +164,16 @@ def kor_2d_lokal_troghet_rust(
             bredd_andel = np.asarray(getattr(rand, f"{sida}_bredd_andel"), np.float64)
             spara(f"rand_{sida}_lutning.npy", lutning)
             spara(f"rand_{sida}_bredd.npy", bredd_andel)
+        if har_tak:
+            spara("regn_area.npy", np.asarray(regn_area, dtype=np.float64))
+            spara("tak_ut.npy", np.array([tak_ut_m2], dtype=np.float64))
         spara("regn_tider.npy", np.asarray(tider, dtype=np.float64))
         spara("regn_intens_m_s.npy", np.asarray(intens_m_s, dtype=np.float64))
         spara(
             "param.npy",
             np.array(
                 [dx, dy, cfl, min_djup_m, dt_max_s, theta, t_start, t_slut,
-                 total_aktiv_area, total_doman_area, 1.0 if gles_front else 0.0],
+                 total_regn_area, total_doman_area, 1.0 if gles_front else 0.0],
                 dtype=np.float64,
             ),
         )
@@ -203,4 +218,9 @@ def kor_2d_lokal_troghet_rust(
         kortid_s=time.perf_counter() - t_klocka_0,
         niva="full2d",
         aktiv_cell_andel=aktiv_cell_andel,
+        regn_mark_m3=total_aktiv_area * regn_summa_m,
+        regn_tak_m3=tak_m2 * regn_summa_m,
+        takvatten=takvatten is not None,
+        takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
+        takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
     )

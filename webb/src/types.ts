@@ -588,6 +588,8 @@ export interface ProjektAvsnitt {
   kolumner: Array<{ id: string; rubrik: string }>;
   matt: ProjektMatt[];
   regn?: ProjektRegn | null;
+  /** Lösarens egna antaganden (takvatten, avtappning), som text. */
+  antaganden?: string[];
   teknisk: ProjektTeknisk;
 }
 

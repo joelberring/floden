@@ -20,6 +20,7 @@ from dynamik.nodmodell import (
     berakna_doman_areor,
     berakna_raster_och_ankomsttider,
     hitta_mottagare,
+    regn_ytor_m2,
     skapa_regn_intervall,
 )
 from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf
@@ -745,6 +746,8 @@ def kor_dynamik_handelsestyrd(
         for nid in cache.sorterade_noder
     }
 
+    a_mark, a_tak, a_led = regn_ytor_m2(graf)
+    r_eff = netto_regn_m * float(avrinning_faktor)
     kortid = time.perf_counter() - t_wall_start
     return DynamikResultat(
         tider_s=tider_tuple,
@@ -761,4 +764,8 @@ def kor_dynamik_handelsestyrd(
         metod="handelsestyrd",
         avtappat_m3=kardinal.avtappat_m3,
         slutsankor=tuple(n.nod_id for n in graf.slutsankor()),
+        regn_mark_m3=a_mark * r_eff,
+        regn_tak_m3=a_tak * r_eff,
+        takvatten=graf.takvatten is not None,
+        takvatten_till_ledning_m3=a_led * r_eff,
     )

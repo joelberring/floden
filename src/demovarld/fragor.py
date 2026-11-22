@@ -113,6 +113,10 @@ def text_vatten(v: DemoVarld, fragedir: Path, varld_dir: Path) -> str:
 #   (Fill-Spill-Merge): inget flöde i tid, ingen infiltration och inget ledningsnät, alltså
 #   maxdjup i sänkor, inte en dynamisk simulering.
 #
+# Takvatten på (Joels beslut 2026-11-22): regnet på taken rinner ned längs fasaderna. Okänd
+# takform räknas som brutet tak: hälften till varje långsida (ringhus: hälften till gården).
+# Avtappning 0 mm/h (standard): ledningsnätet antas fullt vid skyfallet.
+#
 # Scenario `nytt_hus`: ett 18 m-hus (14 x 40 m) byggs ut från södra lamellen i sydvästra gården
 # och spärrar gårdens avrinning från skålen (0,5 m djup) mot porten. Vattnet dämms upp och
 # djupet ökar uppströms. Husets egna celler visas som tak, inte som mark.
@@ -133,7 +137,7 @@ k9 = ["{k9n}"]
 [[analyser]]
 id = "skyfall"
 losare = "vatten.statisk_fyllning"
-parametrar = {{ idf = "stockholmsregn-2024", aterkomsttid_ar = {ATERKOMSTTID_AR:g}, varaktighet_min = {VARAKTIGHET_MIN:g}, klimatfaktor = {KLIMATFAKTOR:g}, regntyp = "block" }}
+parametrar = {{ idf = "stockholmsregn-2024", aterkomsttid_ar = {ATERKOMSTTID_AR:g}, varaktighet_min = {VARAKTIGHET_MIN:g}, klimatfaktor = {KLIMATFAKTOR:g}, regntyp = "block", takvatten = true }}
 
 [[jamforelser]]
 analys = "skyfall"

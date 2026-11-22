@@ -1,0 +1,42 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "mm_151100_6576000",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "d489a4fbe2436069fe1cedfa4fdc7e77d98300387f9b9fa8e16b42fbdcfc29eb"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "9167bfff57bd47d27757e8e2aaabaaa341ff1c61c12e4ba55c2aacaa9108c355"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "0b5238778d8512ff3abf23cbf8e86c68dac9b799f15eea416467e7079c5976b5"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "f28e6af54f8b4148e73da449a0f2391b2a4362b269615a1b349c55408349defb"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "083fc426141dd52bca6cd8e855232521a900d4d3a36e33d6223750e628c4f318"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "fad0109aff6378679a1999c31286688afae0e4fccabdfbf7569538dc1b869a9a"
+    }
+  },
+  "parametrar": {
+    "fall": "A13",
+    "hus_m": [
+      12.0,
+      6.0
+    ],
+    "takvatten": true
+  }
+}

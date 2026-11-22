@@ -39,6 +39,10 @@ pub struct Indata {
     pub total_aktiv_area: f64,
     pub total_doman_area: f64,
     pub gles_front: bool,
+    /// Regnyta per cell (m²) med takvatten (`regn_area.npy`); None = cellens aktiva yta.
+    pub regn_area: Option<Vec<f64>>,
+    /// Takyta vars vatten lämnar rutan (m², `tak_ut.npy`); räknas som in- och utflöde.
+    pub tak_ut_area: f64,
 }
 
 pub struct Utdata {
@@ -112,7 +116,10 @@ pub fn kor(ind: &Indata) -> Utdata {
     let cellarea = dx * dy;
     let min_d = ind.min_djup;
 
-    let aktiv_area: Vec<f64> = ind.aktiv.iter().map(|&a| if a { cellarea } else { 0.0 }).collect();
+    let aktiv_area: Vec<f64> = match &ind.regn_area {
+        Some(r) => r.clone(),
+        None => ind.aktiv.iter().map(|&a| if a { cellarea } else { 0.0 }).collect(),
+    };
     let safe_area: Vec<f64> = ind.aktiv.iter().map(|&a| if a { cellarea } else { 1.0 }).collect();
 
     // Kantgeometri (u = x-kanter (h × (w-1)), v = y-kanter ((h-1) × w)).
@@ -211,6 +218,9 @@ pub fn kor(ind: &Indata) -> Utdata {
         let regn_m = integrera_regn(t_nu, t_nu + dt, &ind.tider, &ind.intens_m_s);
         if regn_m > 0.0 && ind.total_aktiv_area > 0.0 {
             in_m3 += ind.total_aktiv_area * regn_m;
+            if ind.tak_ut_area > 0.0 {
+                ut_m3 += ind.tak_ut_area * regn_m;
+            }
             regn_och_djup(regn_m, &mut volym, &mut h_eff, &mut zs, &mut vat);
         }
 

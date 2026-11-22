@@ -79,6 +79,7 @@ from testsvit.ea_fall import EaBenchmarkFel, kor_alla_ea_testfall
 from testsvit.k1_io import K1FormatFel, las_geotiff
 from testsvit.korare import TestsvitFel, hitta_testfall, kor_testsvit
 from tvad.hybrid import kor_hybrid_2d_graf
+from tvad.kalltermer import Avtappning, Kalltermer
 from tvad.lokal_troghet import TvadFel, TvadResultat, kor_2d_lokal_troghet, skriv_tvad_resultat_k6
 
 
@@ -741,6 +742,11 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
             brytlinjer=brytlinjer,
             oppningar=oppningar,
         )
+        # Takvatten (standard på) och avtappning (standard 0 mm/h), beslut 2026-11-22.
+        from sankgraf.takvatten import med_takvatten_graf
+
+        if args.takvatten == "pa":
+            graf = med_takvatten_graf(graf, indata)
 
         serie, regn_fil = _ladda_regn_for_kor(args, indata)
 
@@ -789,7 +795,15 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
             "regn_statistikkalla": serie.statistikkalla,
             "regn_klimatfaktor": float(serie.klimatfaktor),
             "subgrid_faktor": int(args.subgrid_faktor),
+            "takvatten": args.takvatten == "pa",
+            "avtappning_mm_h": float(args.avtappning_mm_h),
+            "avtappning_kalla": (
+                "angiven (--avtappning-mm-h)"
+                if args.avtappning_mm_h > 0.0
+                else "standard: 0 mm/h (ledningsnätet antas fullt)"
+            ),
         }
+        avt_kap = float(args.avtappning_mm_h) if args.avtappning_mm_h > 0.0 else None
         idf_kalla_kor = _idf_kalla_fran_args(args)
         if idf_kalla_kor is not None:
             parametrar.update(idf_kalla_kor.manifest_parametrar(serie.klimatfaktor))
@@ -805,7 +819,9 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
         res_tvad: TvadResultat | None = None
 
         if args.modell == "graf":
-            res_graf = kor_dynamik_handelsestyrd(graf, regn_tid_s, regn_intensitet_mm_h)
+            res_graf = kor_dynamik_handelsestyrd(
+                graf, regn_tid_s, regn_intensitet_mm_h, avtappning_mm_h=avt_kap
+            )
             if args.ut is not None:
                 skrivna_filer = skriv_dynamik_resultat_k6(
                     res_graf,
@@ -829,6 +845,12 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
                 regn_tid_s,
                 regn_intensitet_mm_h,
                 subgrid_faktor=args.subgrid_faktor,
+                takvatten=graf.takvatten,
+                kalltermer=(
+                    None
+                    if avt_kap is None
+                    else Kalltermer(avtappning=Avtappning.likformig(graf.mark_z.shape, avt_kap))
+                ),
             )
             if args.ut is not None:
                 skrivna_filer = skriv_tvad_resultat_k6(
@@ -846,6 +868,8 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
             kortid_s = float(res_tvad.kortid_s)
             metod = res_tvad.niva
         else:
+            if avt_kap is not None:
+                raise ValueError("--avtappning-mm-h stöds inte i hybriden; använd graf eller 2d.")
             res_tvad = kor_hybrid_2d_graf(
                 graf.mark_z,
                 graf.markslag,
@@ -855,6 +879,7 @@ def _kor_kor_kommando(args: argparse.Namespace) -> int:
                 graf=graf,
                 subgrid_faktor=args.subgrid_faktor,
             )
+
             if args.ut is not None:
                 skrivna_filer = skriv_tvad_resultat_k6(
                     res_tvad,
@@ -1384,6 +1409,19 @@ def bygg_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Klimatfaktor (standard: 1.0; med --idf stockholmsregn-2024: 1.4).",
+    )
+    kor_parser.add_argument(
+        "--takvatten",
+        choices=("pa", "av"),
+        default="pa",
+        help="Regn på tak avrinner till marken längs fasaderna (standard pa; okänd takform = "
+        "brutet tak, hälften till varje långsida).",
+    )
+    kor_parser.add_argument(
+        "--avtappning-mm-h",
+        type=float,
+        default=0.0,
+        help="Avtappning till ledningsnätet i mm/h (standard 0: ledningsnätet antas fullt).",
     )
     _lagg_idf_arg(kor_parser)
     kor_parser.add_argument(

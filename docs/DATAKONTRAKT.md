@@ -56,7 +56,11 @@ fel i stället för gissning om en v1-ruta har byggnadsceller, se nedan). En rut
 `byggnader.gpkg`-kolumner: `byggnad_id` (text, unik, `b_` + 16 hex), `takhojd_rh2000`, `markhojd_rh2000`,
 `hojd_m` (= tak − mark, kontrolleras), `takform` (valfri), `andamal` (valfri), `vaningar` (valfri heltal), `kalla`
 (text), `osakerhet_hojd_m` (valfri, 1 sigma), `hojdkalla` (`kalla_tak`, `laser_klass6`, `kalla_hojd`,
-`kalla_vaningar`, `standard`, `andring`).
+`kalla_vaningar`, `standard`, `andring`). **Valfri kolumn (tillägg 2026-11-22, ingen versionshöjning):**
+`takfall_azimut_grader` (REAL, grader medurs från norr mot den lägre sidan) för pulpettak; läses av takvattnet
+(`sankgraf.takvatten.las_takpolygoner`) om den finns, skrivs inte av markmodellen. `takform` tolkas av takvattnet:
+`platt`/`flat`, `pulpet`/`skillion`, `sadel`/`sadeltak`/`gabled`/`brutet`/`mansard`/`gambrel`; annat = okänd
+(brutet tak) och flaggas.
 
 - **`byggnad_id`** är deterministiskt: sha256 av `kalla` + källans eget id om källan har ett, annars av den
   normaliserade geometrin (1 cm, kanonisk startpunkt och orientering). Hela polygonen (inte den utklippta) skrivs i
@@ -157,8 +161,12 @@ Rutans **kant** är där vatten lämnar modellen (HAV); byggnader är hinder, in
   `InstangtOmradeFel` kastas.
 - Persistensfiltret tar aldrig bort en slutsänka (vattnet har ingen mottagare).
 
-**Regn på tak.** Regn på byggnadsceller räknas inte i någon av vattnets lösare (graf, dynamik, 2D): det ingår inte
-i `in_m3`. Taken avvattnas alltså inte till gården i dag; en gård får bara sitt eget regn.
+**Regn på tak (takvatten, 2026-11-22).** Regn på byggnadsceller avrinner till marken längs fasaderna i alla
+vattnets lösare (graf, dynamik, 2D, hybrid), som standard (`takvatten = true`); reglerna står i `docs/VATTEN.md`
+(okänd takform = brutet tak, hälften till varje långsida; ring = hälften till gården). Fördelningen byggs vid
+körningen ur rastret och `byggnader.gpkg` och skrivs **inte** i K2 (K2-filerna är oförändrade). `in_m3` = regn på
+mark + takvatten till mark och ut över rutkanten; volymbalansen (`volymbalans` i mätvärdena) räknar regnet på hela
+rutan. Med `takvatten = false` räknas regn på tak inte (som före 2026-11-22) och redovisas som `tak_ej_raknat_m3`.
 
 **Flaggor i resultat.** När ett resultat innehåller slutsänkor skriver lösarna (K6 `skriv_statiskt_resultat_k6`,
 K21 `vatten.statisk_fyllning`, `vatten.blaytor`) `slutsanka.tif` (float32, 1,0 i slutsänkornas celler, NaN annars),
@@ -385,6 +393,15 @@ Utdata från `floden fraga kor` i `resultat/<fraga_id>/` (eller `--ut`):
 | `jamforelser/<analys>_<roll>_<efter>_minus_<fore>/` | `diff.tif` (globalt) eller `<ruta_id>.tif` |
 | `sammanstallning.json` | Scenarier med rutors hash, alla jobb med nyckel, `fran_cache`, körtid, mätvärden, varningar, jämförelsemått |
 | `run.json` | K0-manifest för hela frågan |
+
+**Vattnets antaganden i K20 (2026-11-22, inga formatändringar).** `vatten.statisk_fyllning` (version 2) och
+`vatten.dynamik` (version 1) tar `takvatten` (bool, standard true), `takvatten_andel_ledning` (0–1, standard 0),
+`avtappning_mm_h` (≥ 0, standard 0 = ledningsnätet antas fullt) och `avtappning_omraden` (lista
+`{geometri, mm_h}`, EPSG:3011), samt valfri indataroll `avtappning_omraden` (GeoJSON/GeoPackage med
+`avtappning_mm_h`). Statisk fyllning med avtappning kräver `varaktighet_min` (eller IDF-regn). `vatten.dynamik` tar
+regnet som `regn_tid_s` + `regn_mm_h` eller som IDF-parametrarna, och `slut_tid_s`. Mätvärdena får
+`takvatten_*`, `avtappning_mm_h`, `avtappning_kalla`, `avtappning_antagande`, `avtappat_m3` och `volymbalans`;
+webben visar `takvatten_antagande` och `avtappning_antagande` under Antaganden.
 
 ## K21 – Lösare (v1)
 
