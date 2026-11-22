@@ -19,9 +19,11 @@ from rutt.export import (
     skriv_ruttresultat_k8,
 )
 from rutt.kritiska import (
+    KritiskInsats,
     KritisktAvsnitt,
     berakna_ofarbar_sannolikhet,
     hitta_kritiska_avsnitt,
+    valj_kritisk_insats_k,
 )
 from rutt.parametrar import (
     KONTRAKT_K7,
@@ -70,6 +72,7 @@ __all__ = [
     "FordonParametrar",
     "InsatstidPost",
     "KantKumulativRisk",
+    "KritiskInsats",
     "KritisktAvsnitt",
     "RuttExportFel",
     "RuttParametrarFel",
@@ -96,4 +99,5 @@ __all__ = [
     "skriv_ruttresultat_k8",
     "tidsberoende_dijkstra",
     "validera_parametrar",
+    "valj_kritisk_insats_k",
 ]
