@@ -38,8 +38,8 @@ Text: tal skrivs bara som `{{matt:<adress>}}`, med valfria optioner `avrundning=
 gånger en tiopotens, aldrig finare än underlagets upplösning, t.ex. cellens yta för ytmått),
 `enhet=nej`, `enhet=<enhet>` (kontrolleras mot belägget), `tecken=ja` och `format=exp`. Utan
 `avrundning` väljer Floden precision efter enhet och storlek (m: 0,01; m²/m³: 1, eller 10 från
-1 000). Svensk talform: decimalkomma, hårt blanksteg som tusentalsavgränsare från fem siffror och
-före enheten. En siffra utanför en platshållare vägras (beteckningar som `SK-06`, `RH 2000`,
+1 000). Svensk sifferform: decimalkomma, smalt hårt mellanslag (U+202F) som tusentalsavgränsare
+från fyra siffror ("7 430 m³") och hårt blanksteg före enheten. En siffra utanför en platshållare vägras (beteckningar som `SK-06`, `RH 2000`,
 `EPSG:3011`, `K7` och `Stockholmsregn 2024 (Tabell 7)` är tillåtna).
 
 ## Status och trafikljus
@@ -80,25 +80,125 @@ visar samma sak.
 
 ## Skissunderlaget för skyfall
 
-Disposition (förkortad ur `utredningar-stockholm/rapportdisposition.md`): titel och handling
-(rapport-id, körningar, frågekatalogens källäge, dataklass, ansvarig utredare, kontroll),
-1 Sammanfattning med trafikljus per fråga, 2 Uppdrag och beräkningsfall (scenarier, antaganden,
-mottagare), 3 Resultat (kartor före, efter och skillnad i samma utsnitt och färgskala; påståenden
-per fråga), 4 Saknat underlag och villkor, 5 Metod, osäkerhet och metodnotis (metoder med
-valideringsstatus). Bilagor: A Belägg (värde före avrundning, fil, sha256), B Körlogg (rapportens
-händelser och MCP-körloggens rader för rapporten och dess körningar, hashkedjan), C Manifest
-(K0-parametrar per jobb), D Kontroll.
+Disposition (förkortad ur `utredningar-stockholm/rapportdisposition.md`): titelhuvud (avsändare,
+eventuell logotyp, dokumenttyp "Skissunderlag", datum, diarienummer, handläggare), titel och
+handling (underlag, frågekatalogens källäge, uppgifternas klass, ansvarig utredare, kontroll,
+rapport-id), Sammanfattning med trafikljus per fråga, Uppdrag och beräkningsfall (antaganden,
+plats), Resultat (kartor före, efter och skillnad i samma utsnitt och färgskala; resultat per
+fråga), Saknat underlag och villkor, Metod och osäkerhet (metodnotis, metoder med
+valideringsstatus). Bilagor: 1 Belägg (värde före avrundning, fil, sha256), 2 Körlogg (rapportens
+händelser och MCP-körloggens rader för rapporten och dess körningar, hashkedjan), 3 Manifest
+(K0-parametrar per jobb, metodernas beteckning och status), 4 Kontroll. Rubrikerna är utan nummer
+och bildtexterna utan "Figur N" som förval; texten hänvisar till "kartorna nedan". Bilagorna
+numreras (Bilaga 1, 2 …) eftersom texten hänvisar till dem; belägg-id (B1 …) behålls för
+spårbarheten.
+
+## Inställningar: språkprofil och layout
+
+Inställningarna lagras i rapporten (K33, fältet `installningar`), så att samma rapport alltid ger
+samma fil. Fältet är valfritt; en äldre rapport utan fältet får förvalen.
+
+| Inställning | Förval | Vad |
+| --- | --- | --- |
+| `sprakprofil` | `"sbk"` | `"sbk"`: utredningstext från stadsbyggnadskontoret (se nedan). `"neutral"`: tonen i R1. |
+| `numrerade_rubriker` | `false` | `true` ger "1 Sammanfattning", "2 Uppdrag …" |
+| `numrerade_figurer` | `false` | `true` ger "Figur 1. …" i bildtexterna |
+| `avsandare` | `"Stadsbyggnadskontoret"` | i titelhuvud, sidhuvud och dokumentets författare; tom sträng = ingen avsändare |
+| `diarienummer` | `""` | i titelhuvud och sidhuvud |
+| `handlaggare` | `""` | i titelhuvudet. Inga riktiga namn i exempel; skriv "Anges av beställaren" eller lämna tomt |
+| `accentfarg` | `"#1F4E79"` | rubriker och linjen under titelhuvudet |
+| `logotyp` | ingen | lokal PNG/JPEG; ingen logotyp om ingen anges |
+| `typsnitt_brodtext`, `typsnitt_rubriker` | Vera (PDF), Arial (Word) | lokala TTF/OTF-filer, t.ex. Stockholm Type |
+
+**Filer.** Logotyp och typsnitt anges med lokal sökväg. Floden kontrollerar filen och lägger en
+kopia i rapportens mapp (`resurser/<sha256>.<ändelse>`, under `data/lokal/`, utanför git).
+Rapporten lagrar bara sha256, filtyp och typsnittets familjenamn – **aldrig sökvägen**, och
+sökvägen står inte i felmeddelanden, i körloggen eller i Word- och PDF-filen. Stadens logotyp och
+Stockholm Type är skyddade och checkas aldrig in. Saknas kopian vid export letar Floden efter en
+fil med samma sha256 bland sökvägarna i `config.local.toml`; annars stoppas exporten med ett
+tydligt fel. Typsnittet bäddas in i PDF:en (reportlab klarar TTF och OTF med TrueType-konturer;
+OTF med PostScript-konturer vägras med ett meddelande) och dess familjenamn och sha256 står i
+PDF:ens metadata (nyckelord), i Word-filens nyckelord och i rapportens exportpost
+(`exporter[].typsnitt`). Word bäddar inte in typsnitt: Word-filen anger familjenamnet, och
+typsnittet måste finnas på datorn som öppnar filen. Har typsnittet ingen kursiv används den
+raka varianten i bildtexterna.
+
+**Sätta inställningarna.**
+
+- Python: `RapportTjanst.skapa(..., installningar={"diarienummer": "…"})` och
+  `RapportTjanst.andra_installningar(rapport_id, {"numrerade_rubriker": True})` (nollställer
+  kontrollen och loggar händelsen `installningar_andrade` med de ändrade nycklarna).
+- MCP: `rapport_skapa(installningar={…})` och `rapport_installningar(rapport_id, andringar={…})`.
+- Referensflödet: `tools/rapport_demo.py --sprakprofil neutral --numrerade-rubriker
+  --numrerade-figurer --avsandare "" --diarienummer … --handlaggare … --accentfarg … --logotyp FIL
+  --typsnitt-brodtext FIL --typsnitt-rubriker FIL`.
+- Lokala förval: `[rapport]` i `config.local.toml` (versionshanteras inte). Relativa sökvägar
+  räknas från Flodens rot. Förvalen gäller när en rapport skapas och lagras sedan i rapporten.
+
+```toml
+# config.local.toml (inte i git)
+[rapport]
+sprakprofil = "sbk"
+numrerade_rubriker = false
+numrerade_figurer = false
+avsandare = "Stadsbyggnadskontoret"
+handlaggare = "Anges av beställaren"
+accentfarg = "#1F4E79"
+logotyp = "/Users/<du>/Typsnitt och logotyper/logotyp.png"
+typsnitt_brodtext = "/Users/<du>/Library/Fonts/StockholmType-Regular.ttf"
+typsnitt_rubriker = "/Users/<du>/Library/Fonts/StockholmType-Bold.ttf"
+```
+
+**Det gamla beteendet (R1)** fås med `sprakprofil = "neutral"`, `numrerade_rubriker = true` och
+`numrerade_figurer = true`: numrerade rubriker, "Figur N." och bilagor med bokstäver (A–D).
+Layouten (titelhuvud, luft, "Sida 2 (9)") är densamma i båda profilerna.
+
+### Språkprofilen "sbk"
+
+Skriver som en utredningstext eller planbeskrivning från stadsbyggnadskontoret: klarspråk,
+sakligt, opersonligt och bestämt, korta meningar och slutsatsen först ("Av de 15
+skyfallsfrågorna behöver 6 utredas vidare …"). Formuleringar som "Beräkningen visar att …",
+"Frågan behöver utredas vidare i planarbetet" och "Underlag saknas för att bedöma …". Texten säger
+**aldrig** att förvaltningen har tagit ställning ("Stadsbyggnadskontoret bedömer"), eftersom
+rapporten är ett beräkningsunderlag. Ursprunget står i metodavsnittet: framtaget med Floden,
+vilka beräkningar och om AI har använts. Scenarier och statusar skrivs i klarspråk ("före
+förslaget", "Besvaras av beräkningen", "Kräver ställningstagande", "Inte aktuell i skedet",
+trafikljusen "Utreds vidare", "Kan inte bedömas", "Ingen fördjupning"); tekniska beteckningar
+(lösare, adresser, körnings-id i detalj) står bara i bilagorna. Datum skrivs "22 november 2026".
+Mallens text finns i `rapport.skissmall` och `rapport.sprak`, referensflödets påståenden i
+`rapport.referensflode` (båda profilerna). Påståenden skrivs i den profil som gällde när de lades
+till; att byta profil senare ändrar mallens text, inte redan tillagda påståenden. Talen fylls
+alltid av Floden via `{{matt:…}}`, och kontrollen är densamma i båda profilerna (bildtexten
+kontrolleras både som Floden lagrade den och som den står i dokumentet). Språktestet
+(`tests/rapport/test_rapportstil.py`) letar efter förbjudna formuleringar och engelska ord i
+löptexten.
+
+Före och efter (sbk):
+
+| neutral (R1) | sbk |
+| --- | --- |
+| Sållningen omfattar 15 frågor ur frågekatalogen. 6 behöver fördjupas, 4 kan inte avgöras med dagens underlag … | Av de 15 skyfallsfrågorna behöver 6 utredas vidare och 4 kan inte bedömas med nuvarande underlag. |
+| Körning demo-vatten: … Scenarier: fore, efter. efter jämförs med fore (skyfall, max_djup). | Läget efter förslaget jämförs med läget före förslaget, med samma regn. |
+| Ledningsnätet antas fullt under skyfallet: avtappningen är 0,0 mm/h. | Beräkningen förutsätter att ledningsnätet är fullt under skyfallet. Avtappningen till nätet är 0,0 mm/h. |
+| Största vattendjup över mark, före (scenario fore), i m. | Största vattendjup på marken före förslaget, i meter (m). |
+| Status: Underlag saknas · Fördjupning: Kan inte avgöras | Underlag saknas. Kan inte bedömas med nuvarande underlag. |
 
 Kartorna ritas av MCP:s kartfunktion (`FlodenTjanst.karta`, samma raster, färgskala och takmask
 som webben): vit mark = under lägsta klassen, ljusgrått = tak eller inget värde, så att saknade
-celler inte ser torra ut. Metodnotisen är förvald: "Underlaget har tagits fram med Floden och
+celler inte ser torra ut. Rapportens kartor har rubrik i klarspråk ("Största vattendjup före
+förslaget", lagrad i `meta.rubrik` så att kontrollen ritar om samma bild) och decimalkomma i
+teckenförklaringen; axeletiketter som skulle krocka i nedre vänstra hörnet ritas inte. Metodnotisen är förvald: "Underlaget har tagits fram med Floden och
 AI-stöd (modell) … Körloggen finns som bilaga." och ansvarig utredare (valfri i nivå 1).
 
 **Export:** Word med python-docx och PDF med reportlab, båda ren Python (`pip install -e
 ".[rapport]"`, ingår i `dev` och `mcp`), samma block i båda. PDF-vägen valdes för att den saknar
 systemberoenden (ingen LibreOffice), fungerar likadant på Mac och har ett medföljande typsnitt
 (Bitstream Vera Sans i reportlab) med svenska tecken, ², ³ och −; `invariant` och fasta tider i
-docx-zip gör samma rapport till samma fil. Word använder Arial.
+docx-zip gör samma rapport och inställningar till samma fil. Word använder Arial (eller det lokala
+typsnittets familjenamn), Words inbyggda rubrikformat (Rubrik 1–3, så att innehållsförteckning
+och navigeringsfönstret fungerar), svenska som språk (stavningskontrollen) och sidfoten
+"Sida 2 (9)" med fälten PAGE och NUMPAGES. Smalt hårt mellanslag saknas i Vera; i PDF:en ritas det
+som ett hårt mellanslag i mindre grad, så att tal aldrig bryts.
 
 ## Frågekatalogen: vad Floden kan belägga för skyfall
 
@@ -146,11 +246,15 @@ Floden.
   Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
   Rapportmappen kan ändras med `[webb] rapportmapp`.
 
-Exempel: `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter).
+Exempel: `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter, förvalen:
+språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Vera/Arial).
 
 ## Begränsningar
 
 - Bara skyfall och nivå 1. Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
 - Bara vattenmåtten i `MATTKATALOG` kan användas (statisk fyllning och dynamik).
-- Kartornas text är Pillows bitmapptypsnitt (samma kartografi som MCP och webben).
+- Kartornas text är Pillows bitmapptypsnitt (samma kartografi som MCP och webben); det lokala
+  typsnittet används inte i kartorna.
+- Rapporter skapade före 2026-11-22 underkänns i kontrollen ("ritas inte likadant") eftersom
+  kartbilden har ändrats (axeletiketterna); skapa dem på nytt.
 - Frågekatalogen och mappningen är redaktionellt underlag och ska granskas av Joel.

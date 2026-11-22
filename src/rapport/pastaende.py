@@ -266,14 +266,16 @@ def minsta_steg(upplosning: float) -> float:
 
 
 def _gruppera(heltal: str) -> str:
-    """Tusentalsavgränsning med hårt blanksteg (svensk skrivregel för tal med fem siffror och fler)."""
-    if len(heltal) < 5:
+    """Tusentalsavgränsning med smalt hårt mellanslag (U+202F) från fyra siffror: "7 430".
+
+    Hårt, så att talet aldrig bryts över två rader; smalt, som i tryckt svensk sifferform."""
+    if len(heltal) < 4:
         return heltal
     delar = []
     while heltal:
         delar.append(heltal[-3:])
         heltal = heltal[:-3]
-    return " ".join(reversed(delar))
+    return "\u202f".join(reversed(delar))
 
 
 _UPPHOJT: Final[dict[str, str]] = dict(zip("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹", strict=True))
@@ -288,7 +290,8 @@ def formatera_tal(
     tecken: bool = False,
     exponent: bool = False,
 ) -> str:
-    """Svensk talform: decimalkomma, hårt blanksteg, enheten efter ett hårt blanksteg."""
+    """Svensk talform: decimalkomma, smalt hårt mellanslag mellan tusental, hårt blanksteg före
+    enheten ("7 430 m³")."""
     if not math.isfinite(varde):
         raise PastaendeFel("Värdet är inte ändligt.")
     if exponent:

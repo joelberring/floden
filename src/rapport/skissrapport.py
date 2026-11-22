@@ -33,6 +33,14 @@ from floden_mcp.korlogg import Korlogg, hash_av
 from gemensamt.hash import sha256_bytes, sha256_fil
 from rapport.belaggskalla import BelaggFel, FlodenBelaggKalla
 from rapport.fragekatalog import AMNESPREFIX, Fraga, Fragekatalog, FragekatalogFel
+from rapport.installningar import (
+    FILROLLER,
+    InstallningsFel,
+    RapportInstallningar,
+    hitta_resurs,
+    lokala_forval,
+    tillampa,
+)
 from rapport.pastaende import (
     FORFATTARE,
     Pastaende,
@@ -40,6 +48,7 @@ from rapport.pastaende import (
     statusfel,
     textfel,
 )
+from rapport.skissmall import kartrubrik
 
 KONTRAKT_K33: Final[str] = "K33/v1"
 STANDARD_RAPPORTMAPP: Final[str] = "data/lokal/rapporter"
@@ -158,6 +167,8 @@ class Rapport:
     bedomningsgrunder: tuple[dict[str, Any], ...] = ()
     granskning: dict[str, Any] | None = None
     signering: dict[str, Any] | None = None
+    installningar: RapportInstallningar = field(default_factory=RapportInstallningar)
+    """Språk och layout (valfritt i K33/v1; saknas fältet gäller förvalen)."""
     kontrakt: str = KONTRAKT_K33
 
     def till_dict(self) -> dict[str, Any]:
@@ -186,6 +197,7 @@ class Rapport:
             "bedomningsgrunder": [dict(b) for b in self.bedomningsgrunder],
             "granskning": self.granskning,
             "signering": self.signering,
+            "installningar": self.installningar.till_dict(),
         }
 
     @classmethod
@@ -217,6 +229,7 @@ class Rapport:
                 bedomningsgrunder=tuple(dict(b) for b in d.get("bedomningsgrunder", [])),
                 granskning=d.get("granskning"),
                 signering=d.get("signering"),
+                installningar=RapportInstallningar.fran_dict(d.get("installningar")),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise RapportFel(f"rapport.json är ofullständig: {exc}.") from exc
@@ -229,10 +242,41 @@ class Rapport:
         return replace(self, **andringar)
 
 
-def metodnotis_text(notis: Mapping[str, Any]) -> str:
-    """Metodnotisen som den står i rapporten (förval enligt Joels beslut 2026-11-22)."""
+def metodnotis_text(
+    notis: Mapping[str, Any],
+    *,
+    sbk: bool = False,
+    korningar: Sequence[str] = (),
+    bilaga: str = "bilaga",
+) -> str:
+    """Metodnotisen som den står i rapporten (förval enligt Joels beslut 2026-11-22).
+
+    `sbk` ger språkprofilen "sbk": ursprunget (Floden, körningar, AI-stöd) i klarspråk."""
+    modeller = [m for m in notis.get("modeller", []) if m]
+    ansvarig = notis.get("ansvarig_utredare")
+    if sbk:
+        bas = "Underlaget är framtaget med beräkningsverktyget Floden"
+        if korningar:
+            bas += f" (beräkning {', '.join(korningar)})"
+        if notis.get("ai_stod", True):
+            bas += " och AI-stöd" + (f" ({', '.join(modeller)})" if modeller else "") + "."
+            bas += (
+                " AI har använts för att välja beräkningar och formulera texten. Alla tal och "
+                "kartor kommer ur beräkningarna och har kontrollerats automatiskt mot dem."
+            )
+        else:
+            bas += (
+                ". AI har inte använts: texten följer fasta formuleringar. Alla tal och kartor "
+                "kommer ur beräkningarna och har kontrollerats automatiskt mot dem."
+            )
+        bas += f" Körloggen finns i {bilaga}."
+        bas += (
+            f" Ansvarig utredare: {ansvarig}."
+            if ansvarig
+            else " Ansvarig utredare är inte angiven."
+        )
+        return bas
     if notis.get("ai_stod", True):
-        modeller = [m for m in notis.get("modeller", []) if m]
         bas = "Underlaget har tagits fram med Floden och AI-stöd"
         bas += f" ({', '.join(modeller)})." if modeller else "."
         bas += (
@@ -246,7 +290,6 @@ def metodnotis_text(notis: Mapping[str, Any]) -> str:
             "kontrollerats automatiskt mot dem."
         )
     bas += " Körloggen finns som bilaga."
-    ansvarig = notis.get("ansvarig_utredare")
     bas += (
         f" Ansvarig utredare: {ansvarig}."
         if ansvarig
@@ -357,14 +400,44 @@ class RapportTjanst:
         policy: Policy | None = None,
         katalog: Fragekatalog | None = None,
         korlogg: Korlogg | None = None,
+        lokala_forval: Mapping[str, Any] | None = None,
     ) -> None:
+        """`lokala_forval`: inställningar som gäller när en rapport skapas (utöver förvalen).
+        Utelämnat läses `[rapport]` i `config.local.toml` (och `config.toml`) i Flodens rot."""
         self.tjanst = tjanst
+        self._lokala_forval = None if lokala_forval is None else dict(lokala_forval)
         mapp = Path(rapportmapp) if rapportmapp is not None else _rapportmapp_for(tjanst)
         self.arkiv = RapportArkiv(mapp)
         self.policy = policy or Policy()
         self._katalog = katalog
         self.korlogg = korlogg
         self.kalla = FlodenBelaggKalla(tjanst)
+
+    @property
+    def lokala_forval(self) -> dict[str, Any]:
+        if self._lokala_forval is None:
+            try:
+                self._lokala_forval = lokala_forval(self.tjanst.rot)
+            except InstallningsFel as exc:
+                raise RapportFel(str(exc)) from exc
+        return self._lokala_forval
+
+    def resursmapp(self, rapport_id: str) -> Path:
+        return self.arkiv.rapportmapp(rapport_id) / "resurser"
+
+    def resursfiler(self, r: Rapport) -> dict[str, Path]:
+        """Logotyp och typsnitt för exporten: rapportens kopior (kontrollsumman stämmer)."""
+        ut: dict[str, Path] = {}
+        for roll, res in r.installningar.resurser().items():
+            fil = hitta_resurs(res, self.resursmapp(r.rapport_id), self.lokala_forval)
+            if fil is None:
+                raise RapportFel(
+                    f"Filen för {FILROLLER[roll]} (sha256 {res.sha256[:12]}) finns varken i "
+                    "rapportens mapp eller i config.local.toml. Ange filen igen med "
+                    "rapport_installningar."
+                )
+            ut[roll] = fil
+        return ut
 
     @property
     def katalog(self) -> Fragekatalog:
@@ -457,6 +530,7 @@ class RapportTjanst:
                             scenario=scen,
                             utsnitt=utsnitt,
                             max_px=KART_PX,
+                            rubrik=kartrubrik(typ, scen, j["fore"], j["efter"]),
                         )
                     except FlodenFel as exc:
                         raise RapportFel(f"Kartan kunde inte ritas: {exc}") from exc
@@ -488,7 +562,10 @@ class RapportTjanst:
                                     "roll",
                                 )
                             }
-                            | {"utsnitt": utsnitt},
+                            | {
+                                "utsnitt": utsnitt,
+                                "rubrik": kartrubrik(typ, scen, j["fore"], j["efter"]),
+                            },
                         )
                     )
         return ut
@@ -508,7 +585,10 @@ class RapportTjanst:
         modell: str | None = None,
         ansvarig_utredare: str | None = None,
         av: str | None = None,
+        installningar: Mapping[str, Any] | None = None,
     ) -> Rapport:
+        """Skapar rapporten. `installningar` (se `rapport.installningar.NYCKLAR`) läggs ovanpå
+        förvalen och `[rapport]` i config.local.toml."""
         if niva != 1:
             raise RapportFel(
                 "Bara nivå 1 (skissunderlag) finns i R1. Nivå 2 (publicerbart planunderlag med "
@@ -549,6 +629,14 @@ class RapportTjanst:
             )[:12]
         )
         klass = self.policy.klass_for(DataKlass.OPPET, projekt).value
+        try:
+            inst = tillampa(
+                tillampa(RapportInstallningar(), self.lokala_forval, self.resursmapp(rid)),
+                installningar,
+                self.resursmapp(rid),
+            )
+        except InstallningsFel as exc:
+            raise RapportFel(str(exc)) from exc
         rapport = Rapport(
             rapport_id=rid,
             niva=niva,
@@ -582,9 +670,40 @@ class RapportTjanst:
                 "granskningsdatum": self.katalog.granskningsdatum,
                 "fragor": {f.id: f.till_dict() for f in valda},
             },
+            installningar=inst,
         )
         self.arkiv.spara(rapport)
         return rapport
+
+    def andra_installningar(
+        self, rapport_id: str, andringar: Mapping[str, Any], av: str | None = None
+    ) -> RapportInstallningar:
+        """Ändrar rapportens inställningar. Kontrollen nollställs; händelsen loggas utan sökvägar."""
+        r = self.hamta(rapport_id)
+        try:
+            ny = tillampa(r.installningar, andringar, self.resursmapp(rapport_id))
+        except InstallningsFel as exc:
+            raise RapportFel(str(exc)) from exc
+        if ny == r.installningar:
+            return ny
+        andrade = [k for k, v in ny.till_dict().items() if r.installningar.till_dict()[k] != v]
+        self.arkiv.spara(
+            r.med(
+                installningar=ny,
+                kontroll=None,
+                handelser=(
+                    *r.handelser,
+                    {
+                        "tid": _nu(),
+                        "handelse": "installningar_andrade",
+                        "av": av,
+                        "modell": None,
+                        "detalj": ", ".join(andrade),
+                    },
+                ),
+            )
+        )
+        return ny
 
     # ------------------------------------------------------------------ påståenden
 
@@ -735,7 +854,7 @@ class RapportTjanst:
         return resultat
 
     def exportera(self, rapport_id: str, fmt: str, av: str | None = None) -> Path:
-        from rapport.skissexport import ExportStoppad, skriv_pdf, skriv_word
+        from rapport.skissexport import ExportStoppad, TypsnittFel, skriv_pdf, skriv_word
         from rapport.skissmall import bygg_dokument
 
         if fmt not in ("word", "pdf"):
@@ -744,7 +863,7 @@ class RapportTjanst:
         r = self.hamta(rapport_id)
         if not resultat["godkand"]:
             raise ExportStoppad(resultat)
-        dok = bygg_dokument(r, self, korlogg_rader=self.korloggrader(r))
+        dok = bygg_dokument(r, self, korlogg_rader=self.korloggrader(r), med_resurser=True)
         mapp = self.arkiv.rapportmapp(rapport_id)
         namn = f"export/{rapport_id}.{'docx' if fmt == 'word' else 'pdf'}"
         ut = mapp / namn
@@ -755,13 +874,28 @@ class RapportTjanst:
                 skriv_word(dok, tmp, mapp)
             else:
                 skriv_pdf(dok, tmp, mapp)
+        except TypsnittFel as exc:
+            tmp.unlink(missing_ok=True)
+            raise RapportFel(str(exc)) from exc
         except ModuleNotFoundError as exc:
             raise RapportFel(
                 f"Exporten kräver biblioteket {exc.name}. Installera det med: "
                 'pip install -e ".[rapport]"'
             ) from exc
         os.replace(tmp, ut)
-        post = {"format": fmt, "fil": namn, "sha256": sha256_fil(ut), "tid": _nu()}
+        post: dict[str, Any] = {
+            "format": fmt,
+            "fil": namn,
+            "sha256": sha256_fil(ut),
+            "tid": _nu(),
+        }
+        typsnitt = [
+            {"roll": roll, "familj": res.familj, "sha256": res.sha256}
+            for roll, res in r.installningar.resurser().items()
+            if roll.startswith("typsnitt")
+        ]
+        if typsnitt:
+            post["typsnitt"] = typsnitt
         r = self.hamta(rapport_id)
         self.arkiv.spara(
             r.med(
@@ -773,7 +907,10 @@ class RapportTjanst:
                         "handelse": f"export_{fmt}",
                         "av": av,
                         "modell": None,
-                        "detalj": f"{namn} sha256 {str(post['sha256'])[:12]}",
+                        "detalj": f"{namn} sha256 {str(post['sha256'])[:12]}"
+                        + "".join(
+                            f", typsnitt {t['familj']} ({str(t['sha256'])[:12]})" for t in typsnitt
+                        ),
                     },
                 ),
             )

@@ -804,7 +804,9 @@ class FlodenTjanst:
         roll: str | None = None,
         utsnitt: Sequence[float] | None = None,
         max_px: int = 900,
+        rubrik: str | None = None,
     ) -> tuple[bytes, dict[str, Any]]:
+        """Kartan som PNG. `rubrik` ersätter bildens förvalda rubrik (rapporternas klarspråk)."""
         res = self._resultat(korning_id)
         lager = self._lager_for(res, analys, roll)
         typ = typ.strip().lower()
@@ -836,6 +838,7 @@ class FlodenTjanst:
             skiss=status["status"] != "rapport",
             utsnitt=omr,
             max_px=max(300, min(int(max_px), 2000)),
+            rubrik=rubrik,
         )
         sha = hashlib.sha256(png).hexdigest()
         mapp = self.mcp_mapp / "kartor"
