@@ -15,6 +15,8 @@ höjdpanel, före och efter) mot `floden webb`; scenariot som ritas sparas lokal
 Med `--3d` tas docs/bilder/3d-*.png (soltimmar före och efter på marken, VSC på fasaderna,
 vattenyta och ett ritat hus i 3D) mot `floden webb` efter `floden demo`.
 
+Med `--3d-farg` läses pixlar av för punkter med kända färger (kräver `--3d`-vyn, inget sparas).
+
 Med `--demo` tas i stället docs/bilder/demo-*.png (start, projekt, karta bred och smal,
 frågesidan) mot `floden webb` (som serverar klienten själv, standard
 http://127.0.0.1:8765) efter `floden demo`. Inget körs om: resultaten läses ur cachen.
@@ -149,13 +151,13 @@ def _vy3d(webblasare: Browser, url: str) -> None:
     ta(sida, "soltimmar-fore")
     lage(sida, "Efter")
     ta(sida, "soltimmar-efter")
-    ruta = sida.locator("#vy3d-yta canvas").first.bounding_box()
-    assert ruta is not None
-    sida.mouse.move(ruta["x"] + ruta["width"] * 0.58, ruta["y"] + ruta["height"] * 0.4)
-    for _ in range(6):
-        sida.mouse.wheel(0, -300)
-        sida.wait_for_timeout(300)
-    sida.wait_for_timeout(4000)
+    # Längs den smala gatan (E 151350) norrut: gatufasaderna syns från marknivå och uppåt, så att
+    # det går att jämföra de mörkare nedre våningarna med de ljusa översta.
+    sida.evaluate(
+        "window.__floden3d.settKamera({ mal: { e: 151350, n: 6580345, z: 8 },"
+        " avstand: 45, azimut: 0, lutning: 68 })"
+    )
+    sida.wait_for_timeout(5000)
     ta(sida, "vsc-fasader")
     sida.close()
 
@@ -192,6 +194,45 @@ def _vy3d(webblasare: Browser, url: str) -> None:
     lage(sida, "Snett", 2500)
     lage(sida, "Före", 2500)
     ta(sida, "ritat-hus")
+    sida.close()
+
+
+_FARGPROV_JS = """() => {
+  const v = window.__floden3d, sc0 = v.sidor[0], fp = sc0.fasadPunkter;
+  const Points = fp.constructor, Mesh = sc0.terrang.children[0]?.constructor ?? null, Geo = fp.geometry.constructor;
+  const Mat = fp.material.constructor, Scene = sc0.scene.constructor, Attr = fp.geometry.attributes.color.constructor;
+  const Cam = v.camera.constructor, cam = new Cam(); cam.position.set(0, 0, 10); cam.lookAt(0, 0, 0);
+  const r = v.renderer, gl = r.getContext(), res = [];
+  const cols = [[0, 32, 77], [49, 68, 107], [102, 105, 112], [203, 186, 105], [255, 234, 70], [43, 93, 140]];
+  for (const c of cols) {
+    const sc = new Scene(), g = new Geo();
+    g.setAttribute('position', new Attr(new Float32Array([0, 0, 0]), 3));
+    g.setAttribute('color', new Attr(new Float32Array(c.map((x) => x / 255)), 3));
+    sc.add(new Points(g, new Mat({ size: 300, sizeAttenuation: false, vertexColors: true })));
+    r.setScissorTest(false); r.setClearColor(0xffffff, 1); r.clear(); r.render(sc, cam);
+    const px = new Uint8Array(4);
+    gl.readPixels(gl.drawingBufferWidth >> 1, gl.drawingBufferHeight >> 1, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    res.push([c, Array.from(px).slice(0, 3)]);
+  }
+  return { res, farg: r.outputColorSpace, ton: r.toneMapping };
+}"""
+
+
+def _vy3d_farg(webblasare: Browser, url: str) -> None:
+    """Rendera punkter med kända färger och läs av pixlarna: en färg i 3D är exakt skalans RGB."""
+    sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
+    sida.goto(f"{url}/#/karta/demokvarteret?vy=dagsljus-hojd")
+    sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
+    sida.wait_for_timeout(1500)
+    sida.click('[data-visa="3d"]')
+    sida.wait_for_function("window.__floden3d !== undefined", timeout=60_000)
+    sida.wait_for_timeout(5000)
+    ut = sida.evaluate(_FARGPROV_JS)
+    for ford, last in ut["res"]:
+        diff = max(abs(a - b) for a, b in zip(ford, last, strict=True))
+        print(f"skala {ford} -> pixel {last} (största avvikelse {diff})")
+        assert diff <= 1, "färgen i 3D avviker från skalans färg"
+    print("utdatafärgrum", ut["farg"], "tonmappning", ut["ton"])
     sida.close()
 
 
@@ -262,10 +303,11 @@ def main() -> None:
         "--kartverktyg", action="store_true", help="ta kartverktyg-*.png mot floden webb"
     )
     ap.add_argument("--3d", dest="vy3d", action="store_true", help="ta 3d-*.png mot floden webb")
+    ap.add_argument("--3d-farg", dest="vy3d_farg", action="store_true", help="prova att 3D-färger är exakta")
     ap.add_argument("--url", default=None)
     ap.add_argument("--chrome", default="/usr/bin/google-chrome")
     args = ap.parse_args()
-    url = args.url or ("http://127.0.0.1:8765" if args.demo or args.kartverktyg or args.vy3d else "http://127.0.0.1:5173")
+    url = args.url or ("http://127.0.0.1:8765" if args.demo or args.kartverktyg or args.vy3d or args.vy3d_farg else "http://127.0.0.1:5173")
     UT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         # Kartan är MapLibre (WebGL): utan grafikkort används programvaruritning.
@@ -280,6 +322,10 @@ def main() -> None:
         )
         if args.kartverktyg:
             _kartverktyg(webblasare, url)
+        if args.vy3d_farg:
+            _vy3d_farg(webblasare, url)
+            webblasare.close()
+            return
         if args.vy3d:
             _vy3d(webblasare, url)
             webblasare.close()

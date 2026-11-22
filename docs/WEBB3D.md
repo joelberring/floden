@@ -49,4 +49,5 @@ bara några tiotal rutor åt gången. Byggnader hämtas i dag för hela området
 - Vattnets tidsreglage är förberett (`djup_t<minut>`-lager) men demon har bara maxdjup.
 - Rutor utan data i ett lager ger HTTP 404 (en rad i webbläsarens konsol, hanteras av klienten).
 - Provat med programvaru-WebGL (SwiftShader), inte med grafikkort.
+- Färger: datafärger ritas utan färghantering och tonmappning (`vy3d/farghantering.ts`), så en färg i 3D är exakt skalans RGB; `tools/webb_skarmbild.py --3d-farg` läser av pixlar mot skalan.
 - Mäthandtag `window.__floden3d` används av `tools/webb_skarmbild.py --3d`.

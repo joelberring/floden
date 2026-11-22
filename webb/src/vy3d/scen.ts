@@ -12,14 +12,12 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  ColorManagement,
   DataTexture,
   DirectionalLight,
   DoubleSide,
   Float32BufferAttribute,
   Group,
   HemisphereLight,
-  LinearSRGBColorSpace,
   LineBasicMaterial,
   LineSegments,
   Mesh,
@@ -42,7 +40,8 @@ import {
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { Teckenforklaring } from "../fragor-typer.ts";
 import { byggnadText, fasadText, straleMotHojdfalt, type FasadVarden } from "./avlasning.ts";
-import { fargaCeller, fargFor, VSC_TECKENFORKLARING, vscSkillnadsskala } from "./farger.ts";
+import { stallInRenderare } from "./farghantering.ts";
+import { fargaCeller, fargFor, punktFarger, VSC_TECKENFORKLARING, vscSkillnadsskala } from "./farger.ts";
 import type { Behallare } from "./format.ts";
 import {
   byggnaderFran,
@@ -66,7 +65,7 @@ import { franScen, kameraPosition, kameraVinklar, SYNFALT_GRADER, tillScen, type
 import { arVattenYta, type SidKonfig, type Uppdelning } from "./lagerval.ts";
 import { rutNyckel, valjRutor, type Rut } from "./rutnat.ts";
 
-ColorManagement.enabled = false;
+// Färghanteringen är avslagen i farghantering.ts (datafärger = samma RGB som i 2D).
 
 const MARK_GRA = 0xe9e9e9;
 const HUS_OFORANDRAD = 0xd2d2d2;
@@ -195,7 +194,7 @@ export class Vy3d {
   ) {
     this.o = info.origo;
     this.renderer = new WebGLRenderer({ antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
-    this.renderer.outputColorSpace = LinearSRGBColorSpace;
+    stallInRenderare(this.renderer);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setClearColor(0xf2f2f2, 1);
     this.renderer.shadowMap.enabled = false;
@@ -572,19 +571,10 @@ export class Vy3d {
     const skillnad = (d.skillnad as Float32Array | undefined) ?? null;
     const fore = (d.vsc_fore as Float32Array | undefined) ?? null;
     const data: FasadData = { antal: n, vsc, fore, skillnad, vaning: d.vaning as Uint16Array, byggnad: d.byggnad as Uint32Array, byggnadIds: h.byggnad_ids };
-    const farger = new Float32Array(n * 3);
     let storst = 0.5;
     if (skillnad) for (const v of skillnad) if (Number.isFinite(v)) storst = Math.max(storst, Math.abs(v));
     const tf: Teckenforklaring = f.jamfor && skillnad ? vscSkillnadsskala(storst) : VSC_TECKENFORKLARING;
-    for (let i = 0; i < n; i++) {
-      const v = f.jamfor && skillnad ? (skillnad[i] as number) : (vsc[i] as number);
-      const c = fargFor(tf, v);
-      // Punkt utan värde (ingen jämförelse eller inget resultat) ritas grå, aldrig som ett värde.
-      const rgb: [number, number, number] = c[3] === 0 ? (Number.isFinite(v) ? [235, 235, 235] : [154, 154, 154]) : [c[0], c[1], c[2]];
-      farger[i * 3] = rgb[0] / 255;
-      farger[i * 3 + 1] = rgb[1] / 255;
-      farger[i * 3 + 2] = rgb[2] / 255;
-    }
+    const farger = punktFarger(tf, f.jamfor && skillnad ? skillnad : vsc);
     const g = new BufferGeometry();
     g.setAttribute("position", new BufferAttribute(pos, 3));
     g.setAttribute("color", new BufferAttribute(farger, 3));

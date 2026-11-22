@@ -64,3 +64,21 @@ export function fargaCeller(q: Uint16Array, lo: number, hi: number, tf: Teckenfo
     ut[i * 4 + 3] = c[3];
   }
 }
+
+/**
+ * Vertexfärger (0..1, samma RGB som `fargFor`, inte linjäriserade) för en punkt per värde. Punkt utan
+ * värde ritas grå, aldrig som ett värde. Renderaren har färghantering av och utdata i linjärt läge,
+ * så det som står här är exakt det som hamnar i bilden.
+ */
+export function punktFarger(tf: Teckenforklaring, varden: ArrayLike<number>): Float32Array {
+  const ut = new Float32Array(varden.length * 3);
+  for (let i = 0; i < varden.length; i++) {
+    const v = varden[i] as number;
+    const c = fargFor(tf, v);
+    const rgb: [number, number, number] = c[3] === 0 ? (Number.isFinite(v) ? [235, 235, 235] : [154, 154, 154]) : [c[0], c[1], c[2]];
+    ut[i * 3] = rgb[0] / 255;
+    ut[i * 3 + 1] = rgb[1] / 255;
+    ut[i * 3 + 2] = rgb[2] / 255;
+  }
+  return ut;
+}

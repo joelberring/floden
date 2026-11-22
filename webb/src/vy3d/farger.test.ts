@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { Teckenforklaring } from "../fragor-typer.ts";
-import { fargaCeller, fargFor, VSC_TECKENFORKLARING } from "./farger.ts";
+import { Color, ColorManagement, LinearSRGBColorSpace, NoToneMapping } from "three";
+import { stallInRenderare } from "./farghantering.ts";
+import { fargaCeller, fargFor, punktFarger, VSC_TECKENFORKLARING } from "./farger.ts";
 
 // Facit: serverns _sekventiell, _vatten och _skillnad (src/webb/resultatlager.py) för samma värden.
 const SEK: Teckenforklaring = { typ: "kontinuerlig", min: 0, max: 12, stopp: ["#00204d", "#31446b", "#666970", "#958f78", "#cbba69", "#ffea46"] };
@@ -59,4 +61,31 @@ test("fargaCeller färgar en textur ur uppskalade värden och lämnar 'inget vä
   const ut = new Uint8Array(12);
   fargaCeller(q, 0, 12, SEK, ut);
   assert.deepEqual(Array.from(ut), [0, 32, 77, 255, 255, 234, 70, 255, 0, 0, 0, 0]);
+});
+
+test("punktFarger: samma RGB som fargFor och teckenförklaringen, inte linjäriserat", () => {
+  const v = [0, 10, 16.4, 27, 40, Number.NaN];
+  const f = punktFarger(VSC_TECKENFORKLARING, v);
+  for (let i = 0; i < 5; i++) {
+    const c = fargFor(VSC_TECKENFORKLARING, v[i] as number);
+    assert.deepEqual([f[i * 3], f[i * 3 + 1], f[i * 3 + 2]].map((x) => Math.round((x as number) * 255)), [c[0], c[1], c[2]]);
+  }
+  assert.deepEqual([f[15], f[16], f[17]].map((x) => Math.round((x as number) * 255)), [154, 154, 154]);
+  // Mörkt blått stannar mörkt: en sRGB till linjär-omräkning skulle ge 0 för (0, 32, 77) men 8 på blå kanalen -> inte här.
+  assert.equal(Math.round((f[1] as number) * 255), 32);
+});
+
+test("renderarens färghantering är av: en färg i 3D är exakt den i 2D", () => {
+  // farghantering.ts slår av färghanteringen när den läses in; annars tolkar three.js vertexfärger som
+  // linjära och kodar om dem till sRGB vid utdata (mörka färger blir ljusa).
+  assert.equal(ColorManagement.enabled, false);
+  const r = { outputColorSpace: "srgb", toneMapping: 4 };
+  stallInRenderare(r);
+  assert.equal(r.outputColorSpace, LinearSRGBColorSpace);
+  assert.equal(r.toneMapping, NoToneMapping);
+  const c = new Color().setRGB(32 / 255, 77 / 255, 140 / 255);
+  assert.equal(Math.round(c.r * 255), 32);
+  assert.equal(Math.round(c.g * 255), 77);
+  assert.equal(Math.round(c.b * 255), 140);
+  assert.equal(new Color(0x00204d).g, 32 / 255);
 });
