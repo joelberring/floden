@@ -953,7 +953,7 @@ class EmissionsResultat:
 
 def _vattensteg(
     g0: FloatArray,
-    regn_mm: float,
+    regn_mm: float | FloatArray,
     r_spray_1_h: FloatArray,
     e_pot_mm_h: FloatArray,
     param: EmissionsParametrar,
@@ -991,6 +991,10 @@ def berakna_emission(
     atgarder: Sequence[Atgard] = (),
     startmassa_g_m2: npt.ArrayLike | None = None,
     startfukt_mm: npt.ArrayLike | None = None,
+    *,
+    sno_smaltning: bool = False,
+    sno_smaltfaktor_mm_k_h: float = 0.15,
+    sno_sparr_mm: float = 0.5,
 ) -> EmissionsResultat:
     """Kör emissionsmodellen timme för timme för alla vägavsnitt.
 
@@ -1185,13 +1189,25 @@ def berakna_emission(
     ut_salt = np.empty((na, nh))
     ut_fukt = np.empty((na, nh))
     ut_fq = np.empty((na, nh))
+    g_sno = np.zeros(na, dtype=np.float64)
     stad_kapad = 0
 
     for h in range(nh):
-        # 1) Vägfukt
+        # 1) Vägfukt (med valfri massbevarande snö- och graddags-smältning)
         regn = float(vader.nederbord_mm_h[h])
+        if sno_smaltning:
+            temp_c = float(vader.temperatur_c[h])
+            if temp_c <= 0.0:
+                g_sno += regn
+                regn_eff: float | FloatArray = 0.0
+            else:
+                smalt = np.minimum(g_sno, sno_smaltfaktor_mm_k_h * temp_c)
+                g_sno -= smalt
+                regn_eff = regn + smalt
+        else:
+            regn_eff = regn
         g_ny, dran, spray_v, avd, g_efter_dran = _vattensteg(
-            g, regn, r_spray_vatten[:, h], e_pot[:, h], p
+            g, regn_eff, r_spray_vatten[:, h], e_pot[:, h], p
         )
         vb["nederbord"] += regn
         vb["dranering"] += dran
@@ -1204,7 +1220,11 @@ def berakna_emission(
         fq_broms = retentionsfaktor(g, p.retention_broms_mm, p.retention_form)
         bindare_g_m2 = m[:, I_BINDARE, :].sum(axis=1) / bredd
         fq_bind = retentionsfaktor(bindare_g_m2, p.retention_dammbindare_g_m2, p.retention_form)
-        fq_yta = fq_vag * fq_bind  # för allt som ligger på vägytan
+        if sno_smaltning and sno_sparr_mm > 0.0:
+            fq_sno = np.clip(1.0 - g_sno / sno_sparr_mm, 0.0, 1.0)
+        else:
+            fq_sno = np.ones(na, dtype=np.float64)
+        fq_yta = fq_vag * fq_bind * fq_sno  # för allt som ligger på vägytan
         fq = np.repeat(fq_yta[:, None], nk, axis=1)  # för direkt utsläpp per källa
         fq[:, I_BROMS] = fq_broms
 
@@ -1271,10 +1291,10 @@ def berakna_emission(
         ut_damm10[:, h] = m[:, list(DAMMKALLOR)][:, :, i_pm10].sum(axis=(1, 2)) / bredd
         ut_salt[:, h] = m[:, I_SALT, :].sum(axis=1) / bredd
         ut_fukt[:, h] = g
-        ut_fq[:, h] = fq_vag * fq_bind
+        ut_fq[:, h] = fq_yta
 
     mb["slut"] = m.copy()
-    vb["slut"] = g.copy()
+    vb["slut"] = (g + g_sno).copy() if sno_smaltning else g.copy()
     if stad_kapad:
         varningar.append(
             f"Städinsatsen gav borttagningsandel > {_STAD_MAX_ANDEL} under {stad_kapad} timmar; "

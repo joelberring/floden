@@ -19,9 +19,20 @@ from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011, so
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from gemensamt.koordinater import EPSG_INTERN
 from karna.graf import Berakningsgraf, Cache
+from luft.emission import (
+    Trafikprofil,
+    VaderserieTimme,
+    Vagavsnitt,
+    berakna_emission,
+)
+from luft.emission import (
+    testparametrar as _nortrip_testparametrar,
+)
+from luft.partiklar import standard_pm10_fraktioner, timvis_pm10_mkn, vindklass_vikter
 from luft.snabbvind import kor_snabbvind
 from luft.transport import TransportOperator, amne_partikel, stokes_sedimentation_m_s
 from luft.typer import Inflode, Voxelgrid
+from luft.vindbibliotek import Vaderserie, fordela
 from luft.vindkomfort import omrakna_vindhastighet
 from mark_forluster.grundvatten import berakna_grundvattentak
 from rutt.dijkstra import _interpolera_tidserie
@@ -550,6 +561,101 @@ def test_partiklar_stokes_och_vegetationsdeposition_exakt_massbalans() -> None:
     assert bal["deposition_g_s"] > 0.0
     assert c_med[12, 5, 0] < c_utan[12, 5, 0] * 0.90  # minst 10 % lägre halt bakom häcken
     assert math.isclose(float(c_med[12, 5, 0]), float(np.sum(y_adj * s)), rel_tol=1e-10)
+
+
+def test_partiklar_vindklass_vikter_exakt_for_passiv_skalning() -> None:
+    """Flödesinterpolering G(U)=U*C(U) ger exakt 1/U-skalning för passiva ämnen."""
+    klasser = np.array([1.5, 4.0, 8.0])
+    # Passivt ämne: C(U) = 10 / U -> G(U) = 10 konstant
+    c_kl = 10.0 / klasser
+    u_test = np.array([0.8, 1.5, 2.7, 4.0, 6.2, 8.0, 12.0])
+    k0, k1, v0, v1 = vindklass_vikter(u_test, klasser)
+    c_interp = (v0 * klasser[k0] * c_kl[k0] + v1 * klasser[k1] * c_kl[k1]) / u_test
+    assert np.allclose(c_interp, 10.0 / u_test, rtol=1e-12)
+
+
+def test_partiklar_timvis_pm10_mkn_dygnsstatistik() -> None:
+    """timvis_pm10_mkn räknar tvåfraktions-PM10 (PM2.5 + PM_grov) och MKN-dygn > 50 µg/m³."""
+    fr = standard_pm10_fraktioner()
+    assert fr.pm_grov.sedimentation_m_s > 5.0 * fr.pm25.sedimentation_m_s
+
+    n_dygn = 40
+    n_tim = n_dygn * 24
+    # 5 "vårdagar" med högt vägdamm (ger > 50 µg/m³) och 35 lugna dagar
+    e25 = np.full((1, n_tim), 1.0e-5, dtype=np.float64)
+    eg = np.full((1, n_tim), 1.0e-5, dtype=np.float64)
+    eg[0, : 5 * 24] = 6.0e-5
+
+    # 1 väg, 1 riktning, 1 cell; c25=1.0, cg minskar något med lägre vind (deposition)
+    c25 = np.array([[[1.0]]], dtype=np.float64)
+    kl = np.array([1.5, 4.0, 8.0], dtype=np.float64)
+    cg = np.array([[[[0.85]]], [[[1.0]]], [[[1.05]]]], dtype=np.float64)
+    vader = Vaderserie(
+        tid=tuple(f"h{i}" for i in range(n_tim)),
+        vindriktning_grad=np.full(n_tim, 270.0),
+        vindhastighet_m_s=np.full(n_tim, 4.0),
+        giltig=np.ones(n_tim, dtype=np.bool_),
+    )
+    ford = fordela(vader, [270.0], u_ref_m_s=4.0)
+    stat = timvis_pm10_mkn(
+        e25, eg, c25, cg, kl, ford, bakgrund_pm25_ug_m3=5.0, bakgrund_pm_grov_ug_m3=5.0
+    )
+    assert stat.antal_dygn == 40
+    # Lugna dygn: 10 + 10 + 10 = 30 µg/m³; dammdygn: 10 + 60 + 10 = 80 µg/m³ -> exakt 5 dygn > 50
+    assert math.isclose(float(stat.pm10_dygn_over_50[0]), 5.0, abs_tol=1e-9)
+    assert math.isclose(float(stat.pm10_max_dygn_ug_m3[0]), 80.0, rel_tol=1e-9)
+    assert float(stat.pm10_dygn_90_4_ug_m3[0]) > 50.0
+
+
+def test_nortrip_sno_och_smaltning_bevarar_vattenbalans_och_ger_vartopp() -> None:
+    """sno_smaltning=True dämpar damm under snötäcke, smälter vid plusgrader och bevarar vatten."""
+    import warnings
+
+    vag = Vagavsnitt(
+        id="v1",
+        langd_m=100.0,
+        adt_fordon_dygn=10000.0,
+        andel_tung=0.1,
+        andel_dubbdack_latt=0.6,
+        andel_dubbdack_tung=0.1,
+        hastighet_km_h=50.0,
+        antal_korfalt=2,
+        vagbredd_m=7.0,
+    )
+    # 72 timmar: 24 h -4 °C + snöfall (2 mm/h i 3 h = 6 mm), sedan 48 h +8 °C torrt/soligt
+    nh = 72
+    temp = np.concatenate([np.full(24, -4.0), np.full(48, 8.0)])
+    nederb = np.zeros(nh)
+    nederb[0:3] = 2.0  # 6 mm snö
+    vader = VaderserieTimme(
+        start=np.datetime64("2026-03-01T00:00"),
+        nederbord_mm_h=nederb,
+        temperatur_c=temp,
+        relativ_fuktighet_procent=np.full(nh, 50.0),
+        vindhastighet_m_s=np.full(nh, 3.0),
+        vindhojd_m=10.0,
+        temperaturhojd_m=2.0,
+        potentiell_avdunstning_mm_h=np.concatenate([np.zeros(24), np.full(48, 0.3)]),
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = berakna_emission(
+            [vag],
+            vader,
+            Trafikprofil.jamn(),
+            _nortrip_testparametrar(),
+            sno_smaltning=True,
+        )
+    # Exakt vattenbalans (nederbörd = dränering + spray + avdunstning + slut[vatten+snö])
+    vb = res.vattenbalans
+    in_v = float(vb["start"][0] + vb["nederbord"][0])
+    ut_v = float(vb["dranering"][0] + vb["spray"][0] + vb["avdunstning"][0] + vb["slut"][0])
+    assert math.isclose(in_v, ut_v, abs_tol=1e-10)
+    # Under snötäcket (timme 3..23) är uppvirvlingen spärrad (f_q == 0)
+    assert float(np.max(res.f_q[0, 3:24])) == 0.0
+    # När snön smält och vägen torkat (sista 12 h) kommer vårdammet upp (f_q > 0,5)
+    assert float(np.max(res.f_q[0, 60:])) > 0.5
+
 
 
 
