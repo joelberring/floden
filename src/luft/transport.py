@@ -200,6 +200,7 @@ class Amne:
     deposition_m_s: depositionshastighet v_d mot mark och fasta ytor.
     sedimentation_m_s: sedimentationshastighet w_s (nedåt, ≥ 0).
     nedbrytning_1_s: första ordningens nedbrytning λ.
+    vegetationsdeposition_m_s: depositionshastighet v_{d,veg} på bladarea (sänka v_{d,veg}·LAD·V).
     """
 
     namn: str
@@ -208,6 +209,7 @@ class Amne:
     deposition_m_s: float = 0.0
     sedimentation_m_s: float = 0.0
     nedbrytning_1_s: float = 0.0
+    vegetationsdeposition_m_s: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.namn.strip():
@@ -218,6 +220,7 @@ class Amne:
             "deposition_m_s": self.deposition_m_s,
             "sedimentation_m_s": self.sedimentation_m_s,
             "nedbrytning_1_s": self.nedbrytning_1_s,
+            "vegetationsdeposition_m_s": self.vegetationsdeposition_m_s,
         }
         for namn, varde in varden.items():
             if not math.isfinite(varde):
@@ -234,7 +237,52 @@ class Amne:
             self.deposition_m_s == 0.0
             and self.sedimentation_m_s == 0.0
             and self.nedbrytning_1_s == 0.0
+            and self.vegetationsdeposition_m_s == 0.0
         )
+
+
+def stokes_sedimentation_m_s(
+    diameter_um: float,
+    densitet_kg_m3: float = 2000.0,
+    *,
+    viskositet_pa_s: float = 1.81e-5,
+    medel_fri_vaglangd_m: float = 6.6e-8,
+    gravitation_m_s2: float = 9.81,
+) -> float:
+    """Stokes–Cunninghams sedimentationshastighet w_s (m/s) för sfärisk partikel i luft.
+
+    ``diameter_um`` är partikeldiameter i µm (t.ex. 2,5 för PM2.5, 6–10 för grovt vägdamm).
+    Cunningham-glidfaktorn C_c ger korrekt beteende även för submikrona partiklar.
+    """
+    if not (math.isfinite(diameter_um) and diameter_um > 0.0):
+        raise LuftFel(f"diameter_um måste vara > 0, fick {diameter_um}.")
+    if not (math.isfinite(densitet_kg_m3) and densitet_kg_m3 > 0.0):
+        raise LuftFel(f"densitet_kg_m3 måste vara > 0, fick {densitet_kg_m3}.")
+    d_m = diameter_um * 1e-6
+    kn2 = 2.0 * medel_fri_vaglangd_m / d_m
+    c_c = 1.0 + kn2 * (1.257 + 0.400 * math.exp(-1.10 / kn2))
+    return densitet_kg_m3 * gravitation_m_s2 * (d_m * d_m) * c_c / (18.0 * viskositet_pa_s)
+
+
+def amne_partikel(
+    namn: str,
+    diameter_um: float,
+    *,
+    densitet_kg_m3: float = 2000.0,
+    deposition_m_s: float = 0.0,
+    vegetationsdeposition_m_s: float = 0.0,
+    sc_t: float = 0.7,
+) -> Amne:
+    """Bygger ett `Amne` för en partikelfraktion med Stokes–Cunningham-sedimentation."""
+    return Amne(
+        namn=namn,
+        sc_t=sc_t,
+        diffusivitet_m2_s=2e-5,
+        deposition_m_s=deposition_m_s,
+        sedimentation_m_s=stokes_sedimentation_m_s(diameter_um, densitet_kg_m3),
+        nedbrytning_1_s=0.0,
+        vegetationsdeposition_m_s=vegetationsdeposition_m_s,
+    )
 
 
 def _par(lin: IntArray, axel: int, periodisk: bool) -> tuple[IntArray, IntArray]:
@@ -439,6 +487,9 @@ class TransportOperator:
             + amne.diffusivitet_m2_s
         )
         self._k_luft: FloatArray = k_cell[luft]
+        self._lad_luft: FloatArray = np.asarray(
+            vind.grid.lad_m2_m3, dtype=np.float64
+        ).ravel()[luft]
         lin: IntArray = np.arange(luft.size, dtype=np.int64).reshape(self.form)
 
         # --- inre ytor (luft–luft) och väggytor (luft–fast) -------------------
@@ -697,6 +748,11 @@ class TransportOperator:
         utflode += np.bincount(p_in, 2.0 * self._k_luft[p_in] * self.dx_m, minlength=n)
         vagg_koef = self.amne.deposition_m_s * self._yta_m2 + self._ws_a * self._vagg_under
         deposition = np.bincount(self._vagg_p, vagg_koef, minlength=n)
+        if self.amne.vegetationsdeposition_m_s > 0.0:
+            deposition = (
+                deposition
+                + self.amne.vegetationsdeposition_m_s * self._lad_luft * self.cellvolym_m3
+            )
         nedbrytning = np.full(n, self.amne.nedbrytning_1_s * self.cellvolym_m3)
         self._utflode_koef = utflode
         self._deposition_koef = deposition

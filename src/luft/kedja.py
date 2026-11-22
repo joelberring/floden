@@ -27,6 +27,7 @@ from luft.geometri import (
     voxelisera,
 )
 from luft.lbm import LbmParametrar, kor_les
+from luft.snabbvind import kor_snabbvind
 from luft.transport import Amne, TransportOperator
 from luft.typer import FloatArray, Inflode, LuftFel
 from luft.vindbibliotek import Fordelning, Haltstatistik, Vaderserie, Vindbibliotek, fordela
@@ -67,10 +68,15 @@ def bygg_vindbibliotek(
     param: LbmParametrar = LbmParametrar(),  # noqa: B008 - fryst dataklass
     backend: str = "numpy",
     logg: Callable[[str], None] | None = None,
+    *,
+    metod: str = "lbm",
 ) -> Vindbibliotek:
-    """Kör en LES per riktning och samlar fälten i ett vindbibliotek."""
+    """Kör en LES (``metod="lbm"``) eller snabb Poisson-skissvind (``metod="snabbvind"``)
+    per riktning och samlar fälten i ett vindbibliotek."""
     if len(riktningar_grad) == 0:
         raise LuftFel("Minst en vindriktning krävs.")
+    if metod not in ("lbm", "snabbvind"):
+        raise LuftFel(f"Okänd vindmetod: {metod!r} (välj 'lbm' eller 'snabbvind').")
     falt = []
     for r in riktningar_grad:
         grid = voxelisera(
@@ -89,7 +95,10 @@ def bygg_vindbibliotek(
         )
         if logg is not None:
             logg(f"Vindriktning {r:g}°: rutnät {grid.form}, {int(grid.luft.sum())} luftceller")
-        falt.append(kor_les(grid, inflode, param, backend=backend, logg=logg))
+        if metod == "snabbvind":
+            falt.append(kor_snabbvind(grid, inflode, cd_vegetation=param.cd_vegetation))
+        else:
+            falt.append(kor_les(grid, inflode, param, backend=backend, logg=logg))
     return Vindbibliotek(tuple(falt))
 
 

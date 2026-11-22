@@ -11,13 +11,17 @@ import numpy as np
 import pytest
 
 from buller.nord2000.stralar_krokta import reflexpunkter_m
-from dagsljus.horisont import Hojdfalt
+from buller.operator.energi import energisumma_db, pruna_med_energibudget
+from dagsljus.horisont import Hojdfalt, horisont_ruta_iter, uppdatera_horisont_inkrementellt
 from dagsljus.matt import MattFel, SoltimmarAckumulator
 from dagsljus.ruta import omsampla
 from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011, solposition
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from gemensamt.koordinater import EPSG_INTERN
 from karna.graf import Berakningsgraf, Cache
+from luft.snabbvind import kor_snabbvind
+from luft.transport import TransportOperator, amne_partikel, stokes_sedimentation_m_s
+from luft.typer import Inflode, Voxelgrid
 from luft.vindkomfort import omrakna_vindhastighet
 from mark_forluster.grundvatten import berakna_grundvattentak
 from rutt.dijkstra import _interpolera_tidserie
@@ -462,6 +466,91 @@ def test_dagsljus_vsc_diagonal_fasad_rensar_rastercell() -> None:
     res = _vsc_pa_falt(falt, x0, y0, z0, az_n, radie=20.0, kf=64)
     assert res.status[0] == "ok"
     assert np.isfinite(res.vsc[0]) and res.vsc[0] > 0.3
+
+
+def test_buller_energibudget_pruning_garanterar_felgrans() -> None:
+    """pruna_med_energibudget kapar svaga källor men garanterar total_db <= sann <= total + fel."""
+    # 1 stark källa (70 dB) + 199 svagare källor (20..40 dB)
+    sanna = np.concatenate([np.array([70.0]), np.linspace(40.0, 20.0, 199)])
+    ovre = sanna + 3.0  # övre gräns alltid >= sann nivå
+    sann_tot = float(energisumma_db(sanna, axel=0))
+
+    tot, beraknade, maxfel = pruna_med_energibudget(
+        ovre, lambda idx: float(sanna[idx]), max_fel_db=0.05
+    )
+    assert beraknade < 100  # kapar över hälften trots 199 källor och +3 dB övre marginal
+    assert maxfel <= 0.05 + 1e-12
+    assert tot <= sann_tot + 1e-12
+    assert sann_tot <= tot + maxfel + 1e-12
+
+
+def test_dagsljus_inkrementell_horisont_bitidentisk() -> None:
+    """uppdatera_horisont_inkrementellt ger bitidentiskt svar mot full horisontberäkning."""
+    z0 = np.zeros((32, 32), dtype=np.float64)
+    z0[6:10, 6:10] = 12.0
+    z1 = z0.copy()
+    z1[18:22, 18:22] = 15.0
+    f0 = Hojdfalt(z_m=z0, cell_m=1.0, x_min_m=0.0, y_max_m=32.0)
+    f1 = Hojdfalt(z_m=z1, cell_m=1.0, x_min_m=0.0, y_max_m=32.0)
+    h0 = np.stack([h for _, _, h, _ in horisont_ruta_iter(f0, 24, 15.0)], axis=0)
+    h_full = np.stack([h for _, _, h, _ in horisont_ruta_iter(f1, 24, 15.0)], axis=0)
+    h_ink = uppdatera_horisont_inkrementellt(h0, f0, f1, 15.0)
+    assert np.array_equal(h_full, h_ink)
+
+
+def test_luft_snabbvind_massbevarande_och_hornacceleration() -> None:
+    """kor_snabbvind ger diskret divergensfritt 3D-fält med hörnacceleration och läzon."""
+    nx, ny, nz = 24, 16, 12
+    fast = np.zeros((nx, ny, nz), dtype=np.bool_)
+    fast[9:13, 6:10, 0:5] = True
+    grid = Voxelgrid(dx_m=2.0, fast=fast, lad_m2_m3=np.zeros((nx, ny, nz)))
+    vind = kor_snabbvind(grid, Inflode(u_ref_m_s=5.0, z_ref_m=10.0, z0_m=0.5))
+    assert vind.metadata["divergens_rel"] < 1e-5
+    # Hörnacceleration vid husets sida jämfört med ostört inflöde på samma höjd
+    assert vind.u_m_s[0, 11, 5, 1] > vind.u_m_s[0, 1, 5, 1]
+    # Läzon bakom huset har klart lägre fart än inflödet
+    assert vind.u_m_s[0, 14, 8, 1] < 0.4 * vind.u_m_s[0, 1, 8, 1]
+
+
+def test_partiklar_stokes_och_vegetationsdeposition_exakt_massbalans() -> None:
+    """Stokes-sedimentation + vegetationsdeposition bevarar massa exakt och sänker PM-halt."""
+    assert 2e-4 < stokes_sedimentation_m_s(2.5, 1500.0) < 4e-4
+    assert 2e-3 < stokes_sedimentation_m_s(6.0, 2200.0) < 3e-3
+
+    nx, ny, nz = 20, 10, 8
+    fast = np.zeros((nx, ny, nz), dtype=np.bool_)
+    lad_utan = np.zeros((nx, ny, nz), dtype=np.float64)
+    lad_med = np.zeros((nx, ny, nz), dtype=np.float64)
+    lad_med[8:10, 2:8, 0:2] = 2.0  # häck mellan väg (i=4) och gård (i=12)
+
+    infl = Inflode(u_ref_m_s=4.0, z_ref_m=10.0, z0_m=0.5)
+    pm = amne_partikel(
+        "PM_grov",
+        diameter_um=6.0,
+        densitet_kg_m3=2200.0,
+        deposition_m_s=0.005,
+        vegetationsdeposition_m_s=0.02,
+    )
+    assert not pm.har_linjar_hastighetsskalning
+
+    s = np.zeros((nx, ny, nz), dtype=np.float64)
+    s[4, 2:8, 0] = 0.01
+    rec = np.zeros((nx, ny, nz), dtype=np.float64)
+    rec[12, 5, 0] = 1.0
+
+    v_utan = kor_snabbvind(Voxelgrid(dx_m=2.0, fast=fast, lad_m2_m3=lad_utan), infl)
+    v_med = kor_snabbvind(Voxelgrid(dx_m=2.0, fast=fast, lad_m2_m3=lad_med), infl)
+    c_utan = TransportOperator(v_utan, pm).los(s)
+    op_med = TransportOperator(v_med, pm)
+    c_med = op_med.los(s)
+    bal = op_med.massbalans(s, c_med)
+    y_adj = op_med.los_adjungerad(rec)
+
+    assert bal["rel_fel"] < 1e-10
+    assert bal["deposition_g_s"] > 0.0
+    assert c_med[12, 5, 0] < c_utan[12, 5, 0] * 0.90  # minst 10 % lägre halt bakom häcken
+    assert math.isclose(float(c_med[12, 5, 0]), float(np.sum(y_adj * s)), rel_tol=1e-10)
+
 
 
 
