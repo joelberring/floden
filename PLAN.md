@@ -151,4 +151,23 @@ Se `docs/ARKITEKTUR-DRIFT.md` och `docs/KONTO.md`.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
-| D1 Konton | Google-inloggning nu, SSO förberett: `src/konto/` (OIDC med PKCE, SQLite-konton, organisation/förvaltning/projekt, sessioner med CSRF, HTTP-adapter, läge `inloggning = "av"`); Entra/generisk OIDC finns men är inte på | BESLUT "Drift" | klar i paketet (falsk leverantör); anslutning till `src/webb/api.py` och riktig Google-klient återstår |
+| D1 Konton | Google-inloggning nu, SSO förberett: `src/konto/` (OIDC med PKCE, SQLite-konton, organisation/förvaltning/projekt, sessioner med CSRF, HTTP-adapter, läge `inloggning = "av"`); Entra/generisk OIDC finns men är inte på | BESLUT "Drift" | klar (ansluten i `src/webb/api.py`, se `docs/KONTO.md` avsnitt 8); riktig Google-klient återstår (S3) |
+
+## Drift – server (S)
+
+Joels beslut 2026-11-22 (`docs/BESLUT.md`): basserver hos Hetzner, arbetare vid behov, egen bucket i O-Tids Object
+Storage, månadsbudgetar och demo först. Se `docs/DRIFT.md`.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| S1 Avbildning | `Dockerfile` (webb, Rust-verktyg, Python), `deploy/start.sh` (vägrar starta utan inloggning), `docker-compose.prod.yml` med Caddy, avbildning i ghcr.io efter grön CI | D1 | pågår (avbildningen byggs bara i CI; ej provad på server) |
+| S2 Basserver | Eget Hetzner Cloud-projekt `floden`, CX23 i hel1, DNS `floden.berring.se`, Google-klient | S1 | väntar (Joel: konto, DNS, kostnad) |
+| S3 Inloggning i drift | Riktig Google-klient, första administratören, inbjudningar | S2 | väntar |
+| S4 Förråd | Bucket `floden` i O-Tids Object Storage, sha256-nycklar, mellanlager på disk, presignerade URL:er till arbetarna, timkopia av `konto.sqlite` | S2 | väntar (Joel: bucket och nycklar) |
+| S5 Kö, arbetare och kostnadsbok | Jobbkö med pull över HTTPS (O-Tids `geo-server.ts`), klass `liten`; kostnadsbok, månadstak per klass, uppskattning och godkännande per körning, larm 50/80/100 %, daglig avstämning mot leverantören | S4 | väntar |
+| S6 Demoläge | Färdigräknade exempel, besökare läser och gör lätta skisser, tunga körningar bara för superadmin | S5 | väntar |
+| S7 Mätning | Provområdet: tid, minne, disk per ruta; ersätter uppskattningarna i `docs/ARKITEKTUR-DRIFT.md` 5 | S5 | väntar |
+| S8 Batch | Klass `batch` (CCX53/CCX63), en stadsdel, sedan hela Stockholm | S7 | väntar |
+| S9 GPU | Klass `gpu` hos Verda (L40S), L-b-mätning, vindbibliotek för ett kvarter med höga hus | S5, L-b | väntar (Joel: konto och budget) |
+| S10 Kvoter | Kvot per konto och organisation (förval 0), inbjudan med kvot; först därefter delning | S5, S6 | väntar |
+
