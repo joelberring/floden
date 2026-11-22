@@ -448,3 +448,75 @@ scenarier/<nn>/<nyckel>/ ruta/ (K1-ruta med lapp tillämpad) eller bara .klar om
 `<nn>` är nyckelns två första hextecken. En post räknas som klar bara om `.klar` finns.
 Poster skrivs i en temporär katalog och flyttas på plats atomärt. Cachen kan raderas när som
 helst; den byggs upp igen från recepten.
+
+## K32 – Påstående och belägg (v1)
+
+Ett påstående i en rapport (R1, `src/rapport/pastaende.py`). Lagras i K33 (`pastaenden`). Tal i
+`text` står bara som platshållare `{{matt:<adress>[|avrundning=…][|enhet=…][|tecken=ja][|format=exp]}}`;
+siffror utanför platshållare är fel (utom beteckningar som `SK-06`, `RH 2000`, `EPSG:3011`). Se
+`docs/RAPPORTER.md`.
+
+```json
+{
+  "kontrakt": "K32/v1",
+  "pastaende_id": "p-006",
+  "fraga_id": "SK-06",
+  "status": "visat",                       // visat | avvikelse | villkorat | underlag_saknas | ej_tillampligt
+  "text": "… djupare än tröskeln på {{matt:jamforelse.skyfall_max_djup_efter_minus_fore.yta_okning_m2}} mark …",
+  "fordjupning": "ja",                     // nej | ja | kan_inte_avgoras (trafikljus grön | gul | röd)
+  "mottagare": "hela_omradet",             // valfri: rapportens mottagare eller hela_omradet
+  "forutsattning": null, "ansvarig_funktion": null,   // krävs för villkorat
+  "motivering": null,                      // krävs för ej_tillampligt
+  "saknat_underlag": [],                   // krävs för underlag_saknas
+  "forfattare": "ai",                      // ai | manniska | referensflode
+  "modell": "…", "tid": "2026-11-22T08:00:00+00:00",
+  "bedomningsgrund": null, "granskning": null,        // nivå 2 (R3), null i nivå 1
+  "belagg": [{
+    "adress": "jamforelse.skyfall_max_djup_efter_minus_fore.yta_okning_m2",
+    "korning_id": "demo-vatten",
+    "fil": "jamforelser/skyfall_max_djup_efter_minus_fore/diff.tif", "fil_sha256": "…",
+    "manifest": "run.json", "manifest_sha256": "…",          // K0-manifestet som belägget vilar på
+    "analys": "skyfall", "losare": "vatten.statisk_fyllning", "scenarier": ["fore", "efter"],
+    "mottagare": "hela beräkningsområdet",
+    "namnare": "mark i hela beräkningsområdet; byggnadernas tak undantagna",
+    "matt": "max_djup:yta_okning_m2", "storhet": "skillnad i vattendjup över markytan",
+    "enhet": "m²", "tidsdefinition": "läget vid regnets slut (statisk fyllning, inget förlopp)",
+    "statistik": "yta på mark där värdet ökat mer än tröskeln 0,01 m",
+    "varde": 3258.0,                       // före avrundning
+    "upplosning": 1.0,                     // minsta meningsfulla steg (ytmått: cellens yta)
+    "jamforbarhet": "<sha256 av analysens parametrar utan jobbnyckel>",
+    "regn": "Stockholmsregn 2024, återkomsttid 100 år, …",
+    "bedomningsgrund": null                // nivå 2
+  }]
+}
+```
+
+Adresser: `jamforelse.<namn>.<mått>`, `matvarde.<analys>.<scenario>[.<ruta>].<namn>`,
+`omrade.<mottagare>.<lager_id>.<statistik>`. Belägg skapas bara av Floden
+(`rapport.belaggskalla.FlodenBelaggKalla`) ur samma källa som MCP och webben
+(`FlodenTjanst.jamfor` = `FragaTjanst.marksiffror`, `resultat_sammanfattning`, `resultat_varde`).
+
+## K33 – Rapport (v1)
+
+`<rapportmapp>/<rapport_id>/rapport.json` (standard `data/lokal/rapporter/`, utanför git), med
+`kartor/<kart_id>.png` och `export/<rapport_id>.docx|.pdf`. `rapport_id` = `r-` + 12 hex.
+
+| Fält | Innehåll |
+| --- | --- |
+| `kontrakt` | `"K33/v1"` |
+| `rapport_id`, `niva` (1), `amne` (`skyfall`), `projekt`, `titel`, `skapad` | |
+| `fragor` | Frågornas id ur katalogen; `katalog` har filen, källäget och frågornas text |
+| `korningar` | Per körning: `korning_id`, `fraga_id`, `beskrivning`, `kodversion`, `manifest`, `manifest_sha256`, `start`, `analyser` (analys, lösare, scenarier), `jamforelser`, `antaganden`, `scenarier` |
+| `mottagare` | `[{namn, polygon [[e, n], …] EPSG:3011, beskrivning}]` |
+| `pastaenden` | K32 |
+| `kartor` | `{kart_id, korning_id, jamforelse, analys, lager_id, typ (bas/scenario/skillnad), scenario, fil, png_sha256, bildtext, meta {norr, skalstock_m, enhet, skala, cellstorlek_m, kartutsnitt, utsnitt, metodstatus, roll}}` |
+| `metoder` | Per lösare: `losare`, `visningsnamn`, `version`, `status` (skiss/rapport), `underlag`, `anmarkning` |
+| `metodnotis` | `{ai_stod, modeller, ansvarig_utredare}` (ansvarig valfri i nivå 1, krävs i nivå 2) |
+| `dataklass` | Projektets klass enligt policyn; bara `oppet` exporteras i nivå 1 |
+| `handelser` | `{tid, handelse, av, modell, detalj}`: skapad, påstående tillagt/borttaget, kontroll, export |
+| `kontroll` | Senaste kontrollen: `{godkand, tid, punkter: [{id, rubrik, godkand, granskat, fel}]}` |
+| `exporter` | `{format (word/pdf), fil, sha256, tid}` |
+| `skede`, `revision`, `bedomningsgrunder`, `granskning`, `signering` | Nivå 2 (R3), förberedda |
+
+MCP-körloggens rader får fältet `rapport_id` (lista) när ett anrop rör en rapport
+(tillägg i `floden-korlogg/v1`, äldre rader saknar fältet).

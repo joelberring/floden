@@ -106,7 +106,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 | `resultat_sammanfattning` | mätvärden, jämförelser, varningar och antaganden med belägg |
 | `resultat_varde` | värde i en punkt, eller statistik i en polygon (tak utesluts), med belägg |
 | `jamfor` | skillnad före/efter (efter minus före), valfritt inom ett område |
-| `karta_bild` | PNG (MCP-bild) med fast kartografi: ramtext, nord, skala, förklaring, byggnader |
+| `karta_bild` | PNG (MCP-bild) med fast kartografi: ramtext, nord, skala, förklaring, byggnader; mark med värde vit, tak och celler utan värde ljusgrå |
 | `metoder_lista` | lösare, version och valideringsstatus (`skiss` eller `rapport`) |
 | `scenario_skapa` | ritat hus (polygon eller rektangel + höjd) som K9-scenario; kontrolleras av kärnan (`bara_kontroll` sparar inte) |
 | `fraga_skapa` | ny K20-fråga, validerad av kärnan; sökvägar begränsade till demo-, kartverktygs- och cachemapparna |
@@ -115,10 +115,17 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 | `vanta` | väntar på körningar (tidsgräns) |
 | `korlogg_hamta` | läser körloggen och verifierar hashkedjan |
 | `session_deklarera` | deklarerar modell och roll för sessionen |
+| `fragekatalog_sok` | frågekatalogen (Stockholms utredningsfrågor) med vad Floden kan belägga per skyfallsfråga |
+| `rapport_skapa` | skissunderlag (nivå 1) för skyfall över klara körningar: kartor, metodstatus, frågor, beläggsadresser |
+| `pastaende_lagg_till` | påstående med status, fördjupning, text med platshållare `{{matt:<adress>}}` och belägg; vägras utan giltiga belägg |
+| `rapport_kontrollera` | kontrollen inför export (spårning, scenario, nämnare, mått, osäkerhet, karta, status, dataskydd, metodstatus) |
+| `rapport_exportera` | Word eller PDF efter godkänd kontroll; underkänd kontroll stoppar |
+| `rapport_hamta` | rapporten (K33) eller listan över rapporter |
 
 Resurser: `floden://metod/{vatten,dagsljus,luft,karna,validering,mcp}` (metoddokumenten) och
-`floden://kontrakt/{datakontrakt,k0,k1,k9,k10,k11,k20,k21,k22}`. Frågekatalogen ingår inte (den
-finns inte i repot). Promptar: `utforska_demokvarteret` och `prova_nytt_hus`.
+`floden://kontrakt/{datakontrakt,k0,k1,k9,k10,k11,k20,k21,k22}` och `floden://rapport/{rapport_id}`
+(K33 som JSON). Frågekatalogen nås med `fragekatalog_sok`. Promptar: `utforska_demokvarteret`,
+`prova_nytt_hus` och `skissunderlag_skyfall`. Rapporterna beskrivs i `docs/RAPPORTER.md`.
 
 ## Dataklasser
 
@@ -148,10 +155,10 @@ Varje MCP-anrop (verktyg, resurser, promptar) skrivs som en rad i en lokal JSONL
 tillägg-endast och ligger under `data/lokal/` (inte i git). En rad har: tid, klient (`clientInfo`),
 deklarerad modell och roll (argument, annars `session_deklarera`, annars `FLODEN_MCP_MODELL` och
 `FLODEN_MCP_ROLL`), session, verktyg, `indata_hash` och `indata_nycklar`, körnings-id, dataklass,
-utfall, `svar_sha256` och tid. **Argumentvärdena skrivs inte**, och inga hemligheter eller
+utfall, `svar_sha256`, tid och `rapport_id` (de rapporter anropet rör). **Argumentvärdena skrivs inte**, och inga hemligheter eller
 personuppgifter (med inloggning: bara ett opakt konto-id). Raderna är hashkedjade (`foregaende`,
 `hash`); `korlogg_hamta` och `Korlogg.verifiera()` visar om något ändrats. Kan loggen inte skrivas
-lämnas inget resultat ut. Loggen är tänkt att bli bilaga till rapporter (R1 och framåt).
+lämnas inget resultat ut. Loggens rader för en rapport och dess körningar är bilaga B i rapporten.
 
 ## Kända begränsningar
 

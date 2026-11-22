@@ -33,6 +33,10 @@ from floden_mcp import MCP_VERSION
 from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad
 from floden_mcp.karna_api import PROJEKT_ID, FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, KorloggFel, hash_av, nu, rensa_text
+from rapport.fragekatalog import FragekatalogFel, formaga_for
+from rapport.pastaende import PastaendeFel
+from rapport.skissexport import ExportStoppad
+from rapport.skissrapport import RapportFel, RapportTjanst, sammanfattning
 
 Modell = Annotated[
     str | None,
@@ -68,6 +72,8 @@ skisser (se metoder_lista); skriv det när du redovisar resultat. (4) Varje svar
 Arbetsgång: projekt_info och geometri_sammanfattning för att förstå området; byggnader_lista för
 byggnads-id; scenario_skapa för ett ritat hus eller en ändring; korplan för att se vad som räknas;
 kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild för att läsa resultatet.
+Rapporter (R1): fragekatalog_sok, rapport_skapa, pastaende_lagg_till (tal bara som platshållare
+{{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_hamta.
 Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
 med session_deklarera; det loggas i körloggen (korlogg_hamta).
 """
@@ -80,6 +86,21 @@ def _till_dict(r: Any) -> dict[str, Any]:
         return dict(r)
     dump = getattr(r, "model_dump", None)
     return dict(dump(by_alias=True, exclude_none=False)) if callable(dump) else {}
+
+
+def _hitta_rapporter(obj: Any, ut: set[str], djup: int = 0) -> None:
+    """Samlar rapport-id (nyckeln `rapport_id`) ur argument eller svar."""
+    if djup > 4:
+        return
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            if k == "rapport_id" and isinstance(v, str):
+                ut.add(v)
+            elif isinstance(v, Mapping | list):
+                _hitta_rapporter(v, ut, djup + 1)
+    elif isinstance(obj, list):
+        for x in obj[:200]:
+            _hitta_rapporter(x, ut, djup + 1)
 
 
 def _hitta_korningar(obj: Any, ut: set[str], djup: int = 0) -> None:
@@ -124,6 +145,7 @@ def bygg_server(
     policy = policy or Policy()
     logg = logg or Korlogg(tjanst.mcp_mapp / "korlogg.jsonl")
     tillstand = Sessionstillstand(miljo)
+    rapporter = RapportTjanst(tjanst, policy=policy, korlogg=logg)
     server = MCPServer(
         "floden",
         title="Floden",
@@ -148,6 +170,10 @@ def bygg_server(
                     svar = fn(*args, **kwargs)
                 except FlodenFel as exc:
                     raise ToolError(f"{exc} {_FEL_PREFIX}{exc.kod}") from exc
+                except (RapportFel, PastaendeFel, FragekatalogFel) as exc:
+                    raise ToolError(f"{exc} {_FEL_PREFIX}vagrad") from exc
+                except ExportStoppad as exc:
+                    raise ToolError(f"{exc} {_FEL_PREFIX}export_stoppad") from exc
                 if isinstance(svar, dict):
                     projekt = None if namn in utan_projekt else kwargs.get("projekt", PROJEKT_ID)
                     return {"dataklass": policy.klass_for(klass, projekt).value, **svar}
@@ -225,6 +251,9 @@ def bygg_server(
         }
         korningar: set[str] = set()
         _hitta_korningar(argument, korningar)
+        rapporter: set[str] = set()
+        _hitta_rapporter(argument, rapporter)
+        post["rapport_id"] = rapporter
         try:
             policy.kontrollera(str(klient["namn"]), effektiv)
         except PolicyNekad as exc:
@@ -237,6 +266,7 @@ def bygg_server(
             raise
         d = _till_dict(resultat)
         _hitta_korningar(d.get("structuredContent") or d.get("structured_content"), korningar)
+        _hitta_rapporter(d.get("structuredContent") or d.get("structured_content"), rapporter)
         fel = bool(d.get("isError") or d.get("is_error"))
         try:
             _skriv(
@@ -569,8 +599,293 @@ def bygg_server(
     ) -> dict[str, Any]:
         return tjanst.jamfor(korning_id, omrade)
 
+    _registrera_rapportverktyg(server, verktyg, rapporter, tillstand)
     _registrera_resurser(server, tjanst)
     return server
+
+
+def _registrera_rapportverktyg(
+    server: MCPServer,
+    verktyg: Callable[..., Callable[[Callable[..., Any]], Callable[..., Any]]],
+    rapporter: RapportTjanst,
+    tillstand: Sessionstillstand,
+) -> None:
+    """Rapportverktygen (R1): frågekatalog, skissrapport, påståenden med belägg, kontroll, export."""
+    RapportId = Annotated[str, Field(description="Rapport-id från rapport_skapa (r-<12 hex>).")]
+
+    @verktyg(
+        "fragekatalog_sok",
+        "Söker i frågekatalogen (Stockholms utredningsfrågor, docs/utredningar-stockholm/fragor.json, "
+        "redaktionellt underlag). Filtrera på omrade (skyfall, luft, buller, dagsljus, sol), villkor "
+        "(t.ex. 'Planförslag') och text. För skyfall står också vad Floden i dag kan belägga per fråga.",
+    )
+    def fragekatalog_sok(
+        omrade: Annotated[str | None, Field(description="Område, t.ex. 'skyfall'.")] = None,
+        villkor: Annotated[
+            list[str] | None, Field(description="Villkor (delsträngar); 'Alla …' gäller alltid.")
+        ] = None,
+        text: Annotated[str | None, Field(description="Delsträng i fråga eller redovisning.")] = None,
+        ids: Annotated[list[str] | None, Field(description="Bara dessa id (t.ex. SK-06).")] = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        fragor = rapporter.katalog.sok(omrade=omrade, villkor=villkor, text=text, ids=ids)
+        ut = []
+        for f in fragor:
+            post = f.till_dict()
+            fm = formaga_for(f.id)
+            if fm is not None:
+                post["floden"] = {
+                    "niva": fm.niva,
+                    "belagg": fm.belagg,
+                    "saknat": fm.saknat,
+                    "adresser": list(fm.adresser),
+                }
+            ut.append(post)
+        return {
+            "antal": len(ut),
+            "granskningsdatum": rapporter.katalog.granskningsdatum,
+            "fragor": ut,
+            "anmarkning": "Katalogen är redaktionellt underlag sammanställt med AI-stöd och ska "
+            "granskas; val av regel och bedömning avgörs per ärende.",
+        }
+
+    @verktyg(
+        "rapport_skapa",
+        "Skapar ett skissunderlag (nivå 1: sållning, inte bedömning mot krav) för ett ämne (bara "
+        "'skyfall' i R1) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
+        "skillnad; samma takmask som webben), hämtar metodernas valideringsstatus och väljer frågor "
+        "ur katalogen. Svaret listar beläggsadresser du kan använda i pastaende_lagg_till.",
+    )
+    def rapport_skapa(
+        korningar: Annotated[list[str], Field(description="Körnings-id (klara), t.ex. ['demo-vatten'].")],
+        amne: Annotated[str, Field(description="Ämne; 'skyfall' i R1.")] = "skyfall",
+        niva: Annotated[int, Field(description="1 = skissunderlag (enda nivån i R1).")] = 1,
+        titel: str | None = None,
+        fragor: Annotated[
+            list[str] | None, Field(description="Frågor (id); utelämnat = alla för ämnet/villkoren.")
+        ] = None,
+        villkor: Annotated[list[str] | None, Field(description="Filtrera frågorna på villkor.")] = None,
+        mottagare: Annotated[
+            list[dict[str, Any]] | None,
+            Field(
+                description="Platser som påverkas: [{namn (a-z0-9_), polygon [[e, n], ...] "
+                "EPSG:3011, beskrivning}]. Används i adresser omrade.<namn>.<lager_id>.<statistik>."
+            ),
+        ] = None,
+        ansvarig_utredare: Annotated[
+            str | None, Field(description="Valfritt i nivå 1; skrivs i metodnotisen.")
+        ] = None,
+        projekt: Projekt = PROJEKT_ID,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        r = rapporter.skapa(
+            projekt=projekt,
+            amne=amne,
+            korningar=korningar,
+            niva=niva,
+            titel=titel,
+            fragor=fragor,
+            villkor=villkor,
+            mottagare=mottagare or [],
+            ai_stod=True,
+            modell=modell or tillstand.modell,
+            ansvarig_utredare=ansvarig_utredare,
+            av=tillstand.session_id,
+        )
+        return {
+            **sammanfattning(r, rapporter.arkiv),
+            "fragor": [
+                {"id": f, "fraga": r.katalog["fragor"][f]["fraga"]} for f in r.fragor
+            ],
+            "kartor": [{"kart_id": k.kart_id, "bildtext": k.bildtext} for k in r.kartor],
+            "metoder": list(r.metoder),
+            "belagg_adresser": rapporter.adresser(r),
+            "regel": (
+                "Skriv tal som platshållare {{matt:<adress>}} (valfritt |avrundning=10, "
+                "|enhet=nej, |tecken=ja, |format=exp). Varje adress i texten ska stå i belagg. "
+                "Status: visat, avvikelse, villkorat (forutsattning + ansvarig_funktion), "
+                "underlag_saknas (saknat_underlag), ej_tillampligt (motivering). Fördjupning: nej, "
+                "ja, kan_inte_avgoras. Varje fråga behöver minst ett påstående före export."
+            ),
+        }
+
+    @verktyg(
+        "pastaende_lagg_till",
+        "Lägger ett påstående i en rapport: fråga (id), status, text med platshållare för tal "
+        "({{matt:<adress>}}) och belägg (adresser). Floden hämtar varje belägg ur körningen och "
+        "vägrar påståendet om ett belägg saknas, en siffra står utanför en platshållare, "
+        "statusreglerna inte följs, måttet tolkas fel (t.ex. maxdjup som vattennivå) eller "
+        "nämnaren blandas.",
+    )
+    def pastaende_lagg_till(
+        rapport_id: RapportId,
+        fraga_id: Annotated[str, Field(description="Frågans id, t.ex. 'SK-06'.")],
+        status: Annotated[
+            str,
+            Field(description="visat, avvikelse, villkorat, underlag_saknas eller ej_tillampligt."),
+        ],
+        text_med_platshallare: Annotated[
+            str, Field(description="Texten; tal bara som {{matt:<adress>}}.")
+        ],
+        fordjupning: Annotated[
+            str, Field(description="Behöver frågan fördjupas? nej, ja eller kan_inte_avgoras.")
+        ],
+        belagg: Annotated[
+            list[str] | None,
+            Field(description="Beläggsadresser (se belagg_adresser i rapport_skapa)."),
+        ] = None,
+        korning_id: Annotated[
+            str | None, Field(description="Körningen beläggen gäller (om rapporten har flera).")
+        ] = None,
+        mottagare: Annotated[
+            str | None, Field(description="Mottagarens namn eller 'hela_omradet' (valfritt).")
+        ] = None,
+        forutsattning: str | None = None,
+        ansvarig_funktion: str | None = None,
+        motivering: str | None = None,
+        saknat_underlag: list[str] | None = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        bl: list[str | dict[str, Any]] = [
+            {"adress": a, "korning_id": korning_id} if korning_id else a for a in belagg or []
+        ]
+        p = rapporter.lagg_till_pastaende(
+            rapport_id,
+            fraga_id=fraga_id,
+            status=status,
+            text=text_med_platshallare,
+            belagg=bl,
+            fordjupning=fordjupning,
+            mottagare=mottagare,
+            forutsattning=forutsattning,
+            ansvarig_funktion=ansvarig_funktion,
+            motivering=motivering,
+            saknat_underlag=saknat_underlag or [],
+            forfattare="ai",
+            modell=modell or tillstand.modell,
+            av=tillstand.session_id,
+        )
+        return {
+            "rapport_id": rapport_id,
+            "pastaende_id": p.pastaende_id,
+            "fraga_id": p.fraga_id,
+            "status": p.status,
+            "fylld_text": p.fylld_text(),
+            "belagg": [
+                {
+                    "adress": b.adress,
+                    "korning_id": b.korning_id,
+                    "varde": b.varde,
+                    "enhet": b.enhet,
+                    "matt": b.matt,
+                    "namnare": b.namnare,
+                    "tidsdefinition": b.tidsdefinition,
+                    "fil": b.fil,
+                }
+                for b in p.belagg
+            ],
+        }
+
+    @verktyg(
+        "rapport_kontrollera",
+        "Kör kontrollen inför export (spåra tal och figurer, scenario, mottagare och nämnare, mått "
+        "och tidsstatistik, osäkerhet, kartan, status per fråga, dataskydd, metodstatus). Ett fel "
+        "stoppar exporten; meddelandena säger vad som ska rättas.",
+    )
+    def rapport_kontrollera(
+        rapport_id: RapportId, modell: Modell = None, roll: Roll = None
+    ) -> dict[str, Any]:
+        k = rapporter.kontrollera(rapport_id, av=tillstand.session_id)
+        return {"rapport_id": rapport_id, **k}
+
+    @verktyg(
+        "rapport_exportera",
+        "Exporterar rapporten till Word ('word', .docx) eller PDF ('pdf') efter en godkänd kontroll. "
+        "Körloggen och manifesten ingår som bilagor. Underkänd kontroll stoppar exporten.",
+    )
+    def rapport_exportera(
+        rapport_id: RapportId,
+        format: Annotated[str, Field(description="'word' eller 'pdf'.")] = "pdf",
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        from gemensamt.hash import sha256_fil
+
+        fil = rapporter.exportera(rapport_id, format, av=tillstand.session_id)
+        return {
+            "rapport_id": rapport_id,
+            "format": format,
+            "fil": str(fil),
+            "storlek_byte": fil.stat().st_size,
+            "sha256": sha256_fil(fil),
+        }
+
+    @verktyg(
+        "rapport_hamta",
+        "Hämtar en rapport (K33): frågor, påståenden med ifyllda tal och belägg, kartor, metoder, "
+        "kontroll och exporter. Utan rapport_id: listar rapporterna. Samma innehåll som resursen "
+        "floden://rapport/{rapport_id}.",
+    )
+    def rapport_hamta(
+        rapport_id: Annotated[str | None, Field(description="Rapport-id; utelämnat = lista.")] = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        if rapport_id is None:
+            return {"rapporter": rapporter.lista()}
+        return _rapport_svar(rapporter, rapport_id)
+
+    @server.resource(
+        "floden://rapport/{rapport_id}",
+        name="rapport",
+        title="Rapport (K33)",
+        description="En rapport med påståenden, belägg, kartor och kontroll (JSON).",
+        mime_type="application/json",
+    )
+    def rapport_resurs(rapport_id: str) -> str:
+        return json.dumps(_rapport_svar(rapporter, rapport_id), ensure_ascii=False, indent=1)
+
+    @server.prompt(
+        name="skissunderlag_skyfall",
+        title="Skissunderlag skyfall för …",
+        description="Skissunderlag (nivå 1) för skyfall: välj körning, besvara SK-frågorna med "
+        "belägg, kontrollera och exportera Word och PDF.",
+    )
+    def skissunderlag_skyfall(
+        plats: str = "demokvarteret", korning: str = "demo-vatten"
+    ) -> str:
+        return (
+            f"Gör ett skissunderlag för skyfall för {plats} (körning {korning}).\n"
+            "1. korningar_lista och resultat_sammanfattning: kontrollera att körningen är klar och "
+            "har en jämförelse före/efter.\n"
+            "2. fragekatalog_sok(omrade='skyfall'): läs frågorna SK-01 till SK-15 och vad Floden "
+            "kan belägga.\n"
+            f"3. rapport_skapa(korningar=['{korning}']), gärna med en mottagare (polygon) där "
+            "förslaget byggs.\n"
+            "4. För varje fråga: pastaende_lagg_till med status och fördjupning. Skriv tal bara som "
+            "{{matt:<adress>}} ur belagg_adresser. Saknas underlag: status underlag_saknas och "
+            "skriv vad som saknas. Inget 'visat' utan belägg. Bedöm inte mot krav (nivå 1 är "
+            "sållning); skriv inte att något är lämpligt eller uppfyller krav.\n"
+            "5. rapport_kontrollera; rätta det som underkänns.\n"
+            "6. rapport_exportera format 'word' och 'pdf'.\n"
+            "Du äger inget tal. Metoderna är skisser."
+        )
+
+
+def _rapport_svar(rapporter: RapportTjanst, rapport_id: str) -> dict[str, Any]:
+    r = rapporter.hamta(rapport_id)
+    d = r.till_dict()
+    for p, pd in zip(r.pastaenden, d["pastaenden"], strict=True):
+        try:
+            pd["fylld_text"] = p.fylld_text()
+        except PastaendeFel as exc:
+            pd["fylld_text"] = None
+            pd["fel"] = str(exc)
+    d["sammanfattning"] = sammanfattning(r, rapporter.arkiv)
+    return d
 
 
 def _felrad(d: Mapping[str, Any]) -> str | None:
@@ -592,6 +907,7 @@ def _skriv(
 ) -> None:
     rad = {
         **post,
+        "rapport_id": sorted(post.get("rapport_id", set())),
         "utfall": utfall,
         "fel": rensa_text(fel),
         "korning_id": sorted(korningar),

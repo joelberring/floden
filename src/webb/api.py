@@ -442,6 +442,22 @@ STANDARD_KARTVERKTYGSMAPP = "data/lokal/kartverktyg"
 STANDARD_DATAMAPPAR = ["data/lokal"]
 
 
+STANDARD_RAPPORTMAPP = "data/lokal/rapporter"
+
+
+def _rapportmapp(konfig_fil: Path, rapportmapp: str | Path | None) -> Path:
+    """Rapportmappen: argument > `[webb] rapportmapp` > data/lokal/rapporter (från repots rot)."""
+    rot = konfig_fil.resolve().parent
+    if rapportmapp is None:
+        webb: dict[str, Any] = {}
+        if konfig_fil.is_file():
+            with konfig_fil.open("rb") as fh:
+                webb = dict(tomllib.load(fh).get("webb", {}))
+        rapportmapp = webb.get("rapportmapp", STANDARD_RAPPORTMAPP)
+    p = Path(rapportmapp)
+    return p if p.is_absolute() else rot / p
+
+
 def _skapa_fragetjanst(
     konfig_fil: Path,
     fragemappar: Sequence[str | Path] | None,
@@ -541,7 +557,9 @@ class FlodenApiApp:
         kartverktygsmapp: str | Path | None = None,
         datamappar: Sequence[str | Path] | None = None,
         tillat_loopback_underlag: bool = False,
+        rapportmapp: str | Path | None = None,
     ) -> None:
+        self.rapportmapp = _rapportmapp(Path(konfig_fil), rapportmapp)
         self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
         self._kartverktyg: KartverktygTjanst | None = None
         self._vy3d: Vy3dTjanst | None = None
@@ -583,6 +601,42 @@ class FlodenApiApp:
             if self._vy3d is None:
                 self._vy3d = Vy3dTjanst(fragor, kv)
             return self._vy3d
+
+    def rapporter_for(self, projekt_id: str) -> list[dict[str, Any]]:
+        """Projektets rapporter (R1) med kontrollens utfall och nedladdningsbara filer."""
+        from rapport.skissrapport import RapportArkiv, sammanfattning
+
+        arkiv = RapportArkiv(self.rapportmapp)
+        return [sammanfattning(r, arkiv) for r in arkiv.lista(projekt_id)]
+
+    def rapportfil(
+        self, projekt_id: str, rapport_id: str, fmt: str
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Den senast exporterade Word- eller PDF-filen (oförändrad sedan exporten)."""
+        from rapport.skissrapport import RapportArkiv, RapportFel
+
+        typer = {
+            "word": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "pdf": "application/pdf",
+        }
+        if fmt not in typer:
+            raise FlodenWebbFel("Formatet ska vara 'word' eller 'pdf'.", status_kod=404)
+        arkiv = RapportArkiv(self.rapportmapp)
+        try:
+            r = arkiv.las(rapport_id)
+        except RapportFel as exc:
+            raise FlodenWebbFel(str(exc), status_kod=404) from exc
+        if r.projekt != projekt_id:
+            raise FlodenWebbFel("Rapporten hör inte till projektet.", status_kod=404)
+        fil = arkiv.exportfil(r, fmt)
+        if fil is None:
+            raise FlodenWebbFel(
+                f"Rapporten har ingen giltig {fmt}-export (exportera efter en godkänd kontroll).",
+                status_kod=404,
+            )
+        status, headers, kropp = _binart_svar(200, fil.read_bytes(), typer[fmt])
+        headers["Content-Disposition"] = f'attachment; filename="{fil.name}"'
+        return status, headers, kropp
 
     @property
     def projekt(self) -> ProjektTjanst:
@@ -1899,7 +1953,13 @@ class FlodenApiApp:
                 if not delar:
                     return _json_svar(200, self.projekt.lista())
                 if len(delar) == 1:
-                    return _json_svar(200, self.projekt.hamta(delar[0]))
+                    svar = self.projekt.hamta(delar[0])
+                    svar["rapporter"] = self.rapporter_for(delar[0])
+                    return _json_svar(200, svar)
+                if len(delar) == 2 and delar[1] == "rapporter":
+                    return _json_svar(200, {"rapporter": self.rapporter_for(delar[0])})
+                if len(delar) == 5 and delar[1] == "rapporter" and delar[3] == "fil":
+                    return self.rapportfil(delar[0], delar[2], delar[4])
 
             if ren_sokvag == "/api/fragor" or ren_sokvag.startswith("/api/fragor/"):
                 return self._hantera_fragor(verb, ren_sokvag)

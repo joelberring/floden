@@ -7,7 +7,7 @@
  * (AGENTS.md: tal kommer bara ur beräkningar). Det som saknas döljs eller förklaras.
  */
 import { forvaltningSynlig, halsningsnamn, kontoHjalteHtml, kontoHuvudHtml, kontoLage } from "./konto.ts";
-import type { ModulInfo, OmradeSammanfattning, ProjektAvsnitt, ProjektSvar } from "./types.ts";
+import type { ModulInfo, OmradeSammanfattning, ProjektAvsnitt, ProjektSvar, RapportRad } from "./types.ts";
 
 export function esc(text: string): string {
   return text
@@ -196,6 +196,41 @@ function tekniskInfo(a: ProjektAvsnitt): string {
     </details>`;
 }
 
+/** Kontrollens utfall i klarspråk: grönt = får exporteras, rött = något måste rättas. */
+function rapportKontroll(r: RapportRad): string {
+  if (!r.kontroll) return `<span class="rapport-status ej">Inte kontrollerad</span>`;
+  if (r.kontroll.godkand) return `<span class="rapport-status ok">Kontrollen godkänd</span>`;
+  const n = r.kontroll.antal_fel;
+  return `<span class="rapport-status fel">Kontrollen hittade ${n} fel</span>`;
+}
+
+export function rapportLista(projektId: string, rapporter: RapportRad[] | undefined): string {
+  if (!rapporter || rapporter.length === 0) {
+    return `<p class="dampad">Inga rapporter än. En rapport skapas med AI via <code>floden mcp</code> eller med <code>python tools/rapport_demo.py</code>.</p>`;
+  }
+  const bas = `/api/projekt/${encodeURIComponent(projektId)}/rapporter`;
+  const rader = rapporter
+    .map((r) => {
+      const lankar = (["word", "pdf"] as const)
+        .filter((f) => r.filer[f])
+        .map(
+          (f) =>
+            `<a class="textlank" href="${bas}/${encodeURIComponent(r.rapport_id)}/fil/${f}" download>${f === "word" ? "Word" : "PDF"}</a>`,
+        )
+        .join(" · ");
+      return `
+      <li class="rapport-rad">
+        <div>
+          <strong>${esc(r.titel)}</strong>
+          <span class="dampad">${esc(r.skapad.slice(0, 10))} · ${r.antal_pastaenden} påståenden om ${r.antal_fragor} frågor · skissunderlag</span>
+        </div>
+        <div class="rapport-hoger">${rapportKontroll(r)}${lankar ? `<span class="rapport-filer">${lankar}</span>` : `<span class="dampad">Ingen fil exporterad</span>`}</div>
+      </li>`;
+    })
+    .join("");
+  return `<ul class="enkel-lista rapport-lista">${rader}</ul>`;
+}
+
 export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): string {
   if (!projekt) {
     return `
@@ -266,6 +301,10 @@ export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): 
           </section>`
               : ""
           }
+          <section class="sidoblock">
+            ${etikett("Rapporter")}
+            ${rapportLista(projekt.id, projekt.rapporter)}
+          </section>
           <section class="sidoblock ram">
             ${etikett("Hur man läser talen")}
             <p>Talen är beräknade för det påhittade kvarteret och säger inget om verkliga platser. Före är kvarteret som det är, efter är med förändringen.</p>

@@ -51,6 +51,11 @@ har belägg (körning, fil, cell, mått, enhet), varje anrop loggas i en körlog
 dataklass (förval: bara `oppet`). Anslutning, verktyg och policy: `docs/MCP.md`. Kort:
 `pip install -e ".[dev]"`, `floden demo`, sedan `claude mcp add floden -- floden mcp`.
 
+**Rapporter (R1):** AI:n (eller referensflödet) lägger påståenden med belägg i ett skissunderlag
+för skyfall; Floden fyller talen, kontrollerar allt före export och skriver Word och PDF. Se
+`docs/RAPPORTER.md` och exemplet `docs/exempel/skissunderlag_skyfall_demo.pdf`. Utan AI:
+`PYTHONPATH=src python tools/rapport_demo.py`.
+
 ## Köra ett verkligt område på din dator
 
 Hämtar Lantmäteriets öppna laser, byggnader och ortofoto för ditt provområde och kör dagsljus och vatten på det. Allt

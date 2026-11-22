@@ -1,0 +1,1254 @@
+{
+  "granskningsdatum": "2026-11-21",
+  "syfte": "Redaktionellt frågeunderlag för Stockholms stad. Frågorna beskriver beställning och rapportering. Tillämpning avgörs per ärende.",
+  "kallor": {
+    "PBL": {
+      "titel": "Plan- och bygglagen (2010:900)",
+      "url": "https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/plan-och-bygglag-2010900_sfs-2010-900/",
+      "lasanvisning": "Riksdagen, särskilt 2 kap. 5, 6 a, 9 och 10 §§, 4 kap. 33 a § och 8 kap. 9 §."
+    },
+    "MILJO": {
+      "titel": "Miljöprogram 2030",
+      "url": "https://start.stockholm/globalassets/start/om-stockholms-stad/politik-och-demokrati/styrdokument/miljoprogram-2030.pdf",
+      "lasanvisning": "Stockholms stad, målet om frisk luft och god ljudmiljö."
+    },
+    "MKN": {
+      "titel": "Luftkvalitetsförordningen (2010:477)",
+      "url": "https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/luftkvalitetsforordning-2010477_sfs-2010-477/",
+      "lasanvisning": "Riksdagen, särskilt 3, 8–10 och 18–20 §§."
+    },
+    "EU": {
+      "titel": "EU:s luftkvalitetsdirektiv 2024/2881",
+      "url": "https://eur-lex.europa.eu/legal-content/SV/TXT/PDF/?uri=CELEX%3A32024L2881",
+      "lasanvisning": "EU, införlivandebestämmelser och bilaga I, avsnitt 1, tabell 1 om 2030."
+    },
+    "INF": {
+      "titel": "Frågor och svar om införandet i Sverige",
+      "url": "https://www.naturvardsverket.se/amnesomraden/luft/internationellt-arbete-med-luft/eus-luftkvalitetsdirektiv/faq-om-inforandet-av-det-nya-luftkvalitetsdirektivet-och-hur-kommunerna-paverkas-under-ar-2026/",
+      "lasanvisning": "Naturvårdsverket, skilj myndighetens förslag från beslutad svensk lydelse."
+    },
+    "GUIDE": {
+      "titel": "Luftguiden och vägledningar för luftkontroll",
+      "url": "https://www.naturvardsverket.se/vagledning-och-stod/luft-och-klimat/miljokvalitetsnormer-for-utomhusluft/vagledningsdokument-for-kontroll-av-miljokvalitetsnormerna-for-utomhusluft",
+      "lasanvisning": "Naturvårdsverket, stöd för tillämpning och kontroll av normerna."
+    },
+    "FRISK": {
+      "titel": "Preciseringar av Frisk luft",
+      "url": "https://www.sverigesmiljomal.se/miljomalen/frisk-luft/preciseringar-av-frisk-luft/",
+      "lasanvisning": "Sveriges miljömål, nationella miljökvalitetsmål."
+    },
+    "WHO": {
+      "titel": "Global Air Quality Guidelines 2021",
+      "url": "https://www.who.int/publications/b/59593",
+      "lasanvisning": "WHO, hälsobaserade rekommendationer."
+    },
+    "SLBK": {
+      "titel": "Luftföroreningskartor",
+      "url": "https://www.slb.nu/slbanalys/luftfororeningskartor/",
+      "lasanvisning": "SLB-analys, karta för Stockholms län med beräkningsår 2025."
+    },
+    "SLBM": {
+      "titel": "Luften i Stockholm år 2025",
+      "url": "https://www.slb.nu/slb/rapporter/pdf8/slb2026_018.pdf",
+      "lasanvisning": "SLB 18:2026, observationsdata och stationstabeller, bl.a. tabell 10–11."
+    },
+    "SLBP": {
+      "titel": "Liljeholmen – ny bebyggelse längs Södertäljevägen",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/radet-till-skydd-for-stockholms-skonhet/mote-2025-03-24/protocol/luftutredningpdf?downloadMode=open",
+      "lasanvisning": "SLB 27:2023, dnr 2018-13562, sammanfattning samt resultaten för gång- och cykelnätet."
+    },
+    "LPROG": {
+      "titel": "Åtgärdsprogram för kvävedioxid och partiklar i Stockholms län",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c37484e8/1732515595510/%C3%85tg%C3%A4rdsprogram%20f%C3%B6r%20kv%C3%A4veoxider%20och%20partiklar%20i%20Stockholms%20l%C3%A4n.pdf",
+      "lasanvisning": "Länsstyrelsen Stockholm, fastställt 2023."
+    },
+    "BREG": {
+      "titel": "Trafikbullerförordningen (2015:216)",
+      "url": "https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/forordning-2015216-om-trafikbuller-vid_sfs-2015-216/",
+      "lasanvisning": "Riksdagen, 1–8 §§, visad lydelse t.o.m. SFS 2025:981."
+    },
+    "BVAG": {
+      "titel": "Vägledning för hantering av omgivningsbuller vid bostadsbyggande i Stockholm",
+      "url": "https://start.stockholm/globalassets/start/om-stockholms-stad/sa-arbetar-staden/stadsbyggnad/vagledning-for-hantering-av-omgivningsbuller-vid-bostadsbyggande-i-stockholm.pdf",
+      "lasanvisning": "Stadsbyggnadskontoret och miljöförvaltningen, särskilt s. 17–27 och 41–50."
+    },
+    "BKART": {
+      "titel": "Stockholms bullerkarta, lager och metadata",
+      "url": "https://gis.miljo.stockholm.se/server/rest/services/MF/Bullerkartan_2022/MapServer",
+      "lasanvisning": "Miljöförvaltningen, Bullerkartan 2022, lager för olika kombinationer av källor och mått."
+    },
+    "BPROG": {
+      "titel": "Åtgärdsprogram för buller 2024–2028",
+      "url": "https://start.stockholm/globalassets/start/om-stockholms-stad/politik-och-demokrati/styrdokument/atgardsprogram-for-buller-20242028.pdf",
+      "lasanvisning": "Stockholms stad, kartläggning och åtgärder i befintlig miljö."
+    },
+    "NORD": {
+      "titel": "Nationell samordning av omgivningsbuller",
+      "url": "https://www.naturvardsverket.se/492ac2/contentassets/42a2605fb3664aacbb06207f5238b9cc/nord2000.pdf",
+      "lasanvisning": "Naturvårdsverket och övriga samverkande myndigheter, rekommendation för Nord2000."
+    },
+    "BSKOL": {
+      "titel": "Buller på skolgårdar",
+      "url": "https://www.naturvardsverket.se/vagledning-och-stod/buller/buller-pa-skolgardar",
+      "lasanvisning": "Naturvårdsverket, riktvärdestabell och avvägningar vid befintlig verksamhet."
+    },
+    "BIND": {
+      "titel": "BFS 2020:2 om industri- och verksamhetsbuller",
+      "url": "https://www.boverket.se/resources/constitutiontextstore/omb/PDF/konsoliderad_omb_bfs%202020-2.pdf",
+      "lasanvisning": "Boverket, allmänna råd, zoner och bedömning av ljudkaraktär."
+    },
+    "BBYGG": {
+      "titel": "NFS 2004:15 om buller från byggplatser",
+      "url": "https://www.naturvardsverket.se/lagar-och-regler/foreskrifter-och-allmanna-rad/2004/nfs-200415",
+      "lasanvisning": "Naturvårdsverket, byggskedet."
+    },
+    "BINNE": {
+      "titel": "BFS 2024:10 om skydd mot buller i byggnader",
+      "url": "https://rinfo.boverket.se/BFS2024-10/pdf/BFS2024-10.pdf",
+      "lasanvisning": "Boverket, byggnadens tekniska egenskaper."
+    },
+    "BCASE": {
+      "titel": "Trafikbullerutredning, Hemsamariten 1",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/radet-till-skydd-for-stockholms-skonhet/mote-2024-12-02/agenda/trafikbullerutredningpdf?downloadMode=open",
+      "lasanvisning": "Dnr 2020-12922, rapport B 2024-10-09, ritningsbilagor B01–B03."
+    },
+    "AGENDA": {
+      "titel": "Planhandlingar för Trafikflyget, Snöklockan och Storängsbotten",
+      "url": "https://meetingspublic.stockholm.se/committees/radet-till-skydd-for-stockholms-skonhet/mote-2026-03-30",
+      "lasanvisning": "Stockholms stad, 2026-03-30, ärenden 5–7. Hänvisningen gäller bilageförteckningen."
+    },
+    "LST": {
+      "titel": "Rekommendationer för hantering av översvämning till följd av skyfall",
+      "url": "https://ext-dokument.lansstyrelsen.se/Stockholm/Klimat_och_risk/Rekommendationer_f%C3%B6r_hantering_av_%C3%B6versv%C3%A4mning_till_f%C3%B6ljd_av_skyfall.pdf",
+      "lasanvisning": "Länsstyrelserna i Stockholm och Västra Götaland, Fakta 2018:5, de fyra rekommendationerna."
+    },
+    "STM": {
+      "titel": "Metod för skyfallskartering av tätorter",
+      "url": "https://www.mcf.se/sv/publikationer/metod-for-skyfallskartering-av-tatorter--vagledning/",
+      "lasanvisning": "MSB:s metodvägledning för beställare och utförare, publicerad hos Myndigheten för civilt försvar."
+    },
+    "SKART": {
+      "titel": "Trafikkontorets öppna data, uppdaterad skyfallsmodell",
+      "url": "https://openstreetgs.stockholm.se/home/News",
+      "lasanvisning": "Stockholms stad, meddelandet 2025-06-25 om sex kartlager."
+    },
+    "SCHK": {
+      "titel": "Checklistor och rapportmall för dagvattenutredningar",
+      "url": "https://www.stockholmvattenochavfall.se/dagvatten/vagledningar2/planering-och-stadsbyggnadsprocess/checklista/",
+      "lasanvisning": "Stockholm Vatten och Avfall, kvarter/allmän plats och samlad redovisning för detaljplanen."
+    },
+    "SCASE": {
+      "titel": "Dagvatten- och skyfallsutredning, Trafikflyget 4",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/radet-till-skydd-for-stockholms-skonhet/mote-2026-03-30/agenda/dagvatten-och-skyfallsutredningpdf?downloadMode=open",
+      "lasanvisning": "Dnr 2022-13745, granskningshandling 2025-11-11, särskilt avsnitt 8."
+    },
+    "SCASE2": {
+      "titel": "Dagvattenutredning Vanda 3, Akalla",
+      "url": "https://etjanster.stockholm.se/Byggochplantjansten/File/GetFileByFileRecNo?recNo=12365257&type=gplan",
+      "lasanvisning": "Dnr 2024-06843, slutrapport 2025-10-24, sammanfattning och skyfallsavsnitt."
+    },
+    "SPARK": {
+      "titel": "Handlingsplan för klimatanpassning 2022–2025",
+      "url": "https://start.stockholm/globalassets/start/om-stockholms-stad/politik-och-demokrati/styrdokument/handlingsplan-for-klimatanpassning-2022-2025_ta.pdf",
+      "lasanvisning": "Historiskt styrdokument, exempel på genomförda åtgärder i Rålambshovsparken."
+    },
+    "DF": {
+      "titel": "BFS 2024:8 om hygien, hälsa och miljö",
+      "url": "https://rinfo.boverket.se/BFS2024-8/pdf/BFS2024-8.pdf",
+      "lasanvisning": "Boverket, 4 kap. 1–3 §§ och 12–13 kap. vid ändring."
+    },
+    "DGUIDE": {
+      "titel": "Ljusförhållanden",
+      "url": "https://www.boverket.se/sv/PBL-kunskapsbanken/regler-om-byggande/hygien-halsa-och-miljo/ljusforhallanden/",
+      "lasanvisning": "Boverket, tillämpning av dagsljusfaktor, bedömd yta och utblick."
+    },
+    "DOLD": {
+      "titel": "Äldre BBR, avsnitt 6 om hygien, hälsa och miljö",
+      "url": "https://www.boverket.se/globalassets/publikationer/dokument/2026/boverkets-byggregler-bbr-avsnitt-6---hygien-halsa-och-miljo-vagledning-fran-pbl-kunskapsbanken-fore-1-december-2025.pdf",
+      "lasanvisning": "Boverkets arkiverade vägledning, 6:322 och 6:323."
+    },
+    "BYTE": {
+      "titel": "Övergång till Boverkets nya byggregler",
+      "url": "https://www.boverket.se/sv/om-boverket/nyheter-aktuellt/nyheter/nu-galler-boverkets-nya-byggregler",
+      "lasanvisning": "Boverket, publicerad 2026-07-01."
+    },
+    "AFS": {
+      "titel": "AFS 2023:12 om utformning av arbetsplatser",
+      "url": "https://www.av.se/globalassets/filer/publikationer/foreskrifter/utformning-av-arbetsplatser-afs2023-12.pdf",
+      "lasanvisning": "Arbetsmiljöverket, 5 kap. 25 § om dagsljus och utblick."
+    },
+    "SIS": {
+      "titel": "SS-EN 17037:2018+A1:2021, Dagsljus i byggnader",
+      "url": "https://www.sis.se/produkter/byggnadsprojektering/byggnadsutformning/SS-EN-170372018A120212/",
+      "lasanvisning": "SIS, öppet produktblad om standardens omfattning."
+    },
+    "DCASE": {
+      "titel": "Dagsljusutredning för nytt gårdshus, Snöklockan 4",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/radet-till-skydd-for-stockholms-skonhet/mote-2026-03-30/agenda/dagsljusutredningpdf?downloadMode=open",
+      "lasanvisning": "Dnr 2024-06792, inkomststämpel 2026-02-24, metod s. 2–3. Dokumentets egen datering avviker."
+    },
+    "DVSC": {
+      "titel": "Spöksonaten 1, dagsljus i stadsmiljöer och inomhus",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/radet-till-skydd-for-stockholms-skonhet/mote-2023-10-02/protocol/dagsljusutredningpdf?downloadMode=download",
+      "lasanvisning": "Stockholms stads planunderlag 2023, VSC med och utan balkonger samt rumsstudie."
+    },
+    "FUTH": {
+      "titel": "Futharken 2 m.fl., skola i Norra Ängby",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/radet-till-skydd-for-stockholms-skonhet/mote-2020-12-07/agenda/planbeskrivningpdf-56508?downloadMode=open",
+      "lasanvisning": "Dnr 2018-09176, samrådshandling 2020-11-10, s. 47–48."
+    },
+    "LEK": {
+      "titel": "Lekvärdesriktlinjer för Stockholms stad",
+      "url": "https://start.stockholm/globalassets/start/om-stockholms-stad/politik-och-demokrati/styrdokument/lekvardesriktlinjer-for-stockholms-stad.pdf",
+      "lasanvisning": "Stockholms stad, del 3, steg 2, kategori 6 Lokalklimat."
+    },
+    "LEKT": {
+      "titel": "Utformning av förskole- och skolgårdar",
+      "url": "https://leverantor.stockholm/entreprenad-i-stockholms-offentliga-miljoer/utformning-av-forskole--och-skolgardar/",
+      "lasanvisning": "Stockholms stad, tillämpning för kommunala och privata verksamheter."
+    },
+    "FRI": {
+      "titel": "Friyta för lek och utevistelse",
+      "url": "https://www.boverket.se/sv/PBL-kunskapsbanken/regler-om-byggande/krav-pa-byggnadsverk-tomter-mm/krav-pa-tomter/friyta-for-lek-och-utevistelse-for-forskolor-och-skolor/",
+      "lasanvisning": "Boverket, placering, vegetation samt sol och skugga."
+    },
+    "SOLKL": {
+      "titel": "Solklart",
+      "url": "https://www.boverket.se/contentassets/1f125c4642bf4588b157a606bc426b17/solklart.pdf",
+      "lasanvisning": "Boverket, äldre skrift med tumregel för boendemiljöns solighet."
+    },
+    "DOM": {
+      "titel": "Mark- och miljööverdomstolen, P 1187-21",
+      "url": "https://www.domstol.se/mark--och-miljooverdomstolen/mark--och-miljooverdomstolens-avgoranden/2022/108768/",
+      "lasanvisning": "Dom 2022-02-23 om omgivningspåverkan av ny bebyggelse."
+    },
+    "HUM": {
+      "titel": "Humlegårdsmästaren 4 och 5, handlingar",
+      "url": "https://meetingspublic.stockholm.se/committees/skonhetsradets-delegerade-i-plan-och-bygglovsarenden-naturvardsarenden-samt-kulturvardsarenden/mote-2021-08-16",
+      "lasanvisning": "Dnr 2020-03314, ärende 4 den 2021-08-16, förstudier för befintlig och ny byggnad samt solstudie."
+    },
+    "SOLBYTE": {
+      "titel": "Konsekvensutredning till BFS 2024:8",
+      "url": "https://rinfo.boverket.se/BFS2024-8/dok/BFS2024-8_Konsekvensutredning.pdf",
+      "lasanvisning": "Boverket, motiv till att det tidigare kravet på direkt solljus utgått."
+    },
+    "SPA": {
+      "titel": "Solar Position Algorithm",
+      "url": "https://midcdmz.nlr.gov/spa/",
+      "lasanvisning": "Nationellt forskningslaboratorium, referens för solhöjd och azimut vid given plats och tid."
+    },
+    "KCB": {
+      "titel": "Kunskapscentrum om buller, uppdateringar för Nord2000",
+      "url": "https://www.kunskapscentrumbuller.se/",
+      "lasanvisning": "Uppdateringen 2026-03-16 beskriver bland annat vägars emissionslinjer och reflekterande skärm vid järnväg."
+    },
+    "SVOA": {
+      "titel": "Översvämningsrisker vid planering",
+      "url": "https://www.stockholmvattenochavfall.se/dagvatten/vagledningar2/planera/oversvamningsrisker/",
+      "lasanvisning": "Stockholm Vatten och Avfall, tre lokala principer under Stockholms skyfallsmodell."
+    },
+    "LROLL": {
+      "titel": "Länsstyrelsens samråd, granskning och tillsyn av detaljplaner",
+      "url": "https://www.lansstyrelsen.se/stockholm/samhalle/planera-bygga-och-bo/fysisk-planering/samrad-granskning-och-tillsyn-av-detaljplaner.html",
+      "lasanvisning": "Länsstyrelsen Stockholm, processvägledning, särskilt steg 2–4 och planeringsbesked."
+    },
+    "LOP": {
+      "titel": "Statliga och mellankommunala intressen av betydelse för kommunernas planering",
+      "url": "https://www.lansstyrelsen.se/download/18.1f88a453195adb731b152456/1781675676665/R2024-14-Planeringsunderlag%20f%C3%B6r%20%C3%B6versiktsplanering.pdf",
+      "lasanvisning": "Länsstyrelsen Stockholm, rapport 2024:14, version 23 april 2026. Se avsnitten om MKN för luft samt hälsa och säkerhet."
+    },
+    "LLUFT": {
+      "titel": "Miljökvalitetsnormer för luft – en vägledning för detaljplaneläggning",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c3749455/1732517252808/Milj%C3%B6kvalitetsnormer%20f%C3%B6r%20luft%20-%20en%20v%C3%A4gledning%20f%C3%B6r%20detaljplanel%C3%A4ggning%20med%20h%C3%A4nsyn%20till%20luftkvalitet.pdf",
+      "lasanvisning": "Länsstyrelsen Stockholm, 24 mars 2005. Läs avsnittet om planer där MKN särskilt bör uppmärksammas som historiskt metodstöd."
+    },
+    "LRATT": {
+      "titel": "Miljökvalitetsnormer om luft i planering och rättstillämpning",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c3748c8b/1732516468180/Milj%C3%B6kvalitetsnormer%20om%20luft%20i%20planering%20och%20r%C3%A4ttstill%C3%A4mpning.pdf",
+      "lasanvisning": "Länsstyrelserna i Skåne, Stockholm och Västra Götaland, Stockholms rapport 2013:12. Genomgång av planfall och dåvarande rättspraxis."
+    },
+    "LBULL": {
+      "titel": "Trafikbuller i bostadsplanering",
+      "url": "https://www.lansstyrelsen.se/stockholm/om-oss/vara-tjanster/publikationer/2007/trafikbuller-i-bostadsplanering---en-vagledning-for-detaljplanelaggning-med-hansyn-till-trafikbuller.html",
+      "lasanvisning": "Länsstyrelsen Stockholm, 2007. Historisk vägledning för detaljplaneläggning med hänsyn till trafikbuller."
+    },
+    "TRVB": {
+      "titel": "Buller och vibrationer i samhällsplaneringen",
+      "url": "https://bransch.trafikverket.se/for-dig-i-branschen/Planera-och-utreda/samhallsplanering/Miljo-halsa-och-landskap/buller-och-infrastruktur-i-samhallsplaneringen/",
+      "lasanvisning": "Trafikverket, särskilt avsnittet Buller- och vibrationsutredningar. Gäller påverkan från statlig infrastruktur."
+    },
+    "RIB": {
+      "titel": "RiBuller, Riktlinjer buller och vibrationer",
+      "url": "https://www.bullernatverket.se/4a2617/siteassets/dokument/strategidok_trafikf/riktlinjer-buller-och-vibrationersl-s-419701-13.pdf",
+      "lasanvisning": "Region Stockholm, trafikförvaltningen, SL-S-419701, rev. 13 fastställd 2024-05-28. Kap. 3–4, originaldokument via Bullernätverket."
+    },
+    "LSSTR": {
+      "titel": "Strukturplan för hantering av skyfallsrisker – kunskapsstöd",
+      "url": "https://www.lansstyrelsen.se/download/18.4c443e4619540d2095a1fc77/1741007331827/R2025-08-Strukturplan%20f%C3%B6r%20skyfall%20-%20Kunskapsst%C3%B6d.pdf",
+      "lasanvisning": "Länsstyrelsen Stockholm, rapport 2025:8. Läs beskrivningen av åtgärdstyper och tillämpningen i detaljplan."
+    },
+    "SSBF": {
+      "titel": "Utrymning med hjälp av räddningstjänsten",
+      "url": "https://www.storstockholm.brand.se/globalassets/dokument/vagledningsdokument-och-foreskrifter/2025/vl2014-09_utrymning-med-hjalp-av-raddningstjansten_250704_3.pdf",
+      "lasanvisning": "Storstockholms brandförsvar, VL2014-09, dnr 2340/2025, utgåvan publicerad för tillämpning från 2025-07-01. Se avsnitt 5 om räddningsvägar."
+    },
+    "MFSK": {
+      "titel": "Vägledning för inomhus- och utomhusmiljö vid förskola, skola och fritidshem",
+      "url": "https://tillstand.stockholm/tillstand-regler-och-tillsyn/lokal-och-fastigheter/forskola-skola-och-fritidshem/vagledning-for-inomhus-och-utomhusmiljo/",
+      "lasanvisning": "Stockholms stad, miljöförvaltningens vägledning till fastighetsägare och verksamhetsutövare. Se rubrikerna Dagsljus i lokalerna, Trafikbuller och Luftföroreningar."
+    },
+    "SSM": {
+      "titel": "Solskyddsfaktorer – sju tips för säkrare lekplatser och friskare barn",
+      "url": "https://www.stralsakerhetsmyndigheten.se/publikationer/informationsmaterial/solskyddsfaktorer--sju-tips-for-sakrare-lekplatser-och-friskare-barn/",
+      "lasanvisning": "Strålsäkerhetsmyndigheten och länsstyrelserna, planeringsstöd om UV-skydd vid barns utevistelse."
+    },
+    "LVARM": {
+      "titel": "Värmekartläggning av Stockholms län",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c37487c2/1732515935334/V%C3%A4rmekartl%C3%A4ggning%20av%20Stockholms%20l%C3%A4n.pdf",
+      "lasanvisning": "Länsstyrelsen Stockholm, satellitbaserat faktaunderlag. Se avsnittet om mätning av yttemperatur."
+    },
+    "LKLIM": {
+      "titel": "Checklista för klimatanpassning i fysisk planering",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c37497f0/1732517890214/Checklista%20f%C3%B6r%20klimatanpassning%20i%20fysisk%20planering.pdf",
+      "lasanvisning": "Länsstyrelserna, 2016:7 i Stockholms faktaserie. Planprocessens skeden och avsnitt om högre temperaturer och skyfall."
+    },
+    "CIK": {
+      "titel": "Kv Cikadan, trafikbullerutredning",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/skonhetsradets-delegerade-i-plan-och-bygglovsarenden-naturvardsarenden-samt-kulturvardsarenden/mote-2022-01-24/protocol/bullerutredningpdf-49472?downloadMode=download",
+      "lasanvisning": "Rapport 20205-1-B, revision B 2021-11-15. Se s. 7–10 om väg- och spårtrafik, resultat och utlåtande."
+    },
+    "SVMALL": {
+      "titel": "Rapportmall för dagvattenutredning för detaljplan",
+      "url": "https://www.stockholmvattenochavfall.se/globalassets/dagvatten/pdf/dagvattenutredning---rapportmall.pdf",
+      "lasanvisning": "Stockholms stad, version 2025-05-19, publicerad hos Stockholm Vatten och Avfall. Se sammanfattningen, kap. 12 och steg 2."
+    },
+    "SVLIST": {
+      "titel": "Checklista till dagvattenutredningar för detaljplan",
+      "url": "https://www.stockholmvattenochavfall.se/globalassets/dagvatten/pdf/dagvattenutredning---checklista.pdf",
+      "lasanvisning": "Stockholm Vatten och Avfall, checklistan som hör till rapportmallen. Läs tillsammans med rätt mallversion."
+    },
+    "MODLJ": {
+      "titel": "Mark- och miljööverdomstolens dom i mål P 7105-22",
+      "url": "https://www.domstol.se/globalassets/filer/domstol/markochmiljooverdomstolen/avgoranden/2023/p-7105-22-dom-2023-10-25.pdf",
+      "lasanvisning": "Dom 2023-10-25, domskälen s. 16–17 om grannpåverkan, dagsljus före och efter samt skuggning."
+    },
+    "LOVSOL": {
+      "titel": "Lövholmen, sol- och skuggstudie",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/sodermalms-stadsdelsnamnd/mote-2023-10-19/agenda/sol-och-skuggstudie-lovholmenpdf?downloadMode=open",
+      "lasanvisning": "Dnr 2017-13571, daterad 2023-08-29. Jämför tidsbestämda skuggbilder med tidskartorna och tolkningen av gårdar och kaj på s. 9."
+    }
+  },
+  "fragor": [
+    {
+      "id": "LU-01",
+      "omrade": "luft",
+      "typ": "Lag/norm",
+      "villkor": "Alla planer",
+      "fraga": "Vilka miljökvalitetsnormer behöver prövas här?",
+      "redovisning": "Lista ämne, normtyp, lagrum, beslutsdatum och platsens användning. Motivera bortvalda ämnen.",
+      "kallor": [
+        "PBL",
+        "MKN",
+        "GUIDE"
+      ]
+    },
+    {
+      "id": "LU-02",
+      "omrade": "luft",
+      "typ": "Metod",
+      "villkor": "Första bedömning",
+      "fraga": "Vad visar närmaste representativa station och rätt kartlager?",
+      "redovisning": "Ange gatustation eller bakgrund, observationsår, datatäckning, normalår, upplösning och skillnad mot projektets gaturum.",
+      "kallor": [
+        "SLBM",
+        "SLBK"
+      ]
+    },
+    {
+      "id": "LU-03",
+      "omrade": "luft",
+      "typ": "Metod",
+      "villkor": "Förändrad stadsstruktur",
+      "fraga": "Vilken effekt har själva planen vid samma prognosår?",
+      "redovisning": "Ge nuläge, framtid utan plan och med plan jämförbara trafik- och bakgrundsantaganden. Lista avsiktliga skillnader.",
+      "kallor": [
+        "SLBP"
+      ]
+    },
+    {
+      "id": "LU-04",
+      "omrade": "luft",
+      "typ": "Metod",
+      "villkor": "Trafik eller annan lokal källa",
+      "fraga": "Vilka utsläpp driver dygnstoppar respektive årsmedel?",
+      "redovisning": "Redovisa trafik per länk, fordonsmix, hastighet, emissionsfaktorer, avgaser, slitage och uppvirvling. Ange källa till dubbdäcksandel och vinterdrift.",
+      "kallor": [
+        "SLBP",
+        "SLBM"
+      ]
+    },
+    {
+      "id": "LU-05",
+      "omrade": "luft",
+      "typ": "Metod",
+      "villkor": "Modellberäkning",
+      "fraga": "Hur har spridning och bakgrund beskrivits?",
+      "redovisning": "Ange modell/version, meteorologisk period, vind, gaturummets bredd/höjd, emissionsår och regional/urban bakgrund. Visa hur dubbelräkning undviks.",
+      "kallor": [
+        "SLBP",
+        "SLBK"
+      ]
+    },
+    {
+      "id": "LU-06",
+      "omrade": "luft",
+      "typ": "Metod",
+      "villkor": "Korsning, tunnelmynning eller slutet kvarter",
+      "fraga": "Kan den valda modellen beskriva geometrin och vindfältet?",
+      "redovisning": "Visa sektion och beräkningsdomän. Motivera gaturumsmodell, lokal 3D-studie eller kompletterande mätning för frågan.",
+      "kallor": [
+        "SLBP",
+        "GUIDE"
+      ]
+    },
+    {
+      "id": "LU-07",
+      "omrade": "luft",
+      "typ": "Lag/norm",
+      "villkor": "Platser för exponering",
+      "fraga": "Var ska respektive norm utvärderas?",
+      "redovisning": "Karta med trottoarer, korsningar, gårdar och vistelseytor. Motivera receptorer, höjder och undantagna ytor. Ange luftintag separat.",
+      "kallor": [
+        "GUIDE",
+        "MKN",
+        "SLBP"
+      ]
+    },
+    {
+      "id": "LU-08",
+      "omrade": "luft",
+      "typ": "Lag/norm",
+      "villkor": "Korttidsnorm",
+      "fraga": "Finns rätt tidsstatistik för varje jämförelse?",
+      "redovisning": "Ge antalet dygn/timmar över nivån eller relevant ordningsvärde med dokumenterad härledning. Redovisa båda timvillkoren för svensk NO₂.",
+      "kallor": [
+        "MKN",
+        "EU"
+      ]
+    },
+    {
+      "id": "LU-09",
+      "omrade": "luft",
+      "typ": "Vägledning",
+      "villkor": "Barn och annan känslig användning",
+      "fraga": "Hur förhåller sig exponeringen till miljö- och hälsomålen?",
+      "redovisning": "Visa normbedömning och målbedömning i egna kolumner, samt alternativa placeringar av lek eller vistelse.",
+      "kallor": [
+        "FRISK",
+        "WHO",
+        "MILJO"
+      ]
+    },
+    {
+      "id": "LU-10",
+      "omrade": "luft",
+      "typ": "Metod",
+      "villkor": "Prognos eller liten marginal",
+      "fraga": "Kan osäkerheten ändra slutsatsen?",
+      "redovisning": "Jämför modell och representativa observationer. Variera trafik, flottans utsläpp, dubbdäck eller bakgrund. Spara spann och geografiska förändringar.",
+      "kallor": [
+        "SLBP",
+        "SLBM"
+      ]
+    },
+    {
+      "id": "LU-11",
+      "omrade": "luft",
+      "typ": "Projektkontroll",
+      "villkor": "Åtgärd föreslås",
+      "fraga": "Vilken åtgärd förbättrar luften just där människor vistas?",
+      "redovisning": "Jämför ändrad trafik, gatugeometri, placering av vistelseyta eller drift. Redovisa effekt vid samma mottagare och risk för förskjuten exponering.",
+      "kallor": [
+        "SLBP",
+        "LPROG"
+      ]
+    },
+    {
+      "id": "LU-12",
+      "omrade": "luft",
+      "typ": "Projektkontroll",
+      "villkor": "Bygg- och driftfas",
+      "fraga": "Kräver byggdamm eller arbetsmaskiner en egen bedömning?",
+      "redovisning": "Lista arbetsmoment, transportvägar, känsliga mottagare, skyddsåtgärder och vem som följer upp. Håll byggperiodens datum synliga.",
+      "kallor": [
+        "MKN",
+        "GUIDE"
+      ]
+    },
+    {
+      "id": "LU-13",
+      "omrade": "luft",
+      "typ": "Vägledning",
+      "villkor": "Tidig planbedömning",
+      "fraga": "Kan planen träffa någon av länsstyrelsens fem situationer för fördjupad luftbedömning?",
+      "redovisning": "Markera ändrad utluftning, trafikalstring, känslig användning i belastat läge, vägplanering eller miljöprövningspliktig verksamhet. Dokumentera motiv och vald aktuell norm.",
+      "kallor": [
+        "LLUFT",
+        "LRATT",
+        "LOP"
+      ]
+    },
+    {
+      "id": "LU-14",
+      "omrade": "luft",
+      "typ": "Kommunal riktlinje",
+      "villkor": "Planerad skol- eller förskolegård",
+      "fraga": "Hur visas normerna där barn kommer att vistas och vad kan ytterligare minska exponeringen?",
+      "redovisning": "Visa gårdsgräns och vistelseytor, halter per tidsmått och möjliga placeringar. Redovisa källår för kartläggning och skilj mål om låg halt från bindande norm.",
+      "kallor": [
+        "MFSK",
+        "SLBK",
+        "MKN"
+      ]
+    },
+    {
+      "id": "LU-15",
+      "omrade": "luft",
+      "typ": "Projektkontroll",
+      "villkor": "Årsrapport och planprognos används tillsammans",
+      "fraga": "Kan läsaren följa vilken figur som belägger påståendet om den framtida platsen?",
+      "redovisning": "Knyt varje slutsats till station eller beräknad mottagare, tidsmått och år. Ange vilken figur i planutredningen som visar det mest utsatta läget på gång- eller cykelstråket.",
+      "kallor": [
+        "SLBP",
+        "SLBM"
+      ]
+    },
+    {
+      "id": "BU-01",
+      "omrade": "buller",
+      "typ": "Lag",
+      "villkor": "Bostadsplan",
+      "fraga": "Behöver planbeskrivningen redovisa beräknade bullervärden?",
+      "redovisning": "Koppla fasader och planerade uteplatser till PBL 4 kap. 33 a §. Spara skälen om redovisning bedöms obehövlig.",
+      "kallor": [
+        "PBL"
+      ]
+    },
+    {
+      "id": "BU-02",
+      "omrade": "buller",
+      "typ": "Metod",
+      "villkor": "Alla ärenden",
+      "fraga": "Vilka källor och verksamhetstider påverkar platsen?",
+      "redovisning": "Karta över väg, spår, flyg, lastning, fläktar och byggskede. Registrera respektive bedömningsgrund och period.",
+      "kallor": [
+        "BREG",
+        "BIND",
+        "BBYGG"
+      ]
+    },
+    {
+      "id": "BU-03",
+      "omrade": "buller",
+      "typ": "Metod",
+      "villkor": "Väg eller spår",
+      "fraga": "Vilket trafikunderlag och vilken beräkningsmetod används?",
+      "redovisning": "Ange prognosår, årsmedeldygnstrafik, tung trafik, hastighet, nattfördelning samt tågtyp, längd, antal och hastighet per spår. Spara metod/version.",
+      "kallor": [
+        "NORD",
+        "BREG",
+        "KCB"
+      ]
+    },
+    {
+      "id": "BU-04",
+      "omrade": "buller",
+      "typ": "Metod",
+      "villkor": "Utbredningsberäkning",
+      "fraga": "Vilka objekt skärmar eller reflekterar ljud?",
+      "redovisning": "Markegenskaper, terräng, spårlägen, skärmkrön, fasader och byggnadsvolymer per etapp. Dokumentera väderantaganden och reflexordning.",
+      "kallor": [
+        "BVAG",
+        "NORD"
+      ]
+    },
+    {
+      "id": "BU-05",
+      "omrade": "buller",
+      "typ": "Riktvärde",
+      "villkor": "Bostäder vid väg/spår",
+      "fraga": "Vilka fasader och våningsplan kräver bulleranpassning?",
+      "redovisning": "Frifältsvärden vid exponerad och skyddad sida med våning, bostads-ID och bostadsarea. Kontrollera gränsen för små bostäder.",
+      "kallor": [
+        "BREG",
+        "BVAG"
+      ]
+    },
+    {
+      "id": "BU-06",
+      "omrade": "buller",
+      "typ": "Riktvärde",
+      "villkor": "Ljuddämpad sida åberopas",
+      "fraga": "Når rätt antal bostadsrum den skyddade sidan?",
+      "redovisning": "Planritning per berörd bostad. Räkna bostadsrum, länka fönster till mottagarpunkt och jämför både dygnsekvivalent och nattlig maximalnivå.",
+      "kallor": [
+        "BREG",
+        "BVAG"
+      ]
+    },
+    {
+      "id": "BU-07",
+      "omrade": "buller",
+      "typ": "Riktvärde",
+      "villkor": "Uteplats anordnas",
+      "fraga": "Vilka boende har tillgång till en uteplats som klarar bedömningen?",
+      "redovisning": "Avgränsa användbar yta och redovisa ekvivalentnivå, maximalnivå samt relevanta händelser per timme. Visa eventuell gemensam lösning.",
+      "kallor": [
+        "BREG",
+        "BCASE"
+      ]
+    },
+    {
+      "id": "BU-08",
+      "omrade": "buller",
+      "typ": "Vägledning",
+      "villkor": "Förskola eller skola",
+      "fraga": "Hur stor del av den faktiska vistelseytan har god ljudmiljö?",
+      "redovisning": "Kartlägg lek, vila och pedagogik. Beräkna delytor i m² och andelar vid respektive nivå. Ange om gården är ny eller befintlig.",
+      "kallor": [
+        "BSKOL"
+      ]
+    },
+    {
+      "id": "BU-09",
+      "omrade": "buller",
+      "typ": "Riktvärde",
+      "villkor": "Flyg påverkar",
+      "fraga": "Vilken flygplats, tidsperiod och vilket mått gäller?",
+      "redovisning": "Särredovisa FBN och maximal flygnivå. Dokumentera dagundantagets geografiska villkor och nattens händelser.",
+      "kallor": [
+        "BREG"
+      ]
+    },
+    {
+      "id": "BU-10",
+      "omrade": "buller",
+      "typ": "Vägledning",
+      "villkor": "Verksamhetsljud eller byggskede",
+      "fraga": "Vilka driftfall kan ge störning även då trafikvärdena klaras?",
+      "redovisning": "Redovisa buller per källa och period, ljudkaraktär, skydd, etapp och driftsvillkor. Flagga behov av separat vibrations- eller stomljudsstudie.",
+      "kallor": [
+        "BIND",
+        "BBYGG",
+        "AGENDA"
+      ]
+    },
+    {
+      "id": "BU-11",
+      "omrade": "buller",
+      "typ": "Projektkontroll",
+      "villkor": "Åtgärd eller etappvis utbyggnad",
+      "fraga": "Fungerar bostaden innan den skärmande byggnaden är uppförd?",
+      "redovisning": "Beräkna berörd etapp med och utan skärm. Ange nödvändig höjd, placering, tidpunkt, rådighet och vilka ritningar som låser lösningen.",
+      "kallor": [
+        "BVAG"
+      ]
+    },
+    {
+      "id": "BU-12",
+      "omrade": "buller",
+      "typ": "Projektkontroll",
+      "villkor": "Överlämning",
+      "fraga": "Kan varje fasadvärde återfinnas i kartan och planhandlingen?",
+      "redovisning": "Leverera mottagartabell, våningsvisa fasadbilder och uteplatskarta med mått, höjd, enhet och skala. Överlämna fasadbelastning till projektering av inomhusmiljön.",
+      "kallor": [
+        "PBL",
+        "BVAG",
+        "BINNE"
+      ]
+    },
+    {
+      "id": "BU-13",
+      "omrade": "buller",
+      "typ": "Vägledning",
+      "villkor": "Statlig väg eller järnväg påverkar och överskridande befaras",
+      "fraga": "Innehåller underlaget det som Trafikverket anger att det begär vid remiss?",
+      "redovisning": "Redovisa källvis och samlad bedömning av buller och vibrationer, framtida trafikmängd och hastighet samt planerade ändringar i infrastrukturen. Spåra resultaten till planbeskrivningen.",
+      "kallor": [
+        "TRVB",
+        "LOP"
+      ]
+    },
+    {
+      "id": "BU-14",
+      "omrade": "buller",
+      "typ": "Verksamhetsriktlinje",
+      "villkor": "Regionens spåranläggning eller depå berörs",
+      "fraga": "Vilket avsnitt i trafikförvaltningens riktlinjer hör till den berörda anläggningen?",
+      "redovisning": "Ange anläggningshållare, källtyp, luftburet ljud, stomljud eller vibrationer, relevant RiBuller-revision och överenskommen ansvarsfördelning. Pröva bostädernas krav separat.",
+      "kallor": [
+        "RIB",
+        "BREG"
+      ]
+    },
+    {
+      "id": "BU-15",
+      "omrade": "buller",
+      "typ": "Projektkontroll",
+      "villkor": "Trafikprognoser från flera anläggningshållare",
+      "fraga": "Vilket prognosår används för varje bullerkälla i samma beräkningsfall?",
+      "redovisning": "Visa källa, år, mängd och eventuella omräkningar per trafikslag. Länka från det samlade fasad- eller uteplatsresultatet till de ingående prognoserna.",
+      "kallor": [
+        "CIK",
+        "TRVB"
+      ]
+    },
+    {
+      "id": "SK-01",
+      "omrade": "skyfall",
+      "typ": "Lag",
+      "villkor": "Planläggning",
+      "fraga": "Vilken översvämningsrisk avgör markens lämplighet?",
+      "redovisning": "Karta över markanvändning, känsliga byggnader, entréer och riskkällor. Dokumentera relevant regn, andra vattenkällor och avgränsning.",
+      "kallor": [
+        "PBL",
+        "LST"
+      ]
+    },
+    {
+      "id": "SK-02",
+      "omrade": "skyfall",
+      "typ": "Vägledning",
+      "villkor": "Ny bebyggelse",
+      "fraga": "Vilket dimensionerande regn och vilken säkerhetsnivå krävs här?",
+      "redovisning": "Spara hyetograf, återkomsttid, varaktighet, klimatfaktor, horisont och källa. Motivera eventuellt extra scenario för samhällsviktig verksamhet.",
+      "kallor": [
+        "LST",
+        "STM"
+      ]
+    },
+    {
+      "id": "SK-03",
+      "omrade": "skyfall",
+      "typ": "Metod",
+      "villkor": "Alla områden",
+      "fraga": "Varifrån kommer vattnet och vart fortsätter det efter plangränsen?",
+      "redovisning": "Avgränsa hela relevanta tillrinningsområdet, in- och utflöden samt nedströms mottagare. Markera beräkningsdomän och randvillkor.",
+      "kallor": [
+        "STM",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "SK-04",
+      "omrade": "skyfall",
+      "typ": "Metod",
+      "villkor": "Förändrad mark",
+      "fraga": "Vilka höjder och öppningar styr vattenvägen?",
+      "redovisning": "Versionerad terräng, vägbank, port, trumma, kantsten, mur, gård och entrétröskel. Ange RH 2000, mätkälla och objekt som behöver kontrolleras på plats.",
+      "kallor": [
+        "SCASE",
+        "STM"
+      ]
+    },
+    {
+      "id": "SK-05",
+      "omrade": "skyfall",
+      "typ": "Metod",
+      "villkor": "Alla simuleringar",
+      "fraga": "Hur representeras förluster, nät och initialtillstånd?",
+      "redovisning": "Lista markslag, infiltration, råhet, markfukt, avledning, igensättning och eventuell upptryckning. Motivera separat nätmodell eller schablon samt undvik dubbla avdrag.",
+      "kallor": [
+        "STM",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "SK-06",
+      "omrade": "skyfall",
+      "typ": "Metod",
+      "villkor": "Planförslag",
+      "fraga": "Vilken skillnad beror på exploateringen?",
+      "redovisning": "Kör befintligt, planerat och planerat med åtgärd med samma regn, domän och jämförbara villkor. Spara terrängändring och visa differenskarta.",
+      "kallor": [
+        "LST",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "SK-07",
+      "omrade": "skyfall",
+      "typ": "Vägledning",
+      "villkor": "Nya flödesvägar eller bortbyggt magasin",
+      "fraga": "Ökar skaderisken för en granne eller nedströms funktion?",
+      "redovisning": "Jämför lagringsvolym och bräddnivå samt flöde, djup och varaktighet vid identifierade mottagare. Följ vattnet tills förändringen kan bedömas.",
+      "kallor": [
+        "LST",
+        "SCASE2",
+        "SVOA"
+      ]
+    },
+    {
+      "id": "SK-08",
+      "omrade": "skyfall",
+      "typ": "Vägledning",
+      "villkor": "Angöring och samhällsviktig verksamhet",
+      "fraga": "När begränsas tillträde, och finns en fungerande alternativ väg?",
+      "redovisning": "Visa djup och vid behov hastighet över tid längs sammanhängande rutt till entré. Ange fordonstyp, beslutad tolerans och kritisk passage.",
+      "kallor": [
+        "LST",
+        "SCASE2"
+      ]
+    },
+    {
+      "id": "SK-09",
+      "omrade": "skyfall",
+      "typ": "Projektkontroll",
+      "villkor": "Skyddsåtgärd behövs",
+      "fraga": "Vem kan genomföra och underhålla lösningen?",
+      "redovisning": "Måttsatt höjdsättning, volym, inlopp, bräddväg, markåtkomst, genomförandeetapp och driftansvar. Redovisa vad som behöver säkras före byggstart.",
+      "kallor": [
+        "LST",
+        "SPARK"
+      ]
+    },
+    {
+      "id": "SK-10",
+      "omrade": "skyfall",
+      "typ": "Projektkontroll",
+      "villkor": "Förenklad modell eller osäkra data",
+      "fraga": "Vilka slutsatser ändras med ändrad terräng, regn eller avledning?",
+      "redovisning": "Variera dominerande osäkerhet, kontrollera massbalans och upplösning, jämför mot oberoende underlag och ange begränsningar per mottagare.",
+      "kallor": [
+        "STM",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "SK-11",
+      "omrade": "skyfall",
+      "typ": "Projektkontroll",
+      "villkor": "Kombinerad dagvattenutredning",
+      "fraga": "Är vanlig dagvattenhantering och extremregn båda redovisade?",
+      "redovisning": "Knyt volym och rening till rätt dagvattenkrav. Redovisa ytlig avledning och skada vid skyfall separat och summera effekterna på plannivå.",
+      "kallor": [
+        "SCHK",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "SK-12",
+      "omrade": "skyfall",
+      "typ": "Projektkontroll",
+      "villkor": "Karta och export",
+      "fraga": "Kan en läsare följa vattennivån från karta till kritisk sektion?",
+      "redovisning": "Visa maxdjup i meter, vattenyta i RH 2000 och tidserie där förloppet styr. Ange torra celler, saknade data, modellversion och villkorade slutsatser.",
+      "kallor": [
+        "STM",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "SK-13",
+      "omrade": "skyfall",
+      "typ": "Vägledning",
+      "villkor": "Åtgärd utanför planområdet eller över kommungräns",
+      "fraga": "Fungerar skyfallsåtgärden i hela avrinningsområdet och innan samtliga etapper byggts?",
+      "redovisning": "Koppla lokala sektioner till strukturplanens stråk och ytor. Ange rådighet, etapp, kvarstående risk och följden om den externa åtgärden uteblir.",
+      "kallor": [
+        "LSSTR",
+        "LST",
+        "LROLL"
+      ]
+    },
+    {
+      "id": "SK-14",
+      "omrade": "skyfall",
+      "typ": "Vägledning",
+      "villkor": "Räddningsväg och uppställning påverkas",
+      "fraga": "Kan både vägen fram och den avsedda insatsplatsen användas vid relevant tid?",
+      "redovisning": "Redovisa geometrisk åtkomst enligt relevant brandunderlag och separat hydrauliskt underlag. Ange källa till fordonsgränsen eller markera att den behöver fastställas.",
+      "kallor": [
+        "SSBF",
+        "LST"
+      ]
+    },
+    {
+      "id": "SK-15",
+      "omrade": "skyfall",
+      "typ": "Projektkontroll",
+      "villkor": "Dagvatten och skyfall redovisas i flera utredningar",
+      "fraga": "Var blir delområdenas resultat en bedömning av hela planområdet?",
+      "redovisning": "Ange delområde, allmän plats eller kvartersmark, dokumentversion och ansvarig för sammanvägningen. Hänvisa till de avsnitt som visar nedströms påverkan och framkomlighet genom hela området.",
+      "kallor": [
+        "SVMALL",
+        "SVLIST",
+        "SCASE"
+      ]
+    },
+    {
+      "id": "DL-01",
+      "omrade": "dagsljus",
+      "typ": "Föreskrift",
+      "villkor": "Teknisk prövning",
+      "fraga": "Vilken regelversion och vilken byggåtgärd gäller?",
+      "redovisning": "Ange nybyggnad, ändring, ändrad användning eller grannpåverkan samt datum och dokumenterat regelval. Håll äldre och nyare metodutfall isär.",
+      "kallor": [
+        "DF",
+        "DOLD",
+        "BYTE"
+      ]
+    },
+    {
+      "id": "DL-02",
+      "omrade": "dagsljus",
+      "typ": "Projektkontroll",
+      "villkor": "Tidig plan",
+      "fraga": "Vilka fasader, våningar och grannar har störst avskärmning?",
+      "redovisning": "Visa himmelskomponent vid fasad, sektioner och kritiska fönster före/efter. Motivera urvalet för rumsstudien.",
+      "kallor": [
+        "DVSC",
+        "DCASE"
+      ]
+    },
+    {
+      "id": "DL-03",
+      "omrade": "dagsljus",
+      "typ": "Metod",
+      "villkor": "Rumsberäkning",
+      "fraga": "Har modellen rätt geometri och material?",
+      "redovisning": "Redovisa fönstrets fria glasarea, karm, smyg, glasets ljustransmittans, balkong, rumsdjup, tak- och väggreflektans samt omgivande fasader och mark.",
+      "kallor": [
+        "DCASE",
+        "DGUIDE"
+      ]
+    },
+    {
+      "id": "DL-04",
+      "omrade": "dagsljus",
+      "typ": "Metod",
+      "villkor": "Dagsljusfaktor",
+      "fraga": "Hur bestäms provpunkternas värde och representerade area?",
+      "redovisning": "Dokumentera himmelsmodell, referens utomhus, rutnät, analysplan, kantzon och viktning av kantceller. Länka ritning och materialkälla.",
+      "kallor": [
+        "DCASE",
+        "DGUIDE"
+      ]
+    },
+    {
+      "id": "DL-05",
+      "omrade": "dagsljus",
+      "typ": "Föreskrift",
+      "villkor": "Ny bostad",
+      "fraga": "Hur stor andel av den bedömda vistelseytan klarar dagsljusfaktorn i varje bostad?",
+      "redovisning": "Rumsvis bedömd area och area som når gränsen. Summera dessa areor inom bostaden före division och markera exkluderade rum.",
+      "kallor": [
+        "DF",
+        "DGUIDE"
+      ]
+    },
+    {
+      "id": "DL-06",
+      "omrade": "dagsljus",
+      "typ": "Föreskrift",
+      "villkor": "Delade funktioner",
+      "fraga": "Uppfylls dagsljuskravet i både boendeenhet och delade utrymmen?",
+      "redovisning": "Två urskiljbara urval med resultat och ritnings-ID. Kontrollera även om utblicksundantaget är tillämpligt.",
+      "kallor": [
+        "DF"
+      ]
+    },
+    {
+      "id": "DL-07",
+      "omrade": "dagsljus",
+      "typ": "Föreskrift",
+      "villkor": "Bostad eller lokal",
+      "fraga": "Finns utblick där användningen kräver det?",
+      "redovisning": "Redovisa fönster, bröstningshöjd, sikthinder och plats för samvaro eller måltid. För lokal redovisas relevant användarhöjd, exempelvis för barn.",
+      "kallor": [
+        "DF",
+        "DGUIDE"
+      ]
+    },
+    {
+      "id": "DL-08",
+      "omrade": "dagsljus",
+      "typ": "Föreskrift",
+      "villkor": "Lokal, skola eller arbetsplats",
+      "fraga": "Hur visas tillräckligt dagsljus och utblick för den avsedda verksamheten?",
+      "redovisning": "Beskriv vistelsetyp, arbetsplatser och bedömningsmetod samt eventuella skäl och kompensation enligt rätt regelverk.",
+      "kallor": [
+        "DF",
+        "AFS"
+      ]
+    },
+    {
+      "id": "DL-09",
+      "omrade": "dagsljus",
+      "typ": "Föreskrift",
+      "villkor": "Bostad i tidigare lokal",
+      "fraga": "Finns stöd för att anpassa kravet i just denna ändring?",
+      "redovisning": "Dokumentera tidigare användning, vilket krav som annars gäller, skälen enligt 12 kap. och provad utformning.",
+      "kallor": [
+        "DF",
+        "DGUIDE"
+      ]
+    },
+    {
+      "id": "DL-10",
+      "omrade": "dagsljus",
+      "typ": "Metod",
+      "villkor": "Grannpåverkan",
+      "fraga": "Hur påverkas befintliga fönster och vistelserum?",
+      "redovisning": "Koppla samma fönster-ID före och efter. Redovisa både utgångsläge och förändring. Vid okända planlösningar markeras omfattningen av bedömningen.",
+      "kallor": [
+        "DCASE",
+        "PBL"
+      ]
+    },
+    {
+      "id": "DL-11",
+      "omrade": "dagsljus",
+      "typ": "Projektkontroll",
+      "villkor": "Marginalfall",
+      "fraga": "Vilka val av glas, balkong eller fasadkulör styr slutsatsen?",
+      "redovisning": "Prova dokumenterade alternativ för de kritiska rummen. Ange på ritning vilka egenskaper som måste behållas och om materialvärden är antagna.",
+      "kallor": [
+        "DCASE",
+        "DVSC"
+      ]
+    },
+    {
+      "id": "DL-12",
+      "omrade": "dagsljus",
+      "typ": "Projektkontroll",
+      "villkor": "Överlämning",
+      "fraga": "Kan en annan granskare återskapa varje bostads resultat?",
+      "redovisning": "Bifoga lägenhetslista med ritningsrevision, bedömningsyta, godkänd delarea, andel och resultatkartor. Markera outforskade bostäder och behov av komplettering.",
+      "kallor": [
+        "DGUIDE",
+        "DCASE"
+      ]
+    },
+    {
+      "id": "DL-13",
+      "omrade": "dagsljus",
+      "typ": "Kommunal riktlinje",
+      "villkor": "Barn vistas dagligen i skol- eller förskolelokal",
+      "fraga": "Hur förhåller sig fönster och utblick till miljöförvaltningens skolvägledning?",
+      "redovisning": "Ange faktiskt fönstermått, golvyta, användning, våningsläge, hinder och utblick från barnets höjd. Märk fönsterandelen som lokal rekommendation.",
+      "kallor": [
+        "MFSK",
+        "DGUIDE"
+      ]
+    },
+    {
+      "id": "DL-14",
+      "omrade": "dagsljus",
+      "typ": "Projektkontroll",
+      "villkor": "Flera instanser eller mått åberopas",
+      "fraga": "Vilket underlag svarar på hälsoskydd, byggkrav respektive arbetsmiljö?",
+      "redovisning": "Koppla tillsynsvägledning, tekniskt funktionskrav och arbetsplatskrav till varsin slutsats. Ange när en geometrisk tumregel behöver kompletteras med rumsberäkning.",
+      "kallor": [
+        "MFSK",
+        "DF",
+        "AFS"
+      ]
+    },
+    {
+      "id": "DL-15",
+      "omrade": "dagsljus",
+      "typ": "Projektkontroll",
+      "villkor": "Förändrat dagsljus i befintlig bebyggelse",
+      "fraga": "Kan förändringens storlek följas för samma berörda objekt även när jämförelsenivån klaras?",
+      "redovisning": "Visa anonym objektkod och våningsplan i urval, ritning och resultattabell. Redovisa jämförbara värden före och efter. Utred avvikande objekthänvisningar före slutsats.",
+      "kallor": [
+        "MODLJ",
+        "DCASE"
+      ]
+    },
+    {
+      "id": "SO-01",
+      "omrade": "solstudier",
+      "typ": "Lag",
+      "villkor": "Plan eller lov med omgivningspåverkan",
+      "fraga": "Vilka grannfönster och vistelseytor kan förlora sol?",
+      "redovisning": "Avgränsa influensområdet efter skuggans utbredning. Registrera mottagarnas funktion, läge, våningsplan och befintliga förhållanden.",
+      "kallor": [
+        "PBL",
+        "DOM"
+      ]
+    },
+    {
+      "id": "SO-02",
+      "omrade": "solstudier",
+      "typ": "Projektkontroll",
+      "villkor": "Volymstudie",
+      "fraga": "Vilken del av tillåten byggrätt representerar modellen?",
+      "redovisning": "Redovisa nuläge, planförslag och vid behov största tillåtna volym med höjd, placering, tak och etapper. Länka respektive ritningsrevision.",
+      "kallor": [
+        "FUTH",
+        "PBL"
+      ]
+    },
+    {
+      "id": "SO-03",
+      "omrade": "solstudier",
+      "typ": "Metod",
+      "villkor": "Varje beräkning",
+      "fraga": "Är solbanan rätt i tid och rum?",
+      "redovisning": "Ange geografiskt läge, geografiskt norr, höjdsystem, datum och år, Europe/Stockholm och UTC-offset per datum. Dokumentera hur kartnorr korrigerats.",
+      "kallor": [
+        "FUTH",
+        "SOLKL",
+        "SPA"
+      ]
+    },
+    {
+      "id": "SO-04",
+      "omrade": "solstudier",
+      "typ": "Metod",
+      "villkor": "Val av datum",
+      "fraga": "Vilka dagar och tider svarar på användningen av platsen?",
+      "redovisning": "Redovisa valda dagjämningar/solstånd, brukstider och vid behov förskolans öppettid eller kväll på uteplats. Kontrollera ljusperioden även vintertid.",
+      "kallor": [
+        "FUTH",
+        "LEK"
+      ]
+    },
+    {
+      "id": "SO-05",
+      "omrade": "solstudier",
+      "typ": "Metod",
+      "villkor": "Nya volymer, terräng eller vegetation",
+      "fraga": "Vilka hinder kastar skugga vid relevant årstid?",
+      "redovisning": "Modellera mark, omgivande hus, tak, balkonger och vegetation. Spara krongeometri, årsutveckling, lövstatus och antagen genomsläpplighet.",
+      "kallor": [
+        "FUTH",
+        "LEK"
+      ]
+    },
+    {
+      "id": "SO-06",
+      "omrade": "solstudier",
+      "typ": "Kommunal riktlinje",
+      "villkor": "Skol- eller förskolegård i Stockholm",
+      "fraga": "Finns användbar aktiv lek och reträtt i både sol och skugga?",
+      "redovisning": "Rita funktionerna som separata ytor. Redovisa även pratplatser för högstadium och hänvisa till kategori 6.1.",
+      "kallor": [
+        "LEK",
+        "LEKT"
+      ]
+    },
+    {
+      "id": "SO-07",
+      "omrade": "solstudier",
+      "typ": "Kommunal riktlinje",
+      "villkor": "Vegetationsskugga på skolgård",
+      "fraga": "Är gårdens zoner och tidsmål för skuggad friyta uppfyllda?",
+      "redovisning": "Avgränsa friytan. Visa skuggad area och andel kl. 12 vid sommarsolståndet inom tio år, vilka zoner som får vegetationsskugga och trädens antagna storlek.",
+      "kallor": [
+        "LEK"
+      ]
+    },
+    {
+      "id": "SO-08",
+      "omrade": "solstudier",
+      "typ": "Metod",
+      "villkor": "Varaktighet efterfrågas",
+      "fraga": "Hur länge får varje mottagare direkt sol under tidsfönstret?",
+      "redovisning": "Beräkna följd av tidssteg eller exakta skuggpassager. Ange start, slut, steglängd och om måttet är sammanhängande eller summerad tid.",
+      "kallor": [
+        "SOLKL",
+        "FUTH"
+      ]
+    },
+    {
+      "id": "SO-09",
+      "omrade": "solstudier",
+      "typ": "Metod",
+      "villkor": "Grannpåverkan eller alternativ",
+      "fraga": "Var och när tillkommer skugga jämfört med nuläget?",
+      "redovisning": "Matchade före-/efterbilder, differenskarta och tid per utpekat fönster, sittplats eller delyta. Visa även när platsen tidigare låg i skugga.",
+      "kallor": [
+        "DOM",
+        "FUTH"
+      ]
+    },
+    {
+      "id": "SO-10",
+      "omrade": "solstudier",
+      "typ": "Projektkontroll",
+      "villkor": "Vistelserum",
+      "fraga": "Vilken fråga avser sol vid fönstret respektive inne i rummet?",
+      "redovisning": "Visa referenspunkt, fasadriktning, smyg och avskärmning. Dokumentera äldre regel eller avtalad metod om en formell bedömning efterfrågas.",
+      "kallor": [
+        "DOLD",
+        "SOLBYTE",
+        "SIS"
+      ]
+    },
+    {
+      "id": "SO-11",
+      "omrade": "solstudier",
+      "typ": "Projektkontroll",
+      "villkor": "Åtgärdsförslag",
+      "fraga": "Vilken ändring förbättrar den mest påverkade platsen?",
+      "redovisning": "Pröva indragen våning, ändrad volym, omplacerad lekyta eller skuggande träd. Redovisa även effekten på andra vistelseytor.",
+      "kallor": [
+        "FUTH",
+        "LEK",
+        "DOM"
+      ]
+    },
+    {
+      "id": "SO-12",
+      "omrade": "solstudier",
+      "typ": "Projektkontroll",
+      "villkor": "Granskning",
+      "fraga": "Kan läsaren följa varje slutsats från bild till underliggande geometri?",
+      "redovisning": "Ange norrpil, skala, scenarionamn, datum, tidszon, sol-/skugglegend och mottagare på varje bildserie. Länka tidsdata för slutsatser om timmar.",
+      "kallor": [
+        "FUTH",
+        "LEK"
+      ]
+    },
+    {
+      "id": "SO-13",
+      "omrade": "solstudier",
+      "typ": "Vägledning",
+      "villkor": "Barns utemiljö och UV-skydd",
+      "fraga": "Var finns skydd för stillasittande lek och samling när barnen faktiskt använder gården?",
+      "redovisning": "Visa funktionsytor med skugga under brukstiden och vilken vegetation eller konstruktion som ger skydd vid öppning och efter tillväxt. Hänvisa till rätt utgivare för lokala procenttal.",
+      "kallor": [
+        "SSM",
+        "LEK",
+        "MFSK"
+      ]
+    },
+    {
+      "id": "SO-14",
+      "omrade": "solstudier",
+      "typ": "Vägledning",
+      "villkor": "Länets värmekartläggning pekar ut ett utsatt område",
+      "fraga": "Vilken lokal sol- eller värmestudie behövs för just gården eller byggnaden?",
+      "redovisning": "Dokumentera kartans skala och yttemperatur som bakgrund. Pröva sol och skugga i lokal geometri, och beställ termisk analys om frågan gäller värmestress.",
+      "kallor": [
+        "LVARM",
+        "LKLIM"
+      ]
+    },
+    {
+      "id": "SO-15",
+      "omrade": "solstudier",
+      "typ": "Projektkontroll",
+      "villkor": "Skuggbilder och soltidskartor ingår i samma rapport",
+      "fraga": "Vilken tidsperiod representerar varje figur och hur knyts den till delytans användning?",
+      "redovisning": "Märk ögonblicksbild, dygnssumma och periodmedel. Ge periodens datum och ange i text vilken förskolegård, lekplats, kaj eller annan yta slutsatsen gäller.",
+      "kallor": [
+        "LOVSOL",
+        "FUTH"
+      ]
+    }
+  ]
+}

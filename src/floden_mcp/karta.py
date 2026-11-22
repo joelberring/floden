@@ -31,7 +31,7 @@ _BYGGNAD = (70, 70, 70)
 _NY = (180, 70, 43)
 _ANDRAD = (140, 90, 0)
 _TEXTSKALA = 2
-_LEGEND_B = 270
+_LEGEND_B = 310
 
 
 class KartaFel(Exception):
@@ -255,12 +255,63 @@ def rendera_karta(
     kart_b, kart_h = b_c * zoom, h_c * zoom
     px_per_m = zoom / px_bild
 
-    rand_v, rand_t, rand_n = 110, 56, 100
-    duk_b = rand_v + kart_b + 24 + _LEGEND_B
-    duk_h = rand_t + kart_h + rand_n
-    duk = Image.new("RGB", (duk_b, max(duk_h, rand_t + 460)), _BG)
-    # bakgrund (saknat värde och tak syns som ljusgrått)
-    duk.paste(Image.new("RGB", (kart_b, kart_h), _TOM), (rand_v, rand_t))
+    rand_v, rand_t = 110, 56
+    scen = (
+        f"{lager['efter']} - {lager['fore']}" if lager["typ"] == "skillnad" else lager["scenario"]
+    )
+    typtext = {"bas": "bas", "scenario": "scenario", "skillnad": "skillnad (efter minus före)"}[
+        lager["typ"]
+    ]
+    rubrik = f"{lager['etikett']}, {typtext}: {scen}".replace("_", " ")
+    fotrader = [
+        (f"Floden {kodversion}. Ritad ur körningens GeoTIFF.", _SVAG),
+        ("Ingen AI har räknat eller ritat talen.", _SVAG),
+    ]
+    if skiss:
+        fotrader.append(("SKISS: metoden är inte klassad för formell rapport.", _NY))
+
+    # Teckenförklaringen ritas först på en egen yta, så att duken blir så hög som den behöver.
+    leg = Image.new("RGB", (_LEGEND_B, 1200), _BG)
+    ly = _legend(leg, 0, 0, kart_h, lager) + 4
+    lposter: list[tuple[str, tuple[int, int, int], bool]] = [
+        ("Tak eller inget värde", _TOM, True)
+    ]
+    if byggnader:
+        lposter += [
+            ("Byggnad (kontur)", _BYGGNAD, False),
+            ("Ny byggnad", _NY, False),
+            ("Ändrad byggnad", _ANDRAD, False),
+        ]
+    ld = ImageDraw.Draw(leg)
+    for i, (txt, farg, fylld) in enumerate(lposter):
+        yy = ly + i * 22
+        if fylld:
+            ld.rectangle([0, yy + 1, 22, yy + 15], fill=farg, outline=_RAM)
+        else:
+            ld.rectangle([0, yy + 2, 22, yy + 14], outline=farg, width=2)
+        _text(leg, (30, yy), txt)
+    leg_h = ly + 22 * len(lposter) + 6
+
+    kart_botten = rand_t + kart_h
+    fot_y = max(kart_botten + 34, rand_t + leg_h + 8)
+    duk_b = max(
+        rand_v + kart_b + 24 + _LEGEND_B,
+        rand_v + max(_textbredd(t) for t, _f in fotrader) + 16,
+        rand_v + _textbredd(rubrik) + 16,
+    )
+    duk_h = fot_y + 20 * len(fotrader) + 14
+    duk = Image.new("RGB", (duk_b, duk_h), _BG)
+    duk.paste(leg.crop((0, 0, _LEGEND_B, leg_h)), (rand_v + kart_b + 24, rand_t))
+    # Bakgrund: mark med värde är vit; tak och celler utan värde ljusgrå, så att saknade
+    # celler inte ser torra ut (och torr mark inte ser ut att sakna värde).
+    giltig = np.isfinite(sub)
+    if tak_sub is not None:
+        giltig &= ~tak_sub
+    bas_rgb = np.where(giltig[..., None], np.array(_BG, np.uint8), np.array(_TOM, np.uint8))
+    bas_bild = Image.fromarray(bas_rgb.astype(np.uint8), mode="RGB").resize(
+        (kart_b, kart_h), Image.Resampling.NEAREST
+    )
+    duk.paste(bas_bild, (rand_v, rand_t))
     stor = rgba.resize((kart_b, kart_h), Image.Resampling.NEAREST)
     duk.paste(stor.convert("RGB"), (rand_v, rand_t), stor.split()[3])
     d = ImageDraw.Draw(duk)
@@ -291,51 +342,29 @@ def rendera_karta(
         _text(duk, (rand_v - 8 - _textbredd(f"{n:.0f}"), yy - 6), f"{n:.0f}", _SVAG)
         n += steg
 
-    # skalstock
+    # skalstock (liten vit platta, så att den inte döljer mycket av kartan)
     langd_m = _fint_steg((x_max - x_min) / 2.5) / 1.0
     sb = int(round(langd_m * px_per_m))
-    sx, sy = rand_v + 12, rand_t + kart_h - 22
-    d.rectangle([sx - 6, sy - 24, sx + sb + 70, sy + 12], fill=(255, 255, 255))
+    etikett = f"{_fint(langd_m)} m"
+    sx, sy = rand_v + 10, rand_t + kart_h - 14
+    d.rectangle(
+        [sx - 5, sy - 26, sx + max(sb, _textbredd(etikett)) + 6, sy + 8], fill=(255, 255, 255)
+    )
     d.line([sx, sy, sx + sb, sy], fill=_TEXT, width=3)
     d.line([sx, sy - 5, sx, sy + 5], fill=_TEXT, width=2)
     d.line([sx + sb, sy - 5, sx + sb, sy + 5], fill=_TEXT, width=2)
-    _text(duk, (sx, sy - 22), f"{_fint(langd_m)} m")
+    _text(duk, (sx, sy - 24), etikett)
 
     # nordpil (norr är uppåt i kartan)
-    nx, ny = rand_v + kart_b - 28, rand_t + 18
-    d.rectangle([nx - 16, ny - 8, nx + 16, ny + 62], fill=(255, 255, 255))
+    nx, ny = rand_v + kart_b - 24, rand_t + 14
+    d.rectangle([nx - 14, ny - 6, nx + 14, ny + 60], fill=(255, 255, 255))
     d.polygon([(nx, ny + 4), (nx - 9, ny + 38), (nx, ny + 30), (nx + 9, ny + 38)], fill=_TEXT)
     _text(duk, (nx - 6, ny + 42), "N")
 
-    # titel, teckenförklaring, fot
-    scen = (
-        f"{lager['efter']} - {lager['fore']}" if lager["typ"] == "skillnad" else lager["scenario"]
-    )
-    typtext = {"bas": "bas", "scenario": "scenario", "skillnad": "skillnad (efter minus före)"}[
-        lager["typ"]
-    ]
-    rubrik = f"{lager['etikett']}, {typtext}: {scen}"
-    _text(duk, (rand_v, 10), rubrik.replace("_", " "))
+    _text(duk, (rand_v, 10), rubrik)
     _text(duk, (rand_v, 32), f"Körning {korning_id}  |  EPSG:3011", _SVAG)
-    ly = _legend(duk, rand_v + kart_b + 24, rand_t, kart_h, lager) + 4
-    if byggnader:
-        for i, (txt, farg) in enumerate(
-            (("Byggnad (tak)", _BYGGNAD), ("Ny byggnad", _NY), ("Ändrad byggnad", _ANDRAD))
-        ):
-            yy = ly + i * 22
-            lx = rand_v + kart_b + 24
-            d.rectangle([lx, yy + 2, lx + 22, yy + 14], outline=farg, width=2)
-            _text(duk, (lx + 30, yy), txt)
-    fy = rand_t + kart_h + 34
-    for k, rad in enumerate(
-        (
-            f"Floden {kodversion}. Ritad ur körningens GeoTIFF.",
-            "Ingen AI har räknat eller ritat talen.",
-        )
-    ):
-        _text(duk, (rand_v, fy + k * 20), rad, _SVAG)
-    if skiss:
-        _text(duk, (rand_v, fy + 40), "SKISS: metoden är inte klassad för formell rapport.", _NY)
+    for k, (rad, farg) in enumerate(fotrader):
+        _text(duk, (rand_v, fot_y + k * 20), rad, farg)
     ut = io.BytesIO()
     duk.save(ut, format="PNG", optimize=True)
     return ut.getvalue(), {
