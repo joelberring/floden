@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import re
 import shutil
-from collections.abc import Mapping
+import tempfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Final
 
 from gemensamt.hash import sha256_fil
+
+MAX_RESURS_BYTES: Final[int] = 10 * 1024 * 1024
 
 SPRAKPROFILER: Final[tuple[str, ...]] = ("sbk", "neutral")
 STANDARD_AVSANDARE: Final[str] = "Stadsbyggnadskontoret"
@@ -224,12 +227,26 @@ def typsnittsfamilj(fil: Path) -> str:
     raise InstallningsFel("Typsnittsfilen saknar familjenamn.")
 
 
-def _las_in_fil(roll: str, sokvag: str | Path, resursmapp: Path) -> Resurs:
+def _las_in_fil(
+    roll: str,
+    sokvag: str | Path,
+    resursmapp: Path,
+    *,
+    tillatna_rotter: Sequence[Path] | None = None,
+) -> Resurs:
     """Kontrollerar filen, kopierar den till `resursmapp/<sha256><ändelse>` och ger dess Resurs."""
     vad = FILROLLER[roll]
-    fil = Path(str(sokvag)).expanduser()
+    fil = Path(str(sokvag)).expanduser().resolve()
+    if tillatna_rotter is not None and not any(
+        fil.is_relative_to(Path(rot).expanduser().resolve()) for rot in tillatna_rotter
+    ):
+        raise InstallningsFel(f"Filen för {vad} ligger utanför tillåtna mappar.")
     if not fil.is_file():
         raise InstallningsFel(f"Filen för {vad} finns inte eller kan inte läsas.")
+    if fil.stat().st_size > MAX_RESURS_BYTES:
+        raise InstallningsFel(
+            f"Filen för {vad} är för stor (max {MAX_RESURS_BYTES // (1024 * 1024)} MB)."
+        )
     typ = fil.suffix.lower()
     familj: str | None = None
     if roll == "logotyp":
@@ -251,9 +268,19 @@ def _las_in_fil(roll: str, sokvag: str | Path, resursmapp: Path) -> Resurs:
     resursmapp.mkdir(parents=True, exist_ok=True)
     mal = resursmapp / f"{sha}{typ}"
     if not mal.is_file() or sha256_fil(mal) != sha:
-        tmp = mal.with_name(mal.name + ".tmp")
-        shutil.copyfile(fil, tmp)
-        tmp.replace(mal)
+        with tempfile.NamedTemporaryFile(
+            dir=resursmapp,
+            prefix=f".{sha[:12]}-",
+            suffix=f"{typ}.tmp",
+            delete=False,
+        ) as tf:
+            tmp = Path(tf.name)
+        try:
+            shutil.copyfile(fil, tmp)
+            tmp.replace(mal)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
     return Resurs(sha, typ, familj)
 
 
@@ -261,6 +288,8 @@ def tillampa(
     bas: RapportInstallningar,
     andringar: Mapping[str, Any] | None,
     resursmapp: Path,
+    *,
+    tillatna_rotter: Sequence[Path] | None = None,
 ) -> RapportInstallningar:
     """Ny uppsättning inställningar: `bas` med `andringar`.
 
@@ -277,7 +306,11 @@ def tillampa(
     kw: dict[str, Any] = {}
     for k, v in andringar.items():
         if k in FILROLLER:
-            kw[k] = None if v in (None, "") else _las_in_fil(k, v, resursmapp)
+            kw[k] = (
+                None
+                if v in (None, "")
+                else _las_in_fil(k, v, resursmapp, tillatna_rotter=tillatna_rotter)
+            )
         elif k in _BOOLFALT:
             kw[k] = _bool(v, k)
         elif k == "accentfarg":

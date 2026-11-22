@@ -20,7 +20,9 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextvars import ContextVar, Token
+from pathlib import Path
 from typing import Annotated, Any
 
 from mcp.server.context import ServerRequestContext
@@ -120,14 +122,79 @@ def _hitta_korningar(obj: Any, ut: set[str], djup: int = 0) -> None:
             _hitta_korningar(x, ut, djup + 1)
 
 
+class _SessionData:
+    __slots__ = ("session_id", "modell", "roll")
+
+    def __init__(self, session_id: str, modell: str | None, roll: str | None) -> None:
+        self.session_id = session_id
+        self.modell = modell
+        self.roll = roll
+
+
 class Sessionstillstand:
-    """Deklarerad modell och roll för servern (en process = en session över stdio)."""
+    """Deklarerad modell och roll, isolerad per MCP-session (stdio eller HTTP)."""
+
+    _MAX_HTTP_SESSIONER = 1000
 
     def __init__(self, miljo: Mapping[str, str] | None = None) -> None:
         miljo = os.environ if miljo is None else miljo
-        self.session_id = f"s-{uuid.uuid4().hex[:12]}"
-        self.modell = rensa_text(miljo.get("FLODEN_MCP_MODELL"))
-        self.roll = rensa_text(miljo.get("FLODEN_MCP_ROLL"))
+        self._standard_modell = rensa_text(miljo.get("FLODEN_MCP_MODELL"))
+        self._standard_roll = rensa_text(miljo.get("FLODEN_MCP_ROLL"))
+        self._standard = _SessionData(
+            f"s-{uuid.uuid4().hex[:12]}", self._standard_modell, self._standard_roll
+        )
+        self._sessioner: dict[str, _SessionData] = {}
+        self._aktiv: ContextVar[tuple[_SessionData, str | None] | None] = ContextVar(
+            f"floden_mcp_session_{id(self)}", default=None
+        )
+
+    def _for_sid(self, sid: str | None) -> _SessionData:
+        if not sid:
+            return self._standard
+        data = self._sessioner.get(sid)
+        if data is None:
+            if len(self._sessioner) >= self._MAX_HTTP_SESSIONER:
+                self._sessioner.pop(next(iter(self._sessioner)))
+            data = _SessionData(sid, self._standard_modell, self._standard_roll)
+            self._sessioner[sid] = data
+        return data
+
+    def aktivera(
+        self, sid: str | None, konto: str | None
+    ) -> Token[tuple[_SessionData, str | None] | None]:
+        return self._aktiv.set((self._for_sid(sid), konto))
+
+    def aterstall(self, token: Token[tuple[_SessionData, str | None] | None]) -> None:
+        self._aktiv.reset(token)
+
+    def _nu(self) -> _SessionData:
+        aktiv = self._aktiv.get()
+        return self._standard if aktiv is None else aktiv[0]
+
+    @property
+    def konto(self) -> str | None:
+        aktiv = self._aktiv.get()
+        return None if aktiv is None else aktiv[1]
+
+    @property
+    def session_id(self) -> str:
+        return self._nu().session_id
+
+    @property
+    def modell(self) -> str | None:
+        return self._nu().modell
+
+    @modell.setter
+    def modell(self, varde: str | None) -> None:
+        self._nu().modell = varde
+
+    @property
+    def roll(self) -> str | None:
+        return self._nu().roll
+
+    @roll.setter
+    def roll(self, varde: str | None) -> None:
+        self._nu().roll = varde
 
 
 def _result_fel(text: str) -> CallToolResult:
@@ -140,12 +207,23 @@ def bygg_server(
     policy: Policy | None = None,
     logg: Korlogg | None = None,
     miljo: Mapping[str, str] | None = None,
+    tillatna_resursrotter: Sequence[str | Path] | None = None,
 ) -> MCPServer:
     """Skapar MCP-servern. `policy` standard: bara `oppet`; `logg` standard: data/lokal/mcp."""
     policy = policy or Policy()
     logg = logg or Korlogg(tjanst.mcp_mapp / "korlogg.jsonl")
     tillstand = Sessionstillstand(miljo)
-    rapporter = RapportTjanst(tjanst, policy=policy, korlogg=logg)
+    if tillatna_resursrotter is None:
+        env = os.environ if miljo is None else miljo
+        ra_rotter = env.get("FLODEN_MCP_RESURSROTTER", "").strip()
+        if ra_rotter:
+            tillatna_resursrotter = [p for p in ra_rotter.split(os.pathsep) if p.strip()]
+    rapporter = RapportTjanst(
+        tjanst,
+        policy=policy,
+        korlogg=logg,
+        tillatna_resursrotter=tillatna_resursrotter,
+    )
     server = MCPServer(
         "floden",
         title="Floden",
@@ -227,54 +305,68 @@ def bygg_server(
             vilket = "prompt:" + str(params.get("name"))
         klient = _klient(ctx)
         sid, konto = _http(ctx)
-        modell = rensa_text(argument.pop("modell", None)) or tillstand.modell
-        roll = rensa_text(argument.pop("roll", None)) or tillstand.roll
-        projekt = argument.get("projekt", PROJEKT_ID)
-        klass = klasser.get(vilket, DataKlass.OPPET)
-        effektiv = (
-            klass
-            if vilket in utan_projekt or ctx.method != "tools/call"
-            else policy.klass_for(klass, str(projekt))
-        )
-        post: dict[str, Any] = {
-            "tid": nu(),
-            "session": sid or tillstand.session_id,
-            "klient": klient,
-            "protokoll": ctx.protocol_version,
-            "modell": modell,
-            "roll": roll,
-            "konto": konto,
-            "verktyg": vilket,
-            "indata_hash": hash_av(argument),
-            "indata_nycklar": sorted(argument),
-            "dataklass": effektiv.value,
-        }
-        korningar: set[str] = set()
-        _hitta_korningar(argument, korningar)
-        rapporter: set[str] = set()
-        _hitta_rapporter(argument, rapporter)
-        post["rapport_id"] = rapporter
+        token = tillstand.aktivera(sid, konto)
         try:
-            policy.kontrollera(str(klient["namn"]), effektiv)
-        except PolicyNekad as exc:
-            _skriv(logg, post, "nekad_policy", korningar, str(exc), None, t0)
-            return _result_fel(str(exc))
-        try:
-            resultat = await call_next(ctx)
-        except Exception as exc:
-            _skriv(logg, post, "fel", korningar, f"{type(exc).__name__}", None, t0)
-            raise
-        d = _till_dict(resultat)
-        _hitta_korningar(d.get("structuredContent") or d.get("structured_content"), korningar)
-        _hitta_rapporter(d.get("structuredContent") or d.get("structured_content"), rapporter)
-        fel = bool(d.get("isError") or d.get("is_error"))
-        try:
-            _skriv(
-                logg, post, "fel" if fel else "ok", korningar, _felrad(d) if fel else None, d, t0
+            modell = rensa_text(argument.pop("modell", None)) or tillstand.modell
+            roll = rensa_text(argument.pop("roll", None)) or tillstand.roll
+            projekt = argument.get("projekt", PROJEKT_ID)
+            klass = klasser.get(vilket, DataKlass.OPPET)
+            effektiv = (
+                klass
+                if vilket in utan_projekt or ctx.method != "tools/call"
+                else policy.klass_for(klass, str(projekt))
             )
-        except KorloggFel as exc:
-            return _result_fel(f"Körloggen kan inte skrivas, så resultatet lämnas inte ut: {exc}")
-        return resultat
+            post: dict[str, Any] = {
+                "tid": nu(),
+                "session": tillstand.session_id,
+                "klient": klient,
+                "protokoll": ctx.protocol_version,
+                "modell": modell,
+                "roll": roll,
+                "konto": konto,
+                "verktyg": vilket,
+                "indata_hash": hash_av(argument),
+                "indata_nycklar": sorted(argument),
+                "dataklass": effektiv.value,
+            }
+            korningar: set[str] = set()
+            _hitta_korningar(argument, korningar)
+            rapporter_set: set[str] = set()
+            _hitta_rapporter(argument, rapporter_set)
+            post["rapport_id"] = rapporter_set
+            try:
+                policy.kontrollera(str(klient["namn"]), effektiv)
+            except PolicyNekad as exc:
+                _skriv(logg, post, "nekad_policy", korningar, str(exc), None, t0)
+                return _result_fel(str(exc))
+            try:
+                resultat = await call_next(ctx)
+            except Exception as exc:
+                _skriv(logg, post, "fel", korningar, f"{type(exc).__name__}", None, t0)
+                raise
+            d = _till_dict(resultat)
+            _hitta_korningar(d.get("structuredContent") or d.get("structured_content"), korningar)
+            _hitta_rapporter(
+                d.get("structuredContent") or d.get("structured_content"), rapporter_set
+            )
+            fel = bool(d.get("isError") or d.get("is_error"))
+            try:
+                _skriv(
+                    logg,
+                    post,
+                    "fel" if fel else "ok",
+                    korningar,
+                    _felrad(d) if fel else None,
+                    d,
+                    t0,
+                )
+            except KorloggFel as exc:
+                return _result_fel(
+                    f"Körloggen kan inte skrivas, så resultatet lämnas inte ut: {exc}"
+                )
+            return resultat
+        finally:
+            tillstand.aterstall(token)
 
     server.middleware.append(mellanvara)
 
@@ -313,11 +405,15 @@ def bygg_server(
     ) -> dict[str, Any]:
         if korning_id is None and session is None:
             session = tillstand.session_id
+        max_rader = max(1, min(int(senaste), 500))
+        aktivt_konto = tillstand.konto
         rader = logg.las(
             korning_id=korning_id,
             session=None if session in (None, "alla") else session,
-            senaste=max(1, min(int(senaste), 500)),
+            senaste=max_rader if aktivt_konto is None else 5000,
         )
+        if aktivt_konto is not None:
+            rader = [r for r in rader if r.get("konto") == aktivt_konto][-max_rader:]
         ok, antal, fel_rad = logg.verifiera()
         return {
             "session": tillstand.session_id,

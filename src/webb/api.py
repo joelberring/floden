@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import logging
 import math
 import mimetypes
 import os
@@ -2017,11 +2018,12 @@ class FlodenApiApp:
                     "status": exc.status_kod,
                 },
             )
-        except Exception as exc:  # noqa: BLE001 - returnera tydligt API-fel utan tyst krasch
+        except Exception:  # noqa: BLE001 - returnera tydligt API-fel utan tyst krasch
+            _logg.exception("Oväntat fel i webb-API (%s %s)", verb, ren_sokvag)
             return _json_svar(
                 500,
                 {
-                    "fel": f"Internt serverfel: {exc}",
+                    "fel": "Internt serverfel.",
                     "status": 500,
                 },
             )
@@ -2037,9 +2039,10 @@ class FlodenApiApp:
 
         Ordningen följer `docs/KONTO.md` avsnitt 8: `/konto/*` först, sedan klientens statiska
         filer (de innehåller ingen data, så att inloggningssidan kan visas), sedan
-        `kraver_inloggning` **före** att kroppen läses, och sist API:t. Med inloggning på skickas
-        ingen `Access-Control-Allow-Origin`: klient och API nås från samma ursprung.
-        `las_kropp` anropas högst en gång och bara när kroppen behövs.
+        `kraver_inloggning` (och `kraver_projektbehorighet` för projekt-endpoints) **före** att
+        kroppen läses, och sist API:t. Med inloggning på skickas ingen
+        `Access-Control-Allow-Origin`: klient och API nås från samma ursprung. `las_kropp` anropas
+        högst en gång och bara när kroppen behövs.
         """
         verb = metod.upper()
         req = Forfragan.fran_ra(verb, ra_sokvag, rubriker)
@@ -2056,7 +2059,13 @@ class FlodenApiApp:
             statisk = self._statisk(req.sokvag, verb == "HEAD")
             if statisk is not None:
                 return statisk
-        kontroll = self.konto.kraver_inloggning(req)
+        projekt_krav = _projekt_krav(verb, req.sokvag) if self.konto.aktiv else None
+        if projekt_krav is not None:
+            kontroll = self.konto.kraver_projektbehorighet(
+                req, projekt_krav[0], minst=projekt_krav[1]
+            )
+        else:
+            kontroll = self.konto.kraver_inloggning(req)
         if not kontroll.tillaten:
             assert kontroll.svar is not None
             return kontroll.svar
@@ -2094,6 +2103,23 @@ class FlodenApiApp:
             ("Referrer-Policy", "same-origin"),
         ]
         return 200, rubriker, b"" if bara_huvud else innehall
+
+
+_logg = logging.getLogger(__name__)
+
+
+def _projekt_krav(verb: str, sokvag: str) -> tuple[str, str] | None:
+    """Returnerar `(projekt_id, minsta_roll)` för projektbundna API-sökvägar, annars None."""
+    delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d]
+    if len(delar) < 3 or delar[0] != "api":
+        return None
+    grupp, projekt_id = delar[1], delar[2]
+    if grupp in ("projekt", "3d"):
+        return projekt_id, "lasare"
+    if grupp == "kartverktyg" and projekt_id != "wms":
+        minst = "lasare" if verb in ("GET", "HEAD", "OPTIONS") else "utredare"
+        return projekt_id, minst
+    return None
 
 
 _FILTYPER = {

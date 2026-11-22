@@ -401,11 +401,17 @@ class RapportTjanst:
         katalog: Fragekatalog | None = None,
         korlogg: Korlogg | None = None,
         lokala_forval: Mapping[str, Any] | None = None,
+        tillatna_resursrotter: Sequence[str | Path] | None = None,
     ) -> None:
         """`lokala_forval`: inställningar som gäller när en rapport skapas (utöver förvalen).
         Utelämnat läses `[rapport]` i `config.local.toml` (och `config.toml`) i Flodens rot."""
         self.tjanst = tjanst
         self._lokala_forval = None if lokala_forval is None else dict(lokala_forval)
+        self._tillatna_resursrotter = (
+            None
+            if tillatna_resursrotter is None
+            else tuple(Path(p) for p in tillatna_resursrotter)
+        )
         mapp = Path(rapportmapp) if rapportmapp is not None else _rapportmapp_for(tjanst)
         self.arkiv = RapportArkiv(mapp)
         self.policy = policy or Policy()
@@ -634,6 +640,7 @@ class RapportTjanst:
                 tillampa(RapportInstallningar(), self.lokala_forval, self.resursmapp(rid)),
                 installningar,
                 self.resursmapp(rid),
+                tillatna_rotter=self._tillatna_resursrotter,
             )
         except InstallningsFel as exc:
             raise RapportFel(str(exc)) from exc
@@ -681,7 +688,12 @@ class RapportTjanst:
         """Ändrar rapportens inställningar. Kontrollen nollställs; händelsen loggas utan sökvägar."""
         r = self.hamta(rapport_id)
         try:
-            ny = tillampa(r.installningar, andringar, self.resursmapp(rapport_id))
+            ny = tillampa(
+                r.installningar,
+                andringar,
+                self.resursmapp(rapport_id),
+                tillatna_rotter=self._tillatna_resursrotter,
+            )
         except InstallningsFel as exc:
             raise RapportFel(str(exc)) from exc
         if ny == r.installningar:
