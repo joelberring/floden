@@ -16,6 +16,13 @@ from dagsljus.horisont import Hojdfalt, horisont_ruta_iter, uppdatera_horisont_i
 from dagsljus.matt import MattFel, SoltimmarAckumulator
 from dagsljus.ruta import omsampla
 from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011, solposition
+from data_inlasning.smhi import (
+    SmhiStation,
+    bygg_nortrip_vader_fran_smhi,
+    bygg_vaderserie_fran_smhi,
+    hitta_narmaste_station,
+    tolka_smhi_timdata,
+)
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from gemensamt.koordinater import EPSG_INTERN
 from karna.graf import Berakningsgraf, Cache
@@ -655,6 +662,55 @@ def test_nortrip_sno_och_smaltning_bevarar_vattenbalans_och_ger_vartopp() -> Non
     assert float(np.max(res.f_q[0, 3:24])) == 0.0
     # När snön smält och vägen torkat (sista 12 h) kommer vårdammet upp (f_q > 0,5)
     assert float(np.max(res.f_q[0, 60:])) > 0.5
+
+
+def test_smhi_metobs_tolkning_till_vaderserie_och_nortrip() -> None:
+    """SMHI MetObs JSON tolkas med kvalitetsfilter direkt till Vaderserie och NORTRIP."""
+    stationer = [
+        SmhiStation("71420", "Göteborg A", 57.7156, 11.9924, 5.0, True),
+        SmhiStation("98230", "Stockholm-Observatoriekullen", 59.3417, 18.0549, 43.0, True),
+        SmhiStation("71421", "Inaktiv station", 57.7089, 11.9746, 5.0, False),
+    ]
+    st, km = hitta_narmaste_station(57.7089, 11.9746, stationer)
+    assert st.id == "71420"
+    assert km < 2.0
+
+    # 3 timmar från epoch-timme 490_000 (varav 1 post har felaktig kvalitet 'R')
+    h0 = 490_000
+    ra_vind = {
+        "value": [
+            {"date": h0 * 3_600_000, "value": "4.5", "quality": "G"},
+            {"date": (h0 + 1) * 3_600_000, "value": "99.0", "quality": "R"},
+            {"date": (h0 + 2) * 3_600_000, "value": "5.5", "quality": "G"},
+        ]
+    }
+    ra_rikt = {
+        "value": [
+            {"date": h0 * 3_600_000, "value": "240.0", "quality": "G"},
+            {"date": (h0 + 2) * 3_600_000, "value": "250.0", "quality": "Y"},
+        ]
+    }
+    vh = tolka_smhi_timdata(ra_vind)
+    vr = tolka_smhi_timdata(ra_rikt)
+    assert h0 + 1 not in vh  # kvalitet 'R' filtreras bort
+
+    vs = bygg_vaderserie_fran_smhi(vh, vr)
+    assert len(vs.tid) == 3
+    assert vs.giltig.tolist() == [True, False, True]
+    ford = fordela(vs, [240.0, 270.0], u_ref_m_s=5.0)
+    assert int(ford.modellerad.sum()) == 2
+
+    # NORTRIP-vader interpolerar den enstaka saknade timmen (h0 + 1 -> 5.0 m/s)
+    temp = {h0: 2.0, h0 + 2: 6.0}
+    rh = {h0: 70.0, h0 + 2: 60.0}
+    ned = {h0: 0.4}
+    nt = bygg_nortrip_vader_fran_smhi(temp, ned, rh, vh)
+    assert nt.antal_timmar == 3
+    assert math.isclose(float(nt.vindhastighet_m_s[1]), 5.0, rel_tol=1e-12)
+    assert math.isclose(float(nt.temperatur_c[1]), 4.0, rel_tol=1e-12)
+    assert math.isclose(float(nt.nederbord_mm_h[0]), 0.4, rel_tol=1e-12)
+    assert float(nt.nederbord_mm_h[1]) == 0.0
+
 
 
 
