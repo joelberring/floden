@@ -147,9 +147,13 @@ class Berakningsgraf:
         try:
             matvarden = dict(nod.losare.funktion(sokvagar, dict(nod.parametrar), tmp) or {})
             utdata = [
-                FilPost(f.name, f.name, sha256_fil(f))
-                for f in sorted(tmp.iterdir())
-                if f.is_file() and f.name != "run.json"
+                FilPost(
+                    f.relative_to(tmp).as_posix(),
+                    f.relative_to(tmp).as_posix(),
+                    sha256_fil(f),
+                )
+                for f in sorted(tmp.rglob("*"))
+                if f.is_file() and f.relative_to(tmp).as_posix() != "run.json"
             ]
             manifest = skapa_manifest(
                 nod.losare.modul,

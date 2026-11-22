@@ -23,6 +23,7 @@ from dynamik.nodmodell import (
     niva_inkl_overhojd,
     nod_medel_gangtid_s,
     overfallsflode_m3_s,
+    regn_ytor_m2,
     skapa_regn_intervall,
 )
 from sankgraf.typer import SankGraf
@@ -197,6 +198,8 @@ def kor_dynamik_tidssteg(
             t_cur = t_nasta
 
     in_m3 = total_aktiv_area_m2 * total_regn_raw_m * float(avrinning_faktor)
+    a_mark, a_tak, a_led = regn_ytor_m2(graf)
+    r_eff = total_regn_raw_m * float(avrinning_faktor)
 
     # Tom graf (t.ex. A4 lutande plan)
     if not graf.noder:
@@ -218,6 +221,11 @@ def kor_dynamik_tidssteg(
             volymfel_rel=0.0,
             kortid_s=kortid,
             metod="tidssteg",
+            slutsankor=(),
+            regn_mark_m3=a_mark * r_eff,
+            regn_tak_m3=a_tak * r_eff,
+            takvatten=graf.takvatten is not None,
+            takvatten_till_ledning_m3=a_led * r_eff,
         )
 
     sorterade_noder = sorted(graf.noder)
@@ -531,4 +539,9 @@ def kor_dynamik_tidssteg(
         volymfel_rel=volymfel_rel,
         kortid_s=kortid,
         metod="tidssteg",
+        slutsankor=tuple(n.nod_id for n in graf.slutsankor()),
+        regn_mark_m3=a_mark * r_eff,
+        regn_tak_m3=a_tak * r_eff,
+        takvatten=graf.takvatten is not None,
+        takvatten_till_ledning_m3=a_led * r_eff,
     )

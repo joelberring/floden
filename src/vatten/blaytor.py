@@ -205,7 +205,9 @@ def blaytor_vid_mm(
     t0 = time.perf_counter()
     if not takvatten:
         graf = med_takvatten(graf, None)
-    elif graf.takvatten is None:
+    elif graf.takvatten is None or abs(
+        graf.takvatten.andel_ledning - float(takvatten_andel_ledning)
+    ) > 1e-12:
         graf = med_takvatten_graf(graf, andel_ledning=takvatten_andel_ledning)
     netto = netto_regn_mm(graf.markslag, regn_mm, initialforlust_mm)
     fyll = statisk_fyllning(graf, netto / 1000.0)
