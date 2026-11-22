@@ -215,7 +215,7 @@ _FARGPROV_JS = """() => {
     res.push([c, Array.from(px).slice(0, 3)]);
   }
   return { res, farg: r.outputColorSpace, ton: r.toneMapping };
-}"""
+}"""  # noqa: E501
 
 
 def _vy3d_farg(webblasare: Browser, url: str) -> None:
@@ -303,11 +303,14 @@ def main() -> None:
         "--kartverktyg", action="store_true", help="ta kartverktyg-*.png mot floden webb"
     )
     ap.add_argument("--3d", dest="vy3d", action="store_true", help="ta 3d-*.png mot floden webb")
-    ap.add_argument("--3d-farg", dest="vy3d_farg", action="store_true", help="prova att 3D-färger är exakta")
+    ap.add_argument(
+        "--3d-farg", dest="vy3d_farg", action="store_true", help="prova att 3D-färger är exakta"
+    )
     ap.add_argument("--url", default=None)
     ap.add_argument("--chrome", default="/usr/bin/google-chrome")
     args = ap.parse_args()
-    url = args.url or ("http://127.0.0.1:8765" if args.demo or args.kartverktyg or args.vy3d or args.vy3d_farg else "http://127.0.0.1:5173")
+    lokal = args.demo or args.kartverktyg or args.vy3d or args.vy3d_farg
+    url = args.url or ("http://127.0.0.1:8765" if lokal else "http://127.0.0.1:5173")
     UT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         # Kartan är MapLibre (WebGL): utan grafikkort används programvaruritning.
