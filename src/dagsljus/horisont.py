@@ -312,9 +312,85 @@ def horisont_riktning_ruta(
             np.maximum(bb[tgt], v, out=bb[tgt])
     h = np.arctan(best).astype(np.float32)
     ex, ey = (float(a[0]) for a in _komponenter(np.array([phi_rad])))
-    jj, ii = np.meshgrid(np.arange(c_a, c_b) + 0.5, np.arange(r_a, r_b) + 0.5)
-    trunk = _trunkering(falt, jj, ii, np.full_like(jj, ex), np.full_like(jj, ey), rmax_c)
+    ox_1d = np.arange(c_a, c_b, dtype=np.float64) + 0.5
+    oy_1d = np.arange(r_a, r_b, dtype=np.float64) + 0.5
+    if ex > 0.0:
+        tr_x = (falt.bredd - ox_1d) / ex < rmax_c
+    elif ex < 0.0:
+        tr_x = ox_1d / (-ex) < rmax_c
+    else:
+        tr_x = np.zeros(c_b - c_a, dtype=np.bool_)
+    if ey > 0.0:
+        tr_y = (falt.hojd - oy_1d) / ey < rmax_c
+    elif ey < 0.0:
+        tr_y = oy_1d / (-ey) < rmax_c
+    else:
+        tr_y = np.zeros(r_b - r_a, dtype=np.bool_)
+    trunk = np.asarray(tr_y[:, None] | tr_x[None, :], dtype=np.bool_)
     return h, trunk
+
+
+def uppdatera_horisont_inkrementellt(
+    h_fore: NDArray[np.float32],
+    falt_fore: Hojdfalt,
+    falt_efter: Hojdfalt,
+    max_avstand_m: float,
+    *,
+    fonster: tuple[int, int, int, int] | None = None,
+    aktiva_riktningar: frozenset[int] | None = None,
+) -> NDArray[np.float32]:
+    """Uppdaterar en befintlig horisontkub `(K, r, c)` inkrementellt efter en lokal ändring.
+
+    Räknar bara om det exakta skuggfönster i varje riktning `phi_k` vars strålar inom
+    `max_avstand_m` kan träffa någon ändrad cell (`z_efter != z_fore`), plus de ändrade
+    cellerna själva. Ger bitidentiskt resultat med full omräkning men hoppar över 80–97 %
+    av cellerna vid en lokal byggnadsändring.
+    """
+    _validera_avstand(max_avstand_m)
+    if falt_fore.z_m.shape != falt_efter.z_m.shape or falt_fore.cell_m != falt_efter.cell_m:
+        raise HorisontFel("falt_fore och falt_efter måste ha samma rutnät.")
+    ny, nx = falt_efter.z_m.shape
+    r_a, r_b, c_a, c_b = fonster if fonster is not None else (0, ny, 0, nx)
+    antal_k = int(h_fore.shape[0])
+    if h_fore.shape != (antal_k, r_b - r_a, c_b - c_a):
+        raise HorisontFel(
+            f"h_fore har form {h_fore.shape}, väntade {(antal_k, r_b - r_a, c_b - c_a)}."
+        )
+
+    h_efter = h_fore.copy()
+    andrad = falt_efter.z_m != falt_fore.z_m
+    if not bool(np.any(andrad)):
+        return h_efter
+
+    ri, ci = np.nonzero(andrad)
+    ar0, ar1 = int(ri.min()), int(ri.max()) + 1
+    ac0, ac1 = int(ci.min()), int(ci.max()) + 1
+    rmax_c = max_avstand_m / falt_efter.cell_m
+
+    for k, phi in enumerate(riktningar_rad(antal_k)):
+        if aktiva_riktningar is not None and k not in aktiva_riktningar:
+            continue
+        dj, di, _ = stralsekvens(float(phi), rmax_c)
+        if dj.size > 0:
+            # Celler (r, c) som når en ändrad cell (r + di, c + dj) i [ar0..ar1, ac0..ac1]
+            # samt ändrade celler själva (di=0, dj=0).
+            min_di = min(0, int(di.min()))
+            max_di = max(0, int(di.max()))
+            min_dj = min(0, int(dj.min()))
+            max_dj = max(0, int(dj.max()))
+        else:
+            min_di = max_di = min_dj = max_dj = 0
+        sr0 = max(r_a, ar0 - max_di)
+        sr1 = min(r_b, ar1 - min_di)
+        sc0 = max(c_a, ac0 - max_dj)
+        sc1 = min(c_b, ac1 - min_dj)
+        if sr0 >= sr1 or sc0 >= sc1:
+            continue
+        h_del, _ = horisont_riktning_ruta(
+            falt_efter, float(phi), max_avstand_m, fonster=(sr0, sr1, sc0, sc1)
+        )
+        h_efter[k, sr0 - r_a : sr1 - r_a, sc0 - c_a : sc1 - c_a] = h_del
+    return h_efter
 
 
 def horisont_ruta_iter(
