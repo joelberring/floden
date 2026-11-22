@@ -92,3 +92,13 @@ def test_wgsl_lbm_d3q19_konstanter_och_f32_jamvikt_matchar_python() -> None:
     for q in range(19):
         assert opp[opp[q]] == q
         assert np.array_equal(c_wgsl[opp[q]], -c_wgsl[q])
+
+
+def test_webgpu_typescript_motor_kontrakt() -> None:
+    """webgpuMotor.ts ska matcha dagsljus_horisont.wgsl, märka klient_webgpu_f32 och städa VRAM."""
+    motor_fil = SHADER_MAPP.parent / "webgpuMotor.ts"
+    assert motor_fil.is_file()
+    kod = motor_fil.read_text(encoding="utf-8")
+    assert 'berakna_svf_och_soltimmar' in kod
+    assert '"klient_webgpu_f32"' in kod
+    assert "finally {" in kod and ".destroy()" in kod
