@@ -293,22 +293,36 @@ def horisont_riktning_ruta(
     rmax_c = max_avstand_m / falt.cell_m
     dj, di, t = stralsekvens(phi_rad, rmax_c)
     w = (1.0 / (t * falt.cell_m)).astype(dtyp)
+    dj_l = dj.tolist()
+    di_l = di.tolist()
+    w_l = w.tolist()
+    z_max_glob = float(z.max())
     best = np.zeros((r_b - r_a, c_b - c_a), dtype=dtyp)
     for r0 in range(r_a, r_b, radblock):
         r1 = min(r_b, r0 + radblock)
         zb = z[r0:r1, c_a:c_b]
+        max_dz = z_max_glob - float(zb.min())
+        if max_dz <= 0.0:
+            continue
         bb = best[r0 - r_a : r1 - r_a]
         buf = np.empty((r1 - r0, c_b - c_a), dtype=dtyp)
-        for k in range(len(dj)):
-            djk, dik = int(dj[k]), int(di[k])
-            a0, a1 = max(r0, -dik), min(r1, ny - dik)
-            q0, q1 = max(c_a, -djk), min(c_b, nx - djk)
+        for k in range(len(dj_l)):
+            wk = w_l[k]
+            # Exakt övre gräns: om inte ens högsta punkten i hela fältet kan höja
+            # den lägsta lutningen i blocket kan inget senare steg (större avstånd) göra det.
+            if (k & 7) == 7 and max_dz * wk <= float(bb.min()):
+                break
+            djk, dik = dj_l[k], di_l[k]
+            a0 = r0 if -dik < r0 else -dik
+            a1 = r1 if ny - dik > r1 else ny - dik
+            q0 = c_a if -djk < c_a else -djk
+            q1 = c_b if nx - djk > c_b else nx - djk
             if a0 >= a1 or q0 >= q1:
                 continue
             tgt = (slice(a0 - r0, a1 - r0), slice(q0 - c_a, q1 - c_a))
             v = buf[tgt]
             np.subtract(z[a0 + dik : a1 + dik, q0 + djk : q1 + djk], zb[tgt], out=v)
-            np.multiply(v, w[k], out=v)
+            np.multiply(v, wk, out=v)
             np.maximum(bb[tgt], v, out=bb[tgt])
     h = np.arctan(best).astype(np.float32)
     ex, ey = (float(a[0]) for a in _komponenter(np.array([phi_rad])))

@@ -55,6 +55,9 @@ class SubgridTabell:
     oppningsgrad_v: NDArray[np.float64]
     kant_par_z_v: NDArray[np.float64]
     kant_par_oppen_v: NDArray[np.bool_]
+    # Förberäknade effektiva kant-trösklar (+inf på stängda delkanter) för snabb flödesgeometri
+    kant_par_z_eff_u: NDArray[np.float64]
+    kant_par_z_eff_v: NDArray[np.float64]
 
     @property
     def hojd_grov(self) -> int:
@@ -285,6 +288,8 @@ def bygg_subgrid_tabell(
         oppningsgrad_v=oppningsgrad_v,
         kant_par_z_v=kant_par_z_v,
         kant_par_oppen_v=kant_par_oppen_v,
+        kant_par_z_eff_u=np.where(kant_par_oppen_u, kant_par_z_u, np.inf),
+        kant_par_z_eff_v=np.where(kant_par_oppen_v, kant_par_z_v, np.inf),
     )
 
 
@@ -378,21 +383,22 @@ def vattenniva_fran_volym(
         zs[over] = z_top[over] + (v[over] - v_top[over]) / subgrid.aktiv_area_m2[over]
 
     mellan = subgrid.aktiv_mask & (v > 0.0) & (v < v_top)
-    if bool(np.any(mellan)):
-        v_m = v[mellan]
-        vtab_m = subgrid.volym_tab_m3[mellan]
-        ztab_m = subgrid.z_tab[mellan]
-        idx = np.sum(vtab_m <= v_m[:, None], axis=1) - 1
-        idx = np.clip(idx, 0, subgrid.z_nivaer - 2)
+    mellan_idx = np.flatnonzero(mellan)
+    if mellan_idx.size > 0:
+        v_m = v.ravel()[mellan_idx]
+        n_celler = subgrid.aktiv_mask.size
+        vtab_m = subgrid.volym_tab_m3.reshape(n_celler, subgrid.z_nivaer)[mellan_idx]
+        ztab_m = subgrid.z_tab.reshape(n_celler, subgrid.z_nivaer)[mellan_idx]
+        idx = np.count_nonzero(vtab_m <= v_m[:, None], axis=1) - 1
+        np.clip(idx, 0, subgrid.z_nivaer - 2, out=idx)
         r_idx = np.arange(v_m.size)
         v0 = vtab_m[r_idx, idx]
         v1 = vtab_m[r_idx, idx + 1]
         z0 = ztab_m[r_idx, idx]
         z1 = ztab_m[r_idx, idx + 1]
         dv = v1 - v0
-        safe_dv = np.where(dv > 0.0, dv, 1.0)
-        andel = np.where(dv > 0.0, (v_m - v0) / safe_dv, 0.0)
-        zs[mellan] = z0 + andel * (z1 - z0)
+        andel = np.divide(v_m - v0, dv, out=np.zeros_like(v_m), where=dv > 0.0)
+        zs.ravel()[mellan_idx] = z0 + andel * (z1 - z0)
 
     return zs
 
@@ -410,11 +416,12 @@ def kant_flode_geometri_u(
     if subgrid.bredd_grov <= 1:
         tom = np.zeros((subgrid.hojd_grov, 0), dtype=np.float64)
         return tom, tom.copy()
+    inv_f = 1.0 / float(subgrid.faktor)
     zs_kant = np.maximum(grova_zs[:, :-1], grova_zs[:, 1:])
-    diff = np.maximum(0.0, zs_kant[:, :, None] - subgrid.kant_par_z_u)
-    diff = np.where(subgrid.kant_par_oppen_u, diff, 0.0)
-    h_eff = np.asarray(np.mean(diff, axis=2), dtype=np.float64)
-    bredd_andel = np.asarray(np.mean(diff > 0.0, axis=2), dtype=np.float64)
+    diff = zs_kant[:, :, None] - subgrid.kant_par_z_eff_u
+    np.maximum(diff, 0.0, out=diff)
+    h_eff = np.asarray(np.sum(diff, axis=2) * inv_f, dtype=np.float64)
+    bredd_andel = np.asarray(np.count_nonzero(diff > 0.0, axis=2) * inv_f, dtype=np.float64)
     return h_eff, bredd_andel
 
 
@@ -426,11 +433,12 @@ def kant_flode_geometri_v(
     if subgrid.hojd_grov <= 1:
         tom = np.zeros((0, subgrid.bredd_grov), dtype=np.float64)
         return tom, tom.copy()
+    inv_f = 1.0 / float(subgrid.faktor)
     zs_kant = np.maximum(grova_zs[:-1, :], grova_zs[1:, :])
-    diff = np.maximum(0.0, zs_kant[:, :, None] - subgrid.kant_par_z_v)
-    diff = np.where(subgrid.kant_par_oppen_v, diff, 0.0)
-    h_eff = np.asarray(np.mean(diff, axis=2), dtype=np.float64)
-    bredd_andel = np.asarray(np.mean(diff > 0.0, axis=2), dtype=np.float64)
+    diff = zs_kant[:, :, None] - subgrid.kant_par_z_eff_v
+    np.maximum(diff, 0.0, out=diff)
+    h_eff = np.asarray(np.sum(diff, axis=2) * inv_f, dtype=np.float64)
+    bredd_andel = np.asarray(np.count_nonzero(diff > 0.0, axis=2) * inv_f, dtype=np.float64)
     return h_eff, bredd_andel
 
 

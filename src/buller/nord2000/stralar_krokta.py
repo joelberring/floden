@@ -125,17 +125,23 @@ def cirkelbage(
     korda = math.hypot(d, dz)
 
     x = 0.5 * korda * xi * cos_psi
-    if abs(x) > 1.0:
+    abs_x = abs(x)
+    if abs_x > 1.0:
         raise BullerFel("Ingen cirkelbåge förbinder punkterna (|sin Δθ| > 1).")
-    sin_theta_u = sin_psi - xi * d * cos_psi
-    y = xi * d * cos_psi / (1.0 - sin_psi * sin_theta_u)
+    d_cos = d * cos_psi
+    xi_d_cos = xi * d_cos
+    sin_theta_u = sin_psi - xi_d_cos
+    namnare = 1.0 - sin_psi * sin_theta_u
+    y = xi_d_cos / namnare
     if not abs(y) < 1.0:
         raise BullerFel("Gångtiden längs cirkelbågen är inte ändlig (strålen blir lodrät).")
+    asin_x = math.asin(x)
+    asin_genom_x = asin_x / x if abs_x >= 1.0e-6 else 1.0 + x * x / 6.0
     return Cirkelbage(
-        gangtid_s=d * cos_psi / (c_nedre_m_s * (1.0 - sin_psi * sin_theta_u)) * _atanh_genom_x(y),
-        vagstracka_m=korda * _asin_genom_x(x),
+        gangtid_s=d_cos / (c_nedre_m_s * namnare) * _atanh_genom_x(y),
+        vagstracka_m=korda * asin_genom_x,
         vinkel_nedre_rad=math.atan(tan_psi),
-        vinkelandring_rad=math.asin(x),
+        vinkelandring_rad=asin_x,
     )
 
 
