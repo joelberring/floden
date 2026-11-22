@@ -1028,6 +1028,34 @@ class FragaTjanst:
             "tak": np.load(takfil) if takfil.is_file() else None,
         }
 
+    def marksiffror(
+        self, korning_id: str, lager: dict[str, Any], troskel: float
+    ) -> dict[str, float] | None:
+        """Ytor (m²) och största förändring på **mark** i ett skillnadslager, utan byggnadernas tak.
+
+        Den enda funktionen för dessa mått: projektsidan och MCP-servern använder den. Takmasken är
+        den som kartan ritar bilderna med (`<lager>.tak.npy`); kärnans egen jämförelse räknar alla
+        celler, tak inräknade. `None` om lagret inte har något markvärde."""
+        k = self._hamta(korning_id)
+        fil = k.mapp / "webb" / f"{lager['id']}.npy"
+        if not fil.is_file():
+            return None
+        d = np.asarray(np.load(fil), dtype=np.float64)
+        giltig = np.isfinite(d)
+        takfil = k.mapp / "webb" / f"{lager['id']}.tak.npy"
+        if takfil.is_file():
+            giltig &= ~np.load(takfil)
+        if not giltig.any():
+            return None
+        cell = float(lager["pixelstorlek_m"]) ** 2
+        v = d[giltig]
+        return {
+            "yta_minskning_m2": float(np.count_nonzero(v < -troskel)) * cell,
+            "yta_okning_m2": float(np.count_nonzero(v > troskel)) * cell,
+            "max_minskning": float(max(0.0, -v.min())),
+            "max_okning": float(max(0.0, v.max())),
+        }
+
     def omradesstatistik(
         self, korning_id: str, lager_id: str, ring: list[list[float]]
     ) -> dict[str, Any]:

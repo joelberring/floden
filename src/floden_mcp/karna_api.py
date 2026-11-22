@@ -511,7 +511,36 @@ class FlodenTjanst:
             )
             mott = f"{j['efter']} − {j['fore']} (hela området)"
 
-            def v(namn: str, e: str | None, _j: Mapping[str, Any] = j, _m: str = mott) -> Any:
+            # Byggnadernas tak är inte mark: samma funktion och samma takmask som webbens
+            # projektsida (`FragaTjanst.marksiffror`). Kärnans egen jämförelse räknar alla celler.
+            mark = self.fragor.marksiffror(korning_id, la, float(j["troskel"])) if la else None
+            tak_maskat = (
+                la is not None
+                and (
+                    self.fragor._hamta(korning_id).mapp / "webb" / f"{la['id']}.tak.npy"  # noqa: SLF001
+                ).is_file()
+            )
+
+            def v(
+                namn: str,
+                e: str | None,
+                _j: Mapping[str, Any] = j,
+                _m: str = mott,
+                _mark: Mapping[str, float] | None = mark,
+                _fil: str = fil,
+            ) -> Any:
+                if _mark is not None:
+                    return varde_med_belagg(
+                        _mark[namn],
+                        belagg(
+                            korning_id,
+                            _fil,
+                            f"{_j['utdata']}:{namn}:mark",
+                            e,
+                            mottagare=f"jamforelser/{_j['namn']}: {_j['efter']} − {_j['fore']} "
+                            "(mark; byggnadernas tak undantagna)",
+                        ),
+                    )
                 return varde_med_belagg(
                     _j[namn],
                     belagg(
@@ -523,23 +552,49 @@ class FlodenTjanst:
                     ),
                 )
 
-            ut.append(
-                {
-                    "namn": j["namn"],
-                    "analys": j["analys"],
-                    "utdata": j["utdata"],
-                    "fore": j["fore"],
-                    "efter": j["efter"],
-                    "betydelse": f"skillnad = {j['efter']} minus {j['fore']}",
-                    "troskel": j["troskel"],
-                    "max_okning": v("max_okning", enhet),
-                    "max_minskning": v("max_minskning", enhet),
-                    "yta_okning_m2": v("yta_okning_m2", "m²"),
-                    "yta_minskning_m2": v("yta_minskning_m2", "m²"),
-                    "antal_rutor": j["rutor"],
-                    "rasterfil": fil,
+            def karnans(namn: str, e: str | None, _j: Mapping[str, Any] = j) -> Any:
+                return varde_med_belagg(
+                    _j[namn],
+                    belagg(
+                        korning_id,
+                        "sammanstallning.json",
+                        f"{_j['utdata']}:{namn}",
+                        e,
+                        mottagare=f"jamforelser/{_j['namn']}: alla celler, tak inräknade",
+                    ),
+                )
+
+            post: dict[str, Any] = {
+                "namn": j["namn"],
+                "analys": j["analys"],
+                "utdata": j["utdata"],
+                "fore": j["fore"],
+                "efter": j["efter"],
+                "betydelse": f"skillnad = {j['efter']} minus {j['fore']}",
+                "yta_mark_enbart": mark is not None,
+                "tak_maskat": tak_maskat,
+                "troskel": j["troskel"],
+                "max_okning": v("max_okning", enhet),
+                "max_minskning": v("max_minskning", enhet),
+                "yta_okning_m2": v("yta_okning_m2", "m²"),
+                "yta_minskning_m2": v("yta_minskning_m2", "m²"),
+                "antal_rutor": j["rutor"],
+                "rasterfil": fil,
+            }
+            if mark is not None:
+                post["anmarkning"] = (
+                    "Talen gäller mark: byggnadernas tak är undantagna (ett nytt hus är inte "
+                    "ändrad mark). Kärnans omaskade tal, med tak, står i karnans_omaskade."
+                )
+                post["karnans_omaskade"] = {
+                    n: karnans(n, "m²" if n.startswith("yta") else enhet)
+                    for n in ("max_okning", "max_minskning", "yta_okning_m2", "yta_minskning_m2")
                 }
-            )
+            else:
+                post["anmarkning"] = (
+                    "Inget markraster fanns för jämförelsen; talen är kärnans (alla celler)."
+                )
+            ut.append(post)
         return ut
 
     def jamfor(
@@ -683,7 +738,7 @@ class FlodenTjanst:
                     post["betydelse"] = f"{la['efter']} minus {la['fore']}"
                 k = rad.get("kalla")
                 if rad["inom"] and k is not None and rad["varde"] is not None:
-                    post["varde"] = varde_med_belagg(
+                    vb = varde_med_belagg(
                         rad["varde"],
                         belagg(
                             korning_id,
@@ -695,6 +750,16 @@ class FlodenTjanst:
                             fil_sha256=k["fil_sha256"],
                         ),
                     )
+                    if rad["tak"]:
+                        # Cellen är en byggnads tak (samma takmask som kartan): inget markvärde.
+                        post["varde"] = None
+                        post["tak_varde"] = vb
+                        post["orsak"] = (
+                            "Cellen är en byggnads tak, inte mark. Värdet står i tak_varde "
+                            "och ska inte läsas som markvärde."
+                        )
+                    else:
+                        post["varde"] = vb
                 else:
                     post["varde"] = None
                     post["orsak"] = (
@@ -709,8 +774,8 @@ class FlodenTjanst:
                 "roll": av["roll"],
                 "punkt": [av["e"], av["n"]],
                 "varden": varden,
-                "anmarkning": "ar_tak: cellen är en byggnads tak (inte mark); värdet är Flodens "
-                "värde för cellen.",
+                "anmarkning": "ar_tak: cellen är en byggnads tak (inte mark). Då ges inget "
+                "markvärde (varde = null); Flodens värde för cellen står i tak_varde.",
             }
         ring = _ring(omrade, "omrade")
         statistik = []

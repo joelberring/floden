@@ -14,6 +14,12 @@ K9-scenarier, `karna.*`); MCP-lagret i `src/floden_mcp/` räknar ingenting själ
   text. Texten ska peka på belägg, inte ersätta dem.
 - **Varje tal har belägg:** `korning_id`, `fil`, `mottagare` eller `cell` (E/N och cellstorlek),
   `matt` (t.ex. `max_djup:max_okning`) och `enhet`. För rasterceller ingår filens sha256.
+- **Tak är inte mark.** Skillnader och statistik gäller mark: byggnadernas tak undantas med samma
+  takmask som webben och kartan (`FragaTjanst.marksiffror`, en enda funktion; dagsljus maskar
+  fotavtryck i både bas och scenario, vatten bara byggnad i markslaget). Ett nytt hus ger därför
+  aldrig "mer sol" genom sitt eget tak. `jamfor` och `resultat_sammanfattning` ger markens tal
+  (`yta_mark_enbart`, `tak_maskat`) och kärnans omaskade tal bredvid (`karnans_omaskade`).
+  `resultat_varde` i en takcell ger `varde: null` och värdet i `tak_varde`.
 - **Allt är märkt skiss.** Metodstatus (`metoder_lista`) är `skiss` för alla metoder tills en
   människa sätter `rapport` i `data/mcp/metodstatus.toml`. Kartan har texten SKISS i foten.
   Server och klient kan inte höja en metod till `rapport`.

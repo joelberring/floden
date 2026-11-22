@@ -170,9 +170,15 @@ def test_jamforelse_har_belagg_och_talen_ar_flodens(mcp: Mcp) -> None:
         (mcp.app.fragor.korningsmapp / "demo-vatten/resultat/sammanstallning.json").read_text()
     )
     j = s["jamforelser"][0]
-    assert j["max_okning"]["varde"] == sam["jamforelser"][0]["max_okning"]
+    # Markens tal (tak undantagna) kommer ur webbens funktion; kärnans omaskade finns bredvid.
+    res = mcp.app.fragor.resultat("demo-vatten")
+    la = next(x for x in res["lager"] if x["typ"] == "skillnad" and x["primar"])
+    ms = mcp.app.fragor.marksiffror("demo-vatten", la, j["troskel"])
+    assert ms is not None and j["max_okning"]["varde"] == ms["max_okning"]
+    assert j["karnans_omaskade"]["max_okning"]["varde"] == sam["jamforelser"][0]["max_okning"]
     b = j["max_okning"]["belagg"]
-    assert b["korning_id"] == "demo-vatten" and b["fil"] == "sammanstallning.json"
+    assert b["korning_id"] == "demo-vatten" and b["fil"].endswith("diff.tif")
+    assert b["matt"] == "max_djup:max_okning:mark"
     assert b["enhet"] == "m" and j["yta_okning_m2"]["enhet"] == "m²"
     rad = s["matvarden"][0]["rader"][0]
     assert rad["belagg"]["fil"].endswith("run.json")
@@ -314,6 +320,50 @@ def test_ritat_hus_fran_scenario_till_jamforelse(mcp: Mcp) -> None:
         jam["sol"]["max_minskning"]["enhet"] == "h" and jam["skyfall"]["max_okning"]["enhet"] == "m"
     )
     assert jam["skyfall"]["max_okning"]["varde"] > 0  # huset spärrar avrinningen: vatten ökar
+    # Ett nytt hus kan aldrig ge mer sol på mark, och byggnadens eget tak är inte mark.
+    sol_id = next(k for k in ids if "dagsljus" in k)
+    sol = jam["sol"]
+    assert sol["tak_maskat"] and sol["yta_mark_enbart"]
+    assert sol["max_okning"]["varde"] == 0.0 and sol["yta_okning_m2"]["varde"] == 0.0
+    assert sol["max_okning"]["belagg"]["matt"].endswith(":mark")
+    assert sol["karnans_omaskade"]["yta_okning_m2"]["varde"] > 0  # kärnans tal räknar taket
+    assert sol["yta_minskning_m2"]["varde"] < sol["karnans_omaskade"]["yta_minskning_m2"]["varde"]
+    # Samma funktion och mask som webben: jämförelsens tal = FragaTjanst.marksiffror = polygonen
+    # över hela utbredningen (statistik) = projektsidans räkning.
+    res = mcp.app.fragor.resultat(sol_id)
+    la = next(x for x in res["lager"] if x["typ"] == "skillnad" and x["primar"])
+    ms = mcp.app.fragor.marksiffror(sol_id, la, sol["troskel"])
+    assert ms is not None and ms["yta_minskning_m2"] == sol["yta_minskning_m2"]["varde"]
+    u = la["utbredning"]
+    hela = [[u["x_min"], u["y_min"]], [u["x_max"], u["y_min"]], [u["x_max"], u["y_max"]], [u["x_min"], u["y_max"]]]  # fmt: skip
+    st = mcp.ok(
+        "resultat_varde",
+        {"korning_id": sol_id, "analys": "sol", "roll": "soltimmar", "omrade": hela},
+    )
+    skill = next(x for x in st["statistik"] if x["typ"] == "skillnad")
+    assert skill["yta_minskning_m2"]["varde"] == ms["yta_minskning_m2"]
+    assert skill["yta_okning_m2"]["varde"] == 0.0 and skill["max"]["varde"] <= 0.0
+    assert skill["antal_celler_tak_uteslutna"] > 0
+    pr = mcp.app.projekt._marksiffror(sol_id, la, sol["troskel"])  # noqa: SLF001
+    assert pr == ms
+    # Cellen mitt i det nya huset är tak: inget markvärde, värdet märkt som tak.
+    ring = nytt_hus_polygon(LITEN.varld())
+    e = sum(p[0] for p in ring) / len(ring)
+    n = sum(p[1] for p in ring) / len(ring)
+    pv = mcp.ok(
+        "resultat_varde",
+        {"korning_id": sol_id, "analys": "sol", "roll": "soltimmar", "e": e, "n": n},
+    )
+    per_typ = {post["typ"]: post for post in pv["varden"]}
+    assert per_typ["bas"]["ar_tak"] is False and per_typ["bas"]["varde"] is not None  # öppen mark
+    for typ in ("scenario", "skillnad"):  # huset finns i efter-scenariot och därmed i skillnaden
+        post = per_typ[typ]
+        assert post["ar_tak"] is True, post
+        assert post["varde"] is None and post["tak_varde"]["varde"] is not None
+        assert "tak" in post["orsak"]
+    # Vatten: bara byggnad i markslaget maskas; ökningen finns på marken utanför huset.
+    vat = jam["skyfall"]
+    assert vat["tak_maskat"] and vat["yta_okning_m2"]["varde"] > 0
     # Körloggen vet vem som körde vad.
     rader = mcp.logg.las(verktyg="kor")
     assert rader and set(ids) <= set(rader[-1]["korning_id"]) or rader[-1]["utfall"] == "ok"
