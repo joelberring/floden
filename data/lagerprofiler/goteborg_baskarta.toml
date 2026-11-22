@@ -1,0 +1,133 @@
+# Lagerprofil: Göteborgs Stads öppna baskarta -> Flodens roller (markmodell.lagerprofil).
+#
+# Göteborgs Stad publicerar öppen baskarta och 3D-stadsmodell i SWEREF 99 12 00 (EPSG:3007)
+# under CC0 / öppen datalicens via data.goteborg.se.
+#
+# Ytornas markslagskoder enligt K1:
+#   1 hårdgjort, 2 tak, 3 grönt tak, 4 gräs, 5 skog, 6 berg i dagen, 7 grus, 8 vatten, 9 byggnad.
+# Prefixreglerna matchar vanliga lagernamn i Göteborgs öppna baskarta (DWG/DXF/GeoPackage)
+# och ska bekräftas mot full leverans vid skarp kommunal körning.
+
+namn = "goteborg_baskarta"
+version = 1
+beskrivning = "Göteborgs Stads öppna baskarta (EPSG:3007): prefixregler för brytlinjer, byggnader och markslag"
+
+# --- Brytlinjer och byggnadslinjer ---
+[[linjer]]
+prefix = "KANTSTEN"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "VAGKANT"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "VÄGKANT"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "GATA_KANT"
+roll = "kantsten"
+standard_m = 0.12
+
+[[linjer]]
+prefix = "MUR"
+roll = "mur"
+standard_m = 1.0
+
+[[linjer]]
+prefix = "STODMUR"
+roll = "stodmur"
+standard_m = 1.5
+
+[[linjer]]
+prefix = "STÖDMUR"
+roll = "stodmur"
+standard_m = 1.5
+
+[[linjer]]
+prefix = "STAKET"
+roll = "staket"
+standard_m = 0.15
+
+[[linjer]]
+prefix = "SLANT"
+roll = "bankkant"
+standard_m = 0.30
+
+[[linjer]]
+prefix = "SLÄNT"
+roll = "bankkant"
+standard_m = 0.30
+
+[[linjer]]
+prefix = "BYGGNAD"
+roll = "byggnad"
+standard_m = 10.0
+
+[[linjer]]
+prefix = "HUSLIV"
+roll = "byggnad"
+standard_m = 10.0
+
+[[linjer]]
+prefix = "TRUMMA"
+roll = "trumma"
+standard_m = 1.0
+
+[[linjer]]
+prefix = "PORT"
+roll = "port"
+standard_m = 2.5
+
+# --- Markslagsytor (K1-koder) ---
+[[ytor]]
+prefix = "ASFALT"
+markslag = 1
+
+[[ytor]]
+prefix = "GATA"
+markslag = 1
+
+[[ytor]]
+prefix = "TORG"
+markslag = 1
+
+[[ytor]]
+prefix = "GANGCYKEL"
+markslag = 1
+
+[[ytor]]
+prefix = "GRAS"
+markslag = 4
+
+[[ytor]]
+prefix = "GRÄS"
+markslag = 4
+
+[[ytor]]
+prefix = "PARK"
+markslag = 4
+
+[[ytor]]
+prefix = "SKOG"
+markslag = 5
+
+[[ytor]]
+prefix = "BERG"
+markslag = 6
+
+[[ytor]]
+prefix = "GRUS"
+markslag = 7
+
+[[ytor]]
+prefix = "VATTEN"
+markslag = 8
+
+[[ytor]]
+prefix = "BYGGNAD_YTA"
+markslag = 9
