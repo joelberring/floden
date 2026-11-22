@@ -11,7 +11,9 @@ import numpy as np
 import pytest
 
 from buller.nord2000.stralar_krokta import reflexpunkter_m
+from dagsljus.horisont import Hojdfalt
 from dagsljus.matt import MattFel, SoltimmarAckumulator
+from dagsljus.ruta import omsampla
 from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011, solposition
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from gemensamt.koordinater import EPSG_INTERN
@@ -426,6 +428,41 @@ def test_nord2000_reflexpunkter_newton_exakt_kubisk_rot() -> None:
             rest = (2.0 * xi * u * u + p) * u + q
             skala = max(1.0, abs(p * u), abs(q))
             assert abs(rest) <= 1e-12 * skala
+
+
+def test_dagsljus_omsampla_punkt_centrerad_utan_se_forskjutning() -> None:
+    """omsampla(..., 'punkt') ska sampla exakt i den grova cellens mittpunkt för jämn faktor."""
+    # Linjärt plan z(r, c) = 2*(c + 0.5) + 3*(r + 0.5) i 8x8-raster
+    r = np.arange(8, dtype=np.float64)[:, None] + 0.5
+    c = np.arange(8, dtype=np.float64)[None, :] + 0.5
+    z = 2.0 * c + 3.0 * r
+    for faktor in (2, 4):
+        ut = omsampla(z, faktor, "punkt")
+        rc = (np.arange(8 // faktor, dtype=np.float64)[:, None] + 0.5) * faktor
+        cc = (np.arange(8 // faktor, dtype=np.float64)[None, :] + 0.5) * faktor
+        forvantat = 2.0 * cc + 3.0 * rc
+        assert np.allclose(ut, forvantat, atol=1e-12)
+
+
+def test_dagsljus_vsc_diagonal_fasad_rensar_rastercell() -> None:
+    """Fasadpunkt på 45°-diagonal vägg ska rensa byggnadscellen med √2/2·cell_m."""
+    from dagsljus.floden_losare import _vsc_pa_falt
+
+    # 10x10 raster (cell_m = 1.0), en byggnadscell i (5, 5) med höjd 15 m
+    z = np.zeros((10, 10), dtype=np.float64)
+    z[5, 5] = 15.0
+    falt = Hojdfalt(z_m=z, cell_m=1.0, x_min_m=0.0, y_max_m=10.0)
+    # Punkt mitt på byggnadscellen (5.5, 4.5) med normal rakt åt nordost (45°)
+    # Med bara 0.5 m offset hamnar (5.854, 4.854) fortfarande i cell (5, 5)!
+    az_n = np.radians([45.0])
+    cell_proj = 0.5 * (1.0 + 1e-6) * falt.cell_m * (np.abs(np.sin(az_n)) + np.abs(np.cos(az_n)))
+    x0 = np.array([5.5]) + cell_proj * np.sin(az_n)
+    y0 = np.array([4.5]) + cell_proj * np.cos(az_n)
+    z0 = np.array([1.5])
+    res = _vsc_pa_falt(falt, x0, y0, z0, az_n, radie=20.0, kf=64)
+    assert res.status[0] == "ok"
+    assert np.isfinite(res.vsc[0]) and res.vsc[0] > 0.3
+
 
 
 

@@ -675,8 +675,14 @@ class VscFasad(_DagsljusLosare):
         ut_m = float(kontext.parametrar["utanfor_m"])
         n = len(punkter)
         az_n = np.radians([p["az"] for p in punkter])
-        x0 = np.array([p["x"] for p in punkter]) + ut_m * np.sin(az_n)
-        y0 = np.array([p["y"] for p in punkter]) + ut_m * np.cos(az_n)
+        # Minst halva cellens projektion längs fasadnormalen (0,5·cell axelparallellt,
+        # √2/2·cell vid 45°) så att diagonala väggar inte fastnar i egen rastercell.
+        cell_proj = (
+            0.5 * (1.0 + 1e-6) * m.falt.cell_m * (np.abs(np.sin(az_n)) + np.abs(np.cos(az_n)))
+        )
+        ut_eff = np.maximum(ut_m, cell_proj)
+        x0 = np.array([p["x"] for p in punkter]) + ut_eff * np.sin(az_n)
+        y0 = np.array([p["y"] for p in punkter]) + ut_eff * np.cos(az_n)
         z0 = np.array([p["z"] for p in punkter])
         res = _vsc_pa_falt(m.falt, x0, y0, z0, az_n, radie, kf)
         vsc, trunk_ant, status = res.vsc, res.trunk_ant, res.status

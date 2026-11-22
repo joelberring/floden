@@ -37,7 +37,7 @@ class Mosaik:
 
 
 def omsampla(z: NDArray[np.float64], faktor: int, metod: Omsampling) -> NDArray[np.float64]:
-    """Grovare raster med heltalsfaktor. `punkt` tar cellens mittpunktsnärmaste cell."""
+    """Grovare raster med heltalsfaktor. `punkt` samplar exakt i den grova cellens mittpunkt."""
     if faktor == 1:
         return z
     h, b = z.shape
@@ -45,7 +45,18 @@ def omsampla(z: NDArray[np.float64], faktor: int, metod: Omsampling) -> NDArray[
         raise RutaFel(f"Rastret {h}x{b} kan inte omsamplas med faktor {faktor} (inte delbart).")
     if metod == "punkt":
         o = faktor // 2
-        return np.ascontiguousarray(z[o::faktor, o::faktor])
+        if faktor % 2 == 1:
+            return np.ascontiguousarray(z[o::faktor, o::faktor])
+        # Jämn faktor: cellens mittpunkt ligger exakt mellan de 4 centrala fina cellerna.
+        return np.ascontiguousarray(
+            0.25
+            * (
+                z[o - 1 :: faktor, o - 1 :: faktor]
+                + z[o - 1 :: faktor, o::faktor]
+                + z[o::faktor, o - 1 :: faktor]
+                + z[o::faktor, o::faktor]
+            )
+        )
     block = z.reshape(h // faktor, faktor, b // faktor, faktor)
     return np.asarray(block.max(axis=(1, 3)) if metod == "max" else block.mean(axis=(1, 3)))
 
