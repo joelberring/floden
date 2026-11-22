@@ -119,6 +119,7 @@ def berakna_halter(
     utvardering_hojd_m: float = 2.0,
     u_min_m_s: float = 0.5,
     interpolera: bool = False,
+    schema: str = "uppstroms",
 ) -> Haltresultat:
     """Halt från linjekällor för alla riktningar i biblioteket, viktat med väderserien.
 
@@ -133,7 +134,7 @@ def berakna_halter(
     for r in bibliotek.riktningar_grad:
         vind = bibliotek.for_riktning(r)
         kallor, rapport = linjekalla_med_rapport(vind.grid, linjer_xy_m, emission_g_m_s, kallhojd_m)
-        op = TransportOperator(vind, amne)
+        op = TransportOperator(vind, amne, schema=schema)
         c = op.los(kallor)
         balans = op.massbalans(kallor, c)
         if not balans["rel_fel"] < 1e-6:

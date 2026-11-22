@@ -142,9 +142,15 @@ def omrakna_vindhastighet(
     if blandningshojd_m <= max(z_fran_m, z_till_m):
         raise LuftFel("blandningshojd_m måste ligga över båda höjderna.")
     u = np.asarray(u_m_s, dtype=np.float64)
-    u_bland = u * math.log(blandningshojd_m / z0_fran_m) / math.log(z_fran_m / z0_fran_m)
-    ut: FloatArray = u_bland * math.log(z_till_m / z0_till_m) / math.log(
-        blandningshojd_m / z0_till_m
+    u_bland = (
+        u
+        * math.log((blandningshojd_m + z0_fran_m) / z0_fran_m)
+        / math.log((z_fran_m + z0_fran_m) / z0_fran_m)
+    )
+    ut: FloatArray = (
+        u_bland
+        * math.log((z_till_m + z0_till_m) / z0_till_m)
+        / math.log((blandningshojd_m + z0_till_m) / z0_till_m)
     )
     return ut
 

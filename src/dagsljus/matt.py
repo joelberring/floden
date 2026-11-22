@@ -114,35 +114,54 @@ class SoltimmarAckumulator:
         self._hojd = hojd[upp]
         self._seg = np.floor(pos).astype(np.int64) % k
         self._frak = pos - np.floor(pos)
+        akt: set[int] = set()
+        for s in self._seg.tolist():
+            si = int(s)
+            akt.add(si)
+            akt.add((si + 1) % k)
+        self._aktiva = frozenset(akt)
         self._antal = np.zeros(form, dtype=np.int32)
         self._forra: NDArray[np.float64] | None = None
         self._h0: NDArray[np.float64] | None = None
         self._nasta = 0
         self._klar = False
 
-    def _segment(self, s: int, h_a: Falt, h_b: Falt) -> None:
-        for m in np.nonzero(self._seg == s)[0]:
+    def aktiva_riktningar(self) -> frozenset[int]:
+        """Index för de riktningar 0..K-1 som faktiskt används av någon solposition."""
+        return self._aktiva
+
+    def _segment(self, s: int, h_a: Falt | None, h_b: Falt | None) -> None:
+        traffar = np.nonzero(self._seg == s)[0]
+        if traffar.size == 0:
+            return
+        if h_a is None or h_b is None:
+            raise MattFel(f"Saknar horisontdata för aktivt solsegment {s}.")
+        for m in traffar:
             f = self._frak[m]
             hh = h_a * (1.0 - f) + h_b * f
             self._antal += (self._hojd[m] > hh).astype(np.int32)
 
-    def mata(self, k: int, h_rad: NDArray[Any]) -> None:
+    def mata(self, k: int, h_rad: NDArray[Any] | None) -> None:
         if k != self._nasta:
             raise MattFel(f"Riktningarna måste matas i ordning, väntade {self._nasta}, fick {k}.")
-        h = np.asarray(h_rad, dtype=np.float64)
-        if h.shape != self._antal.shape:
-            raise MattFel(f"Formen {h.shape} stämmer inte med {self._antal.shape}.")
+        if h_rad is None:
+            if k in self._aktiva:
+                raise MattFel(f"Riktning {k} är aktiv för solen och kan inte hoppas över.")
+            h: NDArray[np.float64] | None = None
+        else:
+            h = np.asarray(h_rad, dtype=np.float64)
+            if h.shape != self._antal.shape:
+                raise MattFel(f"Formen {h.shape} stämmer inte med {self._antal.shape}.")
         if k == 0:
             self._h0 = h
         else:
-            assert self._forra is not None
             self._segment(k - 1, self._forra, h)
         self._forra = h
         self._nasta += 1
 
     def timmar(self) -> Falt:
         """Soltimmar (h) när alla K riktningar matats."""
-        if self._nasta != self._k or self._forra is None or self._h0 is None:
+        if self._nasta != self._k:
             raise MattFel(f"Bara {self._nasta} av {self._k} riktningar har matats.")
         if not self._klar:
             self._segment(self._k - 1, self._forra, self._h0)

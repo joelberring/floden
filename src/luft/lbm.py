@@ -593,6 +593,8 @@ class Lbm3d:
         self.f: Any = xp.zeros((19, nx, ny, nz), dtype=f32)  # f̄ = f − w
         # Förallokerade buffertar: momentkoefficienter, efter kollision, efter strömning.
         self._mom: Any = xp.empty((10, self.n), dtype=f32)
+        self._ruu: Any = xp.empty((6, self.n), dtype=f32)
+        self._fvagg: Any = xp.zeros((3, self.n), dtype=f32) if self.vaggceller else None
         self._fpost: Any = xp.empty((19, nx, ny, nz), dtype=f32)
         self._fbuf: Any = xp.empty((19, nx, ny, nz), dtype=f32)
         self.inflode_f: Any = None  # (19, ny, nz)
@@ -722,7 +724,8 @@ class Lbm3d:
             # Väggskjuvning ur log-lagen som volymkraft i första cellen (Δ = 1):
             # Löst implicit i u_t (samma kvadratiska form som vegetationen) så att
             # grova råa väggar aldrig överskjuter eller vänder hastigheten.
-            fvagg = xp.zeros((3, self.n), dtype=np.float32)
+            fvagg = self._fvagg
+            fvagg.fill(0.0)
             for a, idx, prov, koef in self.vaggceller:
                 ut_t = u[:, prov].copy()
                 ut_t[a] = 0.0
@@ -736,7 +739,7 @@ class Lbm3d:
 
         # Π^neq (6, n), på plats i mom[4:10]
         pi = mom[4:10]
-        ruu = xp.empty((6, self.n), dtype=np.float32)
+        ruu = self._ruu
         for p, (a, b) in enumerate(_PAR):
             xp.multiply(u[a], u[b], out=ruu[p])
             ruu[p] *= rho

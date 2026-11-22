@@ -165,19 +165,31 @@ def _horisontpass(
     m: Mosaik,
     mottagare: list[Callable[[int, float, NDArray[np.float32]], None]],
     mottagare_utan_standard: list[Callable[[int, float, NDArray[np.float32]], None]] | None = None,
+    *,
+    aktiva_riktningar: frozenset[int] | None = None,
+    hoppa_over: list[Callable[[int], None]] | None = None,
+    hoppa_over_utan_standard: list[Callable[[int], None]] | None = None,
 ) -> _Pass:
     """Beräknar horisonten för det egna fönstret riktning för riktning. `trunk` är antal
     riktningar per cell vars stråle lämnade höjdfältet före max avstånd.
 
     Har mosaiken byggnader med standardhöjd beräknas horisonten också utan dem
     (`falt_utan_standard`) och skickas till `mottagare_utan_standard`; det kostar ett varv till
-    per riktning."""
+    per riktning. När `aktiva_riktningar` anges (t.ex. solens azimutsektor i `SoltimmarMark`)
+    hoppas inaktiva riktningar över utan att anropa `horisont_riktning_ruta`."""
     antal = int(k.parametrar["azimutriktningar"])
     radie = _radie_m(k.parametrar)
     r0, r1, c0, c1 = m.fonster
     trunk = np.zeros((r1 - r0, c1 - c0), dtype=np.int32)
     std = None if m.falt_utan_standard is None else np.zeros_like(trunk)
     for i, phi in enumerate(riktningar_rad(antal)):
+        if aktiva_riktningar is not None and i not in aktiva_riktningar:
+            for g in hoppa_over or []:
+                g(i)
+            if m.falt_utan_standard is not None:
+                for g in hoppa_over_utan_standard or []:
+                    g(i)
+            continue
         h, tr = horisont_riktning_ruta(m.falt, float(phi), radie, fonster=m.fonster)
         trunk += tr
         for f in mottagare:
@@ -407,7 +419,13 @@ class SoltimmarMark(_DagsljusLosare):
         ack = SoltimmarAckumulator(antal, sol_h, sol_az, steg_h, form)
         ack0 = SoltimmarAckumulator(antal, sol_h, sol_az, steg_h, form)
         pas = _horisontpass(
-            kontext, m, [lambda i, _p, h: ack.mata(i, h)], [lambda i, _p, h: ack0.mata(i, h)]
+            kontext,
+            m,
+            [lambda i, _p, h: ack.mata(i, h)],
+            [lambda i, _p, h: ack0.mata(i, h)],
+            aktiva_riktningar=ack.aktiva_riktningar(),
+            hoppa_over=[lambda i: ack.mata(i, None)],
+            hoppa_over_utan_standard=[lambda i: ack0.mata(i, None)],
         )
         trunk = pas.trunk
         timmar = ack.timmar()

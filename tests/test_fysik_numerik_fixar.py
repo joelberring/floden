@@ -10,10 +10,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011
+from dagsljus.matt import MattFel, SoltimmarAckumulator
+from dagsljus.solposition import SolFel, dygnsfonster_utc, lat_lon_fran_3011, solposition
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from gemensamt.koordinater import EPSG_INTERN
 from karna.graf import Berakningsgraf, Cache
+from luft.vindkomfort import omrakna_vindhastighet
 from mark_forluster.grundvatten import berakna_grundvattentak
 from rutt.dijkstra import _interpolera_tidserie
 from rutt.kritiska import hitta_kritiska_avsnitt
@@ -342,5 +344,51 @@ def test_rutt_risk_expm1_utan_kancellation() -> None:
     # 1 - (1 - 1e-12)^100 ≈ 1e-10
     kum = berakna_kumulativ_sannolikhet(1e-12, 100.0)
     assert math.isclose(kum, 1e-10, rel_tol=1e-9)
+
+
+def test_soltimmar_aktiva_riktningar_exakt_och_hoppar_over_norr() -> None:
+    """SoltimmarAckumulator hoppar över inaktiva norr-azimuter vid vårdagjämning."""
+    tider = dygnsfonster_utc("2026-03-20", 18.06, 10.0)
+    hojd, az = solposition(tider, 59.33, 18.06)
+    k = 72
+    form = (4, 4)
+    rng = np.random.default_rng(42)
+    h_alla = rng.uniform(0.0, 0.4, size=(k, *form))
+
+    ack_alla = SoltimmarAckumulator(k, hojd, az, 10.0 / 60.0, form)
+    ack_spar = SoltimmarAckumulator(k, hojd, az, 10.0 / 60.0, form)
+    aktiva = ack_spar.aktiva_riktningar()
+    assert len(aktiva) < k * 0.6  # ca hälften vid vårdagjämning
+    assert 0 not in aktiva  # rakt norrut har ingen sol i mars
+
+    for i in range(k):
+        ack_alla.mata(i, h_alla[i])
+        ack_spar.mata(i, h_alla[i] if i in aktiva else None)
+
+    assert np.array_equal(ack_alla.timmar(), ack_spar.timmar())
+
+    # Aktiv riktning med None ska ge ett tydligt MattFel
+    ack_fel = SoltimmarAckumulator(k, hojd, az, 10.0 / 60.0, form)
+    forsta_aktiva = min(aktiva)
+    for i in range(forsta_aktiva):
+        ack_fel.mata(i, None)
+    with pytest.raises(MattFel):
+        ack_fel.mata(forsta_aktiva, None)
+
+
+def test_vindkomfort_log_lag_enhetlig() -> None:
+    """omrakna_vindhastighet ska använda ln((z + z0) / z0) enhetligt med Inflode."""
+    z0 = 0.5
+    u = omrakna_vindhastighet(
+        np.array([5.0]),
+        z_fran_m=10.0,
+        z0_fran_m=z0,
+        z_till_m=2.0,
+        z0_till_m=z0,
+        blandningshojd_m=60.0,
+    )
+    forvantat = 5.0 * math.log((2.0 + z0) / z0) / math.log((10.0 + z0) / z0)
+    assert math.isclose(float(u[0]), forvantat, rel_tol=1e-12)
+
 
 
