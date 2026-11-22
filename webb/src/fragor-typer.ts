@@ -106,6 +106,8 @@ export interface KorningSvar {
   start: string | null;
   slut: string | null;
   fel: string | null;
+  /** Klarspråksförklaring av `fel` när felet är känt (annars null). */
+  fel_forklaring?: string | null;
   jobb_totalt: number;
   framsteg: { klara: number; totalt: number };
   ateranvand?: boolean;

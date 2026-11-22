@@ -36,6 +36,7 @@ import { monteraLagerpanel } from "./karta/lagerpanel";
 import { PlanDok } from "./karta/plandok";
 import { Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "./karta/ritverktyg";
 import { giltigKakelmall, lasUnderlag, sparaUnderlag, vardAv, wmsBrickmall, type Underlag, type WmsSvar } from "./karta/wms";
+import { felHtml } from "./felvisning";
 import { esc, formatera, PROJEKT_ID } from "./sidor";
 import { fasadForklaringHtml, skapa3dVy, styrning3d, VY3D_ID, type Kontext3d } from "./kartsida3d";
 import { meterPerPxFranZoom, zoomFranMeterPerPx } from "./vy3d/koord";
@@ -75,7 +76,7 @@ interface Sida {
   underlag: Underlag[];
   plan: { fragor: PlanPost[]; valda: string[] } | null;
   planFel: string | null;
-  korning: { slug: string; text: string; klar: boolean; fel: string | null } | null;
+  korning: { slug: string; text: string; klar: boolean; fel: string | null; forklaring?: string | null } | null;
   pollTimer: number | null;
   kontrollTimer: number | null;
   ritaBegard: number;
@@ -1110,7 +1111,8 @@ function ritaRakna(): void {
   else if (sida.plan) planHtml = planUtseende(sida.plan.fragor);
   let korHtml = "";
   const k = sida.korning;
-  if (k) korHtml = `<p class="${k.fel ? "fel-text" : ""}" role="${k.fel ? "alert" : "status"}">${esc(k.fel ?? k.text)}</p>`;
+  if (k?.forklaring) korHtml = felHtml(k.fel, k.forklaring);
+  else if (k) korHtml = `<p class="${k.fel ? "fel-text" : ""}" role="${k.fel ? "alert" : "status"}">${esc(k.fel ?? k.text)}</p>`;
   rot.innerHTML = `
     <p class="dampad liten-text">Räknar om det du ritat och jämför med läget före, med samma beräkningar som resten av Floden.</p>
     <div class="kryss-grupp">${analyser}</div>
@@ -1202,7 +1204,7 @@ async function kolla(sida: Sida, slug: string): Promise<void> {
     const klara = alla.filter((k) => k.status.status === "klar");
     if (fel) {
       stoppaPoll(sida);
-      sida.korning = { slug, text: "", klar: true, fel: `Beräkningen misslyckades: ${String(fel.status.fel ?? "okänt fel")}` };
+      sida.korning = { slug, text: "", klar: true, fel: fel.status.fel_forklaring ? String(fel.status.fel) : `Beräkningen misslyckades: ${String(fel.status.fel ?? "okänt fel")}`, forklaring: typeof fel.status.fel_forklaring === "string" ? fel.status.fel_forklaring : null };
     } else if (alla.length > 0 && klara.length === alla.length) {
       stoppaPoll(sida);
       sida.korning = { slug, text: "Klart. Resultatet ligger i gruppen Resultat i kartan.", klar: true, fel: null };

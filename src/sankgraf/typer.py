@@ -64,6 +64,25 @@ class SankGrafFel(Exception):
     """Fel vid konstruktion, filtrering, fyllning eller I/O av sänkgraf."""
 
 
+class InstangtOmradeFel(SankGrafFel):
+    """Ett sammanhängande markområde saknar all väg ut till rasterkanten.
+
+    Bygg- och nodata-celler är ogenomträngliga i modellen, så en sänka som
+    helt omges av dem har ingen utloppssadel och kan inte lösas i K2-grafen
+    (kontraktet kräver ett ändligt överfall för varje rotnod).
+    ``antal_celler`` är områdets storlek, ``rad``/``kol`` en cell i det.
+    """
+
+    def __init__(self, antal_celler: int, rad: int, kol: int) -> None:
+        self.antal_celler = antal_celler
+        self.rad = rad
+        self.kol = kol
+        super().__init__(
+            f"Instängt område: {antal_celler} markceller (t.ex. rad {rad}, kolumn {kol}) "
+            "saknar utloppssadel mot randen."
+        )
+
+
 @dataclass(frozen=True)
 class VolymPunkt:
     """En punkt `(z, v_m3)` på en sänknods volymkurva (RH 2000, m³)."""

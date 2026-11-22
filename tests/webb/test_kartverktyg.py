@@ -585,3 +585,59 @@ def test_geometrilager_ar_png_med_utbredning(kv: Kv) -> None:
         if status == 200:
             assert data[:4] == b"\x89PNG" and len(huvud["X-Floden-Utbredning"].split(",")) == 4
     assert kv.anrop("GET", f"{P}/geometri/okand.png")[0] == 404
+
+
+# ---------------------------------------------------------------- hus som stänger in vatten
+
+
+def hus_i_porten(aid: str = "hus_i_porten") -> dict[str, Any]:
+    """Ett hus som ligger i gårdens enda utlopp (porten) och stänger in kvarterets lågpunkt."""
+    x, y = 151318.0, 6580196.0
+    ring = [[x, y], [x + 12, y], [x + 12, y + 11], [x, y + 11], [x, y]]
+    return {
+        "typ": "byggnad_ny",
+        "andring_id": aid,
+        "geometri": {"type": "Polygon", "coordinates": [ring]},
+        "egenskaper": {"hojd_m": 12},
+    }
+
+
+def test_hus_som_stanger_in_vatten_ger_varning_fore_korning(kv: Kv) -> None:
+    from webb.felforklaring import INSTANGT_TEXT
+
+    status, v = kv.json("POST", f"{P}/validera", {"andringar": [hus_i_porten()]})
+    assert status == 200 and v["giltig"], v
+    assert INSTANGT_TEXT in v["varningar"]
+    # Det vanliga demohuset stänger inte in något och ger ingen sådan varning.
+    _, ok = kv.json("POST", f"{P}/validera", {"andringar": [demohus()]})
+    assert INSTANGT_TEXT not in ok["varningar"]
+
+
+def test_misslyckad_vattenkorning_ger_klarsprak_och_teknisk_text(kv: Kv) -> None:
+    from webb.felforklaring import INSTANGT_TEXT
+
+    status, _ = kv.json(
+        "POST", f"{P}/scenarier", {"namn": "instangt", "andringar": [hus_i_porten()]}
+    )
+    assert status in (200, 201)
+    status, k = kv.json("POST", f"{P}/scenarier/instangt/kor", {"analyser": ["vatten.skyfall"]})
+    assert status == 202, k
+    slut = time.monotonic() + 600
+    post: dict[str, Any] = {}
+    while time.monotonic() < slut:
+        _, st = kv.json("GET", f"{P}/scenarier/instangt/status")
+        if st["korningar"] and st["korningar"][0]["status"]["status"] in ("klar", "fel"):
+            post = st["korningar"][0]["status"]
+            break
+        time.sleep(0.5)
+    assert post.get("status") == "fel", post
+    assert post["fel_forklaring"] == INSTANGT_TEXT
+    assert "saknar utloppssadel" in post["fel"]  # tekniska texten finns kvar för "Teknisk information"
+
+
+def test_forklara_fel_okanda_fel_ger_inget_klartext() -> None:
+    from webb.felforklaring import INSTANGT_TEXT, forklara_fel
+
+    assert forklara_fel(None) is None
+    assert forklara_fel("ValueError: något annat") is None
+    assert forklara_fel("SankGrafFel: Nod 3 saknar utloppssadel mot randen.") == INSTANGT_TEXT

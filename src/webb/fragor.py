@@ -40,6 +40,7 @@ from karna.resultatcache import CacheFel, ResultatCache
 from karna.rutscenario import ScenarioFel, materialisera_scenario
 from karna.utredning import FragaFel, KorbarFraga, las_fraga
 from webb.fel import FlodenWebbFel
+from webb.felforklaring import forklara_fel
 from webb.moduler import losarinfo, visningsnamn
 from webb.resultatlager import (
     MASKADE_ROLLER,
@@ -119,6 +120,7 @@ class Korning:
             "start": self.start,
             "slut": self.slut,
             "fel": self.fel,
+            "fel_forklaring": forklara_fel(self.fel),
             "jobb_totalt": self.jobb_totalt,
             "plan_nyckel": self.plan_nyckel,
         }
