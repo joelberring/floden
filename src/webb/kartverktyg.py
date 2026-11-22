@@ -50,6 +50,7 @@ from karna.rutscenario import Ruta, las_bas
 from karna.scenario import Andring, Planscenario, ScenarioFel, skriv_scenario
 from karna.utredning import KorbarFraga, las_fraga
 from webb.fel import FlodenWebbFel
+from webb.felforklaring import INSTANGT_TEXT as INSTANGT_VARNING
 from webb.fragor import FragaTjanst
 from webb.moduler import visningsnamn
 
@@ -303,6 +304,7 @@ class KartverktygTjanst:
             # Kärnans egen kontroll av ändringarna (typ, id, dubbletter, byggnadsreferenser).
             k9_per_bas = self._k9_per_bas(mallar, andringar, "kontroll")
             varningar.extend(self._paverkar_inte(mallar, k9_per_bas))
+            varningar.extend(self._instangt_vatten(mallar, k9_per_bas))
         except (RitatFel, ScenarioFel) as exc:
             fel.append(str(exc))
         return {
@@ -348,6 +350,50 @@ class KartverktygTjanst:
             verifiera_byggnadsreferenser(mappar, geometri)
             ut[kort] = (sc, utelamnade)
         return ut
+
+    def _instangt_vatten(
+        self, mallar: Mapping[str, Mall], k9: Mapping[str, tuple[Planscenario, list[str]]]
+    ) -> list[str]:
+        """Varning före körning: ritade hus som stänger in ett markområde i vattnets rutor.
+
+        Byggnader är ogenomträngliga i vattenmodellen, så ett område som helt omges av dem saknar
+        väg ut och vattenberäkningen skulle stoppa. Kontrollen tillämpar förslaget på rutorna i en
+        tillfällig mapp och söker områden som inte når rutans kant (och inte fanns redan i basen).
+        """
+        import tempfile
+
+        from karna.geometri.tillampa import tillampa_pa_v2_ruta
+        from sankgraf.fyllning import instangda_omraden_i_k1_mapp
+
+        mall = mallar.get("vatten")
+        if mall is None or "vatten" not in k9:
+            return []
+        sc, _ = k9["vatten"]
+        andringar = list(sc.andringar)
+        mappar = [r.mapp for r in mall.rutor]
+        version = valj_k1_version(mappar)
+        if version < 2 or not andringar:
+            return []
+        _, geometri = dela_andringar(andringar, version, "kontroll")
+        if not geometri:
+            return []
+        for r in mall.rutor:
+            recept = r.mapp / "recept.json"
+            with tempfile.TemporaryDirectory(prefix="floden-instangt-") as tmp:
+                ut = Path(tmp) / "ruta"
+                andrad = tillampa_pa_v2_ruta(
+                    r.mapp,
+                    ut,
+                    lapp=None,
+                    sektioner=None,
+                    geometri=geometri,
+                    bas_recept_sha256=sha256_fil(recept) if recept.is_file() else "",
+                )
+                if not andrad:
+                    continue
+                if instangda_omraden_i_k1_mapp(ut) and not instangda_omraden_i_k1_mapp(r.mapp):
+                    return [INSTANGT_VARNING]
+        return []
 
     def _paverkar_inte(
         self, mallar: Mapping[str, Mall], k9: Mapping[str, tuple[Planscenario, list[str]]]

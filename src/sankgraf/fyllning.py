@@ -11,7 +11,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sankgraf.flodesvagar import STANDARD_REFERENSDJUP_M
-from sankgraf.hierarki import bygg_sankgraf
+from sankgraf.hierarki import _applicera_oppningar, bygg_sankgraf, hitta_instangda_omraden
 from sankgraf.persistens import filtrera_persistens
 from sankgraf.typer import (
     HAV_NOD_ID,
@@ -327,6 +327,26 @@ def statisk_fyllning(
         volymfel_rel=volymfel_rel,
         utflodes_celler=utflodes_celler,
     )
+
+
+def instangda_omraden_i_k1_mapp(
+    k1_indata_mapp: Path | str,
+) -> list[tuple[int, int, int]]:
+    """Instängda markområden i en K1-ruta (efter öppningar), utan att bygga sänkgrafen.
+
+    Samma regel som `bygg_sankgraf` (se `InstangtOmradeFel`).
+    Returnerar (antal celler, rad, kolumn).
+    """
+    mapp = Path(k1_indata_mapp)
+    mark_raw, geo = las_geotiff(mapp / "mark.tif")
+    slag_raw, _ = las_geotiff(mapp / "markslag.tif")
+    opp_fil = mapp / "oppningar.gpkg"
+    oppningar = las_oppningar_fran_gpkg(opp_fil) if opp_fil.is_file() else []
+    eff_z, eff_slag = _applicera_oppningar(
+        np.asarray(mark_raw, dtype=np.float32), np.asarray(slag_raw, dtype=np.uint8), geo, oppningar
+    )
+    aktiv = np.asarray((eff_slag != MARKSLAG_BYGGNAD) & np.isfinite(eff_z), dtype=np.bool_)
+    return hitta_instangda_omraden(aktiv)
 
 
 def kor_statisk_k1_mapp(

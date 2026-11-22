@@ -34,6 +34,7 @@ import { Kartmotor, type RasterLager, type VyByggnad } from "./karta/kartmotor";
 import { giltigKakelmall } from "./karta/wms";
 import { lagerTekniskHtml, teckenforklaringHtml } from "./teckenforklaring";
 import { lasKartanText } from "./kartforklaring";
+import { felHtml } from "./felvisning";
 import { esc, PROJEKT_ID } from "./sidor";
 import type { ModulInfo } from "./types";
 
@@ -535,7 +536,7 @@ function ritaKorStatus(): void {
     status.innerHTML = `<progress max="${Math.max(totalt, 1)}" value="${klara}" aria-label="Framsteg"></progress>
       <span>${k.status === "ko" ? "I kö" : "Beräknar"}: ${klara} av ${totalt} beräkningar</span>`;
   } else if (k.status === "fel") {
-    status.innerHTML = `<span class="fel-text" role="alert">Beräkningen misslyckades: ${esc(k.fel ?? "okänt fel")}</span>`;
+    status.innerHTML = felHtml(k.fel, k.fel_forklaring);
   } else {
     status.innerHTML = `<span>Klar: ${totalt} beräkningar.</span>`;
   }

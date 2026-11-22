@@ -20,6 +20,7 @@ from sankgraf.typer import (
     HAV_NOD_ID,
     MARKSLAG_BYGGNAD,
     MARKSLAG_HARDGJORT,
+    InstangtOmradeFel,
     SankGraf,
     SankGrafFel,
     SankNod,
@@ -475,6 +476,33 @@ def berakna_kurvor_for_celler(
     return tuple(volym_punkter), tuple(yt_punkter), botten, tot_celler
 
 
+def hitta_instangda_omraden(aktiv: NDArray[np.bool_]) -> list[tuple[int, int, int]]:
+    """Fyrgrannsammanhängande aktiva områden som inte når rasterkanten.
+
+    Returnerar (antal celler, rad, kolumn) för varje sådant område, största först.
+    """
+    from scipy import ndimage
+
+    etiketter, antal = ndimage.label(aktiv)  # 4-grannskap är standard
+    if antal == 0:
+        return []
+    kant = {
+        int(x)
+        for x in np.unique(
+            np.concatenate([etiketter[0], etiketter[-1], etiketter[:, 0], etiketter[:, -1]])
+        )
+    }
+    antal_per = np.bincount(etiketter.ravel(), minlength=antal + 1)
+    ut: list[tuple[int, int, int]] = []
+    for e in range(1, antal + 1):
+        if e in kant:
+            continue
+        rr, kk = np.nonzero(etiketter == e)
+        ut.append((int(antal_per[e]), int(rr[0]), int(kk[0])))
+    ut.sort(reverse=True)
+    return ut
+
+
 def bygg_sankgraf(
     mark_z: NDArray[np.float32],
     osakerhet_z: NDArray[np.float32],
@@ -502,6 +530,10 @@ def bygg_sankgraf(
     z_flat = np.asarray(eff_z, dtype=np.float64).ravel()
     osak_flat = np.asarray(osakerhet_z, dtype=np.float64).ravel()
     aktiv_flat = aktiv.ravel()
+
+    instangda = hitta_instangda_omraden(aktiv)
+    if instangda:
+        raise InstangtOmradeFel(*instangda[0])
 
     kantbarriarer = _berakna_kantbarriarer(z_flat, aktiv_flat, geo, brytlinjer)
     flow_to, cell_till_nod, antal_lov = _berakna_avrinningsomraden(eff_z, aktiv, kantbarriarer)
