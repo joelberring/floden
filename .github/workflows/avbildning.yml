@@ -50,10 +50,13 @@ jobs:
         run: |
           if docker run --rm floden:prov; then echo "startade utan inloggning" >&2; exit 1; fi
           docker run -d --name prov -e FLODEN_TILLAT_UTAN_INLOGGNING=1 -e FLODEN_DEMO=0 -p 8765:8765 floden:prov
+          ok=0
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8765/api/halsa; then echo; break; fi
+            if curl -fsS http://127.0.0.1:8765/api/halsa; then echo; ok=1; break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' prov)" != "true" ]; then break; fi
             sleep 2
           done
+          if [ "$ok" != "1" ]; then docker logs prov; exit 1; fi
           curl -fsS http://127.0.0.1:8765/ | grep -qi "<html"
           docker exec prov floden --help > /dev/null
           docker exec prov tvad_karna --help > /dev/null 2>&1 || docker exec prov test -x /usr/local/bin/tvad_karna
