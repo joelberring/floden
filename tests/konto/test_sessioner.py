@@ -188,3 +188,19 @@ def test_konfigurerbar_secure_for_localhost(tmp_path: Path) -> None:
         "http://127.0.0.1:8765/konto/callback/google"
     )
     assert rubrik((200, [("Content-Type", "x")], b""), "content-type") == "x"
+
+
+def test_icke_kanonisk_base64_i_kakan_godtas_inte() -> None:
+    """32 byte ger 43 tecken där sista tecknet har 2 oanvända bitar: grannvärden avkodas lika."""
+    import base64
+
+    from konto.sessioner import _hash_av
+
+    data = bytes(range(32))
+    kanonisk = base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+    alfabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    i = alfabet.index(kanonisk[-1])
+    granne = kanonisk[:-1] + alfabet[i | 1 if i % 4 == 0 else i - (i % 4)]
+    assert granne != kanonisk
+    assert base64.urlsafe_b64decode(granne + "=") == data
+    assert _hash_av(kanonisk) != _hash_av(granne)

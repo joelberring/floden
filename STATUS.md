@@ -273,3 +273,7 @@ Gjort: README, AGENTS, PLAN, arkitektur, datakontrakt, beslut, data, validering 
 Mätt: –
 Öppet: provområdets exakta avgränsning; tillgång till stadens baskarta och tätare laser; person X.
 Nästa: T00 (repo och grund), sedan T01 och T09a parallellt.
+
+### 2026-11-22 – Granskning av R1 (samordnare)
+- Granskat PR #41 lokalt: pytest 2026 godkända, testsvit 17/17, grupp E 7/7, ruff och mypy rena. Inplanterat fel stoppar exporten. PDF:en genomläst sida för sida; kartor och tal stämmer med körningen (ökningen ligger helt i sydvästra gården).
+- CI föll på `test_forfalskad_eller_trasig_sessionskaka` slumpvis: sista base64-tecknet kan bära oanvända bitar, så en ändrad sessionskaka avkodades till samma bytes och godtogs. Rättat i `konto/sessioner.py` (kräver kanonisk kodning) med ett deterministiskt test.

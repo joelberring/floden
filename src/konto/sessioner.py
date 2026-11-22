@@ -41,7 +41,12 @@ def _hash_av(text: str | None) -> bytes:
     """sha256 av en base64url-hemlighet; en fast attrapp om värdet har fel form (konstant tid)."""
     if text is None or not SLUMP_FORMAT.match(text):
         return _TOMT_HASH
-    return hashlib.sha256(base64.urlsafe_b64decode(text + "=")).digest()
+    data = base64.urlsafe_b64decode(text + "=")
+    # Sista tecknet i base64 kan bära oanvända bitar: kräv kanonisk kodning, annars
+    # godtas en ändrad kaka som avkodas till samma bytes.
+    if _b64(data) != text:
+        return _TOMT_HASH
+    return hashlib.sha256(data).digest()
 
 
 class Utfall(Enum):
