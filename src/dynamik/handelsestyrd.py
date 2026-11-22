@@ -22,7 +22,7 @@ from dynamik.nodmodell import (
     hitta_mottagare,
     skapa_regn_intervall,
 )
-from sankgraf.typer import SankGraf
+from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf
 
 _VOLYM_TOL_M3 = 1e-12
 _TID_TOL_S = 1e-12
@@ -59,6 +59,48 @@ class HandelseKardinalResultat:
     ut_m3: float
     volymfel_rel: float
     kortid_s: float
+    avtappat_m3: float = 0.0
+
+
+def avtappning_per_nod_m3_s(
+    graf: SankGraf,
+    cache: GrafStrukturCache,
+    avtappning_mm_h: float | NDArray[np.float64] | None,
+) -> dict[int, float]:
+    """Avtappningskapacitet (m³/s) per nod ur kapacitet i mm/h per cell (fas 3).
+
+    Samma storhet som 2D-lösarens `tvad.kalltermer.Avtappning`: kapaciteten gäller cellens
+    yta. Ett löv får summan över sina avrinningsceller, en sammansatt nod summan över sina löv.
+    Celler som rinner direkt ut ur området (HAV) och byggnader bidrar inte. I grafen tappas
+    noden av så länge den har vatten eller tillrinning (begränsat av det som finns), oavsett
+    vilka celler som är våta; se `docs/MATEMATIK.md`.
+    """
+    if avtappning_mm_h is None:
+        return {}
+    form = graf.cell_till_nod.shape
+    kap = np.asarray(
+        np.broadcast_to(np.asarray(avtappning_mm_h, dtype=np.float64), form), dtype=np.float64
+    )
+    if kap.shape != form:
+        raise DynamikFel(f"avtappning_mm_h har form {kap.shape}, grafen {form}.")
+    kap = np.where(np.isfinite(kap), kap, 0.0)
+    if np.any(kap < 0.0):
+        raise DynamikFel("avtappning_mm_h får inte vara negativ.")
+    z64 = np.asarray(graf.mark_z, dtype=np.float64)
+    aktiv = (graf.markslag != MARKSLAG_BYGGNAD) & np.isfinite(z64)
+    ct = graf.cell_till_nod
+    mask = aktiv & (ct >= 0)
+    if not np.any(mask) or not cache.sorterade_noder:
+        return {}
+    cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
+    max_id = max(cache.sorterade_noder)
+    per_lov = np.bincount(
+        ct[mask], weights=kap[mask] * cell_area_m2 / 3.6e6, minlength=max_id + 1
+    )
+    return {
+        nid: float(sum(per_lov[lid] for lid in cache.lov_under[nid]))
+        for nid in cache.sorterade_noder
+    }
 
 
 def bygg_graf_struktur_cache(graf: SankGraf) -> GrafStrukturCache:
@@ -230,6 +272,7 @@ def _kor_handelsestyrd_karna(
     brunnar_avdrag_m3_s: float,
     spara_tidsserie: bool,
     utdata_tider_s: Sequence[float] | None,
+    avtappning_m3_s: dict[int, float] | None = None,
 ) -> tuple[
     HandelseKardinalResultat,
     list[float],
@@ -291,6 +334,14 @@ def _kor_handelsestyrd_karna(
         )
         for nid in cache.sorterade_noder
     }
+    # Avtappning per område (fas 3), läggs på brunnsavdraget per nod.
+    avtapp = avtappning_m3_s or {}
+    har_avtappning = any(v > 0.0 for v in avtapp.values())
+    if har_avtappning:
+        for nid, d in avtapp.items():
+            brunn_per_nod[nid] += d
+    har_avdrag = brunnar_avdrag_m3_s > 0.0 or har_avtappning
+    avtappat_m3 = 0.0
 
     # Förbered planerade sampeltider när full tidsserie begärs
     planerade_tider: list[float] = []
@@ -512,6 +563,7 @@ def _kor_handelsestyrd_karna(
                     dv_brunn = min(tillg, d_eff * u_min)
                     volym[nid] = tillg - dv_brunn
                     ut_m3 += dv_brunn
+                    avtappat_m3 += dv_brunn
 
                 if volym[nid] >= cache.max_volym_m3[nid] - _VOLYM_TOL_M3:
                     # Eventuell avrundningsrest (< 1e-12) rinner vidare eller räknas exakt
@@ -526,7 +578,7 @@ def _kor_handelsestyrd_karna(
                     nyfulla.append(nid)
 
             # Uppdatera toppar före ev. tömning/sammanslagning
-            if brunnar_avdrag_m3_s > 0.0:
+            if har_avdrag:
                 niva_nu, vol_nu = _berakna_nod_ogonblicksbild(graf, cache, aktiv, mergad, volym)
                 _uppdatera_maxima(niva_nu, vol_nu)
 
@@ -580,6 +632,7 @@ def _kor_handelsestyrd_karna(
         ut_m3=ut_m3,
         volymfel_rel=volymfel_rel,
         kortid_s=kortid,
+        avtappat_m3=avtappat_m3,
     )
     return kardinal, tider_hist, nod_niva_hist, nod_volym_hist
 
@@ -594,6 +647,7 @@ def kor_handelsestyrd_kardinal(
     avrinning_faktor: float = 1.0,
     initial_forlust_mm: float = 0.0,
     brunnar_avdrag_m3_s: float = 0.0,
+    avtappning_mm_h: float | NDArray[np.float64] | None = None,
 ) -> HandelseKardinalResultat:
     """Snabb händelsestyrd körning som endast returnerar toppvärden, tider och massbalans."""
     if not math.isfinite(avrinning_faktor) or avrinning_faktor < 0.0:
@@ -617,6 +671,7 @@ def kor_handelsestyrd_kardinal(
         brunnar_avdrag_m3_s=float(brunnar_avdrag_m3_s),
         spara_tidsserie=False,
         utdata_tider_s=None,
+        avtappning_m3_s=avtappning_per_nod_m3_s(graf, graf_cache, avtappning_mm_h),
     )
     return kardinal
 
@@ -631,12 +686,18 @@ def kor_dynamik_handelsestyrd(
     avrinning_faktor: float = 1.0,
     initial_forlust_mm: float = 0.0,
     brunnar_avdrag_m3_s: float = 0.0,
+    avtappning_mm_h: float | NDArray[np.float64] | None = None,
 ) -> DynamikResultat:
     """Kör exakt händelsestyrd fyllning–överfall–sammanslagning på en `SankGraf`.
 
     Hoppar direkt mellan diskreta händelser (regnändringar, överfallsstart och
     syskonsammanslagningar). För styckvis konstant eller styckvis linjärt regn
     är fyllnads-, överfalls- och sammanslagningstiderna analytiskt exakta.
+
+    `avtappning_mm_h` (skalär eller raster, fas 3) ger varje nod en avtappning till
+    dagvattennätet (se `avtappning_per_nod_m3_s`); utan den stannar vattnet i sänkorna. En
+    slutsänka (K2/v2) töms bara genom avtappning; når den sitt hinder rinner överskottet ut
+    ur modellen (`t_overfall_s` för slutsänkan är då satt).
     """
     t_wall_start = time.perf_counter()
 
@@ -661,6 +722,7 @@ def kor_dynamik_handelsestyrd(
         brunnar_avdrag_m3_s=float(brunnar_avdrag_m3_s),
         spara_tidsserie=True,
         utdata_tider_s=utdata_tider_s,
+        avtappning_m3_s=avtappning_per_nod_m3_s(graf, cache, avtappning_mm_h),
     )
 
     lov_niva_matris: dict[int, NDArray[np.float64]] = {
@@ -697,4 +759,6 @@ def kor_dynamik_handelsestyrd(
         volymfel_rel=kardinal.volymfel_rel,
         kortid_s=kortid,
         metod="handelsestyrd",
+        avtappat_m3=kardinal.avtappat_m3,
+        slutsankor=tuple(n.nod_id for n in graf.slutsankor()),
     )

@@ -1,0 +1,32 @@
+{
+  "fall_id": "A11",
+  "typ": "slutsanka_avtappning",
+  "gard_area_m2": 100.0,
+  "avtappning_mm_h": 60.0,
+  "hinder_rh2000": 16.0,
+  "slut_tid_s": 2700.0,
+  "tider_s": [
+    0.0,
+    450.0,
+    900.0,
+    1350.0,
+    1800.0,
+    2700.0
+  ],
+  "djup_m": [
+    0.0,
+    0.0075,
+    0.015,
+    0.0075,
+    0.0,
+    0.0
+  ],
+  "max_djup_m": 0.015,
+  "tom_efter_s": 1800.0,
+  "avtappat_m3": 3.0,
+  "forklaring": "Som A10 men gården tappas av med 60 mm/h (fas 3): djup(t) = (120 - 60) t under regnet, sedan minskar det med 60 mm/h till tomt.",
+  "toleranser": {
+    "volymfel_rel_max": 0.001,
+    "maxdjupsfel_m_max": 0.01
+  }
+}

@@ -45,6 +45,8 @@ export interface Kontroll {
   giltig: boolean;
   fel: string[];
   varningar: string[];
+  /** Upplysningar som inte hindrar körning (t.ex. att ett hus stänger in en gård). */
+  information?: string[];
   hus: Array<{ andring_id: string; yta_m2: number; hojd_m: number; vaningar: number; bta_m2: number; vaningshojd_m: number }>;
   andringar: K9Andring[];
 }
@@ -69,6 +71,8 @@ export interface KorningPost {
   mall: string;
   status: { status: string; [k: string]: unknown };
   vyer: ProjektVyLike[];
+  /** Varningar från en klar körning (t.ex. slutna områden). */
+  varningar?: string[];
 }
 
 export const hamtaProjektInfo = (p: string): Promise<ProjektInfo> => lasJson(`${BAS}/${encodeURIComponent(p)}`);

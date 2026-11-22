@@ -50,7 +50,7 @@ from karna.rutscenario import Ruta, las_bas
 from karna.scenario import Andring, Planscenario, ScenarioFel, skriv_scenario
 from karna.utredning import KorbarFraga, las_fraga
 from webb.fel import FlodenWebbFel
-from webb.felforklaring import INSTANGT_TEXT as INSTANGT_VARNING
+from webb.felforklaring import SLUTET_INFO
 from webb.fragor import FragaTjanst
 from webb.moduler import visningsnamn
 
@@ -288,7 +288,11 @@ class KartverktygTjanst:
         return ut
 
     def validera(self, projekt: str, kropp: Mapping[str, Any]) -> dict[str, Any]:
-        """Kontrollerar ritade ändringar. Svar: `giltig`, `fel`, `varningar`, `hus`, `andringar`."""
+        """Kontrollerar ritade ändringar.
+
+        Svar: `giltig`, `fel`, `varningar`, `information`, `hus`, `andringar`. `information` är
+        upplysningar som inte hindrar något (t.ex. att ett hus stänger in en gård).
+        """
         mallar = self._kravs_projekt(projekt)
         lista = kropp.get("andringar")
         if not isinstance(lista, list):
@@ -296,6 +300,7 @@ class KartverktygTjanst:
         andringar = self._normalisera(lista)
         fel: list[str] = []
         varningar: list[str] = []
+        information: list[str] = []
         hus: list[dict[str, Any]] = []
         try:
             res = kontrollera_andringar(andringar, self._rutor_alla(mallar))
@@ -304,13 +309,14 @@ class KartverktygTjanst:
             # Kärnans egen kontroll av ändringarna (typ, id, dubbletter, byggnadsreferenser).
             k9_per_bas = self._k9_per_bas(mallar, andringar, "kontroll")
             varningar.extend(self._paverkar_inte(mallar, k9_per_bas))
-            varningar.extend(self._instangt_vatten(mallar, k9_per_bas))
+            information.extend(self._instangt_vatten(mallar, k9_per_bas))
         except (RitatFel, ScenarioFel) as exc:
             fel.append(str(exc))
         return {
             "giltig": not fel,
             "fel": fel,
             "varningar": varningar,
+            "information": information,
             "hus": hus,
             "andringar": andringar,
         }
@@ -354,11 +360,12 @@ class KartverktygTjanst:
     def _instangt_vatten(
         self, mallar: Mapping[str, Mall], k9: Mapping[str, tuple[Planscenario, list[str]]]
     ) -> list[str]:
-        """Varning före körning: ritade hus som stänger in ett markområde i vattnets rutor.
+        """Information före körning: ritade hus som stänger in ett markområde i vattnets rutor.
 
-        Byggnader är ogenomträngliga i vattenmodellen, så ett område som helt omges av dem saknar
-        väg ut och vattenberäkningen skulle stoppa. Kontrollen tillämpar förslaget på rutorna i en
-        tillfällig mapp och söker områden som inte når rutans kant (och inte fanns redan i basen).
+        Byggnader är ogenomträngliga i vattenmodellen, så ett område som helt omges av dem blir en
+        slutsänka (K2/v2): vattnet blir stående där. Det är inget fel, men användaren ska veta det.
+        Kontrollen tillämpar förslaget på rutorna i en tillfällig mapp och söker områden som inte
+        når rutans kant (och inte fanns redan i basen).
         """
         import tempfile
 
@@ -392,7 +399,7 @@ class KartverktygTjanst:
                 if not andrad:
                     continue
                 if instangda_omraden_i_k1_mapp(ut) and not instangda_omraden_i_k1_mapp(r.mapp):
-                    return [INSTANGT_VARNING]
+                    return [SLUTET_INFO]
         return []
 
     def _paverkar_inte(
@@ -720,6 +727,7 @@ class KartverktygTjanst:
                 try:
                     res = self.fragor.resultat(k["korning_id"])
                     post["vyer"] = self._vyer(res, d["namn"], k["korning_id"])
+                    post["varningar"] = [str(v["text"]) for v in res.get("varningar", [])]
                 except FlodenWebbFel:
                     pass
             ut.append(post)
@@ -742,6 +750,13 @@ class KartverktygTjanst:
                         return str(x["id"])
                 return None
 
+            def markering_for(scen: str, analys: str = la["analys"]) -> str | None:
+                # Kontrollraster för slutna områden (K2/v2, `slutsanka.tif`) i efter-läget.
+                for x in res["lager"]:
+                    if x["analys"] == analys and x["scenario"] == scen and x["roll"] == "slutsanka":
+                        return str(x["id"])
+                return None
+
             vyer.append(
                 {
                     "id": f"{korning_id}:{la['id']}",
@@ -752,6 +767,7 @@ class KartverktygTjanst:
                     "fore_lager": lager_for(la["fore"]),
                     "efter_lager": lager_for(la["efter"]),
                     "skillnad_lager": la["id"],
+                    "markering_lager": markering_for(la["efter"]),
                     "efter_namn": namn,
                     "andring": f"Ritat förslag: {namn}.",
                 }

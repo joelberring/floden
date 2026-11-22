@@ -18,6 +18,7 @@ from sankgraf.typer import (
     MARKSLAG_BYGGNAD,
     SankGraf,
     SankGrafFel,
+    SlutsankaResultat,
     StatiskFyllningResultat,
     las_brytlinjer_fran_gpkg,
     las_oppningar_fran_gpkg,
@@ -183,6 +184,7 @@ def statisk_fyllning(
 
     utflodes_sedda: set[tuple[int, int]] = set()
     utflodes_celler: list[tuple[int, int]] = []
+    over_hinder: dict[int, float] = {}
 
     max_steg = max(1000, len(graf.noder) * 50)
     steg = 0
@@ -203,11 +205,14 @@ def statisk_fyllning(
         if nod.forald_id is None:
             if overskott <= _VOLYM_TOL_M3:
                 continue
-            # Rotnod: svämmar över till nedströms nod eller ut ur området (HAV)
+            # Rotnod: svämmar över till nedströms nod eller ut ur området (HAV).
+            # En slutsänka (K2/v2) "svämmar över" bara när den nått sitt hinder.
             volym[nid] = v_max
             mottagare = _hitta_mottagare(nid)
             if mottagare is None:
                 ut_m3 += overskott
+                if nod.ar_slutsanka:
+                    over_hinder[nid] = over_hinder.get(nid, 0.0) + overskott
                 for rc in graf.overfall_celler.get(nid, ()):
                     if rc not in utflodes_sedda:
                         utflodes_sedda.add(rc)
@@ -315,6 +320,9 @@ def statisk_fyllning(
 
     lagrat_m3 = float(np.sum(djup_f64) * cell_area_m2)
     volymfel_rel = abs(in_m3 - ut_m3 - lagrat_m3) / in_m3 if in_m3 > 0.0 else 0.0
+    slutsankor, slut_mask = slutsanka_sammanstallning(
+        graf, djup_f64, nod_niva_rh2000, over_hinder
+    )
 
     return StatiskFyllningResultat(
         djup_m=np.asarray(djup_f64, dtype=np.float32),
@@ -326,7 +334,55 @@ def statisk_fyllning(
         ut_m3=ut_m3,
         volymfel_rel=volymfel_rel,
         utflodes_celler=utflodes_celler,
+        slutsankor=slutsankor,
+        slutsanka_mask=slut_mask,
     )
+
+
+def slutsanka_sammanstallning(
+    graf: SankGraf,
+    djup_m: NDArray[np.float64] | NDArray[np.float32],
+    nod_niva_rh2000: dict[int, float],
+    over_hinder_m3: dict[int, float],
+) -> tuple[tuple[SlutsankaResultat, ...], NDArray[np.bool_] | None]:
+    """Per slutsänka: area, nivå, största djup, lagrad volym och vatten över hindret.
+
+    Returnerar också cellmasken för slutsänkorna (None om grafen saknar slutsänkor, så att
+    grafer utan slutsänkor ger samma resultat som före K2/v2).
+    """
+    rotter = graf.slutsankor()
+    if not rotter:
+        return (), None
+    cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
+    max_id = max(graf.noder)
+    lov_till_rot = np.full(max_id + 1, -1, dtype=np.int64)
+    for r in rotter:
+        lov_till_rot[np.asarray(graf.lov_under_nod(r.nod_id), dtype=np.int64)] = r.nod_id
+    ct = graf.cell_till_nod
+    rot_per_cell = np.full(ct.shape, -1, dtype=np.int64)
+    giltig = ct >= 0
+    rot_per_cell[giltig] = lov_till_rot[ct[giltig]]
+    mask = rot_per_cell >= 0
+    djup = np.asarray(djup_m, dtype=np.float64)
+    ids = rot_per_cell[mask]
+    antal = np.bincount(ids, minlength=max_id + 1)
+    volym = np.bincount(ids, weights=djup[mask], minlength=max_id + 1) * cell_area_m2
+    maxdjup = np.zeros(max_id + 1, dtype=np.float64)
+    np.maximum.at(maxdjup, ids, djup[mask])
+    ut = tuple(
+        SlutsankaResultat(
+            nod_id=r.nod_id,
+            cell_antal=int(antal[r.nod_id]),
+            area_m2=float(antal[r.nod_id]) * cell_area_m2,
+            hinder_rh2000=float(r.hinder_rh2000 if r.hinder_rh2000 is not None else math.nan),
+            niva_rh2000=float(nod_niva_rh2000.get(r.nod_id, r.botten_rh2000)),
+            max_djup_m=float(maxdjup[r.nod_id]),
+            volym_m3=float(volym[r.nod_id]),
+            over_hinder_m3=float(over_hinder_m3.get(r.nod_id, 0.0)),
+        )
+        for r in rotter
+    )
+    return ut, np.asarray(mask, dtype=np.bool_)
 
 
 def instangda_omraden_i_k1_mapp(

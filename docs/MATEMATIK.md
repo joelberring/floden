@@ -44,3 +44,23 @@ Vilka datastrukturer gör att en lapp bara kräver omräkning av ett delträd oc
 - **Varför hybriden ger 12,9–20,0× speedup (CFL-frikoppling):** I en explicit/lokal-tröghets-2D-modell styrs det globala CFL-tidssteget `Δt ∝ Δx / sqrt(g · h_max)` av stillastående djupa sänkor (`h ≈ 0,5 m`). När djupa samlingar lyfts ut till grafnoder styrs 2D-tidssteget av det grunda skiktflödet på sluttningar/gator (`h ≈ 0,005–0,03 m`), vilket ger `2–4×` större `Δt` redan vid `subgrid=1` och `12,9–20,0×` snabbare körning vid `subgrid=4`.
 - **Fel före vs under kraftigt överfall:** Före överfall ger hybriden `0,01–0,19 cm` MAE mot full 2D och `IoU = 1,0000`. Under pågående kraftigt överfall över smal tröskel (A1, 720 mm/h) uppstår `+1,97 cm` (`subgrid=1`) resp. `+3,60 cm` (`subgrid=4`) extra överhöjd i noden jämfört med full 2D. Fråga till Q3 (person X): kan nod–2D-kopplingen kalibreras med en effektiv utloppslängd eller lokal delstegning för att halvera överfallsfelet vid grov subgrid?
 - **Numerisk stabilitet:** Ren Bates (2010) (`theta=1,0`) utvecklade schackbrädesvängningar i släta bassänger (`n=0,015`) med lodräta kanter; SFINCS/de Almeida m.fl. (2012) `theta=0,9` eliminerade dem helt. I hybridkopplingen gav exponentiell jämviktsrelaxation + gemensam positivitetsbegränsare svängningsfri koppling och volymfel `< 2e-13`.
+
+### 2026-11-22 – Vatten – Slutsänkor (slutna kvarter) och avtappning i grafen (Q1, Q4)
+- **Slutsänka i sammanslagningsträdet:** ett område som byggnader helt omger får ingen sadel mot randen; Kruskal-
+  steget slutar då med en rot per sådant område. Vi ger roten ett *hinder* (lägsta byggnadscell i fyrgrannringen,
+  höjden i `mark.tif`) som övre gräns för volymkurvan, och räknar vatten över hindret som utflöde. Det är ett
+  modellval, inte teori: den verkliga vägen ut är en okänd tröskel (port, dörr, brunn). Mätt: graf och 2D (lokal
+  tröghet, byggnader som väggar) ger samma volym i gården (3,6 m³) och samma vattenyta inom 0,14 mm (2D:s film på
+  sluttningen), på plant golv exakt samma djup (50 mm, A10).
+- **Avtappning per nod:** grafen tappar en nod med kapaciteten summerad över nodens celler så länge den har vatten
+  eller tillrinning (`dynamik.handelsestyrd.avtappning_per_nod_m3_s`). 2D tappar varje *våt cell* för sig. På plant
+  golv är det samma sak (A11: graf och 2D ger 15,0 mm topp och tomt efter 30 min). **Fråga (Q1, Samuel):** på
+  sluttande golv är bara den våta delen av ytan avtappad i 2D, medan grafen räknar hela avrinningsytan. Ska
+  avtappningen i grafen följa ytkurvan `A(h)` (bara vattenytan) i stället, och är händelsestyrd lösning då fortfarande
+  exakt (dV/dt = r·A_avr − k·A(h(V)) är inte längre linjär i V mellan händelser)? Vi har inte valt; dagens
+  graf överskattar avtappningen när gården bara delvis är våt.
+- **Inkrementell omräkning (Q4):** en ändring som rör en slutsänka eller gränsar till ett nytt instängt område ger i
+  dag full omräkning (hindret och ringen är globala egenskaper som den lokala sadelsökningen inte ser). Övriga
+  ändringar bevarar slutsänkorna orörda (mätt: noden identisk före och efter, samma fyllning som full omräkning).
+  **Fråga (Q4):** finns en lokal regel för när ett nytt hus stänger en port, så att bara de berörda komponenterna
+  behöver räknas om?

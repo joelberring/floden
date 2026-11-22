@@ -1294,7 +1294,10 @@ def bygg_parser() -> argparse.ArgumentParser:
     sg_parser = subparsers.add_parser(
         "sankgraf",
         help="Bygg sänkgraf från K1-markmodell och exportera valfritt K2.",
-        description="Bygg sänkhierarki och flödesvägar enligt K2/v1 från K1-indata.",
+        description=(
+            "Bygg sänkhierarki och flödesvägar enligt K2 (v1, eller v2 med slutsänkor) "
+            "från K1-indata."
+        ),
     )
     sg_parser.add_argument(
         "--k1",

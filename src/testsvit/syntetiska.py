@@ -1,4 +1,4 @@
-"""Deterministisk generator för syntetiska valideringsfall A1–A9 (uppdrag T09a)."""
+"""Deterministisk generator för syntetiska valideringsfall A1–A11 (uppdrag T09a; A10–A11 K2/v2)."""
 
 from __future__ import annotations
 
@@ -852,6 +852,121 @@ def _fall_a9_brus_persistens() -> SyntetisktFallSpec:
     )
 
 
+def _sluten_gard_terrang() -> tuple[NDArray[np.float32], NDArray[np.uint8], float, float]:
+    """Sluten kvadratisk gård 10 x 10 m (40 x 40 celler) i ett kvarter 18 x 18 m.
+
+    88 x 88 celler = 22 x 22 m vid 0,25 m. Gården (rad/kolumn 24..63) har plant golv på
+    10,00 m och omges helt av byggnader 4 m breda (markslag 9, rad/kolumn 8..79), med taket på
+    22,00 m utom norra längan (rad 8..23) på 16,00 m: hindret. Gatan runt kvarteret (2 m) lutar
+    2 % utåt från 9,95 m, så att vatten där lämnar området.
+    """
+    n = 88
+    x_min, y_max = BAS_E + 1000.0, BAS_N + n * PIXELSTORLEK_M
+    ii, jj = np.meshgrid(np.arange(n), np.arange(n), indexing="ij")
+    avst_celler = np.minimum(np.minimum(ii, jj), np.minimum(n - 1 - ii, n - 1 - jj))
+    # Gatan: 9,95 m vid huset, 2 % lutning utåt (avstånd i meter från husliv till cellens mitt).
+    mark = (9.95 - 0.02 * (8 - avst_celler - 0.5) * PIXELSTORLEK_M).astype(np.float32)
+    markslag = np.full((n, n), MARKSLAG_HARDGJORT, dtype=np.uint8)
+    kvarter = (avst_celler >= 8)
+    gard = (avst_celler >= 24)
+    hus = kvarter & ~gard
+    markslag[hus] = MARKSLAG_BYGGNAD
+    mark[hus] = np.float32(22.0)
+    mark[8:24, 8:80] = np.float32(16.0)  # norra längan: lägre tak, gårdens hinder
+    mark[gard] = np.float32(10.0)
+    return mark, markslag, x_min, y_max
+
+
+def _fall_a10_sluten_gard() -> SyntetisktFallSpec:
+    mark, markslag, x_min, y_max = _sluten_gard_terrang()
+    n = mark.shape[0]
+    osakerhet = np.full((n, n), 0.02, dtype=np.float32)
+    regn = [(0.0, 300.0), (600.0, 300.0)]  # 300 mm/h i 10 min = 50 mm (kort, för 2D-jämförelsen)
+    gard_area_m2 = 40 * 40 * PIXELSTORLEK_M**2
+    facit = {
+        "fall_id": "A10",
+        "typ": "slutsanka",
+        "gard_area_m2": gard_area_m2,
+        "gard_celler": 1600,
+        "regn_mm": 50.0,
+        "regn_pa_tak_raknas": False,
+        "volym_m3": gard_area_m2 * 0.050,
+        "djup_m": 0.050,
+        "hinder_rh2000": 16.0,
+        "forklaring": (
+            "Gården har ingen väg ut: allt regn på gården (taken räknas inte, regn på "
+            "byggnadsceller ingår inte i modellen) blir stående. Djup = regnvolym / area."
+        ),
+        "toleranser": {"volymfel_rel_max": 0.001, "maxdjupsfel_m_max": 0.01},
+    }
+    return SyntetisktFallSpec(
+        mappnamn="A10_sluten_gard",
+        id="A10",
+        namn="Sluten gård",
+        beskrivning=(
+            "Gård 10 x 10 m helt omgiven av byggnader (lägsta tak 16 m): slutsänka, djup = regn."
+        ),
+        x_min=x_min,
+        y_max=y_max,
+        mark=mark,
+        osakerhet=osakerhet,
+        markslag=markslag,
+        brytlinjer=[],
+        oppningar=[],
+        regn=regn,
+        facit=facit,
+        parametrar={"fall": "A10", "gard_m": 10.0, "hinder_rh2000": 16.0},
+        tvarsnitt_rad=44,
+    )
+
+
+def _fall_a11_sluten_gard_avtappning() -> SyntetisktFallSpec:
+    mark, markslag, x_min, y_max = _sluten_gard_terrang()
+    n = mark.shape[0]
+    osakerhet = np.full((n, n), 0.02, dtype=np.float32)
+    regn = [(0.0, 120.0), (900.0, 120.0)]  # 120 mm/h i 15 min = 30 mm
+    # Avtappning 60 mm/h: netto +60 mm/h i 15 min (15 mm), sedan -60 mm/h: tomt efter 30 min.
+    tider = [0.0, 450.0, 900.0, 1350.0, 1800.0, 2700.0]
+    djup = [0.0, 0.0075, 0.015, 0.0075, 0.0, 0.0]
+    facit = {
+        "fall_id": "A11",
+        "typ": "slutsanka_avtappning",
+        "gard_area_m2": 40 * 40 * PIXELSTORLEK_M**2,
+        "avtappning_mm_h": 60.0,
+        "hinder_rh2000": 16.0,
+        "slut_tid_s": 2700.0,
+        "tider_s": tider,
+        "djup_m": djup,
+        "max_djup_m": 0.015,
+        "tom_efter_s": 1800.0,
+        "avtappat_m3": 100.0 * 0.030,
+        "forklaring": (
+            "Som A10 men gården tappas av med 60 mm/h (fas 3): djup(t) = (120 - 60) t under "
+            "regnet, sedan minskar det med 60 mm/h till tomt."
+        ),
+        "toleranser": {"volymfel_rel_max": 0.001, "maxdjupsfel_m_max": 0.01},
+    }
+    return SyntetisktFallSpec(
+        mappnamn="A11_sluten_gard_avtappning",
+        id="A11",
+        namn="Sluten gård med avtappning",
+        beskrivning=(
+            "Som A10 med avtappning 60 mm/h och 120 mm/h i 15 min: känt förlopp, tomt efter 30 min."
+        ),
+        x_min=x_min,
+        y_max=y_max,
+        mark=mark,
+        osakerhet=osakerhet,
+        markslag=markslag,
+        brytlinjer=[],
+        oppningar=[],
+        regn=regn,
+        facit=facit,
+        parametrar={"fall": "A11", "gard_m": 10.0, "avtappning_mm_h": 60.0},
+        tvarsnitt_rad=44,
+    )
+
+
 def _rita_oversiktsbild(spec: SyntetisktFallSpec, sokvag: Path) -> Path:
     """Ritar en kompakt och tydlig PNG med höjdkarta och tvärsnittsprofil (NumPy + Pillow)."""
     mark = spec.mark.astype(np.float64)
@@ -938,7 +1053,7 @@ def _rita_oversiktsbild(spec: SyntetisktFallSpec, sokvag: Path) -> Path:
 
 
 def alla_syntetiska_specifikationer() -> list[SyntetisktFallSpec]:
-    """Returnerar specifikationerna för alla nio syntetiska fall A1–A9 i ordning."""
+    """Returnerar specifikationerna för alla syntetiska fall A1–A11 i ordning."""
     return [
         _fall_a1_enkel_sanka(),
         _fall_a2_tva_sankor_serie(),
@@ -949,6 +1064,8 @@ def alla_syntetiska_specifikationer() -> list[SyntetisktFallSpec]:
         _fall_a7_vagbank_trumma(),
         _fall_a8_port_byggnad(),
         _fall_a9_brus_persistens(),
+        _fall_a10_sluten_gard(),
+        _fall_a11_sluten_gard_avtappning(),
     ]
 
 
@@ -1020,7 +1137,7 @@ def skriv_syntetiskt_fall(spec: SyntetisktFallSpec, rot: str | Path = "testsvit"
 
 
 def generera_alla_syntetiska_fall(rot: str | Path = "testsvit") -> list[Path]:
-    """Genererar deterministiskt alla 9 syntetiska testfall A1–A9 under `rot`."""
+    """Genererar deterministiskt alla syntetiska testfall A1–A11 under `rot`."""
     mappar: list[Path] = []
     for spec in alla_syntetiska_specifikationer():
         mappar.append(skriv_syntetiskt_fall(spec, rot=rot))

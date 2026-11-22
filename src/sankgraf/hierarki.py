@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import NDArray
@@ -20,6 +21,8 @@ from sankgraf.typer import (
     HAV_NOD_ID,
     MARKSLAG_BYGGNAD,
     MARKSLAG_HARDGJORT,
+    TYP_SANKA,
+    TYP_SLUTSANKA,
     InstangtOmradeFel,
     SankGraf,
     SankGrafFel,
@@ -476,31 +479,110 @@ def berakna_kurvor_for_celler(
     return tuple(volym_punkter), tuple(yt_punkter), botten, tot_celler
 
 
-def hitta_instangda_omraden(aktiv: NDArray[np.bool_]) -> list[tuple[int, int, int]]:
-    """Fyrgrannsammanhängande aktiva områden som inte når rasterkanten.
-
-    Returnerar (antal celler, rad, kolumn) för varje sådant område, största först.
-    """
+def _instangda_etiketter(aktiv: NDArray[np.bool_]) -> tuple[NDArray[np.int32], list[int]]:
+    """Fyrgrannsetiketter för aktiva områden och de etiketter som inte når rasterkanten."""
     from scipy import ndimage
 
     etiketter, antal = ndimage.label(aktiv)  # 4-grannskap är standard
     if antal == 0:
-        return []
+        return np.asarray(etiketter, dtype=np.int32), []
     kant = {
         int(x)
         for x in np.unique(
             np.concatenate([etiketter[0], etiketter[-1], etiketter[:, 0], etiketter[:, -1]])
         )
     }
-    antal_per = np.bincount(etiketter.ravel(), minlength=antal + 1)
+    return np.asarray(etiketter, dtype=np.int32), [
+        e for e in range(1, int(antal) + 1) if e not in kant
+    ]
+
+
+def hitta_instangda_omraden(aktiv: NDArray[np.bool_]) -> list[tuple[int, int, int]]:
+    """Fyrgrannsammanhängande aktiva områden som inte når rasterkanten.
+
+    Returnerar (antal celler, rad, kolumn) för varje sådant område, största först. Sedan K2/v2
+    blir ett område som omges av byggnader en slutsänka (se `bygg_sankgraf`).
+    """
+    etiketter, instangda = _instangda_etiketter(aktiv)
+    if not instangda:
+        return []
+    antal_per = np.bincount(etiketter.ravel())
     ut: list[tuple[int, int, int]] = []
-    for e in range(1, antal + 1):
-        if e in kant:
-            continue
+    for e in instangda:
         rr, kk = np.nonzero(etiketter == e)
         ut.append((int(antal_per[e]), int(rr[0]), int(kk[0])))
     ut.sort(reverse=True)
     return ut
+
+
+@dataclass(frozen=True)
+class SlutetOmrade:
+    """Ett instängt område och dess hinder (lägsta hindercell som gränsar till området)."""
+
+    etikett: int
+    antal_celler: int
+    rad: int
+    kol: int
+    hinder_rh2000: float
+    hinder_rad: int
+    hinder_kol: int
+    lov: tuple[int, ...] = ()
+
+
+def slutna_omraden(
+    eff_z: NDArray[np.float32],
+    aktiv: NDArray[np.bool_],
+) -> tuple[NDArray[np.int32], list[SlutetOmrade]]:
+    """Instängda områden med hinder, i etikettordning.
+
+    **Hindret** är den lägsta cellen i ringen av ogenomträngliga celler som gränsar till
+    området (fyrgrannar), med höjden ur `mark.tif` (byggnadens takhöjd). Vägen vidare över
+    taket prövas inte: på platta tak (K1 v2) är det samma nivå. Verkliga trösklar, portar och
+    brunnar finns inte i markmodellen. Har ringen en cell utan höjd (NaN) är hindret okänt och
+    `InstangtOmradeFel` kastas (största sådana område först).
+    """
+    from scipy import ndimage
+
+    etiketter, instangda = _instangda_etiketter(aktiv)
+    if not instangda:
+        return etiketter, []
+    hojd, bredd = aktiv.shape
+    objekt = ndimage.find_objects(etiketter)
+    kors = ndimage.generate_binary_structure(2, 1)
+    ut: list[SlutetOmrade] = []
+    okanda: list[tuple[int, int, int]] = []
+    for e in instangda:
+        sl = objekt[e - 1]
+        assert sl is not None
+        r0 = max(0, sl[0].start - 1)
+        r1 = min(hojd, sl[0].stop + 1)
+        c0 = max(0, sl[1].start - 1)
+        c1 = min(bredd, sl[1].stop + 1)
+        omr = etiketter[r0:r1, c0:c1] == e
+        ring = ndimage.binary_dilation(omr, structure=kors) & ~omr
+        rr, kk = np.nonzero(omr)
+        antal = int(rr.size)
+        ring_z = np.asarray(eff_z[r0:r1, c0:c1], dtype=np.float64)[ring]
+        if not np.all(np.isfinite(ring_z)):
+            okanda.append((antal, int(rr[0]) + r0, int(kk[0]) + c0))
+            continue
+        hr, hk = np.nonzero(ring)
+        i_min = int(np.argmin(ring_z))  # första minimum i radordning: deterministiskt
+        ut.append(
+            SlutetOmrade(
+                etikett=e,
+                antal_celler=antal,
+                rad=int(rr[0]) + r0,
+                kol=int(kk[0]) + c0,
+                hinder_rh2000=float(ring_z[i_min]),
+                hinder_rad=int(hr[i_min]) + r0,
+                hinder_kol=int(hk[i_min]) + c0,
+            )
+        )
+    if okanda:
+        okanda.sort(reverse=True)
+        raise InstangtOmradeFel(*okanda[0])
+    return etiketter, ut
 
 
 def bygg_sankgraf(
@@ -531,9 +613,8 @@ def bygg_sankgraf(
     osak_flat = np.asarray(osakerhet_z, dtype=np.float64).ravel()
     aktiv_flat = aktiv.ravel()
 
-    instangda = hitta_instangda_omraden(aktiv)
-    if instangda:
-        raise InstangtOmradeFel(*instangda[0])
+    # Områden som helt omges av byggnader blir slutsänkor (K2/v2); okänt hinder ger fel.
+    etiketter, slutna = slutna_omraden(eff_z, aktiv)
 
     kantbarriarer = _berakna_kantbarriarer(z_flat, aktiv_flat, geo, brytlinjer)
     flow_to, cell_till_nod, antal_lov = _berakna_avrinningsomraden(eff_z, aktiv, kantbarriarer)
@@ -736,6 +817,49 @@ def bygg_sankgraf(
             uf_parent[rb] = ra
             topp_nod[ra] = p_id
 
+    # Rotnoder som inte nått randen ligger i ett slutet område: de blir slutsänkor (K2/v2).
+    slutsanka_hinder: dict[int, float] = {}
+    if slutna:
+        etikett_till_omrade = {o.etikett: o for o in slutna}
+        ct_flat_tmp = cell_till_nod.ravel()
+        et_flat = etiketter.ravel()
+        lov_etikett: dict[int, int] = {}
+        i_slutna = np.flatnonzero(np.isin(et_flat, np.asarray(list(etikett_till_omrade))))
+        for lid_np, e_np in zip(ct_flat_tmp[i_slutna], et_flat[i_slutna], strict=True):
+            if int(lid_np) >= 0:
+                lov_etikett.setdefault(int(lid_np), int(e_np))
+        sedda_etiketter: set[int] = set()
+        for rot in sorted({_uf_hitta(x) for x in range(1, antal_lov + 1)}):
+            if ar_hav[rot]:
+                continue
+            nod_id = topp_nod[rot]
+            lov = nod_id
+            while barn_karta[lov]:
+                lov = barn_karta[lov][0]
+            etikett = lov_etikett.get(lov)
+            if etikett is None or etikett in sedda_etiketter:
+                raise SankGrafFel(f"Nod {nod_id} saknar utloppssadel mot randen.")
+            sedda_etiketter.add(etikett)
+            omr = etikett_till_omrade[etikett]
+            hinder_z = omr.hinder_rh2000
+            if barn_karta[nod_id]:
+                # Hindret kan ligga under en inre sadel (t.ex. en låg byggnad vid en sluttande
+                # gård): roten fylls då åtminstone till sadeln så att trädet förblir monotont.
+                hinder_z = max(hinder_z, overfall_z_karta[barn_karta[nod_id][0]])
+            h_idx = omr.hinder_rad * bredd + omr.hinder_kol
+            h_osak = float(osak_flat[h_idx])
+            overfall_z_karta[nod_id] = hinder_z
+            overfall_xy_karta[nod_id] = (
+                geo.x_min + (omr.hinder_kol + 0.5) * dx,
+                geo.y_max - (omr.hinder_rad + 0.5) * dy,
+            )
+            osakerhet_karta[nod_id] = h_osak if math.isfinite(h_osak) else 0.0
+            forald_karta[nod_id] = None
+            ut_till_karta[nod_id] = None
+            ut_lov_karta[nod_id] = None
+            overfall_celler_karta[nod_id] = ((omr.hinder_rad, omr.hinder_kol),)
+            slutsanka_hinder[nod_id] = hinder_z
+
     # Samla cellhöjder per lövsänka i ett svep
     catch_flat = cell_till_nod.ravel()
     lov_mask = catch_flat >= 0
@@ -803,6 +927,8 @@ def bygg_sankgraf(
             osakerhet_m=osakerhet_karta[nid],
             botten_rh2000=botten_z,
             cell_antal=cell_antal,
+            typ=TYP_SLUTSANKA if nid in slutsanka_hinder else TYP_SANKA,
+            hinder_rh2000=slutsanka_hinder.get(nid),
         )
 
     return SankGraf(

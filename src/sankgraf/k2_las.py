@@ -5,6 +5,10 @@ fylla grafen igen: fyllningen behöver också överfallscellerna, vilket löv et
 till, och den bearbetade markhöjden (med brytlinjer och öppningar inbrända). Därför skriver
 `skriv_sankgraf_k2` tre tilläggsfiler: `sankgraf_topologi.json`, `mark_bearbetad.tif` och
 `markslag.tif`. Saknas någon av dem blir det ett fel, inte en halv graf.
+
+Både K2/v1 och K2/v2 läses. I v2 kan en rotnod vara en slutsänka (`typ = "slutsanka"`,
+`overfall_rh2000 = null`, `hinder_rh2000` satt); i Python får den `overfall_rh2000 =
+hinder_rh2000` (se `SankNod`).
 """
 
 from __future__ import annotations
@@ -17,6 +21,9 @@ import numpy as np
 
 from sankgraf.typer import (
     KONTRAKT_K2,
+    KONTRAKT_K2_LASBARA,
+    TYP_SANKA,
+    TYP_SLUTSANKA,
     FlodesVag,
     SankGraf,
     SankGrafFel,
@@ -38,12 +45,26 @@ FILER = (
 )
 
 
-def _nod(d: dict[str, Any]) -> SankNod:
+def _nod(d: dict[str, Any], kontrakt: str) -> SankNod:
+    typ = str(d.get("typ", TYP_SANKA)) if kontrakt != KONTRAKT_K2 else TYP_SANKA
+    if kontrakt == KONTRAKT_K2 and ("typ" in d or d["overfall_rh2000"] is None):
+        raise SankGrafFel(f"Nod {d['nod_id']}: K2/v1 kan inte ha slutsänkor.")
+    hinder = d.get("hinder_rh2000")
+    if typ == TYP_SLUTSANKA:
+        if d["overfall_rh2000"] is not None or hinder is None:
+            raise SankGrafFel(
+                f"Slutsänkan {d['nod_id']}: overfall_rh2000 ska vara null och hinder_rh2000 satt."
+            )
+        overfall = float(hinder)
+    else:
+        if d["overfall_rh2000"] is None:
+            raise SankGrafFel(f"Nod {d['nod_id']} saknar överfall men är ingen slutsänka.")
+        overfall = float(d["overfall_rh2000"])
     return SankNod(
         nod_id=int(d["nod_id"]),
         forald_id=None if d["forald_id"] is None else int(d["forald_id"]),
         barn_id=tuple(int(b) for b in d["barn_id"]),
-        overfall_rh2000=float(d["overfall_rh2000"]),
+        overfall_rh2000=overfall,
         overfall_x=float(d["overfall_x"]),
         overfall_y=float(d["overfall_y"]),
         ut_till_id=None if d["ut_till_id"] is None else int(d["ut_till_id"]),
@@ -54,11 +75,13 @@ def _nod(d: dict[str, Any]) -> SankNod:
         osakerhet_m=float(d["osakerhet_m"]),
         botten_rh2000=float(d["botten_rh2000"]),
         cell_antal=int(d["cell_antal"]),
+        typ=typ,
+        hinder_rh2000=None if hinder is None else float(hinder),
     )
 
 
 def las_sankgraf_k2(mapp: str | Path) -> SankGraf:
-    """Sänkgrafen i `mapp` (K2/v1 med tilläggsfilerna)."""
+    """Sänkgrafen i `mapp` (K2/v1 eller K2/v2 med tilläggsfilerna)."""
     m = Path(mapp)
     saknas = [f for f in FILER if not (m / f).is_file()]
     if saknas:
@@ -68,10 +91,13 @@ def las_sankgraf_k2(mapp: str | Path) -> SankGraf:
     huvud = json.loads((m / "sankgraf.json").read_text(encoding="utf-8"))
     topo = json.loads((m / "sankgraf_topologi.json").read_text(encoding="utf-8"))
     for namn, d in (("sankgraf.json", huvud), ("sankgraf_topologi.json", topo)):
-        if d.get("kontrakt") != KONTRAKT_K2:
+        if d.get("kontrakt") not in KONTRAKT_K2_LASBARA:
             raise SankGrafFel(f"{namn}: fel kontrakt {d.get('kontrakt')!r}.")
+    kontrakt = str(huvud["kontrakt"])
+    if topo["kontrakt"] != kontrakt:
+        raise SankGrafFel("sankgraf.json och sankgraf_topologi.json har olika K2-version.")
 
-    noder = {n.nod_id: n for n in (_nod(d) for d in huvud["noder"])}
+    noder = {n.nod_id: n for n in (_nod(d, kontrakt) for d in huvud["noder"])}
     if len(noder) != int(huvud["antal_noder"]):
         raise SankGrafFel("sankgraf.json: antal_noder stämmer inte med nodlistan.")
 
