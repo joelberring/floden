@@ -294,3 +294,6 @@ Nästa: T00 (repo och grund), sedan T01 och T09a parallellt.
 - Alla rubriker och titeln är svarta; förvald accentfärg (linjen under titelhuvudet) är svart.
 - Svensk rapportlayout: textspalt 130 mm med hängande rubriker. Titel, rubriker nivå 1–2, titelhuvud och breda bilagetabeller börjar vid vänster marginal (22 mm), brödtext, bilder, underrubriker och smala tabeller 30 mm in. Samma i Word (negativt indrag och tabellindrag).
 - Huvuddelen blir 7 sidor före bilagorna (var 6); testet följer med.
+
+### 2026-11-22 – Rapportstil: serif i brödtexten (samordnare, på Joels begäran)
+- Brödtext, ingress, punktlistor och bildtexter har serif som förval: Gelasio i PDF (SIL OFL 1.1, statiska instanser ur variabelfilen, med versala siffror i stället för gemena) och Georgia i Word (samma teckenbredder; versala siffror via `w14:numForm`). Rubriker, tabeller, småtext, titelhuvud, sidhuvud och sidfot är kvar i Liberation Sans / Arial.
