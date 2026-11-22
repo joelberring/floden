@@ -1,0 +1,21 @@
+# Automatisk HTTPS (Let's Encrypt) för FLODEN_DOMAIN. "localhost" ger ett lokalt certifikat.
+# Lyft från O-Tid (github.com/joelberring/otid, MIT): deploy/Caddyfile.
+{$FLODEN_DOMAIN} {
+	encode zstd gzip
+
+	# HSTS: webbläsaren använder bara HTTPS mot domänen i ett år (inte includeSubDomains: berring.se har andra tjänster).
+	header Strict-Transport-Security "max-age=31536000"
+	header X-Content-Type-Options "nosniff"
+	header Referrer-Policy "strict-origin-when-cross-origin"
+	# Floden ska inte indexeras (demo och projekt).
+	header X-Robots-Tag "noindex, nofollow"
+
+	# API:t har en egen spärr på 25 MB (Content-Length); här står samma gräns uttryckligen.
+	request_body {
+		max_size 25MB
+	}
+
+	reverse_proxy floden:8765 {
+		lb_try_duration 10s
+	}
+}
