@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+from sankgraf.bifurkation import (
+    BifurkationsPunkt,
+    detektera_bifurkationer,
+    exportera_bifiltrering_json,
+    skriv_bifurkationer_gpkg,
+    skriv_bifurkationer_json,
+)
 from sankgraf.flodesvagar import (
     MANNING_N_PER_MARKSLAG,
     STANDARD_REFERENSDJUP_M,
@@ -50,6 +57,7 @@ __all__ = [
     "KONTRAKT_K2",
     "MANNING_N_PER_MARKSLAG",
     "STANDARD_REFERENSDJUP_M",
+    "BifurkationsPunkt",
     "FlodesVag",
     "SankGraf",
     "SankGrafFel",
@@ -64,6 +72,8 @@ __all__ = [
     "berakna_total_regn_m",
     "bygg_flodesvagar",
     "bygg_sankgraf",
+    "detektera_bifurkationer",
+    "exportera_bifiltrering_json",
     "filtrera_persistens",
     "kor_statisk_k1_mapp",
     "las_brytlinjer_fran_gpkg",
@@ -71,6 +81,8 @@ __all__ = [
     "las_oppningar_fran_gpkg",
     "manning_hastighet_m_s",
     "sammanfoga_rutor",
+    "skriv_bifurkationer_gpkg",
+    "skriv_bifurkationer_json",
     "skriv_flodesvagar_gpkg",
     "skriv_geotiff_int64",
     "skriv_sankgraf_k2",
