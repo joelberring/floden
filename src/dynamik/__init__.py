@@ -24,6 +24,12 @@ from dynamik.handelsestyrd import (
     kor_dynamik_handelsestyrd,
     kor_handelsestyrd_kardinal,
 )
+from dynamik.intervall import (
+    EntreIntervall,
+    IntervallResultat,
+    NodIntervall,
+    kor_monoton_intervallanalys,
+)
 from dynamik.nodmodell import (
     HAR_PYARROW,
     KONTRAKT_K6,
@@ -62,6 +68,7 @@ __all__ = [
     "EnhetssvarTabell",
     "EnsembleResultat",
     "EnsembleScenario",
+    "EntreIntervall",
     "EntreKumulativRisk",
     "EntrePunkt",
     "EntreResultat",
@@ -69,7 +76,9 @@ __all__ = [
     "FaltningVinstResultat",
     "GrafStrukturCache",
     "HandelseKardinalResultat",
+    "IntervallResultat",
     "KumulativRiskResultat",
+    "NodIntervall",
     "NodKumulativRisk",
     "NodTidsserie",
     "RegnIntervall",
@@ -83,6 +92,7 @@ __all__ = [
     "kor_dynamik_tidssteg",
     "kor_ensemble",
     "kor_handelsestyrd_kardinal",
+    "kor_monoton_intervallanalys",
     "mat_faltning_vinst",
     "nod_medel_gangtid_s",
     "overfallsflode_m3_s",
