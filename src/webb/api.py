@@ -23,6 +23,12 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from buller.optimering import (
+    STANDARD_RIKTVARDE_DB,
+    BullerOptimeringFel,
+    detektera_akustiska_bifurkationer,
+    valj_bullerskarmar_k,
+)
 from dagsljus.horisont import HorisontFel
 from dagsljus.intervall import horisont_1d_konvext_holje, kor_monoton_svf_intervall
 from dynamik.ensemble import EnsembleResultat, EnsembleScenario, kor_ensemble
@@ -66,6 +72,8 @@ from lapp.kontrakt import (
     ProjektLapp,
     las_gatusektioner_fran_konfig,
 )
+from luft.kanslighet import kor_monoton_mkn_intervall
+from luft.typer import LuftFel
 from mark_forluster.koppling import berakna_effektivt_regn_k5
 from mark_forluster.parametrar import ForlustFel
 from rapport.export import RapportExportFel, generera_rapport
@@ -1250,6 +1258,165 @@ class FlodenApiApp:
             "mittlinje_max_horisont_rad": float(np.max(horisont_ost))
             if horisont_ost.size > 0
             else 0.0,
+        }
+
+    def kor_buller_optimering_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/buller-skarmar`: CELF-skärmval + skuggzonsdetektor."""
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+
+        bas_raw = payload.get("bas_niva_db")
+        if not isinstance(bas_raw, list) or not (1 <= len(bas_raw) <= 5000):
+            raise FlodenWebbFel("Fältet 'bas_niva_db' ska vara en lista med 1–5000 tal.")
+        if any(isinstance(v, bool) or not isinstance(v, int | float) for v in bas_raw):
+            raise FlodenWebbFel("Fältet 'bas_niva_db' får bara innehålla tal.")
+        bas_arr = np.asarray(bas_raw, dtype=np.float64)
+        if not np.all(np.isfinite(bas_arr)):
+            raise FlodenWebbFel("Fältet 'bas_niva_db' får inte innehålla NaN eller oändligt.")
+
+        skarmar_raw = payload.get("skarm_reduktion_db")
+        if not isinstance(skarmar_raw, Mapping) or len(skarmar_raw) > 200:
+            raise FlodenWebbFel(
+                "Fältet 'skarm_reduktion_db' ska vara ett objekt (max 200 skärmar)."
+            )
+        skarm_map: dict[str, NDArray[np.float64]] = {}
+        for sid, lista in skarmar_raw.items():
+            if not isinstance(sid, str) or not isinstance(lista, list):
+                raise FlodenWebbFel("Varje post i 'skarm_reduktion_db' ska vara namn -> tal-lista.")
+            if any(isinstance(v, bool) or not isinstance(v, int | float) for v in lista):
+                raise FlodenWebbFel(f"Skärm '{sid}' innehåller ogiltiga värden.")
+            arr = np.asarray(lista, dtype=np.float64)
+            if not np.all(np.isfinite(arr)):
+                raise FlodenWebbFel(f"Skärm '{sid}' innehåller NaN eller oändligt.")
+            skarm_map[sid] = arr
+
+        k_raw = payload.get("k", 5)
+        if isinstance(k_raw, bool) or not isinstance(k_raw, int) or not (1 <= k_raw <= 50):
+            raise FlodenWebbFel("Fältet 'k' ska vara ett heltal mellan 1 och 50.")
+        riktvarde_db = _tolka_tal(payload, "riktvarde_db", STANDARD_RIKTVARDE_DB)
+        mal = str(payload.get("mal", "overskridande_db"))
+
+        try:
+            valda = valj_bullerskarmar_k(
+                bas_arr,
+                skarm_map,
+                k=k_raw,
+                riktvarde_db=riktvarde_db,
+                mal=mal,
+            )
+            bif_ut: list[dict[str, Any]] | None = None
+            avstand_raw = payload.get("avstand_m")
+            if avstand_raw is not None:
+                if not isinstance(avstand_raw, list) or not (1 <= len(avstand_raw) <= 5000):
+                    raise FlodenWebbFel("Fältet 'avstand_m' ska vara en lista med 1–5000 tal.")
+                if any(isinstance(v, bool) or not isinstance(v, int | float) for v in avstand_raw):
+                    raise FlodenWebbFel("Fältet 'avstand_m' får bara innehålla tal.")
+                h_kalla = _tolka_tal(payload, "h_kalla_m", 0.5)
+                h_mott = _tolka_tal(payload, "h_mottagare_m", 4.0)
+                dc_raw = payload.get("dc_dz_intervall", [-0.05, 0.05])
+                if not isinstance(dc_raw, list | tuple) or len(dc_raw) != 2:
+                    raise FlodenWebbFel("Fältet 'dc_dz_intervall' ska vara [min, max].")
+                if any(isinstance(v, bool) or not isinstance(v, int | float) for v in dc_raw):
+                    raise FlodenWebbFel("Fältet 'dc_dz_intervall' ska innehålla två tal.")
+                bifs = detektera_akustiska_bifurkationer(
+                    np.asarray(avstand_raw, dtype=np.float64),
+                    h_kalla,
+                    h_mott,
+                    dc_dz_intervall=(float(dc_raw[0]), float(dc_raw[1])),
+                )
+                bif_ut = [
+                    {
+                        "mottagare_idx": b.mottagare_idx,
+                        "avstand_m": b.avstand_m,
+                        "kritisk_dc_dz_per_s": b.kritisk_dc_dz_per_s,
+                        "skuggzon_bifurkation": b.skuggzon_bifurkation,
+                        "monoton_garanterad": b.monoton_garanterad,
+                    }
+                    for b in bifs
+                ]
+        except BullerOptimeringFel as exc:
+            raise FlodenWebbFel(f"Bulleroptimeringsfel: {exc}", status_kod=400) from exc
+
+        svar: dict[str, Any] = {
+            "format": "floden-buller-optimering/v1",
+            "riktvarde_db": float(riktvarde_db),
+            "mal": mal,
+            "valda_skarmar": [
+                {
+                    "skarm_id": v.skarm_id,
+                    "marginal_vinst": float(v.marginal_vinst),
+                    "kumulativ_vinst": float(v.kumulativ_vinst),
+                    "vinst_ensam": float(v.vinst_ensam),
+                    "nya_godkanda": int(v.nya_godkanda),
+                }
+                for v in valda
+            ],
+        }
+        if bif_ut is not None:
+            svar["akustiska_bifurkationer"] = bif_ut
+        return svar
+
+    def kor_luft_mkn_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/luft-mkn`: monotont MKN-dygnsintervall (PM10)."""
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+
+        serie_raw = payload.get("timvis_lokal_ug_m3")
+        if not isinstance(serie_raw, list) or not (24 <= len(serie_raw) <= 8784):
+            raise FlodenWebbFel(
+                "Fältet 'timvis_lokal_ug_m3' ska vara en lista med 24–8784 timvärden."
+            )
+        if any(isinstance(v, bool) or not isinstance(v, int | float) for v in serie_raw):
+            raise FlodenWebbFel("Fältet 'timvis_lokal_ug_m3' får bara innehålla tal.")
+        serie_arr = np.asarray(serie_raw, dtype=np.float64)
+        if not np.all(np.isfinite(serie_arr)):
+            raise FlodenWebbFel("Fältet 'timvis_lokal_ug_m3' får inte innehålla NaN/oändligt.")
+
+        bakgrund = _tolka_tal(payload, "bakgrund_ug_m3", 0.0)
+        em_iv = self._tolka_intervall(payload, "emissionsfaktor_intervall", (0.8, 1.25))
+        dep_iv = self._tolka_intervall(payload, "depositionsfaktor_intervall", (0.8, 1.25))
+        grans = _tolka_tal(payload, "grans_dygn_ug_m3", 50.0)
+        max_dygn_raw = payload.get("max_dygn_ar", 35)
+        if isinstance(max_dygn_raw, bool) or not isinstance(max_dygn_raw, int) or max_dygn_raw < 0:
+            raise FlodenWebbFel("Fältet 'max_dygn_ar' ska vara ett heltal >= 0.")
+
+        try:
+            iv = kor_monoton_mkn_intervall(
+                serie_arr,
+                bakgrund_ug_m3=bakgrund,
+                emissionsfaktor_intervall=em_iv,
+                depositionsfaktor_intervall=dep_iv,
+                grans_dygn_ug_m3=grans,
+                max_dygn_ar=max_dygn_raw,
+            )
+        except LuftFel as exc:
+            raise FlodenWebbFel(f"MKN-intervallfel: {exc}", status_kod=400) from exc
+
+        return {
+            "format": "floden-luft-mkn-intervall/v1",
+            "min_dygn_over_grans": int(iv.min_dygn_over_grans),
+            "max_dygn_over_grans": int(iv.max_dygn_over_grans),
+            "min_arsmedel_ug_m3": float(iv.min_arsmedel_ug_m3),
+            "max_arsmedel_ug_m3": float(iv.max_arsmedel_ug_m3),
+            "min_percentil_90_4_ug_m3": float(iv.min_percentil_90_4_ug_m3),
+            "max_percentil_90_4_ug_m3": float(iv.max_percentil_90_4_ug_m3),
+            "klarar_mkn_garanterat": bool(iv.klarar_mkn_garanterat),
+            "bryter_mkn_garanterat": bool(iv.bryter_mkn_garanterat),
+            "osaker_mkn_grans": bool(iv.osaker_mkn_grans),
+            "emissionsfaktor_intervall": list(iv.emissionsfaktor_intervall),
+            "depositionsfaktor_intervall": list(iv.depositionsfaktor_intervall),
         }
 
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
@@ -2477,6 +2644,12 @@ class FlodenApiApp:
 
             if verb == "POST" and ren_sokvag == "/api/analys/svf-intervall":
                 return _json_svar(200, self.kor_svf_intervall_analys(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/buller-skarmar":
+                return _json_svar(200, self.kor_buller_optimering_analys(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/luft-mkn":
+                return _json_svar(200, self.kor_luft_mkn_analys(kropp))
 
             if ren_sokvag.startswith(PROV_PREFIX):
                 status, svar = prov_svar(verb, ren_sokvag)
