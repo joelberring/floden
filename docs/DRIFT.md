@@ -17,6 +17,8 @@ Mönstret är lyft från O-Tid (github.com/joelberring/otid, MIT): `Dockerfile`,
 | `docker-compose.prod.yml` | `floden` (ingen port utåt, minnestak 3 GB) och `caddy` (HTTPS, HSTS, `noindex`, 25 MB-gräns). |
 | `.github/workflows/avbildning.yml` | Bygger och röktestar avbildningen på grenar; efter grön CI på `main` läggs den upp som `ghcr.io/joelberring/floden:<sha>`, `:<kort sha>` och `:main`. |
 
+`FORWARDED_ALLOW_IPS` (satt till `*` i `docker-compose.prod.yml`, kan åsidosättas i `.env`): Uvicorn litar annars bara på `X-Forwarded-For` från 127.0.0.1, men Caddy kommer från Docker-nätet, så utan den ser Floden Caddys adress i stället för klientens. `*` är säkert eftersom Floden inte har någon port utåt; ta inte med den om containern någonsin exponeras direkt.
+
 Avbildningen är bara `linux/amd64`, så basservern ska vara en x86-typ (CX23/CX33), inte CAX (ARM).
 
 ## Sätta upp servern
