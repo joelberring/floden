@@ -1748,6 +1748,12 @@ def bygg_parser() -> argparse.ArgumentParser:
         "(uvicorn med kroppstak och gräns för samtidiga beräkningar; kräver extras [server]).",
     )
     webb_parser.add_argument(
+        "--ingen-mcp",
+        action="store_true",
+        help="Bara --server asgi: montera inte MCP på /mcp (annars monteras den när inloggningen "
+        "är på eller värden är loopback).",
+    )
+    webb_parser.add_argument(
         "--max-samtidiga",
         type=int,
         default=None,
@@ -1773,12 +1779,34 @@ def _kor_webb_asgi(args: argparse.Namespace) -> int:
         return 1
     from webb.asgi import STANDARD_MAX_SAMTIDIGA_BERAKNINGAR, skapa_asgi_app
 
-    app = skapa_asgi_app(
-        testsvit_rot=args.rot,
-        konfig_fil=args.konfig,
-        max_samtidiga_berakningar=args.max_samtidiga or STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
-    )
-    print(f"Floden körs på http://{args.host}:{args.port} (uvicorn, ASGI)")
+    def _bygg(mcp_host: str | None) -> Any:
+        return skapa_asgi_app(
+            testsvit_rot=args.rot,
+            konfig_fil=args.konfig,
+            max_samtidiga_berakningar=args.max_samtidiga or STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
+            mcp_host=mcp_host,
+        )
+
+    mcp_text = "MCP: av (--ingen-mcp)"
+    if args.ingen_mcp:
+        app = _bygg(None)
+    else:
+        try:
+            app = _bygg(args.host)
+            mcp_text = "MCP: /mcp"
+        except ModuleNotFoundError as exc:
+            if (exc.name or "").split(".")[0] not in ("mcp", "mcp_types", "starlette"):
+                raise
+            print('MCP-biblioteket saknas: /mcp är av. pip install -e ".[mcp]"', file=sys.stderr)
+            app = _bygg(None)
+            mcp_text = "MCP: av (biblioteket saknas)"
+        except Exception as exc:  # noqa: BLE001 - McpAvstangd och liknande: förklara och kör vidare
+            if type(exc).__name__ != "McpAvstangd":
+                raise
+            print(f"Floden: {exc}", file=sys.stderr)
+            app = _bygg(None)
+            mcp_text = "MCP: av"
+    print(f"Floden körs på http://{args.host}:{args.port} (uvicorn, ASGI; {mcp_text})")
     uvicorn.run(
         app,
         host=args.host,

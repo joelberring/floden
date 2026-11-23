@@ -411,3 +411,14 @@
 .vy-verktyg .flikar {
   margin: 0;
 }
+
+/* Kommandorutan på sidan Nycklar (MCP-token): bryts i stället för att ge sidled. */
+.kodruta {
+  margin: 0.5rem 0 1rem;
+  padding: 0.75rem 1rem;
+  background: #f4f4f1;
+  border: 1px solid #d8d8d2;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 0.85rem;
+}

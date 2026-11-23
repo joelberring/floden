@@ -153,7 +153,64 @@ CREATE TABLE konto_nyckel (
 );
 """
 
-MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2)
+# Version 3: personliga MCP-token (bara sha256 sparas, se mcptoken.py).
+SCHEMA_V3 = """
+CREATE TABLE mcp_token (
+  id TEXT PRIMARY KEY,
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  namn TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  slutar_pa TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  senast_anvand INTEGER,
+  aterkallad INTEGER
+);
+CREATE INDEX mcp_token_konto ON mcp_token (konto_id);
+"""
+
+# Version 4: OAuth 2.1 för MCP (se oauth.py). Bara sha256 av kod och token sparas.
+SCHEMA_V4 = """
+CREATE TABLE oauth_klient (
+  id TEXT PRIMARY KEY,
+  namn TEXT NOT NULL,
+  redirect_uris TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  aterkallad INTEGER
+);
+CREATE TABLE oauth_grant (
+  id TEXT PRIMARY KEY,
+  klient_id TEXT NOT NULL REFERENCES oauth_klient (id) ON DELETE CASCADE,
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  resurs TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  senast_anvand INTEGER,
+  aterkallad INTEGER
+);
+CREATE INDEX oauth_grant_konto ON oauth_grant (konto_id);
+CREATE TABLE oauth_kod (
+  kod_hash TEXT PRIMARY KEY,
+  klient_id TEXT NOT NULL REFERENCES oauth_klient (id) ON DELETE CASCADE,
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  redirect_uri TEXT NOT NULL,
+  challenge TEXT NOT NULL,
+  resurs TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  grant_id TEXT
+);
+CREATE TABLE oauth_token (
+  id TEXT PRIMARY KEY,
+  grant_id TEXT NOT NULL REFERENCES oauth_grant (id) ON DELETE CASCADE,
+  access_hash TEXT NOT NULL UNIQUE,
+  access_utgar INTEGER NOT NULL,
+  refresh_hash TEXT NOT NULL UNIQUE,
+  refresh_utgar INTEGER NOT NULL,
+  refresh_anvand INTEGER,
+  skapad INTEGER NOT NULL
+);
+CREATE INDEX oauth_token_grant ON oauth_token (grant_id);
+"""
+
+MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4)
 
 
 class Databas:

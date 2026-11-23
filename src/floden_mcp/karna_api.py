@@ -120,6 +120,8 @@ class FlodenTjanst:
         self.metodstatus_fil = metodstatus_fil or STANDARD_METODSTATUS
         self._byggnader: list[dict[str, Any]] | None = None
         self._kodversion: str | None = None
+        self.oppenhet: Any = None
+        """Spärren för icke-öppna data (`floden_mcp.oppenhet.Oppenhet`); sätts av `bygg_server`."""
 
     # ------------------------------------------------------------------ delar
 
@@ -1022,6 +1024,19 @@ class FlodenTjanst:
 
         def ok(p: Path) -> bool:
             return any(p.resolve().is_relative_to(r) for r in roter)
+
+        if self.oppenhet is not None:
+            from floden_mcp.oppenhet import OppenhetNekad
+
+            try:
+                for s in fraga.scenarier.values():
+                    for p in (s.bas, *s.k9, *s.lappar):
+                        self.oppenhet.kontrollera_sokvag(p)
+                for a in fraga.analyser:
+                    for p in a.indata.values():
+                        self.oppenhet.kontrollera_sokvag(p)
+            except OppenhetNekad as exc:
+                raise FlodenFel(str(exc), "nekad_oppenhet") from exc
 
         for s in fraga.scenarier.values():
             for p in (s.bas, *s.k9, *s.lappar):
