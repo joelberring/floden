@@ -4,13 +4,20 @@
  * Arbetsbänken är den äldre kartan i index.html (main.ts) och göms i stället för att ritas om,
  * så att kartan finns kvar mellan sidbyten.
  */
-import { forvaltningSynlig, kontoLage, laddaKonto, vidKontoandring } from "./konto";
+import {
+  forvaltningSynlig,
+  inloggningsAdress,
+  kontoLage,
+  laddaKonto,
+  vidKontoandring,
+} from "./konto";
 import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
 import { avslutaFragor, visaFragor } from "./fragor";
 import { avslutaKarta, visaKarta } from "./kartsida";
 import {
   PROJEKT_ID,
   sidaForvaltning,
+  sidaInloggning,
   sidaOm,
   sidaProjekt,
   sidaStart,
@@ -102,6 +109,18 @@ export function startaRouter(krokar: RouterKrokar): void {
     document.title = SIDTITLAR[rutt.sida];
     document.body.dataset.sida = rutt.sida;
 
+    // Utloggad på en server med inloggning: bara inloggningssidan, oavsett adress.
+    if (kontoLage().lage === "ut") {
+      avslutaKarta();
+      avslutaFragor();
+      document.title = "Floden";
+      document.body.dataset.sida = "inloggning";
+      sidhuvudEl.innerHTML = "";
+      vyArbetsbank.hidden = true;
+      vySida.hidden = false;
+      vySida.innerHTML = sidaInloggning(inloggningsAdress("/"));
+      return;
+    }
     if (rutt.sida !== "karta") avslutaKarta();
     if (rutt.sida !== "fragor") avslutaFragor();
 
@@ -167,8 +186,9 @@ export function startaRouter(krokar: RouterKrokar): void {
   // Inloggningsläget kommer från /konto/jag och kan ändra meny, hälsning och förvaltningssidan.
   vidKontoandring(() => {
     const sida = tolkaHash(window.location.hash).sida;
-    if (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank") rita();
-    else sidhuvudEl.innerHTML = sidhuvud(sidId(sida));
+    if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank")) {
+      rita();
+    } else sidhuvudEl.innerHTML = sidhuvud(sidId(sida));
   });
   void laddaKonto();
 

@@ -1265,3 +1265,112 @@ details.panel-sektion > summary h2 {
 .rapport-status.fel::before {
   background: var(--f-varning);
 }
+
+/* ---------- Inloggningssidan (utloggad på servern): målningen över hela fönstret ---------- */
+body[data-sida="inloggning"] .sidhuvud {
+  display: none;
+}
+.inloggning {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #1c1d12;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #ffffff;
+}
+.inloggning-bild {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 42%;
+}
+.inloggning-text {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  width: min(640px, 100%);
+  padding: 0 0 clamp(48px, 9vh, 88px) clamp(28px, 6.7vw, 96px);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  /* Läsbarhet över målningens ljusa partier, utan att täcka bilden. */
+  text-shadow: 0 1px 2px rgba(20, 22, 10, 0.55), 0 2px 18px rgba(20, 22, 10, 0.5);
+}
+.inloggning-knapp {
+  text-shadow: none;
+}
+.inloggning-namn {
+  margin: 0;
+  font-weight: 600;
+  font-size: clamp(72px, 9.2vw, 132px);
+  line-height: 0.92;
+  letter-spacing: -0.035em;
+  color: #ffffff;
+}
+.inloggning-namn:focus {
+  outline: none;
+}
+.inloggning-mening {
+  margin: 0;
+  max-width: 440px;
+  font-size: clamp(19px, 1.7vw, 24px);
+  line-height: 1.35;
+  color: #f3f1e6;
+}
+.inloggning-handling {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px 20px;
+  margin-top: 8px;
+}
+.inloggning-knapp {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 28px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #1c1d12;
+  font-size: 17px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.inloggning-knapp:hover {
+  background: #f3f1e6;
+}
+.inloggning-knapp:focus-visible {
+  outline: 3px solid #e3c75a;
+  outline-offset: 3px;
+}
+.inloggning-not {
+  font-size: 15px;
+  font-weight: 500;
+  color: #f3f1e6;
+}
+/* Mobil (förslag D): knappen över hela bredden, texten under knappen och centrerad. */
+@media (max-width: 600px) {
+  .inloggning-bild {
+    object-position: 46% 50%;
+  }
+  .inloggning-text {
+    right: 0;
+    width: auto;
+    padding: 0 28px 48px;
+    gap: 18px;
+  }
+  .inloggning-handling {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+  }
+  .inloggning-not {
+    text-align: center;
+  }
+}
