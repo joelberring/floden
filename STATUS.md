@@ -351,3 +351,5 @@ Nästa: prova i webbläsare; ev. CSS för `.overfall-popup`.
 - Utloggad på en server med inloggning visas bara inloggningssidan, oavsett adress: målningen `gro_framsidesbild` (Joels bror) över hela fönstret, "Floden", "Hantera floden av utredningsfrågor på ett ställe.", knappen Logga in med Google och "Bara för inbjudna". Förslag A på dator och D på mobil (designcanvas), samma markup med brytpunkt 600 px. Sidhuvud och meny döljs; sidtiteln är bara "Floden" (även i index.html). Lokalt utan inloggning är allt som förut.
 - Bilden ligger i `webb/public/bild/inloggning-{800,1600}.webp` (91 och 288 kB); servern serverar `.webp` och `.jpg` som statiska klientfiler utan inloggning (test i `tests/webb/test_inloggning.py`). Klienttest `webb/src/inloggning.test.ts` kontrollerar att sidan inte nämner vad verktyget räknar på.
 - Granskat med skärmbilder från den byggda klienten (Chrome, 1440×900, 1280×640, 1920×1080, 390×844) mot en provserver som svarar 401.
+### 2026-11-23 – Kort README (samordnare, på Joels begäran)
+- README.md är nu tre rader; den tidigare texten ligger oförändrad i `docs/KOM-IGANG.md`. CLAUDE.md pekar dit. Repot är fortsatt öppet (Joels val).
