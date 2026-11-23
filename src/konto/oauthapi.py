@@ -43,7 +43,16 @@ logg = logging.getLogger("konto")
 MAX_KROPP = 8192
 SCOPE = "mcp"
 KLIENT_IP_RUBRIK = "x-floden-klient-ip"
-_FORMFALT = ("client_id", "redirect_uri", "code_challenge", "state", "resource", "scope")
+_FORMFALT = (
+    "response_type",
+    "client_id",
+    "redirect_uri",
+    "code_challenge",
+    "code_challenge_method",
+    "state",
+    "resource",
+    "scope",
+)
 _HTML_RUBRIKER = [
     ("Content-Type", "text/html; charset=utf-8"),
     ("Cache-Control", "no-store"),
@@ -350,6 +359,7 @@ class OauthApi:
             )
             return kontroll.svar or _felsida("Inloggning krävs.", 401)
         if fel is not None:
+            logg.warning("oauth godkännande avvisat klient=%s fel=%s", klient["id"], fel)
             return self._tillbaka(p, {"error": fel})
         konto_id = kontroll.inloggad.konto_id
         if p.get("beslut") != "tillat":
