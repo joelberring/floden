@@ -132,7 +132,7 @@ def test_bifurkation_determinism_och_export(tmp_path: Path) -> None:
     assert len(rader) == len(p1)
     assert all(r[2] == 1 for r in rader)
 
-    # Bigraderad export utan GIS-beroenden (för Q2 / Samuel)
+    # Bigraderad export utan GIS-beroenden (för Q2 / forskningsparten)
     bifilt_fil = exportera_bifiltrering_json(graf, tmp_path / "bifiltrering.json", osakerhet_m=osak)
     bf = json.loads(bifilt_fil.read_text(encoding="utf-8"))
     assert bf["format"] == "floden-bifiltrering/v1"

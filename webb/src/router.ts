@@ -1,5 +1,5 @@
 /*
- * Enkel hash-router: #/ · #/projekt/<id> · #/karta/<id> · #/fragor · #/om · #/forvaltning
+ * Enkel hash-router: #/ · #/projekt/<id> · #/karta/<id> · #/fragor · #/om · #/matematik · #/forvaltning
  * (bara med inloggning och kontodata) · #/nycklar (inloggade) · #/administration (admin) ·
  * #/arbetsbank/<omrade> (kontrollfallens arbetsbänk).
  * Arbetsbänken är den äldre kartan i index.html (main.ts) och göms i stället för att ritas om,
@@ -19,6 +19,7 @@ import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
 import { avslutaFragor, visaFragor } from "./fragor";
 import { avslutaFlode, projektLaddat, tolkaFlodeAdress, visaFlode } from "./flode/index";
 import { avslutaKarta, visaKarta } from "./kartsida";
+import { visaMatematik } from "./matematik/sida";
 import { avslutaProv, visaProvWebgpu } from "./prov/webgpuProv";
 import { visaAdministration, visaNycklar } from "./kontosidor";
 import {
@@ -33,57 +34,13 @@ import {
   type SidId,
 } from "./sidor";
 import { hamtaProjekt } from "./api";
+import { SIDTITLAR, tolkaHash, type RuttSida } from "./rutter";
 import type { ModulInfo, OmradeSammanfattning, ProjektListaPost, ProjektSvar } from "./types";
-
-export type RuttSida = SidId | "arbetsbank" | "prov";
-
-export interface Rutt {
-  sida: RuttSida;
-  id: string | null;
-  parametrar: URLSearchParams;
-}
 
 export interface RouterKrokar {
   /** Arbetsbänken visas; `omradeId` är null när adressen inte anger något område. */
   visaArbetsbank(omradeId: string | null): void;
 }
-
-export function tolkaHash(hash: string): Rutt {
-  const utan = hash.replace(/^#/, "");
-  const [sokvag = "", fraga = ""] = utan.split("?", 2);
-  const delar = sokvag.split("/").filter((d) => d.length > 0);
-  const parametrar = new URLSearchParams(fraga);
-  const sidor: Record<string, RuttSida> = {
-    projekt: "projekt",
-    oversikt: "projekt", // den gamla översikten är sammanslagen med projektet
-    karta: "karta",
-    fragor: "fragor",
-    om: "om",
-    forvaltning: "forvaltning",
-    nycklar: "nycklar",
-    administration: "administration",
-    arbetsbank: "arbetsbank",
-    prov: "prov", // #/prov/webgpu: provsida för superadmin, ingen länk i menyn
-  };
-  const sida = delar[0] ? sidor[delar[0]] : undefined;
-  if (!sida) {
-    return { sida: "start", id: null, parametrar };
-  }
-  return { sida, id: delar[1] ? decodeURIComponent(delar[1]) : null, parametrar };
-}
-
-const SIDTITLAR: Record<RuttSida, string> = {
-  start: "Floden – se hur ett nytt hus påverkar sol och skyfall",
-  projekt: "Projekt – Floden",
-  karta: "Karta – Floden",
-  fragor: "Utredningsfrågor – Floden",
-  om: "Om beräkningarna – Floden",
-  forvaltning: "Förvaltning – Floden",
-  nycklar: "Nycklar – Floden",
-  administration: "Administration – Floden",
-  arbetsbank: "Arbetsbänk – Floden",
-  prov: "Prov – Floden",
-};
 
 export function startaRouter(krokar: RouterKrokar): void {
   const sidhuvudEl = document.getElementById("sidhuvud");
@@ -157,6 +114,16 @@ export function startaRouter(krokar: RouterKrokar): void {
     if (rutt.sida !== "karta") avslutaKarta();
     if (rutt.sida !== "fragor") avslutaFragor();
     if (rutt.sida !== "prov") avslutaProv();
+
+    // Matematik och forskning: flödets sidhuvud och stil, men inget steg är aktivt.
+    if (rutt.sida === "matematik") {
+      document.body.dataset.sida = "flode";
+      vyArbetsbank.hidden = true;
+      vySida.hidden = false;
+      visaMatematik(sidhuvudEl, vySida);
+      window.scrollTo(0, 0);
+      return;
+    }
 
     const fokuseraRubrik = (): void => {
       window.requestAnimationFrame(() => {
