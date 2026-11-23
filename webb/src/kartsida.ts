@@ -133,16 +133,17 @@ function lagerPost(r: ResultatSvar, id: string | null): LagerPost | null {
 export async function visaKarta(container: HTMLElement, vyId: string | null): Promise<void> {
   avsluta();
   const seq = visaKartaSeq;
+  const avbruten = (): boolean => seq !== visaKartaSeq || !container.isConnected;
   container.innerHTML = `<div class="sidbredd innehall karta-sida"><p class="dampad tom">Hämtar kartan …</p></div>`;
   try {
     if (!t.projekt) t.projekt = await hamtaProjekt(PROJEKT_ID);
-    if (seq !== visaKartaSeq || container.isConnected === false) return;
+    if (avbruten()) return;
     t.info = await hamtaProjektInfo(PROJEKT_ID);
     t.fel = null;
   } catch (e) {
     t.fel = e instanceof Error ? e.message : String(e);
   }
-  if (seq !== visaKartaSeq || container.isConnected === false) return;
+  if (avbruten()) return;
   const p = t.projekt;
   const info = t.info;
   if (!p || !info) {
@@ -159,13 +160,13 @@ export async function visaKarta(container: HTMLElement, vyId: string | null): Pr
   if (vy && !t.resultat.has(vy.korning_id)) {
     try {
       const res = await hamtaResultat(vy.korning_id);
-      if (seq !== visaKartaSeq || container.isConnected === false) return;
+      if (avbruten()) return;
       t.resultat.set(vy.korning_id, res);
     } catch {
       t.vy = null;
     }
   }
-  if (seq !== visaKartaSeq || container.isConnected === false) return;
+  if (avbruten()) return;
   byggSida(container, p, info);
 }
 
