@@ -23,8 +23,11 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from dagsljus.horisont import HorisontFel
+from dagsljus.intervall import horisont_1d_konvext_holje, kor_monoton_svf_intervall
 from dynamik.ensemble import EnsembleResultat, EnsembleScenario, kor_ensemble
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
+from dynamik.intervall import kor_monoton_intervallanalys
 from dynamik.nodmodell import DynamikFel, DynamikResultat, EntrePunkt
 from dynamik.risk import berakna_kumulativ_oversvamningsrisk
 from gemensamt.hash import sha256_bytes, sha256_fil
@@ -75,6 +78,7 @@ from rapport.underlag import (
     RapportUnderlagFel,
     TabellData,
 )
+from rutt.kritiska import valj_kritisk_insats_k
 from rutt.parametrar import (
     FordonParametrar,
     RuttParametrarFel,
@@ -1056,6 +1060,198 @@ class FlodenApiApp:
             },
         }
 
+    def _tolka_intervall(
+        self,
+        payload: Mapping[str, Any],
+        namn: str,
+        standard: tuple[float, float],
+    ) -> tuple[float, float]:
+        """Tolkar ett `[lo, hi]`-intervall ur JSON-kroppen (ändliga tal, 0 <= lo <= hi)."""
+        if namn not in payload or payload[namn] is None:
+            return standard
+        ra = payload[namn]
+        if not isinstance(ra, list | tuple) or len(ra) != 2:
+            raise FlodenWebbFel(f"Fältet '{namn}' ska vara en lista med två tal [min, max].")
+        lo_raw, hi_raw = ra[0], ra[1]
+        if isinstance(lo_raw, bool) or isinstance(hi_raw, bool):
+            raise FlodenWebbFel(f"Fältet '{namn}' ska innehålla tal, inte sant/falskt.")
+        if not isinstance(lo_raw, int | float) or not isinstance(hi_raw, int | float):
+            raise FlodenWebbFel(f"Fältet '{namn}' ska innehålla två tal [min, max].")
+        lo, hi = float(lo_raw), float(hi_raw)
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            raise FlodenWebbFel(f"Fältet '{namn}' ska bara innehålla ändliga tal.")
+        if lo < 0.0 or hi < lo:
+            raise FlodenWebbFel(f"Fältet '{namn}' måste uppfylla 0 <= min <= max.")
+        return (lo, hi)
+
+    def _ladda_analys_omrade(self, omrade_id: str) -> _K1Markmodell | LaddatOmrade:
+        if self.projekt.ar_projekt(omrade_id):
+            return self.ladda_projektmodell(omrade_id)
+        return self.ladda_omrade(omrade_id)
+
+    def kor_intervall_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/intervall`: monoton vattenintervallanalys med grenunion."""
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        klimat_iv = self._tolka_intervall(payload, "klimatfaktor_intervall", (1.0, 1.25))
+        forlust_iv = self._tolka_intervall(payload, "initial_forlust_mm_intervall", (0.0, 2.0))
+        avtapp_iv = self._tolka_intervall(payload, "avtappning_mm_h_intervall", (0.0, 0.0))
+        k_sigma = _tolka_tal(payload, "k_sigma", STANDARD_K_SIGMA)
+        referensregn_mm = _tolka_tal(payload, "referensregn_mm", STANDARD_REFERENSREGN_MM)
+        if referensregn_mm <= 0.0:
+            raise FlodenWebbFel("Fältet 'referensregn_mm' måste vara > 0.")
+
+        omrade = self._ladda_analys_omrade(omrade_id)
+        if isinstance(omrade, LaddatOmrade):
+            regn_tid_s = omrade.regn_tid_s
+            regn_intens = omrade.regn_intensitet_mm_h
+        else:
+            regn_tid_s = (0.0, 3600.0)
+            regn_intens = (referensregn_mm, 0.0)
+
+        punkter = detektera_bifurkationer(
+            omrade.bas_graf,
+            osakerhet_m=omrade.osakerhet_z,
+            k_sigma=k_sigma,
+            referensregn_mm=referensregn_mm,
+        )
+        try:
+            iv = kor_monoton_intervallanalys(
+                omrade.bas_graf,
+                regn_tid_s,
+                regn_intens,
+                klimatfaktor_intervall=klimat_iv,
+                initial_forlust_mm_intervall=forlust_iv,
+                avtappning_mm_h_intervall=avtapp_iv,
+                bifurkationer=punkter,
+            )
+        except DynamikFel as exc:
+            raise FlodenWebbFel(f"Intervallanalysfel: {exc}", status_kod=400) from exc
+
+        noder_ut = [
+            {
+                "nod_id": int(n.nod_id),
+                "min_maxdjup_m": float(n.min_maxdjup_m),
+                "max_maxdjup_m": float(n.max_maxdjup_m),
+                "monoton_garanterad": bool(n.monoton_garanterad),
+                "bifurkationspaverkad": bool(n.bifurkationspaverkad),
+                "paverkande_bifurkationer": [int(b) for b in n.paverkande_bifurkationer],
+            }
+            for n in sorted(iv.noder.values(), key=lambda x: x.max_maxdjup_m, reverse=True)
+        ]
+        antal_monoton = sum(1 for n in iv.noder.values() if n.monoton_garanterad)
+        antal_bif = sum(1 for n in iv.noder.values() if n.bifurkationspaverkad)
+        storsta_min = max((n.min_maxdjup_m for n in iv.noder.values()), default=0.0)
+        storsta_max = max((n.max_maxdjup_m for n in iv.noder.values()), default=0.0)
+        return {
+            "format": "floden-vatten-intervall/v1",
+            "omrade_id": omrade_id,
+            "klimatfaktor_intervall": list(iv.klimatfaktor_intervall),
+            "initial_forlust_mm_intervall": list(iv.initial_forlust_mm_intervall),
+            "avtappning_mm_h_intervall": list(iv.avtappning_mm_h_intervall),
+            "antal_korningar": int(iv.antal_korningar),
+            "antal_bifurkationsgrenar": int(iv.antal_bifurkationsgrenar),
+            "max_volymfel_rel": float(iv.max_volymfel_rel),
+            "kortid_s": float(iv.kortid_s),
+            "sammanfattning": {
+                "antal_noder": len(noder_ut),
+                "antal_monoton_garanterad": antal_monoton,
+                "antal_bifurkationspaverkade": antal_bif,
+                "storsta_min_djup_m": float(storsta_min),
+                "storsta_max_djup_m": float(storsta_max),
+            },
+            "noder": noder_ut[:50],
+        }
+
+    def kor_svf_intervall_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/svf-intervall`: monotont SVF-intervall + 1D-horisontprofil."""
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+
+        osakerhet_m = _tolka_tal(payload, "osakerhet_byggnad_m", 1.0)
+        antal_riktningar_raw = payload.get("antal_riktningar", 16)
+        if isinstance(antal_riktningar_raw, bool) or not isinstance(antal_riktningar_raw, int):
+            raise FlodenWebbFel("Fältet 'antal_riktningar' ska vara ett heltal (>= 4).")
+        if antal_riktningar_raw < 4 or antal_riktningar_raw > 180:
+            raise FlodenWebbFel("Fältet 'antal_riktningar' måste vara mellan 4 och 180.")
+        troskel_raw = payload.get("svf_troskel")
+        svf_troskel: float | None = None
+        if troskel_raw is not None:
+            svf_troskel = _tolka_tal(payload, "svf_troskel", 0.5)
+            if svf_troskel > 1.0:
+                raise FlodenWebbFel("Fältet 'svf_troskel' måste ligga i [0, 1].")
+
+        omrade = self._ladda_analys_omrade(omrade_id)
+        mark_ra = np.asarray(omrade.mark_z, dtype=np.float64)
+        bygg_mask = np.asarray(omrade.markslag, dtype=np.uint8) == 2
+        giltig_mark = np.isfinite(mark_ra) & (~bygg_mask)
+        bas_z = float(np.median(mark_ra[giltig_mark])) if np.any(giltig_mark) else 0.0
+        mark_ren = np.where(np.isfinite(mark_ra) & (~bygg_mask), mark_ra, bas_z)
+        bygg_hojd = np.where(
+            bygg_mask & np.isfinite(mark_ra),
+            np.maximum(mark_ra - bas_z, 0.0),
+            0.0,
+        )
+        if np.any(bygg_mask) and float(np.max(bygg_hojd)) <= 0.0:
+            bygg_hojd = np.where(bygg_mask, 10.0, 0.0)
+
+        cell_m = float(omrade.geo.pixelstorlek_x)
+        try:
+            svf_iv = kor_monoton_svf_intervall(
+                mark_ren,
+                bygg_hojd,
+                osakerhet_m,
+                cell_m=cell_m,
+                x_min_m=float(omrade.geo.x_min),
+                y_max_m=float(omrade.geo.y_max),
+                antal_riktningar=antal_riktningar_raw,
+                svf_troskel=svf_troskel,
+            )
+            mitt_rad = (mark_ren + bygg_hojd)[mark_ren.shape[0] // 2, :]
+            horisont_ost = horisont_1d_konvext_holje(mitt_rad, cell_m, riktning=1)
+        except HorisontFel as exc:
+            raise FlodenWebbFel(f"Dagsljusintervallfel: {exc}", status_kod=400) from exc
+
+        mark_celler = ~bygg_mask
+        svf_min_medel = (
+            float(np.mean(svf_iv.svf_min[mark_celler])) if np.any(mark_celler) else 0.0
+        )
+        svf_max_medel = (
+            float(np.mean(svf_iv.svf_max[mark_celler])) if np.any(mark_celler) else 0.0
+        )
+        return {
+            "format": "floden-dagsljus-svf-intervall/v1",
+            "omrade_id": omrade_id,
+            "osakerhet_byggnad_m": float(osakerhet_m),
+            "antal_riktningar": int(antal_riktningar_raw),
+            "svf_min_medel": svf_min_medel,
+            "svf_max_medel": svf_max_medel,
+            "bredd_max": float(svf_iv.bredd_max),
+            "antal_osakra_celler": int(svf_iv.antal_osakra_celler),
+            "mittlinje_max_horisont_rad": float(np.max(horisont_ost))
+            if horisont_ost.size > 0
+            else 0.0,
+        }
+
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/kor`: kör före/efter + ensemble och returnerar manifest."""
         t_start = time.perf_counter()
@@ -1717,6 +1913,11 @@ class FlodenApiApp:
             raise FlodenWebbFel(f"Ogiltig ruttparameter: {exc}") from exc
         if not math.isfinite(gransdjup_m) or gransdjup_m <= 0.0:
             raise FlodenWebbFel(f"Ogiltigt gransdjup_m: {gransdjup_m} (måste vara > 0).")
+        antal_insatser_raw = payload.get("antal_insatser", 0)
+        if isinstance(antal_insatser_raw, bool) or not isinstance(antal_insatser_raw, int):
+            raise FlodenWebbFel("Fältet 'antal_insatser' ska vara ett heltal (>= 0).")
+        if antal_insatser_raw < 0 or antal_insatser_raw > 50:
+            raise FlodenWebbFel("Fältet 'antal_insatser' måste vara mellan 0 och 50.")
 
         omrade = self.ladda_omrade(omrade_id)
         geo = omrade.geo
@@ -1853,6 +2054,34 @@ class FlodenApiApp:
                 skarp=False,
                 tillat_testvarden=True,
             )
+            rekommenderade_insatser: list[dict[str, Any]] | None = None
+            if antal_insatser_raw > 0 and kant_djup_per_t:
+                varsta_t = max(kant_djup_per_t)
+                stationer = {"station_0": "n_0_0"}
+                adresser = {
+                    f"adress_{nid}": nid for nid in sorted(vagnat.noder) if nid != "n_0_0"
+                }
+                valda = valj_kritisk_insats_k(
+                    vagnat,
+                    stationer,
+                    adresser,
+                    t_s=0.0,
+                    kant_djup=kant_djup_per_t[varsta_t],
+                    parametrar=k7,
+                    fordon_typ=k7_fordon_typ,
+                    k=antal_insatser_raw,
+                    skarp=False,
+                    tillat_testvarden=True,
+                )
+                rekommenderade_insatser = [
+                    {
+                        "kant_id": post.kant_id,
+                        "marginalvinst": float(post.marginalvinst),
+                        "kumulativ_vinst": float(post.kumulativ_vinst),
+                        "vinst_ensam": float(post.vinst_ensam),
+                    }
+                    for post in valda
+                ]
         except (DynamikFel, RegnFel, RuttParametrarFel, VagNatFel, ValueError) as exc:
             raise FlodenWebbFel(f"Ruttanalysfel: {exc}", status_kod=400) from exc
 
@@ -1916,7 +2145,7 @@ class FlodenApiApp:
             varningar=["Testvärden och syntetiskt gatunät används (ej skarpa K7/NVDB-data)."],
         )
 
-        return {
+        svar_rutt: dict[str, Any] = {
             "omrade_id": omrade.omrade_id,
             "fordon_typ": fordon_typ,
             "gransdjup_m": float(gransdjup_m),
@@ -1937,6 +2166,9 @@ class FlodenApiApp:
             "manifest": manifest.till_dict(),
             "kallor": list(omrade.kallor),
         }
+        if rekommenderade_insatser is not None:
+            svar_rutt["rekommenderade_insatser"] = rekommenderade_insatser
+        return svar_rutt
 
     def _hantera_fragor(self, verb: str, sokvag: str) -> tuple[int, dict[str, str], bytes]:
         delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
@@ -2240,6 +2472,12 @@ class FlodenApiApp:
             if verb == "POST" and ren_sokvag == "/api/analys/bifurkationer":
                 return _json_svar(200, self.kor_bifurkation_analys(kropp))
 
+            if verb == "POST" and ren_sokvag == "/api/analys/intervall":
+                return _json_svar(200, self.kor_intervall_analys(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/svf-intervall":
+                return _json_svar(200, self.kor_svf_intervall_analys(kropp))
+
             if ren_sokvag.startswith(PROV_PREFIX):
                 status, svar = prov_svar(verb, ren_sokvag)
                 return _json_svar(status, svar)
@@ -2349,7 +2587,11 @@ class FlodenApiApp:
 
         Analyserna har projektet i kroppen, inte i sökvägen, så `_projekt_krav` når dem inte.
         Kroppen som inte går att tolka lämnas åt endpointen att avvisa (400)."""
-        if verb != "POST" or (sokvag.rstrip("/") or "/") != "/api/analys/bifurkationer":
+        if verb != "POST" or (sokvag.rstrip("/") or "/") not in (
+            "/api/analys/bifurkationer",
+            "/api/analys/intervall",
+            "/api/analys/svf-intervall",
+        ):
             return None
         try:
             payload = json.loads(kropp.decode("utf-8"))
