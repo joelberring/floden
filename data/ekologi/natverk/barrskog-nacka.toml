@@ -20,13 +20,24 @@ nyckel = "N"
 sida = "huvudrapport s. 9-11, bil. 2 s. 3-6, tab. 2 s. 8"
 
 [habitat]
-klasser = [111, 112, 113, 121, 122, 123]
-nmd_namn = "tallskog, granskog och barrblandskog (på fastmark 111-113, på våtmark 121-123)"
+klasser = [111, 112, 113, 114, 121, 122, 123, 124]
+nmd_namn = "tall-, gran-, barrblandskog och lövblandad barrskog (på fastmark 111-114, på våtmark 121-124): habitatkandidater"
 typ = "antagande"
 sakerhet = "låg"
-kalla = "N"
-sida = "bil. 2 s. 3-6 (kodurvalet för habitat anges inte i sammanställningen)"
-anmarkning = "Habitatdefinitionen i NMD-klasser saknas i källan. Nackas habitat byggs av regionala och lokala skogsskikt, naturvärden och ortofoto; NMD ger inte skogens ålder. Floden använder barrdominerade NMD-klasser som ersättare. Resultatet visar hur barrskogsklasserna hänger samman, inte gammal barrskog."
+kalla = "REG17"
+sida = "PDF-s. 4-5 (CadasterENV-motsvarighet); stöds av Botkyrka (BOT24) tab. 1 s. 50"
+anmarkning = "Översättningen till NMD-rastret är ett antagande i Floden. Nacka anger ingen NMD-lista (bil. 2 s. 3-6). Stockholms läns metodbilaga valde motsvarande klasser och lade sedan på naturvärdes- och åldersdata, som saknas här. Resultatet är därför potentiell livsmiljö, okänd kvalitet, inte gammal barrskog."
+
+[[habitatvariant]]
+id = "snavt"
+namn = "Snävt urval (jämförelsescenario)"
+klasser = [111, 112, 113, 121, 122, 123]
+nmd_namn = "tall-, gran- och barrblandskog utan lövblandning (fastmark 111-113, våtmark 121-123)"
+typ = "antagande"
+sakerhet = "låg"
+kalla = "UME23"
+sida = "s. 11"
+anmarkning = "Umeå valde tall-, gran- och barrblandskog (där med medelhöjd över 15 m som lokal ersättning för ålder). Höjd används inte här. Redovisas som jämförelse vid huvudscenariots tröskel."
 
 [min_area]
 varde_ha = 0.5
@@ -162,6 +173,10 @@ typ = "expertbedömning"
 sakerhet = "hög"
 kalla = "N"
 sida = "bil. 2 s. 8, tab. 2"
+
+[[saknas]]
+parameter = "ålder, naturvärde och beståndshöjd för habitat"
+text = "NMD saknar uppgifter om skogens ålder, struktur och naturvärde. Resultatet kallas därför potentiell livsmiljö, okänd kvalitet."
 
 [[saknas]]
 parameter = "p(d) och d50"

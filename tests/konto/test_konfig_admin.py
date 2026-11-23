@@ -103,6 +103,10 @@ def test_admin_cli_bootstrap(tmp_path: Path, capsys: pytest.CaptureFixture[str])
     kor("mappa-grupp", org, forv, "grupp-sbk")
     konto = kor("forbered-konto", "joel@example.test")
     kor("ge-superadmin", konto)
+    # Slår upp id:t (för --konto i serverkommandon).
+    assert kor("konto-id", "Joel@Example.test") == konto
+    assert admin_main(["--konfig", str(konf), "konto-id", "okand@example.test"]) == 1
+    assert "Inget konto" in capsys.readouterr().err
     kor("gor-organisationsadmin", konto, org)
     projekt = kor("skapa-projekt", org, "Provområdet")
     r = Register(Databas(db))

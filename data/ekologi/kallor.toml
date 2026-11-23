@@ -36,3 +36,19 @@ kommun = ""
 [NMD]
 kort = "Naturvårdsverket, Nationella marktäckedata (produktdokumentation, kodnyckel)"
 kommun = ""
+
+[REG17]
+kort = "Ekologigruppen 2017, Regional grön infrastruktur i Stockholms län, bilaga 1&2 (metodbeskrivningar för nätverksanalys och täthetsanalys), Länsstyrelsen Stockholm"
+kommun = ""
+
+[BOT24]
+kort = "Sterenborg 2024, Ekologiska samband i Botkyrka kommun 2024 (Calluna AB för Botkyrka kommun)"
+kommun = "Botkyrka"
+
+[UME23]
+kort = "Sterenborg 2023, rapportversion 2024-04-12, Ekologiska landskapsanalyser för pollinatörer, barrskogsfåglar och fladdermöss, Umeå kommun (Calluna AB)"
+kommun = "Umeå"
+
+[OST21]
+kort = "Ekologigruppen 2021, Ekologiska samband i Åkersberga med omnejd (Österåkers kommun)"
+kommun = "Österåker"

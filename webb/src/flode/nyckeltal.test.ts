@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, slutsats, tal } from "./nyckeltal.ts";
+import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, resultatEtikett, slutsats, tal } from "./nyckeltal.ts";
 
 test("saknade tal visas som –, aldrig som noll", () => {
   assert.equal(tal(null, 1, "m"), "–");
@@ -77,6 +77,8 @@ test("ekologi: signalart, källa och antaganden kommer ur svaret och visas som t
   assert.deepEqual(antagandeRader(e), ["p saknas i källan; d50 = tröskel/2 (500 effektiva m)."]);
   assert.match(intervallForklaring(e), /lägsta och högsta värde mellan källans scenarier/);
   assert.equal(kallRad(null), "");
+  assert.equal(resultatEtikett({ resultat_etikett: "Potentiell livsmiljö, okänd kvalitet" }), "Potentiell livsmiljö, okänd kvalitet");
+  assert.equal(resultatEtikett({ resultat_etikett: null }), "");
   assert.deepEqual(antagandeRader(undefined), []);
   assert.equal(intervallForklaring({ intervall_typ: "faktorer" }), "");
 });

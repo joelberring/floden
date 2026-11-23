@@ -59,7 +59,7 @@ sviten (Python-lösarna körs); `maskin.rust_karna` anger om binären finns.
 `2026-11-23-container.json` är mätt i en **delad molncontainer** (Claude Code på webben): 2 vCPU (Intel Xeon @ 2,30 GHz),
 8 GB RAM, Python 3.13, numpy 2.1.3, ingen GPU, Rust-kärnan inte byggd. Andra processer delar maskinen, så
 **siffrorna är ungefärliga** (räkna med flera tiotals procent i variation mellan körningar) och är ingen referens för
-produktionsservern (`docs/DRIFT.md`, S7). De är en baslinje att jämföra ändringar mot på samma maskin.
+produktionsservern (`docs/DRIFT.md`, S6). De är en baslinje att jämföra ändringar mot på samma maskin.
 
 ## Jämförelse och försämring
 

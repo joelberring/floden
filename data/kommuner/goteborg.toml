@@ -1,0 +1,110 @@
+# Kommunkonfiguration för Göteborgs Stad (kontrakt floden-kommun/v1, docs/KOM-IGANG.md).
+#
+# En kommun är konfigurerad, inte kodad: källor, licenser, koordinatsystem, testområden och
+# beräkningsparametrar står här. Fler kommuner läggs till med en ny fil i den här mappen
+# (data/kommuner/<id>.toml), utan kodändring. Kommandot:
+#   floden geografi mappa goteborg-test --konto <superadmin-id>
+#   floden projekt skapa --geografi goteborg-test@v1 --avgransning <xmin,ymin,xmax,ymax> --namn "..." --konto <konto-id>
+#
+# STATUS: formaten nedan är ANTAGNA och aldrig provade mot Göteborgs tjänster eller Lantmäteriet
+# (utvecklingsmiljön når bara GitHub). Lagernamn och attributnamn i Göteborgs WFS är inte kända:
+# `floden projekt kommun-lager goteborg` listar lagren (GetCapabilities) och `--byggnadslager` på
+# `floden geografi mappa` åsidosätter valet utan att den här filen behöver ändras.
+
+kontrakt = "floden-kommun/v1"
+id = "goteborg"
+namn = "Göteborgs Stad"
+
+# Koordinatsystemet kommunen publicerar i (SWEREF 99 12 00). Floden räknar internt i EPSG:3011
+# (AGENTS.md "Koordinatsystem", BESLUT 2026-11-21): allt konverteras vid inläsning, aldrig mitt i en
+# beräkning. Skalfelet i Göteborg (3011 har mittmeridian 18 grader, Göteborg ligger vid 12) räknas ut
+# och skrivs i geografins manifest (koordinater.skalfel_*) och i kommandots utskrift: cirka 0,16 % i längd, 0,32 % i yta.
+publicering_epsg = 3007
+intern_epsg = 3011
+
+# --- Testområden (--omrade <id>) ---------------------------------------------------------------
+# bbox = [e_min, n_min, e_max, n_max] i publicering_epsg. Området görs till en kvadrat i EPSG:3011
+# runt mittpunkten (sidan = längsta sidan), med `kontext_m` runt om för skuggor och avrinning.
+standard_omrade = "haga"
+
+[omraden.haga]
+namn = "Haga och östra Linnéstaden"
+beskrivning = "Haga / Linnéstaden, 500 x 500 m (data_inlasning.goteborg.GOTEBORG_HAGA_TESTOMRADE)"
+bbox = [147400.0, 6397500.0, 147900.0, 6398000.0]
+motivering = """\
+Området är det som data_inlasning.goteborg redan föreslår som testområde (centrala Göteborg, \
+Haga/Linné, nära mätstationen Haga). Kvarter med sluten bebyggelse och gator i sluttande terräng \
+mot lågdelen mot Vallgraven/Allén ger variation i terräng, kvartersbebyggelse och en sannolik \
+lågpunkt. TERRÄNGEN ÄR INTE KONTROLLERAD mot höjddata (ingen nätåtkomst vid valet): kommandot \
+mäter höjdspann och lägsta punkt i markmodellen och skriver dem i geografins manifest \
+(forberakningar.terrang_karna), så att valet kan bytas om området visar sig vara platt."""
+
+# --- Geografier (floden geografi mappa <id>) -----------------------------------------------------
+# En geografi är ett mappat område med giltig kärna och buffert (docs/DATAKONTRAKT.md, kontrakt K46).
+# Kärnan är ett av testområdena ovan. Bufferten tar kärnans skyfall (hela tillrinningsområdet uppströms,
+# ur höjdmodellen) och dagsljus (påverkansradien hojd_max_m / tan(5 grader)), den större av dem.
+[geografier.goteborg-test]
+namn = "Göteborg, provområde (Haga)"
+omrade = "haga"
+tillrinning_cell_m = 2.0     # cellstorlek för tillrinningsberäkningen (nedsamplad höjdmodell)
+max_buffert_m = 1500.0       # största buffert: tillrinning som når längre ger en varning
+
+# --- Lantmäteriet (höjddata) -------------------------------------------------------------------
+# Hämtas med kontots egen nyckel (sidan Nycklar), aldrig servernyckeln.
+[lantmateriet]
+produkter = ["laser"]       # "laser" och/eller "orto"
+marginal_m = 50.0           # ytterligare marginal för sökning av filer runt beräkningsområdet
+kontext_m = 100.0           # kontext runt studieområdet i markmodellen (skuggor, avrinning)
+upplosning_m = 1.0          # laserns 1-2 punkter per m2 bär inte finare
+# Licensen står i oppenhet.toml bredvid datat. Produktsidan för Laserdata Nedladdning anger CC0,
+# O-Tids dokumentation CC BY 4.0, och villkoren nämner personuppgifter i punktmoln (docs/DATA.md).
+# Därför är rådata (punktmoln, ortofoto, Lantmäteriets byggnader) alltid stängda för MCP, och det
+# härledda (markmodell, resultat) stängt tills --villkor-kontrollerade anges.
+licens = "CC0-1.0"
+licens_anmarkning = "Laserdata Nedladdning, skog: CC0 enligt produktsidan; kontrollera villkoren. ©Lantmäteriet."
+
+# --- Byggnader ---------------------------------------------------------------------------------
+[byggnader]
+kalla = "wfs"               # "wfs" (kommunens) eller "lantmateriet" (STAC-vektor, kräver beställd produkt)
+wfs_url = "https://opengeodata.goteborg.se/services/baskarta/wfs"
+tillatna_varddomaner = ["goteborg.se"]   # https, och värden ska vara eller sluta på någon av dem
+lager = ""                  # lagernamn; tomt = hitta ur GetCapabilities med lager_monster
+lager_monster = "(?i)byggnad"
+max_objekt = 5000
+licens = "CC0-1.0"
+licens_anmarkning = "Göteborgs Stads öppna baskarta: CC0 enligt lagerprofilen (data/lagerprofiler/goteborg_baskarta.toml), ej kontrollerat mot data.goteborg.se."
+
+# Bara dessa attribut sparas (dataminimering: övriga, t.ex. adresser och fastighetsbeteckningar, kastas).
+# Floden-fält = lista med kommunens möjliga kolumnnamn (skiftlägesokänsligt, första träffen gäller).
+[byggnader.falt]
+byggnad_id = ["objectid", "objektidentitet", "gid", "fid", "id"]
+hojd_m = ["hojd", "byggnadshojd", "height"]
+vaningar = ["antal_vaningar", "vaningar"]
+andamal = ["andamal", "anvandning"]
+takform = ["takform"]
+
+# --- Baskarta (valfria lager) ---------------------------------------------------------------------
+# Hämtas och sparas som GeoPackage i EPSG:3011 för granskning. De används inte i K1-bygget än
+# (lagerprofilens prefixregler är för DWG/DXF). Tomt = ingen baskarta hämtas, om inte --baskartelager anges.
+[baskarta]
+lager = []
+licens = "CC0-1.0"
+
+# --- Beräkningar för nuläget -------------------------------------------------------------------
+# Parametrarna skrivs i frågefilerna (K20) och i varje körnings manifest.
+[dagsljus]
+datum = ["2026-03-20"]
+steg_min = 10
+azimutriktningar = 180
+cellstorlek_m = 1
+hojd_max_m = 60
+h_min_grader = 5
+fasad_steg_m = 6.0
+vaningshojd_m = 3.0
+
+[skyfall]
+# Stockholmsregn 2024 gäller Stockholm och används inte här. Göteborg har ingen lokal IDF-källa i
+# Floden än: nationellt P110-regn enligt Dahlström (2010), 100 år, 6 h, klimatfaktor 1,4. Beloppet
+# (mm) räknas ur förvalet och skrivs som regn_mm; byt regn_id för en annan återkomsttid.
+regn_id = "sverige_cds_6h_100ar_kf140"
+takvatten = true

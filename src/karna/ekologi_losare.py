@@ -155,7 +155,7 @@ class Konnektivitet(Analyslosare):
     beskrivning: ClassVar[str] = (
         "Ekologisk konnektivitet för en artprofil (skiss): ECA och PC med monotona intervall, "
         "dPC per habitatfläck, strömtäthet (flaskhalsar) och känslighet. Parametrarna natverk "
-        "(habitatnätverk med signalarter, K46; förval) eller artprofil (föråldrad), cellstorlek_m, "
+        "(habitatnätverk med signalarter, K47; förval) eller artprofil (föråldrad), cellstorlek_m, "
         "max_flackar och max_celler."
     )
     valfria_indataroller: ClassVar[tuple[str, ...]] = (
@@ -442,7 +442,7 @@ class Konnektivitet(Analyslosare):
 
 
 def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
-    """Körning för ett habitatnätverk (K46): NMD (eller biotopraster) som mark, K9-hus som NMD 51."""
+    """Körning för ett habitatnätverk (K47): NMD (eller biotopraster) som mark, K9-hus som NMD 51."""
     from data_inlasning.nmd import NMD_BYGGNAD, NmdFel, NmdLager, lagg_hus_som_nmd51, las_nmd
     from data_inlasning.vmi import las_vmi_mask, stampla_pa_grid
     from ekologi import (
@@ -587,8 +587,28 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
                 "ECA_m2": res[s.scenario_id].eca_m2, "PC": res[s.scenario_id].pc,
             }
         )
+    # Jämförelse mellan habitaturval vid huvudscenariots tröskel (varje variant är ett eget habitatval).
+    variant_rader = []
+    try:
+        for hv in nv.habitatvarianter:
+            vpr = till_artprofil(nv, huvud.scenario_id, klasskoder=klasskoder, habitatvariant=hv.variant_id)
+            vres = berakna_konnektivitet(
+                klasser, vpr, cell_m=cell, x_min_m=x0, y_max_m=y1, berakna_flaskhalsar=False,
+            )
+            variant_rader.append(
+                {"id": hv.variant_id, "namn": hv.namn, "klasser": list(hv.klasser), "typ": hv.belagd.typ,
+                 "kalla": hv.belagd.kalla, "sida": hv.belagd.sida, "antal_flackar": vres.antal_flackar,
+                 "total_habitat_area_m2": vres.total_habitat_area_m2, "ECA_m2": vres.eca_m2, "PC": vres.pc}
+            )  # fmt: skip
+    except EkologiFel as exc:
+        raise LosarFel(f"{namn}: {exc}") from exc
     natverk_dok = nv.som_dict(huvud.scenario_id)
     natverk_dok["scenarier"] = scen_rader
+    natverk_dok["habitat_huvud"] = {
+        "id": "kandidater", "klasser": list(nv.habitat_klasser), "antal_flackar": hr.antal_flackar,
+        "total_habitat_area_m2": hr.total_habitat_area_m2, "ECA_m2": hr.eca_m2, "PC": hr.pc,
+    }
+    natverk_dok["habitatvarianter"] = variant_rader
     natverk_dok["klassraster"] = {"roll": roll, "cellstorlek_m": cell}
     antaganden = list(natverk_dok["antaganden"])
     if iv.ett_scenario:
@@ -611,6 +631,7 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         "intervall_typ": "kallbaserat",
         "dPC": dpc,
         "markslagsmappning": {"sha256": konfig.sha256, "version": konfig.version},
+        "resultat_etikett": nv.resultat_etikett,
         "natverk": {**natverk_dok, "antaganden": antaganden},
         "varningar": varningar,
     }

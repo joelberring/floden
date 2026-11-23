@@ -119,8 +119,10 @@ Med inloggning på (servern) kräver varje projektverktyg ett konto med en roll 
 - Projektet är argumentet `projekt` (förval `demokvarteret`). Verktyg utan `projekt` (körningar, resultat, rapporter) gäller i dag
   bara demokvarteret och kräver rollen där (`demoprojekt_roll`, förval `utredare`; `av` stänger dem för alla).
 - Anrop utan konto (stdio mot en server med inloggning) nekas med "Inloggning krävs". Nekade anrop loggas som `nekad_behorighet`.
-- Rapporter och körningar är ännu inte knutna till ett konto: ett konto med roll på demokvarteret ser de rapporter som skapats
-  där (se `STATUS.md`, Öppet).
+- Rapporter och beställningar hör till ett projekt (`projekt` i K33 och K30). Verktyg och resurser med `rapport_id` eller
+  `bestallning_id` (och `floden://rapport/<id>`) prövas mot rapportens eller beställningens projekt, inte mot `projekt`-argumentet:
+  saknas rollen (lasare, utredare för skrivande verktyg) svarar servern "Okänd rapport" eller "Okänd beställning", samma text som för
+  ett id som inte finns. `rapport_hamta` utan id listar bara rapporter i projekt där kontot har en roll.
 
 ## Data som inte är öppna
 

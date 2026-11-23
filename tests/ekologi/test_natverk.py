@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Habitatnätverk som konfiguration (K46), källbaserat intervall, ändligt motstånd, NMD- och VMI-inläsare."""
+"""Habitatnätverk som konfiguration (K47), källbaserat intervall, ändligt motstånd, NMD- och VMI-inläsare."""
 
 from __future__ import annotations
 
@@ -286,3 +286,36 @@ def test_vmi_rastreras_till_kand_vatmark_och_markeras_som_aldre(tmp_path: Path) 
     m = las_vmi_mask(ut)
     grid = stampla_pa_grid(m, 151_000.0, 6_580_300.0, 4.0, (75, 75))
     assert int(grid.sum()) > 0
+
+
+def test_habitaturval_kandidater_snavt_jamforelse_och_etikett() -> None:
+    from ekologi import hamta_natverk, till_artprofil
+
+    b = hamta_natverk("barrskog-nacka")
+    assert b.habitat_klasser == (111, 112, 113, 114, 121, 122, 123, 124)
+    assert b.habitat_belagd is not None and b.habitat_belagd.typ == "antagande" and b.habitat_belagd.kalla == "REG17"
+    (snavt,) = b.habitatvarianter
+    assert snavt.variant_id == "snavt" and snavt.klasser == (111, 112, 113, 121, 122, 123)
+    assert snavt.belagd.kalla == "UME23" and set(snavt.klasser) < set(b.habitat_klasser)
+    assert till_artprofil(b, habitatvariant="snavt").habitat_markslag == frozenset(snavt.klasser)
+    assert till_artprofil(b).habitat_markslag == frozenset(b.habitat_klasser)
+    with pytest.raises(EkologiFel, match="habitatvariant"):
+        till_artprofil(b, habitatvariant="finns-inte")
+    assert b.resultat_etikett == "Potentiell livsmiljö, okänd kvalitet"
+    assert b.som_dict()["resultat_etikett"] == b.resultat_etikett
+
+
+def test_adellov_126_127_har_eget_antaget_motstand_och_valfritt_tradlager() -> None:
+    from ekologi import hamta_natverk
+
+    a = hamta_natverk("adellov-nacka")
+    assert a.habitat_klasser == (116, 117, 126, 127)
+    antagna = a.antagna_motstand()
+    assert [p["klasser"] for p in antagna] == [[126, 127]]
+    assert a.som_dict()["antagna_motstand"] == antagna
+    assert any("126, 127" in t or "126" in t for t in a.antaganden())
+    (lager,) = a.valfria_lager
+    assert lager.lager_id == "inventerade_adellovtrad" and lager.status == "inte byggt"
+    # Biotopnätverk (Stockholm) har kvalitetsdata och får ingen "okänd kvalitet"-etikett.
+    assert hamta_natverk("barrskog-stockholm-2022").resultat_etikett == ""
+

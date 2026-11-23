@@ -948,7 +948,7 @@ metodstatus `skiss`) räknar kretsteoretisk och grafbaserad konnektivitet (McRae
 (största vegetationshöjd och vanligaste markslag per cell), K1:s markslag översätts enligt `data/ekologi/markslag.toml`
 (sha256 ingår i parametrarna och i `ekologi.json`) och celler med vegetation.tif ≥ 0,5 m får trädskikt.
 
-Parametrar: `natverk` (habitatnätverkets id, K46; **förval i demon**) eller `artprofil` (standardprofilens id eller indataroll `artprofil`, föråldrad; exakt en av dem), `cellstorlek_m` (förval 4; för nätverk NMD-lagrets cellstorlek), `anvand_vmi`, `biotop_klasskoder`,
+Parametrar: `natverk` (habitatnätverkets id, K47; **förval i demon**) eller `artprofil` (standardprofilens id eller indataroll `artprofil`, föråldrad; exakt en av dem), `cellstorlek_m` (förval 4; för nätverk NMD-lagrets cellstorlek), `anvand_vmi`, `biotop_klasskoder`,
 `max_flackar` (förval 40), `max_celler` (förval 250000), `motstand_faktor_intervall` (förval profilens) och
 `spridning_faktor_intervall` (förval `[0,8, 1,25]`); de två sista gäller bara `artprofil` och nekas för `natverk`, som har källbaserat intervall (K46). Valfria indataroller (tillagda 2026-11-23, additivt, K45 förblir v1): `nmd` (NMD-lager, uint8, EPSG:3011), `kand_vatmark` (0/1-mask ur VMI, äldre) och `biotopraster` (lokal klassraster för kommunspecifika nätverk). För många fläckar eller celler ger `LosarFel` med text, inte ett
 avkortat resultat.
@@ -983,7 +983,8 @@ Skillnaden före/efter tas med `[[jamforelser]]` på `stromtathet`. Fälten i `e
 | `markslagsmappning` | objekt | | `sha256` och `version` för `data/ekologi/markslag.toml` |
 | `varningar` | lista av text | | T.ex. okänt markslag, saknad vegetation, färre än två fläckar |
 | `intervall_typ` | text | | `"faktorer"` (artprofil: två extremkörningar) eller `"kallbaserat"` (nätverk: lägsta och högsta värde mellan nätverkets scenarier). Tillägg 2026-11-23 |
-| `natverk` | objekt eller `null` | | Nätverket (K46) som kördes: `natverk_id`, `namn`, `signalarter`, `kalla` (`nyckel`, `referens`, `sida`), `kalla_rad`, `scenario` (huvudscenariot), `scenarier` (`id`, `troskel_m`, `d50_m`, `d50_antagen`, `ECA_m2`, `PC`), `d50_m`, `troskel_m`, `habitat_klasser`, `min_area_m2`, `oandliga_klasser`, `antaganden` (till exempel "p saknas i källan; d50 = tröskel/2"), `saknas`, `biologisk_sakerhet`. `null` för artprofil. Tillägg 2026-11-23 |
+| `resultat_etikett` | text | | `"Potentiell livsmiljö, okänd kvalitet"` för NMD-nätverk (ålder, naturvärde och trädinventering saknas), annars tom. Tillägg 2026-11-23 |
+| `natverk` | objekt eller `null` | | Nätverket (K47) som kördes: `habitat_huvud`, `habitatvarianter` (jämförelseurval vid huvudscenariots tröskel: `id`, `klasser`, `ECA_m2`, `PC`, `antal_flackar`), `antagna_motstand` (motstånd med typ antagande, redovisas separat), `valfria_lager`, `natverk_id`, `namn`, `signalarter`, `kalla` (`nyckel`, `referens`, `sida`), `kalla_rad`, `scenario` (huvudscenariot), `scenarier` (`id`, `troskel_m`, `d50_m`, `d50_antagen`, `ECA_m2`, `PC`), `d50_m`, `troskel_m`, `habitat_klasser`, `min_area_m2`, `oandliga_klasser`, `antaganden` (till exempel "p saknas i källan; d50 = tröskel/2"), `saknas`, `biologisk_sakerhet`. `null` för artprofil. Tillägg 2026-11-23 |
 
 `dPC[]`: `flack_id` (heltal), `area_m2`, `effektiv_area_m2` (m²), `centroid_e_m`, `centroid_n_m` (m, EPSG:3011),
 `dPC_procent` (hur många procent av PC som försvinner om fläcken tas bort) och dess tre komponenter `dPC_intra_procent`
@@ -1003,7 +1004,7 @@ Begäran:
 | Fält | Typ | Enhet | Förval | Innehåll |
 | --- | --- | --- | --- | --- |
 | `omrade_id` | text | | krävs | Projektet (demokvarteret) |
-| `natverk` | text | | projektmallens | Habitatnätverkets id (K46), bara NMD-nätverk som går att köra på servern; kan inte kombineras med `artprofil` |
+| `natverk` | text | | projektmallens | Habitatnätverkets id (K47), bara NMD-nätverk som går att köra på servern; kan inte kombineras med `artprofil` |
 | `artprofil` | text | | – | En standardprofil (K44), föråldrad; svaret varnar |
 | `scenario` | text | | projektets förslag | Id på ett sparat scenario (ritat förslag) |
 | `max_flackar` | heltal 2–200 | st | 40 | Fler habitatfläckar än så ger 400 |
@@ -1022,6 +1023,7 @@ Svar (200):
 | `natverk` | objekt eller `null` | | Som `natverk` i K45 (från läget efter) |
 | `intervall_typ` | text | | Som i K45 |
 | `kalla_rad` | text eller `null` | | En rad med signalart och källa, till resultatpanelen |
+| `resultat_etikett` | text eller `null` | | Som i K45 |
 | `antaganden` | lista av text | | Nätverkets antaganden, till exempel "p saknas i källan; d50 = tröskel/2 (500 effektiva m)." |
 | `korning_id` | text | | Körningen som beläggen hör till |
 | `cellstorlek_m`, `max_flackar` | tal | m, st | Som användes |
@@ -1038,9 +1040,68 @@ Svar (200):
 lösaren (för många fläckar eller celler, `LosarFel`); 404 okänt projekt eller sparat scenario; 401 inte inloggad (när
 inloggning är på). **Behörighet:** som K40 (projektet i `omrade_id` kräver minst `lasare` när inloggning är på).
 
-`GET /api/ekologi/natverk` (tillägg 2026-11-23, `floden-ekologi-natverk/v1`) listar habitatnätverken (K46): `natverk[]` med `natverk_id`, `namn`, `visningsnamn` (till exempel "Barrskogssamband (Nacka/NMD)"), `underlag`, `omfattning`, `korbar`, `korbar_orsak`, `kvalitetskalla`, `signalarter`, `kalla_rad`, `scenarier`, `huvudscenario`, `lokalt`, samt `kommuner[]` med förval per kommun. Ingen behörighet utöver den vanliga läsbehörigheten.
+`GET /api/ekologi/natverk` (tillägg 2026-11-23, `floden-ekologi-natverk/v1`) listar habitatnätverken (K47): `natverk[]` med `natverk_id`, `namn`, `visningsnamn` (till exempel "Barrskogssamband (Nacka/NMD)"), `underlag`, `omfattning`, `korbar`, `korbar_orsak`, `kvalitetskalla`, `signalarter`, `kalla_rad`, `scenarier`, `huvudscenario`, `lokalt`, samt `kommuner[]` med förval per kommun. Ingen behörighet utöver den vanliga läsbehörigheten.
 
-## K46 – Habitatnätverk `floden-habitatnatverk/v1` (v1)
+## K46 – Geografi `floden-geografi/v1` (v1)
+
+Registrerat 2026-11-23 (Joels beslut "geografi först", `docs/ARKITEKTUR-DRIFT.md` 0b). K44 och K45 är ekologins
+(`docs/BESLUT.md` 2026-11-23) och används inte här. En geografi är ett kartlagt område som projekt byggs i: en **giltig
+kärna** (hela området där alla villkor nedan gäller) och en **buffert** runt den. Projekten delar geografins lager och
+låser dess version.
+
+**Skrivs av** `floden geografi mappa <geografi-id>` (`src/geografi/mappa.py`, `src/geografi/modell.py`). **Läses av**
+`floden projekt skapa --geografi <id>@<version>` (`src/kommuner/projekt.py`) och `floden geografi visa <id>@<version>`.
+Geografin definieras i kommunfilen (`[geografier.<id>]` i `data/kommuner/<kommun>.toml`, `docs/KOM-IGANG.md`).
+
+**Mappar** under geo-roten (förval `data/lokal/geo`):
+
+```text
+<geo-rot>/<id>/<version>/manifest.json   manifestet (detta kontrakt), ingen tid, inga nycklar, inga sökvägar
+<geo-rot>/<id>/<version>/oppenhet.toml   K38, följer lagrens öppenhet
+<geo-rot>/_lager/<sha256>/               ett lager, adresserat med trädhashen över sina filer (delas mellan versioner)
+```
+
+Trädhashen är sha256 över sorterade rader `<sha256 av filen>  <relativ sökväg>` (en per fil, åtskilda av radbrytning); dolda filer, `oppenhet.toml` och körloggar (`run.json`, K0: starttid och körtid) ingår
+inte. Två versioner med samma innehåll i ett lager pekar på samma mapp (lagras en gång).
+
+Manifest (JSON, nycklarna sorterade, UTF-8):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `kontrakt` | text | | `"floden-geografi/v1"` |
+| `id`, `version`, `namn`, `kommun` | text | | Id (`[a-z][a-z0-9-]*`), version (`v1`, `v2` ...), visningsnamn, kommunens id |
+| `koordinater` | objekt | | `publicering_epsg` (kommunens), `intern_epsg` (3011), `skalfel_langd_procent`, `skalfel_yta_procent` (mätt i kärnans mitt) |
+| `karna_3011` | `[x0, y0, x1, y1]` | m, EPSG:3011 | Den giltiga kärnan |
+| `gransen_3011` | `[x0, y0, x1, y1]` | m, EPSG:3011 | Yttre gräns (kärnan plus vald buffert): data finns överallt inom den |
+| `buffert` | objekt | m | `dagsljus_paverkansradie_m` (= `hojd_max_m / tan(h_min_grader)`), `skyfall_tillrinning_krav_m` (avstånd från kärnan till tillrinningsområdets yttersta cell), `vald_m`, `max_m`, `tillrinning_nar_kanten` (bool: sant betyder att bufferten är för liten) |
+| `parametrar` | objekt | | `hojd_max_m`, `h_min_grader`, `upplosning_m`, `ruta_storlek_m` (500), `byggnadskalla` |
+| `lager.k1_rutnat` | objekt | | `sha256` (trädhash), `rutor` (`mm_<E>_<N>`), `filer` (`fil`, `sha256`): K1 v2-rutor med DTM (`mark.tif`), DSM/takhöjd, byggnader och markklass |
+| `lager.radata` | objekt | | `sha256`, `lantmateriet_manifest_sha256`, `filer`: Lantmäteriets filer och kommunens byggnader (så att ett projekt kan beskära en egen ruta) |
+| `lager.nmd` | objekt | | Valfritt. `sha256`, `buffert_m` (2000-5000, ur längsta spridningströskel), `cell_m` (10), `filer`: `nmd.tif` (uint8, EPSG:3011) och `nmd.json`. Skrivs av `floden geografi mappa --nmd <tif>`; mappas en gång per geografi och delas av projekten |
+| `lager.vmi` | objekt | | Valfritt. Som `lager.nmd` men `vmi.tif` (0/1-mask, känd våtmark) på NMD-rutnätet; märkt `alder: "äldre"` (inventerad 1981-2005). Skrivs med `--vmi <fil>` |
+| `forberakningar` | objekt | | `terrang_karna` (höjdspann, lägsta punkt), `tillrinning` (`cell_m`, `celler`, `yta_m2`, `krav_buffert_m`, `nar_kanten`), `sankgraf` (text: inte förberäknad; byggs och cachas av kärnan, K22, vid första körningen) |
+| `kallor` | objekt | | Licens och anmärkning per källa (`lantmateriet`, `byggnader`) |
+| `motivering_karna` | text | | Varför kärnan valdes |
+| `oppen_for_mcp` | bool | | Sant bara om mappningen gjordes med `--villkor-kontrollerade` |
+| `varningar` | lista av text | | T.ex. tillrinning som når kanten vid största bufferten |
+
+**Buffertregler.** Dagsljus: påverkansradien `hojd_max_m / tan(h_min_grader)` (60 m och 5 grader ger 686 m).
+Skyfall: hela tillrinningsområdet uppströms kärnan, ur höjdmodellen (D8 med fyllning av sänkor, nedsamplad till
+`tillrinning_cell_m`). Bufferten är den större; når tillrinningsområdet kanten av det hämtade området vidgas området
+(högst `max_buffert_m`), och räcker inte det står det som varning. Kärnan är giltig när alla projekt i den får full
+tillrinning och skuggor utifrån; ett projekt som sticker utanför kärnan får en varning, inget fel.
+
+**Öppenhet (K38).** Lagret `radata` är alltid stängt för MCP. Det härledda (`k1_rutnat`, versionens `oppenhet.toml`) är
+stängt tills mappningen gjorts med `--villkor-kontrollerade`; en ny version behövs för att ändra det.
+
+**Version och projekt.** En version ändras aldrig; ny mappning ger ny version (`--version v2`). Ett projekt
+(`projekt.json`, `floden-projekt/v1`) bär `geografi` (`id@version`) och `geografi_manifest_sha256` och låser därmed
+versionen. `las_manifest` kontrollerar att varje fil i lagren har sin sha256 och stoppar om något ändrats.
+
+**Fel:** geografi eller version som saknas, lager vars sha256 inte stämmer och manifest med fel kontrakt ger `GeografiFel`
+(CLI: slutkod 4 med en rad som säger vad som ska göras).
+
+## K47 – Habitatnätverk `floden-habitatnatverk/v1` (v1)
 
 Registrerat 2026-11-23. En TOML-fil per nätverk och källa i `data/ekologi/natverk/<natverk_id>.toml`, strikt läst av
 `ekologi.natverk.las_natverk` (okända källnycklar, värden utan `kalla`, `sida`, `typ` eller `sakerhet`, motstånd under 1 och
@@ -1056,7 +1117,9 @@ signalarter, inte fynd av arter; skyddsklassade artfynd får inte förekomma.
 | `korbar`, `korbar_orsak` | `false` när motståndstabell saknas (Södertälje, Göteborg) |
 | `signalarter`, `biologisk_sakerhet`, `biologisk_sakerhet_text`, `huvudscenario` | Signalarter (svenska namn); biologisk säkerhet (förval `låg`) |
 | `[kalla]` | `nyckel` och `sida` för nätverket som helhet |
-| `[habitat]` | `klasser` (NMD-koder eller biotopnamn) |
+| `[habitat]` | `klasser` (NMD-koder eller biotopnamn): habitatkandidater |
+| `[[habitatvariant]]` | Valfritt jämförelseurval (`id`, `namn`, `klasser`, `kalla`, `sida`, `typ`, `sakerhet`); körs vid huvudscenariots tröskel och redovisas bredvid kandidaterna |
+| `[[valfritt_lager]]` | Valfritt indatalager som datamodellen förutser men som inte är byggt (`id`, `namn`, `text`, `status`, belägg), t.ex. inventerade gamla ädellövträd som punkter |
 | `[min_area]` | `varde_ha`, eller `saknas = true` (med `antagande_m2` om ett antagande används) |
 | `[[scenario]]` | `id`, `namn`, `troskel_m` (effektiva meter), `d50_m` om källan anger det |
 | `[d50_antagande]` | `regel = "troskel/2"`, `kvot`, `text` ("p saknas i källan; d50 = tröskel/2"), `typ = "antagande"` |
@@ -1073,4 +1136,3 @@ avklippning. Markunderlag för NMD-nätverk: indataroll `nmd` (uint8-GeoTIFF i E
 (`data_inlasning.vmi`), märkt som äldre. Metodstatus: `skiss`, parametrar källbelagda (kommunala modellval), biologisk
 säkerhet låg. K45 förblir v1; ändringarna i K45 (fälten `intervall_typ` och `natverk`, parametern `natverk`, indataroller) är
 additiva och bakåtkompatibla.
-

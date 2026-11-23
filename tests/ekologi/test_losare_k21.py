@@ -265,6 +265,11 @@ def test_api_natverksval_andrar_resultatet_och_visar_signalart_kalla_och_antagan
     assert bar["fore"]["ECA_m2"] != ade["fore"]["ECA_m2"]
     assert bar["intervall_typ"] == "kallbaserat" and bar["kalla_rad"].startswith("Signalarter: tofsmes")
     assert "Källa:" in bar["kalla_rad"] and "bil. 2" in bar["kalla_rad"]
+    assert bar["resultat_etikett"] == ade["resultat_etikett"] == "Potentiell livsmiljö, okänd kvalitet"
+    (snavt,) = bar["natverk"]["habitatvarianter"]
+    assert snavt["id"] == "snavt" and snavt["klasser"] == [111, 112, 113, 121, 122, 123]
+    assert snavt["total_habitat_area_m2"] <= bar["natverk"]["habitat_huvud"]["total_habitat_area_m2"]
+    assert ade["natverk"]["habitatvarianter"] == [] and ade["natverk"]["antagna_motstand"][0]["klasser"] == [126, 127]
     assert any("p saknas i källan; d50 = tröskel/2" in a for a in bar["antaganden"])
     for svar in (bar, ade):
         lo, hi = svar["fore"]["ECA_intervall_m2"]

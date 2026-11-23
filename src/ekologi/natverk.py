@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Habitatnätverk med signalarter som konfiguration (`data/ekologi/natverk/*.toml`, kontrakt K46).
+"""Habitatnätverk med signalarter som konfiguration (`data/ekologi/natverk/*.toml`, kontrakt K47).
 
 Ett nätverk är ett aggregerat samband (till exempel barrskogssamband eller ädellövsamband) med
 signalarter, så som kommunala rapporter redovisar dem. Floden arbetar med nätverk i stället för
@@ -36,6 +36,7 @@ from ekologi.typer import ArtProfil, EkologiFel
 from gemensamt.hash import sha256_fil
 
 FORMAT_NATVERK: Final[str] = "floden-habitatnatverk/v1"
+RESULTAT_ETIKETT_OKAND_KVALITET: Final[str] = "Potentiell livsmiljö, okänd kvalitet"
 DATA_MAPP: Final[Path] = Path(__file__).resolve().parents[2] / "data" / "ekologi"
 NATVERK_MAPP: Final[Path] = DATA_MAPP / "natverk"
 KALLOR_FIL: Final[Path] = DATA_MAPP / "kallor.toml"
@@ -101,6 +102,28 @@ class D50Antagande:
 
 
 @dataclass(frozen=True)
+class Habitatvariant:
+    """Ett alternativt habitaturval (jämförelsescenario) vid samma tröskel som huvudscenariot."""
+
+    variant_id: str
+    namn: str
+    klasser: tuple[int | str, ...]
+    beskrivning: str
+    belagd: Belagd
+
+
+@dataclass(frozen=True)
+class ValfrittLager:
+    """Ett valfritt indatalager som datamodellen förutser men som inte är byggt (visas, används inte)."""
+
+    lager_id: str
+    namn: str
+    text: str
+    status: str
+    belagd: Belagd
+
+
+@dataclass(frozen=True)
 class Motstandspost:
     """Ett motstånd för en eller flera klasser. `varde` är oändligt bara med `oandligt`."""
 
@@ -130,7 +153,7 @@ class Kompletterande:
 
 @dataclass(frozen=True)
 class Natverk:
-    """Ett habitatnätverk (K46) läst ur `data/ekologi/natverk/<id>.toml`."""
+    """Ett habitatnätverk (K47) läst ur `data/ekologi/natverk/<id>.toml`."""
 
     natverk_id: str
     namn: str
@@ -164,6 +187,23 @@ class Natverk:
     filnamn: str
     sha256: str
     kvalitetsklasser: tuple[str, ...] = field(default_factory=tuple)
+    habitatvarianter: tuple[Habitatvariant, ...] = field(default_factory=tuple)
+    valfria_lager: tuple[ValfrittLager, ...] = field(default_factory=tuple)
+
+    @property
+    def resultat_etikett(self) -> str:
+        """Namn på vad resultatet visar. NMD-nätverk saknar uppgifter om ålder, naturvärde och trädinventering."""
+        if self.omfattning == "nmd":
+            return RESULTAT_ETIKETT_OKAND_KVALITET
+        return ""
+
+    def antagna_motstand(self) -> list[dict[str, Any]]:
+        """Motstånd som är Flodens eget modellval (typ antagande), redovisas separat från källans värden."""
+        return [
+            {"klasser": list(p.klasser), "namn": p.namn, "varde": p.varde, "kalla": p.belagd.kalla,
+             "sida": p.belagd.sida, "text": p.belagd.anmarkning}
+            for p in self.motstand if p.belagd.typ == "antagande"
+        ]  # fmt: skip
 
     # ------------------------------------------------------------------ uppslag
 
@@ -251,6 +291,17 @@ class Natverk:
             "biologisk_sakerhet_text": self.biologisk_sakerhet_text,
             "scenario": scen.scenario_id,
             "habitat_klasser": list(self.habitat_klasser),
+            "habitat_typ": self.habitat_belagd.typ if self.habitat_belagd else None,
+            "resultat_etikett": self.resultat_etikett,
+            "habitatvarianter": [
+                {"id": v.variant_id, "namn": v.namn, "klasser": list(v.klasser), **v.belagd.som_dict()}
+                for v in self.habitatvarianter
+            ],
+            "antagna_motstand": self.antagna_motstand(),
+            "valfria_lager": [
+                {"id": v.lager_id, "namn": v.namn, "text": v.text, "status": v.status, **v.belagd.som_dict()}
+                for v in self.valfria_lager
+            ],
             "min_area_m2": self.min_area_m2,
             "d50_m": self.d50_for(scen)[0] if scen.har_avstand else None,
             "troskel_m": scen.troskel_m,
@@ -426,6 +477,17 @@ def las_natverk(sokvag: str | Path) -> Natverk:
         habitat_klasser = ()
     habitat_besk = str(hab.get("nmd_namn") or hab.get("biotop_namn") or hab.get("biotop_beskrivning") or "")
     kvalitetsklasser = tuple(str(x) for x in hab.get("kvalitetsklasser", []))
+    varianter: list[Habitatvariant] = []
+    for r in d.get("habitatvariant", []):
+        vid = _text(r, "id", namn)
+        if vid in {v.variant_id for v in varianter} or vid == "kandidater":
+            raise _fel(namn, f"habitatvariant {vid!r} förekommer flera gånger (eller heter 'kandidater').")
+        varianter.append(
+            Habitatvariant(
+                vid, _text(r, "namn", namn), _klasslista(r["klasser"], namn, f"habitatvariant {vid}", omf),
+                str(r.get("nmd_namn", "")), _belagd(r, namn, f"habitatvariant {vid}"),
+            )
+        )
 
     # minsta area
     ma = d.get("min_area")
@@ -546,6 +608,10 @@ def las_natverk(sokvag: str | Path) -> Natverk:
         saknade = [k for k in habitat_klasser if k not in sedda]
         if saknade:
             raise _fel(namn, f"habitatklasser utan motstånd: {saknade}.")
+        for v in varianter:
+            sakn = [k for k in v.klasser if k not in sedda]
+            if sakn:
+                raise _fel(namn, f"habitatvariant {v.variant_id}: klasser utan motstånd: {sakn}.")
 
     saknas = tuple(
         Saknas(_text(r, "parameter", namn), _text(r, "text", namn)) for r in d.get("saknas", [])
@@ -558,6 +624,13 @@ def las_natverk(sokvag: str | Path) -> Natverk:
             _belagd(r, namn, f"kompletterande {r.get('parameter')}"),
         )
         for r in d.get("kompletterande", [])
+    )
+    valfria = tuple(
+        ValfrittLager(
+            _text(r, "id", namn), _text(r, "namn", namn), _text(r, "text", namn),
+            _text(r, "status", namn), _belagd(r, namn, f"valfritt_lager {r.get('id')}"),
+        )
+        for r in d.get("valfritt_lager", [])
     )
     vmi = d.get("vmi_klass")
     if vmi is not None and (not isinstance(vmi, str) or vmi not in sedda):
@@ -595,6 +668,8 @@ def las_natverk(sokvag: str | Path) -> Natverk:
         filnamn=namn,
         sha256=sha256_fil(fil),
         kvalitetsklasser=kvalitetsklasser,
+        habitatvarianter=tuple(varianter),
+        valfria_lager=valfria,
     )
 
 
@@ -685,6 +760,7 @@ def till_artprofil(
     scenario_id: str | None = None,
     *,
     klasskoder: Mapping[str, int] | None = None,
+    habitatvariant: str | None = None,
 ) -> ArtProfil:
     """Kärnans profil (`ArtProfil`) för ett scenario i ett nätverk.
 
@@ -698,6 +774,15 @@ def till_artprofil(
         )
     scen = natverk.scenario(scenario_id)
     d50, _ = natverk.d50_for(scen)
+    habitat_klasser = natverk.habitat_klasser
+    profil_id = natverk.natverk_id
+    if habitatvariant is not None:
+        hv = next((v for v in natverk.habitatvarianter if v.variant_id == habitatvariant), None)
+        if hv is None:
+            giltiga = ", ".join(v.variant_id for v in natverk.habitatvarianter) or "inga"
+            raise EkologiFel(f"Nätverket {natverk.natverk_id} har ingen habitatvariant {habitatvariant!r} ({giltiga}).")
+        habitat_klasser = hv.klasser
+        profil_id = f"{natverk.natverk_id}:{hv.variant_id}"
     assert natverk.min_area_m2 is not None and natverk.standard_motstand is not None
 
     def kod(k: int | str) -> int:
@@ -722,11 +807,11 @@ def till_artprofil(
     if len(set(koder)) != len(koder):
         raise EkologiFel(f"Klasskartan ger samma kod till flera klasser i {natverk.natverk_id}.")
     return ArtProfil(
-        profil_id=natverk.natverk_id,
+        profil_id=profil_id,
         namn=natverk.visningsnamn(),
         beskrivning=natverk.beskrivning,
         kalla=natverk.kalla_rad(),
-        habitat_markslag=frozenset(kod(k) for k in natverk.habitat_klasser),
+        habitat_markslag=frozenset(kod(k) for k in habitat_klasser),
         min_area_m2=natverk.min_area_m2,
         spridningsavstand_m=d50,
         motstand_per_markslag=motstand,

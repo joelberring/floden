@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Nationella marktäckedata (NMD) som markunderlag för habitatnätverk (kontrakt K46, K45).
+"""Nationella marktäckedata (NMD) som markunderlag för habitatnätverk (kontrakt K47, K45).
 
 Källa: Naturvårdsverket, Nationella marktäckedata (NMD), basskikt, 10 m raster, öppna data (CC0),
 SWEREF 99 TM (EPSG:3006). Nedladdningssidan:

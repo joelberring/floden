@@ -124,6 +124,7 @@ def ekologi_svar(
         "natverk": natverk,
         "intervall_typ": efter.get("intervall_typ", "faktorer"),
         "kalla_rad": natverk["kalla_rad"] if natverk else None,
+        "resultat_etikett": (natverk.get("resultat_etikett") or None) if natverk else None,
         "antaganden": list(natverk["antaganden"]) if natverk else [],
         "parameterkallor": efter["parameterkallor"],
         "korning_id": korning_id,

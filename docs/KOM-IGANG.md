@@ -198,3 +198,21 @@ Flödets fem steg: `docs/bilder/flode-{1-projekt,2-forslag,3-fragor,4-resultat,5
 (före och efter efter en körning; `python tools/webb_skarmbild.py --kartverktyg`, kräver Chrome).
 3D: `docs/bilder/3d-soltimmar-fore.png`, `3d-soltimmar-efter.png`, `3d-vsc-fasader.png`, `3d-vatten.png` och
 `3d-ritat-hus.png` (`python tools/webb_skarmbild.py --3d`).
+
+## En ny kommun: konfigurera, inte koda
+
+En kommun är en fil, `data/kommuner/<id>.toml` (kontrakt `floden-kommun/v1`; förebild `data/kommuner/goteborg.toml`). Filen har
+källor och licenser (Lantmäteriets produkter, kommunens WFS för byggnader med tillåtna värdnamn), koordinatsystemet kommunen
+publicerar i (`publicering_epsg`, t.ex. 3007 för Göteborg; Floden räknar alltid i EPSG:3011 och skriver skalfelet),
+testområden (`[omraden.<id>]` med bbox i kommunens system och en motivering), geografier (`[geografier.<id>]`: namn, område
+som kärna, `tillrinning_cell_m`, `max_buffert_m`), dagsljusparametrar och regnförval (`[skyfall] regn_id`). Okända nycklar,
+http-adresser och värdnamn utanför listan avvisas. Då räcker det att:
+
+1. kopiera `goteborg.toml` till `<id>.toml` och byta källor, område och koordinatsystem,
+2. lägga in din egen Lantmäteri-nyckel på sidan Nycklar,
+3. `floden geografi mappa <geografi-id> --konto <superadmin>` (bara superadmin), därefter
+   `floden projekt skapa --geografi <geografi-id>@v1 --avgransning ... --namn ... --konto <konto-id>`.
+
+Serverkommandona står rad för rad i `docs/DRIFT.md` ("Göteborg"). Okända lagernamn och attribut i kommunens WFS löses utan
+kodändring: `floden projekt kommun-lager <id>` listar lagren och `lager = "..."` eller `--byggnadslager` väljer. Villkoren för
+AI-visning kontrolleras av en människa (`--villkor-kontrollerade`); tills dess är det härledda stängt för MCP.

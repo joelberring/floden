@@ -5,7 +5,7 @@ Kommunala rapporter redovisar aggregerade samband, till exempel barrskogssamband
 arbetar på samma sätt och har därför nätverk i stället för fria artprofiler. Varje parameter har en källa ur
 källsammanställningen [`docs/ekologi/habitatnatverk-svensk-stadsmiljo.md`](ekologi/habitatnatverk-svensk-stadsmiljo.md)
 (källnyckel och sida eller tabell). Kontrakten är K44 (artprofil, föråldrad), K45 (lösaren, `stromtathet.tif`, `ekologi.json`,
-webb-API) och **K46** (habitatnätverk) i `docs/DATAKONTRAKT.md`.
+webb-API) och **K47** (habitatnätverk) i `docs/DATAKONTRAKT.md`.
 
 **Metodstatus: `skiss`. Parametrar källbelagda (kommunala modellval), biologisk säkerhet låg.** Källorna är kommunala
 modellval (expertbedömningar och litteratur), inte fältkalibrerade. Sammanställningen anger för samtliga nätverk att en visad
@@ -33,11 +33,19 @@ Varje värde har `kalla`, `sida`, `typ` (uppmätt, litteratur, modell, expertbed
 saknas i källan står som `[[saknas]]` eller som ett uttryckligt antagande. Exempel som är antaganden i Floden och inte värden ur
 källan:
 
-- **Habitat i NMD-klasser** för barrskog- och ädellövsambanden. Nacka anger NMD bara för motståndet; habitatet byggs i källan ur
-  skogsskikt, naturvärden och ortofoto. Floden använder barrdominerade klasser (111–113, 121–123) respektive 116–117 som ersättare,
-  så resultatet visar hur de klasserna hänger ihop och inte gammal skog.
+- **Habitat i NMD-klasser** för barrskog- och ädellövsambanden (uppdaterat efter Codex jämförelse åt Joel,
+  `docs/ekologi/habitatnatverk-svensk-stadsmiljo.md`, avsnittet "Vilka NMD-klasser kan användas som habitat i Nackas två
+  skogsnätverk?"). Nacka anger NMD bara för motståndet; habitatet byggs i källan ur skogsskikt, naturvärden och ortofoto.
+  Översättningen till NMD-rastret är märkt `antagande`. Habitatkandidater: **barrskog 111–114 och 121–124** (Stockholms län,
+  bilaga 1&2, PDF-s. 4–5, stöds av Botkyrka tab. 1); **ädellöv 116, 117, 126 och 127** (Stockholms län PDF-s. 7, där 126
+  uttryckligen räknas som ädellöv; stöds av Botkyrka tab. 2). Det snävare urvalet **111–113 och 121–123** (Umeå s. 11) körs
+  som jämförelsescenario ("snävt") vid huvudscenariots tröskel och redovisas bredvid kandidaterna.
+- **Resultatet kallas "potentiell livsmiljö, okänd kvalitet"** (webb, API och `ekologi.json`, fältet `resultat_etikett`) eftersom
+  ålder, naturvärde och trädinventering saknas. Det visar hur marktyperna hänger ihop, inte gammal skog.
+- **Valfritt lager för inventerade gamla ädellövträd** (punkter som blir noder även på öppen mark) finns i datamodellen
+  (`[[valfritt_lager]]` i `adellov-nacka.toml`, status "inte byggt") och i PLAN; lösaren läser det inte än.
 - **d50 = tröskel/2** där källan bara anger en tröskel (se nedan).
-- **Motstånd för NMD 126–127** i ädellövsambandet (saknas i tabellen; antagande 2, som 124–125).
+- **Motstånd för NMD 126–127** i ädellövsambandet (saknas i Nackas tabell 1; eget modellval, typ `antagande`, 2 som 124–125). Redovisas separat i resultatet (`natverk.antagna_motstand`).
 - **Minsta area** för groddjursnätverket (saknas i källan; varje sammanhängande habitatyta räknas).
 
 Stockholms nätverk bygger på stadens biotopdatabas, som inte är öppen. Biotopklasserna kan inte översättas rakt av till NMD (NMD 42
@@ -82,7 +90,7 @@ nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt.
 ## Begränsningar
 
 - **Skiss.** Kommunala modellval; biologisk säkerhet låg. Resultatet visar hur just nätverket reagerar, inte vad en art gör.
-- **Habitat ur NMD är en ersättare** (ingen ålder, volym eller naturvärde). Nackas fulla urval går inte att återskapa med öppen data.
+- **Habitat ur NMD är potentiell livsmiljö, okänd kvalitet** (ingen ålder, volym eller naturvärde). Nackas fulla urval går inte att återskapa med öppen data.
 - **Tröskeln 3 000 m** för mindre hackspett och gröngöling är "fågelväg" i artmetoden och "kostnadsviktat" i översikten; Floden
   tolkar den som effektiva meter. Osäkert.
 - **Födosöksgränser** (500 effektiva m) och arealkrav utöver minsta area ingår inte.

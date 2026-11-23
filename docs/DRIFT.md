@@ -111,7 +111,7 @@ Spärren för data som inte är öppna (`docs/MCP.md`) är alltid på; data unde
 
 ## Markunderlag för ekologi: NMD och VMI
 
-Habitatnätverken (`docs/EKOLOGI.md`, K46) behöver NMD (Nationella marktäckedata, Naturvårdsverket, 10 m raster, öppna data, CC0,
+Habitatnätverken (`docs/EKOLOGI.md`, K47) behöver NMD (Nationella marktäckedata, Naturvårdsverket, 10 m raster, öppna data, CC0,
 SWEREF 99 TM) och, valfritt, Våtmarksinventeringen (VMI, inventerad 1981-2005, äldre). Containern som koden byggdes i når bara
 GitHub och paketregister, så inläsarna är testade mot syntetiska raster och vektorer och **inte körda mot riktiga filer**. Exakta
 filnamn och adresser är därför inte kontrollerade: hämta dem från Naturvårdsverkets sidor.
@@ -139,8 +139,101 @@ Kommandona skriver `nmd.tif` och `nmd.json` (källa, kontrollsumma, utbredning) 
 indata = { nmd = "data/lokal/ekologi/prov1/nmd.tif" }
 ```
 
-Ritade hus (K9) läggs ovanpå som NMD 51 av lösaren. `src/geografi` finns inte på main; när den finns ska lagren registreras i
-dess manifest. Stockholms nätverk 2022 körs bara lokalt mot stadens biotopdatabas (inte öppen) och ska aldrig laddas upp.
+Ritade hus (K9) läggs ovanpå som NMD 51 av lösaren.
+
+**Som lager i geografin (K46).** Hellre än projektlager mappas NMD och VMI en gång per geografi, med kontextbuffert (2-5 km ur
+längsta tröskel) runt kärnan, och ingår i manifestet som `lager.nmd` och `lager.vmi` (innehållsadresserade, sha256-verifierade):
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden geografi mappa <geografi-id> --konto <superadmin> --nmd data/lokal/ekologi/nmd/<NMD-fil>.tif --vmi data/lokal/ekologi/<VMI-fil>.gpkg --nmd-troskel-m 3000
+```
+
+Båda är valfria; `--nmd-troskel-m` (förval 3000, begränsas till 2-5 km) är den längsta spridningströskel som geografin ska
+prövas mot. Det som saknas än: att ekologilösaren läser lagren ur projektets geografi i stället för indataroller (se PLAN);
+tills dess anges `nmd` som indata som ovan. Stockholms nätverk 2022 körs bara lokalt mot stadens biotopdatabas (inte öppen) och ska aldrig laddas upp.
+
+## Göteborg: geografin `goteborg-test` och ett provprojekt (etapp 3, S5)
+
+Geografi först (`docs/ARKITEKTUR-DRIFT.md` 0b): området mappas en gång som en **geografi** (kärna Haga 500 x 500 m + buffert,
+kontrakt K46), sedan skapas projekt i den. Kommunen är konfigurerad i `data/kommuner/goteborg.toml`, inget är kodat.
+Allt körs i containern, ett kommando per rad (kör dem ett i taget och läs svaret mellan varje).
+
+**Före första körningen**
+
+- Superadmin-kontot ska ha en egen Lantmäteri-nyckel på sidan **Nycklar** i webben (servernyckeln används aldrig).
+- Kontot som blir utredare i projektet ska vara medlem i en organisation (steg 2 och 3 nedan om det saknas).
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin konto-id <superadmin-epost>
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin skapa-organisation "Göteborgs Stad"
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin gor-organisationsadmin <konto-id> <organisations-id>
+```
+
+(Första raden skriver konto-id. Andra raden skriver organisations-id; hoppa över de två sista om kontot redan är medlem.)
+
+**1. Lista Göteborgs byggnadslager** (läser bara GetCapabilities; lagernamnen i Göteborgs WFS är inte kända)
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden projekt kommun-lager goteborg
+```
+
+Står rätt lager inte först i listan: sätt `lager = "<namn>"` under `[byggnader]` i `data/kommuner/goteborg.toml` (eller ge
+`--byggnadslager <namn>` i nästa steg).
+
+**2. Mappa geografin** (bara superadmin; hämtar Lantmäteriets laser och Göteborgs byggnader, tar minuter)
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden geografi mappa goteborg-test --konto <superadmin-konto-id>
+```
+
+Utskriften visar buffert (dagsljus 686 m vid 60 m och 5 grader, och tillrinningens krav), terrängens höjdspann och lägsta
+punkt i kärnan, och skalfelet. Kan köras om: en version som finns lämnas orörd (`--version v2` för en ny mappning).
+Resultatet ligger i `data/lokal/geo/goteborg-test/v1/manifest.json` och `data/lokal/geo/_lager/<sha256>/`.
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden geografi visa goteborg-test@v1
+```
+
+Visar manifestet och kontrollerar sha256 för varje fil.
+
+**3. Skapa ett projekt i geografin** (avgränsning i meter, EPSG:3011: `xmin,ymin,xmax,ymax`; här 300 x 300 m i mitten av Haga)
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden projekt skapa --geografi goteborg-test@v1 --avgransning=-209984,6413653,-209684,6413953 --namn "Haga prov" --konto <konto-id>
+```
+
+Projektet får id `haga-prov` i `data/lokal/projekt/haga-prov/`, låst till `goteborg-test@v1`, och kontot blir utredare. En
+avgränsning som sticker utanför kärnan ger en varning, inte ett fel; utanför geografins yttre gräns (ingen data) är ett fel.
+
+**4. Lägg till ett hus som scenario och se diffen mot nuläget** (centrum i EPSG:3011, höjd över mark i meter)
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden projekt scenario-hus haga-prov --namn "Nytt hus" --centrum=-209834,6413830 --bredd 20 --djup 12 --hojd 24 --status forslag
+```
+
+`--status planerat` märker scenariot som planerat läge (förberett i datamodellen, räknas inte som bas än).
+
+**5. Kör skyfall och dagsljus för nuläget och scenariot**
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden projekt kor haga-prov
+```
+
+Körningarna syns i webben under projektet (frågorna `skyfall` och `dagsljus`), för kontot som utredare.
+
+**Felmeddelanden** skrivs som en rad utan stackspår. Slutkod 3: Lantmäteri-nyckel saknas eller nekas (lägg in den på sidan
+Nycklar). Slutkod 4: inte superadmin, konto eller organisation saknas, fel i kommunfilen eller geografin saknas. Slutkod 2:
+en källa svarar inte (Lantmäteriet eller Göteborgs WFS), eller svarar med något annat än väntat (fel koordinater, tomt svar,
+avkortad lista). `--felsok` skriver stackspår vid oväntade fel.
+
+**Öppenhet.** Lantmäteriets och Göteborgs villkor för AI-visning är inte kontrollerade av Floden: rådata är alltid stängd för
+MCP, och det härledda (markmodell, resultat) är stängt tills geografin mappats om med `--villkor-kontrollerade` (en ny version,
+`--version v2`). Licenserna står i `oppenhet.toml` bredvid datat. Inga nycklar eller personuppgifter skrivs i utskrift eller
+loggar; kommunens adressfält och liknande sparas inte.
+
+**Oprövat.** Hela kedjan är provad bara mot en falsk Lantmäteriserver och syntetiska svar (utvecklingsmiljön når bara GitHub).
+Formatet på Göteborgs WFS (lagernamn, attribut, GeoJSON och axelordning) är antaget, och Lantmäteriets verkliga filer har inte
+körts genom bygget. Första körningen på servern är därför också provet.
 
 ## Uppdatera
 
@@ -166,4 +259,4 @@ om; S4 lägger en timkopia av den i bucketen. Ingen annan backup (beslut 2026-11
 ## Kostnadskontroll
 
 Basservern kostar lika mycket oavsett antal användare. Allt som kostar per timme (arbetare, GPU) går genom kostnadsbok
-och månadstak (S5) och startas till en början bara av superadmin (demoläget, S6).
+och månadstak (S5k) och startas till en början bara av superadmin (demoläget, S6d).

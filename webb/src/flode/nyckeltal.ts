@@ -42,10 +42,12 @@ export interface EkologiSvar {
   delta_pc?: number | null;
   varningar?: string[];
   artprofil_id?: string;
-  /** Nätverket (K46) som kördes; null för en föråldrad artprofil. */
+  /** Nätverket (K47) som kördes; null för en föråldrad artprofil. */
   natverk?: { natverk_id?: string; namn?: string; signalarter?: string[]; antaganden?: string[] } | null;
   /** En rad med signalart och källa, t.ex. "Signalarter: tofsmes, talltita. Källa: …, bil. 2 …". */
   kalla_rad?: string | null;
+  /** Vad resultatet visar när kvalitetsdata saknas, t.ex. "Potentiell livsmiljö, okänd kvalitet". */
+  resultat_etikett?: string | null;
   antaganden?: string[];
   intervall_typ?: string;
 }
@@ -53,6 +55,11 @@ export interface EkologiSvar {
 /** Signalart och källa på en rad, ur svaret; tom text när svaret saknar nätverk. */
 export function kallRad(e: EkologiSvar | null | undefined): string {
   return typeof e?.kalla_rad === "string" ? e.kalla_rad : "";
+}
+
+/** Etikett för vad ekologiresultatet visar; tom när svaret saknar en. */
+export function resultatEtikett(e: EkologiSvar | null | undefined): string {
+  return typeof e?.resultat_etikett === "string" ? e.resultat_etikett : "";
 }
 
 /** Antaganden som ska synas, t.ex. "p saknas i källan; d50 = tröskel/2 (500 effektiva m)." */
