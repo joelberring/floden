@@ -1,5 +1,7 @@
 import type {
   AdminProjekt,
+  AdminOrganisation,
+  AdminOrganisationDetalj,
   AdminProjektDetalj,
   HalsaSvar,
   KorBegaran,
@@ -271,5 +273,53 @@ export function sparraKonto(kontoId: string, sparrad: boolean): Promise<{ status
     method: "PUT",
     headers: JSON_HUVUD,
     body: JSON.stringify({ sparrad }),
+  });
+}
+
+export function sattProjektDelning(projektId: string, synlig: boolean): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/projekt/${encodeURIComponent(projektId)}/delning`, {
+    method: "PUT",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ organisation_synlig: synlig }),
+  });
+}
+
+/* ---------- Administration av organisationen: medlemmar och roller ---------- */
+
+export function hamtaAdminOrganisationer(): Promise<{ organisationer: AdminOrganisation[] }> {
+  return lasJson<{ organisationer: AdminOrganisation[] }>("/konto/admin/organisationer");
+}
+
+export function hamtaAdminOrganisationDetalj(id: string): Promise<AdminOrganisationDetalj> {
+  return lasJson<AdminOrganisationDetalj>(`/konto/admin/organisationer/${encodeURIComponent(id)}`);
+}
+
+export function bjudInOrganisation(orgId: string, epost: string, roll: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/admin/organisationer/${encodeURIComponent(orgId)}/inbjudningar`, {
+    method: "POST",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ epost, roll }),
+  });
+}
+
+export function sattOrganisationsRoll(orgId: string, kontoId: string, roll: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(
+    `/konto/admin/organisationer/${encodeURIComponent(orgId)}/medlemmar/${encodeURIComponent(kontoId)}`,
+    { method: "PUT", headers: JSON_HUVUD, body: JSON.stringify({ roll }) },
+  );
+}
+
+export function taBortOrganisationsMedlem(orgId: string, kontoId: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(
+    `/konto/admin/organisationer/${encodeURIComponent(orgId)}/medlemmar/${encodeURIComponent(kontoId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function bytOrganisationsnamn(orgId: string, namn: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/admin/organisationer/${encodeURIComponent(orgId)}`, {
+    method: "PUT",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ namn }),
   });
 }

@@ -42,6 +42,7 @@ docker compose -f docker-compose.prod.yml logs -f floden
 - DNS: en A-post (och AAAA) för `floden.berring.se` till serverns adress innan Caddy startar, så att certifikatet går att hämta.
 - Google: redirect-URI `https://floden.berring.se/konto/callback/google` (`docs/KONTO.md` avsnitt 2).
 - Första administratören: `docker compose -f docker-compose.prod.yml exec floden python -m konto.admin …` (`docs/KONTO.md` avsnitt 7). Därefter sköts inbjudningar, roller och spärr av konton i webben (sidan **Administration**, bara för superadmin och organisationsadmin; `docs/KONTO.md` avsnitt 10).
+- Bjuda in en kollega med stora rättigheter (men inte superadmin): se "Organisation och kollega" nedan.
 - Nyckelhemligheten `FLODEN_NYCKELHEMLIGHET` (nästa avsnitt) ska vara satt i `.env` innan användarna lägger in egna nycklar.
 
 ## Nyckelhemligheten (`FLODEN_NYCKELHEMLIGHET`)
@@ -151,6 +152,24 @@ docker compose -f docker-compose.prod.yml exec floden floden geografi mappa <geo
 Båda är valfria; `--nmd-troskel-m` (förval 3000, begränsas till 2-5 km) är den längsta spridningströskel som geografin ska
 prövas mot. Det som saknas än: att ekologilösaren läser lagren ur projektets geografi i stället för indataroller (se PLAN);
 tills dess anges `nmd` som indata som ovan. Stockholms nätverk 2022 körs bara lokalt mot stadens biotopdatabas (inte öppen) och ska aldrig laddas upp.
+## Organisation och kollega (organisationsroller)
+
+Roller i en organisation: `medlem` < `ledare` < `organisationsadmin` < `agare`. Organisationsadmin och ägare är utredare, ledare är läsare, i de av organisationens projekt som är **delade med organisationen** (inte i privata projekt, inte i andras). Nya projekt är privata. Superadmin ger fortfarande ingen projektdata. Detaljer: `docs/KONTO.md` avsnitt 5 och 11.
+
+Joel (superadmin) skapar organisationen "Floden" med sig själv som ägare och bjuder in Samuel som organisationsadmin. Ett kommando per rad, läs svaret mellan varje. `<epost>` är Joels egen inloggningsadress på första raden och Samuels Google-adress på sista; `<konto-id>` och `<org-id>` skrivs av raderna före.
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin konto-id <epost>
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin kontostatus <konto-id>
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin skapa-organisation "Floden" --agare <konto-id>
+docker compose -f docker-compose.prod.yml exec floden python -m konto.admin bjud-in-organisation <org-id> <epost> organisationsadmin
+```
+
+- Rad 1 skriver Joels konto-id (inget konto: logga in en gång med Google). Rad 2 ska skriva `superadmin=ja ...`; annars `... ge-superadmin <konto-id>` först.
+- Rad 3 skriver organisationens id. Rad 4 skriver inbjudans id. Ingen e-post skickas: säg till Samuel att logga in på https://floden.berring.se med just den adressen. Därefter kan Joel eller Samuel hantera fler personer på sidan **Administration** (Samuel kan bara bjuda in medlem och ledare; ägare och organisationsadmin utses av Joel).
+- Samuel ser ett projekt först när det är delat: projektets utredare eller skaparen (Joel, om han skapade det) kryssar i "Synligt för organisationen Floden" på sidan **Administration**. Före dess kan han bara administrera projektets medlemmar.
+- Projekt som ska höra till organisationen skapas med `floden projekt skapa ... --konto <konto-id> --organisation <org-id>` (se nedan). Redan skapade projekt i en annan organisation ändras inte.
+- Databasen migreras av sig själv till schemaversion 5 vid nästa start (befintliga roller gäller som förut). Ta en kopia av `data/konto/konto.sqlite` före uppdateringen.
 
 ## Göteborg: geografin `goteborg-test` och ett provprojekt (etapp 3, S5)
 
