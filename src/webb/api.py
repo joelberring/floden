@@ -2948,11 +2948,8 @@ class FlodenApiApp:
             "/api/analys/bifurkationer",
             "/api/analys/intervall",
             "/api/analys/svf-intervall",
-<<<<<<< HEAD
             "/api/analys/ekologi",
-=======
             *BERAKNINGS_SOKVAGAR,
->>>>>>> f3862e2 (Etapp 3: geografi först (K46), floden geografi mappa, projekt i geografin, scenario som diff, projektbehörighet på rutter och MCP, commit i kartans sidfot)
         ):
             return None
         try:
