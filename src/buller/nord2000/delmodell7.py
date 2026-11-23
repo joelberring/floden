@@ -268,14 +268,18 @@ def gransfrekvens_hz(geo: Spridningsgeometri, medeltemperatur_c: float) -> float
 
 
 def markkorrektion_csr(markfaktor_pg: float) -> float:
-    """C_SR = p_G² för p_G > 1, annars 1, AV 1106/07 ekv. (272).
+    """C_SR = max(p_G, 1), AV 1849/00 avsnitt 4.9 (s. 89) och AV 1106/07 s. 116 och 119.
 
     p_G är markeffektdelen av skärmmodellen (produkten över |p̂_G|^(w′w′) i ekv. 188 för en
-    kant, motsvarande för två kanter). C_SR begränsas nedåt till 1.
+    kant, motsvarande för två kanter). Både AV 1849/00 (s. 89: "CSCR is approximated by ...
+    pG = p/p1") och löptexten i AV 1106/07 (s. 116 och 119: "CSR ... is the ground effect part
+    of Eq. (188) limited downwards to a value of 1") anger p_G utan kvadrat i 10·lg(C_SR);
+    ekv. (272) i AV 1106/07 s. 117 trycker p_G², vilket ger +1–2 dB överskattning i skärmfallen
+    (N18R071–093). C_SR begränsas nedåt till 1.
     """
     if not markfaktor_pg >= 0.0 or not math.isfinite(markfaktor_pg):
         raise BullerFel("Delmodell 7: markfaktorn p_G ska vara ett ändligt tal ≥ 0.")
-    return markfaktor_pg * markfaktor_pg if markfaktor_pg > 1.0 else 1.0
+    return markfaktor_pg if markfaktor_pg > 1.0 else 1.0
 
 
 def lagfrekvenskorrektion_db(frekvens_hz: float, gransfrekvens_f0_hz: float) -> float:

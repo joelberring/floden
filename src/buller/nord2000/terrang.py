@@ -229,15 +229,29 @@ def gangvagsskillnad_m(geo: Terranggeometri, index: int) -> float:
     return omvag if zi - z_sikt >= 0.0 else -omvag
 
 
-def primar_skarmkant(geo: Terranggeometri) -> Skarmkant | None:
-    """Väljer T₁: den inre terrängpunkt över baslinjen som har störst Δℓ₀ (avsnitt 5.21.1).
+_KONVEX_MARGINAL_M = 0.0001  # AV 1106/07 avsnitt 5.23.2, ekv. (336)
 
-    Returnerar `None` när ingen punkt kommer i fråga (ett enda segment, eller inga inre
-    punkter med h_bas > 0).
+
+def _ar_konvex(geo: Terranggeometri, index: int) -> bool:
+    """Convex(index) enligt AV 1106/07 ekv. (336): minst 0,0001 m över linjen mellan grannarna."""
+    x_f, z_f = float(geo.x_m[index - 1]), float(geo.z_m[index - 1])
+    x_n, z_n = float(geo.x_m[index + 1]), float(geo.z_m[index + 1])
+    x_i, z_i = float(geo.x_m[index]), float(geo.z_m[index])
+    dz = z_i - z_f - (z_n - z_f) * (x_i - x_f) / (x_n - x_f)
+    return dz >= _KONVEX_MARGINAL_M
+
+
+def primar_skarmkant(geo: Terranggeometri) -> Skarmkant | None:
+    """Väljer T₁: den konvexa inre terrängpunkt över baslinjen som har störst Δℓ₀ (avsnitt 5.21.1).
+
+    Icke-konvexa punkter (t.ex. platta impedansgränser på vägbanan där z inte bryts, β = π)
+    bildar ingen diffrakterande kil enligt avsnitt 5.7.1 och avgränsar i stället skärmformen
+    (W₁/W₂ i avsnitt 5.21.1). Returnerar `None` när ingen punkt kommer i fråga (ett enda
+    segment, eller inga konvexa inre punkter med h_bas > 0).
     """
     basta: Skarmkant | None = None
     for i in range(1, geo.x_m.shape[0] - 1):
-        if float(geo.h_bas_m[i]) <= 0.0:
+        if float(geo.h_bas_m[i]) <= 0.0 or not _ar_konvex(geo, i):
             continue
         dl = gangvagsskillnad_m(geo, i)
         if basta is None or dl > basta.gangvagsskillnad_m:
