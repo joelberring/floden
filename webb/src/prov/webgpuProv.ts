@@ -19,7 +19,7 @@ import {
   skapaBenchmarkDokument,
   type BenchmarkDokument,
 } from "./benchmarkFormat";
-import { avkodaFalt, jamforFalt, median } from "./jamfor";
+import { avkodaFalt, godkand, jamforFalt, median } from "./jamfor";
 import { provSidaHtml, type ProvFallInfo, type ProvResultatRad, type ProvTillstand } from "./provSida";
 import { provTillgang } from "./provtillgang";
 import { upptackaWebGpu, ryms, type WebGpuStatus } from "./webgpuStatus";
@@ -365,7 +365,7 @@ function radFran(
     andelOverTolerans: j.andelOverTolerans,
     tolerans: j.tolerans,
     antalIckeAndliga: j.antalIckeAndliga,
-    godkand: Number.isFinite(j.storstaFel) && j.storstaFel <= j.tolerans,
+    godkand: godkand(j),
     serverMs: serverS * 1000,
   };
 }
