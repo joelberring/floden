@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """K21-lösaren `ekologi.konnektivitet`, kontrakten K44 och K45 och webb-API:t (litet demoläge).
 
 Facittest G7: ett scenario med ett nytt hus ger ΔECA <= 0 genom hela kedjan (K9 -> K1 -> mosaik ->
@@ -23,7 +24,9 @@ from ekologi import (
     EkologiFel,
     artprofil_fran_dict,
     artprofil_till_dict,
+    hamta_natverk,
     las_artprofil_fil,
+    till_artprofil,
 )
 from karna.analyslosare import LosarFel, hamta_losare
 from karna.ekologi_losare import las_markslagskonfig
@@ -88,9 +91,14 @@ def test_k45_ekologi_json_stammer_med_kontraktet_och_rastren_ar_kontraktsenliga(
         d = json.loads((mapp / "ekologi.json").read_text(encoding="utf-8"))
         assert set(d) == namn
         assert d["format"] == "floden-ekologi-konnektivitet/v1"
-        assert d["metodstatus"] == "skiss" and d["artprofil_id"] == "pollinerare"
-        assert d["artprofil"] == artprofil_till_dict(STANDARD_ARTPROFILER["pollinerare"])
-        assert "saknar exakta källhänvisningar" in d["parameterkallor"]
+        assert d["metodstatus"] == "skiss" and d["artprofil_id"] == "barrskog-nacka"
+        assert d["artprofil"] == artprofil_till_dict(till_artprofil(hamta_natverk("barrskog-nacka")))
+        assert "källbelagda" in d["parameterkallor"] and d["intervall_typ"] == "kallbaserat"
+        nv = d["natverk"]
+        assert nv["natverk_id"] == "barrskog-nacka" and nv["signalarter"] == ["tofsmes", "talltita"]
+        assert "p saknas i källan; d50 = tröskel/2" in nv["antaganden"][0]
+        assert [s["id"] for s in nv["scenarier"]] == ["1000", "3000"]
+        assert nv["oandliga_klasser"] == [] and nv["kalla"]["nyckel"] == "N"
         assert d["antal_flackar"] == len(d["dPC"])
         lo, hi = d["ECA_intervall_m2"]
         assert lo <= d["ECA_m2"] <= hi
@@ -176,9 +184,10 @@ def test_egen_artprofil_via_indata_kor_och_standardid_nekas(demo: Demo) -> None:
     fraga = (demo.fragor / "demo_ekologi.toml").read_text(encoding="utf-8")
     egen = demo.fragor / "egen_profil.json"
     egen.write_text(json.dumps({**d, "profil_id": "egen_pollinerare"}), encoding="utf-8")
-    ny = fraga.replace(
-        'parametrar = { artprofil = "pollinerare", cellstorlek_m = 4 }',
+    ny = re.sub(
+        r'parametrar = \{ natverk = "barrskog-nacka" \}\nindata = \{ nmd = "[^"]*" \}',
         'parametrar = { cellstorlek_m = 4 }\nindata = { artprofil = "egen_profil.json" }',
+        fraga,
     )
     ny = ny.replace('fraga_id = "demo-ekologi"', 'fraga_id = "egen-ekologi"')
     assert ny != fraga
@@ -223,6 +232,14 @@ def test_api_fel_ar_tydliga(demo: Demo) -> None:
     assert s == 400 and "max_flackar=2" in d["fel"]
     s, d = _post(demo, {"omrade_id": "demokvarteret", "artprofil": "hjorthornsbagge"})
     assert s == 400 and "artprofil" in d["fel"]
+    s, d = _post(demo, {"omrade_id": "demokvarteret", "natverk": "finns-inte"})
+    assert s == 400 and "natverk" in d["fel"]
+    s, d = _post(demo, {"omrade_id": "demokvarteret", "natverk": "groddjur-stockholm-2022"})
+    assert s == 400 and "lokalt" in d["fel"]
+    s, d = _post(demo, {"omrade_id": "demokvarteret", "natverk": "tofsmes-sodertalje"})
+    assert s == 400 and "inte körbart" in d["fel"] or "går inte att köra" in d["fel"]
+    s, d = _post(demo, {"omrade_id": "demokvarteret", "natverk": "barrskog-nacka", "artprofil": "pollinerare"})
+    assert s == 400
     s, d = _post(demo, {"omrade_id": "demokvarteret", "max_flackar": 1})
     assert s == 400
     s, d = _post(demo, {"omrade_id": "demokvarteret", "cellstorlek_m": 0.01})
@@ -238,3 +255,36 @@ def test_api_fel_ar_tydliga(demo: Demo) -> None:
 def test_api_ar_projektbundet_for_behorighet(demo: Demo) -> None:
     kropp = json.dumps({"omrade_id": "demokvarteret"}).encode()
     assert demo.app._projekt_for_analys("POST", "/api/analys/ekologi", kropp) == "demokvarteret"
+
+
+def test_api_natverksval_andrar_resultatet_och_visar_signalart_kalla_och_antaganden(demo: Demo) -> None:
+    s1, bar = _post(demo, {"omrade_id": "demokvarteret", "natverk": "barrskog-nacka"})
+    s2, ade = _post(demo, {"omrade_id": "demokvarteret", "natverk": "adellov-nacka"})
+    assert s1 == s2 == 200
+    assert bar["artprofil_id"] == "barrskog-nacka" and ade["artprofil_id"] == "adellov-nacka"
+    assert bar["fore"]["ECA_m2"] != ade["fore"]["ECA_m2"]
+    assert bar["intervall_typ"] == "kallbaserat" and bar["kalla_rad"].startswith("Signalarter: tofsmes")
+    assert "Källa:" in bar["kalla_rad"] and "bil. 2" in bar["kalla_rad"]
+    assert bar["resultat_etikett"] == ade["resultat_etikett"] == "Potentiell livsmiljö, okänd kvalitet"
+    (snavt,) = bar["natverk"]["habitatvarianter"]
+    assert snavt["id"] == "snavt" and snavt["klasser"] == [111, 112, 113, 121, 122, 123]
+    assert snavt["total_habitat_area_m2"] <= bar["natverk"]["habitat_huvud"]["total_habitat_area_m2"]
+    assert ade["natverk"]["habitatvarianter"] == [] and ade["natverk"]["antagna_motstand"][0]["klasser"] == [126, 127]
+    assert any("p saknas i källan; d50 = tröskel/2" in a for a in bar["antaganden"])
+    for svar in (bar, ade):
+        lo, hi = svar["fore"]["ECA_intervall_m2"]
+        assert lo < svar["fore"]["ECA_m2"] <= hi or lo <= svar["fore"]["ECA_m2"] <= hi
+        assert svar["delta_eca_m2"] <= 0.0
+    # Ett nytt hus (ändligt motstånd) minskar ECA för minst ett av nätverken i demon.
+    assert min(bar["delta_eca_m2"], ade["delta_eca_m2"]) < 0.0
+
+
+def test_api_natverkslista_ger_visningsnamn_kommunforval_och_lokala_markeringar(demo: Demo) -> None:
+    status, d = demo.get("/api/ekologi/natverk")
+    assert status == 200 and d["metodstatus"] == "skiss"
+    per = {n["natverk_id"]: n for n in d["natverk"]}
+    assert per["barrskog-nacka"]["visningsnamn"] == "Barrskogssamband (Nacka/NMD)"
+    assert per["barrskog-nacka"]["korbar"] and not per["barrskog-nacka"]["lokalt"]
+    assert per["groddjur-stockholm-2022"]["lokalt"]
+    assert not per["tofsmes-sodertalje"]["korbar"] and per["tofsmes-sodertalje"]["korbar_orsak"]
+    assert {k["kommun_id"] for k in d["kommuner"]} == {"stockholm", "goteborg"}

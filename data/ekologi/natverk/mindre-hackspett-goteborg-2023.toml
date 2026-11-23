@@ -1,0 +1,54 @@
+# Mindre hackspett, Göteborg 2023:11 (kommunspecifikt, lokal kvalitetskälla). Källa: sammanställningen
+# docs/ekologi/habitatnatverk-svensk-stadsmiljo.md, avsnittet "Mindre hackspett" (kolumnen Göteborg och andra fältstudier).
+# Göteborg har kartlagt biotoper och inventerat arten men anger ingen numerisk rörelsefriktion och ingen minsta polygon.
+# Nätverket är därför inte körbart (korbar = false). Det används som kvalitetskälla bredvid Nackas NMD-nätverk
+# (data/ekologi/kommuner.toml).
+format = "floden-habitatnatverk/v1"
+natverk_id = "mindre-hackspett-goteborg-2023"
+namn = "Mindre hackspett, Göteborgs biotopkartering 2023"
+underlag = "Göteborg 2023"
+omfattning = "biotop"
+korbar = false
+korbar_orsak = "Minsta livskraftiga polygon och numerisk rörelsefriktion saknas i artkarteringen. Avståndskurva och PC/ECA-parameter saknas."
+kvalitetskalla = true
+signalarter = ["mindre hackspett"]
+beskrivning = "Kartering av biotoper för mindre hackspett och inventering i fyra områden i Göteborgs Stad (Änggården, Bergsjön, Frölunda, Backa). Varje polygons värde för häckning och födosök graderades var för sig."
+biologisk_sakerhet = "måttlig"
+biologisk_sakerhet_text = "Hög säkerhet om metoderna, måttlig för varje kartlagd boplats (sammanställningen)."
+huvudscenario = "kvalitet"
+
+[kalla]
+nyckel = "G"
+sida = "s. 8-11, kap. 3, 5, 6, tab. 1-4, bil. 3"
+
+[habitat]
+biotop_beskrivning = "Biotopkartering med klass A, B, C och 0 för häckning och födosök. Död och murken lövved, döda grenar, lövträdsart och beståndsstruktur har betydelse som en NMD-kod ensam inte fångar."
+kvalitetsklasser = ["A", "B", "C", "0"]
+typ = "uppmätt"
+sakerhet = "måttlig"
+kalla = "G"
+sida = "s. 8-11, kap. 3, 5, tab. 1-4"
+anmarkning = "Flygbild, fältkontroll och artinventering. Klasserna beskriver lokal kvalitet och är inte motståndsvärden."
+
+[min_area]
+saknas = true
+kalla = "G"
+sida = "kap. 3, 5, tab. 1-4"
+anmarkning = "Minsta livskraftiga polygon saknas."
+
+[[scenario]]
+id = "kvalitet"
+namn = "Lokal kvalitetskälla (inget avstånd)"
+typ = "uppmätt"
+sakerhet = "måttlig"
+kalla = "G"
+sida = "kap. 6 och bil. 3"
+anmarkning = "Göteborg visar möjliga stråk med kartor och fältkunskap. Avståndströskel saknas."
+
+[[saknas]]
+parameter = "numerisk rörelsefriktion, avståndskurva och PC/ECA-parameter"
+text = "Saknas i artkarteringen."
+
+[[saknas]]
+parameter = "minsta livskraftiga polygon"
+text = "Saknas i artkarteringen."

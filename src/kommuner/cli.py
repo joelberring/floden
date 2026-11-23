@@ -57,6 +57,12 @@ def registrera(subparsers: Any) -> None:
         "--hojdmodell-fil", action="append", default=[], type=Path,
         help="Redan nedladdat höjdmodell-paket (ZIP eller GeoTIFF). Kan anges flera gånger.",
     )
+    m.add_argument("--nmd", default=None, help="NMD-GeoTIFF (EPSG:3006, CC0, hämtad av dig): valfritt marktäckelager (ekologi).")
+    m.add_argument("--vmi", default=None, help="VMI-polygoner (känd våtmark, äldre inventering): valfritt lager, kräver helst --nmd.")
+    m.add_argument(
+        "--nmd-troskel-m", type=float, default=3000.0,
+        help="Längsta spridningströskel (effektiva m) att pröva: NMD/VMI klipps med 2-5 km buffert runt kärnan.",
+    )
     m.add_argument(
         "--villkor-kontrollerade", action="store_true",
         help="Jag har läst Lantmäteriets och kommunens villkor: lagret öppnas för MCP (annars stängt).",
@@ -137,6 +143,8 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
             villkor_kontrollerade=args.villkor_kontrollerade, byggnadslager=args.byggnadslager,
             byggnader_kalla=args.byggnader_kalla,
             hojdmodell_urlar=tuple(args.hojdmodell_url), hojdmodell_filer=tuple(args.hojdmodell_fil),
+            nmd_fil=_abs(rot, args.nmd) if args.nmd else None,
+            vmi_fil=_abs(rot, args.vmi) if args.vmi else None, nmd_troskel_m=args.nmd_troskel_m,
         )  # fmt: skip
         return 0
     if kommando == "projekt skapa":

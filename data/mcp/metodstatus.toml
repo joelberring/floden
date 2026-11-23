@@ -51,5 +51,5 @@ status = "skiss"
 
 ["ekologi.konnektivitet"]
 status = "skiss"
-underlag = ["tests/ekologi/test_facit_g.py (G1-G6, analytiska facit)", "tests/ekologi/test_losare_k21.py (G7)", "docs/EKOLOGI.md"]
-anmarkning = "Artprofilernas parametrar (habitat, minsta area, spridningsavstånd, motstånd per markslag, osäkerhetsfaktorer) saknar exakta källhänvisningar och är skissparametrar. Markslagsöversättningen (data/ekologi/markslag.toml) är egna val. Resultatet jämför planalternativ för en artgrupp; det säger inget om verkliga arter."
+underlag = ["tests/ekologi/test_facit_g.py (G1-G6, analytiska facit)", "tests/ekologi/test_losare_k21.py (G7)", "tests/ekologi/test_natverk.py", "docs/EKOLOGI.md", "docs/ekologi/habitatnatverk-svensk-stadsmiljo.md"]
+anmarkning = "Parametrar källbelagda (kommunala modellval), biologisk säkerhet låg. Habitatnätverk med signalarter (data/ekologi/natverk/*.toml) har källa och sida, typ och säkerhet per värde; det som saknas i källan är märkt som saknat eller antagande (till exempel d50 = tröskel/2). Intervallet är källbaserat (lägsta och högsta värde mellan scenarier). Markslagsöversättningen för artprofiler (data/ekologi/markslag.toml) är egna val. Resultatet jämför planalternativ för ett nätverk; det säger inget om verkliga arter och är inte verifierat mot fältdata."

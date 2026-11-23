@@ -1,0 +1,48 @@
+# Tofsmes i gammal barrskog (Södertälje), Södertälje 2020. Källa: sammanställningen docs/ekologi/habitatnatverk-svensk-stadsmiljo.md.
+# Södertälje anger d50 och avklippning, men huvudrapporten saknar den numeriska motståndslistan. Nätverket är därför
+# inte körbart (korbar = false) och finns som källa för d50 och för kvoten 0,5 mellan d50 och avklippning.
+format = "floden-habitatnatverk/v1"
+natverk_id = "tofsmes-sodertalje"
+namn = "Tofsmes i gammal barrskog (Södertälje)"
+underlag = "Södertälje 2020"
+omfattning = "biotop"
+korbar = false
+korbar_orsak = "Numerisk friktionslista (marktäckestal) och säkra totalbarriärer saknas i den tillgängliga huvudrapporten."
+signalarter = ["tofsmes"]
+beskrivning = "Spridningsanalys för tofsmes med Graphab (billigaste väg) och Conefor."
+biologisk_sakerhet = "låg"
+biologisk_sakerhet_text = "Hög för d50 som modellinställning, låg för sannolikheten i naturen (sammanställningen)."
+huvudscenario = "d50"
+
+[kalla]
+nyckel = "D"
+sida = "s. 13-16, 24-25"
+
+[habitat]
+biotop_beskrivning = "Barrskog över 100 år samt barrskog som uppfyller andra urvalskriterier (naturvärdesklass 1-4, nyckelbiotop, biotopskydd, Natura 2000). Områden på 1 till under 2 ha får också funktion som mellanstationer."
+typ = "modell"
+sakerhet = "hög"
+kalla = "D"
+sida = "s. 13-16, 24-25"
+
+[min_area]
+varde_ha = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "D"
+sida = "s. 13-16, 24-25"
+
+[[scenario]]
+id = "d50"
+namn = "d50 1 250 och avklippning 2 500 effektiva m"
+troskel_m = 2500
+d50_m = 1250
+typ = "modell"
+sakerhet = "hög"
+kalla = "D"
+sida = "s. 13-16, 24-25"
+anmarkning = "Antagen spridning. Formen på hela kurvan saknas i huvudrapporten."
+
+[[saknas]]
+parameter = "numerisk motståndslista"
+text = "Marktäckestal och säkra totalbarriärer saknas i den tillgängliga huvudrapporten (den publicerade filen slutar på s. 53 och innehåller inte den detaljerade listan)."

@@ -25,7 +25,11 @@ from ekologi.artprofiler import (
     hamta_artprofil,
 )
 from ekologi.habitat import extrahera_habitatflackar
-from ekologi.intervall import kor_monoton_ekologi_intervall, valj_basta_ekologi_atgarder_k
+from ekologi.intervall import (
+    kallbaserat_intervall,
+    kor_monoton_ekologi_intervall,
+    valj_basta_ekologi_atgarder_k,
+)
 from ekologi.konnektivitet import (
     berakna_konnektivitet,
     berakna_kostnadsavstand,
@@ -34,6 +38,16 @@ from ekologi.konnektivitet import (
 )
 from ekologi.krets import bygg_kantlista, los_kretspar
 from ekologi.motstand import bygg_motstandsyta
+from ekologi.natverk import (
+    Natverk,
+    alla_natverk,
+    hamta_natverk,
+    kommunforval,
+    korbara_natverk,
+    las_natverk,
+    natverk_sha256,
+    till_artprofil,
+)
 from ekologi.typer import (
     ArtProfil,
     EkologiAtgard,
@@ -44,12 +58,23 @@ from ekologi.typer import (
     ForeEfterEkologi,
     HabitatFlack,
     HabitatKarta,
+    KallbaseratIntervall,
     KonnektivitetsResultat,
     KretsParResultat,
     MotstandsYta,
 )
 
 __all__ = [
+    "KallbaseratIntervall",
+    "Natverk",
+    "alla_natverk",
+    "hamta_natverk",
+    "kallbaserat_intervall",
+    "kommunforval",
+    "korbara_natverk",
+    "las_natverk",
+    "natverk_sha256",
+    "till_artprofil",
     "FORMAT_ARTPROFIL",
     "PARAMETERKALLA_EGEN",
     "PARAMETERKALLA_STANDARD",

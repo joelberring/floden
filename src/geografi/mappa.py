@@ -148,6 +148,9 @@ def mappa_geografi(
     nycklar_fran: Callable[[str | None], Any] | None = None,
     klient_fabrik: Callable[[Any], Any] | None = None,
     register: Any = None,
+    nmd_fil: Path | None = None,
+    vmi_fil: Path | None = None,
+    nmd_troskel_m: float = 3000.0,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
     from kommuner.baskarta import tak_till_gpkg
@@ -194,6 +197,9 @@ def mappa_geografi(
             list(d.get("varningar", [])), bool(d.get("oppen_for_mcp")),
         )  # fmt: skip
 
+    for _f, _n in ((nmd_fil, "NMD"), (vmi_fil, "VMI")):
+        if _f is not None and not Path(_f).is_file():
+            raise SkapaFel(f"{_n}-filen {_f} finns inte.")
     # 3. Höjdkälla. Kommunens filpaket kräver ingen nyckel; Lantmäteriets laser kräver kontots egen nyckel
     # (och är reserven om kommunens fil fallerar). Nyckeln kontrolleras före all hämtning när den behövs.
     fil_hojd = kommun.hojd.kalla == "filpaket"
@@ -377,6 +383,13 @@ def mappa_geografi(
         lm_manifest_sha = sha256_fil(lmf)
     lager_ra = lagra(geo_rot, bygge / "radata")
     lager_k1 = lagra(geo_rot, bygge / "k1_rutnat")
+    from geografi.markunderlag import bygg_markunderlag
+
+    mark_lager, mark_kallor, mark_varn = bygg_markunderlag(
+        geo_rot, bygge, karna, nmd_fil=nmd_fil, vmi_fil=vmi_fil, troskel_m=nmd_troskel_m,
+        villkor_kontrollerade=villkor_kontrollerade,
+    )  # fmt: skip
+    varningar.extend(mark_varn)
     fk = kommun.filpaket
     licenser = [kommun.lantmateriet.licens] if hojd_anvand == "lantmateriet" else []
     if hojd_anvand == "filpaket" and fk is not None and fk.hojdmodell is not None:
@@ -438,6 +451,7 @@ def mappa_geografi(
                 "lantmateriet_manifest_sha256": lm_manifest_sha,
                 "filer": [{"fil": f, "sha256": s} for f, s in lager_ra.filer],
             },
+            **mark_lager,
         },
         "forberakningar": {
             "terrang_karna": terr,
@@ -458,6 +472,7 @@ def mappa_geografi(
                 if kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None
                 else {"kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning}
             ),
+            **mark_kallor,
         },
         "motivering_karna": omrade.motivering,
         "oppen_for_mcp": villkor_kontrollerade,

@@ -401,8 +401,9 @@ class ProjektTjanst:
             "id": "ekologi",
             "rubrik": "Ekologi: konnektivitet (skiss)",
             "ingress": (
-                "Hur ett nytt hus ändrar möjligheten för en artgrupp att ta sig mellan "
-                "habitatfläckar. Skiss: artprofilens parametrar saknar exakta källhänvisningar."
+                "Hur ett nytt hus ändrar möjligheten för ett habitatnätverk (till exempel "
+                "barrskogssamband) att hänga ihop. Skiss: parametrarna är källbelagda "
+                "(kommunala modellval), biologisk säkerhet låg."
             ),
             "kolumner": [
                 {"id": "fore", "rubrik": "Före"},

@@ -1,0 +1,162 @@
+# Ädellöv och ek (Stockholm 2022, lokalt), Stockholm 2022 (kommunspecifikt, stadens biotopdatabas). Källa: sammanställningen
+# docs/ekologi/habitatnatverk-svensk-stadsmiljo.md. Klasserna är stadens biotopklasser och körs bara lokalt.
+format = "floden-habitatnatverk/v1"
+natverk_id = "adellov-ek-stockholm-2022"
+namn = "Ädellöv och ek (Stockholm 2022, lokalt)"
+underlag = "Stockholm 2022"
+omfattning = "biotop"
+korbar = true
+signalarter = ["bredbandad ekbarkbock", "ädelguldbagge", "kardinalrödrock"]
+beskrivning = "Habitatnätverk för arter knutna till ek och gammal ädellövskog i Stockholms stad. Linkage Mapper, betweenness och current-flow-centralitet, Ekdatabasen 2017 och Biotopdatabasen 2019."
+biologisk_sakerhet = "låg"
+biologisk_sakerhet_text = "Hög säkerhet om modellens urval, låg om ett enskilt träds biologiska betydelse kan avgöras med areafiltret (sammanställningen)."
+nmd_overforing = "ej möjlig"
+nmd_overforing_text = "Stockholms biotopklasser kan inte översättas rakt av till NMD (NMD 42 innehåller till exempel mer än gräsmatta, och stadens skikt skiljer mellan vägyta i grundkartan och större vägar som läggs ovanpå). Nätverket bygger på stadens biotopdatabas, som inte är öppen, och körs bara lokalt med en lokal klasskarta."
+huvudscenario = "1000"
+
+[kalla]
+nyckel = "S"
+sida = "s. 13-15, 41-43, tab. 6, bil. 4"
+
+[habitat]
+klasser = ["lovskog"]
+biotop_namn = "ekar minst 80 cm i diameter, skyddsvärda ädellövträd samt gammal ädellövskog och blandlövskog med ädellöv (Ekdatabasen 2017, Biotopdatabasen 2019)"
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 13-15"
+anmarkning = "Klassen lovskog är en förenkling: habitatet avgränsas lokalt ur stadens ek- och biotopdata och ges i den lokala klasskartan koden för lovskog. Träd inom 125 effektiva m grupperas i källan; enskilda träd utan granne uteslöts. Grupperingen ingår inte i Flodens körning."
+
+[min_area]
+varde_ha = 0.5
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 13-15, 41-43, tab. 6"
+anmarkning = "Minsta sammanhängande livsmiljö."
+
+[[scenario]]
+id = "1000"
+namn = "1 000 effektiva m"
+troskel_m = 1000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 13-15, 41-43, tab. 6, bil. 4"
+
+[d50_antagande]
+regel = "troskel/2"
+kvot = 0.5
+typ = "antagande"
+sakerhet = "låg"
+kalla = "D"
+sida = "s. 15-16, 19, 25, 33, 41-42"
+text = "p saknas i källan; d50 = tröskel/2"
+motivering = "Södertälje anger d50 och avklippning med kvoten 0,5 (1 250/2 500, 750/1 500, 500/1 000). Kvoten används här för Stockholms tröskel."
+
+[standard_motstand]
+varde = 50
+typ = "antagande"
+sakerhet = "låg"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+anmarkning = "Gäller bara klasser som saknas i den lokala klasskartan. Antalet sådana celler redovisas som varning. Värdet är det högsta ändliga motståndet i tabellen utom byggnad."
+
+[[motstand]]
+klasser = ["lovskog"]
+biotop_namn = "lövskog"
+varde = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["barrskog", "barr_lovblandskog"]
+biotop_namn = "barr- och barr-lövblandskog"
+varde = 2
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["tradkronor_over_oppen_mark"]
+biotop_namn = "trädkronor över öppen mark"
+varde = 2
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vag_belagd"]
+biotop_namn = "väg med beläggning, grundkartan"
+varde = 5
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vag_grus"]
+biotop_namn = "väg av grus, grundkartan"
+varde = 2
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["storre_vag_overlagrat"]
+biotop_namn = "större väg, överlagrat linjeskikt"
+varde = 50
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["byggnad"]
+biotop_namn = "byggnad (långdistansrastret)"
+varde = 200
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+anmarkning = "Källan anger 3 000 för byggnad och större väg i kortdistansrastret; här används långdistansrastret (200). Högt men ändligt."
+
+[[motstand]]
+klasser = ["hardgjord_utanfor_vag"]
+biotop_namn = "hårdgjord yta utanför vägen"
+varde = 15
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["gras_urban", "oppen_gras_mark"]
+biotop_namn = "urban öppen gräsyta och öppen torr-frisk gräsmark"
+varde = 3
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["akter", "oppen_vatmark", "oppet_vatten"]
+biotop_namn = "åker, öppen våtmark och öppet vatten"
+varde = 5
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[saknas]]
+parameter = "p(d) och d50"
+text = "Median och p saknas i källan."
+
+[[saknas]]
+parameter = "empiriskt stöd för total barriär"
+text = "Sammanställningen finner inget empiriskt belägg för total passageförlust; finita värden används."

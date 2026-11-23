@@ -1274,7 +1274,7 @@ class FlodenApiApp:
 
     def kor_ekologi_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/analys/ekologi`: ECA och PC före/efter (skiss), flaskhalsar (K45)."""
-        from ekologi import STANDARD_ARTPROFILER
+        from ekologi import STANDARD_ARTPROFILER, alla_natverk, korbara_natverk
         from webb.ekologi_analys import ekologi_svar
 
         if not kropp_bytes.strip():
@@ -1290,10 +1290,33 @@ class FlodenApiApp:
             raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
         if not self.projekt.ar_projekt(omrade_id):
             raise FlodenWebbFel(f"Okänt projekt '{omrade_id}'.", status_kod=404)
-        artprofil = payload.get("artprofil", "pollinerare")
-        if not isinstance(artprofil, str) or artprofil not in STANDARD_ARTPROFILER:
-            raise FlodenWebbFel(
-                f"Fältet 'artprofil' ska vara en av: {', '.join(sorted(STANDARD_ARTPROFILER))}."
+        natverk = payload.get("natverk")
+        artprofil = payload.get("artprofil")
+        if natverk is not None and artprofil is not None:
+            raise FlodenWebbFel("Ange bara en av fälten 'natverk' och 'artprofil'.")
+        over: dict[str, Any] = {}
+        extra_varning: list[str] = []
+        if natverk is not None:
+            alla = alla_natverk()
+            if not isinstance(natverk, str) or natverk not in alla:
+                raise FlodenWebbFel(
+                    "Fältet 'natverk' ska vara ett av: "
+                    f"{', '.join(sorted(korbara_natverk('nmd')))}."
+                )
+            nv = alla[natverk]
+            if not nv.korbar or nv.omfattning != "nmd":
+                orsak = nv.korbar_orsak or "nätverket körs bara lokalt (stadens biotopdatabas)"
+                raise FlodenWebbFel(f"Nätverket {natverk} går inte att köra på servern: {orsak}.")
+            over = {"natverk": natverk, "artprofil": None}
+        elif artprofil is not None:
+            if not isinstance(artprofil, str) or artprofil not in STANDARD_ARTPROFILER:
+                raise FlodenWebbFel(
+                    f"Fältet 'artprofil' ska vara en av: {', '.join(sorted(STANDARD_ARTPROFILER))}."
+                )
+            over = {"artprofil": artprofil, "natverk": None}
+            extra_varning.append(
+                "Artprofiler är föråldrade (skiss utan källor); välj ett habitatnätverk "
+                "(fältet 'natverk')."
             )
         scenario = payload.get("scenario")
         if scenario is not None and (not isinstance(scenario, str) or not scenario.strip()):
@@ -1307,11 +1330,14 @@ class FlodenApiApp:
         avstand_m = _tolka_tal(payload, "flaskhals_avstand_m", 20.0)
         if avstand_m < cell_m:
             raise FlodenWebbFel("Fältet 'flaskhals_avstand_m' ska vara minst cellstorleken.")
+        if "cellstorlek_m" in payload or over.get("artprofil") is not None:
+            over["cellstorlek_m"] = cell_m
+        over["max_flackar"] = max_flackar
         try:
             k = self.kartverktyg.kor_ekologi(
                 omrade_id,
                 scenario.strip() if isinstance(scenario, str) else None,
-                {"artprofil": artprofil, "cellstorlek_m": cell_m, "max_flackar": max_flackar},
+                over,
             )
         except FlodenWebbFel as exc:
             if exc.status_kod == 500 and "LosarFel" in str(exc):
@@ -1326,7 +1352,32 @@ class FlodenApiApp:
             antal_flaskhalsar=antal_flaskhalsar,
             flaskhals_avstand_m=avstand_m,
             max_flackar=max_flackar,
+            extra_varningar=extra_varning,
         )
+
+    def ekologi_natverk_lista(self) -> dict[str, Any]:
+        """Svar för `GET /api/ekologi/natverk`: habitatnätverken (K47) och kommunernas förval."""
+        from ekologi import alla_natverk, kommunforval
+
+        return {
+            "format": "floden-ekologi-natverk/v1",
+            "metodstatus": "skiss",
+            "metodnotering": (
+                "Parametrar källbelagda (kommunala modellval), biologisk säkerhet låg."
+            ),
+            "natverk": [n.katalogpost() for n in alla_natverk().values()],
+            "kommuner": [
+                {
+                    "kommun_id": k.kommun_id,
+                    "namn": k.namn,
+                    "forval_server": list(k.forval_server),
+                    "forval_lokalt": list(k.forval_lokalt),
+                    "kvalitetskallor": dict(k.kvalitetskallor),
+                    "anmarkning": k.anmarkning,
+                }
+                for k in kommunforval().values()
+            ],
+        }
 
     def kor_buller_optimering_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/analys/buller-skarmar`: CELF-skärmval + skuggzonsdetektor."""
@@ -2699,6 +2750,9 @@ class FlodenApiApp:
         try:
             if verb == "GET" and ren_sokvag == "/api/halsa":
                 return _json_svar(200, self.halsa())
+
+            if verb == "GET" and ren_sokvag == "/api/ekologi/natverk":
+                return _json_svar(200, self.ekologi_natverk_lista())
 
             if verb == "GET" and ren_sokvag == "/api/regn":
                 region_param = query.get("region", [None])[0]

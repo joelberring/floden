@@ -32,7 +32,7 @@ from markmodell.pipeline import bygg_markmodell_ruta
 from markmodell.rutnat import Ruta
 
 KALLA = "demovarld"
-KODVERSION = "demovarld/1"
+KODVERSION = "demovarld/2"
 START_TID = "2026-11-21T00:00:00+01:00"  # fast: samma värld ger samma recept (sha256)
 
 GATA_BREDD_M = 12.0
@@ -318,3 +318,57 @@ def avstand_till_kant(v: DemoVarld) -> float:
     """Minsta avstånd (m) från fokusområdet till världens kant."""
     x0, y0, x1, y1 = v.fokus_m
     return min(x0, y0, v.sida_m - x1, v.sida_m - y1)
+
+
+# --- Syntetiskt NMD-lager för ekologidemon -----------------------------------------------
+
+NMD_TALLSKOG = 111
+NMD_ADELLOVSKOG = 116
+NMD_OVRIG_OPPEN = 42
+NMD_VAG = 53
+NMD_HUS = 51
+NMD_CELL_M = 10.0
+GARD_DELNING_M = 133.0
+"""Varje gård delas längs en diagonal (summan av avstånden från kvarterets sydvästra hörn är
+`GARD_DELNING_M`): sydvästra delen tallskog, nordöstra ädellöv (omvänt i varannan gård).
+Påhittad markbeläggning, inte en tolkning av verkliga data."""
+
+
+def bygg_nmd(v: DemoVarld) -> tuple[NDArray[np.uint8], float, float, float]:
+    """Påhittat NMD-lager (klasskoder som i NMD-basskiktet) över hela världen på 10 m-celler.
+
+    Gator får 53, byggnader 51, gårdarna tallskog (111) och ädellövskog (116) i två delar och
+    världens marginal övrig öppen mark (42). Returnerar (klasser, x_min, y_max, cell) i EPSG:3011.
+    Syntetiskt: samma parametrar ger samma raster. Det är inte NMD och ska inte tolkas som det.
+    """
+    from rasterio.features import rasterize
+    from rasterio.transform import from_origin
+
+    cell = NMD_CELL_M
+    n = round(v.sida_m / cell)
+    e = v.e0_m + (np.arange(n) + 0.5) * cell
+    nn = v.n0_m + v.sida_m - (np.arange(n) + 0.5) * cell
+    ee, nr = np.meshgrid(e, nn)
+    x, y = ee - v.e0_m, nr - v.n0_m
+    c = np.asarray(v.gatucentra_m)
+    dx = np.min(np.abs(x[..., None] - c), axis=-1)
+    dy = np.min(np.abs(y[..., None] - c), axis=-1)
+    gata = (dx < GATA_BREDD_M / 2.0) | (dy < GATA_BREDD_M / 2.0)
+    klasser = np.full((n, n), NMD_OVRIG_OPPEN, dtype=np.uint8)
+    for i, j, x0, x1, y0, y1 in v.kvarter():
+        i_kv = (x >= x0) & (x < x1) & (y >= y0) & (y < y1)
+        vast = (i + j) % 2 == 0
+        delning = (x - x0) + (y - y0) < GARD_DELNING_M
+        kod = np.where(delning == vast, NMD_TALLSKOG, NMD_ADELLOVSKOG).astype(np.uint8)
+        klasser = np.where(i_kv, kod, klasser)
+    klasser = np.where(gata, np.uint8(NMD_VAG), klasser)
+    transform = from_origin(v.e0_m, v.n0_m + v.sida_m, cell, cell)
+    ringar = [
+        {"type": "Polygon", "coordinates": [[list(p) for p in (*b.polygon, b.polygon[0])]]}
+        for b in byggnader(v)
+        if b.kalla_id != LAGT_HUS
+    ]
+    hus = rasterize(((r, 1) for r in ringar), out_shape=(n, n), transform=transform, fill=0,
+                    dtype="uint8")
+    klasser = np.where(hus > 0, np.uint8(NMD_HUS), klasser).astype(np.uint8)
+    return klasser, v.e0_m, v.n0_m + v.sida_m, cell

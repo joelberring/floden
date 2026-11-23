@@ -164,3 +164,18 @@ class EkologiAtgardVal:
     marginal_eca_vinst_m2: float
     kumulativ_eca_vinst_m2: float
     vinst_ensam_m2: float
+
+
+@dataclass(frozen=True)
+class KallbaseratIntervall:
+    """Källbaserat intervall: lägsta och högsta värde mellan källor och scenarier."""
+
+    natverk_id: str
+    scenario_ids: tuple[str, ...]
+    eca_per_scenario_m2: tuple[float, ...]
+    pc_per_scenario: tuple[float, ...]
+    eca_min_m2: float
+    eca_max_m2: float
+    pc_min: float
+    pc_max: float
+    ett_scenario: bool

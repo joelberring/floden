@@ -19,7 +19,7 @@ import { meterPerPxFranZoom, zoomFranMeterPerPx } from "../vy3d/koord.ts";
 import { flodeAdress } from "./adress.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
-import { jamforelse, nyckeltal, regnText, slutsats, type Amne, type EkologiSvar, type Marksiffror, type Underlag } from "./nyckeltal.ts";
+import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, regnText, resultatEtikett, slutsats, type Amne, type EkologiSvar, type Marksiffror, type Underlag } from "./nyckeltal.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { tillstandFor } from "./tillstand.ts";
 
@@ -74,6 +74,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   let mark: MarkSvar | null = null;
   let ekologi: EkologiSvar | null = null;
   let ekologiFel: string | null = null;
+  let natverkLista: Array<{ natverk_id: string; visningsnamn: string; korbar: boolean; lokalt: boolean }> = [];
+  let valtNatverk: string | null = null;
   let lage: Lage = "skillnad";
   let svep = 0.5;
   let a: Kartmotor | null = null;
@@ -251,6 +253,10 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const regn = amne === "vatten" ? regnText(r.antaganden.regn[0]) : null;
     const vattenAnt = amne === "vatten" ? [...new Set((r.antaganden.vatten ?? []).flatMap((x) => [x.takvatten_text, x.avtappning_text]).filter((x): x is string => Boolean(x)))] : [];
     const ingress = amne === "dagsljus" || amne === "ekologi" ? projektSvar?.avsnitt.find((x) => x.id === amne)?.ingress : null;
+    const natverkVal = amne === "ekologi" && natverkLista.length > 0
+      ? `<label class="flode-liten">Habitatnätverk <select id="rs-natverk" aria-label="Habitatnätverk">${natverkLista.map((n) => `<option value="${esc(n.natverk_id)}"${n.natverk_id === (valtNatverk ?? ekologi?.artprofil_id) ? " selected" : ""}>${esc(n.visningsnamn)}</option>`).join("")}</select></label>`
+      : "";
+    const ekoKalla = amne === "ekologi" ? [resultatEtikett(ekologi), kallRad(ekologi), ...antagandeRader(ekologi), intervallForklaring(ekologi)].filter(Boolean) : [];
     const ekoVarning = amne === "ekologi" ? [...(ekologi?.varningar ?? []), ...(ekologiFel ? [`Ekologisvaret gick inte att hämta: ${ekologiFel}`] : [])] : [];
     const raderRegn = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ingress ?? "", ...ekoVarning, `Alla tal kommer ur körningen ${vy.korning_id}.`].filter(Boolean).join(" ");
     const kallVal = harRitat && (projektSvar?.vyer.length ?? 0) > 0
@@ -262,12 +268,13 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       ? `<div class="flode-chips liten" role="group" aria-label="Förändring">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.efter_namn)}</button>`).join("")}</div>`
       : "";
     inne.innerHTML = `
-      ${kallVal}${vyVal}
+      ${kallVal}${vyVal}${natverkVal}
       <h1 class="flode-slutsats" id="rs-rubrik">${esc(slutsats(amne, u))}</h1>
       <dl class="flode-tal">${tal.map((x) => `<div><dt>${esc(x.etikett)}</dt><dd>${esc(x.varde)}</dd>${x.under ? `<dd class="flode-tal-under">${esc(x.under)}</dd>` : ""}</div>`).join("")}</dl>
       <div class="flode-staplar"><span class="flode-liten flode-dampad">${esc(jfr.rubrik)}</span>
         ${jfr.staplar.map((s) => `<div class="flode-stapel"><span class="flode-dampad">${esc(s.etikett)}</span><span class="flode-stapel-fyll${s.etikett === "Före" || s.etikett === "Mindre sol" ? " ljus" : ""}" style="width:${s.andel === null ? 0 : Math.max(2, Math.round(s.andel * 100))}%"></span><span>${esc(s.varde)}</span></div>`).join("")}
       </div>
+      ${ekoKalla.length > 0 ? `<ul class="flode-liten flode-dampad" id="rs-eko-kalla">${ekoKalla.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       <p class="flode-liten flode-dampad">${esc(raderRegn)}</p>`;
   };
 
@@ -289,6 +296,12 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         if (amne === "ekologi") {
           // Talen räknas på servern (K45); webben formaterar bara. Det ritade förslaget går som scenario.
           const begaran: Record<string, unknown> = { omrade_id: projekt };
+          if (valtNatverk) begaran.natverk = valtNatverk;
+          if (natverkLista.length === 0) {
+            natverkLista = await lasJson<{ natverk: typeof natverkLista }>("/api/ekologi/natverk")
+              .then((s) => s.natverk.filter((n) => n.korbar && !n.lokalt))
+              .catch(() => []);
+          }
           if (kalla === "ritat" && t.scenario) begaran.scenario = t.scenario.slug;
           try {
             eko = await lasJson<EkologiSvar>("/api/analys/ekologi", {
@@ -336,6 +349,12 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       kalla = m.dataset.kalla as "ritat" | "projekt";
       void valjVy(vyerFor(kalla)[0] ?? null);
     } else if (m.dataset.vy) void valjVy(vyerFor(kalla).find((v) => v.id === m.dataset.vy) ?? null);
+  });
+  lyssna(rot, "change", (h) => {
+    const s = h.target as HTMLSelectElement;
+    if (s.id !== "rs-natverk") return;
+    valtNatverk = s.value;
+    void valjVy(vy);
   });
   rot.querySelector("#rs-flikar")?.addEventListener("keydown", (h) => {
     const k = (h as KeyboardEvent).key;

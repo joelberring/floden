@@ -1,0 +1,134 @@
+# Barrskogssamband (Stockholm 2022, lokalt), Stockholm 2022 (kommunspecifikt, stadens biotopdatabas). Källa: sammanställningen
+# docs/ekologi/habitatnatverk-svensk-stadsmiljo.md. Klasserna är stadens biotopklasser och körs bara lokalt.
+format = "floden-habitatnatverk/v1"
+natverk_id = "barrskog-stockholm-2022"
+namn = "Barrskogssamband (Stockholm 2022, lokalt)"
+underlag = "Stockholm 2022"
+omfattning = "biotop"
+korbar = true
+signalarter = ["tofsmes", "talltita", "svartmes"]
+beskrivning = "Habitatnätverk för barrskogsmesar i Stockholms stad. Linkage Mapper och nätverkscentralitet, stadens biotopdatabas 2019."
+biologisk_sakerhet = "låg"
+biologisk_sakerhet_text = "Hög säkerhet om vald tröskel, låg om verklig sannolikhet (sammanställningen)."
+nmd_overforing = "ej möjlig"
+nmd_overforing_text = "Stockholms biotopklasser kan inte översättas rakt av till NMD (NMD 42 innehåller till exempel mer än gräsmatta, och stadens skikt skiljer mellan vägyta i grundkartan och större vägar som läggs ovanpå). Nätverket bygger på stadens biotopdatabas, som inte är öppen, och körs bara lokalt med en lokal klasskarta."
+huvudscenario = "3000"
+
+[kalla]
+nyckel = "S"
+sida = "s. 7-9, 34-37, tab. 5, bil. 3 s. 44-47 och bil. 4"
+
+[habitat]
+klasser = ["gammal_barrskog"]
+biotop_namn = "gammal barrskog ur Biotopdatabasen 2019 (tall-, gran- och barrdominerad skog med kompletterande attribut)"
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 7-9, 34-37"
+anmarkning = "Habitatet är minst 9 ha födosöks- och häckningsmiljö tillsammans, varav minst 2 ha gammal barrskog för reproduktion. Bara arealgränsen 9 ha används i Flodens körning; kravet på 2 ha gammal barrskog ingår inte."
+
+[min_area]
+varde_ha = 9
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 7-9, 34-37, tab. 5"
+
+[[scenario]]
+id = "3000"
+namn = "3 000 effektiva m"
+troskel_m = 3000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 7-9, 34-37, tab. 5, bil. 3 s. 44-47 och bil. 4"
+
+[d50_antagande]
+regel = "troskel/2"
+kvot = 0.5
+typ = "antagande"
+sakerhet = "låg"
+kalla = "D"
+sida = "s. 15-16, 19, 25, 33, 41-42"
+text = "p saknas i källan; d50 = tröskel/2"
+motivering = "Södertälje anger d50 och avklippning med kvoten 0,5 (1 250/2 500, 750/1 500, 500/1 000). Kvoten används här för Stockholms tröskel."
+
+[standard_motstand]
+varde = 200
+typ = "antagande"
+sakerhet = "låg"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+anmarkning = "Gäller bara klasser som saknas i den lokala klasskartan. Antalet sådana celler redovisas som varning. Värdet är det högsta ändliga motståndet i tabellen utom byggnad."
+
+[[motstand]]
+klasser = ["gammal_barrskog", "annan_skog"]
+biotop_namn = "skog (barr-, bland- och lövskog)"
+varde = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["tradkronor_over_oppen_mark"]
+biotop_namn = "trädkronor över öppen mark"
+varde = 2
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vag_belagd"]
+biotop_namn = "väg med beläggning, grundkartan"
+varde = 3
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vag_grus"]
+biotop_namn = "väg av grus, grundkartan"
+varde = 2
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["storre_vag_overlagrat"]
+biotop_namn = "större väg, överlagrat linjeskikt"
+varde = 50
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["byggnad"]
+biotop_namn = "byggnad (långdistansrastret)"
+varde = 200
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+anmarkning = "Källan anger 3 000 för byggnad och större väg i kortdistansrastret; här används långdistansrastret (200). Högt men ändligt."
+
+[[motstand]]
+klasser = ["hardgjord_utanfor_vag", "gras_urban", "akter", "oppen_gras_mark", "oppen_vatmark", "oppet_vatten"]
+biotop_namn = "hårdgjord yta utanför vägen, urban öppen gräsyta, åker, öppen torr-frisk gräsmark, öppen våtmark och öppet vatten"
+varde = 200
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[saknas]]
+parameter = "p(d) och d50"
+text = "Median och p vid länktröskeln saknas i källan. Expertuppgifter om ovilja att korsa öppningar på 50-400 m avser en annan typ av rörelse."
+
+[[saknas]]
+parameter = "empiriskt stöd för total barriär"
+text = "Sammanställningen finner inget empiriskt belägg för total passageförlust; finita värden används."

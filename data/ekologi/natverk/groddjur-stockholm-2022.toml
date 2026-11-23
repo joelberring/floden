@@ -1,0 +1,224 @@
+# Groddjur (Stockholm 2022, lokalt), Stockholm 2022 (kommunspecifikt, stadens biotopdatabas). Källa: sammanställningen
+# docs/ekologi/habitatnatverk-svensk-stadsmiljo.md. Klasserna är stadens biotopklasser och körs bara lokalt.
+format = "floden-habitatnatverk/v1"
+natverk_id = "groddjur-stockholm-2022"
+namn = "Groddjur (Stockholm 2022, lokalt)"
+underlag = "Stockholm 2022"
+omfattning = "biotop"
+korbar = true
+signalarter = ["vanlig padda"]
+beskrivning = "Habitatnätverk för groddjur med vanlig padda som exempel. Linkage Mapper, separat kostnadsanalys för hemområden, stadens data om groddammar och biotoper."
+biologisk_sakerhet = "låg"
+biologisk_sakerhet_text = "Hög för inställningarna, låg för 10 % spridning över 3 km och för överföring till känsligare arter (sammanställningen)."
+nmd_overforing = "ej möjlig"
+nmd_overforing_text = "Stockholms biotopklasser kan inte översättas rakt av till NMD (NMD 42 innehåller till exempel mer än gräsmatta, och stadens skikt skiljer mellan vägyta i grundkartan och större vägar som läggs ovanpå). Nätverket bygger på stadens biotopdatabas, som inte är öppen, och körs bara lokalt med en lokal klasskarta."
+huvudscenario = "3000"
+vmi_klass = "oppen_vatmark"
+vmi_text = "Känd våtmark ur Våtmarksinventeringen (VMI, inventerad 1981-2005, äldre) kan väljas som habitat. Cellerna får då klassen oppen_vatmark."
+
+[kalla]
+nyckel = "S"
+sida = "s. 10-12, 38-40, 48, 61-65"
+
+[habitat]
+klasser = ["oppen_vatmark", "oppet_vatten_utan_anlaggning"]
+biotop_namn = "kända och potentiella lekvatten: öppen våtmark och öppet vatten"
+typ = "antagande"
+sakerhet = "låg"
+kalla = "S"
+sida = "s. 10-12, 38-40"
+anmarkning = "Källan avgränsar lekvatten ur stadens groddammsdata, sjöstränder, biotoper och expertutpekade platser; klasserna här är en förenkling för den lokala klasskartan."
+
+[min_area]
+saknas = true
+antagande_m2 = 1
+typ = "antagande"
+sakerhet = "låg"
+kalla = "S"
+sida = "s. 10-12, 38-40"
+anmarkning = "Minsta lekvattenarea saknas i källan. Floden låter varje sammanhängande habitatyta räknas (1 m2). Rapportens 100 m2 är en litteraturuppgift om paddans sommarhabitat och används inte."
+
+[[scenario]]
+id = "3000"
+namn = "3 000 effektiva m"
+troskel_m = 3000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 10-12, 38-40, 48, 61-65"
+anmarkning = "Max mellan lekvatten. Hemområdesanalysen (2 000 effektiva m från lekvatten) ingår inte. Expertuppskattningen att 10 % av de juvenila sprids 3 km över 1-3 år är ingen p-kurva."
+
+[d50_antagande]
+regel = "troskel/2"
+kvot = 0.5
+typ = "antagande"
+sakerhet = "låg"
+kalla = "D"
+sida = "s. 15-16, 19, 25, 33, 41-42"
+text = "p saknas i källan; d50 = tröskel/2"
+motivering = "Södertälje anger d50 och avklippning med kvoten 0,5 (1 250/2 500, 750/1 500, 500/1 000). Kvoten används här för Stockholms tröskel."
+
+[standard_motstand]
+varde = 1000
+typ = "antagande"
+sakerhet = "låg"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+anmarkning = "Gäller bara klasser som saknas i den lokala klasskartan. Antalet sådana celler redovisas som varning. Värdet är det högsta ändliga motståndet i tabellen (motorväg, primär och trunk)."
+
+[[motstand]]
+klasser = ["byggnad"]
+biotop_namn = "byggnad (långdistansrastret)"
+varde = 2000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+anmarkning = "Högt men ändligt. Sammanställningen finner inget empiriskt belägg för total barriär; Danmarkstudien (Hels och Buchwald) gäller dödsrisk vid motorvägspassage, en annan händelse än lyckad spridning."
+
+[[motstand]]
+klasser = ["hardgjord_utanfor_vag", "vag_belagd"]
+biotop_namn = "hårdgjord yta utanför vägen och väg med beläggning, grundkartan"
+varde = 5
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vag_grus"]
+biotop_namn = "väg av grus, grundkartan"
+varde = 2
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["storre_vag_tertiar"]
+biotop_namn = "tertiär väg, överlagrat linjeskikt"
+varde = 21
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["storre_vag_sekundar"]
+biotop_namn = "sekundär väg, överlagrat linjeskikt"
+varde = 41
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["storre_vag_motorvag_primar_trunk"]
+biotop_namn = "motorväg, primär och trunk, överlagrat linjeskikt"
+varde = 1000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 35, 39, 42, 61-65"
+
+[[motstand]]
+klasser = ["jarnvag_ovan_jord"]
+biotop_namn = "järnväg ovan jord"
+varde = 1000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 35, 39, 42, 61-65"
+
+[[motstand]]
+klasser = ["stodmur_bullerskydd"]
+biotop_namn = "stödmur och bullerskydd"
+varde = 2000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 35, 39, 42, 61-65"
+
+[[motstand]]
+klasser = ["vagbro_over_vatten"]
+biotop_namn = "särskilt identifierade vägbroar över vatten"
+varde = 1000
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 35, 39, 42, 61-65"
+
+[[motstand]]
+klasser = ["groddjurspassage"]
+biotop_namn = "utpekade fungerande groddjurspassager och valda bropassager"
+varde = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "s. 35, 39, 42, 61-65"
+
+[[motstand]]
+klasser = ["gras_urban", "akter", "oppen_gras_mark", "oppen_vatmark"]
+biotop_namn = "urban öppen gräsyta, åker, öppen gräsmark och öppen våtmark"
+varde = 3
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vass_tat"]
+biotop_namn = "tät vass"
+varde = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["oppet_vatten_utan_anlaggning"]
+biotop_namn = "öppet vatten utan anläggning"
+varde = 10
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["oppet_vatten_med_anlaggning"]
+biotop_namn = "öppet vatten med anläggning"
+varde = 19
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["vegetationstackt_vatten"]
+biotop_namn = "vegetationstäckt vatten i angivna klasser"
+varde = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[motstand]]
+klasser = ["gammal_barrskog", "annan_skog", "lovskog", "barrskog", "barr_lovblandskog"]
+biotop_namn = "skog i skogsklasserna"
+varde = 1
+typ = "modell"
+sakerhet = "hög"
+kalla = "S"
+sida = "tab. 5-6, bil. 4 s. 56-68"
+
+[[saknas]]
+parameter = "p(d) och d50"
+text = "En kalibrerad p-kurva saknas i källan."
+
+[[saknas]]
+parameter = "trädkronor över öppen mark"
+text = "Separat värde saknas för groddjur."
+
+[[saknas]]
+parameter = "minsta lekvattenarea"
+text = "Saknas i källan."

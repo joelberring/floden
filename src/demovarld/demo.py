@@ -86,6 +86,7 @@ def bygg_varld(
         if (
             gammal.get("nyckel") == nyckel
             and (varld_dir / "dagsljus" / "k9_nytt_hus.json").is_file()
+            and (varld_dir / "ekologi" / "nmd.tif").is_file()
         ):
             return False
     varld_dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +115,11 @@ def bygg_varld(
         [w.andring_nytt_hus(v)],
         "Nytt 18 m-hus i sydvästra gården, spärrar avrinningen mot porten.",
     )
+    logg("Bygger det påhittade NMD-lagret för ekologidemon ...")
+    from data_inlasning.nmd import NmdLager, skriv_nmd
+
+    nmd, x0, y1, cell = w.bygg_nmd(v)
+    skriv_nmd(NmdLager(nmd, x0, y1, cell), varld_dir / "ekologi" / "nmd.tif")
     meta.write_text(
         json.dumps(
             {

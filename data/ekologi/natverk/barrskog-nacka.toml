@@ -1,0 +1,191 @@
+# Barrskogssamband, Nacka 2020 (NMD). Källa: sammanställningen docs/ekologi/habitatnatverk-svensk-stadsmiljo.md,
+# avsnittet "Barrskogsfåglar", raden "Nacka 2020. Gammal barrskog", och "Motstånd per marktyp".
+# Varje värde har källnyckel (data/ekologi/kallor.toml), sida eller tabell, typ och säkerhet.
+# typ: uppmätt | litteratur | modell | expertbedömning | antagande (antagande = värdet saknas i källan och är
+# ett uttryckligt val i Floden). sakerhet: hög | måttlig | låg, som sammanställningen anger den för värdet.
+format = "floden-habitatnatverk/v1"
+natverk_id = "barrskog-nacka"
+namn = "Barrskogssamband"
+underlag = "Nacka 2020"
+omfattning = "nmd"
+korbar = true
+signalarter = ["tofsmes", "talltita"]
+beskrivning = "Samband för arter knutna till gammal barrskog, främst barrskogsmesar. Nackas modell: kostnadsbaserade länkar mellan barrskogsfläckar med NMD-friktion."
+biologisk_sakerhet = "låg"
+biologisk_sakerhet_text = "Hög för GIS-reglerna, låg för överföring mellan fågel, insekt och svamp (sammanställningen)."
+huvudscenario = "1000"
+
+[kalla]
+nyckel = "N"
+sida = "huvudrapport s. 9-11, bil. 2 s. 3-6, tab. 2 s. 8"
+
+[habitat]
+klasser = [111, 112, 113, 114, 121, 122, 123, 124]
+nmd_namn = "tall-, gran-, barrblandskog och lövblandad barrskog (på fastmark 111-114, på våtmark 121-124): habitatkandidater"
+typ = "antagande"
+sakerhet = "låg"
+kalla = "REG17"
+sida = "PDF-s. 4-5 (CadasterENV-motsvarighet); stöds av Botkyrka (BOT24) tab. 1 s. 50"
+anmarkning = "Översättningen till NMD-rastret är ett antagande i Floden. Nacka anger ingen NMD-lista (bil. 2 s. 3-6). Stockholms läns metodbilaga valde motsvarande klasser och lade sedan på naturvärdes- och åldersdata, som saknas här. Resultatet är därför potentiell livsmiljö, okänd kvalitet, inte gammal barrskog."
+
+[[habitatvariant]]
+id = "snavt"
+namn = "Snävt urval (jämförelsescenario)"
+klasser = [111, 112, 113, 121, 122, 123]
+nmd_namn = "tall-, gran- och barrblandskog utan lövblandning (fastmark 111-113, våtmark 121-123)"
+typ = "antagande"
+sakerhet = "låg"
+kalla = "UME23"
+sida = "s. 11"
+anmarkning = "Umeå valde tall-, gran- och barrblandskog (där med medelhöjd över 15 m som lokal ersättning för ålder). Höjd används inte här. Redovisas som jämförelse vid huvudscenariots tröskel."
+
+[min_area]
+varde_ha = 0.5
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "huvudrapport s. 9-11, bil. 2 s. 3-6"
+anmarkning = "0,5 ha är minsta modellfläck. Artprofilen anger 2 ha häckningsbiotop inom 10 ha skogsdominerad miljö för ett par mesar; det kravet används inte."
+
+[[scenario]]
+id = "1000"
+namn = "1 000 effektiva m"
+troskel_m = 1000
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "huvudrapport s. 9-11, bil. 2 s. 3-6"
+
+[[scenario]]
+id = "3000"
+namn = "3 000 effektiva m"
+troskel_m = 3000
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "huvudrapport s. 9-11, bil. 2 s. 3-6"
+
+[d50_antagande]
+regel = "troskel/2"
+kvot = 0.5
+typ = "antagande"
+sakerhet = "låg"
+kalla = "D"
+sida = "s. 15-16, 19, 25, 33, 41-42"
+text = "p saknas i källan; d50 = tröskel/2"
+motivering = "Södertälje anger d50 och avklippning med kvoten 0,5 (1 250/2 500, 750/1 500, 500/1 000). Kvoten används här för Nackas trösklar."
+
+[standard_motstand]
+varde = 20
+typ = "antagande"
+sakerhet = "låg"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2 (värdet för NMD 42)"
+anmarkning = "Gäller bara klasser som saknas i tabellen (i praktiken saknade data, NMD 0). Antalet sådana celler redovisas som varning."
+
+[[motstand]]
+klasser = [111, 112, 113, 114, 115, 116, 117, 121, 122, 123, 124, 125]
+nmd_namn = "skogsklasser utom temporärt ej skog (på fastmark 111-117, på våtmark 121-125)"
+varde = 1
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [118, 126, 127]
+nmd_namn = "temporärt ej skog på fastmark (118) och skog 126-127 på våtmark"
+varde = 10
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [128]
+nmd_namn = "temporärt ej skog på våtmark"
+varde = 20
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [41]
+nmd_namn = "öppen mark utan vegetation"
+varde = 20
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [42]
+nmd_namn = "övrig öppen mark med vegetation"
+varde = 20
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [3]
+nmd_namn = "åkermark"
+varde = 20
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [2]
+nmd_namn = "öppen våtmark"
+varde = 10
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [51]
+nmd_namn = "byggnad"
+varde = 100
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+anmarkning = "Högt men ändligt motstånd. Källan anger ingen total barriär."
+
+[[motstand]]
+klasser = [52, 53]
+nmd_namn = "övrig exploaterad yta (52) och väg/järnväg (53)"
+varde = 40
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[motstand]]
+klasser = [61, 62]
+nmd_namn = "sjö och vattendrag (61) och hav (62)"
+varde = 40
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 2 s. 8, tab. 2"
+
+[[saknas]]
+parameter = "ålder, naturvärde och beståndshöjd för habitat"
+text = "NMD saknar uppgifter om skogens ålder, struktur och naturvärde. Resultatet kallas därför potentiell livsmiljö, okänd kvalitet."
+
+[[saknas]]
+parameter = "p(d) och d50"
+text = "Median och sannolikhet vid länktröskeln saknas i källan (Nacka anger bara max 1 000 och 3 000 effektiva m)."
+
+[[saknas]]
+parameter = "separat värde för vägklass och gräsmatta"
+text = "Källan har ingen separat klass för större väg och ingen för gräsmatta (NMD 42 innehåller mer än gräsmatta)."
+
+[[saknas]]
+parameter = "empiriskt stöd för total barriär"
+text = "Sammanställningen finner inget empiriskt belägg för att byggnad, väg eller vatten är totala barriärer; finita värden används."

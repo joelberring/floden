@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { jamforelse, nyckeltal, slutsats, tal } from "./nyckeltal.ts";
+import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, resultatEtikett, slutsats, tal } from "./nyckeltal.ts";
 
 test("saknade tal visas som –, aldrig som noll", () => {
   assert.equal(tal(null, 1, "m"), "–");
@@ -65,4 +65,20 @@ test("ekologi: ECA med intervall, ΔECA och patchantal kommer ur svaret; hektar 
 test("ekologi: en positiv ΔECA får ingen framgångsmening", () => {
   const s = slutsats("ekologi", { troskel: null, siffror: null, ekologi: { delta_eca_m2: 10 } });
   assert.match(s, /kontrollera/);
+});
+
+test("ekologi: signalart, källa och antaganden kommer ur svaret och visas som text", () => {
+  const e = {
+    kalla_rad: "Signalarter: tofsmes, talltita. Källa: Bovin 2020, bil. 2 s. 3-6, tab. 2 s. 8.",
+    antaganden: ["p saknas i källan; d50 = tröskel/2 (500 effektiva m).", 5 as unknown as string],
+    intervall_typ: "kallbaserat",
+  };
+  assert.match(kallRad(e), /^Signalarter: tofsmes, talltita\. Källa:/);
+  assert.deepEqual(antagandeRader(e), ["p saknas i källan; d50 = tröskel/2 (500 effektiva m)."]);
+  assert.match(intervallForklaring(e), /lägsta och högsta värde mellan källans scenarier/);
+  assert.equal(kallRad(null), "");
+  assert.equal(resultatEtikett({ resultat_etikett: "Potentiell livsmiljö, okänd kvalitet" }), "Potentiell livsmiljö, okänd kvalitet");
+  assert.equal(resultatEtikett({ resultat_etikett: null }), "");
+  assert.deepEqual(antagandeRader(undefined), []);
+  assert.equal(intervallForklaring({ intervall_typ: "faktorer" }), "");
 });
