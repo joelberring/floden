@@ -19,7 +19,7 @@ from tests.konto.fake_idp import FalskIdp, Klocka
 ORIGIN = "https://floden.test"
 KAK = kaknamn(True)
 ANNA = {
-    "sub": "1001",
+    "sub": "sub-anna-x1",  # ej hex: får inte kunna råka finnas i slumpade id:n
     "email": "anna@example.test",
     "email_verified": True,
     "name": "Anna Exempel",
