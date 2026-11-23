@@ -34,7 +34,7 @@ from konto.databas import Databas
 from konto.hamtare import Hamtare, UrllibHamtare
 from konto.konfig import KontoKonfig
 from konto.leverantor import Leverantor, bygg_leverantor
-from konto.register import Register
+from konto.register import Register, _roll_niva
 from konto.sessioner import (
     CSRF_HEADER,
     Inloggad,
@@ -198,12 +198,22 @@ class KontoAdapter:
     def kraver_projektbehorighet(
         self, request: Forfragan, projekt_id: str, minst: str = "lasare"
     ) -> Kontroll:
-        """Inloggning och en uttrycklig projektroll. Medlemskap och superadmin räcker inte."""
+        """Inloggning och en uttrycklig projektroll. Medlemskap och superadmin räcker inte.
+
+        Undantag: det påhittade demoprojektet (`[konto] demoprojekt`, inga verkliga data), där
+        varje inloggat konto har rollen `demoprojekt_roll` (beslut 2026-11-23, Joel kan ändra)."""
         kontroll = self.kraver_inloggning(request)
         if not kontroll.tillaten or kontroll.inloggad is None:
             return kontroll
         assert self.register is not None  # noqa: S101
         if self.register.har_projektroll(kontroll.inloggad.konto_id, projekt_id, minst):
+            return kontroll
+        demo_roll = self.konfig.demoprojekt_roll
+        if (
+            projekt_id == self.konfig.demoprojekt
+            and demo_roll != "av"
+            and _roll_niva(demo_roll) >= _roll_niva(minst)
+        ):
             return kontroll
         logg.info("projekt nekat konto=%s projekt=%s", kontroll.inloggad.konto_id, projekt_id)
         svar = _fel(403, "ingen-behorighet", "Saknar behörighet till projektet")

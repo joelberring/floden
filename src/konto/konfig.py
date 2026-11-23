@@ -47,6 +47,10 @@ class KontoKonfig:
     nya_konton: str = "inbjudan"
     oppna_sokvagar: tuple[str, ...] = ("/api/halsa",)
     leverantorer: Mapping[str, LeverantorInst] = field(default_factory=dict)
+    # Det påhittade demoprojektet (inga verkliga data): roll som varje inloggat, ej spärrat konto
+    # får där utan inbjudan. "av" stänger det. Gäller bara projekt-id `demoprojekt`.
+    demoprojekt: str = "demokvarteret"
+    demoprojekt_roll: str = "utredare"
 
     @property
     def aktiv(self) -> bool:
@@ -97,6 +101,9 @@ def las_konto_konfig(
     secure = tabell.get("cookie_secure", True)
     if not isinstance(secure, bool):
         raise KontoKonfigFel("[konto].cookie_secure måste vara sant eller falskt")
+    demo_roll = _text(tabell, "demoprojekt_roll", "utredare")
+    if demo_roll not in ("av", "lasare", "utredare"):
+        raise KontoKonfigFel('[konto].demoprojekt_roll måste vara "av", "lasare" eller "utredare"')
     oppna = tabell.get("oppna_sokvagar", ["/api/halsa"])
     if not isinstance(oppna, list) or not all(isinstance(s, str) for s in oppna):
         raise KontoKonfigFel("[konto].oppna_sokvagar måste vara en lista med text")
@@ -136,6 +143,8 @@ def las_konto_konfig(
         nya_konton=nya_konton,
         oppna_sokvagar=tuple(oppna),
         leverantorer=leverantorer,
+        demoprojekt=_text(tabell, "demoprojekt", "demokvarteret"),
+        demoprojekt_roll=demo_roll,
     )
     if resultat.aktiv:
         _validera_aktiv(resultat)

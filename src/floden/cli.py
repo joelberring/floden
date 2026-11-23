@@ -1727,8 +1727,8 @@ def bygg_parser() -> argparse.ArgumentParser:
     webb_parser.add_argument(
         "--rot",
         type=str,
-        default="testsvit",
-        help="Rotmapp för K1-områden/testsvit (standard: testsvit).",
+        default=None,
+        help="Rotmapp för K1-områden/testsvit (standard: testsvit bredvid konfigurationsfilen).",
     )
     webb_parser.add_argument(
         "--konfig",

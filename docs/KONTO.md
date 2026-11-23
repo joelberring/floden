@@ -82,6 +82,7 @@ session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personup
 
 - `har_projektroll`/`kraver_projektbehorighet` ser bara `projektbehorighet`. Medlemskap i organisation eller förvaltning, och superadmin, ger ingen projektdata; en admin får tilldela sig själv en roll, och det loggas.
 - **Ingen e-postkoppling mellan konton utom** (a) verifierad adress från en betrodd leverantör, till ett verifierat konto eller ett av servern förberett konto utan identitet. Ett konto som skapats via Entra (med identitet och overifierad adress) kan aldrig bli målet för en sådan koppling (skydd mot att någon i förväg skapar ett konto med någon annans adress).
+- `demoprojekt_roll = "utredare"` (standard): varje inloggat, ej spärrat konto har den rollen på det påhittade demokvarteret (`demoprojekt = "demokvarteret"`), utan inbjudan. `"lasare"` ger bara läsning, `"av"` kräver uttrycklig roll även där. Riktiga projekt påverkas inte (BESLUT 2026-11-23).
 - `nya_konton = "inbjudan"` (standard): ett nytt konto skapas bara om identiteten har en väg in (registrerad tenant, intygad domän som är registrerad, eller en öppen inbjudan till den verifierade adressen). Annars ger callback 403 `ingen-inbjudan` och inget sparas. `"oppen"` skapar konto åt vem som helst, utan någon behörighet.
 - Omprövning vid inloggning: ändrad grupp flyttar `idp-grupp`-medlemskap (logg: konto-id, förvaltning, regel-id). `manuell`-medlemskap rörs inte.
 - Ett spärrat konto (`sparrad`) kan inte logga in och dess sessioner slutar gälla direkt.

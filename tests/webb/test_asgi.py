@@ -115,7 +115,7 @@ def test_asgi_avvisar_for_stor_kropp_via_header_och_strom() -> None:
         status, _, kropp = await _anropa_asgi(
             asgi_app,
             "POST",
-            "/api/bifurkationer",
+            "/api/analys/bifurkationer",
             headers=[(b"content-length", b"64")],
             chunks=(b"x" * 64,),
         )
@@ -127,7 +127,7 @@ def test_asgi_avvisar_for_stor_kropp_via_header_och_strom() -> None:
         status2, _, kropp2 = await _anropa_asgi(
             asgi_app,
             "POST",
-            "/api/bifurkationer",
+            "/api/analys/bifurkationer",
             chunks=(b"a" * 10, b"b" * 10),
         )
         assert status2 == 413

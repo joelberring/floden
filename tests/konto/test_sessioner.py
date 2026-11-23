@@ -204,3 +204,39 @@ def test_icke_kanonisk_base64_i_kakan_godtas_inte() -> None:
     assert granne != kanonisk
     assert base64.urlsafe_b64decode(granne + "=") == data
     assert _hash_av(kanonisk) != _hash_av(granne)
+
+
+def test_demoprojektet_ar_oppet_for_inloggade_men_inte_andra_projekt(miljo: Miljo) -> None:
+    """Det påhittade demokvarteret: alla inloggade får `utredare` (förval), inget annat projekt."""
+    webb = inloggad(miljo)
+    a = miljo.adapter
+    krav = begaran(webb, "GET", "/api/projekt/demokvarteret")
+    assert a.kraver_projektbehorighet(krav, "demokvarteret", "utredare").tillaten
+    nekad = a.kraver_projektbehorighet(krav, "ett-riktigt-projekt")
+    assert not nekad.tillaten and nekad.svar is not None and nekad.svar[0] == 403
+    # utan session: fortfarande 401, även för demon
+    utan = a.kraver_projektbehorighet(
+        Forfragan.fran_ra("GET", "/api/projekt/demokvarteret", {}), "demokvarteret"
+    )
+    assert not utan.tillaten and utan.svar is not None and utan.svar[0] == 401
+
+
+def test_demoprojekt_roll_kan_sankas_och_stangas(tmp_path: Path, miljo: Miljo) -> None:
+    from konto.konfig import KontoKonfigFel, las_konto_konfig
+
+    webb = inloggad(miljo)
+    krav = begaran(webb, "GET", "/api/projekt/demokvarteret")
+    a = miljo.adapter
+    object.__setattr__(a.konfig, "demoprojekt_roll", "lasare")
+    assert a.kraver_projektbehorighet(krav, "demokvarteret", "lasare").tillaten
+    assert not a.kraver_projektbehorighet(krav, "demokvarteret", "utredare").tillaten
+    object.__setattr__(a.konfig, "demoprojekt_roll", "av")
+    assert not a.kraver_projektbehorighet(krav, "demokvarteret").tillaten
+    assert las_konto_konfig({}).demoprojekt_roll == "utredare"
+    assert las_konto_konfig({"konto": {"demoprojekt_roll": "av"}}).demoprojekt_roll == "av"
+    try:
+        las_konto_konfig({"konto": {"demoprojekt_roll": "admin"}})
+    except KontoKonfigFel:
+        pass
+    else:
+        raise AssertionError("ogiltig roll ska ge KontoKonfigFel")
