@@ -1,9 +1,9 @@
 """Kritiska gatuavsnitt (girig sökning) och ensemblesannolikhet (T07 steg 5–6, K8).
 
-**Status: fristående.** Modulen är testad (`tests/rutt/test_entreer_kritiska_k8.py`) men inte
-inkopplad i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan
-modul i `src` använder den: `rutt/__init__.py` återexporterar den och `rutt/export.py` importerar
-`KritisktAvsnitt` som typ, men inget anropar dem; se `STATUS.md` (2026-11-23).
+**Status:** `valj_kritisk_insats_k` (CELF) är inkopplad i webb-API:t (`POST /api/rutt` med
+valfri parameter `antal_insatser`, `webb.api.FlodenApiApp.kor_rutt_analys`) och testad i
+`tests/rutt/test_entreer_kritiska_k8.py`, `tests/rutt/test_kritiska.py` samt
+`tests/webb/test_analys_steg_a.py`.
 """
 
 from __future__ import annotations

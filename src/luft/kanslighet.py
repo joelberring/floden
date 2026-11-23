@@ -10,9 +10,9 @@ Utnyttjar två exakta matematiska egenskaper hos advektion–diffusion–deposit
    källstyrkan och antitont i deposition/utspädning → två extremberäkningar ger
    garanterade MKN-dygnsintervall utan Monte Carlo.
 
-**Status: fristående.** Modulen är testad (`tests/luft/test_kanslighet.py`) men inte inkopplad i
-något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan modul i `src`
-använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
+**Status:** `kor_monoton_mkn_intervall` är inkopplad i webb-API:t (`POST /api/analys/luft-mkn`,
+`webb.api.FlodenApiApp.kor_luft_mkn_analys`) och testad i `tests/luft/test_kanslighet.py` samt
+`tests/webb/test_analys_steg_b.py`. Adjungerad känslighet/CELF är redo för 3D-luftflödet.
 """
 
 from __future__ import annotations

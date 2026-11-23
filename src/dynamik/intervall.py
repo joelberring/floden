@@ -10,10 +10,9 @@ När en uppströms sadel är topologiskt instabil (en `BifurkationsPunkt` från
 och en styrd gren-analys kör de alternativa utloppsgrenarna för topp-N kritiska
 bifurkationer och tar unionen av intervallen.
 
-**Status: fristående.** Modulen är testad (`tests/dynamik/test_intervall.py`) men inte inkopplad
-i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan modul i `src`
-använder den (`dynamik/__init__.py` återexporterar den, men inget anropar den); se `STATUS.md`
-(2026-11-23).
+**Status:** Inkopplad i webb-API:t (`POST /api/analys/intervall`,
+`webb.api.FlodenApiApp.kor_intervall_analys`) med projektbehörighetskontroll och testad i
+`tests/dynamik/test_intervall.py` samt `tests/webb/test_analys_steg_a.py`.
 """
 
 from __future__ import annotations

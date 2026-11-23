@@ -71,3 +71,15 @@ dokument från olika maskiner eller källor jämförs men märks som osäkra.
 
 Se `docs/WEBGPU-ARKITEKTUR.md` avsnitt 5. Ladda ned resultatet från sidan (källa `"webblasare"`) och lägg det här,
 t.ex. som `docs/benchmark/ÅÅÅÅ-MM-DD-<maskin>-webblasare.json`. Klientens f32-tal är skissläge.
+
+## Webbläsare (WebGPU)
+
+`2026-11-23-mac-webgpu.json`: Joels Mac (Apple, Metal 3, 10 kärnor, 16 GB, Chrome 157), körd på
+floden.berring.se. Dagsljus 300 × 300 m: 54 ms mot 4 243 ms på servern (cirka 80 gånger). Vatten 2D
+64 × 64, 1 000 steg: 9,9 ms mot 244 ms (cirka 25 gånger). Soltimmar och vatten ligger långt
+inom toleransen. SVF hade största fel 0,0126 i 0,0144 % av cellerna (13 av 90 000, nära fasader).
+
+Ett fall är godkänt när alla celler är ändliga, högst 0,1 % av cellerna ligger över toleransen och
+ingen cell har större fel än två gånger toleransen (`godkand()` i `webb/src/prov/jamfor.ts`).
+Med den regeln är också SVF-fallet godkänt. Filen ovan skrevs med den äldre regeln (största fel ≤
+toleransen) och har därför `godkand: false` för SVF.

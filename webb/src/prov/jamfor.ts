@@ -105,3 +105,19 @@ export function avkodaFalt(d: { dtyp: string; form: number[]; base64: string }):
   }
   throw new JamforFel(`Okänd dtyp: ${d.dtyp}`);
 }
+
+/** Högsta andel celler som får ligga över toleransen (0,1 %). f32 ger enstaka avvikande celler
+ * vid skarpa kanter (fasader), som inte syns i en skiss. */
+export const TILLATEN_ANDEL_OVER = 0.001;
+/** Ingen enskild cell får ha större fel än så här många gånger toleransen. */
+export const STORSTA_FEL_FAKTOR = 2;
+
+/** Godkänt: alla celler ändliga, högst 0,1 % över toleransen och inget fel över 2 × toleransen. */
+export function godkand(j: FaltJamforelse): boolean {
+  return (
+    j.antalIckeAndliga === 0 &&
+    Number.isFinite(j.storstaFel) &&
+    j.andelOverTolerans <= TILLATEN_ANDEL_OVER &&
+    j.storstaFel <= STORSTA_FEL_FAKTOR * j.tolerans
+  );
+}

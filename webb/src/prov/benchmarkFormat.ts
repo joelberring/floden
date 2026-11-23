@@ -5,7 +5,7 @@
  * "webblasare". Klientens tal är f32 och bara skissläge; det står i anmärkningen.
  */
 import type { FaltJamforelse } from "./jamfor.ts";
-import { median } from "./jamfor.ts";
+import { godkand, median } from "./jamfor.ts";
 
 export const BENCHMARK_FORMAT = "floden-benchmark/v1" as const;
 export const SKISSLAGE_TEXT =
@@ -58,7 +58,7 @@ export function tidObjekt(tiderSekunder: readonly number[]): NonNullable<Benchma
   };
 }
 
-/** Ett fall ur en fältjämförelse. `godkand` betyder största felet <= toleransen. */
+/** Ett fall ur en fältjämförelse. `godkand` enligt `godkand()` i jamfor.ts (andel celler och största fel). */
 export function fallFranJamforelse(args: {
   id: string;
   namn: string;
@@ -81,7 +81,7 @@ export function fallFranJamforelse(args: {
       varde: Number.isFinite(j.storstaFel) ? j.storstaFel : Number.MAX_VALUE,
       enhet: args.enhet,
       grans: j.tolerans,
-      godkand: Number.isFinite(j.storstaFel) && j.storstaFel <= j.tolerans,
+      godkand: godkand(j),
       beskrivning: args.beskrivning,
       matt: {
         medelfel: Number.isFinite(j.medelFel) ? j.medelFel : -1,

@@ -1,0 +1,258 @@
+{
+  "format": "floden-benchmark/v1",
+  "kalla": "webblasare",
+  "skapad_utc": "2026-11-23T11:24:24Z",
+  "kodversion": "okand",
+  "maskin": {
+    "cpu": null,
+    "karnor": 10,
+    "os": "MacIntel",
+    "python": null,
+    "numpy": null,
+    "rust_karna": null,
+    "gpu": {
+      "tillganglig": true,
+      "adapter": {
+        "vendor": "apple",
+        "architecture": "metal-3",
+        "device": "",
+        "description": ""
+      },
+      "begransningar": {
+        "maxBufferSize": 4294967292,
+        "maxStorageBufferBindingSize": 4294967292,
+        "maxStorageBuffersPerShaderStage": 10,
+        "maxComputeWorkgroupSizeX": 1024,
+        "maxComputeWorkgroupSizeY": 1024,
+        "maxComputeInvocationsPerWorkgroup": 1024,
+        "maxComputeWorkgroupsPerDimension": 65535,
+        "maxBindGroups": 4,
+        "maxUniformBufferBindingSize": 65536
+      }
+    },
+    "webblasare": {
+      "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+      "sprak": "sv",
+      "enhetsminne_gb": 16
+    }
+  },
+  "installning": {
+    "uppvarmning": 1,
+    "upprepningar": 5,
+    "tidsmatt": "median av upprepningar, performance.now() runt hela körningen (uppladdning, beräkning, läsning tillbaka)",
+    "minnesmatt": [
+      "gpu_buffrar_mb: summan av buffertstorlekarna som skapas (beräknad, inte uppmätt VRAM)"
+    ],
+    "toleranser": {
+      "dagsljus-kvarter300:svf": 0.01,
+      "dagsljus-kvarter300:soltimmar_h": 0.25,
+      "vatten2d-lutande-plan:max_djup_m": 0.0005,
+      "vatten2d-lutande-plan:slutdjup_m": 0.0005
+    }
+  },
+  "anmarkning": "Skissläge: tal från klientens f32-beräkning får bara användas som skiss. Facit är serverns f64-beräkning. Tiderna gäller den här webbläsaren och det här grafikkortet.",
+  "delar": {
+    "dagsljus": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "dagsljus-kvarter300:svf",
+          "namn": "Dagsljus: syntetiskt kvarter 300 x 300 m, SVF och soltimmar (svf)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.053900000005960465,
+            "min": 0.045400000005960464,
+            "max": 0.06009999999403953,
+            "n": 5,
+            "alla": [
+              0.0454,
+              0.0493,
+              0.0539,
+              0.0567,
+              0.0601
+            ]
+          },
+          "minne": {
+            "gpu_buffrar_mb": 1.72
+          },
+          "avvikelse": {
+            "varde": 0.012566566467285156,
+            "enhet": "andel",
+            "grans": 0.01,
+            "godkand": false,
+            "beskrivning": "GPU (f32) mot server (f64), fält svf",
+            "matt": {
+              "medelfel": 0.0000056565797991222805,
+              "andel_over_tolerans": 0.00014444444444444444,
+              "tolerans": 0.01,
+              "antal_celler": 90000,
+              "antal_ickeandliga": 0
+            }
+          },
+          "extra": {
+            "forsta_koerning_s": 0.06510000002384186,
+            "skapa_motor_s": 0.09009999999403953,
+            "server_kortid_s": 4.24264619799942,
+            "facit_beraknad_med": "server, f64 (dagsljus.horisont.horisont_riktning_ruta)",
+            "berakningsplats": "klient_webgpu_f32",
+            "indata": {
+              "nx": 300,
+              "ny": 300,
+              "n_riktningar": 64,
+              "rmax_celler": 120
+            }
+          }
+        },
+        {
+          "id": "dagsljus-kvarter300:soltimmar_h",
+          "namn": "Dagsljus: syntetiskt kvarter 300 x 300 m, SVF och soltimmar (soltimmar_h)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.053900000005960465,
+            "min": 0.045400000005960464,
+            "max": 0.06009999999403953,
+            "n": 5,
+            "alla": [
+              0.0454,
+              0.0493,
+              0.0539,
+              0.0567,
+              0.0601
+            ]
+          },
+          "minne": {
+            "gpu_buffrar_mb": 1.72
+          },
+          "avvikelse": {
+            "varde": 9.5367431640625e-7,
+            "enhet": "h",
+            "grans": 0.25,
+            "godkand": true,
+            "beskrivning": "GPU (f32) mot server (f64), fält soltimmar_h",
+            "matt": {
+              "medelfel": 6.963941786024306e-8,
+              "andel_over_tolerans": 0,
+              "tolerans": 0.25,
+              "antal_celler": 90000,
+              "antal_ickeandliga": 0
+            }
+          },
+          "extra": {
+            "forsta_koerning_s": 0.06510000002384186,
+            "skapa_motor_s": 0.09009999999403953,
+            "server_kortid_s": 4.24264619799942,
+            "facit_beraknad_med": "server, f64 (dagsljus.horisont.horisont_riktning_ruta)",
+            "berakningsplats": "klient_webgpu_f32",
+            "indata": {
+              "nx": 300,
+              "ny": 300,
+              "n_riktningar": 64,
+              "rmax_celler": 120
+            }
+          }
+        }
+      ]
+    },
+    "skyfall": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "vatten2d-lutande-plan:max_djup_m",
+          "namn": "Vatten 2D: lutande plan med sänka och byggnad, 64 x 64 celler (max_djup_m)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.009899999976158142,
+            "min": 0.009799999982118607,
+            "max": 0.009900000005960464,
+            "n": 5,
+            "alla": [
+              0.0099,
+              0.0098,
+              0.0099,
+              0.0099,
+              0.0099
+            ]
+          },
+          "minne": {
+            "gpu_buffrar_mb": 0.14
+          },
+          "avvikelse": {
+            "varde": 9.164214134216309e-7,
+            "enhet": "m",
+            "grans": 0.0005,
+            "godkand": true,
+            "beskrivning": "GPU (f32) mot samma schema i f64 på servern, fält max_djup_m",
+            "matt": {
+              "medelfel": 6.77282372407717e-8,
+              "andel_over_tolerans": 0,
+              "tolerans": 0.0005,
+              "antal_celler": 4096,
+              "antal_ickeandliga": 0
+            }
+          },
+          "extra": {
+            "forsta_koerning_s": 0.012299999982118606,
+            "skapa_motor_s": 0.08689999997615815,
+            "server_kortid_s": 0.2442392140001175,
+            "facit_beraknad_med": "server, f64 (benchmark.provfall.vatten_schema, samma schema som vatten_2d.wgsl)",
+            "berakningsplats": "klient_webgpu_f32",
+            "tidssteg": 1000,
+            "indata": {
+              "nx": 64,
+              "ny": 64
+            }
+          }
+        },
+        {
+          "id": "vatten2d-lutande-plan:slutdjup_m",
+          "namn": "Vatten 2D: lutande plan med sänka och byggnad, 64 x 64 celler (slutdjup_m)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.009899999976158142,
+            "min": 0.009799999982118607,
+            "max": 0.009900000005960464,
+            "n": 5,
+            "alla": [
+              0.0099,
+              0.0098,
+              0.0099,
+              0.0099,
+              0.0099
+            ]
+          },
+          "minne": {
+            "gpu_buffrar_mb": 0.14
+          },
+          "avvikelse": {
+            "varde": 9.164214134216309e-7,
+            "enhet": "m",
+            "grans": 0.0005,
+            "godkand": true,
+            "beskrivning": "GPU (f32) mot samma schema i f64 på servern, fält slutdjup_m",
+            "matt": {
+              "medelfel": 6.174373901046692e-8,
+              "andel_over_tolerans": 0,
+              "tolerans": 0.0005,
+              "antal_celler": 4096,
+              "antal_ickeandliga": 0
+            }
+          },
+          "extra": {
+            "forsta_koerning_s": 0.012299999982118606,
+            "skapa_motor_s": 0.08689999997615815,
+            "server_kortid_s": 0.2442392140001175,
+            "facit_beraknad_med": "server, f64 (benchmark.provfall.vatten_schema, samma schema som vatten_2d.wgsl)",
+            "berakningsplats": "klient_webgpu_f32",
+            "tidssteg": 1000,
+            "indata": {
+              "nx": 64,
+              "ny": 64
+            }
+          }
+        }
+      ]
+    }
+  }
+}
