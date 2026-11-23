@@ -359,6 +359,9 @@ def uppdatera_horisont_inkrementellt(
     `max_avstand_m` kan träffa någon ändrad cell (`z_efter != z_fore`), plus de ändrade
     cellerna själva. Ger bitidentiskt resultat med full omräkning men hoppar över 80–97 %
     av cellerna vid en lokal byggnadsändring.
+
+    **Fristående:** funktionen är testad (`tests/test_fysik_numerik_fixar.py`) men inte inkopplad i
+    något användarflöde; ingen annan modul i `src` anropar den (se `STATUS.md`, 2026-11-23).
     """
     _validera_avstand(max_avstand_m)
     if falt_fore.z_m.shape != falt_efter.z_m.shape or falt_fore.cell_m != falt_efter.cell_m:

@@ -7,6 +7,10 @@
    Himmelsandelen (SVF) är strikt antiton (monotont avtagande) i byggnadshöjderna.
    Två körningar (z_bygg - σ och z_bygg + σ) ger därför en matematiskt garanterad
    inneslutning [SVF_min, SVF_max] för varje markcell utan Monte Carlo.
+
+**Status: fristående.** Modulen är testad (`tests/dagsljus/test_modern_matte.py`) men inte
+inkopplad i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan
+modul i `src` använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
 """
 
 from __future__ import annotations

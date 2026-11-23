@@ -8,6 +8,10 @@
    Identifierar mottagare där ljudhastighetsgradienten dc/dz inom ett väderintervall
    kan passera den refraktiva skuggzonsgränsen `d_skugga = sqrt(2 R h_s) + sqrt(2 R h_r)`,
    där dämpningen i Nord2000 hoppar kraftigt och enkel monotonitet bryter.
+
+**Status: fristående.** Modulen är testad (`tests/buller/test_optimering.py`) men inte inkopplad
+i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan modul i `src`
+använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
 """
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Adjungerad käll-/vegetationskänslighet, CELF-åtgärdsval och monotona MKN-intervall.
 
 Utnyttjar två exakta matematiska egenskaper hos advektion–diffusion–deposition i
@@ -8,6 +9,10 @@ Utnyttjar två exakta matematiska egenskaper hos advektion–diffusion–deposit
 2. **M-matrismonotonitet** (`A⁻¹ >= 0`): lokalt haltbidrag är strikt monotont i
    källstyrkan och antitont i deposition/utspädning → två extremberäkningar ger
    garanterade MKN-dygnsintervall utan Monte Carlo.
+
+**Status: fristående.** Modulen är testad (`tests/luft/test_kanslighet.py`) men inte inkopplad i
+något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan modul i `src`
+använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
 """
 
 from __future__ import annotations

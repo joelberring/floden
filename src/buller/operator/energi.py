@@ -41,6 +41,9 @@ def pruna_med_energibudget(
 
     Returnerar `(total_db, antal_beraknade, garanterat_maxfel_db)`. Den sanna summan ligger
     matematiskt garanterat i `[total_db, total_db + garanterat_maxfel_db]`.
+
+    **Fristående:** funktionen är testad (`tests/test_fysik_numerik_fixar.py`) men inte inkopplad i
+    något användarflöde; ingen annan modul i `src` anropar den (se `STATUS.md`, 2026-11-23).
     """
     ovre = np.asarray(ovre_grans_db, dtype=np.float64)
     n = int(ovre.size)

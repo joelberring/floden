@@ -1,4 +1,4 @@
-"""Exporterar GIS-fritt bifiltrerings- och bifurkationsunderlag för Q2 (Samuel Lundqvist, SU).
+"""Exporterar GIS-fritt bifiltrerings- och bifurkationsunderlag för Q2 (Samuel).
 
 Exempel:
     python tools/exportera_q2_underlag.py \\

@@ -3,6 +3,10 @@
 Bygger deterministiska tabeller och måttdefinitioner ur Flodens beräkningsresultat
 (`sankgraf.bifurkation`, `luft.kanslighet`, `buller.optimering`) utan påhittade siffror
 och i svensk utredningsform (decimalkomma, smalt hårt mellanslag).
+
+**Status: fristående.** Modulen är testad (`tests/rapport/test_r2_domaner.py`) men inte
+inkopplad i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan
+modul i `src` använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
 """
 
 from __future__ import annotations
