@@ -245,8 +245,8 @@ class OauthApi:
         resurs = p.get("resource")
         if resurs is not None and resurs.rstrip("/") != self.resurs:
             return klient, None, "invalid_target"
-        if p.get("scope") and set(p["scope"].split()) - {SCOPE, "offline_access"}:
-            return klient, None, "invalid_scope"
+        # Okända scope (Claude-appen begär t.ex. `claudeai`) avvisas inte: Floden har en enda
+        # behörighet och utfärdar alltid `mcp` (RFC 6749 3.3 tillåter ett annat scope än det begärda).
         return klient, None, None
 
     def _tillbaka(self, p: Mapping[str, str], parametrar: dict[str, str]) -> Svar:
@@ -260,9 +260,14 @@ class OauthApi:
         p = _fran_fraga(req)
         klient, sida, fel = self._kontrollera_begaran(p)
         if sida is not None:
+            logg.warning("oauth auktorisering avvisad (sida) klient_kand=%s", klient is not None)
             return sida
         assert klient is not None  # noqa: S101
         if fel is not None:
+            logg.warning(
+                "oauth auktorisering avvisad klient=%s fel=%s scope=%s metod=%s",
+                klient["id"], fel, p.get("scope", "-")[:60], p.get("code_challenge_method", "-"),
+            )
             return self._tillbaka(p, {"error": fel})
         kontroll = self.a.kraver_inloggning(req)
         if not kontroll.tillaten or kontroll.inloggad is None:

@@ -404,3 +404,14 @@ def test_godkannandesidan_har_inte_no_referrer(miljo: Miljo) -> None:
     sida = _authorize_get(webb, _fraga(_registrera(miljo)))
     assert sida[0] == 200
     assert rubrik(sida, "Referrer-Policy") == "same-origin"
+
+
+def test_okant_scope_fran_claude_appen_ger_kod_med_scope_mcp(miljo: Miljo) -> None:
+    """Claude-appen begär ett eget scope (t.ex. `claudeai`); Floden utfärdar ändå `mcp`."""
+    webb, _ = _inloggad(miljo)
+    klient = _registrera(miljo)
+    p = _fraga(klient, scope="claudeai")
+    assert _authorize_get(webb, p)[0] == 200
+    kod = _kod_fran(_godkann(webb, p))
+    tok = _byt(miljo, klient, kod)
+    assert tok[0] == 200 and _json(tok)["scope"] == "mcp"
