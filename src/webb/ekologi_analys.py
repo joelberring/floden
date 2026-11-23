@@ -69,6 +69,7 @@ def ekologi_svar(
     antal_flaskhalsar: int,
     flaskhals_avstand_m: float,
     max_flackar: int,
+    extra_varningar: list[str] | None = None,
 ) -> dict[str, Any]:
     res = fragor.resultat(korning_id)
     skill = next(
@@ -107,7 +108,8 @@ def ekologi_svar(
         )
 
     d_eca = float(efter["ECA_m2"]) - float(fore["ECA_m2"])
-    varningar = [str(v) for v in efter["varningar"]]
+    varningar = [*(extra_varningar or []), *(str(v) for v in efter["varningar"])]
+    natverk = efter.get("natverk")
     if d_eca > 1e-9:
         varningar.append(
             "ΔECA är positiv: ett förslag med nytt hus bör inte öka konnektiviteten. Orsaken är "
@@ -119,6 +121,10 @@ def ekologi_svar(
         "scenario": scenario,
         "metodstatus": "skiss",
         "artprofil_id": efter["artprofil_id"],
+        "natverk": natverk,
+        "intervall_typ": efter.get("intervall_typ", "faktorer"),
+        "kalla_rad": natverk["kalla_rad"] if natverk else None,
+        "antaganden": list(natverk["antaganden"]) if natverk else [],
         "parameterkallor": efter["parameterkallor"],
         "korning_id": korning_id,
         "cellstorlek_m": efter["cellstorlek_m"],

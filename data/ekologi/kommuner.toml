@@ -1,0 +1,21 @@
+# Förval av habitatnätverk per kommun. Nätverken ligger i data/ekologi/natverk/*.toml.
+# forval_server: nätverk som går att köra på servern med öppen data (NMD).
+# forval_lokalt: kommunspecifika nätverk som bygger på stadens egen biotopdatabas (inte öppen); körs bara lokalt.
+# kvalitetskallor: lokal källa för kvalitetsinformation bredvid ett servernätverk (visas, räknas inte).
+# Underlag: sammanställningen docs/ekologi/habitatnatverk-svensk-stadsmiljo.md.
+version = 1
+
+[kommun.stockholm]
+namn = "Stockholm"
+forval_server = ["barrskog-nacka", "adellov-nacka", "mindre-hackspett-nacka", "grongoling-nacka"]
+forval_lokalt = ["barrskog-stockholm-2022", "adellov-ek-stockholm-2022", "groddjur-stockholm-2022"]
+anmarkning = "Stockholms nätverk 2022 bygger på stadens biotopdatabas och körs lokalt. På servern används Nackas NMD-nätverk."
+
+[kommun.goteborg]
+namn = "Göteborg"
+forval_server = ["barrskog-nacka", "adellov-nacka", "mindre-hackspett-nacka", "grongoling-nacka"]
+forval_lokalt = []
+anmarkning = "Göteborg använder Nackas NMD-nätverk. För mindre hackspett är Göteborg 2023:11 lokal kvalitetskälla."
+
+[kommun.goteborg.kvalitetskallor]
+"mindre-hackspett-nacka" = "mindre-hackspett-goteborg-2023"

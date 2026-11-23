@@ -1,0 +1,150 @@
+# Mindre hackspett, Nacka 2020 (NMD). Källa: sammanställningen docs/ekologi/habitatnatverk-svensk-stadsmiljo.md,
+# avsnittet "Mindre hackspett" (kolumnen Nacka) och Göteborg 2023:11 som lokal kvalitetskälla (se mindre-hackspett-goteborg-2023.toml).
+format = "floden-habitatnatverk/v1"
+natverk_id = "mindre-hackspett-nacka"
+namn = "Mindre hackspett, lövskog och sumpskog"
+underlag = "Nacka 2020"
+omfattning = "nmd"
+korbar = true
+signalarter = ["mindre hackspett"]
+beskrivning = "Habitatnätverk för mindre hackspett i lövskog, sumpskog och äldre lövträd. Nackas expertbaserade GIS-modell med Linkage Mapper."
+biologisk_sakerhet = "låg"
+biologisk_sakerhet_text = "Hög säkerhet om metoderna, måttlig för varje kartlagd boplats, låg för exakt rörelseeffekt (sammanställningen)."
+huvudscenario = "3000"
+
+[kalla]
+nyckel = "N"
+sida = "bil. 1 s. 2-3, 5-7, 11-12, 15-18, tab. 1-2"
+
+[habitat]
+klasser = [114, 115, 116, 117, 124, 125, 126, 127]
+nmd_namn = "potentiella boträdsmiljöer: lövblandad barrskog, triviallövskog, ädellövskog, triviallövskog med ädellövinslag (fastmark 114-117, våtmark 124-127)"
+typ = "expertbedömning"
+sakerhet = "måttlig"
+kalla = "N"
+sida = "bil. 1 s. 5-7, 15-17, tab. 1"
+anmarkning = "Nackas urval kräver dessutom medelålder minst 60 år eller vegetationsvolym minst 100 kubikmeter och tar bort avverkningsytor. NMD ger inte ålder eller volym, så de villkoren ingår inte i Flodens NMD-körning."
+
+[min_area]
+varde_ha = 1
+typ = "expertbedömning"
+sakerhet = "måttlig"
+kalla = "N"
+sida = "bil. 1 s. 6-7 och 17, steg 5-10"
+anmarkning = "1 ha är ett kartfilter för automatiskt urval av boplatser. Rapporten motsäger sig själv i slutsteget (ytor under 1 ha rensades bort respektive exporterades), därför måttlig säkerhet. Det är inte ett krav på en livskraftig population."
+
+[[scenario]]
+id = "3000"
+namn = "3 000 effektiva m"
+troskel_m = 3000
+typ = "expertbedömning"
+sakerhet = "måttlig"
+kalla = "N"
+sida = "bil. 1 s. 2-3, 7, 11-12, 18"
+anmarkning = "Artmetoden och GIS-steg 11 anger 3 000 m fågelväg mellan aktivitetsområden; bilagans översikt kallar också 3 000 m kostnadsviktat. Floden tolkar 3 000 som effektiva meter. Tolkningen är osäker."
+
+[d50_antagande]
+regel = "troskel/2"
+kvot = 0.5
+typ = "antagande"
+sakerhet = "låg"
+kalla = "D"
+sida = "s. 15-16, 19, 25, 33, 41-42"
+text = "p saknas i källan; d50 = tröskel/2"
+motivering = "Södertälje anger d50 och avklippning med kvoten 0,5 (1 250/2 500, 750/1 500, 500/1 000). Kvoten används här för Nackas tröskel."
+
+[standard_motstand]
+varde = 4
+typ = "antagande"
+sakerhet = "låg"
+kalla = "N"
+sida = "bil. 1 s. 16, tab. 2 (värdet för NMD 42)"
+anmarkning = "Gäller bara klasser som saknas i tabellen (i praktiken saknade data, NMD 0). Antalet sådana celler redovisas som varning."
+
+[[motstand]]
+klasser = [111, 112, 113, 114, 115, 116, 117, 121, 122, 123, 124, 125, 126, 127]
+nmd_namn = "skogsklasser utom temporärt ej skog"
+varde = 1
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 1 s. 16, tab. 2"
+
+[[motstand]]
+klasser = [2, 128]
+nmd_namn = "öppen våtmark (2) och temporärt ej skog på våtmark (128)"
+varde = 2
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 1 s. 16, tab. 2"
+
+[[motstand]]
+klasser = [42, 61, 62, 118]
+nmd_namn = "övrig öppen mark med vegetation, sötvatten, hav och temporärt ej skog på fastmark"
+varde = 4
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 1 s. 16, tab. 2"
+
+[[motstand]]
+klasser = [3, 41]
+nmd_namn = "åkermark och öppen vegetationsfri mark"
+varde = 10
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 1 s. 16, tab. 2"
+
+[[motstand]]
+klasser = [51, 52, 53]
+nmd_namn = "byggnad, övrig exploaterad yta, väg och järnväg"
+varde = 100
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 1 s. 16, tab. 2"
+anmarkning = "Högt men ändligt motstånd. Sammanställningen finner inget empiriskt stöd för oändligt motstånd för arten."
+
+[[kompletterande]]
+parameter = "häckningsrevir enligt fältstudie"
+varde = "minst 40 ha lövdominerad skog, högst 200 ha"
+anvands = false
+typ = "litteratur"
+sakerhet = "måttlig"
+kalla = "W"
+sida = "s. 387, 390-394"
+anmarkning = "Forskarnas skötselråd (södra Sverige, sex års radiotelemetri). Används inte som parameter i Floden; ett annat mått än Nackas 1 ha och 3 000 m."
+
+[[kompletterande]]
+parameter = "födosök från boplats"
+varde = "500 effektiva m"
+anvands = false
+typ = "expertbedömning"
+sakerhet = "hög"
+kalla = "N"
+sida = "bil. 1 s. 6-7 och 17, steg 5-10"
+anmarkning = "Födosöksskog (NMD 111-117, 121-127) inom 500 effektiva m från boplats. Ingår inte i Flodens förenklade körning."
+
+[[kompletterande]]
+parameter = "ungfågelspridning, median av tio återfynd"
+varde = "3 755,5 m (1 880-6 790 m)"
+anvands = false
+typ = "uppmätt"
+sakerhet = "låg"
+kalla = "H"
+sida = "s. 213-215, tab. 1"
+anmarkning = "Tyskland (Hessen). Låg säkerhet för hela populationen. Används inte som parameter."
+
+[[saknas]]
+parameter = "p(d) och d50"
+text = "Sannolikhet och biologiskt maximum saknas i källan."
+
+[[saknas]]
+parameter = "minsta livskraftiga fläckarea"
+text = "En visad minsta fläckarea som säkerställer en långsiktigt livskraftig population saknas."
+
+[[saknas]]
+parameter = "empiriskt stöd för total barriär"
+text = "Empiriskt stöd för att sätta en svensk väg, byggnad eller vattenyta till oändligt motstånd för arten saknas."

@@ -1,0 +1,38 @@
+# Källnycklar för habitatnätverken (data/ekologi/natverk/*.toml).
+# Nycklarna är samma som i källsammanställningen docs/ekologi/habitatnatverk-svensk-stadsmiljo.md
+# (avsnittet "Fullständiga referenser"). Här står bara den korta hänvisningen; fullständig referens finns i
+# sammanställningen. Sidnummer avser rapporternas tryckta sidor; Nackas bilagor har egen paginering.
+# En nyckel som inte finns här ger fel när ett nätverk läses.
+version = 1
+
+[N]
+kort = "Bovin 2020, Grön infrastruktur i Nacka kommun (WSP för Nacka kommun), bilaga 1 och 2"
+kommun = "Nacka"
+
+[S]
+kort = "Stockholms stad, Miljöförvaltningen 2023, Habitatnätverk i Stockholms stad 2022"
+kommun = "Stockholm"
+
+[D]
+kort = "Ekologigruppen 2020, Ekologiska samband i Södertälje"
+kommun = "Södertälje"
+
+[G]
+kort = "Bengtsson, Albeck och Appelqvist 2023, Pro Natura, rapport 2023:11 (mindre hackspett i Göteborgs Stad)"
+kommun = "Göteborg"
+
+[W]
+kort = "Wiktander, Olsson och Nilsson 2001, Biological Conservation 100, 387-395"
+kommun = ""
+
+[H]
+kort = "Höntsch, Conz och Rossmanith 2008, Vogelkundliche Berichte aus Niedersachsen 40, 213-216"
+kommun = ""
+
+[PC]
+kort = "Saura och Pascual-Hortal 2007, Landscape and Urban Planning 83, 91-103"
+kommun = ""
+
+[NMD]
+kort = "Naturvårdsverket, Nationella marktäckedata (produktdokumentation, kodnyckel)"
+kommun = ""

@@ -2,14 +2,16 @@
 # världen och kör frågan med
 #   floden demo
 #
-# SKISS. Artprofilen `pollinerare` (vildbin och humlor) är en skissprofil: dess parametrar saknar
-# exakta källhänvisningar (docs/EKOLOGI.md). Resultatet visar hur ett nytt hus ändrar konnektiviteten
-# för just den profilen i det påhittade kvarteret; det säger ingenting om verkliga arter.
+# SKISS. Nätverket `barrskog-nacka` (Barrskogssamband, Nacka 2020, NMD) är ett habitatnätverk med
+# signalarter: parametrarna (habitat, minsta area, tröskel, motstånd per NMD-klass) har källa och sida i
+# data/ekologi/natverk/barrskog-nacka.toml. Markunderlaget är ett PÅHITTAT NMD-lager (indata `nmd`,
+# 10 m, gårdarna delade i tallskog och ädellövskog); ritade hus läggs ovanpå som NMD 51. Resultatet
+# visar hur ett nytt hus ändrar konnektiviteten i det påhittade kvarteret; det säger ingenting om
+# verkliga arter. Bytbart till `adellov-nacka` (Ädellövsamband) med `natverk` nedan.
 #
 # Samma bas och samma K9 som vattenfrågan: fokusområdet (300 x 300 m) som en ruta, ett 18 m-hus i sydvästra
-# gården. Gårdarnas gräs är habitat för profilen, gatorna är hårdgjorda hinder, träden längs gatan
-# ger trädskikt (vegetation.tif). Rutnätet är 4 m. Intervallet [ECA_min, ECA_max] kommer ur två
-# extremkörningar (motstånd x0,7 och x1,4, spridningsavstånd x0,8 och x1,25).
+# gården. Intervallet [ECA_min, ECA_max] är källbaserat: lägsta och högsta värde mellan nätverkets
+# tröskelscenarier (1 000 och 3 000 effektiva m).
 kontrakt = "K20/v1"
 fraga_id = "demo-ekologi"
 beskrivning = "Ekologisk konnektivitet (ECA och flaskhalsar, skiss) före och efter ett nytt hus."
@@ -24,7 +26,8 @@ k9 = ["../../data/demo/varld/vatten/k9_nytt_hus.json"]
 [[analyser]]
 id = "konnektivitet"
 losare = "ekologi.konnektivitet"
-parametrar = { artprofil = "pollinerare", cellstorlek_m = 4 }
+parametrar = { natverk = "barrskog-nacka" }
+indata = { nmd = "../../data/demo/varld/ekologi/nmd.tif" }
 
 [[jamforelser]]
 analys = "konnektivitet"

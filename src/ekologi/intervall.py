@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -18,6 +18,7 @@ from ekologi.typer import (
     EkologiAtgardVal,
     EkologiFel,
     EkologiIntervallResultat,
+    KallbaseratIntervall,
 )
 
 
@@ -164,3 +165,31 @@ def valj_basta_ekologi_atgarder_k(
             heapq.heappush(ko, (-ny_marg, aid, steg - 1, idx))
 
     return resultat
+
+
+def kallbaserat_intervall(
+    natverk_id: str, resultat_per_scenario: Mapping[str, Any]
+) -> KallbaseratIntervall:
+    """Lägsta och högsta ECA och PC mellan scenarier/källor för samma nätverk.
+
+    `resultat_per_scenario` är scenario-id till `KonnektivitetsResultat`. Ersätter intervallet med
+    faktorerna x0,7/x1,4. Med ett enda scenario är intervallet en punkt (`ett_scenario`), eftersom
+    inget källbaserat intervall då finns. Monotonin (G6) gäller: för scenarier som bara skiljer i
+    d50 är ECA och PC icke-avtagande i d50, så min och max ligger vid minsta respektive största d50.
+    """
+    if not resultat_per_scenario:
+        raise EkologiFel("Inga scenarier att bilda ett källbaserat intervall av.")
+    ids = tuple(resultat_per_scenario)
+    eca = tuple(float(resultat_per_scenario[i].eca_m2) for i in ids)
+    pc = tuple(float(resultat_per_scenario[i].pc) for i in ids)
+    return KallbaseratIntervall(
+        natverk_id=natverk_id,
+        scenario_ids=ids,
+        eca_per_scenario_m2=eca,
+        pc_per_scenario=pc,
+        eca_min_m2=min(eca),
+        eca_max_m2=max(eca),
+        pc_min=min(pc),
+        pc_max=max(pc),
+        ett_scenario=len(ids) == 1,
+    )

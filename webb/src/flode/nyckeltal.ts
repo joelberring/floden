@@ -41,6 +41,30 @@ export interface EkologiSvar {
   delta_eca_procent?: number | null;
   delta_pc?: number | null;
   varningar?: string[];
+  artprofil_id?: string;
+  /** Nätverket (K46) som kördes; null för en föråldrad artprofil. */
+  natverk?: { natverk_id?: string; namn?: string; signalarter?: string[]; antaganden?: string[] } | null;
+  /** En rad med signalart och källa, t.ex. "Signalarter: tofsmes, talltita. Källa: …, bil. 2 …". */
+  kalla_rad?: string | null;
+  antaganden?: string[];
+  intervall_typ?: string;
+}
+
+/** Signalart och källa på en rad, ur svaret; tom text när svaret saknar nätverk. */
+export function kallRad(e: EkologiSvar | null | undefined): string {
+  return typeof e?.kalla_rad === "string" ? e.kalla_rad : "";
+}
+
+/** Antaganden som ska synas, t.ex. "p saknas i källan; d50 = tröskel/2 (500 effektiva m)." */
+export function antagandeRader(e: EkologiSvar | null | undefined): string[] {
+  return Array.isArray(e?.antaganden) ? e.antaganden.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** Förklaring av vad intervallet är; källbaserat för nätverk. */
+export function intervallForklaring(e: EkologiSvar | null | undefined): string {
+  return e?.intervall_typ === "kallbaserat"
+    ? "Intervallet är lägsta och högsta värde mellan källans scenarier."
+    : "";
 }
 
 export interface Tal {

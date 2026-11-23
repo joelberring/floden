@@ -109,6 +109,39 @@ standardflöde); Anthropics servrar måste kunna nå sajten (inga IP-spärrar fr
 Körloggen för MCP-anrop ligger i `data/lokal/mcp/korlogg.jsonl` (volymen `./data/lokal`) och har konto-id och token-id, aldrig token.
 Spärren för data som inte är öppna (`docs/MCP.md`) är alltid på; data under `data/lokal` räknas som stängda för MCP.
 
+## Markunderlag för ekologi: NMD och VMI
+
+Habitatnätverken (`docs/EKOLOGI.md`, K46) behöver NMD (Nationella marktäckedata, Naturvårdsverket, 10 m raster, öppna data, CC0,
+SWEREF 99 TM) och, valfritt, Våtmarksinventeringen (VMI, inventerad 1981-2005, äldre). Containern som koden byggdes i når bara
+GitHub och paketregister, så inläsarna är testade mot syntetiska raster och vektorer och **inte körda mot riktiga filer**. Exakta
+filnamn och adresser är därför inte kontrollerade: hämta dem från Naturvårdsverkets sidor.
+
+- NMD: https://www.naturvardsverket.se/verktyg-och-tjanster/kartor-och-karttjanster/nationella-marktackedata/ladda-ner-nationella-marktackedata/
+  (filer under https://geodata.naturvardsverket.se/nedladdning/marktacke/ , NMD2018 eller NMD2023, basskiktet som GeoTIFF).
+- VMI: https://geodata.naturvardsverket.se/nedladdning/VMI/ (en mapp per län, GIS-skikt i `5_GIS_skikt`).
+
+Kommandon på servern, ett per rad (kärnan är områdets avgränsning i EPSG:3011; bufferten väljs efter nätverkets tröskel, 2-5 km):
+
+```bash
+mkdir -p data/lokal/ekologi/nmd data/lokal/ekologi/prov1
+curl -fL -o data/lokal/ekologi/nmd/nmd.zip "<NMD-URL från nedladdningssidan>"
+unzip -o data/lokal/ekologi/nmd/nmd.zip -d data/lokal/ekologi/nmd
+docker compose -f docker-compose.prod.yml exec floden python -m data_inlasning.nmd klipp --nmd data/lokal/ekologi/nmd/<NMD-fil>.tif --kaerna <E0> <N0> <E1> <N1> --natverk barrskog-nacka --ut data/lokal/ekologi/prov1
+curl -fL -o data/lokal/ekologi/vmi.zip "<VMI-URL för länet>"
+docker compose -f docker-compose.prod.yml exec floden python -m data_inlasning.vmi klipp --vmi data/lokal/ekologi/<VMI-fil>.gpkg --kaerna <E0> <N0> <E1> <N1> --buffert-m 3000 --ut data/lokal/ekologi/prov1
+```
+
+Kommandona skriver `nmd.tif` och `nmd.json` (källa, kontrollsumma, utbredning) respektive `kand_vatmark.tif` och
+`kand_vatmark.json` (märkt som äldre). Lagren är projektlager: ange dem som indata i projektets ekologifråga, som i
+`exempel/fragor/demo_ekologi.toml`:
+
+```toml
+indata = { nmd = "data/lokal/ekologi/prov1/nmd.tif" }
+```
+
+Ritade hus (K9) läggs ovanpå som NMD 51 av lösaren. `src/geografi` finns inte på main; när den finns ska lagren registreras i
+dess manifest. Stockholms nätverk 2022 körs bara lokalt mot stadens biotopdatabas (inte öppen) och ska aldrig laddas upp.
+
 ## Uppdatera
 
 ```bash

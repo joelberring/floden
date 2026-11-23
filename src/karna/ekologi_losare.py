@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Ekologilösaren för kärnan (K21): `ekologi.konnektivitet` på K1 v2-rutor (kontrakt K44 och K45).
 
 Kärnan (`src/ekologi/`, numpy och scipy) räknar; den här filen är adaptern mot K1: rutorna (efter
@@ -37,6 +38,10 @@ STANDARD_SPRIDNING_FAKTOR = (0.8, 1.25)
 """Spridningsavståndets faktorer för intervallet (kärnans standard)."""
 _PARAMETRAR = {
     "artprofil",
+    "natverk",
+    "natverk_sha256",
+    "anvand_vmi",
+    "biotop_klasskoder",
     "cellstorlek_m",
     "max_flackar",
     "max_celler",
@@ -149,10 +154,13 @@ class Konnektivitet(Analyslosare):
     version: ClassVar[str] = "1"
     beskrivning: ClassVar[str] = (
         "Ekologisk konnektivitet för en artprofil (skiss): ECA och PC med monotona intervall, "
-        "dPC per habitatfläck, strömtäthet (flaskhalsar) och känslighet. Parametrarna artprofil, "
-        "cellstorlek_m, max_flackar och max_celler."
+        "dPC per habitatfläck, strömtäthet (flaskhalsar) och känslighet. Parametrarna natverk "
+        "(habitatnätverk med signalarter, K46; förval) eller artprofil (föråldrad), cellstorlek_m, "
+        "max_flackar och max_celler."
     )
-    valfria_indataroller: ClassVar[tuple[str, ...]] = ("artprofil",)
+    valfria_indataroller: ClassVar[tuple[str, ...]] = (
+        "artprofil", "nmd", "kand_vatmark", "biotopraster"
+    )
     utdataroller: ClassVar[tuple[str, ...]] = ("stromtathet", "kansighet", "ekologi")
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
@@ -161,18 +169,52 @@ class Konnektivitet(Analyslosare):
         okanda = sorted(set(parametrar) - _PARAMETRAR)
         if okanda:
             raise LosarFel(f"{self.namn}: okända parametrar {okanda}.")
-        if "markslagsmappning_sha256" in parametrar:
-            raise LosarFel(f"{self.namn}: 'markslagsmappning_sha256' sätts av lösaren.")
+        for satt in ("markslagsmappning_sha256", "natverk_sha256"):
+            if satt in parametrar:
+                raise LosarFel(f"{self.namn}: '{satt}' sätts av lösaren.")
         profil = parametrar.get("artprofil")
+        natverk = parametrar.get("natverk")
+        if profil is not None and natverk is not None:
+            raise LosarFel(f"{self.namn}: ange bara en av parametrarna 'natverk' och 'artprofil'.")
         if profil is not None and profil not in STANDARD_ARTPROFILER:
             raise LosarFel(
                 f"{self.namn}: okänd artprofil {profil!r}. Giltiga: "
                 f"{', '.join(sorted(STANDARD_ARTPROFILER))} (eller indata 'artprofil', K44)."
             )
+        natverk_hash: str | None = None
+        if natverk is not None:
+            from ekologi import EkologiFel, hamta_natverk, natverk_sha256
+
+            try:
+                n = hamta_natverk(str(natverk))
+                natverk_hash = natverk_sha256(n.natverk_id)
+            except EkologiFel as exc:
+                raise LosarFel(f"{self.namn}: {exc}") from exc
+            if not n.korbar:
+                raise LosarFel(f"{self.namn}: nätverket {natverk} är inte körbart: {n.korbar_orsak}")
+            for fel in ("motstand_faktor_intervall", "spridning_faktor_intervall"):
+                if parametrar.get(fel) is not None:
+                    raise LosarFel(
+                        f"{self.namn}: '{fel}' gäller bara artprofil; nätverk har källbaserat intervall."
+                    )
         spr = _intervall(parametrar, "spridning_faktor_intervall")
+        cell_ra = parametrar.get("cellstorlek_m")
+        biotop = parametrar.get("biotop_klasskoder")
+        if biotop is not None and (
+            not isinstance(biotop, Mapping)
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in biotop.values())
+        ):
+            raise LosarFel(f"{self.namn}: 'biotop_klasskoder' ska vara klassnamn till heltalskod.")
         return {
             "artprofil": profil,
-            "cellstorlek_m": _tal(parametrar, "cellstorlek_m", STANDARD_CELLSTORLEK_M, over=0.0),
+            "natverk": natverk,
+            "natverk_sha256": natverk_hash,
+            "anvand_vmi": bool(parametrar.get("anvand_vmi", False)),
+            "biotop_klasskoder": dict(biotop) if biotop is not None else None,
+            "cellstorlek_m": (
+                None if (natverk is not None and cell_ra is None)
+                else _tal(parametrar, "cellstorlek_m", STANDARD_CELLSTORLEK_M, over=0.0)
+            ),
             "max_flackar": _heltal(parametrar, "max_flackar", STANDARD_MAX_FLACKAR, minst=2),
             "max_celler": _heltal(parametrar, "max_celler", STANDARD_MAX_CELLER, minst=1),
             "motstand_faktor_intervall": _intervall(parametrar, "motstand_faktor_intervall"),
@@ -202,10 +244,13 @@ class Konnektivitet(Analyslosare):
         from testsvit.k1_io import skriv_geotiff
 
         p = k.parametrar
+        if p.get("natverk") is not None:
+            return _kor_natverk(self, k)
         fil_profil = k.indata.get("artprofil")
         if (p["artprofil"] is None) == (fil_profil is None):
             raise LosarFel(
-                f"{self.namn}: ange exakt en av parametern 'artprofil' och indata 'artprofil'."
+                f"{self.namn}: ange exakt en av parametrarna 'natverk' och 'artprofil' "
+                "eller indata 'artprofil'."
             )
         try:
             if fil_profil is not None:
@@ -367,6 +412,8 @@ class Konnektivitet(Analyslosare):
             },
             "dPC": dpc,
             "markslagsmappning": {"sha256": konfig.sha256, "version": konfig.version},
+            "intervall_typ": "faktorer",
+            "natverk": None,
             "varningar": varningar,
         }
         (k.utmapp / "ekologi.json").write_text(
@@ -392,6 +439,224 @@ class Konnektivitet(Analyslosare):
             },
             varningar=tuple(varningar),
         )
+
+
+def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
+    """Körning för ett habitatnätverk (K46): NMD (eller biotopraster) som mark, K9-hus som NMD 51."""
+    from data_inlasning.nmd import NMD_BYGGNAD, NmdFel, NmdLager, lagg_hus_som_nmd51, las_nmd
+    from data_inlasning.vmi import las_vmi_mask, stampla_pa_grid
+    from ekologi import (
+        EkologiFel,
+        berakna_konnektivitet,
+        extrahera_habitatflackar,
+        hamta_natverk,
+        kallbaserat_intervall,
+        till_artprofil,
+    )
+    from ekologi.artprofil_format import artprofil_till_dict
+    from ekologi.natverk import METODSTATUS_TEXT
+    from karna.geometri.mosaik import bygg_ytmosaik
+    from karna.geometri.rasterfil import GeometriFel
+    from testsvit.k1_io import skriv_geotiff
+
+    p = k.parametrar
+    namn = losare.namn
+    nv = hamta_natverk(str(p["natverk"]))
+    biotop = nv.omfattning == "biotop"
+    roll = "biotopraster" if biotop else "nmd"
+    fil = k.indata.get(roll)
+    if fil is None:
+        raise LosarFel(
+            f"{namn}: nätverket {nv.natverk_id} kräver indata '{roll}'"
+            + (
+                " (stadens biotopklasser som heltalsraster; nätverket körs bara lokalt) och "
+                "parametern 'biotop_klasskoder'."
+                if biotop
+                else " (NMD-lager, EPSG:3011; skapas med `python -m data_inlasning.nmd klipp`)."
+            )
+        )
+    klasskoder = p.get("biotop_klasskoder")
+    try:
+        lager = las_nmd(fil) if not biotop else _las_klassraster(fil)
+        if biotop and klasskoder is None:
+            raise LosarFel(f"{namn}: biotopnätverk kräver parametern 'biotop_klasskoder'.")
+        profiler = {
+            s.scenario_id: till_artprofil(nv, s.scenario_id, klasskoder=klasskoder)
+            for s in nv.scenarier
+        }
+    except (EkologiFel, NmdFel) as exc:
+        raise LosarFel(f"{namn}: {exc}") from exc
+    huvud = nv.scenario()
+    profil = profiler[huvud.scenario_id]
+    cell = float(p["cellstorlek_m"]) if p["cellstorlek_m"] is not None else lager.cell_m
+    varningar: list[str] = []
+    klasser = lager.klasser
+    x0, y1 = lager.x_min_m, lager.y_max_m
+    if abs(cell - lager.cell_m) > 1e-9:
+        klasser = _omsampla(lager, cell)
+    if klasser.size > int(p["max_celler"]):
+        raise LosarFel(
+            f"{namn}: området blir {klasser.size} celler med cellstorlek {cell:g} m, över "
+            f"max_celler={p['max_celler']}. Öka cellstorlek_m, minska området eller höj max_celler."
+        )
+    # Ritade hus och befintliga K1-byggnader ovanpå som NMD 51 (biotop: klassen "byggnad").
+    hus_kod = NMD_BYGGNAD if not biotop else (klasskoder or {}).get("byggnad")
+    if hus_kod is None:
+        raise LosarFel(f"{namn}: 'biotop_klasskoder' saknar klassen 'byggnad'.")
+    konfig = las_markslagskonfig()
+    try:
+        mos = bygg_ytmosaik([r.mapp for r in k.scenario.rutor], cell, omsampling="max")
+    except GeometriFel as exc:
+        raise LosarFel(f"{namn}: {exc}") from exc
+    slag, _ = konfig.oversatt(mos.markslag, None)
+    hus_mask = slag == 2
+    klasser, andrade = lagg_hus_som_nmd51(
+        NmdLager(klasser, x0, y1, cell), hus_mask, mos.x_min_m, mos.y_max_m, cell, int(hus_kod)
+    )
+    varningar.append(
+        f"{andrade} celler lades som byggnad ur K1/K9 ({'NMD 51' if not biotop else 'klassen byggnad'}); "
+        "rivna hus tas inte bort ur markunderlaget."
+    )
+    if p.get("anvand_vmi"):
+        vfil = k.indata.get("kand_vatmark")
+        if vfil is None or nv.vmi_klass is None or klasskoder is None:
+            raise LosarFel(
+                f"{namn}: anvand_vmi kräver indata 'kand_vatmark', ett nätverk med vmi_klass "
+                "och 'biotop_klasskoder'."
+            )
+        vm = stampla_pa_grid(las_vmi_mask(vfil), x0, y1, cell, klasser.shape)
+        klasser = np.where(vm & (klasser != hus_kod), np.uint8(klasskoder[nv.vmi_klass]), klasser)
+        varningar.append(
+            "Känd våtmark ur VMI (äldre inventering, 1981-2005) används som habitat; lagret kan vara inaktuellt."
+        )
+    ok = set(profil.motstand_per_markslag)
+    saknade = int(np.count_nonzero(~np.isin(klasser, sorted(ok))))
+    if saknade:
+        varningar.append(
+            f"{saknade} celler har en klass som saknas i nätverkets tabell: standardmotstånd "
+            f"({profil.standard_motstand:g}) gäller där (flaggat antagande)."
+        )
+    try:
+        habitat = extrahera_habitatflackar(klasser, profil, cell_m=cell, x_min_m=x0, y_max_m=y1)
+        if len(habitat.flackar) > int(p["max_flackar"]):
+            raise LosarFel(
+                f"{namn}: {len(habitat.flackar)} habitatfläckar, över max_flackar={p['max_flackar']}. "
+                "Antalet fläckpar växer kvadratiskt; höj max_flackar eller öka cellstorlek_m."
+            )
+        res = {}
+        for sid, pr in profiler.items():
+            res[sid] = berakna_konnektivitet(
+                klasser, pr, cell_m=cell, x_min_m=x0, y_max_m=y1,
+                berakna_flaskhalsar=(sid == huvud.scenario_id),
+            )
+        iv = kallbaserat_intervall(nv.natverk_id, res)
+    except EkologiFel as exc:
+        raise LosarFel(f"{namn}: {exc}") from exc
+    hr = res[huvud.scenario_id]
+    form = klasser.shape
+    nodata = np.full(form, np.nan, dtype=np.float32)
+    if hr.stromtathet_sammanlagd is None:
+        varningar.append(
+            f"{hr.antal_flackar} habitatfläck(ar): strömtäthet och känslighet kräver minst två "
+            "fläckar och lämnas som nodata (NaN)."
+        )
+    j = nodata if hr.stromtathet_sammanlagd is None else np.asarray(hr.stromtathet_sammanlagd, dtype=np.float32)
+    kg = nodata if hr.kanslighet_sammanlagd is None else np.asarray(hr.kanslighet_sammanlagd, dtype=np.float32)
+    for fnamn, arr in (("stromtathet.tif", j), ("kansighet.tif", kg)):
+        skriv_geotiff(k.utmapp / fnamn, arr, x_min=x0, y_max=y1, pixelstorlek=cell)
+    betydelse = {b.flack_id: b for b in hr.flack_betydelse}
+    dpc = [
+        {
+            "flack_id": f.flack_id, "area_m2": f.area_m2, "effektiv_area_m2": f.effektiv_area_m2,
+            "centroid_e_m": f.centroid_e_m, "centroid_n_m": f.centroid_n_m,
+            "dPC_procent": betydelse[f.flack_id].dpc_procent,
+            "dPC_intra_procent": betydelse[f.flack_id].dpc_intra_procent,
+            "dPC_flux_procent": betydelse[f.flack_id].dpc_flux_procent,
+            "dPC_connector_procent": betydelse[f.flack_id].dpc_connector_procent,
+        }
+        for f in habitat.flackar
+    ]
+    dpc.sort(key=lambda r: (-float(r["dPC_procent"]), int(r["flack_id"])))
+    scen_rader = []
+    for s in nv.scenarier:
+        d50, ant = nv.d50_for(s)
+        scen_rader.append(
+            {
+                "id": s.scenario_id, "namn": s.namn, "troskel_m": s.troskel_m, "d50_m": d50,
+                "d50_antagen": ant is not None, "antagande": ant,
+                "ECA_m2": res[s.scenario_id].eca_m2, "PC": res[s.scenario_id].pc,
+            }
+        )
+    natverk_dok = nv.som_dict(huvud.scenario_id)
+    natverk_dok["scenarier"] = scen_rader
+    natverk_dok["klassraster"] = {"roll": roll, "cellstorlek_m": cell}
+    antaganden = list(natverk_dok["antaganden"])
+    if iv.ett_scenario:
+        antaganden.append("Ett enda scenario i källan: inget källbaserat intervall (intervallet är en punkt).")
+    dok = {
+        "format": FORMAT_K45,
+        "metodstatus": "skiss",
+        "artprofil_id": nv.natverk_id,
+        "artprofil": artprofil_till_dict(profil),
+        "parameterkallor": METODSTATUS_TEXT,
+        "cellstorlek_m": cell,
+        "analys_area_m2": hr.analys_area_m2,
+        "antal_flackar": hr.antal_flackar,
+        "total_habitat_area_m2": hr.total_habitat_area_m2,
+        "ECA_m2": hr.eca_m2,
+        "PC": hr.pc,
+        "ECA_intervall_m2": [iv.eca_min_m2, iv.eca_max_m2],
+        "PC_intervall": [iv.pc_min, iv.pc_max],
+        "intervall_faktorer": {"motstand": [1.0, 1.0], "spridning": [1.0, 1.0]},
+        "intervall_typ": "kallbaserat",
+        "dPC": dpc,
+        "markslagsmappning": {"sha256": konfig.sha256, "version": konfig.version},
+        "natverk": {**natverk_dok, "antaganden": antaganden},
+        "varningar": varningar,
+    }
+    (k.utmapp / "ekologi.json").write_text(
+        json.dumps(dok, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return LosarUtdata(
+        filer={"stromtathet": "stromtathet.tif", "kansighet": "kansighet.tif", "ekologi": "ekologi.json"},
+        matvarden={
+            "artprofil": nv.natverk_id,
+            "natverk": nv.natverk_id,
+            "scenario": huvud.scenario_id,
+            "eca_m2": hr.eca_m2,
+            "eca_min_m2": iv.eca_min_m2,
+            "eca_max_m2": iv.eca_max_m2,
+            "pc": hr.pc,
+            "pc_min": iv.pc_min,
+            "pc_max": iv.pc_max,
+            "antal_flackar": hr.antal_flackar,
+            "total_habitat_area_m2": hr.total_habitat_area_m2,
+            "cellstorlek_m": cell,
+        },
+        varningar=tuple(varningar),
+    )
+
+
+def _las_klassraster(fil: Path) -> Any:
+    """Lokal klassraster (uint8, EPSG:3011) för biotopnätverk; samma format som nmd.tif."""
+    from data_inlasning.nmd import NmdFel, NmdLager
+    from testsvit.k1_io import las_geotiff
+
+    arr, geo = las_geotiff(fil)
+    if geo.epsg != 3011 or arr.dtype != np.uint8:
+        raise NmdFel(f"{Path(fil).name} ska vara uint8 i EPSG:3011.")
+    return NmdLager(np.asarray(arr, dtype=np.uint8), geo.x_min, geo.y_max, geo.pixelstorlek_x)
+
+
+def _omsampla(lager: Any, cell: float) -> NDArray[np.uint8]:
+    """Närmaste granne till ny cellstorlek över samma utbredning (klasskoder interpoleras aldrig)."""
+    ny = max(1, int(round(lager.klasser.shape[0] * lager.cell_m / cell)))
+    nx = max(1, int(round(lager.klasser.shape[1] * lager.cell_m / cell)))
+    e = (np.arange(nx) + 0.5) * cell
+    n = (np.arange(ny) + 0.5) * cell
+    kol = np.minimum((e / lager.cell_m).astype(int), lager.klasser.shape[1] - 1)
+    rad = np.minimum((n / lager.cell_m).astype(int), lager.klasser.shape[0] - 1)
+    return np.asarray(lager.klasser[np.ix_(rad, kol)], dtype=np.uint8)
 
 
 LOSARE: list[Analyslosare] = [Konnektivitet()]
