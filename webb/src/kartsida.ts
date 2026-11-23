@@ -12,6 +12,7 @@ import type { AvlasningSvar, LagerPost, ResultatSvar } from "./fragor-typer";
 import { LAGEN, lasKartan, type Lage } from "./kartforklaring";
 import {
   bytScenarioNamn,
+  hamtaBifurkationer,
   hamtaBildMedUtbredning,
   hamtaProjektInfo,
   hamtaScenario,
@@ -23,6 +24,7 @@ import {
   scenarioStatus,
   sparaScenario,
   taBortScenario,
+  type BifurkationAnalysSvar,
   type Kontroll,
   type PlanPost,
   type ProjektInfo,
@@ -95,6 +97,7 @@ interface Sida {
 let s: Sida | null = null;
 let senastLage = "";
 let avlasningSeq = 0;
+let visaKartaSeq = 0;
 let avlasningTimer: number | null = null;
 
 const el = <T extends HTMLElement>(id: string): T | null => (s?.rot.querySelector(`#${id}`) as T | null) ?? null;
@@ -104,6 +107,7 @@ export function avslutaKarta(): void {
 }
 
 function avsluta(): void {
+  visaKartaSeq += 1;
   if (!s) return;
   s.vy3d?.avmontera();
   s.a.avsluta();
@@ -128,15 +132,17 @@ function lagerPost(r: ResultatSvar, id: string | null): LagerPost | null {
 /** Visar kartsidan. `vyId` är en vy ur projektet (`?vy=`), annars den första. */
 export async function visaKarta(container: HTMLElement, vyId: string | null): Promise<void> {
   avsluta();
+  const seq = visaKartaSeq;
   container.innerHTML = `<div class="sidbredd innehall karta-sida"><p class="dampad tom">Hämtar kartan …</p></div>`;
   try {
     if (!t.projekt) t.projekt = await hamtaProjekt(PROJEKT_ID);
+    if (seq !== visaKartaSeq || container.isConnected === false) return;
     t.info = await hamtaProjektInfo(PROJEKT_ID);
     t.fel = null;
   } catch (e) {
     t.fel = e instanceof Error ? e.message : String(e);
   }
-  if (container.isConnected === false) return;
+  if (seq !== visaKartaSeq || container.isConnected === false) return;
   const p = t.projekt;
   const info = t.info;
   if (!p || !info) {
@@ -152,11 +158,14 @@ export async function visaKarta(container: HTMLElement, vyId: string | null): Pr
   const vy = t.vy;
   if (vy && !t.resultat.has(vy.korning_id)) {
     try {
-      t.resultat.set(vy.korning_id, await hamtaResultat(vy.korning_id));
+      const res = await hamtaResultat(vy.korning_id);
+      if (seq !== visaKartaSeq || container.isConnected === false) return;
+      t.resultat.set(vy.korning_id, res);
     } catch {
       t.vy = null;
     }
   }
+  if (seq !== visaKartaSeq || container.isConnected === false) return;
   byggSida(container, p, info);
 }
 
@@ -367,6 +376,14 @@ function sidHtml(p: ProjektSvar): string {
             <h2 class="etikett-liten" id="rp-rubrik">Räkna före och efter</h2>
             <div id="rakna"></div>
           </section>
+          <section class="panel" aria-labelledby="bp-rubrik">
+            <details class="installningar" id="bifurkation-panel">
+              <summary id="bp-rubrik">Känsliga överfall &amp; 2D-kontroll</summary>
+              <p class="dampad">Identifierar överfallspunkter där höjdosäkerheten kan ändra rinnväg (bör mätas in i fält) och var 2D-beräkning behövs.</p>
+              <button type="button" class="knapp knapp-liten" id="kontroll-bifurkation">Analysera överfall</button>
+              <div id="bifurkation-svar" role="status"></div>
+            </details>
+          </section>
           <section class="lasruta" aria-labelledby="las-rubrik" id="lasruta" hidden>
             <h2 class="etikett-liten" id="las-rubrik">Så läser du kartan</h2>
             <p id="las-text"></p>
@@ -427,6 +444,45 @@ function kopplaKnappar(_p: ProjektSvar, _info: ProjektInfo): void {
     uppdateraResultatLager();
     synka();
   });
+  el<HTMLButtonElement>("kontroll-bifurkation")?.addEventListener("click", () => {
+    void korBifurkationsKontroll();
+  });
+}
+
+function formateraBifurkationHtml(svar: BifurkationAnalysSvar): string {
+  const andelPct = (svar.felindikator.andel_2d_yta * 100).toFixed(1);
+  const f = svar.felindikator;
+  const instabila = svar.punkter.filter((p) => p.instabil).slice(0, 5);
+  const lista =
+    instabila.length === 0
+      ? `<p class="dampad">Inga instabila överfallspunkter vid k = ${svar.k_sigma.toFixed(1)}σ.</p>`
+      : `<ul class="enkel-lista">${instabila
+          .map(
+            (p) =>
+              `<li>Nod ${p.nod_id} (E ${Math.round(p.overfall_x)}, N ${Math.round(p.overfall_y)}): marginal ${p.marginal_m.toFixed(3)} m, berör ${Math.round(p.paverkad_volym_m3)} m³ — <strong>mät in i fält</strong></li>`,
+          )
+          .join("")}</ul>`;
+  return `<p><strong>2D-behov:</strong> ${andelPct} % av ytan (${f.antal_noder_2d} av ${f.antal_noder_totalt} sänkor). <strong>Instabila överfall:</strong> ${svar.antal_instabila} st.</p>${lista}`;
+}
+
+async function korBifurkationsKontroll(): Promise<void> {
+  const sida = s;
+  const ut = el("bifurkation-svar");
+  const knapp = el<HTMLButtonElement>("kontroll-bifurkation");
+  if (!sida || !ut) return;
+  if (knapp) knapp.disabled = true;
+  ut.innerHTML = `<p class="dampad">Analyserar överfall och 2D-behov …</p>`;
+  try {
+    const svar = await hamtaBifurkationer(PROJEKT_ID);
+    if (s !== sida) return;
+    ut.innerHTML = formateraBifurkationHtml(svar);
+  } catch (e) {
+    if (s !== sida) return;
+    const msg = e instanceof Error ? e.message : String(e);
+    ut.innerHTML = `<p class="dampad">${esc(msg)}</p>`;
+  } finally {
+    if (s === sida && knapp) knapp.disabled = false;
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
