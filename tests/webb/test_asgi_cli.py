@@ -48,3 +48,12 @@ def test_webb_asgi_utan_uvicorn_ger_tydligt_fel(
     monkeypatch.setitem(sys.modules, "uvicorn", None)
     assert main(["webb", "--ingen-bygg", "--server", "asgi"]) == 1
     assert "uvicorn saknas" in capsys.readouterr().err
+
+
+def test_halsa_visar_commit_fran_miljon(monkeypatch: pytest.MonkeyPatch) -> None:
+    from webb.api import FlodenApiApp
+
+    monkeypatch.setenv("FLODEN_COMMIT", "abc1234")
+    assert FlodenApiApp().halsa()["commit"] == "abc1234"
+    monkeypatch.delenv("FLODEN_COMMIT")
+    assert FlodenApiApp().halsa()["commit"] is None

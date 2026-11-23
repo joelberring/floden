@@ -42,6 +42,10 @@ COPY --from=rust /src/rust/tvad_karna/target/release/tvad_karna /usr/local/bin/t
 RUN mkdir -p data/cache data/konto data/demo data/lokal \
  && chown -R floden:floden data \
  && chmod 755 deploy/start.sh
+# Commiten som byggs (sätts av .github/workflows/avbildning.yml), visas i GET /api/halsa.
+# Sist i filen, så att ett nytt värde inte bygger om de tidigare lagren.
+ARG FLODEN_COMMIT=
+ENV FLODEN_COMMIT=${FLODEN_COMMIT}
 USER floden
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=5 \

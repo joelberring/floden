@@ -323,3 +323,6 @@ Nästa: T00 (repo och grund), sedan T01 och T09a parallellt.
 ### 2026-11-23 – Drift: ASGI i produktion (samordnare)
 - `floden webb --server asgi` kör `webb.asgi` i uvicorn 0.54.0 (extras `[server]`, en arbetsprocess). `deploy/start.sh` väljer läge med `FLODEN_SERVER` (förval `asgi`, reserv `trad`); Docker-avbildningen installerar `[server]`.
 - Röktest lokalt: `/api/halsa` 200, POST på 26 MB ger 413 både med Content-Length och chunked. Nya tester i `tests/webb/test_asgi_cli.py`.
+- Röktest av https://floden.berring.se (inbyggda webbläsaren, 2026-11-23 07:00): `/api/halsa` 200, `/api/*` och `/konto/jag` 401 utan inloggning, HSTS, CSP, X-Frame-Options DENY och nosniff finns. Servern var `BaseHTTP` (trådservern). `X-Content-Type-Options` och `Referrer-Policy` sätts dubbelt (av Caddy och appen), vilket är ofarligt men kan städas.
+- `/api/halsa` visar nu `commit` (Dockerfile ARG `FLODEN_COMMIT`, satt i publiceringsflödet), så att det går att se vilken version som körs.
+- Startsidan sa "Demokvarteret är inte byggt … kör floden demo" till utloggade besökare (projektlistan ger 401). Nu står det "Logga in för att öppna demokvarteret."
