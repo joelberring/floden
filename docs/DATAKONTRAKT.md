@@ -449,6 +449,36 @@ scenarier/<nn>/<nyckel>/ ruta/ (K1-ruta med lapp tillämpad) eller bara .klar om
 Poster skrivs i en temporär katalog och flyttas på plats atomärt. Cachen kan raderas när som
 helst; den byggs upp igen från recepten.
 
+## K30 – Beställning (v1)
+
+Valfri beställning som styr vilka katalogfrågor ett skissunderlag tar med och hur ingressen
+skrivs (R2, `src/rapport/bestallning.py`). Lagras i `<rapportmapp>/bestallningar/b-<12 hex>.json`
+och som kopia i K33 (`bestallning`). Innehåller ingen personuppgift (syftet kontrolleras mot
+e-postadress och personnummer).
+
+```json
+{
+  "kontrakt": "K30/v1",
+  "bestallning_id": "b-0a1b2c3d4e5f",
+  "syfte": "Skissa hur ett höjt hus påverkar sol på marken och dagsljus vid fasad",
+  "skede": "skiss",                       // skiss | planunderlag (planunderlag kan inte köras förrän R3)
+  "mottagare_roll": "planhandlaggare",    // planhandlaggare | byggaktor | granskare
+  "amnen": ["dagsljus", "sol"],           // skyfall | dagsljus | sol | luft | buller (en rapport per beställning)
+  "projekt": "demokvarteret",
+  "skapad": "2026-11-23T09:00:00+00:00",
+  "fragor": [],                           // uttryckliga frågor (id); går före urvalet
+  "villkor": [],                          // filtrerar på frågans villkor
+  "bara_med_underlag": true,              // bara frågor Floden kan besvara helt eller delvis
+  "scenario": {"fore": "bas", "efter": ["hojd", "nytt_hus"]},   // eller null
+  "urval": ["DL-02", "DL-10", "…"],       // frågorna som beställningen ger
+  "utelamnade": 15,                       // frågor i ämnena som inte kom med
+  "katalog": {"granskningsdatum": "2026-11-21"}
+}
+```
+
+Urval: uttryckliga `fragor` annars ämnenas frågor, filtrerade på `villkor`, mottagarrollens
+frågetyper och `bara_med_underlag`. Tomt urval ger fel.
+
 ## K32 – Påstående och belägg (v1)
 
 Ett påstående i en rapport (R1, `src/rapport/pastaende.py`). Lagras i K33 (`pastaenden`). Tal i
@@ -492,7 +522,10 @@ siffror utanför platshållare är fel (utom beteckningar som `SK-06`, `RH 2000`
 ```
 
 Adresser: `jamforelse.<namn>.<mått>`, `matvarde.<analys>.<scenario>[.<ruta>].<namn>`,
-`omrade.<mottagare>.<lager_id>.<statistik>`. Belägg skapas bara av Floden
+`omrade.<mottagare>.<lager_id>.<statistik>` (mottagaren `hela_omradet` är hela beräkningsområdet;
+statistiken `yta_m2` är ytan med värde), samt för dagsljus (R2) `fasad.vsc.<scenario>.<mått>`,
+`fasad.vsc.<parameter>` och `fasadjamforelse.vsc.<före>.<efter>.<mått>` och jämförelsemåttet
+`yta_minskning_over_<X>h_m2`. Belägg skapas bara av Floden
 (`rapport.belaggskalla.FlodenBelaggKalla`) ur samma källa som MCP och webben
 (`FlodenTjanst.jamfor` = `FragaTjanst.marksiffror`, `resultat_sammanfattning`, `resultat_varde`).
 
@@ -505,8 +538,9 @@ typsnitt, namngivna efter sha256). `rapport_id` = `r-` + 12 hex.
 | Fält | Innehåll |
 | --- | --- |
 | `kontrakt` | `"K33/v1"` |
-| `rapport_id`, `niva` (1), `amne` (`skyfall`), `projekt`, `titel`, `skapad` | |
+| `rapport_id`, `niva` (1), `amne` (`skyfall` eller `dagsljus`), `projekt`, `titel`, `skapad` | |
 | `fragor` | Frågornas id ur katalogen; `katalog` har filen, källäget och frågornas text |
+| `bestallning` | Valfritt (tillagt 2026-11-23, ingen versionsökning: äldre rapporter utan fältet läses som förut). K30, eller null |
 | `korningar` | Per körning: `korning_id`, `fraga_id`, `beskrivning`, `kodversion`, `manifest`, `manifest_sha256`, `start`, `analyser` (analys, lösare, scenarier), `jamforelser`, `antaganden`, `scenarier` |
 | `mottagare` | `[{namn, polygon [[e, n], …] EPSG:3011, beskrivning}]` |
 | `pastaenden` | K32 |

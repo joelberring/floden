@@ -680,6 +680,37 @@ class FlodenApiApp:
         arkiv = RapportArkiv(self.rapportmapp)
         return [sammanfattning(r, arkiv) for r in arkiv.lista(projekt_id)]
 
+    def fragekatalog(self, query: Mapping[str, list[str]]) -> dict[str, Any]:
+        """Svar för `GET /api/fragekatalog`: katalogens frågor med vad Floden kan belägga (R2).
+
+        Filter (valfria): `omrade`, `villkor` (kommaseparerat), `text`, `ids` (kommaseparerat)."""
+        from rapport.fragekatalog import Fragekatalog, FragekatalogFel, fraga_med_formaga
+
+        fil = self.konfig_fil.resolve().parent / "docs" / "utredningar-stockholm" / "fragor.json"
+        try:
+            katalog = Fragekatalog.las(fil) if fil.is_file() else Fragekatalog.las()
+        except FragekatalogFel as exc:
+            raise FlodenWebbFel(str(exc), status_kod=500) from exc
+
+        def lista(namn: str) -> list[str] | None:
+            v = [x.strip() for d in query.get(namn, []) for x in d.split(",") if x.strip()]
+            return v or None
+
+        text = (query.get("text") or [""])[0]
+        fragor = katalog.sok(
+            omrade=(query.get("omrade") or [""])[0] or None,
+            villkor=lista("villkor"),
+            text=text or None,
+            ids=lista("ids"),
+        )
+        return {
+            "antal": len(fragor),
+            "granskningsdatum": katalog.granskningsdatum,
+            "fragor": [fraga_med_formaga(f) for f in fragor],
+            "anmarkning": "Katalogen är redaktionellt underlag sammanställt med AI-stöd och ska "
+            "granskas; val av regel och bedömning avgörs per ärende.",
+        }
+
     def rapportfil(
         self, projekt_id: str, rapport_id: str, fmt: str
     ) -> tuple[int, dict[str, str], bytes]:
@@ -2071,6 +2102,9 @@ class FlodenApiApp:
             if verb == "GET" and ren_sokvag == "/api/regn":
                 region_param = query.get("region", [None])[0]
                 return _json_svar(200, self.lista_regn(region=region_param))
+
+            if verb == "GET" and ren_sokvag == "/api/fragekatalog":
+                return _json_svar(200, self.fragekatalog(query))
 
             if verb == "GET" and ren_sokvag == "/api/moduler":
                 return _json_svar(200, lista_moduler(self._demo_moduler()))

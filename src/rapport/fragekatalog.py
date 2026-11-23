@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Frågekatalogen (`docs/utredningar-stockholm/fragor.json`) och vad Floden kan belägga (R1).
 
 Katalogen är redaktionellt underlag (källäge 21 november 2026, sammanställt med AI-stöd och ska
@@ -21,14 +22,30 @@ STANDARD_KATALOG: Final[Path] = (
     Path(__file__).resolve().parents[2] / "docs" / "utredningar-stockholm" / "fragor.json"
 )
 
-AMNESPREFIX: Final[dict[str, str]] = {
-    "skyfall": "SK",
-    "dagsljus": "DL",
-    "sol": "SO",
-    "luft": "LU",
-    "buller": "BU",
+AMNESPREFIX: Final[dict[str, tuple[str, ...]]] = {
+    "skyfall": ("SK",),
+    "dagsljus": ("DL", "SO"),
+    "luft": ("LU",),
+    "buller": ("BU",),
 }
-"""Ämne -> frågornas id-prefix. Bara skyfall har en skissrapport i R1."""
+"""Rapportämne -> frågornas id-prefix. Rapportämnet `dagsljus` omfattar katalogens områden
+`dagsljus` (DL) och `solstudier` (SO). Skissrapport finns för skyfall (R1) och dagsljus (R2)."""
+AMNESOMRADEN: Final[dict[str, tuple[str, ...]]] = {
+    "skyfall": ("skyfall",),
+    "dagsljus": ("dagsljus", "solstudier"),
+    "luft": ("luft",),
+    "buller": ("buller",),
+}
+"""Rapportämne -> katalogens `omrade`."""
+OMRADESALIAS: Final[dict[str, str]] = {"sol": "solstudier"}
+"""Alias som tas emot i API och MCP: `sol` är katalogens område `solstudier`."""
+FLODEN_MARKNING: Final[tuple[str, ...]] = ("visat", "delvis", "underlag_saknas", "ej_tillampligt")
+MARKNING_TEXT: Final[dict[str, str]] = {
+    "visat": "visat",
+    "delvis": "delvis",
+    "underlag_saknas": "underlag saknas",
+    "ej_tillampligt": "ej tillämpligt",
+}
 
 
 class FragekatalogFel(Exception):
@@ -74,6 +91,17 @@ class Formaga:
     saknat: str
     adresser: tuple[str, ...]
     forval_status: str
+
+    @property
+    def markning(self) -> str:
+        """Kan Floden ge underlag i dag? `visat` (frågans kärna), `delvis`, `underlag_saknas`
+        (Floden räknar inte det frågan gäller) eller `ej_tillampligt` (frågan avgörs utanför en
+        beräkning: regelval, genomförande, sammanvägning)."""
+        if self.niva == "kan":
+            return "visat"
+        if self.niva == "delvis":
+            return "delvis"
+        return "ej_tillampligt" if self.forval_status == "ej_tillampligt" else "underlag_saknas"
 
 
 FLODEN_FORMAGA: Final[dict[str, Formaga]] = {
@@ -208,6 +236,268 @@ FLODEN_FORMAGA: Final[dict[str, Formaga]] = {
 }
 
 
+_SOLMARK = "omrade.hela_omradet.<lager_id>.<statistik>"
+_JFR = "jamforelse.<namn>.<mått>"
+_FASAD = "fasad.<analys>.<scenario>.<mått>"
+_FASADJFR = "fasadjamforelse.<analys>.<fore>.<efter>.<mått>"
+_FASADPAR = "fasad.<analys>.<parameter>"
+_OMR = "omrade.<mottagare>.<lager_id>.<statistik>"
+_DATUM = "matvarde.<analys>.<scenario>.<ruta>.datum"
+_LATLON = ("matvarde.<analys>.<scenario>.<ruta>.lat_grader", "matvarde.<analys>.<scenario>.<ruta>.lon_grader")
+
+_VSC_ADR = (_FASAD, _FASADJFR, _FASADPAR)
+_SOL_ADR = (_SOLMARK, _JFR)
+
+FLODEN_FORMAGA.update(
+    {
+        "DL-01": Formaga(
+            "saknas",
+            "",
+            "Regelval och byggåtgärd är ett beslut i ärendet, inte en beräkning. Skissen jämför "
+            "före och efter ett planförslag (grannpåverkan) och väljer ingen regelversion.",
+            (),
+            "ej_tillampligt",
+        ),
+        "DL-02": Formaga(
+            "delvis",
+            "Himmelskomponent (VSC) på fasadpunkter före och efter: antal punkter, lägsta värde, "
+            "punkter under BRE:s gräns och med stor relativ minskning.",
+            "Sektioner och kritiska fönster redovisas inte; fasadpunkterna är genererade "
+            "(en per våning och fasadsteg), inte verkliga fönster. Balkonger modelleras inte.",
+            _VSC_ADR,
+            "underlag_saknas",
+        ),
+        "DL-03": Formaga(
+            "saknas",
+            "",
+            "Ingen rumsmodell: glasarea, karm, smyg, ljustransmittans, rumsdjup och reflektanser "
+            "ingår inte (docs/DAGSLJUS.md avsnitt 11).",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-04": Formaga(
+            "saknas",
+            "",
+            "Dagsljusfaktor (DF) i typrum finns inte; Floden räknar VSC på fasad under mulen "
+            "CIE-himmel. DF är en senare fas.",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-05": Formaga(
+            "saknas",
+            "",
+            "Ingen dagsljusfaktor och inga bostäder eller vistelseytor i modellen.",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-06": Formaga(
+            "saknas",
+            "",
+            "Ingen dagsljusfaktor och ingen uppdelning i boendeenhet och delade utrymmen.",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-07": Formaga(
+            "saknas",
+            "",
+            "Fönster, bröstningshöjd och sikthinder för utblick modelleras inte.",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-08": Formaga(
+            "saknas",
+            "",
+            "Verksamhet, arbetsplatser och bedömningsmetod för dagsljus och utblick ingår inte.",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-09": Formaga(
+            "saknas",
+            "",
+            "Anpassning av krav vid ändrad användning är en juridisk avvägning i ärendet, inte en "
+            "beräkning.",
+            (),
+            "ej_tillampligt",
+        ),
+        "DL-10": Formaga(
+            "kan",
+            "VSC i samma fasadpunkt (samma fasad_id) före och efter: utgångsläge, minskning, "
+            "antal punkter under BRE:s gräns och under kvoten mot läget före.",
+            "Fasadpunkter är inte verkliga fönster och planlösningar är okända; omfattningen "
+            "markeras. Reflekterat ljus, glas och balkonger ingår inte.",
+            (_FASAD, _FASADJFR, _FASADPAR),
+            "visat",
+        ),
+        "DL-11": Formaga(
+            "saknas",
+            "",
+            "Glas, balkonger och fasadkulör modelleras inte (balkonger och utkragningar ger fel "
+            "VSC, docs/DAGSLJUS.md avsnitt 11).",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-12": Formaga(
+            "delvis",
+            "Körningens manifest, kontrollsummor och VSC per fasadpunkt (vsc.csv) gör att en "
+            "annan kan återskapa fasadpunkternas värden.",
+            "Ingen lägenhetslista, ritningsrevision eller bedömningsyta per bostad.",
+            (_FASAD,),
+            "underlag_saknas",
+        ),
+        "DL-13": Formaga(
+            "saknas",
+            "",
+            "Fönstermått, golvyta, användning och utblick från barnets höjd ingår inte.",
+            (),
+            "underlag_saknas",
+        ),
+        "DL-14": Formaga(
+            "saknas",
+            "",
+            "Att koppla hälsoskydd, byggkrav och arbetsmiljö till varsin slutsats är en "
+            "bedömning i ärendet, inte en beräkning. VSC är ett geometriskt mått.",
+            (),
+            "ej_tillampligt",
+        ),
+        "DL-15": Formaga(
+            "kan",
+            "Förändringens storlek per fasadpunkt (samma fasad_id): största minskning, lägsta "
+            "kvot, antal punkter under BRE:s gräns och under kvoten.",
+            "Resultattabellen per punkt finns i körningen (vsc.csv); lägenhet och våningsplan "
+            "anges bara genom fasad_id. Planlösningar är okända.",
+            (_FASADJFR, _FASADPAR),
+            "visat",
+        ),
+        "SO-01": Formaga(
+            "delvis",
+            "Yta på mark som förlorar mer än en viss tid sol (influensområde i differenskartan) "
+            "och största förlust, efter tak undantagna.",
+            "Sol vid grannfönster och på fasad räknas inte (soltimmar gäller markytan); "
+            "mottagarnas funktion och våningsplan finns inte.",
+            _SOL_ADR,
+            "underlag_saknas",
+        ),
+        "SO-02": Formaga(
+            "saknas",
+            "",
+            "Tillåten byggrätt och etapper finns inte i Floden; scenariot är den ändring "
+            "(K9) som lagts in.",
+            (),
+            "underlag_saknas",
+        ),
+        "SO-03": Formaga(
+            "delvis",
+            "Solläge (latitud och longitud i rutans mittpunkt) och datum som beräkningen "
+            "använde; solläget är mätt mot NREL SPA.",
+            "Tidszon och UTC-förskjutning per datum, geografiskt norr och korrigering av "
+            "kartnorr redovisas inte i resultatet.",
+            (*_LATLON, _DATUM),
+            "underlag_saknas",
+        ),
+        "SO-04": Formaga(
+            "delvis",
+            "De datum körningen räknade (parametern datum) och soltimmar för dem.",
+            "Val av dagar och brukstider för platsens användning är ett beslut; tidsfönster "
+            "(öppettid, kväll) kan inte anges, soltimmar gäller hela dygnet.",
+            (_DATUM,),
+            "underlag_saknas",
+        ),
+        "SO-05": Formaga(
+            "delvis",
+            "Terräng och byggnader (platta tak) kastar skugga i beräkningen; kartor och "
+            "tak undantagna i talen.",
+            "Balkonger och sadeltak modelleras inte; vegetation ingår inte som standard "
+            "(ogenomskinliga kronor om den slås på, ingen lövstatus).",
+            (_SOLMARK,),
+            "underlag_saknas",
+        ),
+        "SO-06": Formaga(
+            "delvis",
+            "Soltimmar (medel, största, minsta) i varje yta som anges som mottagare (polygon), "
+            "före och efter.",
+            "Ytornas funktion (aktiv lek, reträtt) och bedömning mot Lekvärdesriktlinjerna "
+            "ingår inte.",
+            (_OMR,),
+            "underlag_saknas",
+        ),
+        "SO-07": Formaga(
+            "saknas",
+            "",
+            "Vegetationsskugga, trädens tillväxt och skuggad andel vid ett klockslag räknas "
+            "inte (vegetation ingår inte som standard).",
+            (),
+            "underlag_saknas",
+        ),
+        "SO-08": Formaga(
+            "delvis",
+            "Summerad direkt sol per dygn (timmar per dygn, medel över valda datum) på "
+            "marken och i en mottagare, före och efter, med tidssteg ur körningen.",
+            "Sammanhängande tid och tidsfönster (brukstid) beräknas inte.",
+            (_SOLMARK, _OMR),
+            "underlag_saknas",
+        ),
+        "SO-09": Formaga(
+            "kan",
+            "Matchade före- och efterkartor i samma färgskala, differenskarta, yta som förlorar "
+            "sol och tid per mottagare (polygon).",
+            "Klockslag för när skuggan faller ingår inte (dygnssumma). Sol per fönster och "
+            "sittplats anges bara som mottagare med polygon.",
+            (_JFR, _SOLMARK, _OMR),
+            "visat",
+        ),
+        "SO-10": Formaga(
+            "saknas",
+            "",
+            "Sol vid fönster och i rum räknas inte; soltimmar gäller markytan.",
+            (),
+            "underlag_saknas",
+        ),
+        "SO-11": Formaga(
+            "delvis",
+            "Jämförelse av prövade alternativ (varje scenario ställs mot nuläget) med samma "
+            "mått: yta som förlorar sol och största förlust.",
+            "Floden föreslår ingen åtgärd; indragen våning, omplacerad lekyta och träd prövas "
+            "bara om de lagts in som scenario (K9).",
+            (_JFR,),
+            "underlag_saknas",
+        ),
+        "SO-12": Formaga(
+            "delvis",
+            "Kartor med norrpil, skalstock, scenarionamn, enhet och teckenförklaring; varje tal "
+            "har belägg med körning, fil och kontrollsumma.",
+            "Tidszon och tidsdata per tidssteg redovisas inte i resultatet.",
+            (_SOLMARK,),
+            "underlag_saknas",
+        ),
+        "SO-13": Formaga(
+            "saknas",
+            "",
+            "Skydd mot sol (skugga för lek och samling under brukstiden, vegetation) räknas "
+            "inte.",
+            (),
+            "underlag_saknas",
+        ),
+        "SO-14": Formaga(
+            "delvis",
+            "Soltimmar och skuggor i lokal geometri för gården eller byggnaden (mottagare).",
+            "Länets värmekartläggning och termisk analys (yttemperatur, värmestress) ingår "
+            "inte.",
+            (_OMR, _SOLMARK),
+            "underlag_saknas",
+        ),
+        "SO-15": Formaga(
+            "kan",
+            "Varje karta är en dygnssumma (timmar per dygn, medel över de datum körningen "
+            "räknade); datum och tidssteg står i antagandena och beläggen.",
+            "Ögonblicksbilder och periodmedel för flera perioder ingår inte; vilken yta "
+            "slutsatsen gäller anges med mottagare.",
+            (_DATUM, _SOLMARK),
+            "visat",
+        ),
+    }
+)
+
+
 def _fraga(data: Any, nr: int) -> Fraga:
     if not isinstance(data, dict):
         raise FragekatalogFel(f"fragor[{nr}] är inte ett objekt.")
@@ -276,6 +566,8 @@ class Fragekatalog:
         någon av texterna (gemener), eller är "Alla ..." (gäller alltid). `text`: delsträng i
         frågan eller redovisningen. `ids`: bara dessa id.
         """
+        if omrade is not None:
+            omrade = OMRADESALIAS.get(omrade, omrade)
         villkor_l = [v.strip().lower() for v in villkor or [] if v.strip()]
         text_l = text.strip().lower() if text else None
         id_set = set(ids) if ids is not None else None
@@ -294,6 +586,18 @@ class Fragekatalog:
             ut.append(f)
         return ut
 
+    def for_amne(self, amne: str, villkor: Iterable[str] | None = None) -> list[Fraga]:
+        """Frågorna för ett rapportämne (`dagsljus` = DL- och SO-frågorna), i katalogens ordning."""
+        omraden = AMNESOMRADEN.get(OMRADESALIAS.get(amne, amne))
+        if omraden is None:
+            raise FragekatalogFel(
+                f"Okänt ämne '{amne}'. Ämnen: {', '.join(AMNESOMRADEN)} (och 'sol')."
+            )
+        ut: list[Fraga] = []
+        for o in omraden:
+            ut += self.sok(omrade=o, villkor=villkor)
+        return ut
+
     def kalla_text(self, nyckel: str) -> str:
         k = self.kallor.get(nyckel)
         return str(k.get("titel", nyckel)) if isinstance(k, dict) else nyckel
@@ -304,14 +608,13 @@ def formaga_for(fraga_id: str) -> Formaga | None:
     return FLODEN_FORMAGA.get(fraga_id)
 
 
-def formagetabell_markdown() -> str:
-    """Tabellen över skyfallsfrågorna som den står i `docs/RAPPORTER.md`."""
+def formagetabell_markdown(amne: str = "skyfall") -> str:
+    """Tabellen över ämnets frågor som den står i `docs/RAPPORTER.md`."""
     katalog = Fragekatalog.las()
     rader = [
         "| Fråga | Floden i dag | Belägg Floden kan ge | Saknas och varför | Status i demon |",
         "| --- | --- | --- | --- | --- |",
     ]
-    niva_text = {"kan": "kan belägga", "delvis": "delvis", "saknas": "underlag saknas"}
     status_text = {
         "visat": "visat",
         "villkorat": "villkorat",
@@ -319,18 +622,43 @@ def formagetabell_markdown() -> str:
         "ej_tillampligt": "ej tillämpligt",
         "avvikelse": "avvikelse",
     }
-    for fid, fm in FLODEN_FORMAGA.items():
-        f = katalog.hamta(fid)
+    for f in katalog.for_amne(amne):
+        fm = FLODEN_FORMAGA.get(f.id)
+        if fm is None:
+            continue
         rader.append(
-            f"| {fid} {f.fraga} | {niva_text[fm.niva]} | {fm.belagg or '–'} | {fm.saknat} | "
-            f"{status_text[fm.forval_status]} |"
+            f"| {f.id} {f.fraga} | {MARKNING_TEXT[fm.markning]} | {fm.belagg or '–'} | "
+            f"{fm.saknat} | {status_text[fm.forval_status]} |"
         )
     return "\n".join(rader) + "\n"
 
 
+def fraga_med_formaga(f: Fraga) -> dict[str, Any]:
+    """Frågan som JSON (API och MCP): katalogens fält och vad Floden kan ge i dag (om kartlagt)."""
+    post = f.till_dict()
+    fm = formaga_for(f.id)
+    post["floden"] = (
+        None
+        if fm is None
+        else {
+            "markning": fm.markning,
+            "niva": fm.niva,
+            "belagg": fm.belagg,
+            "saknat": fm.saknat,
+            "adresser": list(fm.adresser),
+            "status_i_demon": fm.forval_status,
+        }
+    )
+    return post
+
+
 __all__ = [
+    "AMNESOMRADEN",
     "AMNESPREFIX",
     "FLODEN_FORMAGA",
+    "FLODEN_MARKNING",
+    "MARKNING_TEXT",
+    "OMRADESALIAS",
     "STANDARD_KATALOG",
     "Formaga",
     "Fraga",
@@ -338,4 +666,5 @@ __all__ = [
     "FragekatalogFel",
     "formaga_for",
     "formagetabell_markdown",
+    "fraga_med_formaga",
 ]

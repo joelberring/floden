@@ -1028,6 +1028,28 @@ class FragaTjanst:
             "tak": np.load(takfil) if takfil.is_file() else None,
         }
 
+    def _markvarden(
+        self, korning_id: str, lager: dict[str, Any]
+    ) -> tuple[np.ndarray[Any, Any], float] | None:
+        """Lagrets värden på **mark** (ändliga celler utanför takmasken) och cellens yta (m²).
+
+        Samma takmask som `marksiffror` och kartan (`<lager>.tak.npy`). `None` om lagret saknar
+        markvärden."""
+        k = self._hamta(korning_id)
+        lager_id = str(lager["id"])
+        fil = k.mapp / "webb" / f"{lager_id}.npy"
+        if not fil.is_file():
+            return None
+        d = np.asarray(np.load(fil), dtype=np.float64)
+        giltig = np.isfinite(d)
+        takfil = k.mapp / "webb" / f"{lager_id}.tak.npy"
+        if takfil.is_file():
+            giltig &= ~np.load(takfil)
+        if not giltig.any():
+            return None
+        px = float(lager["pixelstorlek_m"])
+        return d[giltig], px * px
+
     def marksiffror(
         self, korning_id: str, lager: dict[str, Any], troskel: float
     ) -> dict[str, float] | None:
@@ -1055,6 +1077,29 @@ class FragaTjanst:
             "max_minskning": float(max(0.0, -v.min())),
             "max_okning": float(max(0.0, v.max())),
         }
+
+    def markyta_over(
+        self, korning_id: str, lager: dict[str, Any], troskel: float, riktning: str
+    ) -> float | None:
+        """Yta (m²) på **mark** där ett skillnadslager har minskat (`minskning`) eller ökat
+        (`okning`) mer än `troskel`, med samma takmask som `marksiffror`.
+
+        Används för rapportmåttet "yta som förlorar mer än X timmar sol". `None` om lagret saknar
+        markvärden."""
+        if riktning not in ("minskning", "okning"):
+            raise FlodenWebbFel("riktning ska vara 'minskning' eller 'okning'.", status_kod=422)
+        if not (troskel >= 0.0 and np.isfinite(troskel)):
+            raise FlodenWebbFel("Tröskeln ska vara ett tal som inte är negativt.", status_kod=422)
+        mark = self._markvarden(korning_id, lager)
+        if mark is None:
+            return None
+        v, cell = mark
+        antal = (
+            np.count_nonzero(v < -troskel)
+            if riktning == "minskning"
+            else np.count_nonzero(v > troskel)
+        )
+        return float(antal) * cell
 
     def omradesstatistik(
         self, korning_id: str, lager_id: str, ring: list[list[float]]

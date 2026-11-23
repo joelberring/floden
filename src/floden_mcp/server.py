@@ -35,7 +35,13 @@ from floden_mcp import MCP_VERSION
 from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad
 from floden_mcp.karna_api import PROJEKT_ID, FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, KorloggFel, hash_av, nu, rensa_text
-from rapport.fragekatalog import FragekatalogFel, formaga_for
+from rapport.bestallning import (
+    BESTALLNINGSAMNEN,
+    MOTTAGARROLLER,
+    SKEDEN,
+    sammanfattning_bestallning,
+)
+from rapport.fragekatalog import FragekatalogFel, fraga_med_formaga
 from rapport.pastaende import PastaendeFel
 from rapport.skissexport import ExportStoppad
 from rapport.skissrapport import RapportFel, RapportTjanst, sammanfattning
@@ -74,7 +80,9 @@ skisser (se metoder_lista); skriv det när du redovisar resultat. (4) Varje svar
 Arbetsgång: projekt_info och geometri_sammanfattning för att förstå området; byggnader_lista för
 byggnads-id; scenario_skapa för ett ritat hus eller en ändring; korplan för att se vad som räknas;
 kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild för att läsa resultatet.
-Rapporter (R1): fragekatalog_sok, rapport_skapa, rapport_installningar, pastaende_lagg_till (tal bara som platshållare
+Rapporter (R1, R2): bestallning_skapa (syfte, skede, mottagare, ämnen; valfritt), fragekatalog_sok,
+rapport_skapa (skyfall eller dagsljus/sol; med bestallning_id styr beställningen frågorna och
+ingressen), rapport_installningar, pastaende_lagg_till (tal bara som platshållare
 {{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_hamta.
 Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
 med session_deklarera; det loggas i körloggen (korlogg_hamta).
@@ -713,7 +721,9 @@ def _registrera_rapportverktyg(
         "fragekatalog_sok",
         "Söker i frågekatalogen (Stockholms utredningsfrågor, docs/utredningar-stockholm/fragor.json, "
         "redaktionellt underlag). Filtrera på omrade (skyfall, luft, buller, dagsljus, sol), villkor "
-        "(t.ex. 'Planförslag') och text. För skyfall står också vad Floden i dag kan belägga per fråga.",
+        "(t.ex. 'Planförslag') och text. För skyfall, dagsljus (DL) och solstudier (SO) står också vad "
+        "Floden i dag kan belägga per fråga (floden.markning: visat, delvis, underlag saknas, "
+        "ej tillämpligt).",
     )
     def fragekatalog_sok(
         omrade: Annotated[str | None, Field(description="Område, t.ex. 'skyfall'.")] = None,
@@ -726,18 +736,7 @@ def _registrera_rapportverktyg(
         roll: Roll = None,
     ) -> dict[str, Any]:
         fragor = rapporter.katalog.sok(omrade=omrade, villkor=villkor, text=text, ids=ids)
-        ut = []
-        for f in fragor:
-            post = f.till_dict()
-            fm = formaga_for(f.id)
-            if fm is not None:
-                post["floden"] = {
-                    "niva": fm.niva,
-                    "belagg": fm.belagg,
-                    "saknat": fm.saknat,
-                    "adresser": list(fm.adresser),
-                }
-            ut.append(post)
+        ut = [fraga_med_formaga(f) for f in fragor]
         return {
             "antal": len(ut),
             "granskningsdatum": rapporter.katalog.granskningsdatum,
@@ -747,15 +746,88 @@ def _registrera_rapportverktyg(
         }
 
     @verktyg(
+        "bestallning_skapa",
+        "Skapar en beställning (K30) som styr vilka katalogfrågor ett skissunderlag tar med och hur "
+        "ingressen skrivs: syfte, skede ('skiss'; 'planunderlag' kommer i R3 och kan inte köras "
+        "än), mottagare (planhandlaggare, byggaktor, granskare), ämnen och valfria frågor, "
+        "villkor och scenario (före och efter). Svaret listar frågorna som valts och hur många "
+        "som utelämnats. Använd bestallning_id i rapport_skapa. Skriv inga personuppgifter i "
+        "syftet.",
+    )
+    def bestallning_skapa(
+        syfte: Annotated[str, Field(description="Vad ska underlaget hjälpa till att avgöra?")],
+        amnen: Annotated[
+            list[str], Field(description=f"Ämnen: {', '.join(BESTALLNINGSAMNEN)}. Dagsljus och sol hör ihop.")
+        ],
+        skede: Annotated[str, Field(description=f"{' eller '.join(SKEDEN)}.")] = "skiss",
+        mottagare_roll: Annotated[
+            str, Field(description=f"Vem läser: {', '.join(MOTTAGARROLLER)}.")
+        ] = "planhandlaggare",
+        fragor: Annotated[
+            list[str] | None, Field(description="Frågor (id) som ska med; åsidosätter urvalet.")
+        ] = None,
+        villkor: Annotated[list[str] | None, Field(description="Filtrera på villkor.")] = None,
+        bara_med_underlag: Annotated[
+            bool, Field(description="Ta bara med frågor Floden kan besvara helt eller delvis.")
+        ] = False,
+        scenario: Annotated[
+            dict[str, Any] | None,
+            Field(description="{'fore': 'bas', 'efter': ['hojd', 'nytt_hus']} (scenarionamn)."),
+        ] = None,
+        projekt: Projekt = PROJEKT_ID,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        b = rapporter.bestallning_skapa(
+            syfte=syfte,
+            amnen=amnen,
+            projekt=projekt,
+            skede=skede,
+            mottagare_roll=mottagare_roll,
+            fragor=fragor or (),
+            villkor=villkor or (),
+            bara_med_underlag=bara_med_underlag,
+            scenario=scenario,
+        )
+        return {
+            **sammanfattning_bestallning(b),
+            "nasta": "rapport_skapa(korningar=[...], bestallning_id=...)",
+        }
+
+    @verktyg(
+        "bestallning_hamta",
+        "Hämtar en beställning (K30) med id, eller listar projektets beställningar utan id.",
+    )
+    def bestallning_hamta(
+        bestallning_id: Annotated[str | None, Field(description="b-<12 hex>; utelämnat = lista.")] = None,
+        projekt: Projekt = PROJEKT_ID,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        if bestallning_id:
+            return sammanfattning_bestallning(rapporter.bestallning_hamta(bestallning_id))
+        lista = rapporter.bestallningar.lista(projekt)
+        return {"antal": len(lista), "bestallningar": [sammanfattning_bestallning(b) for b in lista]}
+
+    @verktyg(
         "rapport_skapa",
-        "Skapar ett skissunderlag (nivå 1: sållning, inte bedömning mot krav) för ett ämne (bara "
-        "'skyfall' i R1) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
+        "Skapar ett skissunderlag (nivå 1: sållning, inte bedömning mot krav) för ett ämne ("
+        "'skyfall' eller 'dagsljus', se bestallning_skapa) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
         "skillnad; samma takmask som webben), hämtar metodernas valideringsstatus och väljer frågor "
         "ur katalogen. Svaret listar beläggsadresser du kan använda i pastaende_lagg_till.",
     )
     def rapport_skapa(
-        korningar: Annotated[list[str], Field(description="Körnings-id (klara), t.ex. ['demo-vatten'].")],
-        amne: Annotated[str, Field(description="Ämne; 'skyfall' i R1.")] = "skyfall",
+        korningar: Annotated[
+            list[str], Field(description="Körnings-id (klara), t.ex. ['demo-vatten'].")
+        ],
+        amne: Annotated[
+            str | None,
+            Field(description="'skyfall' (förval) eller 'dagsljus' (dagsljus och sol)."),
+        ] = None,
+        bestallning_id: Annotated[
+            str | None,
+            Field(description="Beställning (b-<12 hex>) från bestallning_skapa; styr ämne och frågor."),
+        ] = None,
         niva: Annotated[int, Field(description="1 = skissunderlag (enda nivån i R1).")] = 1,
         titel: str | None = None,
         fragor: Annotated[
@@ -788,7 +860,8 @@ def _registrera_rapportverktyg(
     ) -> dict[str, Any]:
         r = rapporter.skapa(
             projekt=projekt,
-            amne=amne,
+            amne=amne if amne or bestallning_id else "skyfall",
+            bestallning=bestallning_id,
             korningar=korningar,
             niva=niva,
             titel=titel,
@@ -1005,6 +1078,30 @@ def _registrera_rapportverktyg(
             "{{matt:<adress>}} ur belagg_adresser. Saknas underlag: status underlag_saknas och "
             "skriv vad som saknas. Inget 'visat' utan belägg. Bedöm inte mot krav (nivå 1 är "
             "sållning); skriv inte att något är lämpligt eller uppfyller krav.\n"
+            "5. rapport_kontrollera; rätta det som underkänns.\n"
+            "6. rapport_exportera format 'word' och 'pdf'.\n"
+            "Du äger inget tal. Metoderna är skisser."
+        )
+
+
+    @server.prompt(
+        name="skissunderlag_dagsljus",
+        title="Skissunderlag dagsljus och sol för …",
+        description="Skissunderlag (nivå 1) för dagsljus och solstudier: beställning, frågor, "
+        "körning, rapport, kontroll och export.",
+    )
+    def skissunderlag_dagsljus(
+        plats: str = "demokvarteret", korning: str = "demo-dagsljus"
+    ) -> str:
+        return (
+            f"Gör ett skissunderlag för dagsljus och sol för {plats} (körning {korning}).\n"
+            "1. bestallning_skapa(syfte, amnen=['dagsljus','sol'], mottagare_roll, scenario="
+            "{'fore': 'bas', 'efter': [...]}): beställningen väljer frågorna ur DL- och SO-listan.\n"
+            "2. fragekatalog_sok(omrade='dagsljus'): se floden.markning per fråga.\n"
+            f"3. rapport_skapa(korningar=['{korning}'], bestallning_id=...).\n"
+            "4. För varje fråga: pastaende_lagg_till. Tal bara som {{matt:<adress>}} ur "
+            "belagg_adresser. Saknas underlag: status underlag_saknas och skriv vad som saknas. "
+            "Bedöm inte mot krav; VSC mot BRE:s gräns är ett antal punkter, inte ett utlåtande.\n"
             "5. rapport_kontrollera; rätta det som underkänns.\n"
             "6. rapport_exportera format 'word' och 'pdf'.\n"
             "Du äger inget tal. Metoderna är skisser."

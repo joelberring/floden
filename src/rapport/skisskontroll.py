@@ -52,6 +52,8 @@ PUNKTER: Final[tuple[tuple[str, str], ...]] = (
     ("metodstatus", "Metodernas valideringsstatus"),
 )
 
+_PARAMETERSTAT: Final[tuple[str, ...]] = ("parameter i måttets definition", "parameter (indata)")
+"""Beläggens statistik för parametrar i dagsljusmåtten: de gäller alla nämnare."""
 _NIVA1_FORBJUDET: Final[tuple[str, ...]] = (
     "uppfyller kravet",
     "uppfyller kraven",
@@ -111,6 +113,7 @@ def mattfel(p: Pastaende) -> list[str]:
         fel.append(f"{_pid(p)}: texten talar om medelvärde, men beläggen är största värden (max).")
     if "medelvärde" in stat and "största" not in stat and _MAXORD.search(text):
         fel.append(f"{_pid(p)}: texten talar om största värde, men belägget är ett medelvärde.")
+    fel += dagsljusfel(p, text)
     try:
         p.fylld_text()
     except PastaendeFel as exc:
@@ -118,9 +121,52 @@ def mattfel(p: Pastaende) -> list[str]:
     return fel
 
 
+# "dagsljusfaktor" (även med stor bokstav) om ett VSC-belägg, utom när texten säger att den inte är
+# beräknad ("inte dagsljusfaktor", "ingen dagsljusfaktor").
+_DF_ORD: Final[re.Pattern[str]] = re.compile(
+    r"(?<!inte )(?<!ingen )(?<!Inte )(?<!Ingen )\b(dagsljusfaktor\w*|Dagsljusfaktor\w*|DF)\b"
+)
+_FASADSOL_ORD: Final[re.Pattern[str]] = re.compile(
+    r"\b(sol|soltimmar|solljus)\s+(på|vid|mot|i)\s+(fasad\w*|fönster\w*|rum\w*)", re.I
+)
+_SAMMANHANGANDE_ORD: Final[re.Pattern[str]] = re.compile(r"\bsammanhängande\b", re.I)
+_VERKLIGA_FONSTER: Final[re.Pattern[str]] = re.compile(
+    r"\b(grannens|grannarnas|bostadens|lägenhetens)\s+fönster", re.I
+)
+
+
+def dagsljusfel(p: Pastaende, text: str) -> list[str]:
+    """Mått och tidsstatistik för dagsljus: VSC är ingen dagsljusfaktor, soltimmar gäller marken
+    och är en summa (inte sammanhängande tid), fasadpunkter är inga verkliga fönster."""
+    fel: list[str] = []
+    vsc = any(b.matt.startswith("vsc:") for b in p.belagg)
+    sol = any(b.losare == "dagsljus.soltimmar_mark" and "soltim" in b.matt for b in p.belagg)
+    if vsc and (m := _DF_ORD.search(text)):
+        fel.append(
+            f"{_pid(p)}: texten säger '{m.group(0)}' men belägget är vertikal himmelskomponent "
+            "(VSC) vid fasadpunkt, inte dagsljusfaktor i rum."
+        )
+    if vsc and (m := _VERKLIGA_FONSTER.search(text)):
+        fel.append(
+            f"{_pid(p)}: texten säger '{m.group(0)}' men fasadpunkterna är genererade punkter, "
+            "inte verkliga fönster."
+        )
+    if sol and (m := _FASADSOL_ORD.search(text)):
+        fel.append(
+            f"{_pid(p)}: texten säger '{m.group(0)}' men soltimmarna gäller markytan, inte "
+            "fasad eller fönster."
+        )
+    if sol and _SAMMANHANGANDE_ORD.search(text):
+        fel.append(
+            f"{_pid(p)}: soltimmarna är en summa per dygn, inte sammanhängande tid."
+        )
+    return fel
+
+
 def mottagarfel(p: Pastaende, r: Rapport) -> list[str]:
     fel: list[str] = []
-    namnare = sorted({b.namnare for b in p.belagg})
+    # parametrar (BRE:s gräns, datum) är indata till måttet och gäller alla nämnare
+    namnare = sorted({b.namnare for b in p.belagg if not b.statistik.startswith(_PARAMETERSTAT)})
     if len(namnare) > 1:
         fel.append(
             f"{_pid(p)}: beläggen gäller olika nämnare ({'; '.join(namnare)}). Ett påstående "
@@ -129,7 +175,7 @@ def mottagarfel(p: Pastaende, r: Rapport) -> list[str]:
     for b in p.belagg:
         if b.adress.startswith("omrade."):
             namn = b.adress.split(".")[1]
-            if namn not in r.mottagare_per_namn:
+            if namn not in r.mottagare_per_namn and namn != "hela_omradet":
                 fel.append(f"{_pid(p)}: mottagaren '{namn}' finns inte i rapporten.")
             if p.mottagare and p.mottagare != namn:
                 fel.append(
@@ -257,7 +303,7 @@ def _sparbarhet(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
                 k.korning_id,
                 k.analys,
                 typ=k.typ,
-                scenario=None if k.typ == "skillnad" else k.scenario,
+                scenario=k.scenario,
                 utsnitt=k.meta.get("utsnitt"),
                 max_px=KART_PX,
                 rubrik=k.meta.get("rubrik"),
@@ -299,9 +345,9 @@ def _scenario(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
 
 
 def _karta(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
+    from rapport.amnestext import tomvarde_lagrad, tomvarde_sbk
     from rapport.skissmall import bildtext
-    from rapport.skissrapport import TOMVARDE_TEXT
-    from rapport.sprak import TOMVARDE_SBK, scenarionamn
+    from rapport.sprak import scenarionamn
 
     fel: list[str] = []
     for k in r.kartor:
@@ -317,8 +363,8 @@ def _karta(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
         # Bildtexten som Floden lagrade (K33) och bildtexten som står i dokumentet (språkprofil).
         visad = bildtext(k, r)
         for text, tomvarde, scen in (
-            (k.bildtext, TOMVARDE_TEXT, k.scenario),
-            (visad, TOMVARDE_SBK if r.installningar.sbk else TOMVARDE_TEXT,
+            (k.bildtext, tomvarde_lagrad(r.amne), k.scenario),
+            (visad, tomvarde_sbk(r.amne) if r.installningar.sbk else tomvarde_lagrad(r.amne),
              scenarionamn(k.scenario) if r.installningar.sbk else k.scenario),
         ):  # fmt: skip
             if tomvarde not in text:
@@ -330,21 +376,30 @@ def _karta(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
                 fel.append(f"Kartan {k.kart_id}: scenariot '{scen}' står inte i bildtexten.")
             if m.get("enhet") and str(m["enhet"]) not in text:
                 fel.append(f"Kartan {k.kart_id}: enheten står inte i bildtexten.")
-    per_jamforelse: dict[str, dict[str, Any]] = {}
-    for k in r.kartor:
-        if k.typ in ("bas", "scenario"):
-            per_jamforelse.setdefault(k.jamforelse, {})[k.typ] = k.meta.get("skala")
-    for namn, skalor in per_jamforelse.items():
-        if len(skalor) == 2 and skalor.get("bas") != skalor.get("scenario"):
-            fel.append(
-                f"Kartorna före och efter för {namn} har olika färgskalor; samma skala krävs för "
-                "att en förändring ska synas."
-            )
     for kp in r.korningar:
         for j in kp["jamforelser"]:
-            for typ in ("bas", "scenario", "skillnad"):
-                if not any(k.jamforelse == j["namn"] and k.typ == typ for k in r.kartor):
+            bas = next(
+                (
+                    k
+                    for k in r.kartor
+                    if k.typ == "bas" and k.analys == j["analys"] and k.scenario == j["fore"]
+                ),
+                None,
+            )
+            efter = next(
+                (k for k in r.kartor if k.typ == "scenario" and k.jamforelse == j["namn"]), None
+            )
+            skillnad = next(
+                (k for k in r.kartor if k.typ == "skillnad" and k.jamforelse == j["namn"]), None
+            )
+            for typ, kart in (("bas", bas), ("scenario", efter), ("skillnad", skillnad)):
+                if kart is None:
                     fel.append(f"Kartan för {j['namn']} ({typ}) saknas i rapporten.")
+            if bas is not None and efter is not None and bas.meta.get("skala") != efter.meta.get("skala"):
+                fel.append(
+                    f"Kartorna före och efter för {j['namn']} har olika färgskalor; samma skala "
+                    "krävs för att en förändring ska synas."
+                )
     return fel, len(r.kartor)
 
 
@@ -380,6 +435,10 @@ def _dataskydd(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
             )
     for p in r.pastaenden:
         fel += [f for f in sprakfel(p, r) if "e-post" in f or "personnummer" in f]
+    if r.bestallning is not None and any(
+        mo.search(r.bestallning.syfte) for mo in (_EPOST, _PERSONNR)
+    ):
+        fel.append("Beställningens syfte liknar en e-postadress eller ett personnummer.")
     for m in r.mottagare:
         if _EPOST.search(m.beskrivning) or _PERSONNR.search(m.beskrivning):
             fel.append(f"Mottagaren {m.namn}: beskrivningen liknar en personuppgift.")
