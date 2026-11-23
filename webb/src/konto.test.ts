@@ -22,7 +22,7 @@ test("tolkaKontoSvar", () => {
   assert.deepEqual(tolkaKontoSvar(401, { fel: "x" }), { lage: "ut" });
   assert.deepEqual(
     tolkaKontoSvar(200, { inloggning: "pa", konto: { namn: "N", epost: "e" } }),
-    { lage: "in", namn: "N", epost: "e", medlemskap: [], projekt: [] },
+    { lage: "in", namn: "N", epost: "e", superadmin: false, admin: false, medlemskap: [], projekt: [] },
   );
   assert.deepEqual(
     tolkaKontoSvar(200, {
@@ -34,6 +34,8 @@ test("tolkaKontoSvar", () => {
       lage: "in",
       namn: "N",
       epost: "e",
+      superadmin: false,
+      admin: false,
       medlemskap: [{ organisation: "O", forvaltning: "F", roll: "medlem" }],
       projekt: [],
     },
