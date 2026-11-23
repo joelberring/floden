@@ -1736,8 +1736,58 @@ def bygg_parser() -> argparse.ArgumentParser:
         default="config.toml",
         help="Sökväg till config.toml (standard: config.toml).",
     )
+    webb_parser.add_argument(
+        "--server",
+        choices=("trad", "asgi"),
+        default="trad",
+        help="Serverläge: 'trad' (standardbibliotekets trådserver, lokalt) eller 'asgi' "
+        "(uvicorn med kroppstak och gräns för samtidiga beräkningar; kräver extras [server]).",
+    )
+    webb_parser.add_argument(
+        "--max-samtidiga",
+        type=int,
+        default=None,
+        help="Bara --server asgi: högsta antal samtidiga tunga beräkningar (standard 4).",
+    )
 
     return parser
+
+
+def _kor_webb_asgi(args: argparse.Namespace) -> int:
+    """`floden webb --server asgi`: samma app som trådservern, men i uvicorn (src/webb/asgi.py).
+
+    En arbetsprocess (kontodatabasen, cachen och körningsloggen ligger i processen). Proxyhuvuden
+    godtas bara från localhost och Docker-nätet bakom Caddy (FORWARDED_ALLOW_IPS, standard
+    127.0.0.1)."""
+    try:
+        import uvicorn
+    except ImportError:
+        print(
+            "uvicorn saknas: installera med pip install -e '.[server]' eller kör --server trad.",
+            file=sys.stderr,
+        )
+        return 1
+    from webb.asgi import STANDARD_MAX_SAMTIDIGA_BERAKNINGAR, skapa_asgi_app
+
+    app = skapa_asgi_app(
+        testsvit_rot=args.rot,
+        konfig_fil=args.konfig,
+        max_samtidiga_berakningar=args.max_samtidiga or STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
+    )
+    print(f"Floden körs på http://{args.host}:{args.port} (uvicorn, ASGI)")
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        workers=1,
+        proxy_headers=True,
+        lifespan="on",
+        log_level="warning",
+        access_log=False,
+        server_header=False,
+        timeout_graceful_shutdown=10,
+    )
+    return 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1796,6 +1846,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             except KlientByggeFel as exc:
                 print(f"Kunde inte bygga webbklienten: {exc}", file=sys.stderr)
                 return 1
+        if args.server == "asgi":
+            return _kor_webb_asgi(args)
         server = skapa_http_server(
             host=args.host,
             port=args.port,

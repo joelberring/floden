@@ -319,3 +319,7 @@ Nästa: T00 (repo och grund), sedan T01 och T09a parallellt.
 
 ### 2026-11-22 – Rapportstil: serif i brödtexten (samordnare, på Joels begäran)
 - Brödtext, ingress, punktlistor och bildtexter har serif som förval: Gelasio i PDF (SIL OFL 1.1, statiska instanser ur variabelfilen, med versala siffror i stället för gemena) och Georgia i Word (samma teckenbredder; versala siffror via `w14:numForm`). Rubriker, tabeller, småtext, titelhuvud, sidhuvud och sidfot är kvar i Liberation Sans / Arial.
+
+### 2026-11-23 – Drift: ASGI i produktion (samordnare)
+- `floden webb --server asgi` kör `webb.asgi` i uvicorn 0.54.0 (extras `[server]`, en arbetsprocess). `deploy/start.sh` väljer läge med `FLODEN_SERVER` (förval `asgi`, reserv `trad`); Docker-avbildningen installerar `[server]`.
+- Röktest lokalt: `/api/halsa` 200, POST på 26 MB ger 413 både med Content-Length och chunked. Nya tester i `tests/webb/test_asgi_cli.py`.
