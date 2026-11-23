@@ -270,6 +270,15 @@ säga vilka som saknas. Testkörningar använder `config.toml` → `[rutt_test]`
 | `kritiska_avsnitt.gpkg` | Gatuavsnitt med `vinst` = antal adresser som blir nåbara om avsnittet hålls öppet |
 | `run.json` | Manifest |
 
+**Tillägg i webb-API:t (2026-11-23, additivt, K8 förblir v1).** `POST /api/rutt` (testområden och
+testvärden, `tillat_testvarden: true`) tar det valfria heltalsfältet `antal_insatser` (0–50, förval 0; annat ger 400).
+Är det 0 eller utelämnat är svaret oförändrat. Är det > 0 väljs `k = antal_insatser` vägavsnitt som ska hållas
+öppna (CELF, `rutt.kritiska.valj_kritisk_insats_k`, för regnet med längst återkomsttid i körningen; en station i
+nätets första nod och en adress i varje övrig nod) och svaret får fältet `rekommenderade_insatser`, en lista i vald ordning:
+`kant_id` (text), `marginalvinst`, `kumulativ_vinst` och `vinst_ensam`, alla tre i antal adresser som blir nåbara
+(dimensionslösa tal). Fältet saknas när `antal_insatser` är 0 eller när körningen inte har något regn. Äldre klienter ser ingen
+skillnad.
+
 ## K9 – Planscenario (v1)
 
 Bas + diff, gemensamt för alla moduler (vatten, luft, buller, dagsljus). Kod: `karna.scenario`.
@@ -699,3 +708,172 @@ med `benchmark.provfall`; läses av `webb/src/prov/webgpuProv.ts`. Fält (matris
 Facit är serverns f64-beräkning: dagsljus med `dagsljus.horisont`, vatten med referensschemat
 `benchmark.provfall.vatten_schema` (samma schema som `vatten_2d.wgsl`, inte hela lösaren `tvad.lokal_troghet`).
 Klientens tal är f32 och får bara användas i skissläge.
+
+## K40 – Vattenintervall `floden-vatten-intervall/v1` (v1)
+
+Nästa lediga nummer efter K37 (K38 och K39 är tagna av MCP-grenen, PR #58). Registrerat 2026-11-23 i efterhand
+(PR #57, ingen formatändring). Ett JSON-svar, ingen fil: monoton intervallanalys av maxdjup per sänknod när
+klimatfaktor, initial förlust och avtappning varierar inom intervall, med grenunion över bifurkationspunkter (K34).
+
+**Anrop:** `POST /api/analys/intervall`. **Skrivs av** `FlodenApiApp.kor_intervall_analys` (`src/webb/api.py`)
+som kör `dynamik.intervall.kor_monoton_intervallanalys`. **Läses av** inget i webbklienten än.
+
+Begäran (JSON-objekt):
+
+| Fält | Typ | Enhet | Förval | Innehåll |
+| --- | --- | --- | --- | --- |
+| `omrade_id` | text | | krävs | Testsvitens område eller projekt (demokvarteret) |
+| `klimatfaktor_intervall` | `[lo, hi]` | (faktor) | `[1,0, 1,25]` | 0 ≤ lo ≤ hi, ändliga tal |
+| `initial_forlust_mm_intervall` | `[lo, hi]` | mm | `[0, 2]` | som ovan |
+| `avtappning_mm_h_intervall` | `[lo, hi]` | mm/h | `[0, 0]` | som ovan |
+| `k_sigma` | tal ≥ 0 | (antal σ) | 2,0 | Bifurkationsgräns, som K34 |
+| `referensregn_mm` | tal > 0 | mm | 100 | Som K34; används också som regn (1 h) för projekt, som saknar eget regn |
+
+Svar (200):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-vatten-intervall/v1"` |
+| `omrade_id` | text | | Som i begäran |
+| `klimatfaktor_intervall`, `initial_forlust_mm_intervall`, `avtappning_mm_h_intervall` | `[lo, hi]` | faktor, mm, mm/h | Intervallen som användes |
+| `antal_korningar` | heltal | st | Antal lösarkörningar (extremfall och grenar) |
+| `antal_bifurkationsgrenar` | heltal | st | Antal grenar som bifurkationer gav upphov till |
+| `max_volymfel_rel` | tal | (relativt) | Största relativa volymfel över körningarna |
+| `kortid_s` | tal | s | Analysens körtid |
+| `sammanfattning` | objekt | | `antal_noder`, `antal_monoton_garanterad`, `antal_bifurkationspaverkade` (heltal, st; `antal_noder` räknar alla noder, inte bara de i `noder`), `storsta_min_djup_m`, `storsta_max_djup_m` (m) |
+| `noder` | lista | | De högst 50 noder med störst `max_maxdjup_m`, störst först |
+
+Nod (`noder[]`): `nod_id` (heltal), `min_maxdjup_m`, `max_maxdjup_m` (m, innesluter nodens största djup),
+`monoton_garanterad` (bool), `bifurkationspaverkad` (bool), `paverkande_bifurkationer` (lista av heltal, nod-id
+för bifurkationerna i K34).
+
+**Fel:** 400 för tom eller ogiltig JSON, saknat `omrade_id`, intervall som inte är två ändliga tal med
+0 ≤ lo ≤ hi, tal som inte är ≥ 0 (`referensregn_mm` ska vara > 0) och `DynamikFel` från lösaren; 404 okänt område;
+401 inte inloggad (bara när inloggning är på). Felsvaret är `{"fel": text, "status": heltal}`.
+**Behörighet:** inloggning av: öppet lokalt. Inloggning på: inloggat konto (CSRF som för alla POST); är `omrade_id`
+ett projekt (demokvarteret) krävs minst rollen `lasare` i projektet (403 annars). Testsvitens områden kräver bara
+inloggning.
+
+## K41 – SVF-intervall `floden-dagsljus-svf-intervall/v1` (v1)
+
+Registrerat 2026-11-23 i efterhand (PR #57, ingen formatändring). Ett JSON-svar: monotont garanterat intervall för
+himmelsandel (sky view factor, SVF) per markcell när byggnadshöjden är osäker ±σ, i sammandrag, plus största
+horisontvinkel på områdets mittrad.
+
+**Anrop:** `POST /api/analys/svf-intervall`. **Skrivs av** `kor_svf_intervall_analys` (`src/webb/api.py`) som kör
+`dagsljus.intervall.kor_monoton_svf_intervall` och `horisont_1d_konvext_holje`. Byggnadsceller är celler med
+markslag 2 (tak); byggnadshöjden är takhöjden över medianen av markcellerna (10 m om den blir 0).
+
+Begäran:
+
+| Fält | Typ | Enhet | Förval | Innehåll |
+| --- | --- | --- | --- | --- |
+| `omrade_id` | text | | krävs | Som K40 |
+| `osakerhet_byggnad_m` | tal ≥ 0 | m | 1,0 | Byggnadshöjdens osäkerhet, 1 σ |
+| `antal_riktningar` | heltal 4–180 | st | 16 | Azimutriktningar i SVF-beräkningen |
+| `svf_troskel` | tal 0–1 eller utelämnad | (andel) | ingen | Tröskel för `antal_osakra_celler` |
+
+Svar (200):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-dagsljus-svf-intervall/v1"` |
+| `omrade_id` | text | | Som i begäran |
+| `osakerhet_byggnad_m` | tal | m | Som i begäran |
+| `antal_riktningar` | heltal | st | Som i begäran |
+| `svf_min_medel`, `svf_max_medel` | tal | andel 0–1 | Medelvärde över markceller (utan byggnadsceller) av undre respektive övre SVF-gräns |
+| `bredd_max` | tal | andel 0–1 | Största intervallbredd `svf_max − svf_min` över cellerna |
+| `antal_osakra_celler` | heltal | st | Markceller med `svf_min` < `svf_troskel` ≤ `svf_max` (0 om ingen tröskel anges) |
+| `mittlinje_max_horisont_rad` | tal | rad | Största horisontvinkel mot öst på områdets mittrad |
+
+Rasterna `svf_min` och `svf_max` ingår inte i svaret.
+
+**Fel:** 400 för ogiltig JSON, saknat `omrade_id`, `antal_riktningar` utanför 4–180 eller inte heltal,
+`svf_troskel` utanför [0, 1], negativa eller ej ändliga tal och `HorisontFel`; 404 okänt område; 401 när inloggning
+är på och kontot saknas. **Behörighet:** som K40 (projekt i `omrade_id` kräver minst `lasare`).
+
+## K42 – Bullerskärmsval `floden-buller-optimering/v1` (v1)
+
+Registrerat 2026-11-23 i efterhand (PR #57, ingen formatändring). Ett JSON-svar: val av `k` bullerskärmar som
+minskar överskridandet mest (CELF på en submodulär målfunktion), och valfritt en kontroll av vilka mottagare som
+kan växla mellan direkt sikt och refraktiv skuggzon inom ett väderintervall. Indata är färdiga dB-tal från
+beräkningen; inget terräng- eller områdesunderlag läses.
+
+**Anrop:** `POST /api/analys/buller-skarmar`. **Skrivs av** `kor_buller_optimering_analys` (`src/webb/api.py`) som
+kör `buller.optimering.valj_bullerskarmar_k` och `detektera_akustiska_bifurkationer`.
+
+Begäran:
+
+| Fält | Typ | Enhet | Förval | Innehåll |
+| --- | --- | --- | --- | --- |
+| `bas_niva_db` | lista av tal, 1–5000 | dB | krävs | Ljudnivå per mottagare utan skärm |
+| `skarm_reduktion_db` | objekt, högst 200 | dB | krävs | Skärm-id (text) → lista av dämpning per mottagare, samma längd som `bas_niva_db`; negativa värden räknas som 0 |
+| `k` | heltal 1–50 | st | 5 | Antal skärmar att välja |
+| `riktvarde_db` | tal ≥ 0 | dB | 55,0 | Riktvärde mottagarna jämförs med |
+| `mal` | text | | `"overskridande_db"` | `"overskridande_db"` (minskning av överskridandet, vinst i dB) eller `"antal_godkanda"` (antal mottagare som blir godkända, vinst i st) |
+| `avstand_m` | lista av tal, 1–5000 | m | utelämnad | Källa–mottagare-avstånd (> 0). Anges den körs skuggzonsdetektorn |
+| `h_kalla_m`, `h_mottagare_m` | tal ≥ 0 | m | 0,5 och 4,0 | Käll- och mottagarhöjd (bara med `avstand_m`) |
+| `dc_dz_intervall` | `[min, max]` | 1/s | `[−0,05, 0,05]` | Vertikal ljudhastighetsgradient (bara med `avstand_m`) |
+
+Svar (200):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-buller-optimering/v1"` |
+| `riktvarde_db` | tal | dB | Som i begäran |
+| `mal` | text | | Som i begäran |
+| `valda_skarmar` | lista | | Skärmarna i vald ordning (tom om inget har nytta) |
+| `akustiska_bifurkationer` | lista | | Finns bara när `avstand_m` angavs; en post per mottagare, i samma ordning |
+
+`valda_skarmar[]`: `skarm_id` (text), `marginal_vinst` (vinsten i just detta steg), `kumulativ_vinst`,
+`vinst_ensam` (vinsten om skärmen vore ensam), alla tre i målets enhet (dB eller st enligt `mal`), och
+`nya_godkanda` (heltal, st mottagare som i steget går från över till under riktvärdet).
+
+`akustiska_bifurkationer[]`: `mottagare_idx` (heltal, index i `avstand_m`), `avstand_m` (m),
+`kritisk_dc_dz_per_s` (1/s, gradienten där skuggzonen når avståndet), `skuggzon_bifurkation` (bool, gränsen ligger
+inom `dc_dz_intervall`), `monoton_garanterad` (bool, = inte `skuggzon_bifurkation`).
+
+**Fel:** 400 för ogiltig JSON, fel längd eller typ i listorna, NaN/oändligt, `k` utanför 1–50, okänt `mal`,
+`BullerOptimeringFel`; 401 när inloggning är på och kontot saknas. Inget 404: det finns inget område.
+**Behörighet:** inloggning av: öppet lokalt. Inloggning på: inloggat konto; ingen projektroll krävs eftersom
+begäran bara innehåller tal och inga projektdata.
+
+## K43 – Luft-MKN-intervall `floden-luft-mkn-intervall/v1` (v1)
+
+Registrerat 2026-11-23 i efterhand (PR #57, ingen formatändring). Ett JSON-svar: monotont garanterad inneslutning av
+MKN-statistik för PM10 när emission och deposition är osäkra. Två extremserier (lägsta emission med högsta
+deposition, och tvärtom) ger undre och övre gräns. Indata är en färdig timserie; inget områdesunderlag läses.
+
+**Anrop:** `POST /api/analys/luft-mkn`. **Skrivs av** `kor_luft_mkn_analys` (`src/webb/api.py`) som kör
+`luft.kanslighet.kor_monoton_mkn_intervall`.
+
+Begäran:
+
+| Fält | Typ | Enhet | Förval | Innehåll |
+| --- | --- | --- | --- | --- |
+| `timvis_lokal_ug_m3` | lista av tal ≥ 0, 24–8784 | µg/m³ | krävs | Lokalt haltbidrag per timme |
+| `bakgrund_ug_m3` | tal ≥ 0 | µg/m³ | 0 | Regional bakgrund, läggs till |
+| `emissionsfaktor_intervall` | `[lo, hi]` | (faktor) | `[0,8, 1,25]` | 0 ≤ lo ≤ hi |
+| `depositionsfaktor_intervall` | `[lo, hi]` | (faktor) | `[0,8, 1,25]` | 0 < lo ≤ hi |
+| `grans_dygn_ug_m3` | tal ≥ 0 | µg/m³ | 50 | Dygnsgräns |
+| `max_dygn_ar` | heltal ≥ 0 | dygn | 35 | Högsta tillåtna antal dygn över gränsen |
+
+Svar (200):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-luft-mkn-intervall/v1"` |
+| `min_dygn_over_grans`, `max_dygn_over_grans` | heltal | dygn | Antal hela dygn (24 timmar; överskjutande timmar räknas inte) med dygnsmedel över gränsen |
+| `min_arsmedel_ug_m3`, `max_arsmedel_ug_m3` | tal | µg/m³ | Medelvärde över hela serien |
+| `min_percentil_90_4_ug_m3`, `max_percentil_90_4_ug_m3` | tal | µg/m³ | 90,4-percentilen av dygnsmedlen |
+| `klarar_mkn_garanterat` | bool | | `max_dygn_over_grans ≤ max_dygn_ar` |
+| `bryter_mkn_garanterat` | bool | | `min_dygn_over_grans > max_dygn_ar` |
+| `osaker_mkn_grans` | bool | | Varken klarar eller bryter garanterat |
+| `emissionsfaktor_intervall`, `depositionsfaktor_intervall` | `[lo, hi]` | faktor | Intervallen som användes |
+
+Svaret säger inte om gränsvärdet i miljöbalkens mening klaras för en plats; percentilen och dygnsantalet är
+underlag, och 90,4-percentilen jämförs inte med något värde här.
+
+**Fel:** 400 för ogiltig JSON, `timvis_lokal_ug_m3` med färre än 24 eller fler än 8784 värden, icke-tal eller
+NaN/oändligt, intervall som bryter ovan, `max_dygn_ar` som inte är ett heltal ≥ 0, `LuftFel`; 401 när inloggning
+är på och kontot saknas. **Behörighet:** som K42 (inloggat konto, ingen projektroll).
