@@ -14,6 +14,7 @@ import {
 import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
 import { avslutaFragor, visaFragor } from "./fragor";
 import { avslutaKarta, visaKarta } from "./kartsida";
+import { avslutaProv, visaProvWebgpu } from "./prov/webgpuProv";
 import {
   PROJEKT_ID,
   sidaForvaltning,
@@ -27,7 +28,7 @@ import {
 import { hamtaProjekt } from "./api";
 import type { ModulInfo, OmradeSammanfattning, ProjektSvar } from "./types";
 
-export type RuttSida = SidId | "arbetsbank";
+export type RuttSida = SidId | "arbetsbank" | "prov";
 
 export interface Rutt {
   sida: RuttSida;
@@ -53,6 +54,7 @@ export function tolkaHash(hash: string): Rutt {
     om: "om",
     forvaltning: "forvaltning",
     arbetsbank: "arbetsbank",
+    prov: "prov", // #/prov/webgpu: provsida för superadmin, ingen länk i menyn
   };
   const sida = delar[0] ? sidor[delar[0]] : undefined;
   if (!sida) {
@@ -69,6 +71,7 @@ const SIDTITLAR: Record<RuttSida, string> = {
   om: "Om beräkningarna – Floden",
   forvaltning: "Förvaltning – Floden",
   arbetsbank: "Arbetsbänk – Floden",
+  prov: "Prov – Floden",
 };
 
 export function startaRouter(krokar: RouterKrokar): void {
@@ -102,7 +105,7 @@ export function startaRouter(krokar: RouterKrokar): void {
       .catch(() => undefined),
   ]);
 
-  const sidId = (s: RuttSida): SidId => (s === "arbetsbank" ? "om" : s);
+  const sidId = (s: RuttSida): SidId => (s === "arbetsbank" || s === "prov" ? "om" : s);
 
   const rita = (): void => {
     const rutt = tolkaHash(window.location.hash);
@@ -123,6 +126,7 @@ export function startaRouter(krokar: RouterKrokar): void {
     }
     if (rutt.sida !== "karta") avslutaKarta();
     if (rutt.sida !== "fragor") avslutaFragor();
+    if (rutt.sida !== "prov") avslutaProv();
 
     const fokuseraRubrik = (): void => {
       window.requestAnimationFrame(() => {
@@ -159,6 +163,13 @@ export function startaRouter(krokar: RouterKrokar): void {
       fokuseraRubrik();
       return;
     }
+    if (rutt.sida === "prov") {
+      // Provsidan håller sitt eget tillstånd; den ritas inte om vid andra sidbyten.
+      void visaProvWebgpu(vySida);
+      window.scrollTo(0, 0);
+      fokuseraRubrik();
+      return;
+    }
     if (rutt.sida === "karta") {
       void visaKarta(vySida, rutt.parametrar.get("vy"));
       window.scrollTo(0, 0);
@@ -186,7 +197,7 @@ export function startaRouter(krokar: RouterKrokar): void {
   // Inloggningsläget kommer från /konto/jag och kan ändra meny, hälsning och förvaltningssidan.
   vidKontoandring(() => {
     const sida = tolkaHash(window.location.hash).sida;
-    if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank")) {
+    if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov")) {
       rita();
     } else sidhuvudEl.innerHTML = sidhuvud(sidId(sida));
   });
@@ -216,7 +227,7 @@ export function startaRouter(krokar: RouterKrokar): void {
   // Sidorna ritas om när moduler, projekt och områden har kommit (kartan och frågorna ritas inte om).
   void data.then(() => {
     const sida = tolkaHash(window.location.hash).sida;
-    if (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank") {
+    if (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov") {
       rita();
     }
   });

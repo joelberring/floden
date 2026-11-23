@@ -1,0 +1,126 @@
+{
+  "format": "floden-benchmark/v1",
+  "kalla": "webblasare",
+  "skapad_utc": "2026-11-23T12:00:00Z",
+  "kodversion": "abc123456789",
+  "maskin": {
+    "cpu": null,
+    "karnor": 8,
+    "os": "MacIntel",
+    "python": null,
+    "numpy": null,
+    "rust_karna": null,
+    "gpu": {
+      "tillganglig": true,
+      "adapter": {
+        "vendor": "apple",
+        "architecture": "metal-3",
+        "device": "",
+        "description": ""
+      },
+      "begransningar": {
+        "maxBufferSize": 1073741824
+      }
+    },
+    "webblasare": {
+      "user_agent": "Exempel/1.0",
+      "sprak": "sv-SE",
+      "enhetsminne_gb": 8
+    }
+  },
+  "installning": {
+    "uppvarmning": 1,
+    "upprepningar": 3,
+    "tidsmatt": "median",
+    "minnesmatt": []
+  },
+  "anmarkning": "Skissläge: tal från klientens f32-beräkning får bara användas som skiss. Facit är serverns f64-beräkning. Tiderna gäller den här webbläsaren och det här grafikkortet.",
+  "delar": {
+    "dagsljus": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "dagsljus-kvarter300:svf",
+          "namn": "Dagsljus (svf)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.0123,
+            "min": 0.0119,
+            "max": 0.0125,
+            "n": 3,
+            "alla": [
+              0.0123,
+              0.0119,
+              0.0125
+            ]
+          },
+          "minne": {
+            "gpu_buffrar_mb": 2.1
+          },
+          "avvikelse": {
+            "varde": 0.010000000000000009,
+            "enhet": "andel",
+            "grans": 0.02,
+            "godkand": true,
+            "beskrivning": "GPU (f32) mot server (f64)",
+            "matt": {
+              "medelfel": 0.0025000000000000022,
+              "andel_over_tolerans": 0,
+              "tolerans": 0.02,
+              "antal_celler": 4,
+              "antal_ickeandliga": 0
+            }
+          },
+          "extra": {}
+        },
+        {
+          "id": "dagsljus-kvarter300:soltimmar_h",
+          "namn": "Dagsljus (soltimmar_h)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.0123,
+            "min": 0.0119,
+            "max": 0.0125,
+            "n": 3,
+            "alla": [
+              0.0123,
+              0.0119,
+              0.0125
+            ]
+          },
+          "minne": {
+            "gpu_buffrar_mb": 2.1
+          },
+          "avvikelse": {
+            "varde": 0.5,
+            "enhet": "h",
+            "grans": 0.25,
+            "godkand": false,
+            "beskrivning": "GPU (f32) mot server (f64)",
+            "matt": {
+              "medelfel": 0.125,
+              "andel_over_tolerans": 0.25,
+              "tolerans": 0.25,
+              "antal_celler": 4,
+              "antal_ickeandliga": 0
+            }
+          },
+          "extra": {}
+        }
+      ]
+    },
+    "skyfall": {
+      "status": "hoppas_over",
+      "skal": "Provet av vatten 2D kördes inte.",
+      "fall": [
+        {
+          "id": "vatten2d-lutande-plan",
+          "namn": "Vatten 2D",
+          "status": "hoppas_over",
+          "skal": "Provet av vatten 2D kördes inte."
+        }
+      ]
+    }
+  }
+}

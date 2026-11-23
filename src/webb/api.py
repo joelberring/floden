@@ -111,6 +111,8 @@ from webb.fragor import FragaTjanst
 from webb.kartverktyg import KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import ProjektTjanst
+from webb.prov import PREFIX as PROV_PREFIX
+from webb.prov import prov_svar
 from webb.rendering import (
     DEFAULT_KALLOR,
     RenderingFel,
@@ -2134,6 +2136,10 @@ class FlodenApiApp:
             if verb == "POST" and ren_sokvag == "/api/analys/bifurkationer":
                 return _json_svar(200, self.kor_bifurkation_analys(kropp))
 
+            if ren_sokvag.startswith(PROV_PREFIX):
+                status, svar = prov_svar(verb, ren_sokvag)
+                return _json_svar(status, svar)
+
             return _json_svar(
                 404,
                 {
@@ -2200,6 +2206,16 @@ class FlodenApiApp:
         if not kontroll.tillaten:
             assert kontroll.svar is not None
             return kontroll.svar
+        # WebGPU-provet (src/webb/prov.py) är bara för superadmin när inloggning är på.
+        if (
+            self.konto.aktiv
+            and req.sokvag.startswith(PROV_PREFIX)
+            and (kontroll.inloggad is None or not kontroll.inloggad.superadmin)
+        ):
+            status, headers, kropp = _json_svar(
+                403, {"fel": "Provsidorna är bara för superadmin.", "status": 403}
+            )
+            return status, list(headers.items()), kropp
         try:
             kropp_in = las_kropp() if verb == "POST" else b""
         except FlodenWebbFel as exc:
