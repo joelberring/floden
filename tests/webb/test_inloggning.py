@@ -167,3 +167,14 @@ def test_klientbygge_hoppar_over_aktuell_klient_och_bygger_annars(tmp_path: Path
     assert len(anrop) == antal
     with pytest.raises(KlientByggeFel):
         sakerstall_klient(tmp_path / "saknas", logg=lambda _t: None, kor=kor)
+
+
+def test_inloggningsbilden_serveras_utan_inloggning(tmp_path: Path, miljo: Miljo) -> None:
+    """Målningen på inloggningssidan (webb/public/bild) är en statisk fil: ingen inloggning."""
+    app = _app(tmp_path, miljo.adapter)
+    bild = tmp_path / "dist" / "bild"
+    bild.mkdir()
+    (bild / "inloggning-800.webp").write_bytes(b"RIFF\x00\x00\x00\x00WEBPVP8 ")
+    status, h, k = _http(app, "GET", "/bild/inloggning-800.webp")
+    assert status == 200 and h["content-type"] == "image/webp" and k.startswith(b"RIFF")
+    assert _http(app, "GET", "/api/omraden")[0] == 401

@@ -43,6 +43,34 @@ function statusKlass(m: ModulInfo): string {
 
 /* ---------- Sidhuvud (samma meny på alla sidor) ---------- */
 
+/* ---------- Inloggning (servern med inloggning, utloggad besökare) ---------- */
+
+/**
+ * Hel sida med målningen i bakgrunden: namnet, en mening och inloggningsknappen. Samma markup på
+ * dator och mobil (förslag A och D); bilden väljs efter skärmbredd. Säger medvetet lite om vad
+ * Floden gör.
+ */
+export function sidaInloggning(inloggningsHref: string): string {
+  return `
+    <section class="inloggning" aria-labelledby="inloggning-rubrik">
+      <img class="inloggning-bild"
+        src="/bild/inloggning-1600.webp"
+        srcset="/bild/inloggning-800.webp 800w, /bild/inloggning-1600.webp 1600w"
+        sizes="100vw"
+        alt="Målning av en bäck som rinner genom grönska mot ett ljust gult ljus" />
+      <div class="inloggning-text">
+        <h1 id="inloggning-rubrik" class="inloggning-namn">Floden</h1>
+        <p class="inloggning-mening">Hantera floden av utredningsfrågor<br />på&nbsp;ett&nbsp;ställe.</p>
+        <div class="inloggning-handling">
+          <a class="inloggning-knapp" href="${esc(inloggningsHref)}" data-konto="logga-in">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><path d="M10 17l5-5-5-5"></path><path d="M15 12H3"></path></svg>
+            Logga in med Google</a>
+          <span class="inloggning-not">Bara för inbjudna</span>
+        </div>
+      </div>
+    </section>`;
+}
+
 export function sidhuvud(aktiv: SidId): string {
   const lank = (id: SidId, text: string, href: string): string =>
     `<a href="${href}"${aktiv === id ? ' aria-current="page"' : ""}>${esc(text)}</a>`;
