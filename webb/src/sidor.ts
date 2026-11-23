@@ -18,7 +18,7 @@ export function esc(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export type SidId = "start" | "projekt" | "karta" | "fragor" | "om" | "forvaltning" | "nycklar" | "administration";
+export type SidId = "start" | "projekt" | "karta" | "fragor" | "om" | "matematik" | "forvaltning" | "nycklar" | "administration";
 
 export const PROJEKT_ID = "demokvarteret";
 

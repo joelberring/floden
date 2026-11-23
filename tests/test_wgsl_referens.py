@@ -102,3 +102,53 @@ def test_webgpu_typescript_motor_kontrakt() -> None:
     assert 'berakna_svf_och_soltimmar' in kod
     assert '"klient_webgpu_f32"' in kod
     assert "finally {" in kod and ".destroy()" in kod
+
+
+def test_dagsljus_wgsl_korsprodukt_dda_robust_mot_gpu_ulp() -> None:
+    """dagsljus_horisont.wgsl ska använda heltalsräknare + korsprodukt (0/64 fel vid 8 ULP)."""
+    from dagsljus.horisont import stralsekvens
+
+    shader = (SHADER_MAPP / "dagsljus_horisont.wgsl").read_text(encoding="utf-8")
+    assert "var ix: i32 = 0;" in shader
+    assert "let lhs: f32 = select(1e30, fx * aey" in shader
+
+    f32 = np.float32
+    rmax = 120.0
+    for k in range(64):
+        phi = 2.0 * math.pi * k / 64
+        ex = f32(math.sin(phi))
+        ey = f32(-math.cos(phi))
+        if abs(ex) > 1e-6:
+            for _ in range(8):  # simulera 8 ULP fast-math GPU sin/cos-drift
+                ex = np.nextafter(ex, f32(ex * 2.0))
+        if abs(ex) < f32(1e-6):
+            ex = f32(0.0)
+        if abs(ey) < f32(1e-6):
+            ey = f32(0.0)
+        aex, aey = f32(abs(ex)), f32(abs(ey))
+        sx = 1 if ex >= 0 else -1
+        sy = 1 if ey >= 0 else -1
+        tdx = f32(1e30) if ex == 0 else f32(1.0) / aex
+        tdy = f32(1e30) if ey == 0 else f32(1.0) / aey
+
+        ix = iy = cj = ci = 0
+        out: list[tuple[int, int]] = []
+        for _ in range(int(2 * rmax) + 4):
+            tmx = f32(1e30) if ex == 0 else f32(f32(ix) + f32(0.5)) * tdx
+            tmy = f32(1e30) if ey == 0 else f32(f32(iy) + f32(0.5)) * tdy
+            if min(tmx, tmy) > f32(rmax):
+                break
+            lhs = f32(1e30) if ex == 0 else f32(f32(ix) + f32(0.5)) * aey
+            rhs = f32(1e30) if ey == 0 else f32(f32(iy) + f32(0.5)) * aex
+            tol = f32(1e-5) * max(lhs, rhs)
+            tie = (ex != 0 and ey != 0) and abs(lhs - rhs) <= tol
+            if ex != 0 and (tie or lhs < rhs):
+                cj += sx
+                ix += 1
+            if ey != 0 and (tie or rhs < lhs):
+                ci += sy
+                iy += 1
+            out.append((cj, ci))
+
+        dj, di, _ = stralsekvens(phi, rmax)
+        assert out == list(zip(dj.tolist(), di.tolist(), strict=True))

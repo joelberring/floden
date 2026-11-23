@@ -49,7 +49,7 @@ export function flodeAdress(projekt: string | null, steg: Steg): string {
 }
 
 /** Stegraden: riktiga länkar, `aria-current="page"` på aktivt steg. */
-export function stegradHtml(projekt: string | null, aktivt: Steg): string {
+export function stegradHtml(projekt: string | null, aktivt: Steg | null): string {
   const lankar = STEG.map((s, i) => {
     const pa = s.id === aktivt;
     return `<a class="flode-steg${pa ? " aktivt" : ""}" href="${flodeAdress(projekt, s.id)}"${pa ? ' aria-current="page"' : ""}><span class="flode-steg-nr">${i + 1}</span> ${esc(s.namn)}</a>`;

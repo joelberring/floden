@@ -49,7 +49,7 @@ Gäller för alla AI-agenter och människor som arbetar i projektet. Vid konflik
 - Ett resultat avviker från facit mer än gränserna i `docs/VALIDERING.md` och du inte hittar orsaken på
   rimlig tid.
 - Något kräver kostnad (molnmaskiner, betaldata) eller kontakt med en extern part.
-- Matematiska frågor som hör till Samuels del (`tasks/T03`): formulera frågan och lämna den, gissa inte fram teori.
+- Matematiska frågor som hör till forskningspartens del (`tasks/T03`, `docs/MATEMATIK.md`): formulera frågan och lämna den, gissa inte fram teori.
 
 ## När ett arbetspass är klart
 

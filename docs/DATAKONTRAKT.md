@@ -576,7 +576,7 @@ punkter där vattnets utlopp kan byta väg inom höjdosäkerheten (Q2, `docs/MAT
 `tools/exportera_q2_underlag.py`). Samma punkter skrivs som GeoPackage av `skriv_bifurkationer_gpkg`
 (`bifurkationer.gpkg`, lager `bifurkationer`, punktgeometri på överfallet, EPSG från argumentet, förval
 3011; attributen som nedan utom koordinaterna, och den alternativa sadelns läge ingår inte). **Läses av** inget i Floden idag (testerna
-`tests/sankgraf/test_bifurkation.py` läser tillbaka filen); avsedd för skissrapport, webb och Samuels analys.
+`tests/sankgraf/test_bifurkation.py` läser tillbaka filen); avsedd för skissrapport, webb och forskningspartens analys.
 Punkterna finns också inbäddade i svaret från `POST /api/analys/bifurkationer` (K36).
 
 | Fält | Typ | Enhet | Innehåll |
@@ -609,7 +609,7 @@ bigraderade k[x, y]-experiment (2-parameterpersistens, Q2).
 
 **Skrivs av** `sankgraf.bifurkation.exportera_bifiltrering_json` (fil `bifiltrering_q2.json`; anropas av
 `tools/exportera_q2_underlag.py`). **Läses av** inget i Floden (testerna läser tillbaka filen); avsedd för
-Samuels externa experiment i Python eller Macaulay2.
+Forskningspartens externa experiment i Python eller Macaulay2.
 
 | Fält | Typ | Enhet | Innehåll |
 | --- | --- | --- | --- |
