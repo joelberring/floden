@@ -17,7 +17,7 @@ vattenyta och ett ritat hus i 3D) mot `floden webb` efter `floden demo`.
 
 Med `--3d-farg` läses pixlar av för punkter med kända färger (kräver `--3d`-vyn, inget sparas).
 
-Med `--demo` tas i stället docs/bilder/demo-*.png (start, projekt, karta bred och smal,
+Med `--demo` tas i stället docs/bilder/demo-*.png (projekt, karta bred och smal,
 frågesidan) mot `floden webb` (som serverar klienten själv, standard
 http://127.0.0.1:8765) efter `floden demo`. Inget körs om: resultaten läses ur cachen.
 """
@@ -85,10 +85,9 @@ def _sida(
 
 
 def _demo(webblasare: Browser, url: str) -> None:
-    """demo-*.png: start, projekt, karta (1440 och 800 px) samt frågesidans resultat."""
+    """demo-*.png: projekt, karta (1440 och 800 px) samt frågesidans resultat."""
     for bredd, suffix in ((1440, ""), (800, "-smal")):
         sida = webblasare.new_page(viewport={"width": bredd, "height": 1000})
-        _sida(sida, url, "#/", ".modul-kort", f"demo-start{suffix}.png")
         _sida(sida, url, "#/projekt/demokvarteret", ".jamfor-tabell", f"demo-projekt{suffix}.png")
         sida.goto(f"{url}/#/karta/demokvarteret?vy=dagsljus-hojd")
         sida.wait_for_selector("#vy-yta canvas", timeout=60_000)

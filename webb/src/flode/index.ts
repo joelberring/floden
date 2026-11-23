@@ -1,0 +1,70 @@
+/*
+ * Flödet: väljer steg ur adressen, ritar huvudet och steget, och flyttar fokus till rubriken vid
+ * stegbyte. Anropas av routern; allt annat i flödet ligger i den här mappen.
+ */
+import "./flode.css";
+import { hamtaProjektLista } from "../api.ts";
+import { tolkaFlodeAdress, type FlodeRutt } from "./adress.ts";
+import { visaForslag } from "./forslag.ts";
+import { visaFragor } from "./fragor.ts";
+import { ritaFlodeHuvud, sattProjektNamn } from "./huvud.ts";
+import { visaProjektlista, type Avslutbar } from "./projektlista.ts";
+import { visaRapport } from "./rapport.ts";
+import { visaResultat } from "./resultat.ts";
+
+export { tolkaFlodeAdress };
+
+let aktiv: Avslutbar | null = null;
+
+export function avslutaFlode(): void {
+  aktiv?.avsluta();
+  aktiv = null;
+}
+
+export const STEGTITEL: Record<string, string> = {
+  projekt: "Projekt",
+  forslag: "Förslag",
+  fragor: "Frågor",
+  resultat: "Resultat",
+  rapport: "Rapport",
+};
+
+/** Visar flödets steg. `huvud` är sidhuvudselementet, `rot` innehållet. */
+export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt): void {
+  avslutaFlode();
+  document.title = `${STEGTITEL[rutt.steg]} – Floden`;
+  ritaFlodeHuvud(huvud, rutt.projekt, rutt.steg);
+  const p = rutt.projekt;
+  // Projektets namn i huvudet (id:t tills listan har kommit).
+  if (p) {
+    void hamtaProjektLista()
+      .then((l) => {
+        const post = l.projekt.find((x) => x.id === p);
+        if (post && aktiv) {
+          sattProjektNamn(p, post.namn);
+          ritaFlodeHuvud(huvud, p, rutt.steg);
+        }
+      })
+      .catch(() => undefined);
+  }
+  let steg: Avslutbar;
+  if (rutt.steg === "projekt" || p === null) steg = visaProjektlista(rot, null);
+  else if (rutt.steg === "forslag") steg = visaForslag(rot, p);
+  else if (rutt.steg === "fragor") steg = visaFragor(rot, p);
+  else if (rutt.steg === "resultat") steg = visaResultat(rot, p);
+  else steg = visaRapport(rot, p);
+  aktiv = steg;
+  // Fokus på rubriken när steget är ritat (och går att nå med tangentbordet).
+  void steg.klar.then(() => {
+    if (aktiv !== steg) return;
+    const h = rot.querySelector<HTMLElement>("h1");
+    if (h) {
+      if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+      h.focus({ preventScroll: true });
+    }
+  });
+}
+
+export function projektLaddat(huvud: HTMLElement, rutt: FlodeRutt): void {
+  ritaFlodeHuvud(huvud, rutt.projekt, rutt.steg);
+}

@@ -17,6 +17,7 @@ import {
 } from "./konto";
 import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
 import { avslutaFragor, visaFragor } from "./fragor";
+import { avslutaFlode, projektLaddat, tolkaFlodeAdress, visaFlode } from "./flode/index";
 import { avslutaKarta, visaKarta } from "./kartsida";
 import { avslutaProv, visaProvWebgpu } from "./prov/webgpuProv";
 import { visaAdministration, visaNycklar } from "./kontosidor";
@@ -141,6 +142,18 @@ export function startaRouter(krokar: RouterKrokar): void {
       vySida.innerHTML = sidaInloggning(inloggningsAdress("/"));
       return;
     }
+    // Flödet (#/ och #/p/<projekt>/<steg>) har eget sidhuvud och egna steg.
+    const flode = tolkaFlodeAdress(window.location.hash);
+    if (flode) {
+      avslutaKarta();
+      avslutaFragor();
+      document.body.dataset.sida = "flode";
+      vyArbetsbank.hidden = true;
+      vySida.hidden = false;
+      visaFlode(sidhuvudEl, vySida, flode);
+      return;
+    }
+    avslutaFlode();
     if (rutt.sida !== "karta") avslutaKarta();
     if (rutt.sida !== "fragor") avslutaFragor();
     if (rutt.sida !== "prov") avslutaProv();
@@ -241,6 +254,11 @@ export function startaRouter(krokar: RouterKrokar): void {
 
   // Inloggningsläget kommer från /konto/jag och kan ändra meny, hälsning och förvaltningssidan.
   vidKontoandring(() => {
+    const flode = tolkaFlodeAdress(window.location.hash);
+    if (flode && kontoLage().lage !== "ut") {
+      projektLaddat(sidhuvudEl, flode);
+      return;
+    }
     const sida = tolkaHash(window.location.hash).sida;
     if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov")) {
       rita();
@@ -271,6 +289,7 @@ export function startaRouter(krokar: RouterKrokar): void {
   rita();
   // Sidorna ritas om när moduler, projekt och områden har kommit (kartan, frågorna och kontosidorna ritas inte om).
   void data.then(() => {
+    if (tolkaFlodeAdress(window.location.hash)) return;
     const sida = tolkaHash(window.location.hash).sida;
     if (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov") {
       rita();

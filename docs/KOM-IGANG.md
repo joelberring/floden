@@ -165,8 +165,7 @@ kontot. Den slås på i `config.local.toml`
 `docs/KONTO.md` (avsnitt 2 för Google-klienten, avsnitt 8 för hur den är kopplad i webben). Med
 inloggning på visas en *Logga in med Google*-knapp och, när du är inloggad, ditt namn och *Logga ut*.
 
-Skärmbilder (bred 1440 px och smal 800 px med `-smal`): `docs/bilder/demo-start.png`,
-`demo-projekt.png`, `demo-karta.png` (+ `demo-karta-vatten.png`), `demo-fragor.png`, `demo-dagsljus.png`,
+Flödets fem steg: `docs/bilder/flode-{1-projekt,2-forslag,3-fragor,4-resultat,5-rapport}.png` och `-smal` (390 px; `python tools/flode_skarmbild.py`). Skärmbilder (bred 1440 px och smal 800 px med `-smal`): `docs/bilder/demo-projekt.png`, `demo-karta.png` (+ `demo-karta-vatten.png`), `demo-fragor.png`, `demo-dagsljus.png`,
 `demo-vatten.png` (`python tools/webb_skarmbild.py --demo`). Kartverktyget: `docs/bilder/kartverktyg-lager.png`,
 `kartverktyg-rita.png` (mitt i ritningen, med fästmarkör), `kartverktyg-hojd.png` och `kartverktyg-resultat.png`
 (före och efter efter en körning; `python tools/webb_skarmbild.py --kartverktyg`, kräver Chrome).
