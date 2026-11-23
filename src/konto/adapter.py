@@ -9,6 +9,8 @@ Adaptern känner inte till `http.server`: den tar (metod, sökväg, query, heade
 - `GET  /konto/callback/<leverantör>` tar emot koden, kontrollerar allt och sätter sessionskakor
 - `POST /konto/logga-ut` återkallar sessionen (CSRF-header, eller exakt Origin)
 - `GET  /konto/jag` visar vem som är inloggad (401 om ingen)
+- `GET/PUT/DELETE /konto/nycklar[/<typ>]` kontots egna API-nycklar, krypterade (`konto.nycklar`)
+- `/konto/admin/...` inbjudningar, roller och spärr för admin (`konto.kontoapi`)
 
 Med `inloggning = "av"` kräver ingenting inloggning och `/konto/jag` svarar `{"inloggning": "av"}`.
 Flödets tillstånd (state, nonce, PKCE-verifierare) ligger i databasen, inte i en kaka som
@@ -27,7 +29,7 @@ import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
 
 from konto.databas import Databas
@@ -45,6 +47,9 @@ from konto.sessioner import (
     satt_kaka,
 )
 from konto.tilldelning import InloggningNekad, logga_in_identitet
+
+if TYPE_CHECKING:
+    from konto.nycklar import NyckelForrad
 
 logg = logging.getLogger("konto")
 
@@ -138,19 +143,24 @@ class KontoAdapter:
         hamtare: Hamtare | None = None,
         klocka: Callable[[], float] = time.time,
         leverantorer: Mapping[str, Leverantor] | None = None,
+        nyckelhemlighet: str | None = None,
     ) -> None:
         self.konfig = konfig
         self._klocka = klocka
         self._kak = kaknamn(konfig.cookie_secure)
         self.register: Register | None = None
         self.sessioner: Sessioner | None = None
+        self.nycklar: NyckelForrad | None = None
         self._klienter: dict[str, Any] = {}
         if not konfig.aktiv:
             return
         # Importen sker först här: läget "av" kräver varken PyJWT eller databas.
+        from konto.nycklar import NyckelForrad
         from konto.oidc import OidcKlient
 
         self.register = register or Register(Databas(konfig.databas), klocka)
+        # Hemligheten för nyckelkrypteringen: FLODEN_NYCKELHEMLIGHET (saknas den är sidan avstängd).
+        self.nycklar = NyckelForrad(self.register, nyckelhemlighet, klocka)
         self.sessioner = Sessioner(self.register, konfig)
         levs = (
             dict(leverantorer)
@@ -219,6 +229,20 @@ class KontoAdapter:
         svar = _fel(403, "ingen-behorighet", "Saknar behörighet till projektet")
         return Kontroll(False, svar=svar)
 
+    def projekt_for_konto(self, konto_id: str) -> list[dict[str, str]]:
+        """Registrets projekt där kontot har en uttrycklig roll (id, namn, roll). Demokvarteret
+        ingår inte här: det följer `demoprojekt_roll` (se `demoroll`)."""
+        if self.register is None:
+            return []
+        proj = self.register.sammanfattning(konto_id)["projekt"]
+        assert isinstance(proj, list)  # noqa: S101
+        return [{"id": p["id"], "namn": p["namn"], "roll": p["roll"]} for p in proj]
+
+    def demoroll(self) -> str | None:
+        """Rollen varje inloggat konto har på demoprojektet, eller None när den är `av`."""
+        roll = self.konfig.demoprojekt_roll
+        return None if roll == "av" else roll
+
     def _origin_ok(self, request: Forfragan) -> bool:
         origin = request.headers.get("origin")
         return origin is None or origin == self.konfig.origin
@@ -261,6 +285,12 @@ class KontoAdapter:
             if req.metod != "POST":
                 return _fel(405, "metod", "Metod ej tillåten")
             return self._logga_ut(req)
+        if len(delar) >= 2 and delar[1] in ("nycklar", "admin"):
+            from konto import kontoapi
+
+            if delar[1] == "nycklar":
+                return kontoapi.hantera_nycklar(self, req, delar[2:])
+            return kontoapi.hantera_admin(self, req, delar[2:])
         return _fel(404, "okand", "Okänd ändpunkt")
 
     def _jag(self, req: Forfragan) -> Svar:
@@ -281,6 +311,7 @@ class KontoAdapter:
                     "namn": i.namn,
                     "epost": i.epost,
                     "superadmin": i.superadmin,
+                    "admin": self.register.ar_admin(i.konto_id),
                     "utgar": i.utgar,
                 },
                 **self.register.sammanfattning(i.konto_id),

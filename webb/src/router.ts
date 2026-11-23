@@ -1,10 +1,14 @@
 /*
  * Enkel hash-router: #/ · #/projekt/<id> · #/karta/<id> · #/fragor · #/om · #/forvaltning
- * (bara med inloggning och kontodata) · #/arbetsbank/<omrade> (kontrollfallens arbetsbänk).
+ * (bara med inloggning och kontodata) · #/nycklar (inloggade) · #/administration (admin) ·
+ * #/arbetsbank/<omrade> (kontrollfallens arbetsbänk).
  * Arbetsbänken är den äldre kartan i index.html (main.ts) och göms i stället för att ritas om,
- * så att kartan finns kvar mellan sidbyten.
+ * så att kartan finns kvar mellan sidbyten. Den finns inte i menyn eller på någon sida: den nås
+ * bara med adressen och visas bara för superadmin, eller alltid när inloggning är av (lokalt).
  */
 import {
+  adminTillaten,
+  arbetsbankTillaten,
   forvaltningSynlig,
   inloggningsAdress,
   kontoLage,
@@ -14,18 +18,20 @@ import {
 import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
 import { avslutaFragor, visaFragor } from "./fragor";
 import { avslutaKarta, visaKarta } from "./kartsida";
+import { visaAdministration, visaNycklar } from "./kontosidor";
 import {
   PROJEKT_ID,
   sidaForvaltning,
   sidaInloggning,
   sidaOm,
   sidaProjekt,
+  sidaProjektUtanData,
   sidaStart,
   sidhuvud,
   type SidId,
 } from "./sidor";
 import { hamtaProjekt } from "./api";
-import type { ModulInfo, OmradeSammanfattning, ProjektSvar } from "./types";
+import type { ModulInfo, OmradeSammanfattning, ProjektListaPost, ProjektSvar } from "./types";
 
 export type RuttSida = SidId | "arbetsbank";
 
@@ -52,6 +58,8 @@ export function tolkaHash(hash: string): Rutt {
     fragor: "fragor",
     om: "om",
     forvaltning: "forvaltning",
+    nycklar: "nycklar",
+    administration: "administration",
     arbetsbank: "arbetsbank",
   };
   const sida = delar[0] ? sidor[delar[0]] : undefined;
@@ -68,6 +76,8 @@ const SIDTITLAR: Record<RuttSida, string> = {
   fragor: "Utredningsfrågor – Floden",
   om: "Om beräkningarna – Floden",
   forvaltning: "Förvaltning – Floden",
+  nycklar: "Nycklar – Floden",
+  administration: "Administration – Floden",
   arbetsbank: "Arbetsbänk – Floden",
 };
 
@@ -83,6 +93,8 @@ export function startaRouter(krokar: RouterKrokar): void {
   let omraden: OmradeSammanfattning[] = [];
   let projekt: ProjektSvar | null = null;
   let harProjekt = false;
+  let projektLista: ProjektListaPost[] = [];
+  let projektListaKlar = false;
   const data = Promise.all([
     hamtaModuler()
       .then((s) => {
@@ -96,10 +108,15 @@ export function startaRouter(krokar: RouterKrokar): void {
       .catch(() => undefined),
     hamtaProjektLista()
       .then(async (s) => {
-        harProjekt = s.projekt.length > 0;
+        projektLista = s.projekt;
+        // Demokvarteret har egen sida med siffror; projekt ur registret saknar beräkningar än.
+        harProjekt = s.projekt.some((p) => p.id === PROJEKT_ID && p.finns !== false);
         if (harProjekt) projekt = await hamtaProjekt(PROJEKT_ID);
       })
-      .catch(() => undefined),
+      .catch(() => undefined)
+      .finally(() => {
+        projektListaKlar = true;
+      }),
   ]);
 
   const sidId = (s: RuttSida): SidId => (s === "arbetsbank" ? "om" : s);
@@ -138,7 +155,24 @@ export function startaRouter(krokar: RouterKrokar): void {
       window.location.replace("#/");
       return;
     }
+    // Sidor med behörighetskrav väntar på /konto/jag och går annars tillbaka till startsidan.
+    const lage = kontoLage();
+    const kravs: Partial<Record<RuttSida, () => boolean>> = {
+      arbetsbank: arbetsbankTillaten,
+      administration: adminTillaten,
+    };
+    const krav = kravs[rutt.sida];
+    if (krav && lage.lage !== "okand" && !krav()) {
+      window.location.replace("#/");
+      return;
+    }
     sidhuvudEl.innerHTML = sidhuvud(sidId(rutt.sida));
+    if (krav && lage.lage === "okand") {
+      vyArbetsbank.hidden = true;
+      vySida.hidden = false;
+      vySida.innerHTML = "";
+      return;
+    }
 
     if (rutt.sida === "arbetsbank") {
       vySida.hidden = true;
@@ -167,10 +201,21 @@ export function startaRouter(krokar: RouterKrokar): void {
     }
     switch (rutt.sida) {
       case "start":
-        vySida.innerHTML = sidaStart(moduler, harProjekt);
+        vySida.innerHTML = sidaStart(moduler, harProjekt, projektLista);
         break;
       case "projekt":
-        vySida.innerHTML = sidaProjekt(projekt, moduler);
+        if (rutt.id && rutt.id !== PROJEKT_ID) {
+          const p = projektLista.find((x) => x.id === rutt.id) ?? null;
+          vySida.innerHTML = p || projektListaKlar ? sidaProjektUtanData(p) : "";
+        } else {
+          vySida.innerHTML = sidaProjekt(projekt, moduler);
+        }
+        break;
+      case "nycklar":
+        void visaNycklar(vySida);
+        break;
+      case "administration":
+        void visaAdministration(vySida);
         break;
       case "om":
         vySida.innerHTML = sidaOm(moduler, omraden);
@@ -186,7 +231,7 @@ export function startaRouter(krokar: RouterKrokar): void {
   // Inloggningsläget kommer från /konto/jag och kan ändra meny, hälsning och förvaltningssidan.
   vidKontoandring(() => {
     const sida = tolkaHash(window.location.hash).sida;
-    if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank")) {
+    if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor")) {
       rita();
     } else sidhuvudEl.innerHTML = sidhuvud(sidId(sida));
   });
@@ -213,10 +258,10 @@ export function startaRouter(krokar: RouterKrokar): void {
 
   window.addEventListener("hashchange", rita);
   rita();
-  // Sidorna ritas om när moduler, projekt och områden har kommit (kartan och frågorna ritas inte om).
+  // Sidorna ritas om när moduler, projekt och områden har kommit (kartan, frågorna och kontosidorna ritas inte om).
   void data.then(() => {
     const sida = tolkaHash(window.location.hash).sida;
-    if (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank") {
+    if (!["karta", "fragor", "arbetsbank", "nycklar", "administration"].includes(sida)) {
       rita();
     }
   });

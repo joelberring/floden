@@ -403,12 +403,23 @@ def bygg_dokument(
     antal = {k: sum(1 for v in fordj.values() if v == k) for k in ("ja", "kan_inte_avgoras", "nej")}
     rubrik(1, "1", "Sammanfattning")
     if sbk:
-        n_nej = antal["nej"]
-        dok.stycke(
-            f"Av de {len(r.fragor)} {amnestext.fragenamn(r)} behöver {antal['ja']} utredas vidare och "
-            f"{antal['kan_inte_avgoras']} kan inte bedömas med nuvarande underlag. För {n_nej} "
-            f"{'fråga' if n_nej == 1 else 'frågor'} behövs ingen fördjupning i detta skede."
-        )
+        n_tot = len(r.fragor)
+        delar = [
+            (verb, antal[k], rest)
+            for k, verb, rest in (
+                ("ja", "behöver", "utredas vidare"),
+                ("kan_inte_avgoras", "kan", "inte bedömas med nuvarande underlag"),
+                ("nej", "behöver", "ingen fördjupning i detta skede"),
+            )
+            if antal[k]
+        ]
+        if delar:
+            satser = []
+            for i, (verb, n, rest) in enumerate(delar):
+                tal = "alla" if n == n_tot else str(n)
+                satser.append(f"{verb} {tal} {rest}" if i == 0 else f"{tal} {verb} {rest}")
+            lista = satser[0] if len(satser) == 1 else ", ".join(satser[:-1]) + " och " + satser[-1]
+            dok.stycke(f"Av de {n_tot} {amnestext.fragenamn(r)} {lista}.")
         dok.stycke(
             "Tabellen visar för varje fråga om den behöver utredas vidare. Frågorna kommer ur "
             f"frågekatalogen för {r.amne if r.amne == 'skyfall' else 'dagsljus och sol'}."

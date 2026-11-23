@@ -98,7 +98,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 
 | Verktyg | Gör |
 | --- | --- |
-| `projekt_lista`, `projekt_info` | projekt, utbredning, antal byggnader, tillgängliga analyser |
+| `projekt_lista`, `projekt_info` | projekt (per konto: med inloggning på bara de som kontot har tillgång till, med roll), utbredning, antal byggnader, tillgängliga analyser |
 | `geometri_sammanfattning` | byggnader: antal, fotavtryck, höjder, takformer, höjdkälla |
 | `byggnader_lista` | byggnader (valfritt inom ett område) |
 | `fragor_lista` | K20-frågor och om de är giltiga och körda |
@@ -131,6 +131,16 @@ Resurser: `floden://metod/{vatten,dagsljus,luft,karna,validering,mcp}` (metoddok
 `prova_nytt_hus`, `skissunderlag_skyfall` och `skissunderlag_dagsljus`. Kedjan beställning, frågor, körning, rapport, kontroll och export går att köra helt via MCP (testet `test_bestallning_till_export_via_mcp_for_dagsljus`). Rapporterna och deras inställningar beskrivs i
 `docs/RAPPORTER.md`. Sökvägar till logotyp och typsnitt hamnar aldrig i körloggen (argumentvärden
 loggas inte), i svaren eller i rapporten; bara filens sha256.
+
+### Nycklar och administration når AI:n aldrig
+
+Det finns **inget MCP-verktyg, ingen resurs och ingen prompt för nyckelhantering**, och det ska inte komma något: AI:n får
+aldrig läsa eller skriva en användares API-nycklar (Lantmäteriet, Anthropic; `docs/KONTO.md` avsnitt 10). Nycklarna lagras
+krypterade, visas aldrig igen ens för användaren, och klartexten (`NyckelForrad.las`) når bara serverkod som själv ska
+använda nyckeln. MCP-koden importerar inte nyckelförrådet, och ett test (`tests/floden_mcp/test_mcp_konto.py`) stoppar både
+verktyg med nyckelrelaterade namn och sådana importer. Detsamma gäller administrationen (inbjudningar, roller och spärr av
+konton, `docs/KONTO.md` avsnitt 11): e-postadresser är personuppgifter och behörighet ges av människor. Verktygen ser bara
+vad kontot redan har tillgång till (`projekt_lista`); körloggen har konto-id men aldrig nyckelvärden.
 
 ## Dataklasser
 
