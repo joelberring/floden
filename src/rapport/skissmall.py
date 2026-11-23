@@ -144,6 +144,27 @@ class Dokument:
         self.block.append(Stycke(text, stil))
 
 
+def sammanfattningsmening(n_tot: int, antal: Mapping[str, int], namn: str) -> str:
+    """Sammanfattningens första mening: hoppar över nollor, "alla" när alla frågor hamnar i samma."""
+    delar = [
+        (verb, antal.get(k, 0), rest)
+        for k, verb, rest in (
+            ("ja", "behöver", "utredas vidare"),
+            ("kan_inte_avgoras", "kan", "inte bedömas med nuvarande underlag"),
+            ("nej", "behöver", "ingen fördjupning i detta skede"),
+        )
+        if antal.get(k, 0)
+    ]
+    if not delar:
+        return ""
+    satser = []
+    for i, (verb, n, rest) in enumerate(delar):
+        tal = "alla" if n == n_tot else str(n)
+        satser.append(f"{verb} {tal} {rest}" if i == 0 else f"{tal} {verb} {rest}")
+    lista = satser[0] if len(satser) == 1 else ", ".join(satser[:-1]) + " och " + satser[-1]
+    return f"Av de {n_tot} {namn} {lista}."
+
+
 def _kort(sha: str | None, n: int = 12) -> str:
     return "–" if not sha else sha[:n]
 
@@ -404,22 +425,9 @@ def bygg_dokument(
     rubrik(1, "1", "Sammanfattning")
     if sbk:
         n_tot = len(r.fragor)
-        delar = [
-            (verb, antal[k], rest)
-            for k, verb, rest in (
-                ("ja", "behöver", "utredas vidare"),
-                ("kan_inte_avgoras", "kan", "inte bedömas med nuvarande underlag"),
-                ("nej", "behöver", "ingen fördjupning i detta skede"),
-            )
-            if antal[k]
-        ]
-        if delar:
-            satser = []
-            for i, (verb, n, rest) in enumerate(delar):
-                tal = "alla" if n == n_tot else str(n)
-                satser.append(f"{verb} {tal} {rest}" if i == 0 else f"{tal} {verb} {rest}")
-            lista = satser[0] if len(satser) == 1 else ", ".join(satser[:-1]) + " och " + satser[-1]
-            dok.stycke(f"Av de {n_tot} {amnestext.fragenamn(r)} {lista}.")
+        mening = sammanfattningsmening(n_tot, antal, amnestext.fragenamn(r))
+        if mening:
+            dok.stycke(mening)
         dok.stycke(
             "Tabellen visar för varje fråga om den behöver utredas vidare. Frågorna kommer ur "
             f"frågekatalogen för {r.amne if r.amne == 'skyfall' else 'dagsljus och sol'}."

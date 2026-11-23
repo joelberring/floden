@@ -273,3 +273,23 @@ def test_dagsljusfel_vagras(m: Miljo, fraga: str, text: str, fel: str) -> None:
     kw = {**kw, "text": f"{text} {{{{matt:{kw['belagg'][0]}}}}}"}
     with pytest.raises(PastaendeFel, match=fel):
         m.rt.lagg_till_pastaende(r.rapport_id, forfattare="ai", **kw)
+
+
+def test_sammanfattningsmeningen_hoppar_over_nollor() -> None:
+    from rapport.skissmall import sammanfattningsmening
+
+    namn = "dagsljus- och solfrågorna"
+    assert (
+        sammanfattningsmening(15, {"ja": 15, "kan_inte_avgoras": 0, "nej": 0}, namn)
+        == "Av de 15 dagsljus- och solfrågorna behöver alla utredas vidare."
+    )
+    assert (
+        sammanfattningsmening(15, {"ja": 9, "kan_inte_avgoras": 3, "nej": 3}, namn)
+        == "Av de 15 dagsljus- och solfrågorna behöver 9 utredas vidare, 3 kan inte bedömas "
+        "med nuvarande underlag och 3 behöver ingen fördjupning i detta skede."
+    )
+    assert (
+        sammanfattningsmening(15, {"ja": 12, "kan_inte_avgoras": 0, "nej": 3}, namn)
+        == "Av de 15 dagsljus- och solfrågorna behöver 12 utredas vidare och 3 behöver ingen "
+        "fördjupning i detta skede."
+    )
