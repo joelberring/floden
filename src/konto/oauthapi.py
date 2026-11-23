@@ -49,7 +49,8 @@ _HTML_RUBRIKER = [
     ("Cache-Control", "no-store"),
     ("X-Content-Type-Options", "nosniff"),
     ("X-Frame-Options", "DENY"),
-    ("Referrer-Policy", "no-referrer"),
+    # same-origin, inte no-referrer: med no-referrer skickar Chrome `Origin: null` när formuläret postas.
+    ("Referrer-Policy", "same-origin"),
     (
         "Content-Security-Policy",
         "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
@@ -314,10 +315,20 @@ class OauthApi:
         assert klient is not None  # noqa: S101
         # CSRF och Origin som för övriga skrivande anrop: formulärets fält följer med som header.
         huvud = {**req.headers, CSRF_HEADER: p.get("csrf", "")}
+        # Vissa webbläsare (och appars inbyggda webbvyer) skickar `Origin: null` för ett formulär på
+        # en sida med strikt referrer-policy. Då räknas Origin som saknad, men bara när webbläsaren
+        # själv intygar att anropet kommer från samma sajt (Sec-Fetch-Site). CSRF-token krävs alltid.
+        if huvud.get("origin") == "null" and huvud.get("sec-fetch-site") in (None, "same-origin"):
+            huvud.pop("origin")
         kontroll = self.a.kraver_inloggning(
             Forfragan(req.metod, req.sokvag, req.query, huvud, req.kropp)
         )
         if not kontroll.tillaten or kontroll.inloggad is None:
+            logg.warning(
+                "oauth godkännande nekat klient=%s origin=%s sec_fetch_site=%s",
+                klient["id"], "saknas" if "origin" not in huvud else ("null" if huvud["origin"] == "null" else "annan"),
+                huvud.get("sec-fetch-site", "saknas"),
+            )
             return kontroll.svar or _felsida("Inloggning krävs.", 401)
         if fel is not None:
             return self._tillbaka(p, {"error": fel})

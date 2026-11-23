@@ -374,3 +374,33 @@ def test_ogiltig_oauth_token_i_bearer_ger_401(miljo: Miljo) -> None:
     assert _kor_skydd(miljo, "GET", {"Authorization": "Bearer fl_oat_kort"})[0] == 401
     b64 = base64.urlsafe_b64encode(b"x").decode()
     assert _kor_skydd(miljo, "GET", {"Authorization": f"Bearer fl_ort_{b64}"})[0] == 401
+
+
+def test_godkannandet_godtar_origin_null_fran_samma_sajt_men_inte_utan_csrf(miljo: Miljo) -> None:
+    """Chrome skickar `Origin: null` för formulär på sidor med strikt referrer-policy."""
+    webb, _ = _inloggad(miljo)
+    klient = _registrera(miljo)
+    p = _fraga(klient)
+    form = {**p, "beslut": "tillat", "csrf": webb.csrf_headers()["X-Floden-CSRF"]}
+    rubr = {"Origin": "null", "Sec-Fetch-Site": "same-origin", "Content-Type": "application/x-www-form-urlencoded"}
+    ok = webb.anrop("POST", "/oauth/authorize", headers=rubr, kropp=urlencode(form).encode())
+    assert _kod_fran(ok)
+    # Origin null från en annan sajt nekas.
+    korsande = webb.anrop(
+        "POST", "/oauth/authorize", headers={**rubr, "Sec-Fetch-Site": "cross-site"},
+        kropp=urlencode(form).encode(),
+    )
+    assert korsande[0] == 403
+    # Origin null utan rätt CSRF-token nekas.
+    utan = webb.anrop(
+        "POST", "/oauth/authorize", headers=rubr,
+        kropp=urlencode({**form, "csrf": "fel"}).encode(),
+    )
+    assert utan[0] == 403
+
+
+def test_godkannandesidan_har_inte_no_referrer(miljo: Miljo) -> None:
+    webb, _ = _inloggad(miljo)
+    sida = _authorize_get(webb, _fraga(_registrera(miljo)))
+    assert sida[0] == 200
+    assert rubrik(sida, "Referrer-Policy") == "same-origin"
