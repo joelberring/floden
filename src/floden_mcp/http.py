@@ -14,11 +14,14 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import logging
 from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 from urllib.parse import parse_qs
 
 from konto import Forfragan, KontoAdapter
+
+logg = logging.getLogger("konto")
 
 Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
@@ -123,6 +126,7 @@ class KontoSkydd:
                 else None
             )
             if traff is None:
+                logg.info("mcp anrop %s -> 401 ogiltig bearer (prefix=%s)", scope["method"], varde.strip()[:7])
                 # Aldrig token, rubrik eller orsak i svaret.
                 await self._neka(
                     send,
@@ -146,6 +150,7 @@ class KontoSkydd:
                 status, huvud, kropp = kontroll.svar
                 extra = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in huvud]
                 extra.append((b"content-length", str(len(kropp)).encode("ascii")))
+                logg.info("mcp anrop %s -> %s utan bearer", scope["method"], status)
                 if status == 401:
                     extra.append((b"www-authenticate", self.www_authenticate().encode("latin-1")))
                 await send({"type": "http.response.start", "status": status, "headers": extra})

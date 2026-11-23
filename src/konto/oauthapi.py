@@ -154,7 +154,15 @@ class OauthApi:
         }
 
     def hantera(self, req: Forfragan) -> Svar | None:
-        """Svar för OAuth-sökvägar, eller None om sökvägen inte är OAuth."""
+        """Svar för OAuth-sökvägar, eller None om sökvägen inte är OAuth. Varje anrop loggas med
+        metod, sökväg, status och klienttyp (aldrig kod, token, verifierare eller kakor)."""
+        svar = self._hantera(req)
+        if svar is not None:
+            ua = (req.headers.get("user-agent") or "-")[:60]
+            logg.info("oauth anrop %s %s -> %s ua=%s", req.metod, req.sokvag, svar[0], ua)
+        return svar
+
+    def _hantera(self, req: Forfragan) -> Svar | None:
         s = req.sokvag.rstrip("/")
         if s in (
             "/.well-known/oauth-protected-resource",
@@ -194,6 +202,12 @@ class OauthApi:
             data = None
         if not isinstance(data, dict):
             return _oauth_fel(400, "invalid_client_metadata", "Kroppen måste vara ett JSON-objekt")
+        logg.info(
+            "oauth registrering begärd auth=%s grant=%s resp=%s scope=%s redirect=%s",
+            data.get("token_endpoint_auth_method", "-"), data.get("grant_types", "-"),
+            data.get("response_types", "-"), str(data.get("scope", "-"))[:60],
+            str(data.get("redirect_uris", "-"))[:200],
+        )
         metod = data.get("token_endpoint_auth_method", "none")
         if metod != "none":
             return _oauth_fel(400, "invalid_client_metadata", "Bara publika klienter (none)")
