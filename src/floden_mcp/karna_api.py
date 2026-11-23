@@ -361,9 +361,12 @@ class FlodenTjanst:
             "tips": "Frågor med indata_saknas kan inte köras på den här datorn.",
         }
 
-    def korningar_lista(self, max_antal: int = 20) -> dict[str, Any]:
+    def korningar_lista(
+        self, max_antal: int = 20, konto_id: str | None = None
+    ) -> dict[str, Any]:
+        """Körningarna anroparen får se (med inloggning på: `FlodenApiApp.korningar_for_konto`)."""
         with _oversatt():
-            alla = self.fragor.lista_korningar()["korningar"]
+            alla = self.app.korningar_for_konto(konto_id)["korningar"]
         max_antal = max(1, min(int(max_antal), 100))
         return {
             "antal": len(alla),
@@ -1204,7 +1207,7 @@ class FlodenTjanst:
             )
         if fraga is not None:
             with _oversatt():
-                svar = self.fragor.starta_korning(fraga)
+                svar = self.fragor.starta_korning(fraga, projekt)
             return {
                 "korningar": [self._start_post(svar, fraga=fraga)],
                 "nasta_steg": "Anropa vanta med körnings-id, sedan resultat_sammanfattning.",

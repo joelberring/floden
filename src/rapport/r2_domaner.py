@@ -1,106 +1,42 @@
-"""Rapporter R2: måttkataloger för alla fyra domäner samt deterministiska fält-/intervallbilagor.
+"""Rapporter R3-underlag: deterministiska tabeller för luft och buller (och skyfallets fältlista).
 
-Bygger deterministiska tabeller och måttdefinitioner ur Flodens beräkningsresultat
-(`sankgraf.bifurkation`, `luft.kanslighet`, `buller.optimering`) utan påhittade siffror
-och i svensk utredningsform (decimalkomma, smalt hårt mellanslag).
+Tabellbyggarna gör Flodens beräkningsresultat (`sankgraf.bifurkation`, `luft.kanslighet`,
+`buller.optimering`) till tabeller i svensk utredningsform: `bygg_faltmatningstabell`,
+`bygg_mkn_intervallrad`, `bygg_bullerskarm_tabell` och `skapa_r2_fleromans_sammanfattning`.
+Talen skrivs med `rapport.pastaende.formatera_tal` (decimalkomma, smalt hårt mellanslag mellan
+tusental), alltså samma svenska sifferform som rapportkedjan.
 
-**Status: fristående.** Modulen är testad (`tests/rapport/test_r2_domaner.py`) men inte
-inkopplad i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan
-modul i `src` använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
-R2 (dagsljus, 2026-11-23) kopplade avsiktligt inte in den: den täcker bifurkation, luft och buller,
-som inte har körningar med belägg via `FlodenTjanst`, och en andra väg för tal vid sidan av
-beläggskällan vore ett brott mot regeln att Floden fyller varje tal från samma källa.
+**Status: fristående underlag för R3 (luft och buller).** Modulen är testad
+(`tests/rapport/test_r2_domaner.py`) men inte inkopplad i något användarflöde (CLI, webb, MCP,
+K20-lösare eller rapportkedja).
+
+**Tal får nå en rapport bara via belägg.** Rapporttal kommer ur `FlodenTjanst` och
+`rapport.belaggskalla` (mått med enhet, avrundning och belägg per körning). Luft och buller har
+inga körningar med belägg än, och därför får inget i den här modulen nå en rapport direkt:
+tabellerna är underlag tills de domänerna har körningar med belägg och mått i
+`belaggskalla.MATTKATALOG`. Då ska talen i rapporten hämtas därifrån, inte härifrån.
+Modulen har ingen egen måttkatalog och ingen egen talformatering (båda var dubbletter av
+`belaggskalla.MATTKATALOG` och `pastaende.formatera_tal` och är borttagna).
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 from buller.optimering import BullerSkarmVal
 from luft.kanslighet import MknIntervallResultat
+from rapport.pastaende import formatera_tal
 from sankgraf.bifurkation import BifurkationsPunkt
 
-_NBSP = "\u202f"  # smalt hårt mellanslag för tusentalsavgränsning (svensk sifferform)
 
-
-@dataclass(frozen=True)
-class MattSpec:
-    """Kontrakt för ett rapportmått i R2: domän, enhet och finaste tillåtna avrundning."""
-
-    matt_id: str
-    doman: str  # "skyfall" | "dagsljus" | "luft" | "buller"
-    visningsnamn: str
-    enhet: str
-    min_steg: float
-    beskrivning: str
-
-
-MATTKATALOG_R2: dict[str, MattSpec] = {
-    # Skyfall
-    "skyfall.max_djup_m": MattSpec(
-        "skyfall.max_djup_m", "skyfall", "Största vattendjup", "m", 0.01,
-        "Maximalt vattendjup på mark (tak undantagna).",
-    ),
-    "skyfall.bifurkationer_antal": MattSpec(
-        "skyfall.bifurkationer_antal", "skyfall", "Instabila överfallspunkter", "st", 1.0,
-        "Antal sadlar där höjdosäkerheten kan ändra vattnets flödesväg.",
-    ),
-    "skyfall.andel_2d_yta_procent": MattSpec(
-        "skyfall.andel_2d_yta_procent", "skyfall", "Yta som kräver 2D-hydraulik", "%", 1.0,
-        "Andel aktiv markyta där plan vattenyta inte räcker (a posteriori-felindikator).",
-    ),
-    # Dagsljus / sol
-    "dagsljus.soltimmar_mark_h": MattSpec(
-        "dagsljus.soltimmar_mark_h", "dagsljus", "Soltimmar på mark", "h", 0.5,
-        "Direkta soltimmar vid vårdagjämning på mark (tak undantagna).",
-    ),
-    "dagsljus.svf_andel": MattSpec(
-        "dagsljus.svf_andel", "dagsljus", "Himmelsandel (SVF)", "andel", 0.01,
-        "Synlig andel av himmelskupolen (0–1).",
-    ),
-    "dagsljus.vsc_procent": MattSpec(
-        "dagsljus.vsc_procent", "dagsljus", "Vertikal himmelskomponent (VSC)", "%", 0.5,
-        "BRE-standard för dagsljus på fasad (fri horisont = 39,6 %).",
-    ),
-    # Luft / MKN
-    "luft.pm10_arsmedel_ug_m3": MattSpec(
-        "luft.pm10_arsmedel_ug_m3", "luft", "PM10 årsmedelhalt", "µg/m³", 0.5,
-        "Årsmedelhalt PM10 (MKN-normvärde 40 µg/m³).",
-    ),
-    "luft.pm10_dygn_over_50": MattSpec(
-        "luft.pm10_dygn_over_50", "luft", "PM10 dygn över 50 µg/m³", "dygn/år", 1.0,
-        "Antal dygn med dygnsmedel > 50 µg/m³ (MKN-gräns högst 35 dygn/år).",
-    ),
-    "luft.pm25_arsmedel_ug_m3": MattSpec(
-        "luft.pm25_arsmedel_ug_m3", "luft", "PM2.5 årsmedelhalt", "µg/m³", 0.5,
-        "Årsmedelhalt PM2.5 (MKN-normvärde 25 µg/m³).",
-    ),
-    # Buller
-    "buller.ekvivalent_niva_dba": MattSpec(
-        "buller.ekvivalent_niva_dba", "buller", "Ekvivalent ljudnivå vid fasad", "dBA", 0.5,
-        "Beräknad ekvivalent ljudnivå enligt Nord2000.",
-    ),
-    "buller.antal_over_riktvarde": MattSpec(
-        "buller.antal_over_riktvarde", "buller", "Fasadpunkter över riktvärde", "st", 1.0,
-        "Antal bostadsfasader över valt riktvärde (t.ex. 55/60 dBA).",
-    ),
-}
-
-
-def lista_matt_for_doman(doman: str) -> list[MattSpec]:
-    """Returnerar alla R2-mått för en angiven fysikdomän i deterministisk ordning."""
-    return [m for _, m in sorted(MATTKATALOG_R2.items()) if m.doman == doman]
-
-
-def formatera_svenskt_tal(varde: float, decimaler: int = 1) -> str:
-    """Formaterar flyttal enligt svensk utredningsnorm (smalt hårt mellanslag + decimalkomma)."""
+def _tal(varde: float, decimaler: int) -> str:
+    """Talet med `decimaler` decimaler i rapportkedjans sifferform. Oändligt eller NaN blir "–"
+    (en säkerhetsmarginal utan osäkerhet är oändlig och ska inte skrivas som ett tal)."""
     if not math.isfinite(varde):
         return "–"
-    formaterat = f"{varde:,.{decimaler}f}"
-    return formaterat.replace(",", _NBSP).replace(".", ",")
+    return formatera_tal(varde, None, 10.0**-decimaler, visa_enhet=False)
 
 
 def bygg_faltmatningstabell(
@@ -119,7 +55,7 @@ def bygg_faltmatningstabell(
         "| ---: | --- | ---: | ---: | ---: | ---: |",
     ]
     for p in instabila:
-        sak_str = formatera_svenskt_tal(p.sakerhetsmarginal, 2)
+        sak_str = _tal(p.sakerhetsmarginal, 2)
         koord_str = f"{round(p.overfall_x)}, {round(p.overfall_y)}"
         rader.append(
             {
@@ -135,9 +71,9 @@ def bygg_faltmatningstabell(
             }
         )
         md_linjer.append(
-            f"| {p.nod_id} | {koord_str} | {formatera_svenskt_tal(p.overfall_hojd_m, 2)} | "
-            f"{formatera_svenskt_tal(p.marginal_m, 2)} | {sak_str} | "
-            f"{formatera_svenskt_tal(p.paverkad_volym_m3, 0)} |"
+            f"| {p.nod_id} | {koord_str} | {_tal(p.overfall_hojd_m, 2)} | "
+            f"{_tal(p.marginal_m, 2)} | {sak_str} | "
+            f"{_tal(p.paverkad_volym_m3, 0)} |"
         )
     if not instabila:
         md_linjer = [
@@ -203,8 +139,8 @@ def bygg_bullerskarm_tabell(
             }
         )
         md_linjer.append(
-            f"| {prio} | {post.skarm_id} | {formatera_svenskt_tal(post.marginal_vinst, 1)} | "
-            f"{formatera_svenskt_tal(post.kumulativ_vinst, 1)} | {post.nya_godkanda} |"
+            f"| {prio} | {post.skarm_id} | {_tal(post.marginal_vinst, 1)} | "
+            f"{_tal(post.kumulativ_vinst, 1)} | {post.nya_godkanda} |"
         )
     return {
         "rubrik": f"Prioriterade bullerskärmar (riktvärde {riktvarde_db:.0f} dBA)",
@@ -240,7 +176,7 @@ def skapa_r2_fleromans_sammanfattning(
             skyfall_del["andel_2d_yta_procent"] = procent
             md.append(
                 f"- Andel aktiv markyta som kräver 2D-hydraulik: "
-                f"**{formatera_svenskt_tal(procent, 1)} %**"
+                f"**{_tal(procent, 1)} %**"
             )
         if bifurkationer is not None:
             falt = bygg_faltmatningstabell(bifurkationer)
@@ -261,7 +197,7 @@ def skapa_r2_fleromans_sammanfattning(
         md.append("\n## Dagsljus och sol")
         md.append(
             f"- Monotont SVF-intervall (byggnadshöjdsosäkerhet): "
-            f"**{formatera_svenskt_tal(svf_min, 2)}–{formatera_svenskt_tal(svf_max, 2)}**"
+            f"**{_tal(svf_min, 2)}–{_tal(svf_max, 2)}**"
         )
 
     if mkn_intervall:

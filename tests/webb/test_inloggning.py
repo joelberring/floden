@@ -116,8 +116,14 @@ def test_inloggad_far_api_utan_cors_och_post_kraver_csrf(tmp_path: Path, miljo: 
     )
     assert status == 403
     # Rätt CSRF och ursprung: släpps igenom till API:t (frågan finns inte -> 404 från API:t).
+    # (Ett projekt anges: utan projekt får bara superadmin starta en fråga som inte är demons.)
     status, _, _ = _http(
-        app, "POST", "/api/fragor/finns-inte/kor", webb, {**origin, **webb.csrf_headers()}
+        app,
+        "POST",
+        "/api/fragor/finns-inte/kor",
+        webb,
+        {**origin, **webb.csrf_headers()},
+        b'{"projekt_id": "demokvarteret"}',
     )
     assert status == 404
 

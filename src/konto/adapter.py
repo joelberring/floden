@@ -235,15 +235,7 @@ class KontoAdapter:
         kontroll = self.kraver_inloggning(request)
         if not kontroll.tillaten or kontroll.inloggad is None:
             return kontroll
-        assert self.register is not None  # noqa: S101
-        if self.register.har_projektroll(kontroll.inloggad.konto_id, projekt_id, minst):
-            return kontroll
-        demo_roll = self.konfig.demoprojekt_roll
-        if (
-            projekt_id == self.konfig.demoprojekt
-            and demo_roll != "av"
-            and _roll_niva(demo_roll) >= _roll_niva(minst)
-        ):
+        if self.har_roll(kontroll.inloggad.konto_id, projekt_id, minst):
             return kontroll
         logg.info("projekt nekat konto=%s projekt=%s", kontroll.inloggad.konto_id, projekt_id)
         svar = _fel(403, "ingen-behorighet", "Saknar behörighet till projektet")
@@ -262,6 +254,10 @@ class KontoAdapter:
             and demo_roll != "av"
             and _roll_niva(demo_roll) >= _roll_niva(minst)
         )
+
+    def ar_superadmin(self, konto_id: str) -> bool:
+        """Är kontot superadmin? Alltid falskt när inloggning är av (ingen konto-gräns finns då)."""
+        return self.aktiv and self.register is not None and self.register.ar_superadmin(konto_id)
 
     def resurs_metadata_url(self) -> str | None:
         """Adressen till skyddade resursens metadata (RFC 9728) för `WWW-Authenticate`, eller None

@@ -744,7 +744,7 @@ class KartverktygTjanst:
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
         ut: list[dict[str, Any]] = []
         for p in poster:
-            svar = self.fragor.starta_korning(p["ref"])
+            svar = self.fragor.starta_korning(p["ref"], projekt)
             korningar[p["mall"]] = {
                 "korning_id": svar["korning_id"],
                 "ref": p["ref"],

@@ -1,4 +1,4 @@
-"""Tester för R2-måttkatalog och deterministiska fält-/intervallbilagor (`rapport.r2_domaner`)."""
+"""Tester för deterministiska fält-/intervallbilagor (`rapport.r2_domaner`, underlag för R3)."""
 
 from __future__ import annotations
 
@@ -11,32 +11,35 @@ import numpy as np
 from buller.optimering import valj_bullerskarmar_k
 from luft.kanslighet import kor_monoton_mkn_intervall
 from rapport.r2_domaner import (
-    MATTKATALOG_R2,
     bygg_bullerskarm_tabell,
     bygg_faltmatningstabell,
     bygg_mkn_intervallrad,
-    formatera_svenskt_tal,
-    lista_matt_for_doman,
     skapa_r2_fleromans_sammanfattning,
 )
 from sankgraf.bifurkation import BifurkationsPunkt
 
 
-def test_r2_mattkatalog_tacker_alla_fyra_domaner() -> None:
-    """Måttkatalogen för R2 ska ha enhets- och avrundningsspecar för alla 4 fysikdomäner."""
-    for doman in ("skyfall", "dagsljus", "luft", "buller"):
-        lista = lista_matt_for_doman(doman)
-        assert len(lista) >= 2
-        assert all(m.min_steg > 0.0 and m.enhet for m in lista)
-    assert "dagsljus.vsc_procent" in MATTKATALOG_R2
-    assert "luft.pm10_dygn_over_50" in MATTKATALOG_R2
-    assert "buller.ekvivalent_niva_dba" in MATTKATALOG_R2
+def test_modulen_har_ingen_egen_mattkatalog_eller_talformatering() -> None:
+    """Dubbletterna av `belaggskalla.MATTKATALOG` och `pastaende.formatera_tal` är borttagna."""
+    import rapport.r2_domaner as r2
+
+    for namn in ("MattSpec", "MATTKATALOG_R2", "lista_matt_for_doman", "formatera_svenskt_tal"):
+        assert not hasattr(r2, namn), namn
+    assert "belägg" in (r2.__doc__ or "") and "R3" in (r2.__doc__ or "")
+
+
+def test_tal_skrivs_som_i_rapportkedjan() -> None:
+    from rapport.pastaende import formatera_tal
+    from rapport.r2_domaner import _tal
+
+    assert _tal(1234.5, 1) == "1\u202f234,5" == formatera_tal(1234.5, None, 0.1, visa_enhet=False)
+    assert _tal(7430.0, 0) == "7\u202f430"
+    assert _tal(10.5, 2) == "10,50"
+    assert _tal(float("inf"), 2) == "–"  # oändlig säkerhetsmarginal skrivs inte som tal
 
 
 def test_faltmatningstabell_mkn_rad_och_bullertabell() -> None:
     """Deterministiska bilagetabeller ska använda svensk sifferform och rätt utfall."""
-    assert formatera_svenskt_tal(1234.5, 1) == "1\u202f234,5"
-
     p = BifurkationsPunkt(
         nod_id=7,
         primar_ut_till_id=2,

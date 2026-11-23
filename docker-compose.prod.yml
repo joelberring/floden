@@ -26,6 +26,9 @@ services:
       FLODEN_TILLAT_UTAN_INLOGGNING: ${FLODEN_TILLAT_UTAN_INLOGGNING:-0}
       FLODEN_DEMO: ${FLODEN_DEMO:-1}
       FLODEN_SERVER: ${FLODEN_SERVER:-asgi}
+      # Uvicorn litar annars bara på X-Forwarded-For från 127.0.0.1, men Caddy kommer från Docker-nätet.
+      # "*" är säkert här eftersom Floden inte har någon port utåt (bara Caddy når den, se expose nedan).
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
       FLODEN_KONTO_GOOGLE_KLIENT_ID: ${FLODEN_KONTO_GOOGLE_KLIENT_ID:-}
       FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET: ${FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET:-}
       # Krypterar användarnas API-nycklar (sidan Nycklar). Saknas den är nyckelsidan avstängd. docs/DRIFT.md.
