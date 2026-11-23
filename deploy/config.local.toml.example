@@ -9,6 +9,8 @@ cookie_secure = true
 sessionstimmar = 12
 nya_konton = "inbjudan"
 oppna_sokvagar = ["/api/halsa"]
+# Det påhittade demokvarteret: roll för alla inloggade ("utredare", "lasare" eller "av").
+demoprojekt_roll = "utredare"
 
 [konto.leverantorer.google]
 aktiv = true

@@ -204,7 +204,12 @@ def test_projektets_overfallsanalys_kraver_projektroll(varld: Varld, miljo: Milj
 
     bo = miljo.webblasare()
     assert bo.logga_in(miljo.idp, {**ANNA, "sub": "1002", "email": "bo@example.test"})[0] == 302
-    assert anropa(bo) == 403  # inloggad, men ingen roll i demokvarteret (som /api/projekt/...)
+    # Demokvarteret är påhittat: alla inloggade har rollen `demoprojekt_roll` (förval utredare).
+    assert anropa(bo) == 200
+    # Med `demoprojekt_roll = "av"` krävs uttrycklig roll även där, som för riktiga projekt.
+    object.__setattr__(miljo.adapter.konfig, "demoprojekt_roll", "av")
+    assert anropa(bo) == 403
+    assert anropa(anna) == 200
 
 
 def test_testsvitens_omraden_kraver_bara_inloggning(varld: Varld, miljo: Miljo) -> None:
