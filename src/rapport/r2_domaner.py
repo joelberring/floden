@@ -205,3 +205,77 @@ def bygg_bullerskarm_tabell(
         "rader": rader,
         "markdown": "\n".join(md_linjer),
     }
+
+
+def skapa_r2_fleromans_sammanfattning(
+    projektnamn: str,
+    *,
+    bifurkationer: Sequence[BifurkationsPunkt] | None = None,
+    andel_2d_yta: float | None = None,
+    svf_intervall: tuple[float, float] | None = None,
+    mkn_intervall: Sequence[tuple[str, MknIntervallResultat]] | None = None,
+    bullerskarmar: Sequence[BullerSkarmVal] | None = None,
+    buller_riktvarde_db: float = 55.0,
+) -> dict[str, Any]:
+    """Bygger en samlad deterministisk R2-sammanfattning över upp till fyra fysikdomäner.
+
+    Endast domäner med faktiskt uppmätta/beräknade indata tas med; inga tal gissas eller
+    interpoleras fram.
+    """
+    domaner: dict[str, Any] = {}
+    md: list[str] = [f"# Samlad R2-sammanfattning – {projektnamn}"]
+
+    if bifurkationer is not None or andel_2d_yta is not None:
+        skyfall_del: dict[str, Any] = {}
+        md.append("\n## Skyfall")
+        if andel_2d_yta is not None:
+            procent = round(float(andel_2d_yta) * 100.0, 1)
+            skyfall_del["andel_2d_yta_procent"] = procent
+            md.append(
+                f"- Andel aktiv markyta som kräver 2D-hydraulik: "
+                f"**{formatera_svenskt_tal(procent, 1)} %**"
+            )
+        if bifurkationer is not None:
+            falt = bygg_faltmatningstabell(bifurkationer)
+            skyfall_del["faltmatning"] = falt
+            md.append(
+                f"- Instabila överfallspunkter att mäta in i fält: "
+                f"**{falt['antal_instabila']} st**"
+            )
+            md.append("")
+            md.append(falt["markdown"])
+        domaner["skyfall"] = skyfall_del
+
+    if svf_intervall is not None:
+        svf_min, svf_max = float(svf_intervall[0]), float(svf_intervall[1])
+        domaner["dagsljus"] = {
+            "svf_intervall": [round(svf_min, 3), round(svf_max, 3)],
+        }
+        md.append("\n## Dagsljus och sol")
+        md.append(
+            f"- Monotont SVF-intervall (byggnadshöjdsosäkerhet): "
+            f"**{formatera_svenskt_tal(svf_min, 2)}–{formatera_svenskt_tal(svf_max, 2)}**"
+        )
+
+    if mkn_intervall:
+        mkn_rader = [bygg_mkn_intervallrad(plats, iv) for plats, iv in mkn_intervall]
+        domaner["luft"] = {"mkn_platser": mkn_rader}
+        md.append("\n## Luftkvalitet och MKN")
+        for rad in mkn_rader:
+            d_min, d_max = rad["dygn_over_50_intervall"]
+            md.append(
+                f"- **{rad['plats']}**: {d_min}–{d_max} dygn/år > 50 µg/m³ – {rad['status_text']}"
+            )
+
+    if bullerskarmar is not None:
+        tabell = bygg_bullerskarm_tabell(bullerskarmar, riktvarde_db=buller_riktvarde_db)
+        domaner["buller"] = tabell
+        md.append(f"\n## Buller ({tabell['rubrik']})")
+        md.append(tabell["markdown"])
+
+    return {
+        "format": "floden-r2-sammanfattning/v1",
+        "projektnamn": projektnamn,
+        "domaner": domaner,
+        "markdown": "\n".join(md) + "\n",
+    }
