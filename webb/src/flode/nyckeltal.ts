@@ -46,6 +46,8 @@ export interface EkologiSvar {
 export interface Tal {
   etikett: string;
   varde: string;
+  /** Liten rad under talet, t.ex. osäkerhetsintervallet. */
+  under?: string;
 }
 
 export interface Stapel {
@@ -86,15 +88,18 @@ export function ytaMedIntervall(v: number | null | undefined, iv: readonly numbe
   const n = nummer(v);
   if (n === null) return "–";
   const h = arHektar(n);
-  if (!iv || iv.length !== 2 || !Number.isFinite(iv[0]) || !Number.isFinite(iv[1])) return ytaI(n, h, 0);
-  return `${ytaI(n, h, 0)} (${ytaI(iv[0] as number, h, 0)} till ${ytaI(iv[1] as number, h, 0)})`;
+  const i = intervallText(iv, (x) => ytaI(x, h, 0));
+  return i ? `${ytaI(n, h, 0)} (${i})` : ytaI(n, h, 0);
 }
 
-function andelMedIntervall(v: number | null | undefined, iv: readonly number[] | null | undefined): string {
-  const t = tal(nummer(v), 4, "");
-  if (t === "–" || !iv || iv.length !== 2 || !Number.isFinite(iv[0]) || !Number.isFinite(iv[1])) return t.trim();
-  return `${t.trim()} (${tal(iv[0], 4, "").trim()} till ${tal(iv[1], 4, "").trim()})`;
+/** "a till b" för ett giltigt intervall, annars tom text. */
+function intervallText(iv: readonly number[] | null | undefined, f: (x: number) => string): string {
+  if (!iv || iv.length !== 2 || !Number.isFinite(iv[0]) || !Number.isFinite(iv[1])) return "";
+  return `${f(iv[0] as number)} till ${f(iv[1] as number)}`;
 }
+
+/** ECA visas alltid i hektar, så att före, efter och staplar har samma enhet. */
+const ecaHa = (v: number): string => tal(v / 10000, 2, "ha");
 
 function slutsatsEkologi(e: EkologiSvar | null | undefined): string {
   const d = nummer(e?.delta_eca_m2);
@@ -127,11 +132,11 @@ export function nyckeltal(amne: Amne, u: Underlag): Tal[] {
     const ef = e?.efter;
     const flackar = (v: number | null | undefined): string => (nummer(v) === null ? "–" : formatera(v as number, 0));
     return [
-      { etikett: "ECA före", varde: ytaMedIntervall(f?.ECA_m2, f?.ECA_intervall_m2) },
-      { etikett: "ECA efter", varde: ytaMedIntervall(ef?.ECA_m2, ef?.ECA_intervall_m2) },
+      { etikett: "ECA före", varde: nummer(f?.ECA_m2) === null ? "–" : ecaHa(f?.ECA_m2 as number), under: intervallText(f?.ECA_intervall_m2, ecaHa) },
+      { etikett: "ECA efter", varde: nummer(ef?.ECA_m2) === null ? "–" : ecaHa(ef?.ECA_m2 as number), under: intervallText(ef?.ECA_intervall_m2, ecaHa) },
       { etikett: "Förändring av ECA", varde: yta(e?.delta_eca_m2) },
-      { etikett: "PC före", varde: andelMedIntervall(f?.PC, f?.PC_intervall) },
-      { etikett: "PC efter", varde: andelMedIntervall(ef?.PC, ef?.PC_intervall) },
+      { etikett: "PC före", varde: tal(nummer(f?.PC), 4, "").trim(), under: intervallText(f?.PC_intervall, (x) => tal(x, 4, "").trim()) },
+      { etikett: "PC efter", varde: tal(nummer(ef?.PC), 4, "").trim(), under: intervallText(ef?.PC_intervall, (x) => tal(x, 4, "").trim()) },
       { etikett: "Habitatfläckar före och efter", varde: nummer(f?.antal_flackar) === null && nummer(ef?.antal_flackar) === null ? "–" : `${flackar(f?.antal_flackar)} och ${flackar(ef?.antal_flackar)}` },
     ];
   }
@@ -151,6 +156,11 @@ export function nyckeltal(amne: Amne, u: Underlag): Tal[] {
   ];
 }
 
+const ecaHaTal = (v: number | null | undefined): number | null => {
+  const n = nummer(v);
+  return n === null ? null : n / 10000;
+};
+
 function staplar(poster: Array<[string, number | null, number, string]>): Stapel[] {
   const stor = Math.max(0, ...poster.map(([, v]) => v ?? 0));
   return poster.map(([etikett, v, dec, enhet]) => ({
@@ -165,8 +175,8 @@ export function jamforelse(amne: Amne, u: Underlag): { rubrik: string; staplar: 
     return {
       rubrik: "Effektiv konnektivitetsyta (ECA)",
       staplar: staplar([
-        ["Före", nummer(u.ekologi?.fore?.ECA_m2), 0, "m²"],
-        ["Efter", nummer(u.ekologi?.efter?.ECA_m2), 0, "m²"],
+        ["Före", ecaHaTal(u.ekologi?.fore?.ECA_m2), 2, "ha"],
+        ["Efter", ecaHaTal(u.ekologi?.efter?.ECA_m2), 2, "ha"],
       ]),
     };
   }

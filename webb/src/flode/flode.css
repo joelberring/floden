@@ -213,6 +213,7 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-tal div { display: flex; flex-direction: column; gap: 4px; }
 .flode-tal dt { font-size: 12px; color: var(--fl-mute); }
 .flode-tal dd { margin: 0; font-size: 22px; font-weight: 600; }
+.flode-tal dd.flode-tal-under { font-size: 12px; font-weight: 400; color: var(--fl-mute); }
 .flode-staplar { display: flex; flex-direction: column; gap: 6px; }
 .flode-stapel { display: flex; align-items: center; gap: 8px; font-size: 12px; }
 .flode-stapel > span:first-child { width: 64px; flex: 0 0 auto; }

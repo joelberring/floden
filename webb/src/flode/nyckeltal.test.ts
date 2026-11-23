@@ -47,14 +47,19 @@ test("ekologi: ECA med intervall, ΔECA och patchantal kommer ur svaret; hektar 
     },
   };
   const t = nyckeltal("ekologi", u);
-  assert.match(t[0]?.varde ?? "", /1,20\s?ha \(0,90\s?ha till 1,50\s?ha\)/);
+  assert.match(t[0]?.varde ?? "", /^1,20\s?ha$/);
+  assert.match(t[0]?.under ?? "", /^0,90\s?ha till 1,50\s?ha$/);
   assert.match(t[1]?.varde ?? "", /^1,17\s?ha/);
   assert.match(t[2]?.varde ?? "", /^−?-?258\s?m²$/);
-  assert.match(t[3]?.varde ?? "", /0,2500 \(0,2000 till 0,3000\)/);
+  assert.equal(t[3]?.varde, "0,2500");
+  assert.equal(t[3]?.under, "0,2000 till 0,3000");
   assert.equal(t[4]?.varde, "0,2400");
+  assert.equal(t[4]?.under, "");
   assert.match(t[5]?.varde ?? "", /^4 och 4$/);
   assert.match(slutsats("ekologi", u), /minskar .* med 258\s?m² \(2,2\s?%\)/);
-  assert.equal(jamforelse("ekologi", u).staplar.length, 2);
+  const st = jamforelse("ekologi", u).staplar;
+  assert.equal(st.length, 2);
+  assert.match(st[0]?.varde ?? "", /^1,20\s?ha$/);
 });
 
 test("ekologi: en positiv ΔECA får ingen framgångsmening", () => {

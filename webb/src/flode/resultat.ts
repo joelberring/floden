@@ -264,7 +264,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     inne.innerHTML = `
       ${kallVal}${vyVal}
       <h1 class="flode-slutsats" id="rs-rubrik">${esc(slutsats(amne, u))}</h1>
-      <dl class="flode-tal">${tal.map((x) => `<div><dt>${esc(x.etikett)}</dt><dd>${esc(x.varde)}</dd></div>`).join("")}</dl>
+      <dl class="flode-tal">${tal.map((x) => `<div><dt>${esc(x.etikett)}</dt><dd>${esc(x.varde)}</dd>${x.under ? `<dd class="flode-tal-under">${esc(x.under)}</dd>` : ""}</div>`).join("")}</dl>
       <div class="flode-staplar"><span class="flode-liten flode-dampad">${esc(jfr.rubrik)}</span>
         ${jfr.staplar.map((s) => `<div class="flode-stapel"><span class="flode-dampad">${esc(s.etikett)}</span><span class="flode-stapel-fyll${s.etikett === "Före" || s.etikett === "Mindre sol" ? " ljus" : ""}" style="width:${s.andel === null ? 0 : Math.max(2, Math.round(s.andel * 100))}%"></span><span>${esc(s.varde)}</span></div>`).join("")}
       </div>
