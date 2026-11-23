@@ -173,6 +173,9 @@ Se `docs/ARKITEKTUR-DRIFT.md` och `docs/KONTO.md`.
 
 ## Drift – server (S)
 
+**Etapp 3 (pågår, Joel 2026-11-23): geografi först.** Ordningen är S5 mappa `goteborg-test`, S6 mät den, S7 Hägersten-Älvsjö med
+Skärholmen, S8 Stockholm (`docs/ARKITEKTUR-DRIFT.md` 0b). Kön och demoläget (tidigare S5 och S6) är S5k och S6d.
+
 Joels beslut 2026-11-22 (`docs/BESLUT.md`): basserver hos Hetzner, arbetare vid behov, egen bucket i O-Tids Object
 Storage, månadsbudgetar och demo först. Se `docs/DRIFT.md`.
 
@@ -182,13 +185,15 @@ Storage, månadsbudgetar och demo först. Se `docs/DRIFT.md`.
 | S2 Basserver | Eget Hetzner Cloud-projekt `floden`, CX23 i hel1, DNS `floden.berring.se`, Google-klient | S1 | klar (servern live 2026-11-23, https://floden.berring.se) |
 | S3 Inloggning i drift | Riktig Google-klient, första administratören, inbjudningar | S2 | klar (Google-inloggning och superadmin på plats 2026-11-23; inbjudningar sköts nu i webben, se E1) |
 | S4 Förråd och backup | Bucket `floden` i O-Tids Object Storage, sha256-nycklar, mellanlager på disk, presignerade URL:er till arbetarna, timkopia av `konto.sqlite` (backup) | S2 | väntar (Joels beslut om backup och bucket; ingår inte i E1) |
-| S5 Kö, arbetare och kostnadsbok | Jobbkö med pull över HTTPS (O-Tids `geo-server.ts`), klass `liten`; kostnadsbok, månadstak per klass, uppskattning och godkännande per körning, larm 50/80/100 %, daglig avstämning mot leverantören | S4 | väntar |
-| S6 Demoläge | Färdigräknade exempel, besökare läser och gör lätta skisser, tunga körningar bara för superadmin | S5 | väntar |
-| S7 Mätning | Provområdet: tid, minne, disk per ruta; ersätter uppskattningarna i `docs/ARKITEKTUR-DRIFT.md` 5 | S5 | väntar |
+| S5 Geografi `goteborg-test` | Geografin som objekt (K46, `src/geografi/`): `floden geografi mappa goteborg-test --konto <superadmin>` hämtar och bygger kärna (Haga, 500 m) + buffert (dagsljus H/tan 5° och tillrinning uppströms), innehållsadresserade lager och manifest; `floden projekt skapa --geografi goteborg-test@v1 --avgransning ...` med scenario som diff (K9) och körning av skyfall och dagsljus (`docs/DRIFT.md`, `docs/DATAKONTRAKT.md` K46) | S3, E1 | **pågår (etapp 3)**: kod, tester och dokument klara; ej körd mot Lantmäteriet och Göteborgs tjänster (se STATUS) |
+| S6 Mätning av `goteborg-test` | Tid, minne och disk per ruta och körning på servern; ersätter uppskattningarna i `docs/ARKITEKTUR-DRIFT.md` 5 | S5 | väntar |
+| S7 Hägersten-Älvsjö med Skärholmen | Geografi nummer två (en stadsdel), batchkörning på stor maskin (klass `batch`, CCX53/CCX63) | S6 | väntar |
+| S8 Stockholm | Hela Stockholm som geografi | S7 | väntar |
+| S5k Kö, arbetare och kostnadsbok | Jobbkö med pull över HTTPS (O-Tids `geo-server.ts`), klass `liten`; kostnadsbok, månadstak per klass, uppskattning och godkännande per körning, larm 50/80/100 %, daglig avstämning mot leverantören (var S5 före "geografi först", 2026-11-23) | S4 | väntar |
+| S6d Demoläge | Färdigräknade exempel, besökare läser och gör lätta skisser, tunga körningar bara för superadmin (var S6) | S5k | väntar |
 | S7b Benchmarksvit | `floden benchmark`: fasta fall (skyfall, dagsljus, luft, buller), tid (median), minne (RSS och tracemalloc) och avvikelse mot facit, format `floden-benchmark/v1` (K37), jämförelse `--jamfor`; GPU-prov i webbläsaren `#/prov/webgpu` (superadmin) mot serverns f64-facit (`docs/benchmark/README.md`, `docs/WEBGPU-ARKITEKTUR.md` 5) | D1 | klar för servern (baslinje i delad container, `docs/benchmark/2026-11-23-container.json`); GPU-provet är byggt men inte körts på grafikkort |
-| S8 Batch | Klass `batch` (CCX53/CCX63), en stadsdel, sedan hela Stockholm | S7 | väntar |
-| S9 GPU | Klass `gpu` hos Verda (L40S), L-b-mätning, vindbibliotek för ett kvarter med höga hus | S5, L-b | väntar (Joel: konto och budget) |
-| S10 Kvoter | Kvot per konto och organisation (förval 0), inbjudan med kvot; först därefter delning | S5, S6 | väntar |
+| S9 GPU | Klass `gpu` hos Verda (L40S), L-b-mätning, vindbibliotek för ett kvarter med höga hus | S5k, L-b | väntar (Joel: konto och budget) |
+| S10 Kvoter | Kvot per konto och organisation (förval 0), inbjudan med kvot; först därefter delning | S5k, S6d | väntar |
 
 ## Drift – etapp 1 i webben (E)
 

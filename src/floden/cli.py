@@ -1692,9 +1692,11 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_benchmark(subparsers)
 
+    from kommuner.cli import registrera as registrera_kommuner
     from lantmateriet.cli import registrera as registrera_lantmateriet
 
     registrera_lantmateriet(subparsers)
+    registrera_kommuner(subparsers)
 
     from floden_mcp.cli import registrera as registrera_mcp
 
@@ -1864,6 +1866,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from demovarld.cli import kor as kor_demo
 
         return kor_demo(args)
+    if args.kommando in ("projekt", "geografi"):
+        from kommuner.cli import kor as kor_kommuner
+
+        return kor_kommuner(args)
     if args.kommando in ("data", "omrade"):
         from lantmateriet.cli import kor as kor_lantmateriet
 

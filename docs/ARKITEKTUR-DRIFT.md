@@ -13,6 +13,27 @@ Källa för det som återanvänds: O-Tid (github.com/joelberring/otid, MIT, © 2
 - **Användarna är kommuner:** organisation → förvaltning → projekt (avsnitt 3a), SSO på sikt (avsnitt 3b), automatisk koppling till förvaltning (avsnitt 3c).
 - Rekommendationen i avsnitt 3 är ändrad efter detta. Förslag till beslutsrader står i avsnitt 7; `BESLUT.md` ändras bara av Joel.
 
+## 0b. Geografi först (Joel 2026-11-23)
+
+Systemdesignens avsnitt 2.0 (`design/floden-systemdesign.md`, Joels projektdokument; finns inte i repot) och serverplanen
+(`design/server-och-drift.md`) ger ordningen **geografi först**: ett projekt byggs inte direkt ur en kommun, utan i en
+**geografi** som mappats i förväg.
+
+- **Geografi** = giltig kärna (några hundra meter till några kilometer) + buffert + förberäknade lager, ett objekt med id och
+  version (`goteborg-test@v1`), innehållsadresserat och beskrivet av ett manifest (kontrakt **K46**, `docs/DATAKONTRAKT.md`).
+  Bufferten är den större av dagsljusets påverkansradie (`H / tan 5°`) och hela tillrinningsområdet uppströms kärnan
+  (ur höjdmodellen). Lager med samma innehåll lagras en gång, även om flera versioner delar dem.
+- **Mappning** är en egen åtgärd, `floden geografi mappa <id> --konto <superadmin>`: bara superadmin (organisationsadmin är
+  ett öppet förslag), kontots egen Lantmäteri-nyckel, bara öppna data på servern.
+- **Projekt** väljer en avgränsning i en geografi (`floden projekt skapa --geografi <id>@<version> --avgransning ...`) och
+  låser versionen. Avgränsning utanför kärnan ger en varning, inte ett fel. Projektet registreras i kontoregistret med
+  skaparen som `utredare`.
+- **Scenario som diff:** ett ritat hus (K9) är en diff mot geografin i projektet; skyfall och dagsljus räknas för nuläget och
+  för scenariot. Planerat läge (beslutade planer som blir nästa bas) förbereds i datamodellen med fältet `status` på
+  scenariot (`forslag`, `planerat`) men räknas inte som bas än.
+- **Ordning:** S5 mappa `goteborg-test`, S6 mät den, S7 Hägersten-Älvsjö med Skärholmen, S8 hela Stockholm (`PLAN.md`).
+  Stegen 8-10 i avsnitt 6 följer samma ordning.
+
 ## 1. Läget i dag
 
 ### Floden
@@ -253,9 +274,10 @@ Antagande: Stockholms kommun ca **190 km² land**. K1-ruta 500 × 500 m med 25 m
 | 5 | Jobbkö i Floden (Postgres) + arbetare som tar `full2d` över HTTPS med token | A1/EA1 via kön ger samma `run.json` som lokalt | 2 dagar |
 | 6 | Avbildningar i CI (ghcr.io), backup och bevakning från `deploy/`; egen VPS | Grön CI bygger avbildningar; dump + återställning provad | 1–2 dagar |
 | 7 | Arbetare vid behov (start/radera, budget, tomgång) | Väntande jobb startar en server som raderas efter tomgång | 2 dagar |
-| 8 | Mät provområdet (1 km²): tid, minne och disk per ruta, 2D-tid per km² | Mätvärden i `STATUS.md` som ersätter uppskattningarna i avsnitt 5 | ½ dag |
-| 9 | Batchkörning på stor maskin, rutcache, budgettak per körning | En stadsdel (t.ex. Hägersten-Älvsjö) i en batch | 2–3 dagar |
-| 10 | Hela Stockholm | Karta över hela staden med `run.json` | beror på 8–9 |
+| 7b | Mappa `goteborg-test` (geografi, K46) och skapa ett projekt med ett scenario i den (avsnitt 0b) | `floden geografi mappa goteborg-test`, `floden projekt skapa` ger manifest och projekt | 1 dag |
+| 8 | Mät `goteborg-test` (1 km²): tid, minne och disk per ruta, 2D-tid per km² | Mätvärden i `STATUS.md` som ersätter uppskattningarna i avsnitt 5 | ½ dag |
+| 9 | Mappa Hägersten-Älvsjö med Skärholmen som geografi; batchkörning på stor maskin, rutcache, budgettak per körning | Stadsdelen i en batch | 2–3 dagar |
+| 10 | Hela Stockholm som geografi | Karta över hela staden med `run.json` | beror på 8–9 |
 | 11 | (Senare) SAML 2.0, attributmappning (signal 3) med bekräftelse, SCIM, ev. identitetsfederation | En andra kommun loggar in utan kodändring | beror på kommunerna |
 
 ## 7. Beslut som Joel behöver fatta

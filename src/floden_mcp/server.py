@@ -14,11 +14,13 @@ Verktygen finns i en tabell längst ned (`VERKTYG`); klassen för varje verktyg 
 """
 
 import base64
+import contextlib
 import functools
 import json
 import os
 import re
 import time
+import urllib.parse
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar, Token
@@ -295,6 +297,31 @@ def bygg_server(
     klasser: dict[str, DataKlass] = {}
     utan_projekt = {"session_deklarera", "korlogg_hamta", "metoder_lista"}
 
+    def _objekt_nekas(argument: Mapping[str, Any], vilket: str, konto: str | None, minst: str) -> str | None:
+        """Text om verktyget/resursen pekar på en rapport eller beställning i ett projekt som kontot inte har
+        rollen i (annars None). Samma text som för en som saknas."""
+        if behorighet is None:
+            return None
+        rapport_ids: set[str] = set()
+        _hitta_rapporter(argument, rapport_ids)
+        if vilket.startswith("resurs:floden://rapport/"):
+            rapport_ids.add(urllib.parse.unquote(vilket.rsplit("/", 1)[1]))
+        kontrollera: list[tuple[str, str, str]] = []
+        for rid in sorted(rapport_ids):
+            try:
+                kontrollera.append((rid, "rapport", rapporter.hamta(rid).projekt))
+            except Exception:  # noqa: BLE001 - okänd rapport: verktyget svarar själv
+                continue
+        bid = argument.get("bestallning_id")
+        if isinstance(bid, str) and bid:
+            with contextlib.suppress(Exception):  # okänd beställning: verktyget svarar själv
+                kontrollera.append((bid, "beställning", rapporter.bestallning_hamta(bid).projekt))
+        for id_, slag, projekt_id in kontrollera:
+            if konto is None or not behorighet(konto, projekt_id, minst):
+                return f"Okänd {slag} '{id_}'."
+        return None
+
+
     def verktyg(
         namn: str, beskrivning: str, *, klass: DataKlass = DataKlass.OPPET
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -415,6 +442,13 @@ def bygg_server(
                     )
                     _skriv(logg, post, "nekad_behorighet", korningar, f"saknar {minst}", None, t0)
                     return _result_fel(text)
+            if behorighet is not None and ctx.method in ("tools/call", "resources/read"):
+                # Rapporter och beställningar hör till ett projekt: rollen prövas i det projektet, inte i
+                # `projekt`-argumentet (som saknas och förvalt är demokvarteret). Okänd och nekad ser lika ut.
+                nekad_text = _objekt_nekas(argument, vilket, konto, "utredare" if vilket in SKRIVVERKTYG else "lasare")
+                if nekad_text is not None:
+                    _skriv(logg, post, "nekad_behorighet", korningar, "objekt i annat projekt", None, t0)
+                    return _result_fel(nekad_text)
             if ctx.method == "tools/call" and tjanst.app.konto.aktiv:
                 # Samma körningsbehörighet som webben (`/api/korningar/<id>/*`): minst lasare i
                 # körningens projekt, annars "okänd körning" (ingen skillnad mot en som saknas).
@@ -809,7 +843,7 @@ def bygg_server(
     ) -> dict[str, Any]:
         return tjanst.jamfor(korning_id, omrade)
 
-    _registrera_rapportverktyg(server, verktyg, rapporter, tillstand)
+    _registrera_rapportverktyg(server, verktyg, rapporter, tillstand, behorighet)
     _registrera_resurser(server, tjanst)
     return server
 
@@ -819,6 +853,7 @@ def _registrera_rapportverktyg(
     verktyg: Callable[..., Callable[[Callable[..., Any]], Callable[..., Any]]],
     rapporter: RapportTjanst,
     tillstand: Sessionstillstand,
+    behorighet: Behorighet | None = None,
 ) -> None:
     """Rapportverktygen (R1): frågekatalog, skissrapport, påståenden med belägg, kontroll, export."""
     RapportId = Annotated[str, Field(description="Rapport-id från rapport_skapa (r-<12 hex>).")]
@@ -1150,7 +1185,15 @@ def _registrera_rapportverktyg(
         roll: Roll = None,
     ) -> dict[str, Any]:
         if rapport_id is None:
-            return {"rapporter": rapporter.lista()}
+            # Bara rapporter i projekt där kontot har en roll (utan inloggning: alla).
+            konto = tillstand.konto
+            alla = rapporter.lista()
+            if behorighet is not None:
+                alla = [
+                    r for r in alla
+                    if konto is not None and behorighet(konto, str(r.get("projekt", "")), "lasare")
+                ]  # fmt: skip
+            return {"rapporter": alla}
         return _rapport_svar(rapporter, rapport_id)
 
     @server.resource(

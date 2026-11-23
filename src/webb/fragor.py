@@ -146,8 +146,12 @@ class FragaTjanst:
         cachemapp: Path,
         korningsmapp: Path,
         demomapp: Path | None = None,
+        projektrot: Path | None = None,
     ) -> None:
         self.demomapp = demomapp
+        self.projektrot = projektrot
+        """Rotmapp för kommunprojekt (`floden projekt skapa`): varje `<projekt>/fragor`
+        under den räknas som en frågemapp, så att projektens frågor syns utan ändrad konfig."""
         self.rot = rot
         self.fragemappar = fragemappar
         self.cachemapp = cachemapp
@@ -156,6 +160,7 @@ class FragaTjanst:
         self._lock = threading.RLock()
         self._korningar: dict[str, Korning] = {}
         self._inlast = False
+        self._mapp_stampel = -1
         self._exekutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="floden-kor")
 
     # ------------------------------------------------------------------ hjälpfunktioner
@@ -175,10 +180,17 @@ class FragaTjanst:
     def _fragefiler(self) -> dict[str, Path]:
         """ref -> fil. Ref är filnamnet utan ändelse (med -2, -3 vid krock mellan mappar)."""
         ut: dict[str, Path] = {}
-        for mapp in self.fragemappar:
+        mappar = list(self.fragemappar)
+        if self.projektrot is not None and self.projektrot.is_dir():
+            mappar += sorted(p for p in self.projektrot.glob("*/fragor") if p.is_dir())
+        sedda: set[Path] = set()
+        for mapp in mappar:
             if not mapp.is_dir():
                 continue
             for fil in sorted([*mapp.glob("*.toml"), *mapp.glob("*.json")]):
+                if fil.resolve() in sedda:
+                    continue
+                sedda.add(fil.resolve())
                 bas = re.sub(r"[^a-z0-9_\-]+", "-", fil.stem.lower()).strip("-") or "fraga"
                 ref, n = bas, 2
                 while ref in ut:
@@ -340,13 +352,25 @@ class FragaTjanst:
         tmp.replace(k.mapp / "korning.json")
 
     def _lasta_korningar(self) -> None:
+        """Läser körregistret från disk: allt vid första anropet (en körning som stod som pågående
+        då är avbruten), därefter bara körningar som tillkommit sedan sist (skrivna av en annan
+        process, t.ex. `floden projekt skapa`). Mappens ändringstid avgör om det är värt
+        att titta; en känd körning skrivs aldrig över härifrån."""
         with self._lock:
-            if self._inlast:
-                return
+            forsta = not self._inlast
             self._inlast = True
             if not self.korningsmapp.is_dir():
                 return
+            try:
+                stampel = self.korningsmapp.stat().st_mtime_ns
+            except OSError:
+                return
+            if not forsta and stampel == self._mapp_stampel:
+                return
+            self._mapp_stampel = stampel
             for fil in sorted(self.korningsmapp.glob("*/korning.json")):
+                if fil.parent.name in self._korningar:
+                    continue
                 try:
                     d = json.loads(fil.read_text(encoding="utf-8"))
                     k = Korning(
@@ -368,7 +392,7 @@ class FragaTjanst:
                     )
                 except (OSError, ValueError, KeyError):
                     continue  # en trasig post hindrar inte de andra
-                if k.status in ("ko", "kor"):
+                if forsta and k.status in ("ko", "kor"):
                     k.status = "fel"
                     k.fel = "Körningen avbröts när servern stoppades."
                     k.slut = k.slut or _nu()
