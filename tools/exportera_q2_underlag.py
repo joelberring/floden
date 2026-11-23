@@ -1,9 +1,9 @@
-"""Exporterar GIS-fritt bifiltrerings- och bifurkationsunderlag för Q2 (Samuel).
+"""Exporterar GIS-fritt bifiltrerings- och bifurkationsunderlag för Q2 (forskningsparten).
 
 Exempel:
     python tools/exportera_q2_underlag.py \\
         --indata testsvit/A9_brus_persistens/indata \\
-        --ut utdata/q2_samuel
+        --ut utdata/q2_forskningspart
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--ut",
-        default="utdata/q2_samuel",
+        default="utdata/q2_forskningspart",
         help="Utmapp för bifiltrering_q2.json, bifurkationer.json och bifurkationer.gpkg.",
     )
     ap.add_argument("--k-sigma", type=float, default=STANDARD_K_SIGMA)

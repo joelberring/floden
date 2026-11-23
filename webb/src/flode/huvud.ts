@@ -1,7 +1,7 @@
 /*
  * Sidhuvudet i flödet: 56 px, "Floden / <projekt>", stegraden och kontoknappen. Kontomenyn har
- * Nycklar (inloggade) och Administration (admin) och en diskret länk till Om
- * beräkningarna och utredningsfrågorna utan projekt.
+ * Nycklar (inloggade) och Administration (admin) och diskreta länkar till Om
+ * beräkningarna, Matematik och forskning och utredningsfrågorna utan projekt.
  */
 import { adminTillaten, kontoLage } from "../konto.ts";
 import { esc } from "../sidor.ts";
@@ -39,13 +39,14 @@ export function kontoMenyHtml(): string {
         ${l.lage === "in" ? `<li><a class="flode-meny-rad" href="#/nycklar">Nycklar</a></li>` : ""}
         ${adminTillaten(l) ? `<li><a class="flode-meny-rad" href="#/administration">Administration</a></li>` : ""}
         <li><a class="flode-meny-rad" href="#/om">Om beräkningarna</a></li>
+        <li><a class="flode-meny-rad" href="#/matematik">Matematik och forskning</a></li>
         <li><a class="flode-meny-rad" href="#/fragor">Utredningsfrågor</a></li>
         ${ut}
       </ul>
     </div>`;
 }
 
-export function flodeHuvudHtml(projekt: string | null, aktivt: Steg): string {
+export function flodeHuvudHtml(projekt: string | null, aktivt: Steg | null): string {
   const namn = projekt ? (namnCache.get(projekt) ?? projekt) : null;
   return `
     <div class="flode-huvud">
@@ -56,7 +57,7 @@ export function flodeHuvudHtml(projekt: string | null, aktivt: Steg): string {
 }
 
 /** Ritar huvudet och kopplar kontomenyn (öppna, stäng med Esc eller klick utanför). */
-export function ritaFlodeHuvud(el: HTMLElement, projekt: string | null, aktivt: Steg): void {
+export function ritaFlodeHuvud(el: HTMLElement, projekt: string | null, aktivt: Steg | null): void {
   el.innerHTML = flodeHuvudHtml(projekt, aktivt);
   const knapp = el.querySelector<HTMLButtonElement>(".flode-konto-knapp");
   const meny = el.querySelector<HTMLElement>(".flode-meny");

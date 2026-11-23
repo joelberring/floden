@@ -1,0 +1,328 @@
+# Register över Flodens matematiska metoder: en post per metod, ordnad per domän.
+#
+# Källan till `docs/MATEMATIK.md` (metodtabellen) och till sidan "Matematik och forskning" i appen
+# (`webb/src/matematik/data.generated.ts`). Båda genereras med `python tools/generera_matematik.py`;
+# `tests/gemensamt/test_metodregister.py` kontrollerar att de genererade filerna är i takt med den här
+# filen, att varje sökväg finns och att `metodstatus` pekar på en post i `data/mcp/metodstatus.toml`.
+#
+# `anvandarflode` (var metoden nås, kontrollerat mot koden 2026-11-23):
+#   flode      i webbflödet (#/p/<projekt>/...), via K21-lösare
+#   karta      i webbklienten utanför flödet (#/karta/...)
+#   api        bara som endpoint i webb-API:t, ingen knapp eller panel i klienten
+#   cli        kommandorad (`floden kor`, `floden testsvit`), MCP eller K21-lösare utan webbflöde
+#   fristaende modul med tester, men inte inkopplad någonstans
+#
+# `metodstatus` (valfri) är nyckeln (`metodstatus_ocksa`: fler nycklar som metoden täcker; rapport bara om alla är det) i `data/mcp/metodstatus.toml`; klassningen skiss/rapport hämtas därifrån
+# och sätts aldrig här. Metoder utan nyckel där är `skiss` (förval i den filen).
+#
+# Formler: `latex` skrivs i docs/MATEMATIK.md, `text` visas på sidan i appen (läsbar utan formelbibliotek).
+
+[doman.vatten]
+namn = "Vatten"
+[doman.dagsljus]
+namn = "Dagsljus"
+[doman.luft]
+namn = "Luft"
+[doman.buller]
+namn = "Buller"
+[doman.ekologi]
+namn = "Ekologi"
+
+# ---------------------------------------------------------------- vatten
+
+[[metod]]
+id = "vatten.sankgraf"
+doman = "vatten"
+namn = "Sänkgraf som sammanslagningsträd"
+sammanfattning = "Terrängens sänkor och deras överfall som ett rotat träd (Fill–Spill–Merge, Barnes 2020), med persistensfilter, slutsänkor och takvatten som linjär omfördelning."
+anvandarflode = "flode"
+metodstatus = "vatten.statisk_fyllning"
+kod = ["src/sankgraf/hierarki.py", "src/sankgraf/persistens.py", "src/sankgraf/fyllning.py", "src/sankgraf/takvatten.py", "src/sankgraf/avtappning.py"]
+kontrakt = ["K1 (v2)", "K2 (v2)"]
+facit = ["testsvit/A1_enkel_sanka (A0–A13, `floden testsvit`)", "tests/sankgraf/test_a_fall_statisk.py", "tests/sankgraf/test_instangt_omrade.py", "tests/sankgraf/test_takvatten.py"]
+anmarkning = "Persistensfiltret är relativt: en sänka tas bort när p(u) < f·σ(u) med f = 2 (inte en fast gräns). Takvattnets omfördelning har kolumnsumma 1 inklusive vatten som lämnar rutan; andelen till ledningsnät (standard 0) tas bort före fördelningen."
+[[metod.formel]]
+latex = 'p(u) = z_{\text{öv}}(u) - z_{\min}(u), \qquad \text{filtrera bort } u \text{ när } p(u) < f\,\sigma(u),\; f = 2'
+text = "p(u) = z_öv(u) − z_min(u); sänkor med p(u) < f·σ(u), f = 2, filtreras bort"
+[[metod.formel]]
+latex = 'T_{\text{tak}} : \mathbb{R}^{|\Omega_{\text{tak}}|} \to \mathbb{R}^{|\Omega_{\text{mark}}|}, \qquad \text{kolumnsumma } 1'
+text = "Takvatten: fasta vikter från varje takcell till markceller, kolumnsumma 1 (linjärt i regnet)"
+
+[[metod]]
+id = "vatten.dynamik"
+doman = "vatten"
+namn = "Händelsestyrd dynamik i grafen"
+sammanfattning = "Volymen i varje sänka är styckvis linjär mellan händelser (bräddning, sammanslagning); lösaren hoppar mellan händelserna i stället för att stega i tid."
+anvandarflode = "flode"
+metodstatus = "vatten.dynamik"
+kod = ["src/dynamik/handelsestyrd.py", "src/dynamik/nodmodell.py", "src/dynamik/enhetssvar.py", "src/dynamik/tidsstegning.py"]
+kontrakt = ["K4", "K6", "K21 (lösaren vatten.dynamik)"]
+facit = ["tests/dynamik/test_a_fall_dynamik.py", "tests/dynamik/test_enhetssvar_och_ensemble.py", "testsvit/A1_enkel_sanka (A1–A3, A9–A13)"]
+anmarkning = "Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1."
+[[metod.formel]]
+latex = '\frac{\mathrm{d}V_u}{\mathrm{d}t} = r(t)\,A_{\text{eff}}(u) + \sum_{w \to u} Q_{w \to u}(t) - Q_{\text{avt}}(u)'
+text = "dV_u/dt = r(t)·A_eff(u) + Σ Q_(w→u)(t) − Q_avt(u)"
+[[metod.formel]]
+latex = 'Q = C_d\,B\,\max(0, \Delta h)^{3/2}'
+text = "Q = C_d·B·max(0, Δh)^(3/2)  (bredskronsöverfall, tidsstegning)"
+
+[[metod]]
+id = "vatten.tvad_hybrid"
+doman = "vatten"
+namn = "2D lokal tröghet, subgrid och hybrid"
+sammanfattning = "Lokal-tröghetsapproximationen (Bates 2010, de Almeida m.fl. 2012) på rutnät med θ-viktning, subgridtabeller och koppling till grafens djupa noder; en a posteriori-indikator pekar ut var 2D behövs."
+anvandarflode = "cli"
+kod = ["src/tvad/lokal_troghet.py", "src/tvad/hybrid.py", "src/tvad/subgrid.py", "src/tvad/felindikator.py", "src/vatten/losare_2d.py", "rust/tvad_karna"]
+kontrakt = ["K1", "K5", "K6", "K36 (felindikator i API-svaret)"]
+facit = ["testsvit EA1, EA2, EA8A (`floden testsvit`)", "testsvit grupp D (Hunter, `floden testsvit --grupp D`)", "tests/tvad/test_hastighet_facit.py", "tests/tvad/test_lokal_troghet_och_hybrid.py", "tests/tvad/test_felindikator.py"]
+anmarkning = "Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3."
+[[metod.formel]]
+latex = '\Delta t \le \mathrm{CFL}\cdot\frac{\Delta x}{\sqrt{g\,h_{\max}} + |u|_{\max}}, \qquad \mathrm{CFL} = 0{,}5'
+text = "Δt ≤ CFL·Δx / (√(g·h_max) + |u|_max), CFL = 0,5"
+[[metod.formel]]
+latex = '\bar q_i = \theta\, q_i + \tfrac12 (1-\theta)(q_{i-1} + q_{i+1}), \qquad \theta = 0{,}9'
+text = "q̄_i = θ·q_i + ½(1 − θ)(q_(i−1) + q_(i+1)), θ = 0,9"
+[[metod.formel]]
+latex = '\mathrm{Fr} = \frac{u}{\sqrt{g\,h}} \quad \text{(Manning-normalflöde vid överfallet; tröskel } 0{,}30\text{)}'
+text = "Fr = u / √(g·h) vid överfallskanten (tröskel 0,30); felindikatorn väger också lutning (0,015) och genomströmningskvot (4,0)"
+
+[[metod]]
+id = "vatten.bifurkation"
+doman = "vatten"
+namn = "Bifurkationsdetektor"
+sammanfattning = "Flaggar överfallspunkter där höjdosäkerheten kan få vattnet att byta utlopp, med påverkad avrinningsyta och volym."
+anvandarflode = "karta"
+kod = ["src/sankgraf/bifurkation.py", "src/webb/api.py (POST /api/analys/bifurkationer)", "webb/src/karta/overfall.ts"]
+kontrakt = ["K34", "K35", "K36"]
+facit = ["tests/sankgraf/test_bifurkation.py", "tests/webb/test_bifurkation_projekt.py", "tests/tvad/test_felindikator.py"]
+anmarkning = "Nås som lager i kartsidan (#/karta), inte i flödet. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
+[[metod.formel]]
+latex = '\Delta z = \max(0,\, z_2 - z_1), \qquad \sigma = \sqrt{\sigma_1^2 + \sigma_2^2}, \qquad \text{instabil om } \frac{\Delta z}{\sigma} \le k'
+text = "Δz = max(0, z₂ − z₁), σ = √(σ₁² + σ₂²); instabil om Δz/σ ≤ k (k = 2)"
+
+[[metod]]
+id = "vatten.intervall"
+doman = "vatten"
+namn = "Monoton intervallanalys för vatten"
+sammanfattning = "Under fast flödestopologi är maxdjupet monotont i regn, initial förlust och avtappning; två extremkörningar ger garanterade gränser, med grenunion kring instabila bifurkationer."
+anvandarflode = "api"
+kod = ["src/dynamik/intervall.py", "src/webb/api.py (POST /api/analys/intervall)"]
+kontrakt = ["K40", "K34"]
+facit = ["tests/dynamik/test_intervall.py (50 slumpade scenarier på vart och ett av A1–A4, totalt 200, alla inneslutna)", "tests/webb/test_analys_steg_a.py"]
+anmarkning = "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Ingen panel i klienten (K40: läses av inget i webbklienten)."
+[[metod.formel]]
+latex = 'h_{\min}(t) \le h_u(t) \le h_{\max}(t), \qquad (h_{\min}, h_{\max}) \text{ ur två extremkörningar}'
+text = "h_min(t) ≤ h_u(t) ≤ h_max(t); gränserna ur två extremkörningar (mer regn, lägre förlust, lägre avtappning ⇒ högre nivå)"
+
+# ---------------------------------------------------------------- dagsljus
+
+[[metod]]
+id = "dagsljus.horisont_svf_vsc"
+doman = "dagsljus"
+namn = "Horisont, soltimmar, SVF och VSC"
+sammanfattning = "Horisontvinkel per azimut över ett prismafält (DSM), soltimmar ur solbanan, himmelsandel (SVF) och vertikal himmelskomponent (VSC, mulen CIE-himmel, BRE-normering)."
+anvandarflode = "flode"
+metodstatus = "dagsljus.horisont"
+metodstatus_ocksa = ["dagsljus.soltimmar_mark", "dagsljus.svf_mark", "dagsljus.vsc_fasad"]
+kod = ["src/dagsljus/horisont.py", "src/dagsljus/matt.py", "src/dagsljus/solposition.py", "src/dagsljus/floden_losare.py", "src/dagsljus/ruta.py"]
+kontrakt = ["K1 (v2)", "K11", "K21 (lösarna dagsljus.*)"]
+facit = ["testsvit grupp E, E1–E7 (`floden testsvit --grupp E`)", "tests/dagsljus/test_horisont.py", "tests/dagsljus/test_matt.py", "tests/dagsljus/test_losare.py"]
+anmarkning = "Fri plan ger VSC 39,6 % och SVF 1 (E1). Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew."
+[[metod.formel]]
+latex = 'h(\varphi) = \max\Bigl(0,\; \max_{c \in \text{stråle}(\varphi)} \arctan\frac{z_c - z_0}{s_c}\Bigr)'
+text = "h(φ) = max(0, max över celler c på strålen: atan((z_c − z₀) / s_c))"
+[[metod.formel]]
+latex = '\mathrm{SVF} = 1 - \frac{1}{K}\sum_{k=1}^{K} \sin^2 h_k'
+text = "SVF = 1 − (1/K)·Σ sin² h_k   (fri yta: 1)"
+[[metod.formel]]
+latex = '\mathrm{VSC} = \frac{1}{N}\int_{-\pi/2}^{\pi/2} I\bigl(h(\varphi_n + \psi)\bigr)\cos\psi\,\mathrm{d}\psi, \quad N = \tfrac{7\pi}{9}, \quad \mathrm{VSC}_{\text{oskymd}} = 0{,}3962'
+text = "VSC = (1/N)·∫ I(h(φ_n + ψ))·cos ψ dψ, N = 7π/9; oskymd fasad 39,6 %"
+
+[[metod]]
+id = "dagsljus.dozier_frew"
+doman = "dagsljus"
+namn = "Dozier–Frew: horisont i linjär tid"
+sammanfattning = "Exakt 1D-horisont längs en stråle med övre konvext hölje (monoton stack), O(N) oberoende av sökradien."
+anvandarflode = "api"
+kod = ["src/dagsljus/intervall.py (horisont_1d_konvext_holje)", "src/webb/api.py (POST /api/analys/svf-intervall)"]
+kontrakt = ["K41"]
+facit = ["tests/dagsljus/test_modern_matte.py (maxavvikelse < 1e-14 mot O(N²))"]
+anmarkning = "Används bara för den 1D-horisontprofil som svf-intervall returnerar; huvudberäkningen av horisonten (ovan) använder den inte."
+[[metod.formel]]
+latex = 'h_i = \max_{j > i} \arctan\frac{z_j - z_i}{d_{ij}} \quad \text{i } O(N) \text{ i stället för } O(N^2)'
+text = "h_i = max över j > i av atan((z_j − z_i) / d_ij), beräknad i O(N)"
+
+[[metod]]
+id = "dagsljus.svf_intervall"
+doman = "dagsljus"
+namn = "Monotona SVF-intervall"
+sammanfattning = "SVF är antiton i byggnadshöjd: körningar med z − σ och z + σ ger garanterat [SVF_min, SVF_max] per cell."
+anvandarflode = "api"
+kod = ["src/dagsljus/intervall.py (kor_monoton_svf_intervall)", "src/webb/api.py (POST /api/analys/svf-intervall)"]
+kontrakt = ["K41"]
+facit = ["tests/dagsljus/test_modern_matte.py (20 slumpade höjdscenarier inneslutna)", "tests/webb/test_analys_steg_a.py"]
+anmarkning = "Ingen panel i klienten."
+[[metod.formel]]
+latex = '\mathrm{SVF}(H - \sigma) \ge \mathrm{SVF}(H) \ge \mathrm{SVF}(H + \sigma)'
+text = "SVF(H − σ) ≥ SVF(H) ≥ SVF(H + σ)"
+
+# ---------------------------------------------------------------- luft
+
+[[metod]]
+id = "luft.transport"
+doman = "luft"
+namn = "Vindfält och spridning som M-matris"
+sammanfattning = "Stationär advektion–diffusion–deposition på voxelnät som ett glest linjärt system; snabbvind ger ett divergensfritt skissfält med Poisson-projektion."
+anvandarflode = "cli"
+metodstatus = "luft.halt"
+metodstatus_ocksa = ["luft.vindkomfort"]
+kod = ["src/luft/transport.py", "src/luft/snabbvind.py", "src/luft/lbm.py", "src/luft/vindkomfort.py", "src/karna/luft_losare.py"]
+kontrakt = ["K21 (lösarna luft.halt, luft.vindkomfort)"]
+facit = ["tests/luft/test_transport.py", "tests/luft/test_transport_tvd.py", "tests/luft/test_lbm_validering.py", "docs/LUFT.md avsnitt 6 (L1–L8)"]
+anmarkning = "M-matrisen (alla element utanför diagonalen ≤ 0, kolumnvis diagonaldominant) gäller för uppströmsschemat och för TVD med `m_matris_tak = true` (standard). Lösarna finns i K21 men luft är inte ett ämne med beräkning i webbflödet. Licens MIT (src/luft/)."
+[[metod.formel]]
+latex = '\nabla\!\cdot(\mathbf{u}\,c) - \nabla\!\cdot(K\nabla c) + \lambda c = s \;\;\Longrightarrow\;\; L\,c = s, \qquad L^{-1} \ge 0'
+text = "∇·(u c) − ∇·(K ∇c) + λ c = s  ⇒  L c = s, L M-matris (L⁻¹ ≥ 0)"
+
+[[metod]]
+id = "luft.adjungerad"
+doman = "luft"
+namn = "Adjungerad känslighet och åtgärdsval"
+sammanfattning = "En adjungerad lösning ger känsligheten hos mottagarhalten för varje källa och för vegetationen, i stället för en körning per cell."
+anvandarflode = "fristaende"
+kod = ["src/luft/kanslighet.py (berakna_adjungerad_kanslighet, valj_basta_luftatgarder_k)"]
+kontrakt = []
+facit = ["tests/luft/test_kanslighet.py (dualitetsfel < 1e-12, vegetationsgradient mot finit differens, relativt 1e-3)"]
+anmarkning = "Inte inkopplad i något flöde eller API (git grep 2026-11-23): bara kor_monoton_mkn_intervall i samma fil används av API:t. Beskrivs som 'redo för 3D-luftflödet' i modulens docstring."
+[[metod.formel]]
+latex = 'J(c) = w^{\top} c, \quad L^{\top}\lambda = w \;\;\Longrightarrow\;\; \frac{\partial J}{\partial s_i} = \lambda_i, \quad \frac{\partial J}{\partial \mathrm{LAD}_i} = -v_{\text{veg}}\,\Delta x^3\,\lambda_i\,c_i'
+text = "J = wᵀc, Lᵀλ = w  ⇒  ∂J/∂s_i = λ_i,  ∂J/∂LAD_i = −v_veg·Δx³·λ_i·c_i"
+
+[[metod]]
+id = "luft.mkn_intervall"
+doman = "luft"
+namn = "Monotona MKN-intervall"
+sammanfattning = "Halten är monoton i emission och antiton i deposition; två extremserier av en färdig timserie ger ett garanterat intervall för dygn över 50 µg/m³ (MKN: högst 35 dygn per år)."
+anvandarflode = "api"
+kod = ["src/luft/kanslighet.py (kor_monoton_mkn_intervall)", "src/webb/api.py (POST /api/analys/luft-mkn)"]
+kontrakt = ["K43"]
+facit = ["tests/luft/test_kanslighet.py (50 MKN-scenarier inneslutna)", "tests/webb/test_analys_steg_b.py"]
+anmarkning = "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Ingen panel i klienten."
+[[metod.formel]]
+latex = 'c_{\text{lo}} = c_{\text{bg}} + \frac{e_{\text{lo}}}{d_{\text{hi}}}\,c_{\text{lokal}}, \qquad c_{\text{hi}} = c_{\text{bg}} + \frac{e_{\text{hi}}}{d_{\text{lo}}}\,c_{\text{lokal}}'
+text = "c_lo = c_bg + (e_lo/d_hi)·c_lokal,  c_hi = c_bg + (e_hi/d_lo)·c_lokal; dygn över 50 µg/m³ räknas i båda serierna"
+
+# ---------------------------------------------------------------- buller
+
+[[metod]]
+id = "buller.nord2000"
+doman = "buller"
+namn = "Nord2000 referenskärna"
+sammanfattning = "Punkt-till-punkt-överföring enligt Nord2000 (delmodell 1–9: plan mark, terräng, skärmar, refraktion) med operatorlager och klustring med felgräns."
+anvandarflode = "cli"
+kod = ["src/buller/nord2000/", "src/buller/operator/", "src/buller/lagen/", "src/buller/scen/", "src/buller/banor/"]
+kontrakt = ["KB1", "KB2", "KB3", "KB4 (docs/buller/KONTRAKT.md)"]
+facit = ["tests/buller/nord2000/", "tests/buller/test_helkedja.py", "testsvit grupp N (RL 18-18, 80 fall, kräver lokal källmapp)"]
+anmarkning = "Pågår: `nord2000_konform = False`, rapportläget spärrat. Grupp N 2026-11-21 (docs/buller/logg/P-S2.md): 33 av 80 godkända, 16 ska utredas, 4 underkända, 27 ej körbara. Ej i webbflödet. Newton–Raphson används för krökta strålar (stralar_krokta.py), inte för skärmdiffraktionen."
+[[metod.formel]]
+latex = 'L[m,b] = 10\lg \sum_{v} w_v \sum_{\text{banor}} 10^{\,(L_W[\text{källa},b] + H[\text{bana},v,b])/10}'
+text = "L[m,b] = 10·lg Σ_v w_v Σ_banor 10^((L_W[källa,b] + H[bana,v,b]) / 10)   (KB2; energisumma över banor och väderklasser)"
+
+[[metod]]
+id = "buller.celf"
+doman = "buller"
+namn = "CELF: submodulärt val av åtgärder"
+sammanfattning = "Girigt val av de k mest effektiva åtgärderna (bullerskärmar, kritiska gatuavsnitt, luft- och ekologiåtgärder) med lat utvärdering och garantin (1 − 1/e) mot optimum; skuggzonsdetektor för mottagare där Nord2000-dämpningen hoppar."
+anvandarflode = "api"
+kod = ["src/buller/optimering.py", "src/rutt/kritiska.py (valj_kritisk_insats_k)", "src/luft/kanslighet.py (valj_basta_luftatgarder_k)", "src/ekologi/intervall.py (valj_basta_ekologi_atgarder_k)", "src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/rutt)"]
+kontrakt = ["K42", "K8"]
+facit = ["tests/buller/test_optimering.py (matchar brute force, k = 3)", "tests/rutt/test_kritiska.py (brute force; 400 noder och 760 kanter under 0,05 s)", "tests/ekologi/test_facit_g.py (G6: CELF väljer ekodukt först)", "tests/luft/test_kanslighet.py"]
+anmarkning = "Bara buller- och ruttvarianten nås via API (buller-skarmar, rutt med antal_insatser); luft- och ekologivarianten är fristående funktioner. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms."
+[[metod.formel]]
+latex = 'f(S) = \sum_i w_i \min\bigl(\max(0, L_i - L_{\text{rikt}}),\, \max_{s \in S}\Delta L_{i,s}\bigr), \qquad f(S_{\text{CELF}}) \ge \bigl(1 - \tfrac1e\bigr) f(S^*), \; |S| \le k'
+text = "f(S) = Σ_i w_i·min(max(0, L_i − L_rikt), max_(s∈S) ΔL_(i,s));  f(S_CELF) ≥ (1 − 1/e)·f(S*), |S| ≤ k"
+[[metod.formel]]
+latex = 'g_{\text{krit}} = -\,c_0\,\frac{\bigl(\sqrt{2h_s} + \sqrt{2h_r}\bigr)^2}{d^2}'
+text = "g_krit = −c₀·(√(2h_s) + √(2h_r))² / d²   (kritisk ljudhastighetsgradient för skuggzon)"
+
+# ---------------------------------------------------------------- ekologi
+
+[[metod]]
+id = "ekologi.krets"
+doman = "ekologi"
+namn = "Kretsteoretisk konnektivitet"
+sammanfattning = "Landskapet som elektriskt nät: harmoniska kantkonduktanser, Dirichlet-låsning av käll- och målfläck, effektivt motstånd, strömtäthet (flaskhalsar) och exakt känslighet med en lösning."
+anvandarflode = "flode"
+metodstatus = "ekologi.konnektivitet"
+kod = ["src/ekologi/krets.py", "src/ekologi/motstand.py", "src/ekologi/habitat.py", "src/karna/ekologi_losare.py"]
+kontrakt = ["K44", "K45"]
+facit = ["tests/ekologi/test_facit_g.py (G1–G3, G5)", "tests/ekologi/test_losare_k21.py (G7)"]
+anmarkning = "Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md)."
+[[metod.formel]]
+latex = 'G_{uv} = \frac{2\,g_u g_v}{(g_u + g_v)\,\ell_{uv}}, \qquad g = 1/R, \qquad R_{\text{eff}} = 1/I_{\text{tot}}'
+text = "G_uv = 2·g_u·g_v / ((g_u + g_v)·ℓ_uv), g = 1/R;  R_eff = 1 / I_tot;  L_II symmetrisk positivt definit M-matris"
+[[metod.formel]]
+latex = '\frac{\partial R_{\text{eff}}(P_i, P_j)}{\partial G_{uv}} = -\left(\frac{v_u - v_v}{I_{\text{tot}}}\right)^{2} \le 0'
+text = "∂R_eff/∂G_uv = −((v_u − v_v) / I_tot)² ≤ 0   (en lösning, ingen extra körning per kant)"
+
+[[metod]]
+id = "ekologi.pc_eca"
+doman = "ekologi"
+namn = "PC, ECA och dPC"
+sammanfattning = "Kostnadsavstånd med multi-source Dijkstra, spridningssannolikhet mellan fläckar, Probability of Connectivity, Equivalent Connected Area och Saura–Rubio-dekomposition (intra, flux, connector)."
+anvandarflode = "flode"
+metodstatus = "ekologi.konnektivitet"
+kod = ["src/ekologi/konnektivitet.py", "src/ekologi/typer.py", "src/webb/ekologi_analys.py (POST /api/analys/ekologi)"]
+kontrakt = ["K44", "K45"]
+facit = ["tests/ekologi/test_facit_g.py (G4: exakt PC, ECA och dPC för tre fläckar)", "tests/ekologi/test_losare_k21.py (G7)"]
+anmarkning = "Före/efter i webbflödet (fliken Ekologi i Resultat). Sannolikhetsfunktionen är exponentiell med p0 = 0,5 vid spridningsavståndet."
+[[metod.formel]]
+latex = 'p^*_{ij} = e^{-\alpha d^*_{ij}},\; \alpha = -\ln p_0 / d_{\text{disp}}; \qquad \mathrm{PC} = \frac{\sum_{i,j} a_i a_j\, p^*_{ij}}{A_L^{2}}, \qquad \mathrm{ECA} = A_L\sqrt{\mathrm{PC}}'
+text = "p*_ij = exp(−α·d*_ij), α = −ln p₀ / d_disp;  PC = Σ a_i·a_j·p*_ij / A_L²;  ECA = A_L·√PC"
+
+[[metod]]
+id = "ekologi.intervall"
+doman = "ekologi"
+namn = "Monotona osäkerhetsintervall"
+sammanfattning = "ECA och PC är antitona i motståndet och monotona i spridningsavståndet; två extremkörningar ger ett garanterat intervall över litteraturosäkerheten."
+anvandarflode = "flode"
+metodstatus = "ekologi.konnektivitet"
+kod = ["src/ekologi/intervall.py (kor_monoton_ekologi_intervall)", "src/karna/ekologi_losare.py"]
+kontrakt = ["K45"]
+facit = ["tests/ekologi/test_facit_g.py (G6: 50 slumpade scenarier, alla inneslutna)", "tests/ekologi/test_losare_k21.py (G7: intervallen innesluter nominellt värde)"]
+anmarkning = "Intervallens faktorer är egna val utan källa (STATUS 2026-11-23). Motståndet skalas med en gemensam faktor, inte cell för cell."
+[[metod.formel]]
+latex = '\mathrm{ECA}(R_{\max}, d_{\min}) \le \mathrm{ECA} \le \mathrm{ECA}(R_{\min}, d_{\max})'
+text = "ECA(R_max, d_min) ≤ ECA ≤ ECA(R_min, d_max)"
+
+# ---------------------------------------------------------------- öppna frågor
+
+[[fraga]]
+id = "Q1"
+titel = "Exakt händelsestyrd fyllning, min-plus-algebra och avtappning"
+kort = "När är fyllningstiderna i sänkträdet exakt beräkningsbara i min-plus-semiringen, hur bryts exaktheten av olinjära överfall (Q ∝ Δh^(3/2)), och finns en exakt eller garanterat konservativ formulering när avtappningen följer den våta ytan A(h)?"
+underlag = ["tests/dynamik/test_a_fall_dynamik.py", "testsvit A9–A13", "docs/MATEMATIK.md (observationer 2026-11-20 och 2026-11-22)"]
+
+[[fraga]]
+id = "Q2"
+titel = "Flerparameterpersistens under höjdosäkerhet"
+kort = "Kan sänksystemets robusthet formaliseras som tvåparameterpersistens över höjd och osäkerhet (minimala fria upplösningar, Hilbertfunktioner, Betti-tal), och kan en persistensförenkling av en DEM ges en bevisbar felgräns i maxdjup?"
+underlag = ["tools/exportera_q2_underlag.py", "src/sankgraf/bifurkation.py (exportera_bifiltrering_json)", "docs/DATAKONTRAKT.md (K35, K34)"]
+
+[[fraga]]
+id = "Q3"
+titel = "Fel i hybriden"
+kort = "Hur stort är felet när djupa samlingar räknas som noder med plan vattenyta och resten i 2D, jämfört med full 2D, särskilt under pågående kraftigt överfall över en smal tröskel?"
+underlag = ["src/tvad/hybrid.py", "src/tvad/felindikator.py", "testsvit EA2 och EA8A", "docs/VALIDERING.md avsnitt C"]
+
+[[fraga]]
+id = "Q4"
+titel = "Inkrementell omräkning"
+kort = "Vilka datastrukturer gör att en ändring bara kräver omräkning av berörda delträd och det som ligger nedströms, och finns en lokal regel för när ett nytt hus stänger en port eller skapar en slutsänka?"
+underlag = ["src/sankgraf/hierarki.py", "src/lapp/", "tests/sankgraf/test_instangt_omrade.py", "docs/MATEMATIK.md (observationer T04 och 2026-11-22)"]
+
+[[fraga]]
+id = "Q5"
+titel = "Fysikbevarande modellreduktion för 2D i realtid"
+kort = "Kan en masskonserverande reducerad modell (POD eller Reduced Basis) för 2D-delzoner, med känd a posteriori-felgräns, ge realtidssvar för kritiska gator utan svart-låda-AI (AGENTS.md regel 1)?"
+underlag = ["src/tvad/lokal_troghet.py", "docs/benchmark/README.md", "docs/WEBGPU-ARKITEKTUR.md"]
