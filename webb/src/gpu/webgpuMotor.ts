@@ -94,6 +94,20 @@ export function harWebGpu(): boolean {
   return Boolean((navigator as unknown as GpuNavigatorLike).gpu);
 }
 
+/** Ärlig statusrad för användaren om lokal WebGPU (f32 skiss) vs server (f64). */
+export function webGpuSkissStatus(): { tillganglig: boolean; beskrivning: string } {
+  if (harWebGpu()) {
+    return {
+      tillganglig: true,
+      beskrivning: "WebGPU tillgänglig lokalt (f32 skissläge) · formella resultat räknas i f64 på servern.",
+    };
+  }
+  return {
+    tillganglig: false,
+    beskrivning: "WebGPU saknas i webbläsaren · alla beräkningar körs deterministiskt i f64 på servern.",
+  };
+}
+
 /** Bygger den 32 byte stora uniform-bufferten som matchar `struct Params` i `dagsljus_horisont.wgsl`. */
 export function packaDagsljusParams(indata: DagsljusGpuIndata): ArrayBuffer {
   const buf = new ArrayBuffer(32);

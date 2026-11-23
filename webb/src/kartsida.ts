@@ -34,6 +34,7 @@ import { Kartmotor, TOM_RITVY, type RasterLager, type RitVy, type VyByggnad } fr
 import { LagerLista } from "./karta/lager";
 import { monteraLagerpanel } from "./karta/lagerpanel";
 import { PlanDok } from "./karta/plandok";
+import { webGpuSkissStatus } from "./gpu/webgpuMotor";
 import { Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "./karta/ritverktyg";
 import { giltigKakelmall, lasUnderlag, sparaUnderlag, vardAv, wmsBrickmall, type Underlag, type WmsSvar } from "./karta/wms";
 import { felHtml, informationHtml, korVarningarHtml } from "./felvisning";
@@ -1139,8 +1140,10 @@ function ritaRakna(): void {
   rot.setAttribute("aria-busy", String(pagar));
   if (k?.forklaring) korHtml = felHtml(k.fel, k.forklaring);
   else if (k) korHtml = `<p class="${k.fel ? "fel-text" : ""}" role="${k.fel ? "alert" : "status"}">${esc(k.fel ?? k.text)}</p>${korVarningarHtml(k.varningar)}`;
+  const gpuStatus = webGpuSkissStatus();
   rot.innerHTML = `
     <p class="dampad liten-text">Räknar om det du ritat och jämför med läget före, med samma beräkningar som resten av Floden.</p>
+    <p class="dampad liten-text">${esc(gpuStatus.beskrivning)}</p>
     <div class="kryss-grupp">${analyser}</div>
     <label class="falt-rad">Avtappning till ledningsnätet (mm/h, valfritt) <input type="number" min="0" step="any" id="rakna-avtappning" class="kontroll" placeholder="0 – ledningsnätet antas fullt" value="${sida.avtappning === null ? "" : esc(String(sida.avtappning))}"/></label>
     <div class="knapp-rad"><button type="button" class="knapp" id="rakna-plan" ${giltig && !pagar ? "" : "disabled"}>Räkna före och efter</button></div>

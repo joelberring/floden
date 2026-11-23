@@ -94,6 +94,48 @@ export const scenarioStatus = (p: string, slug: string): Promise<{ slug: string;
   lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/status`);
 export const lasWmsLager = (url: string): Promise<WmsSvar> => post(`${BAS}/wms/lager`, { url });
 
+export interface BifurkationsPunktPost {
+  nod_id: number;
+  primar_ut_till_id: number | null;
+  alternativ_ut_till_id: number | null;
+  overfall_hojd_m: number;
+  alternativ_hojd_m: number;
+  marginal_m: number;
+  osakerhet_komb_m: number;
+  sakerhetsmarginal: number | null;
+  instabil: boolean;
+  overfall_x: number;
+  overfall_y: number;
+  alternativ_x: number;
+  alternativ_y: number;
+  paverkad_avrinningsyta_m2: number;
+  paverkad_volym_m3: number;
+}
+
+export interface BifurkationAnalysSvar {
+  format: string;
+  omrade_id: string;
+  k_sigma: number;
+  referensregn_mm: number;
+  antal_instabila: number;
+  punkter: BifurkationsPunktPost[];
+  felindikator: {
+    andel_2d_yta: number;
+    antal_2d_celler: number;
+    antal_aktiva_celler: number;
+    antal_noder_2d: number;
+    antal_noder_totalt: number;
+  };
+}
+
+/** Hämtar topologiskt instabila överfallspunkter ("mät in i fält") och 2D-felindikator. */
+export const hamtaBifurkationer = (
+  omrade_id: string,
+  k_sigma = 2.0,
+  referensregn_mm = 100.0,
+): Promise<BifurkationAnalysSvar> =>
+  post("/api/analys/bifurkationer", { omrade_id, k_sigma, referensregn_mm });
+
 /** Hämtar en rasterbild med utbredningen ur huvudet `X-Floden-Utbredning` och ger en objekt-URL. */
 export async function hamtaBildMedUtbredning(url: string): Promise<{ url: string; utbredning: Utbredning }> {
   const svar = await fetch(url);
