@@ -1,21 +1,22 @@
-# Rapporter: påståenden med belägg, kontroll och export (R1)
+# Rapporter: påståenden med belägg, kontroll och export (R1, R2)
 
 **Floden räknar, AI:n ställer frågor, väljer körningar och skriver – men äger aldrig ett tal.**
 En rapport är en lista *påståenden* (K32) som var och en besvarar en fråga ur frågekatalogen och
 är bunden till *belägg* ur Flodens körningar. Talen i texten är typade platshållare som Floden
 fyller. Före export körs en deterministisk kontroll; ett enda fel stoppar exporten. Beslutat av
 Joel 2026-11-22 (se `BESLUT.md`). Kod: `src/rapport/` (`pastaende`, `belaggskalla`,
-`fragekatalog`, `skissrapport`, `skisskontroll`, `skissmall`, `skissexport`, `referensflode`).
-Kontrakt: K32 och K33 i `DATAKONTRAKT.md`.
+`fragekatalog`, `bestallning`, `skissrapport`, `skisskontroll`, `skissmall`, `amnestext`,
+`skissexport`, `fasadbelagg`, `referensflode`, `referensflode_dagsljus`).
+Kontrakt: K30, K32 och K33 i `DATAKONTRAKT.md`.
 
 ## Två nivåer
 
 | Nivå | Vad | Status |
 | --- | --- | --- |
-| 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1) |
+| 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1) och **dagsljus och sol** (R2) |
 | 2 Publicerbart planunderlag | Bedömning mot bedömningsgrunder, metodnotis och ansvarig utredare, granskning och signering. | R3; fälten finns förberedda i K32/K33 (`bedomningsgrund`, `granskning`, `signering`, `skede`, `revision`) |
 
-Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller.
+Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall och dagsljus/sol är klara på nivå 1; luft och buller återstår.
 
 ## Påstående, belägg och platshållare
 
@@ -92,6 +93,121 @@ händelser och MCP-körloggens rader för rapporten och dess körningar, hashked
 och bildtexterna utan "Figur N" som förval; texten hänvisar till "kartorna nedan". Bilagorna
 numreras (Bilaga 1, 2 …) eftersom texten hänvisar till dem; belägg-id (B1 …) behålls för
 spårbarheten.
+
+## Beställning (K30)
+
+En beställning är valfri och styr två saker: vilka katalogfrågor underlaget tar med och hur
+ingressen skrivs. Utan beställning gäller som förut (alla frågor för ämnet, mallens ingress).
+Fälten (kontraktet står i `DATAKONTRAKT.md`):
+
+- **syfte**: en mening om vad underlaget ska hjälpa till att avgöra. Skrivs ut i handlingsrutan
+  och ingressen. Syftet får inte likna en e-postadress eller ett personnummer.
+- **skede**: `skiss` eller `planunderlag`. Bara `skiss` kan köras; `planunderlag` (nivå 2) vägras
+  med hänvisning till R3.
+- **mottagare** (`mottagare_roll`): `planhandlaggare`, `byggaktor` eller `granskare`. Rollen
+  väljer ingressens tonläge och filtrerar frågorna på typ (byggaktören ser föreskrifter, lagar,
+  riktvärden, riktlinjer, vägledning och metod; granskaren metod, projektkontroll och föreskrift;
+  planhandläggaren alla).
+- **ämnen och frågor**: `dagsljus` och `sol` (hör ihop i en rapport) eller `skyfall`. `fragor`
+  anger frågor uttryckligen och går före urvalet; `villkor` filtrerar på frågans villkor;
+  `bara_med_underlag` tar bara frågor som Floden kan besvara helt eller delvis.
+- **projekt och scenario**: `scenario = {"fore": "bas", "efter": ["hojd", "nytt_hus"]}` väljer
+  vilka jämförelser som redovisas. Utelämnat tas alla jämförelser i körningen.
+
+Beställningen räknar ut urvalet (`urval`, `utelamnade`) när den skapas och sparas i
+`<rapportmapp>/bestallningar/b-<12 hex>.json`; en kopia ligger i rapportens K33 (`bestallning`).
+Ingressen nämner hur många av frågorna i ämnet som togs med. Kontrollen ändras inte av en
+beställning: varje fråga som kommer med behöver fortfarande ett påstående med belägg.
+
+## Skissunderlaget för dagsljus och sol
+
+Ämnet `dagsljus` (rapporten heter "Skissunderlag dagsljus och sol") täcker katalogens DL- och
+SO-frågor. Det byggs på demons körning `demo-dagsljus` (soltimmar på mark och vertikal
+himmelskomponent, VSC, på fasadpunkter, före och efter *höjt hus* och *nytt hus*) och använder
+samma disposition, kartmönster, bilagor, kontroll och språkprofiler som skyfallsunderlaget. Bara det
+kärnan faktiskt räknar redovisas (`docs/DAGSLJUS.md`).
+
+Måtten, med värdena i demon (hela demokvarteret, fullt läge):
+
+| Mått | Före | Höjt hus | Nytt hus |
+| --- | --- | --- | --- |
+| Soltimmar på mark, medel (h per dygn, 20 mars) | 4,4 | 4,4 | 4,3 |
+| Markyta som mister sol, jämfört med nuläget | | 2 758 m² | 5 318 m² |
+| Markyta som mister mer än 1 timme | | 1 456 m² | 3 077 m² |
+| Markyta som mister mer än 2 timmar | | 598 m² | 1 609 m² |
+| Största minskning i en cell (h) | | 5,5 | 7,0 |
+| Fasadpunkter (K11) med VSC under BRE:s gräns, 27 % | 1 245 av 3 553 | 1 247 av 3 553 | 1 272 av 3 545 jämförbara |
+| Punkter som går från över till under gränsen | | 2 | 27 |
+| Punkter där VSC efter är lägre än 0,8 av före | | 0 | 38 |
+| Största minskning av VSC (procentenheter) | | 3,0 | 17,3 |
+| Lägsta VSC i nuläget | 7,7 % | | |
+
+Talen fylls av Floden ur körningen; de står i rapporten som platshållare. Små avvikelser mot
+talen här kan förekomma i det lilla testläget (2 m-celler). Mätpunkterna är genererade
+fasadpunkter (en per våning och fasadsteg), inte verkliga fönster, och VSC är himmelskomponent
+under mulen CIE-himmel, inte dagsljusfaktor i rum; kontrollen (`dagsljusfel`) vägrar påståenden
+som säger något annat. Soltimmarna är en dygnssumma på mark i en ruta, inte sammanhängande tid
+och inte sol på fasad. SVF (himmelsandel på mark) och ekvinoktieskuggor redovisas bara om
+körningen har dem; demon har det inte, och det står då som underlag som saknas. Det finns ingen
+bedömning mot krav: BRE:s 27 % och kvoten 0,8 används som räknade antal ("antal punkter under
+gränsen"), inte som slutsats. Parametrarna (gräns, kvot, datum) är belägg av typen *parameter*
+och blandas inte med mätvärden i nämnarkontrollen.
+
+Beläggsadresser, utöver skyfallets: `fasad.vsc.<scenario>.<mått>` (mått ur ett scenario:
+`vsc_min_procent`, `antal_punkter`, `antal_under_grans`), `fasad.vsc.grans_procent` och
+`fasad.vsc.kvot` (parametrar), `fasadjamforelse.vsc.<före>.<efter>.<mått>` (`antal_jamforbara`,
+`antal_under_grans_efter`, `antal_nytt_under_grans`, `antal_under_kvot`, `antal_under_bada`,
+`antal_nya`, `min_kvot`, `max_minskning_procentenheter`), `jamforelse.<namn>.yta_minskning_over_<X>h_m2`
+(markyta som mister mer än X timmars sol; X i hela timmar) och mottagaren `hela_omradet` i
+`omrade.<mottagare>.<lager_id>.<statistik>` (samt statistiken `yta_m2`). Fasadmåtten räknas av
+Floden ur `vsc.csv` per ruta och scenario; beläggets fil-sha256 är en gemensam sha256 över
+filerna.
+
+Kartorna är soltimmar före, efter per alternativ och skillnad per alternativ (samma färgskala,
+samma utsnitt), ritade som skyfallets kartor (takmasken används). Bilagorna är Belägg, Körlogg,
+Manifest och Kontroll.
+
+### Frågorna DL och SO: vad Floden kan belägga
+
+Tabellen skrivs ur `FLODEN_FORMAGA` och testet (`tests/rapport/test_dagsljus.py`) kontrollerar att
+den stämmer med koden. *Floden i dag* är `visat` (frågans kärna), `delvis`, `underlag saknas`
+(Floden räknar inte det frågan gäller) eller `ej tillämpligt` (frågan avgörs utanför en
+beräkning). "Status i demon" är referensflödets status. I demon blir bara DL-10, DL-15, SO-09 och
+SO-15 *visat*; de som markerats *delvis* får status *underlag saknas* för det som fattas.
+
+| Fråga | Floden i dag | Belägg Floden kan ge | Saknas och varför | Status i demon |
+| --- | --- | --- | --- | --- |
+| DL-01 Vilken regelversion och vilken byggåtgärd gäller? | ej tillämpligt | – | Regelval och byggåtgärd är ett beslut i ärendet, inte en beräkning. Skissen jämför före och efter ett planförslag (grannpåverkan) och väljer ingen regelversion. | ej tillämpligt |
+| DL-02 Vilka fasader, våningar och grannar har störst avskärmning? | delvis | Himmelskomponent (VSC) på fasadpunkter före och efter: antal punkter, lägsta värde, punkter under BRE:s gräns och med stor relativ minskning. | Sektioner och kritiska fönster redovisas inte; fasadpunkterna är genererade (en per våning och fasadsteg), inte verkliga fönster. Balkonger modelleras inte. | underlag saknas |
+| DL-03 Har modellen rätt geometri och material? | underlag saknas | – | Ingen rumsmodell: glasarea, karm, smyg, ljustransmittans, rumsdjup och reflektanser ingår inte (docs/DAGSLJUS.md avsnitt 11). | underlag saknas |
+| DL-04 Hur bestäms provpunkternas värde och representerade area? | underlag saknas | – | Dagsljusfaktor (DF) i typrum finns inte; Floden räknar VSC på fasad under mulen CIE-himmel. DF är en senare fas. | underlag saknas |
+| DL-05 Hur stor andel av den bedömda vistelseytan klarar dagsljusfaktorn i varje bostad? | underlag saknas | – | Ingen dagsljusfaktor och inga bostäder eller vistelseytor i modellen. | underlag saknas |
+| DL-06 Uppfylls dagsljuskravet i både boendeenhet och delade utrymmen? | underlag saknas | – | Ingen dagsljusfaktor och ingen uppdelning i boendeenhet och delade utrymmen. | underlag saknas |
+| DL-07 Finns utblick där användningen kräver det? | underlag saknas | – | Fönster, bröstningshöjd och sikthinder för utblick modelleras inte. | underlag saknas |
+| DL-08 Hur visas tillräckligt dagsljus och utblick för den avsedda verksamheten? | underlag saknas | – | Verksamhet, arbetsplatser och bedömningsmetod för dagsljus och utblick ingår inte. | underlag saknas |
+| DL-09 Finns stöd för att anpassa kravet i just denna ändring? | ej tillämpligt | – | Anpassning av krav vid ändrad användning är en juridisk avvägning i ärendet, inte en beräkning. | ej tillämpligt |
+| DL-10 Hur påverkas befintliga fönster och vistelserum? | visat | VSC i samma fasadpunkt (samma fasad_id) före och efter: utgångsläge, minskning, antal punkter under BRE:s gräns och under kvoten mot läget före. | Fasadpunkter är inte verkliga fönster och planlösningar är okända; omfattningen markeras. Reflekterat ljus, glas och balkonger ingår inte. | visat |
+| DL-11 Vilka val av glas, balkong eller fasadkulör styr slutsatsen? | underlag saknas | – | Glas, balkonger och fasadkulör modelleras inte (balkonger och utkragningar ger fel VSC, docs/DAGSLJUS.md avsnitt 11). | underlag saknas |
+| DL-12 Kan en annan granskare återskapa varje bostads resultat? | delvis | Körningens manifest, kontrollsummor och VSC per fasadpunkt (vsc.csv) gör att en annan kan återskapa fasadpunkternas värden. | Ingen lägenhetslista, ritningsrevision eller bedömningsyta per bostad. | underlag saknas |
+| DL-13 Hur förhåller sig fönster och utblick till miljöförvaltningens skolvägledning? | underlag saknas | – | Fönstermått, golvyta, användning och utblick från barnets höjd ingår inte. | underlag saknas |
+| DL-14 Vilket underlag svarar på hälsoskydd, byggkrav respektive arbetsmiljö? | ej tillämpligt | – | Att koppla hälsoskydd, byggkrav och arbetsmiljö till varsin slutsats är en bedömning i ärendet, inte en beräkning. VSC är ett geometriskt mått. | ej tillämpligt |
+| DL-15 Kan förändringens storlek följas för samma berörda objekt även när jämförelsenivån klaras? | visat | Förändringens storlek per fasadpunkt (samma fasad_id): största minskning, lägsta kvot, antal punkter under BRE:s gräns och under kvoten. | Resultattabellen per punkt finns i körningen (vsc.csv); lägenhet och våningsplan anges bara genom fasad_id. Planlösningar är okända. | visat |
+| SO-01 Vilka grannfönster och vistelseytor kan förlora sol? | delvis | Yta på mark som förlorar mer än en viss tid sol (influensområde i differenskartan) och största förlust, efter tak undantagna. | Sol vid grannfönster och på fasad räknas inte (soltimmar gäller markytan); mottagarnas funktion och våningsplan finns inte. | underlag saknas |
+| SO-02 Vilken del av tillåten byggrätt representerar modellen? | underlag saknas | – | Tillåten byggrätt och etapper finns inte i Floden; scenariot är den ändring (K9) som lagts in. | underlag saknas |
+| SO-03 Är solbanan rätt i tid och rum? | delvis | Solläge (latitud och longitud i rutans mittpunkt) och datum som beräkningen använde; solläget är mätt mot NREL SPA. | Tidszon och UTC-förskjutning per datum, geografiskt norr och korrigering av kartnorr redovisas inte i resultatet. | underlag saknas |
+| SO-04 Vilka dagar och tider svarar på användningen av platsen? | delvis | De datum körningen räknade (parametern datum) och soltimmar för dem. | Val av dagar och brukstider för platsens användning är ett beslut; tidsfönster (öppettid, kväll) kan inte anges, soltimmar gäller hela dygnet. | underlag saknas |
+| SO-05 Vilka hinder kastar skugga vid relevant årstid? | delvis | Terräng och byggnader (platta tak) kastar skugga i beräkningen; kartor och tak undantagna i talen. | Balkonger och sadeltak modelleras inte; vegetation ingår inte som standard (ogenomskinliga kronor om den slås på, ingen lövstatus). | underlag saknas |
+| SO-06 Finns användbar aktiv lek och reträtt i både sol och skugga? | delvis | Soltimmar (medel, största, minsta) i varje yta som anges som mottagare (polygon), före och efter. | Ytornas funktion (aktiv lek, reträtt) och bedömning mot Lekvärdesriktlinjerna ingår inte. | underlag saknas |
+| SO-07 Är gårdens zoner och tidsmål för skuggad friyta uppfyllda? | underlag saknas | – | Vegetationsskugga, trädens tillväxt och skuggad andel vid ett klockslag räknas inte (vegetation ingår inte som standard). | underlag saknas |
+| SO-08 Hur länge får varje mottagare direkt sol under tidsfönstret? | delvis | Summerad direkt sol per dygn (timmar per dygn, medel över valda datum) på marken och i en mottagare, före och efter, med tidssteg ur körningen. | Sammanhängande tid och tidsfönster (brukstid) beräknas inte. | underlag saknas |
+| SO-09 Var och när tillkommer skugga jämfört med nuläget? | visat | Matchade före- och efterkartor i samma färgskala, differenskarta, yta som förlorar sol och tid per mottagare (polygon). | Klockslag för när skuggan faller ingår inte (dygnssumma). Sol per fönster och sittplats anges bara som mottagare med polygon. | visat |
+| SO-10 Vilken fråga avser sol vid fönstret respektive inne i rummet? | underlag saknas | – | Sol vid fönster och i rum räknas inte; soltimmar gäller markytan. | underlag saknas |
+| SO-11 Vilken ändring förbättrar den mest påverkade platsen? | delvis | Jämförelse av prövade alternativ (varje scenario ställs mot nuläget) med samma mått: yta som förlorar sol och största förlust. | Floden föreslår ingen åtgärd; indragen våning, omplacerad lekyta och träd prövas bara om de lagts in som scenario (K9). | underlag saknas |
+| SO-12 Kan läsaren följa varje slutsats från bild till underliggande geometri? | delvis | Kartor med norrpil, skalstock, scenarionamn, enhet och teckenförklaring; varje tal har belägg med körning, fil och kontrollsumma. | Tidszon och tidsdata per tidssteg redovisas inte i resultatet. | underlag saknas |
+| SO-13 Var finns skydd för stillasittande lek och samling när barnen faktiskt använder gården? | underlag saknas | – | Skydd mot sol (skugga för lek och samling under brukstiden, vegetation) räknas inte. | underlag saknas |
+| SO-14 Vilken lokal sol- eller värmestudie behövs för just gården eller byggnaden? | delvis | Soltimmar och skuggor i lokal geometri för gården eller byggnaden (mottagare). | Länets värmekartläggning och termisk analys (yttemperatur, värmestress) ingår inte. | underlag saknas |
+| SO-15 Vilken tidsperiod representerar varje figur och hur knyts den till delytans användning? | visat | Varje karta är en dygnssumma (timmar per dygn, medel över de datum körningen räknade); datum och tidssteg står i antagandena och beläggen. | Ögonblicksbilder och periodmedel för flera perioder ingår inte; vilken yta slutsatsen gäller anges med mottagare. | visat |
+
 
 ## Inställningar: språkprofil och layout
 
@@ -222,17 +338,17 @@ status *visat* utan belägg, det avgörs av påståendets egna belägg.
 | SK-02 Vilket dimensionerande regn och vilken säkerhetsnivå krävs här? | delvis | Det regn som körningen använde: källa, återkomsttid, varaktighet, klimatfaktor, mängd. | Vilken säkerhetsnivå som krävs är ett beslut, inte en beräkning (villkorat). | villkorat |
 | SK-03 Varifrån kommer vattnet och vart fortsätter det efter plangränsen? | delvis | Utflöde över beräkningsområdets kant och stående vatten. | Tillrinningsområde, plangräns och nedströms mottagare avgränsas inte; randvillkoret är fritt utflöde över rutans kant. | underlag saknas |
 | SK-04 Vilka höjder och öppningar styr vattenvägen? | underlag saknas | – | Terrängens version finns i rutans recept (sha256) men inga mått per höjd, öppning eller tröskel; objekten behöver kontrolleras på plats. | underlag saknas |
-| SK-05 Hur representeras förluster, nät och initialtillstånd? | kan belägga | Avtappning till ledningsnätet och takvatten som de räknades (statisk fyllning har ingen infiltration och inget förlopp). | Markfukt, igensättning och upptryckning modelleras inte. | visat |
-| SK-06 Vilken skillnad beror på exploateringen? | kan belägga | Skillnad före/efter i största vattendjup på mark (takmask som webben), samma regn och område, med differenskarta. | Planförslag med åtgärd körs bara om det finns som eget scenario. | visat |
+| SK-05 Hur representeras förluster, nät och initialtillstånd? | visat | Avtappning till ledningsnätet och takvatten som de räknades (statisk fyllning har ingen infiltration och inget förlopp). | Markfukt, igensättning och upptryckning modelleras inte. | visat |
+| SK-06 Vilken skillnad beror på exploateringen? | visat | Skillnad före/efter i största vattendjup på mark (takmask som webben), samma regn och område, med differenskarta. | Planförslag med åtgärd körs bara om det finns som eget scenario. | visat |
 | SK-07 Ökar skaderisken för en granne eller nedströms funktion? | delvis | Stående vattenvolym och utflöde före/efter, djup i en namngiven mottagare (polygon). | Flöde och varaktighet saknas (statisk fyllning); nedströms mottagare är inte utpekade. | underlag saknas |
 | SK-08 När begränsas tillträde, och finns en fungerande alternativ väg? | underlag saknas | – | Framkomlighet ej bedömd: ingen rutt i frågan, fordonsgränsen (K7) är inte fastställd och tidsserie för djup och hastighet saknas i statisk fyllning. | underlag saknas |
-| SK-09 Vem kan genomföra och underhålla lösningen? | underlag saknas | – | Genomförande och drift är projektkontroll utanför Floden. | ej tillämpligt |
+| SK-09 Vem kan genomföra och underhålla lösningen? | ej tillämpligt | – | Genomförande och drift är projektkontroll utanför Floden. | ej tillämpligt |
 | SK-10 Vilka slutsatser ändras med ändrad terräng, regn eller avledning? | delvis | Volymbalansens relativa fel (massbalans) per körning. | Känslighetsfall (terräng, regn, avledning) kräver fler körningar; jämförelse mot oberoende underlag finns inte. | underlag saknas |
-| SK-11 Är vanlig dagvattenhantering och extremregn båda redovisade? | underlag saknas | – | Dagvattenhantering (vardagsregn, rening) räknas inte i Floden. | ej tillämpligt |
+| SK-11 Är vanlig dagvattenhantering och extremregn båda redovisade? | ej tillämpligt | – | Dagvattenhantering (vardagsregn, rening) räknas inte i Floden. | ej tillämpligt |
 | SK-12 Kan en läsare följa vattennivån från karta till kritisk sektion? | delvis | Maxdjup i meter på karta med teckenförklaring, tomvärde och modellversion. | Vattenyta i RH 2000, sektioner och tidsserie redovisas inte. | underlag saknas |
-| SK-13 Fungerar skyfallsåtgärden i hela avrinningsområdet och innan samtliga etapper byggts? | underlag saknas | – | Åtgärder utanför planområdet och etappvis utbyggnad prövas inte i skissen. | ej tillämpligt |
+| SK-13 Fungerar skyfallsåtgärden i hela avrinningsområdet och innan samtliga etapper byggts? | ej tillämpligt | – | Åtgärder utanför planområdet och etappvis utbyggnad prövas inte i skissen. | ej tillämpligt |
 | SK-14 Kan både vägen fram och den avsedda insatsplatsen användas vid relevant tid? | underlag saknas | – | Räddningsväg och insatsplats: fordonsgräns och brandunderlag saknas (K7 tom). | underlag saknas |
-| SK-15 Var blir delområdenas resultat en bedömning av hela planområdet? | underlag saknas | – | Sammanvägning av flera utredningar görs inte i en skiss för ett beräkningsområde. | ej tillämpligt |
+| SK-15 Var blir delområdenas resultat en bedömning av hela planområdet? | ej tillämpligt | – | Sammanvägning av flera utredningar görs inte i en skiss för ett beräkningsområde. | ej tillämpligt |
 
 
 Floden kan alltså i dag ge belägg för kärnan i **SK-05** (förluster och nät som de räknades) och
@@ -244,24 +360,37 @@ Floden.
 
 ## Köra
 
-- **Referensflöde utan AI:** `PYTHONPATH=src python tools/rapport_demo.py [--exempel docs/exempel]`
+- **Referensflöde utan AI:** `PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus]
+  [--roll planhandlaggare|byggaktor|granskare] [--alla-fragor] [--exempel docs/exempel]`
   (kräver `floden demo`). Skapar rapporten i `data/lokal/rapporter/<rapport_id>/`, lägger fasta
-  påståenden (`rapport.referensflode`), kontrollerar och exporterar Word och PDF.
-- **Via MCP:** verktygen `fragekatalog_sok`, `rapport_skapa`, `pastaende_lagg_till`,
-  `rapport_kontrollera`, `rapport_exportera`, `rapport_hamta` och resursen
-  `floden://rapport/{rapport_id}`; prompten `skissunderlag_skyfall`. Exempel:
-  `PYTHONPATH=src python tools/mcp_rapportflode.py`.
+  påståenden (`rapport.referensflode`, `rapport.referensflode_dagsljus`), kontrollerar och
+  exporterar Word och PDF. För dagsljus skapas först en beställning; `--alla-fragor` tar med alla 30
+  frågor i stället för de 15 som Floden kan belägga helt eller delvis.
+- **Via MCP:** en AI kan gå beställning, frågor, körning, rapport och export: `bestallning_skapa`,
+  `bestallning_hamta`, `fragekatalog_sok`, `rapport_skapa` (med `bestallning_id`),
+  `pastaende_lagg_till`, `rapport_kontrollera`, `rapport_exportera`, `rapport_hamta` och resursen
+  `floden://rapport/{rapport_id}`; promptarna `skissunderlag_skyfall` och
+  `skissunderlag_dagsljus`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
 - **Webben:** projektsidan listar rapporterna med kontrollens utfall (grön/röd) och länkar till
   Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
-  Rapportmappen kan ändras med `[webb] rapportmapp`.
+  Rapportmappen kan ändras med `[webb] rapportmapp`. Frågekatalogen nås med
+  `GET /api/fragekatalog?omrade=dagsljus&villkor=…&text=…&ids=…` (samma innehåll som
+  `fragekatalog_sok`, inklusive `floden.markning` per fråga).
 
-Exempel: `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter, förvalen:
+Exempel: `docs/exempel/skissunderlag_dagsljus_demo.pdf` och `.docx` (dagsljus och sol, 15 frågor)
+samt `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter, förvalen:
 språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Liberation Sans/Arial, svarta rubriker, smal spalt).
 
 ## Begränsningar
 
-- Bara skyfall och nivå 1. Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
-- Bara vattenmåtten i `MATTKATALOG` kan användas (statisk fyllning och dynamik).
+- Bara skyfall, dagsljus/sol och nivå 1 (luft och buller har ingen skissrapport än; frågorna finns i katalogen). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
+- Bara måtten i `MATTKATALOG` kan användas (vatten: statisk fyllning och dynamik; dagsljus:
+  soltimmar på mark, SVF, VSC på fasadpunkter).
+- Dagsljus: demons körning har ett datum (20 mars) och ingen SVF. Sol på fasad, sol på tak,
+  dagsljusfaktor i rum, utblick, årsstatistik och ekvinoktieskuggor (höst) finns inte i kärnan och
+  redovisas som underlag som saknas. Nivå 1 bedömer inte mot krav.
+- Beställningen styr urval och ingress men inte kontrollen; rollen byggaktör/granskare filtrerar
+  på frågetyp, vilket är en förenkling som ska granskas.
 - Kartornas text är Pillows bitmapptypsnitt (samma kartografi som MCP och webben); det lokala
   typsnittet används inte i kartorna.
 - Rapporter skapade före 2026-11-22 underkänns i kontrollen ("ritas inte likadant") eftersom

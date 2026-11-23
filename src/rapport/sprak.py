@@ -51,7 +51,13 @@ def datum_text(iso: str, sbk: bool) -> str:
 
 def scenarionamn(scenario_id: str) -> str:
     """Scenariots namn i löptext: "fore" → "före"; andra id med blanksteg i stället för '_'."""
-    return {"fore": "före", "efter": "efter", "bas": "nuläge"}.get(
+    return {
+        "fore": "före",
+        "efter": "efter",
+        "bas": "nuläge",
+        "hojd": "höjt hus",
+        "nytt_hus": "nytt hus",
+    }.get(
         scenario_id, scenario_id.replace("_", " ")
     )
 

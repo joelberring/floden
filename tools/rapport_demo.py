@@ -1,10 +1,11 @@
-"""Referensflöde utan AI: skissunderlag skyfall för demokvarterets vattenfråga, Word och PDF.
+# ruff: noqa: E501
+"""Referensflöde utan AI: skissunderlag skyfall eller dagsljus för demokvarteret, Word och PDF.
 
 Skapar en rapport (K33) över körningen `demo-vatten`, lägger fasta påståenden (K32) för SK-01 till
 SK-15 (`rapport.referensflode`), kontrollerar och exporterar. Deterministiskt: inga modeller.
 Kräver demon (`floden demo`).
 
-    PYTHONPATH=src python tools/rapport_demo.py [--rot .] [--ut data/lokal/rapporter]
+    PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus] [--rot .] [--ut data/lokal/rapporter]
         [--exempel docs/exempel] [--inplantera-fel]
         [--sprakprofil sbk|neutral] [--numrerade-rubriker] [--numrerade-figurer]
         [--avsandare TEXT] [--diarienummer TEXT] [--handlaggare TEXT] [--accentfarg HEX]
@@ -30,7 +31,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rot", default=str(Path(__file__).resolve().parents[1]))
     p.add_argument("--ut", default=None, help="Rapportmapp (standard data/lokal/rapporter).")
     p.add_argument("--exempel", default=None, help="Kopiera Word och PDF hit (t.ex. docs/exempel).")
-    p.add_argument("--korning", default="demo-vatten")
+    p.add_argument("--amne", choices=("skyfall", "dagsljus"), default="skyfall")
+    p.add_argument("--korning", default=None, help="Standard demo-vatten (skyfall), demo-dagsljus.")
+    p.add_argument("--roll", choices=("planhandlaggare", "byggaktor", "granskare"), default="planhandlaggare",
+                   help="Dagsljus: beställningens mottagare.")
+    p.add_argument("--alla-fragor", action="store_true",
+                   help="Dagsljus: ta med alla DL- och SO-frågor (förval: bara de där Floden kan ge underlag).")
     p.add_argument("--inplantera-fel", action="store_true")
     p.add_argument("--sprakprofil", choices=("sbk", "neutral"), default=None)
     p.add_argument("--numrerade-rubriker", action="store_true", default=None)
@@ -55,6 +61,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from floden_mcp.karna_api import FlodenTjanst
     from rapport.referensflode import gardens_mottagare, pastaenden
+    from rapport.referensflode_dagsljus import kontekst_fran_rapport
+    from rapport.referensflode_dagsljus import pastaenden as pastaenden_dagsljus
     from rapport.skissexport import ExportStoppad
     from rapport.skisskontroll import kontroll_text
     from rapport.skissrapport import RapportTjanst
@@ -63,21 +71,45 @@ def main(argv: list[str] | None = None) -> int:
     app = FlodenApiApp(testsvit_rot=rot / "testsvit", konfig_fil=rot / "config.toml")
     tjanst = FlodenTjanst(app, rot=rot)
     rt = RapportTjanst(tjanst, rapportmapp=a.ut)
-    r = rt.skapa(
-        projekt="demokvarteret",
-        amne="skyfall",
-        korningar=[a.korning],
-        titel="Skissunderlag skyfall – demokvarteret, nytt hus i sydvästra gården",
-        mottagare=[gardens_mottagare()],
-        ai_stod=False,
-        av="referensflode",
-        installningar=installningar,
-    )
+    korning = a.korning or ("demo-dagsljus" if a.amne == "dagsljus" else "demo-vatten")
+    if a.amne == "dagsljus":
+        best = rt.bestallning_skapa(
+            syfte="Skissa hur ett höjt hus och ett nytt hus i demokvarteret påverkar sol på marken "
+            "och dagsljus vid fasad",
+            amnen=["dagsljus", "sol"],
+            projekt="demokvarteret",
+            mottagare_roll=a.roll,
+            bara_med_underlag=not a.alla_fragor,
+            scenario={"fore": "bas", "efter": ["hojd", "nytt_hus"]},
+        )
+        print(f"Beställning {best.bestallning_id}: {len(best.urval)} frågor ({best.utelamnade} utelämnade)")
+        r = rt.skapa(
+            projekt="demokvarteret",
+            korningar=[korning],
+            mottagare=[gardens_mottagare()],
+            ai_stod=False,
+            av="referensflode",
+            installningar=installningar,
+            bestallning=best,
+        )
+        kw_lista = pastaenden_dagsljus(kontekst_fran_rapport(rt, r), r.fragor)
+    else:
+        r = rt.skapa(
+            projekt="demokvarteret",
+            amne="skyfall",
+            korningar=[korning],
+            titel="Skissunderlag skyfall – demokvarteret, nytt hus i sydvästra gården",
+            mottagare=[gardens_mottagare()],
+            ai_stod=False,
+            av="referensflode",
+            installningar=installningar,
+        )
+        kw_lista = pastaenden(sprakprofil=r.installningar.sprakprofil)
     print(
         f"Rapport {r.rapport_id}: {len(r.fragor)} frågor, {len(r.kartor)} kartor, "
         f"språkprofil {r.installningar.sprakprofil}"
     )
-    for kw in pastaenden(sprakprofil=r.installningar.sprakprofil):
+    for kw in kw_lista:
         pa = rt.lagg_till_pastaende(
             r.rapport_id, forfattare="referensflode", av="referensflode", **kw
         )
@@ -86,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.inplantera_fel:
         fil = rt.arkiv.rapportmapp(r.rapport_id) / "rapport.json"
         data = json.loads(fil.read_text(encoding="utf-8"))
-        b = data["pastaenden"][5]["belagg"][0]
+        b = next(x for x in data["pastaenden"] if x["belagg"])["belagg"][0]
         print(f"Inplanterat fel: {b['adress']} {b['varde']} -> {b['varde'] * 1.1}")
         b["varde"] = b["varde"] * 1.1
         fil.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -107,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
         mal = Path(a.exempel)
         mal.mkdir(parents=True, exist_ok=True)
         for f in filer:
-            namn = "skissunderlag_skyfall_demo" + f.suffix
+            namn = f"skissunderlag_{a.amne}_demo" + f.suffix
             shutil.copyfile(f, mal / namn)
             print(f"Kopierade till {mal / namn}")
     return 0

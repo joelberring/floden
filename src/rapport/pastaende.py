@@ -244,6 +244,7 @@ def standardsteg(enhet: str | None, varde: float, upplosning: float) -> float:
         "h": 0.1,
         "grader": 1.0,
         "%": 1.0,
+        "st": 1.0,
     }
     if enhet in ("m²", "m³"):
         steg = 10.0 if a >= 1000 else 1.0

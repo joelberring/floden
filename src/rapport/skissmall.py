@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Mallen för skissunderlaget (nivå 1, skyfall): rapporten som en lista block (R1).
 
 Samma block skrivs till Word och PDF (`rapport.skissexport`), så att båda formaten har exakt samma
@@ -22,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rapport import amnestext
+from rapport.bestallning import MOTTAGARTEXT
 from rapport.installningar import RapportInstallningar
 from rapport.pastaende import (
     FORDJUPNING_TEXT,
@@ -35,7 +38,6 @@ from rapport.sprak import (
     FORDJUPNING_TEXT_SBK,
     LJUS_TEXT_SBK,
     STATUS_TEXT_SBK,
-    TOMVARDE_SBK,
     datum_text,
     scenarionamn,
 )
@@ -142,6 +144,27 @@ class Dokument:
         self.block.append(Stycke(text, stil))
 
 
+def sammanfattningsmening(n_tot: int, antal: Mapping[str, int], namn: str) -> str:
+    """Sammanfattningens första mening: hoppar över nollor, "alla" när alla frågor hamnar i samma."""
+    delar = [
+        (verb, antal.get(k, 0), rest)
+        for k, verb, rest in (
+            ("ja", "behöver", "utredas vidare"),
+            ("kan_inte_avgoras", "kan", "inte bedömas med nuvarande underlag"),
+            ("nej", "behöver", "ingen fördjupning i detta skede"),
+        )
+        if antal.get(k, 0)
+    ]
+    if not delar:
+        return ""
+    satser = []
+    for i, (verb, n, rest) in enumerate(delar):
+        tal = "alla" if n == n_tot else str(n)
+        satser.append(f"{verb} {tal} {rest}" if i == 0 else f"{tal} {verb} {rest}")
+    lista = satser[0] if len(satser) == 1 else ", ".join(satser[:-1]) + " och " + satser[-1]
+    return f"Av de {n_tot} {namn} {lista}."
+
+
 def _kort(sha: str | None, n: int = 12) -> str:
     return "–" if not sha else sha[:n]
 
@@ -208,13 +231,6 @@ def _pastaenden_per_fraga(r: Rapport) -> dict[str, list[Pastaende]]:
     return ut
 
 
-def _lage(scenario: str) -> str:
-    namn = scenarionamn(scenario)
-    if namn in ("före", "efter"):
-        return f"{namn} förslaget"
-    return f"i alternativet {namn}"
-
-
 def _losare(r: Rapport, korning_id: str, analys: str) -> str:
     for k in r.korningar:
         if k["korning_id"] == korning_id:
@@ -233,29 +249,31 @@ def bildtext(k: Karta, r: Rapport) -> str:
     jfr = next(
         (j for kp in r.korningar for j in kp["jamforelser"] if j["namn"] == k.jamforelse), None
     )
-    statisk = _losare(r, k.korning_id, k.analys) == "vatten.statisk_fyllning"
-    tid = (
-        "Läget när regnet har slutat (statisk fyllning)."
-        if statisk
-        else "Det största djupet under regnet."
+    return amnestext.bildtext_sbk(
+        r.amne,
+        k.typ,
+        k.scenario,
+        jfr["fore"] if jfr else "fore",
+        jfr["efter"] if jfr else "efter",
+        k.korning_id,
+        _losare(r, k.korning_id, k.analys),
     )
-    if k.typ == "skillnad":
-        fore = scenarionamn(jfr["fore"]) if jfr else "före"
-        efter = scenarionamn(jfr["efter"]) if jfr else "efter"
-        vad = (
-            f"Skillnad i största vattendjup på marken, {efter} minus {fore} förslaget, i meter "
-            "(m). Rött: djupare, blått: grundare."
-        )
-    else:
-        vad = f"Största vattendjup på marken {_lage(k.scenario)}, i meter (m)."
-    return f"{vad} {tid} Beräkning {k.korning_id}. Norr uppåt. {TOMVARDE_SBK}"
 
 
 def kartrubrik(typ: str, scenario: str | None, fore: str, efter: str) -> str:
-    """Kartans rubrik i bilden (ritas av Floden), i klarspråk."""
-    if typ == "skillnad":
-        return f"Skillnad i största vattendjup, {scenarionamn(efter)} minus {scenarionamn(fore)}"
-    return f"Största vattendjup {_lage(scenario or '')}"
+    """Kartans rubrik för skyfall (R1; se `rapport.amnestext.kartrubrik` för alla ämnen)."""
+    return amnestext.kartrubrik("skyfall", typ, scenario, fore, efter)
+
+
+def _bestallningsrader(r: Rapport, sbk: bool) -> list[tuple[str, str]]:
+    """Beställningen (K30) i handlingsrutan: syfte och mottagare."""
+    b = r.bestallning
+    if b is None:
+        return []
+    return [
+        ("Syfte" if sbk else "Beställningens syfte", b.syfte),
+        ("Mottagare" if sbk else "Mottagare (roll)", MOTTAGARTEXT[b.mottagare_roll].capitalize()),
+    ]
 
 
 def bygg_dokument(
@@ -338,21 +356,7 @@ def bygg_dokument(
             typsnitt_rubriker=typsnitt("typsnitt_rubriker"),
         ),
     )
-    if sbk:
-        ingress = (
-            "Underlaget är en tidig sållning av skyfallsfrågorna för förslaget. Det visar vilka "
-            "frågor som behöver utredas vidare och vilket underlag som saknas. Underlaget prövar "
-            "inte förslaget mot krav."
-        )
-        if demo:
-            ingress += " Demokvarteret är påhittat. Inga verkliga data eller byggnader ingår."
-    else:
-        ingress = (
-            "Skissunderlag för tidig sållning: vilka skyfallsfrågor behöver fördjupas, och vad "
-            "saknas för att kunna svara? Underlaget bedömer inte förslaget mot krav."
-        )
-        if demo:
-            ingress += " Demokvarteret är påhittat; inga verkliga data eller byggnader."
+    ingress = amnestext.ingress(r, sbk, demo)
     dok.stycke(ingress, "ingress")
 
     kontroll = r.kontroll or {}
@@ -372,8 +376,9 @@ def bygg_dokument(
         rader: tuple[tuple[str, str], ...] = (
             ("Dokumenttyp", "Skissunderlag för tidig sållning"),
             ("Projekt", r.projekt),
-            ("Ämne", r.amne.capitalize()),
+            ("Ämne", amnestext.amnesnamn(r)),
             ("Skede", "Planstart och tidig sållning"),
+            *_bestallningsrader(r, True),
             ("Underlag", korningar[0].upper() + korningar[1:] if korningar else "–"),
             (
                 "Frågekatalog",
@@ -390,8 +395,9 @@ def bygg_dokument(
         rader = (
             ("Handling", "Skissunderlag, nivå 1 (sållning)"),
             ("Projekt", r.projekt),
-            ("Ämne", r.amne.capitalize()),
+            ("Ämne", amnestext.amnesnamn(r)),
             ("Skede", "Planstart och tidig sållning"),
+            *_bestallningsrader(r, False),
             ("Datum", datum),
             ("Rapport-id", r.rapport_id),
             ("Körningar", korningar),
@@ -418,15 +424,13 @@ def bygg_dokument(
     antal = {k: sum(1 for v in fordj.values() if v == k) for k in ("ja", "kan_inte_avgoras", "nej")}
     rubrik(1, "1", "Sammanfattning")
     if sbk:
-        n_nej = antal["nej"]
-        dok.stycke(
-            f"Av de {len(r.fragor)} skyfallsfrågorna behöver {antal['ja']} utredas vidare och "
-            f"{antal['kan_inte_avgoras']} kan inte bedömas med nuvarande underlag. För {n_nej} "
-            f"{'fråga' if n_nej == 1 else 'frågor'} behövs ingen fördjupning i detta skede."
-        )
+        n_tot = len(r.fragor)
+        mening = sammanfattningsmening(n_tot, antal, amnestext.fragenamn(r))
+        if mening:
+            dok.stycke(mening)
         dok.stycke(
             "Tabellen visar för varje fråga om den behöver utredas vidare. Frågorna kommer ur "
-            "frågekatalogen för skyfall."
+            f"frågekatalogen för {r.amne if r.amne == 'skyfall' else 'dagsljus och sol'}."
         )
     else:
         dok.stycke(
@@ -453,11 +457,18 @@ def bygg_dokument(
     rubrik(1, "2", "Uppdrag och beräkningsfall")
     for k in r.korningar:
         if sbk:
-            jfr = " ".join(
-                f"Läget {scenarionamn(j['efter'])} förslaget jämförs med läget "
-                f"{scenarionamn(j['fore'])} förslaget, med samma regn."
-                for j in k["jamforelser"]
-            )
+            if r.amne == "dagsljus":
+                jfr = " ".join(
+                    f"Läget {amnestext.lage(r.amne, j['efter'])} jämförs med läget "
+                    f"{amnestext.lage(r.amne, j['fore'])}."
+                    for j in k["jamforelser"]
+                )
+            else:
+                jfr = " ".join(
+                    f"Läget {scenarionamn(j['efter'])} förslaget jämförs med läget "
+                    f"{scenarionamn(j['fore'])} förslaget, med samma regn."
+                    for j in k["jamforelser"]
+                )
             dok.stycke(f"{k['beskrivning']} {jfr}".strip())
             if k.get("antaganden"):
                 dok.stycke("Beräkningen bygger på följande antaganden:")
@@ -499,28 +510,20 @@ def bygg_dokument(
 
     # Resultat ---------------------------------------------------------------------------------
     rubrik(1, "3", "Resultat")
-    if sbk:
-        dok.stycke(
-            "Kartorna nedan visar det största vattendjupet på marken före och efter förslaget, "
-            "med samma färgskala, och skillnaden mellan dem. Talen i texten är framräknade av "
-            f"Floden ur beräkningen. Varje tal har ett belägg i {bilref(1)}."
-        )
-    else:
-        dok.stycke(
-            "Kartorna visar största vattendjup över mark före och efter förslaget, med samma "
-            "färgskala, och skillnaden efter minus före. Talen i texten är ifyllda av Floden ur "
-            f"körningen; varje tal har ett belägg i {bilref(1)}."
-        )
+    dok.stycke(amnestext.resultatintro(r, sbk, bilref(1)))
     for nr, karta in enumerate(r.kartor, start=1):
         text = bildtext(karta, r)
         if inst.numrerade_figurer:
             text = f"Figur {nr}. {text}"
         dok.block.append(Figur(karta.fil, text, nr))
 
+    # Ett belägg-id per adress och körning: samma tal i flera påståenden ger en rad i bilagan.
+    per_adress: dict[tuple[str, str], int] = {}
     bnr: dict[tuple[str, str], int] = {}
     for p in r.pastaenden:
         for b in p.belagg:
-            bnr.setdefault((p.pastaende_id, b.adress), len(bnr) + 1)
+            nr = per_adress.setdefault((b.korning_id, b.adress), len(per_adress) + 1)
+            bnr[(p.pastaende_id, b.adress)] = nr
 
     rubrik(2, "3.1" if sbk else "", "Resultat per fråga" if sbk else "Påståenden per fråga")
     for fid, ps in per_fraga.items():
@@ -649,30 +652,35 @@ def bygg_dokument(
             "alternativ men inte är granskad för en formell rapport. Bara en människa kan klassa "
             "en metod som 'rapport'."
         )
-    statisk = any(
-        a["losare"] == "vatten.statisk_fyllning" for k in r.korningar for a in k["analyser"]
-    )
-    if sbk:
-        osak = [
-            "Beräkningen är en statisk fyllning. Den visar läget när regnet har slutat, men inte "
-            "förloppet, infiltrationen i marken eller vattnets hastighet."
-            if statisk
-            else "Beräkningen är dynamisk men har en förenklad koppling till ledningsnätet.",
-            "Vattendjupet anges över markytan. Det är inte en vattennivå i höjdsystemet RH 2000.",
-            "Taken räknas inte som mark när läget före och efter förslaget jämförs.",
-            f"{bilaga(1)} anger för varje tal vad det mäter och vid vilken tidpunkt.",
-        ]
-        dok.stycke("Resultatet ska läsas med följande begränsningar:")
+    if r.amne == "dagsljus":
+        inledning, osak = amnestext.osakerhet(r, sbk, bilaga(1) if sbk else bilref(1))
+        if sbk:
+            dok.stycke(inledning)
     else:
-        osak = [
-            "Statisk fyllning räknar inget förlopp i tid, ingen infiltration och ingen hastighet; "
-            "kartorna visar läget vid regnets slut."
-            if statisk
-            else "Dynamisk beräkning med förenklad nätkoppling.",
-            "Vattendjupet är djup över markytan, inte vattennivå i RH 2000.",
-            "Byggnadernas tak räknas inte som mark i jämförelserna (samma takmask som webben).",
-            f"Varje beläggs tidsdefinition och statistik står i {bilref(1)}.",
-        ]
+        statisk = any(
+            a["losare"] == "vatten.statisk_fyllning" for k in r.korningar for a in k["analyser"]
+        )
+        if sbk:
+            osak = [
+                "Beräkningen är en statisk fyllning. Den visar läget när regnet har slutat, men inte "
+                "förloppet, infiltrationen i marken eller vattnets hastighet."
+                if statisk
+                else "Beräkningen är dynamisk men har en förenklad koppling till ledningsnätet.",
+                "Vattendjupet anges över markytan. Det är inte en vattennivå i höjdsystemet RH 2000.",
+                "Taken räknas inte som mark när läget före och efter förslaget jämförs.",
+                f"{bilaga(1)} anger för varje tal vad det mäter och vid vilken tidpunkt.",
+            ]
+            dok.stycke("Resultatet ska läsas med följande begränsningar:")
+        else:
+            osak = [
+                "Statisk fyllning räknar inget förlopp i tid, ingen infiltration och ingen hastighet; "
+                "kartorna visar läget vid regnets slut."
+                if statisk
+                else "Dynamisk beräkning med förenklad nätkoppling.",
+                "Vattendjupet är djup över markytan, inte vattennivå i RH 2000.",
+                "Byggnadernas tak räknas inte som mark i jämförelserna (samma takmask som webben).",
+                f"Varje beläggs tidsdefinition och statistik står i {bilref(1)}.",
+            ]
     dok.block.append(Punktlista(tuple(osak)))
 
     # Bilagor ----------------------------------------------------------------------------------
@@ -687,8 +695,12 @@ def bygg_dokument(
         "liten",
     )
     brader = []
+    sedda: set[tuple[str, str]] = set()
     for p in r.pastaenden:
         for b in p.belagg:
+            if (b.korning_id, b.adress) in sedda:
+                continue
+            sedda.add((b.korning_id, b.adress))
             brader.append(
                 (
                     f"B{bnr[(p.pastaende_id, b.adress)]}",
