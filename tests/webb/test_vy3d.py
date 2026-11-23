@@ -591,3 +591,12 @@ def test_fasad_for_okand_analys_eller_scenario_ger_404(varld: Varld) -> None:
     assert varld.get(f"{P}/fasad/demo-dagsljus/bas?analys=finns_inte")[0] == 404
     assert varld.get(f"{P}/fasad/demo-dagsljus/finns_inte?analys=vsc")[0] == 404
     assert varld.get(f"{P}/fasad/demo-vatten/bas?analys=vsc")[0] in (404, 409)
+
+
+def test_terrang_validerar_projekt_aven_efter_cache(varld: Varld) -> None:
+    """Okänt projektnamn ska ge FlodenWebbFel även efter att demokvarterets terräng cachats."""
+    from webb.fel import FlodenWebbFel
+
+    assert varld.tjanst.terrang("demokvarteret") is not None
+    with pytest.raises(FlodenWebbFel):
+        varld.tjanst.terrang("okant_projekt")

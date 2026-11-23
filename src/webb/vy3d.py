@@ -27,7 +27,9 @@ from __future__ import annotations
 import csv
 import hashlib
 import math
+import os
 import re
+import tempfile
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
@@ -308,7 +310,7 @@ class Vy3dTjanst:
         self.kartverktyg = kartverktyg
         self.cachemapp = cachemapp or (fragor.korningsmapp.parent / "vy3d")
         self._lock = threading.RLock()
-        self._terrang: _Terrang | None = None
+        self._terrang_per_projekt: dict[str, _Terrang] = {}
         self._minne: OrderedDict[str, bytes] = OrderedDict()
         self._spann: dict[str, tuple[float, float]] = {}
         self._beraknade = 0
@@ -341,12 +343,21 @@ class Vy3dTjanst:
             data = bygg()
             with self._lock:
                 self._beraknade += 1
+            tmp_path: Path | None = None
             try:
                 fil.parent.mkdir(parents=True, exist_ok=True)
-                tmp = fil.with_suffix(".tmp")
-                tmp.write_bytes(data)
-                tmp.replace(fil)
+                with tempfile.NamedTemporaryFile(
+                    dir=fil.parent,
+                    prefix=f".{fil.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as fh:
+                    fh.write(data)
+                    tmp_path = Path(fh.name)
+                os.replace(tmp_path, fil)
             except OSError:
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
                 pass  # cachen är en optimering
         with self._lock:
             self._minne[h] = data
@@ -363,10 +374,13 @@ class Vy3dTjanst:
         return list(bas.rutor)
 
     def terrang(self, projekt: str) -> _Terrang:
+        self.kartverktyg._kravs_projekt(projekt)  # noqa: SLF001 - samma paket
         with self._lock:
-            if self._terrang is None:
-                self._terrang = _Terrang(self._bas_rutor(projekt))
-            return self._terrang
+            terrang = self._terrang_per_projekt.get(projekt)
+            if terrang is None:
+                terrang = _Terrang(self._bas_rutor(projekt))
+                self._terrang_per_projekt[projekt] = terrang
+            return terrang
 
     def _origo(self, t: _Terrang) -> tuple[float, float, float]:
         u = t.utbredning

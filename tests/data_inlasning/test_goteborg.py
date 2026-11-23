@@ -85,3 +85,42 @@ def test_tolka_goteborg_luft_json() -> None:
     assert serie.pm10_ug_m3[0] == pytest.approx(32.5)
     assert np.isnan(serie.pm25_ug_m3[1])
     assert serie.no2_ug_m3[1] == pytest.approx(34.2)
+
+
+def test_goteborg_luft_till_mkn_intervall_och_r2_sammanfattning() -> None:
+    """Helhetskedja: Göteborgs öppna timdata -> monotont MKN-intervall -> R2-rapport."""
+    from luft.kanslighet import kor_monoton_mkn_intervall
+    from rapport.r2_domaner import skapa_r2_fleromans_sammanfattning
+
+    # 365 dygn * 24 timmar med vintersäsongstoppar (dubbdäck/sandning)
+    poster = []
+    for dygn in range(365):
+        bas_pm10 = 42.0 if dygn < 45 else 18.0
+        for tim in range(24):
+            poster.append(
+                {
+                    "time": f"2026-01-01T{tim:02d}:00:00Z",
+                    "PM10": bas_pm10,
+                    "PM2.5": 8.0,
+                    "NO2": 22.0,
+                }
+            )
+    serie = tolka_goteborg_luft_json({"values": poster}, station="Femman")
+    iv = kor_monoton_mkn_intervall(
+        serie.pm10_ug_m3,
+        bakgrund_ug_m3=10.0,
+        emissionsfaktor_intervall=(0.85, 1.15),
+        depositionsfaktor_intervall=(0.95, 1.05),
+    )
+    assert iv.min_dygn_over_grans <= iv.max_dygn_over_grans
+    assert iv.max_dygn_over_grans >= 45
+
+    sam = skapa_r2_fleromans_sammanfattning(
+        GOTEBORG_HAGA_TESTOMRADE.namn,
+        mkn_intervall=[("Göteborg – Femman", iv)],
+    )
+    assert "Göteborg – Femman" in sam["markdown"]
+    assert sam["domaner"]["luft"]["mkn_platser"][0]["dygn_over_50_intervall"] == [
+        iv.min_dygn_over_grans,
+        iv.max_dygn_over_grans,
+    ]
