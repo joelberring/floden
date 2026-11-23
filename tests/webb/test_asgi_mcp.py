@@ -87,6 +87,13 @@ def test_mcp_med_inloggning_kraver_token_eller_session_pa_icke_loopback(miljo: M
         # En främmande Host nekas av MCP:s skydd mot DNS rebinding.
         fel = _rpc(klient, "tools/list", {}, {**sess, "Host": "angripare.example"}, id_=4)
         assert fel.status_code == 421
+        # Claude-appen anropar från Anthropics moln med Origin claude.ai: släpps igenom med bearer.
+        for origin in ("https://claude.ai", "https://claude.com"):
+            ok = _rpc(klient, "tools/list", {}, {**sess, "Origin": origin}, id_=5)
+            assert ok.status_code == 200, (origin, ok.text)
+        # En främmande Origin nekas fortfarande.
+        fel = _rpc(klient, "tools/list", {}, {**sess, "Origin": "https://angripare.example"}, id_=6)
+        assert fel.status_code == 403
     assert konto_id  # kontot följde med in i körloggen (se test_mcp_http)
     loggfil = _rot(tmp_path) / "data" / "lokal" / "mcp" / "korlogg.jsonl"
     assert loggfil.is_file() and konto_id in loggfil.read_text(encoding="utf-8")
