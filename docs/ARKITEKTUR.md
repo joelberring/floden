@@ -47,7 +47,7 @@ Allt kopplas ihop genom filformaten i `DATAKONTRAKT.md`. Ingen modul läser en a
 
 ```
 floden/
-  AGENTS.md  PLAN.md  STATUS.md  README.md
+  AGENTS.md  PLAN.md  STATUS.md  README.md (kort; översikten i docs/KOM-IGANG.md)
   docs/                 dokumentation och kontrakt
   tasks/                uppdragsbeskrivningar
   src/<modul>/          en mapp per modul
