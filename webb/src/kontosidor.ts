@@ -9,6 +9,8 @@ import {
   hamtaAdminProjekt,
   hamtaAdminProjektDetalj,
   hamtaMcpTokens,
+  hamtaOauthAnslutningar,
+  aterkallaOauthAnslutning,
   hamtaNycklar,
   sattProjektRoll,
   skapaMcpToken,
@@ -50,6 +52,11 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
       mcp = { svar: await hamtaMcpTokens(), ny, fel: null };
     } catch (e) {
       mcp = { svar: null, ny: null, fel: felText(e) };
+    }
+    try {
+      mcp = { ...mcp, appar: (await hamtaOauthAnslutningar()).anslutningar };
+    } catch {
+      mcp = { ...mcp, appar: [] };
     }
   };
   const ladda = async (meddelande = "", ny: NyMcpToken | null = null): Promise<void> => {
@@ -93,6 +100,21 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
   };
   vy.onclick = (h: MouseEvent): void => {
     const mal = h.target instanceof Element ? h.target : null;
+    const app = mal?.closest("[data-aterkalla-app]");
+    if (app) {
+      h.preventDefault();
+      const id = app.getAttribute("data-aterkalla-app") ?? "";
+      const namn = app.getAttribute("data-aterkalla-namn") ?? "";
+      if (!window.confirm(`Ta bort tillgången för "${namn}"? Appen slutar fungera direkt.`)) return;
+      void aterkallaOauthAnslutning(id).then(
+        () => ladda("Tillgången är borttagen."),
+        (e: unknown) => {
+          mcp = { ...mcp, fel: felText(e) };
+          rita();
+        },
+      );
+      return;
+    }
     const aterkalla = mal?.closest("[data-aterkalla-mcp]");
     if (aterkalla) {
       h.preventDefault();

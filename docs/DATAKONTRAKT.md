@@ -721,3 +721,15 @@ kalla = "Lantmäteriet, Laserdata Nedladdning skog"   # fri text
 - Utan metadata är bara demon och material som följer med repot öppet (`data/demo`, `testsvit`, `exempel`, `docs`, `data/regn`,
   `data/mcp`, `data/lagerprofiler`) samt MCP:s och kartverktygets egna arbetsmappar. Allt annat (inklusive `data/lokal`) är stängt.
 - I `config.local.toml` kan lager anges utan fil: `[oppenhet.lager.<namn>]` med `sokvag`, `oppen` och `licens` (samma regler).
+
+## K39 – OAuth för MCP: token- och metadataformat `floden-oauth/v1` (v1)
+
+Tillägg (inget K0–K38 ändras). Beskriver vad Claude-appen och andra MCP-klienter ser; regler i `docs/KONTO.md` avsnitt 13.
+
+- Token: `fl_oac_` (auktoriseringskod, 60 s, engångs), `fl_oat_` (access, 3600 s) och `fl_ort_` (refresh, 30 dagar, roteras), alla +
+  32 slumpbyte som base64url (43 tecken). Bara sha256 sparas. `fl_mcp_` (personlig token) är oförändrad.
+- Metadata: `/.well-known/oauth-protected-resource[/mcp]` (RFC 9728) och `/.well-known/oauth-authorization-server` (RFC 8414); `scope`
+  är `mcp` (`offline_access` accepteras och ignoreras). Registrering: `POST /oauth/register` (RFC 7591), svar med `client_id`.
+- Token-svaret: `{"access_token", "token_type": "Bearer", "expires_in": 3600, "refresh_token", "scope": "mcp"}`; fel som
+  `{"error", "error_description"}` (RFC 6749).
+- Körloggens fält `token` är för en OAuth-token grant-id (32 hextecken), för en personlig token token-id.

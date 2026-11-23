@@ -53,6 +53,8 @@ from konto.tilldelning import InloggningNekad, logga_in_identitet
 if TYPE_CHECKING:
     from konto.mcptoken import McpTokenForrad
     from konto.nycklar import NyckelForrad
+    from konto.oauth import OauthForrad
+    from konto.oauthapi import OauthApi
 
 logg = logging.getLogger("konto")
 
@@ -125,7 +127,7 @@ def saker_atervand(varde: str | None) -> str:
     """Bara en sökväg på den här servern: enkel `/` först, inga kontrolltecken eller `\\`."""
     if (
         not varde
-        or len(varde) > 512
+        or len(varde) > 1024
         or not varde.startswith("/")
         or varde.startswith("//")
         or "\\" in varde
@@ -155,6 +157,8 @@ class KontoAdapter:
         self.sessioner: Sessioner | None = None
         self.nycklar: NyckelForrad | None = None
         self.mcp_tokens: McpTokenForrad | None = None
+        self.oauth: OauthForrad | None = None
+        self.oauth_api: OauthApi | None = None
         self._klienter: dict[str, Any] = {}
         if not konfig.aktiv:
             return
@@ -167,6 +171,11 @@ class KontoAdapter:
         # Hemligheten för nyckelkrypteringen: FLODEN_NYCKELHEMLIGHET (saknas den är sidan avstängd).
         self.nycklar = NyckelForrad(self.register, nyckelhemlighet, klocka)
         self.mcp_tokens = McpTokenForrad(self.register)
+        from konto.oauth import OauthForrad
+        from konto.oauthapi import OauthApi
+
+        self.oauth = OauthForrad(self.register, f"{konfig.origin}/mcp")
+        self.oauth_api = OauthApi(self, self.oauth)
         self.sessioner = Sessioner(self.register, konfig)
         levs = (
             dict(leverantorer)
@@ -187,7 +196,12 @@ class KontoAdapter:
         return self.konfig.aktiv
 
     def ager_sokvag(self, sokvag: str) -> bool:
-        return sokvag == "/konto" or sokvag.startswith("/konto/")
+        return (
+            sokvag == "/konto"
+            or sokvag.startswith("/konto/")
+            or sokvag.startswith("/oauth/")
+            or sokvag.startswith("/.well-known/oauth-")
+        )
 
     # --- webbserverns kontroll ----------------------------------------------------------------
 
@@ -251,8 +265,10 @@ class KontoAdapter:
 
     def resurs_metadata_url(self) -> str | None:
         """Adressen till skyddade resursens metadata (RFC 9728) för `WWW-Authenticate`, eller None
-        när Floden inte är en OAuth-server (steg 2 slår på den)."""
-        return None
+        när inloggning är av."""
+        if not self.aktiv:
+            return None
+        return f"{self.konfig.origin}/.well-known/oauth-protected-resource/mcp"
 
     def kontrollera_bearer(self, token: str) -> tuple[str, str] | None:
         """(konto-id, token-id) för en giltig bearer-token (MCP-token `fl_mcp_...`), annars None.
@@ -262,6 +278,8 @@ class KontoAdapter:
             return None
         if token.startswith("fl_mcp_"):
             return self.mcp_tokens.verifiera(token)
+        if token.startswith("fl_oat_") and self.oauth is not None:
+            return self.oauth.verifiera(token)
         return None
 
     def projekt_for_konto(self, konto_id: str) -> list[dict[str, str]]:
@@ -301,6 +319,10 @@ class KontoAdapter:
             kropp,
         )
         delar = [d for d in req.sokvag.split("/") if d]
+        if delar and delar[0] in ("oauth", ".well-known"):
+            if not self.aktiv or self.oauth_api is None:
+                return _fel(404, "inloggning-av", "Inloggning är avstängd")
+            return self.oauth_api.hantera(req) or _fel(404, "okand", "Okänd ändpunkt")
         if not delar or delar[0] != "konto":
             return _fel(404, "okand", "Okänd ändpunkt")
         if len(delar) == 2 and delar[1] == "jag":
@@ -320,13 +342,17 @@ class KontoAdapter:
             if req.metod != "POST":
                 return _fel(405, "metod", "Metod ej tillåten")
             return self._logga_ut(req)
-        if len(delar) >= 2 and delar[1] in ("nycklar", "admin", "mcp-token"):
+        if len(delar) >= 2 and delar[1] in ("nycklar", "admin", "mcp-token", "oauth"):
             from konto import kontoapi
 
             if delar[1] == "nycklar":
                 return kontoapi.hantera_nycklar(self, req, delar[2:])
             if delar[1] == "mcp-token":
                 return kontoapi.hantera_mcp_token(self, req, delar[2:])
+            if delar[1] == "oauth":
+                from konto.oauthapi import hantera_oauth_anslutningar
+
+                return hantera_oauth_anslutningar(self, req, delar[2:])
             return kontoapi.hantera_admin(self, req, delar[2:])
         return _fel(404, "okand", "Okänd ändpunkt")
 

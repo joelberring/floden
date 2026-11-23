@@ -703,6 +703,18 @@ export interface NyMcpToken extends McpTokenPost {
   token: string;
 }
 
+/** En app som kontot godkänt via OAuth (t.ex. Claude-appen). Aldrig token. */
+export interface OauthAnslutning {
+  id: string;
+  namn: string;
+  skapad_datum: string | null;
+  senast_anvand_datum: string | null;
+}
+
+export interface OauthSvar {
+  anslutningar: OauthAnslutning[];
+}
+
 export interface AdminProjekt {
   id: string;
   namn: string;

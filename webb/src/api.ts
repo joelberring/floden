@@ -8,6 +8,7 @@ import type {
   NyckelStatus,
   McpTokenSvar,
   NyMcpToken,
+  OauthSvar,
   NycklarSvar,
   OmradenSvar,
   ProjektListaSvar,
@@ -221,6 +222,16 @@ export function skapaMcpToken(namn: string): Promise<NyMcpToken> {
 
 export function aterkallaMcpToken(id: string): Promise<{ status: string }> {
   return lasJson<{ status: string }>(`/konto/mcp-token/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+/* ---------- Anslutna appar (/konto/oauth): Claude-appen och andra OAuth-klienter ---------- */
+
+export function hamtaOauthAnslutningar(): Promise<OauthSvar> {
+  return lasJson<OauthSvar>("/konto/oauth");
+}
+
+export function aterkallaOauthAnslutning(id: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/oauth/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /* ---------- Administration (/konto/admin): superadmin och organisationsadmin ---------- */

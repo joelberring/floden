@@ -158,7 +158,7 @@ AI frågar, väljer körningar och skriver; Floden räknar och äger varje tal (
 | R2 Beställning, frågekatalog, mottagare | Beställning (K30: syfte, skede, mottagare, ämnen, frågor, scenario) styr urval och ingress; frågekatalogen i repot nås via `GET /api/fragekatalog` och MCP `fragekatalog_sok` med markering per fråga; skissunderlag dagsljus och sol (`docs/RAPPORTER.md`) | R1 | delvis (beställning, katalog och dagsljus/sol klara på skissnivå via MCP och API; saknas: beställningsformulär i webben, luft och buller, SVF och höstens ekvinox i körningen) |
 | R3 Formell rapport (steg 2) | Rapport med validerade metoder (`rapport`-status), granskning och signering av människa | R1, R2, validering | väntar |
 | R4 Roller, modellval, datapolicy | Roller (utforskare, skribent, granskare), vilken modell får vilken dataklass | R0, D1 | väntar (maskinåtkomst med token över HTTP, projektroller i verktygen och spärren för icke-öppna data: se R4a) |
-| R4a MCP på servern | Personliga MCP-token, `/mcp` bakom kontoskyddet på floden.berring.se, projektroller i verktygen, spärr för icke-öppna data (K38); steg 2: OAuth för Claude-appen | R0, D1, S1 | pågår (steg 1 klar; steg 2 pågår) |
+| R4a MCP på servern | Personliga MCP-token, `/mcp` bakom kontoskyddet på floden.berring.se, projektroller i verktygen, spärr för icke-öppna data (K38); steg 2: OAuth för Claude-appen | R0, D1, S1 | klar (steg 1 och 2; riktig koppling från Claude-appen ej provad) |
 | R5 Export och arkiv | Export (PDF/Word) med körloggen som bilaga, arkivering och spårbarhet | R3, R4 | väntar |
 
 ## Drift – konton (D)

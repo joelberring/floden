@@ -15,6 +15,7 @@ import type {
   NyckelStatus,
   NycklarSvar,
   NyMcpToken,
+  OauthAnslutning,
 } from "./types.ts";
 
 function etikett(text: string, tagg = "h2"): string {
@@ -73,6 +74,8 @@ export interface McpAvsnitt {
   svar: McpTokenSvar | null;
   ny: NyMcpToken | null;
   fel: string | null;
+  /** Appar kontot godkänt via OAuth (Claude-appen); utelämnad eller null medan de hämtas. */
+  appar?: OauthAnslutning[] | null;
 }
 
 /** Kommandot för Claude Code. `token` är den nyss skapade token, annars platshållaren `<token>`. */
@@ -121,6 +124,26 @@ export function mcpTokenAvsnitt(a: McpAvsnitt): string {
     </section>`;
 }
 
+export function anslutnaApparAvsnitt(a: McpAvsnitt): string {
+  const mcpUrl = a.svar?.mcp_url ?? "";
+  const huvud = `<div class="sektionsrad linje-under-stark">${etikett("Anslutna appar")}</div>
+      <p class="avsnitt-ingress">Claude-appen ansluts utan token: lägg till en egen koppling (Inställningar, Kopplingar, Lägg till egen koppling) med adressen <code>${esc(mcpUrl)}</code>. Du loggar in här och godkänner appen. Här kan du ta bort tillgången igen.</p>`;
+  if (!a.appar) return `<section class="nyckel-avsnitt" data-anslutna-appar>${huvud}<p class="dampad">Hämtar …</p></section>`;
+  const rader = a.appar
+    .map(
+      (p) => `<tr>
+        <td>${esc(p.namn)}</td><td>${esc(p.skapad_datum ?? "–")}</td><td>${esc(p.senast_anvand_datum ?? "Aldrig")}</td>
+        <td><button type="button" class="knapp knapp-liten" data-aterkalla-app="${esc(p.id)}" data-aterkalla-namn="${esc(p.namn)}">Ta bort tillgång</button></td></tr>`,
+    )
+    .join("");
+  const tabell = a.appar.length
+    ? `<div class="tabell-ruta"><table class="data-tabell">
+        <thead><tr><th scope="col">App</th><th scope="col">Godkänd</th><th scope="col">Senast använd</th><th scope="col">Åtgärd</th></tr></thead>
+        <tbody>${rader}</tbody></table></div>`
+    : `<p class="dampad">Inga anslutna appar.</p>`;
+  return `<section class="nyckel-avsnitt" data-anslutna-appar>${huvud}${tabell}</section>`;
+}
+
 export function sidaNycklar(
   svar: NycklarSvar | null,
   fel: string | null = null,
@@ -144,7 +167,7 @@ export function sidaNycklar(
       <h1 class="sidrubrik stor">Nycklar</h1>
       <p class="ingress">Dina egna API-nycklar. De lagras krypterade på servern och visas aldrig igen efter att du sparat dem: du ser bara när de sparades och hur de slutar. Att ersätta eller ta bort en nyckel gör du här.</p>
       ${innehall}
-      ${mcp && l.lage !== "av" ? mcpTokenAvsnitt(mcp) : ""}
+      ${mcp && l.lage !== "av" ? mcpTokenAvsnitt(mcp) + anslutnaApparAvsnitt(mcp) : ""}
     </div>`;
 }
 

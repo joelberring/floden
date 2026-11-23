@@ -99,9 +99,10 @@ docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/
 ```
 
 Inget nytt i `.env` eller `config.local.toml` behövs. Kontrollera att `config.local.toml` har `offentlig_url = "https://floden.berring.se"`.
-Prova sedan: logga in på https://floden.berring.se, skapa en token under *Nycklar > MCP-token* och kör kommandot som visas
-(`docs/KOM-IGANG.md`). Kontodatabasen migreras av sig själv vid start (schemaversion 3, tabellen `mcp_token`; version 4 med OAuth, se
-`docs/KONTO.md`); ta en kopia av `data/konto/konto.sqlite` före uppdateringen om du vill kunna backa.
+OAuth för Claude-appen kräver ingen ytterligare inställning (endpoints under `/oauth/` och `/.well-known/` når Floden genom Caddys
+standardflöde); Anthropics servrar måste kunna nå sajten (inga IP-spärrar framför Caddy). Prova sedan: logga in på https://floden.berring.se, skapa en token under *Nycklar > MCP-token* och kör kommandot som visas
+(`docs/KOM-IGANG.md`). Kontodatabasen migreras av sig själv vid start (schemaversion 4: tabellen `mcp_token` och OAuth-tabellerna, se
+`docs/KONTO.md` avsnitt 12 och 13); ta en kopia av `data/konto/konto.sqlite` före uppdateringen om du vill kunna backa.
 
 Körloggen för MCP-anrop ligger i `data/lokal/mcp/korlogg.jsonl` (volymen `./data/lokal`) och har konto-id och token-id, aldrig token.
 Spärren för data som inte är öppna (`docs/MCP.md`) är alltid på; data under `data/lokal` räknas som stängda för MCP.

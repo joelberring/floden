@@ -71,7 +71,17 @@ verktygslagret.
 3. `claude mcp list` ska visa `floden`. Be Claude Code: "lista mina Floden-projekt" (verktyget `projekt_lista`).
 4. Tappade du tokenen, eller ska en dator inte ha tillgång längre: återkalla den på samma sida och skapa en ny. Högst 5 token.
 
-**Claude-appen (egen koppling, OAuth).** *Steg 2, beskrivs här när det är byggt och provat.*
+**Claude-appen (egen koppling, OAuth).** Ingen token behövs.
+
+1. I Claude-appen (claude.ai, Desktop eller mobil): *Inställningar > Kopplingar > Lägg till egen koppling*. Namn: Floden. Adress:
+   `https://floden.berring.se/mcp`. Lämna OAuth-klient-id och hemlighet tomma (Floden registrerar appen själv).
+2. Tryck *Anslut*. Du skickas till Floden: logga in med Google om du inte redan är inloggad, och godkänn på sidan "Ge Claude tillgång
+   till Floden som <ditt konto>?". Kontrollera att adressen under texten är `claude.ai`.
+3. Be Claude: "lista mina Floden-projekt". Appen ser bara projekt där du har en roll, precis som i webben.
+4. Ta bort tillgången: *Nycklar > Anslutna appar > Ta bort tillgång* (appen slutar fungera direkt), eller koppla bort i Claude-appen.
+   Tillgången gäller en timme i taget och förnyas av appen i upp till 30 dagar; efter det får du godkänna igen.
+
+**Inte provat mot den riktiga Claude-appen** när det här skrevs: flödet är provat mot specifikationen och Claudes krav med tester.
 
 ## Köra ett verkligt område på din dator
 

@@ -41,6 +41,30 @@ def _json_bytes(payload: Mapping[str, Any]) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
 
+KLIENT_IP_RUBRIK = "x-floden-klient-ip"
+
+
+def _klient_ip(scope: Mapping[str, Any], rubriker: Mapping[str, str]) -> str:
+    """Klientens adress för hastighetsgränser (OAuth). En inkommande `X-Floden-Klient-Ip` räknas
+    aldrig. Kommer anropet från en lokal eller privat adress (Caddy på Docker-nätet) används den
+    sista adressen i `X-Forwarded-For` (Caddy skriver över den med den verkliga adressen)."""
+    import ipaddress
+
+    klient = scope.get("client")
+    direkt = str(klient[0]) if klient else "okand"
+    try:
+        adr = ipaddress.ip_address(direkt)
+    except ValueError:
+        return direkt
+    if adr.is_loopback or adr.is_private:
+        fran = rubriker.get("x-forwarded-for", "").split(",")[-1].strip()
+        try:
+            return str(ipaddress.ip_address(fran))
+        except ValueError:
+            return direkt
+    return direkt
+
+
 def _sammanfoga_rubriker(
     raa_rubriker: Sequence[tuple[bytes, bytes]],
 ) -> dict[str, str]:
@@ -237,6 +261,7 @@ class FlodenAsgiApp:
         query_b = bytes(scope.get("query_string", b"") or b"")
         full_sokvag = f"{sokvag}?{query_b.decode('latin-1')}" if query_b else sokvag
         rubriker = _sammanfoga_rubriker(scope.get("headers", ()))
+        rubriker[KLIENT_IP_RUBRIK] = _klient_ip(scope, rubriker)
         huvud = metod == "HEAD"
 
         kropp_in: bytes = b""

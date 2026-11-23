@@ -204,3 +204,21 @@ test("MCP-token: avsnittet finns även när nyckelhanteringen är avstängd, men
   settKontoLage({ lage: "av" });
   assert.doesNotMatch(sidaNycklar(null, null, mcpSvar(0)), /data-mcp-token/);
 });
+
+test("Anslutna appar: adressen till Claude-appen, namn maskeras och ta bort finns per rad", () => {
+  settKontoLage(anvandare());
+  const sida = sidaNycklar(nycklar(true), null, {
+    ...mcpSvar(0),
+    appar: [{ id: "g0", namn: "Claude <i>", skapad_datum: "2027-01-15", senast_anvand_datum: null }],
+  });
+  assert.match(sida, /data-aterkalla-app="g0"/);
+  assert.doesNotMatch(sida, /Claude <i>/);
+  assert.match(sida, /Claude &lt;i&gt;/);
+  assert.match(text(sida), /2027-01-15\s+Aldrig/);
+  assert.match(sida, new RegExp(MCP_URL.replace(/\./g, "\\.")));
+  const tom = sidaNycklar(nycklar(true), null, { ...mcpSvar(0), appar: [] });
+  assert.match(text(tom), /Inga anslutna appar/);
+  const hamtar = sidaNycklar(nycklar(true), null, mcpSvar(0));
+  assert.match(hamtar, /data-anslutna-appar/);
+  settKontoLage({ lage: "av" });
+});

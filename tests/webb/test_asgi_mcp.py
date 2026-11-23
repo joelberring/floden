@@ -90,3 +90,48 @@ def test_mcp_med_inloggning_kraver_token_eller_session_pa_icke_loopback(miljo: M
     assert konto_id  # kontot följde med in i körloggen (se test_mcp_http)
     loggfil = _rot(tmp_path) / "data" / "lokal" / "mcp" / "korlogg.jsonl"
     assert loggfil.is_file() and konto_id in loggfil.read_text(encoding="utf-8")
+
+
+def test_oauth_hela_vagen_over_asgi_och_spoofad_klient_ip_hjalper_inte(miljo: Miljo, tmp_path: Path) -> None:
+    from urllib.parse import parse_qs, urlsplit
+
+    from konto.oauth import pkce_utmaning
+    from tests.konto.conftest import rubrik
+    from tests.konto.test_oauth import CLAUDE, VERIFIERARE, _fraga, _godkann
+
+    webb, _ = _inloggad(miljo, ANNA)
+    app = _app(tmp_path, "0.0.0.0", konto=miljo.adapter)  # noqa: S104
+    with TestClient(app, base_url="https://floden.test") as klient:
+        meta = klient.get("/.well-known/oauth-authorization-server")
+        assert meta.status_code == 200 and meta.json()["issuer"] == "https://floden.test"
+        assert klient.get("/.well-known/oauth-protected-resource/mcp").json()["resource"] == "https://floden.test/mcp"
+        # 401 från /mcp pekar på metadata
+        svar = _rpc(klient, "tools/list", {}, {})
+        assert 'resource_metadata="https://floden.test/.well-known/oauth-protected-resource/mcp"' in svar.headers["www-authenticate"]
+        reg = klient.post("/oauth/register", json={"client_name": "Claude", "redirect_uris": [CLAUDE]})
+        assert reg.status_code == 201
+        klient_id = {"client_id": reg.json()["client_id"]}
+        kod = parse_qs(urlsplit(rubrik(_godkann(webb, _fraga(klient_id)), "Location") or "").query)["code"][0]
+        tok = klient.post(
+            "/oauth/token",
+            data={
+                "grant_type": "authorization_code", "code": kod, "client_id": klient_id["client_id"],
+                "redirect_uri": CLAUDE, "code_verifier": VERIFIERARE,
+            },
+        )
+        assert tok.status_code == 200 and tok.headers["cache-control"] == "no-store"
+        access = tok.json()["access_token"]
+        assert pkce_utmaning(VERIFIERARE)
+        sess = _initiera(klient, {"Authorization": f"Bearer {access}"})
+        res = _rpc(klient, "tools/call", {"name": "projekt_lista", "arguments": {}}, sess, id_=3)
+        assert res.status_code == 200 and not _data(res)["result"].get("isError")
+        # Spoofad X-Floden-Klient-Ip ger ingen ny hink: gränsen på 10 registreringar gäller ändå.
+        koder = [
+            klient.post(
+                "/oauth/register",
+                json={"redirect_uris": [CLAUDE]},
+                headers={"X-Floden-Klient-Ip": f"203.0.113.{i}"},
+            ).status_code
+            for i in range(12)
+        ]
+        assert koder[-1] == 429

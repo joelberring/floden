@@ -97,7 +97,7 @@ Skriptet `tools/mcp_provflode.py` är ett körbart exempel på hela flödet med 
 Servern (`floden webb --server asgi`, `docs/DRIFT.md`) monterar MCP:s Streamable HTTP på `/mcp` i samma process som webben. **`/mcp`
 är av när inloggningen är av och värden inte är loopback.** Med inloggning på krävs på varje anrop antingen en personlig
 **MCP-token** (`Authorization: Bearer fl_mcp_...`, `docs/KONTO.md` avsnitt 12) eller en session; Claude-appen använder OAuth
-(steg 2, nedan i `docs/KONTO.md`). Claude Code:
+(`docs/KONTO.md` avsnitt 13). Claude Code:
 
 ```bash
 claude mcp add --transport http floden https://floden.berring.se/mcp --header "Authorization: Bearer <token>"
