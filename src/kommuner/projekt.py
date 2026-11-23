@@ -220,12 +220,23 @@ def skapa_projekt(
     )
     bygg_fil = radata / "kommun" / "byggnader.gpkg"
     skriv(f"Bygger skyfallsrutan ({v[2]-v[0]:.0f} x {v[3]-v[1]:.0f} m) ur geografins rådata ...")
-    bygg_omrade(
-        omr, radata / "lantmateriet", k1_v,
-        byggnader_fil=bygg_fil if bygg_fil.is_file() else None,
-        en_ruta=True, upplosning_m=kommun.lantmateriet.upplosning_m,
-        anvand_orto="orto" in kommun.lantmateriet.produkter, skriv=skriv,
-    )  # fmt: skip
+    klippt = radata / "hojd" / "hojdmodell_klippt.tif"
+    if klippt.is_file():  # geografin byggdes ur kommunens höjdmodell (filpaket)
+        from kommuner.hojdmodell import Hojdmodell
+        from kommuner.k1_filpaket import bygg_omrade_filpaket
+
+        bygg_omrade_filpaket(
+            omr, k1_v, hojdmodell=Hojdmodell([klippt], epsg_antagen=3011), hojd_paket=[],
+            byggnader_fil=bygg_fil if bygg_fil.is_file() else None,
+            upplosning_m=kommun.lantmateriet.upplosning_m, en_ruta=True, skriv=skriv,
+        )  # fmt: skip
+    else:
+        bygg_omrade(
+            omr, radata / "lantmateriet", k1_v,
+            byggnader_fil=bygg_fil if bygg_fil.is_file() else None,
+            en_ruta=True, upplosning_m=kommun.lantmateriet.upplosning_m,
+            anvand_orto="orto" in kommun.lantmateriet.produkter, skriv=skriv,
+        )  # fmt: skip
     varningar.append(
         "Skyfallsfrågan räknar på en ruta runt avgränsningen (statisk fyllning): tillrinning från högre mark "
         "utanför rutan ingår inte. Geografins tillrinningsyta finns i manifestet (forberakningar.tillrinning)."
@@ -269,7 +280,7 @@ def _licens(mapp: Path, geo_rot: Path, manifest: Mapping[str, Any]) -> str:
     from kommuner.skapa import _strangaste_licens
 
     k = manifest.get("kallor", {})
-    return _strangaste_licens([str(k["lantmateriet"]["licens"]), str(k["byggnader"]["licens"])])
+    return _strangaste_licens([str((k.get("hojd") or k["lantmateriet"])["licens"]), str(k["byggnader"]["licens"])])
 
 
 def _registrera(reg: Any, org: str | None, konto_id: str | None, mapp: Path, namn: str) -> bool:
