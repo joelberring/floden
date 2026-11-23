@@ -6,17 +6,24 @@
 import {
   aterkallaMcpToken,
   bjudIn,
+  bjudInOrganisation,
+  bytOrganisationsnamn,
+  hamtaAdminOrganisationDetalj,
+  hamtaAdminOrganisationer,
   hamtaAdminProjekt,
   hamtaAdminProjektDetalj,
   hamtaMcpTokens,
   hamtaOauthAnslutningar,
   aterkallaOauthAnslutning,
   hamtaNycklar,
+  sattOrganisationsRoll,
+  sattProjektDelning,
   sattProjektRoll,
   skapaMcpToken,
   sparaNyckel,
   sparraKonto,
   taBortNyckel,
+  taBortOrganisationsMedlem,
   taBortProjektRoll,
 } from "./api";
 import { kontoLage } from "./konto";
@@ -156,7 +163,9 @@ export async function visaAdministration(vy: HTMLElement): Promise<void> {
     try {
       const lista = await hamtaAdminProjekt();
       const detaljer = await Promise.all(lista.projekt.map((p) => hamtaAdminProjektDetalj(p.id)));
-      vy.innerHTML = sidaAdministration(detaljer, null, meddelande);
+      const orgar = await hamtaAdminOrganisationer();
+      const orgDetaljer = await Promise.all(orgar.organisationer.map((o) => hamtaAdminOrganisationDetalj(o.id)));
+      vy.innerHTML = sidaAdministration(detaljer, null, meddelande, orgDetaljer);
     } catch (e) {
       vy.innerHTML = sidaAdministration(null, felText(e));
     }
@@ -168,6 +177,21 @@ export async function visaAdministration(vy: HTMLElement): Promise<void> {
   vy.innerHTML = sidaAdministration(null);
   vy.onsubmit = (h: SubmitEvent): void => {
     const form = h.target instanceof HTMLFormElement ? h.target : null;
+    const orgBjud = form?.dataset.orgBjudIn;
+    if (form && orgBjud) {
+      h.preventDefault();
+      const epost = (form.elements.namedItem("epost") as HTMLInputElement).value;
+      const roll = (form.elements.namedItem("roll") as HTMLSelectElement).value;
+      void bjudInOrganisation(orgBjud, epost, roll).then(klart(`Inbjudan till ${epost} är skapad.`), misslyckades);
+      return;
+    }
+    const orgNamn = form?.dataset.orgNamn;
+    if (form && orgNamn) {
+      h.preventDefault();
+      const namn = (form.elements.namedItem("namn") as HTMLInputElement).value;
+      void bytOrganisationsnamn(orgNamn, namn).then(klart("Namnet är ändrat."), misslyckades);
+      return;
+    }
     const pid = form?.dataset.bjudIn;
     if (!form || !pid) return;
     h.preventDefault();
@@ -176,7 +200,22 @@ export async function visaAdministration(vy: HTMLElement): Promise<void> {
     void bjudIn(pid, epost, roll).then(klart(`Inbjudan till ${epost} är skapad.`), misslyckades);
   };
   vy.onchange = (h: Event): void => {
+    if (h.target instanceof HTMLInputElement && h.target.dataset.delning) {
+      const ruta = h.target;
+      void sattProjektDelning(ruta.dataset.delning ?? "", ruta.checked).then(
+        klart(ruta.checked ? "Projektet är delat med organisationen." : "Projektet är privat igen."),
+        misslyckades,
+      );
+      return;
+    }
     const el = h.target instanceof HTMLSelectElement ? h.target : null;
+    if (el?.dataset.orgRoll && el.dataset.orgKonto) {
+      void sattOrganisationsRoll(el.dataset.orgRoll, el.dataset.orgKonto, el.value).then(
+        klart("Rollen är ändrad."),
+        misslyckades,
+      );
+      return;
+    }
     const pid = el?.dataset.rollProjekt;
     const kid = el?.dataset.rollKonto;
     if (!el || !pid || !kid) return;
@@ -184,6 +223,15 @@ export async function visaAdministration(vy: HTMLElement): Promise<void> {
   };
   vy.onclick = (h: MouseEvent): void => {
     const mal = h.target instanceof Element ? h.target : null;
+    const orgMedlem = mal?.closest("[data-org-ta-bort]")?.getAttribute("data-org-ta-bort");
+    if (orgMedlem) {
+      h.preventDefault();
+      const [oid = "", kid = ""] = orgMedlem.split("|");
+      if (window.confirm("Ta bort personen från organisationen? Personens roller i projekt påverkas inte.")) {
+        void taBortOrganisationsMedlem(oid, kid).then(klart("Medlemmen är borttagen."), misslyckades);
+      }
+      return;
+    }
     const roll = mal?.closest("[data-ta-bort-roll]")?.getAttribute("data-ta-bort-roll");
     if (roll) {
       h.preventDefault();

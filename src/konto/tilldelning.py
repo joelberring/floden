@@ -11,7 +11,10 @@ Regler (BESLUT 2026-11-21 "Drift", docs/ARKITEKTUR-DRIFT.md 3c):
 3. Organisation: IdP-tenant (registrerad), eller intygad domän. Aldrig förvaltning eller projekt.
 4. Förvaltning: bara via IdP-grupp (mappningsregel). Prövas om vid varje inloggning; manuella
    medlemskap rörs inte. Okända grupper (Entra-överflöd) lämnar medlemskapen oförändrade.
-5. Projekt: bara inbjudan till verifierad adress. Medlemskap ger aldrig projektbehörighet.
+5. Projekt: bara inbjudan till verifierad adress. Förvaltning och enkelt organisationsmedlemskap
+   ger aldrig projektbehörighet. Organisationsroller (ledare, organisationsadmin, ägare) ger rätt
+   i organisationens projekt (`Register.effektiv_projektroll`) men sätts aldrig av en IdP-signal:
+   bara av en inbjudan till organisationen (verifierad adress) eller ett serverkommando.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from dataclasses import dataclass
 
 from konto.konfig import KontoKonfig
 from konto.leverantor import Identitet, Leverantor
-from konto.register import PROJEKTROLLER, Register, normalisera_epost
+from konto.register import ORGROLLER, PROJEKTROLLER, Register, normalisera_epost
 
 
 class InloggningNekad(Exception):
@@ -88,6 +91,14 @@ def _oppna_inbjudningar(c: sqlite3.Connection, epost: str, nu: int) -> list[sqli
     ).fetchall()
 
 
+def _oppna_orginbjudningar(c: sqlite3.Connection, epost: str, nu: int) -> list[sqlite3.Row]:
+    return c.execute(
+        "SELECT * FROM organisationsinbjudan WHERE epost = ? AND anvand_tid IS NULL"
+        " AND giltig_till > ?",
+        (epost, nu),
+    ).fetchall()
+
+
 def _hitta_konto(
     c: sqlite3.Connection, identitet: Identitet, lev: Leverantor, epost: str | None
 ) -> sqlite3.Row | None:
@@ -120,6 +131,7 @@ def logga_in_identitet(
             raise InloggningNekad("okand-tenant")
         betrodd_epost = lev.epost_betrodd and identitet.epost_verifierad and epost is not None
         inbjudningar = _oppna_inbjudningar(c, epost, nu) if betrodd_epost and epost else []
+        orginbjudningar = _oppna_orginbjudningar(c, epost, nu) if betrodd_epost and epost else []
 
         rad = _hitta_konto(c, identitet, lev, epost)
         nytt = rad is None
@@ -127,7 +139,11 @@ def logga_in_identitet(
             register.notera(c, "inloggning-nekad", rad["id"], "orsak=sparrad")
             raise InloggningNekad("sparrad")
         if rad is None:
-            if konfig.nya_konton != "oppen" and org is None and not inbjudningar:
+            if (
+                konfig.nya_konton != "oppen"
+                and org is None
+                and not (inbjudningar or orginbjudningar)
+            ):
                 register.notera(c, "inloggning-nekad", None, "orsak=ingen-inbjudan")
                 raise InloggningNekad("ingen-inbjudan")
             konto_id = uuid.uuid4().hex
@@ -179,6 +195,8 @@ def logga_in_identitet(
             _satt_organisation(register, c, konto_id, org[0], org[1], identitet, nu)
         if inbjudningar:
             _anvand_inbjudningar(register, c, konto_id, inbjudningar, nu)
+        if orginbjudningar:
+            _anvand_orginbjudningar(register, c, konto_id, orginbjudningar, nu)
         register.notera(c, "inloggning", konto_id, f"leverantor={identitet.leverantor}")
         return Inloggning(konto_id=konto_id, nytt_konto=nytt)
 
@@ -266,4 +284,43 @@ def _anvand_inbjudningar(
         )
         register.notera(
             c, "inbjudan-mottagen", konto_id, f"inbjudan={inb['id']} projekt={inb['projekt_id']}"
+        )
+
+
+def _anvand_orginbjudningar(
+    register: Register,
+    c: sqlite3.Connection,
+    konto_id: str,
+    inbjudningar: list[sqlite3.Row],
+    nu: int,
+) -> None:
+    """Tar emot öppna inbjudningar till organisationen för kontots verifierade adress. En högre
+    befintlig roll behålls; rollen sätts på organisationsnivå (utan förvaltning)."""
+    for inb in inbjudningar:
+        rad = c.execute(
+            "SELECT roll FROM medlemskap WHERE konto_id = ? AND organisation_id = ?"
+            " AND forvaltning_id IS NULL",
+            (konto_id, inb["organisation_id"]),
+        ).fetchone()
+        if rad is None:
+            c.execute(
+                "INSERT INTO medlemskap (konto_id, organisation_id, forvaltning_id, roll, kalla,"
+                " skapad, bekraftad_av) VALUES (?, ?, NULL, ?, 'inbjudan', ?, ?)",
+                (konto_id, inb["organisation_id"], inb["roll"], nu, inb["skapad_av"]),
+            )
+        elif ORGROLLER.index(rad["roll"]) < ORGROLLER.index(inb["roll"]):
+            c.execute(
+                "UPDATE medlemskap SET roll = ?, kalla = 'inbjudan', bekraftad_av = ?"
+                " WHERE konto_id = ? AND organisation_id = ? AND forvaltning_id IS NULL",
+                (inb["roll"], inb["skapad_av"], konto_id, inb["organisation_id"]),
+            )
+        c.execute(
+            "UPDATE organisationsinbjudan SET anvand_av = ?, anvand_tid = ? WHERE id = ?",
+            (konto_id, nu, inb["id"]),
+        )
+        register.notera(
+            c,
+            "orginbjudan-mottagen",
+            konto_id,
+            f"inbjudan={inb['id']} organisation={inb['organisation_id']} roll={inb['roll']}",
         )

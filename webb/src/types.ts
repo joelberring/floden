@@ -649,6 +649,10 @@ export interface ProjektListaPost {
   roll?: string;
   /** Falskt för ett projekt ur kontoregistret som ännu saknar beräkningar. */
   finns?: boolean;
+  /** Projekt ur kontoregistret: delat med organisationen (organisationsroller ger rätt). */
+  organisation_synlig?: boolean;
+  /** `projekt` (uttrycklig roll) eller `organisation` (rollen kommer av organisationsrollen). */
+  kalla?: string;
 }
 
 export interface ProjektListaSvar {
@@ -722,6 +726,10 @@ export interface AdminProjekt {
   organisation: string;
   medlemmar: number;
   oppna_inbjudningar: number;
+  /** Projektet är delat med organisationen. Utelämnat av äldre servrar (tolkas som privat). */
+  organisation_synlig?: boolean;
+  /** Får kontot ändra delningen (projektets utredare och skaparen)? */
+  kan_andra_delning?: boolean;
 }
 
 export interface AdminMedlem {
@@ -744,6 +752,26 @@ export interface AdminInbjudan {
 
 export interface AdminProjektDetalj {
   projekt: AdminProjekt;
+  roller: string[];
+  medlemmar: AdminMedlem[];
+  inbjudningar: AdminInbjudan[];
+}
+
+/** En organisation utföraren får administrera (`GET /konto/admin/organisationer`). */
+export interface AdminOrganisation {
+  id: string;
+  namn: string;
+  /** Utförarens egen roll: medlem, ledare, organisationsadmin, agare eller superadmin. */
+  din_roll: string;
+  far_byta_namn: boolean;
+  /** Alla organisationsroller, i stigande ordning. */
+  roller: string[];
+  /** Rollerna utföraren får bjuda in med och ge (organisationsadmin: bara medlem och ledare). */
+  tillatna_roller: string[];
+}
+
+export interface AdminOrganisationDetalj {
+  organisation: AdminOrganisation;
   roller: string[];
   medlemmar: AdminMedlem[];
   inbjudningar: AdminInbjudan[];

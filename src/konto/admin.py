@@ -1,19 +1,21 @@
 """Administratörs-CLI för det som bara servern ska kunna göra (bootstrap, organisationsregler).
 
 Körs på servern med `PYTHONPATH=src python -m konto.admin <kommando>`. Skriver id:n, aldrig e-post.
+Felmeddelanden (okänd organisation, ogiltig roll) skrivs utan stacktrace och ger felkod 1.
 Mönster från O-Tids `scripts/account-superadmin.ts`: superadmin sätts bara med serverkommando.
 """
 
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from konto.databas import Databas
 from konto.konfig import las_konto_konfig
-from konto.register import Register
+from konto.register import Register, RegisterFel
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -25,6 +27,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     sub = p.add_subparsers(dest="kommando", required=True)
     for namn, args in {
         "skapa-organisation": ["namn"],
+        "bjud-in-organisation": ["organisation", "epost", "roll"],
+        "kontostatus": ["konto"],
         "registrera-tenant": ["organisation", "leverantor", "tenant"],
         "registrera-doman": ["organisation", "doman"],
         "skapa-forvaltning": ["organisation", "namn"],
@@ -38,13 +42,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         s = sub.add_parser(namn)
         for arg in args:
             s.add_argument(arg)
+        if namn == "skapa-organisation":
+            s.add_argument("--agare", metavar="KONTO_ID", help="konto-id för organisationens ägare")
     a = p.parse_args(argv)
 
     lokal = Path(a.lokal_konfig)
     konf = las_konto_konfig(las_konfig(a.konfig, lokal if lokal.exists() else None))
     r = Register(Databas(konf.databas))
+    try:
+        return _utfor(a, r)
+    except (RegisterFel, sqlite3.IntegrityError) as exc:
+        print(f"Fel: {exc}", file=sys.stderr)
+        return 1
+
+
+def _utfor(a: argparse.Namespace, r: Register) -> int:
     if a.kommando == "skapa-organisation":
-        print(r.skapa_organisation(a.namn))
+        print(r.skapa_organisation(a.namn, agare=a.agare))
+    elif a.kommando == "bjud-in-organisation":
+        print(r.bjud_in_organisation_server(a.organisation, a.epost, a.roll))
+    elif a.kommando == "kontostatus":
+        print(r.kontostatus(a.konto))
     elif a.kommando == "registrera-tenant":
         r.registrera_tenant(a.organisation, a.leverantor, a.tenant)
         print("ok")

@@ -10,6 +10,7 @@ import { esc } from "./sidor.ts";
 import type {
   AdminInbjudan,
   AdminMedlem,
+  AdminOrganisationDetalj,
   AdminProjektDetalj,
   McpTokenSvar,
   NyckelStatus,
@@ -200,6 +201,17 @@ function inbjudanRad(i: AdminInbjudan): string {
   return `<tr><td>${esc(i.epost)}</td><td>${esc(i.roll)}</td><td>${esc(INBJUDAN_TEXT[i.status])}</td><td>${esc(datumTid(i.giltig_till))}</td></tr>`;
 }
 
+/** Kryssrutan "Synligt för organisationen <namn>". Bara projektets utredare och skaparen kan ändra. */
+export function delningHtml(p: AdminProjektDetalj["projekt"]): string {
+  const synlig = p.organisation_synlig === true;
+  const kan = p.kan_andra_delning === true;
+  return `<p class="delning" data-delning-rad>
+    <label><input type="checkbox" data-delning="${esc(p.id)}"${synlig ? " checked" : ""}${kan ? "" : " disabled"} />
+      Synligt för organisationen ${esc(p.organisation)}</label>
+    <span class="dampad">${synlig ? "Organisationens ägare och administratörer utreder i projektet, ledare läser." : "Privat: bara de som har en roll i projektet ser det."}${kan ? "" : " Bara projektets utredare och skaparen ändrar detta."}</span>
+  </p>`;
+}
+
 export function adminProjektHtml(d: AdminProjektDetalj): string {
   const p = d.projekt;
   const medlemmar = d.medlemmar.length
@@ -215,6 +227,7 @@ export function adminProjektHtml(d: AdminProjektDetalj): string {
   return `
     <section class="admin-projekt" data-admin-projekt="${esc(p.id)}">
       <div class="sektionsrad linje-under-stark">${etikett(`${p.organisation}: ${p.namn}`)}</div>
+      ${delningHtml(p)}
       <form data-bjud-in="${esc(p.id)}" class="knapp-par">
         <label class="falt-rad">E-postadress <input class="kontroll" type="email" name="epost" required autocomplete="off" /></label>
         <label class="falt-rad">Roll ${rollVal(d.roller, d.roller[0] ?? "lasare", 'name="roll"')}</label>
@@ -227,21 +240,76 @@ export function adminProjektHtml(d: AdminProjektDetalj): string {
     </section>`;
 }
 
+function orgMedlemsRad(oid: string, d: AdminOrganisationDetalj, m: AdminMedlem): string {
+  const tillatna = d.organisation.tillatna_roller;
+  // Raden kan ändras bara om utföraren får ge den nuvarande rollen (en organisationsadmin rör inte en annan admin).
+  const redigerbar = tillatna.includes(m.roll);
+  const namn = `${esc(m.namn)}${m.sparrad ? ` <span class="chip">Spärrad</span>` : ""}`;
+  const roll = redigerbar
+    ? rollVal(tillatna, m.roll, `data-org-roll="${esc(oid)}" data-org-konto="${esc(m.konto_id)}" aria-label="Roll för ${esc(m.namn)}"`)
+    : esc(m.roll);
+  const atgard = redigerbar
+    ? `<button type="button" class="knapp knapp-liten" data-org-ta-bort="${esc(oid)}|${esc(m.konto_id)}">Ta bort från organisationen</button>`
+    : "–";
+  return `<tr><td>${namn}</td><td>${esc(m.epost ?? "–")}</td><td>${roll}</td><td>${atgard}</td></tr>`;
+}
+
+export function adminOrganisationHtml(d: AdminOrganisationDetalj): string {
+  const o = d.organisation;
+  const medlemmar = d.medlemmar.length
+    ? `<div class="tabell-ruta"><table class="data-tabell">
+        <thead><tr><th scope="col">Namn</th><th scope="col">E-post</th><th scope="col">Roll</th><th scope="col">Åtgärd</th></tr></thead>
+        <tbody>${d.medlemmar.map((m) => orgMedlemsRad(o.id, d, m)).join("")}</tbody></table></div>`
+    : `<p class="dampad">Inga medlemmar än.</p>`;
+  const inbjudningar = d.inbjudningar.length
+    ? `<div class="tabell-ruta"><table class="data-tabell">
+        <thead><tr><th scope="col">E-post</th><th scope="col">Roll</th><th scope="col">Status</th><th scope="col">Giltig till</th></tr></thead>
+        <tbody>${d.inbjudningar.map(inbjudanRad).join("")}</tbody></table></div>`
+    : `<p class="dampad">Inga inbjudningar.</p>`;
+  const namnForm = o.far_byta_namn
+    ? `<form data-org-namn="${esc(o.id)}" class="knapp-par">
+        <label class="falt-rad">Organisationens namn <input class="kontroll" type="text" name="namn" value="${esc(o.namn)}" maxlength="120" required autocomplete="off" /></label>
+        <button type="submit" class="knapp">Byt namn</button>
+      </form>`
+    : "";
+  const bjud = o.tillatna_roller.length
+    ? `<form data-org-bjud-in="${esc(o.id)}" class="knapp-par">
+        <label class="falt-rad">E-postadress <input class="kontroll" type="email" name="epost" required autocomplete="off" /></label>
+        <label class="falt-rad">Roll ${rollVal(o.tillatna_roller, o.tillatna_roller[0] ?? "medlem", 'name="roll"')}</label>
+        <button type="submit" class="knapp knapp-svart">Bjud in till organisationen</button>
+      </form>`
+    : "";
+  return `
+    <section class="admin-organisation" data-admin-organisation="${esc(o.id)}">
+      <div class="sektionsrad linje-under-stark">${etikett(`Organisation: ${o.namn}`)}</div>
+      <p class="avsnitt-ingress">Din roll: <strong>${esc(o.din_roll)}</strong>. Organisationsadmin och ägare utreder i alla organisationens projekt; ledare läser dem.</p>
+      ${namnForm}
+      ${bjud}
+      ${etikett("Medlemmar och roller", "h3")}
+      ${medlemmar}
+      ${etikett("Inbjudningar till organisationen", "h3")}
+      ${inbjudningar}
+    </section>`;
+}
+
 export function sidaAdministration(
   projekt: AdminProjektDetalj[] | null,
   fel: string | null = null,
   meddelande = "",
+  organisationer: AdminOrganisationDetalj[] = [],
 ): string {
   let innehall: string;
   if (fel) innehall = `<p class="hjalp-ruta" role="alert">${esc(fel)}</p>`;
   else if (!projekt) innehall = `<p class="dampad">Hämtar …</p>`;
   else if (projekt.length === 0) innehall = `<p class="dampad">Du administrerar inga projekt än.</p>`;
   else innehall = projekt.map(adminProjektHtml).join("");
+  const organisation = fel || !projekt ? "" : organisationer.map(adminOrganisationHtml).join("");
   return `
     <div class="sidbredd innehall">
       <h1 class="sidrubrik stor">Administration</h1>
-      <p class="ingress">Bjud in personer till ett projekt, ändra roller och spärra konton. En inbjudan tas emot när personen loggar in med den adressen; <strong>lasare</strong> får läsa, <strong>utredare</strong> får även köra.</p>
+      <p class="ingress">Bjud in personer till organisationen eller till ett projekt, ändra roller och spärra konton. En inbjudan tas emot när personen loggar in med den adressen; <strong>lasare</strong> får läsa, <strong>utredare</strong> får även köra.</p>
       ${meddelande ? `<p class="hjalp-ruta" role="status">${esc(meddelande)}</p>` : ""}
+      ${organisation}
       ${innehall}
     </div>`;
 }
