@@ -144,7 +144,11 @@ def luftabsorption_monoton_db(
         lufttryck_kpa,
     )
     a0 = np.minimum(alpha * vagstracka_m, STORSTA_A0_BANDFORMEL_DB)
-    ut: Flyttal = -a0 * np.power(_BANDFORMEL_A - _BANDFORMEL_B * a0, _BANDFORMEL_EXPONENT)
+    # Skalar ** matchar luftabsorption_db bit-för-bit även på x86_64 (undviker 1 ULP SIMD-diff).
+    ut: Flyttal = np.array(
+        [-v * (_BANDFORMEL_A - _BANDFORMEL_B * v) ** _BANDFORMEL_EXPONENT for v in a0.tolist()],
+        dtype=np.float64,
+    )
     return ut
 
 
