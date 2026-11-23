@@ -415,3 +415,28 @@ def test_okant_scope_fran_claude_appen_ger_kod_med_scope_mcp(miljo: Miljo) -> No
     kod = _kod_fran(_godkann(webb, p))
     tok = _byt(miljo, klient, kod)
     assert tok[0] == 200 and _json(tok)["scope"] == "mcp"
+
+
+def test_godkannandesidans_eget_formular_ger_en_kod(miljo: Miljo) -> None:
+    """Postar exakt de dolda fälten som sidan innehåller (inte begärans fält direkt)."""
+    import html as _html
+    import re as _re
+
+    webb, _ = _inloggad(miljo)
+    klient = _registrera(miljo)
+    sida = _authorize_get(webb, _fraga(klient))
+    assert sida[0] == 200
+    text = sida[2].decode("utf-8")
+    falt = {
+        _html.unescape(n): _html.unescape(v)
+        for n, v in _re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)">', text)
+    }
+    assert falt["code_challenge_method"] == "S256"
+    svar = webb.anrop(
+        "POST",
+        "/oauth/authorize",
+        headers={"Origin": ORIGIN, "Content-Type": "application/x-www-form-urlencoded"},
+        kropp=urlencode({**falt, "beslut": "tillat"}).encode(),
+    )
+    kod = _kod_fran(svar)
+    assert _byt(miljo, klient, kod)[0] == 200
