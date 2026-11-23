@@ -48,7 +48,15 @@ def registrera(subparsers: Any) -> None:
     m.add_argument("--georot", default=STANDARD_GEOROT, help="Rotmapp för geografier.")
     m.add_argument("--kommunfil", default=None, help="Annan kommunfil än data/kommuner/<kommun>.toml.")
     m.add_argument("--byggnadslager", default=None, help="Åsidosätter byggnadslagret.")
-    m.add_argument("--byggnader-kalla", choices=("wfs", "lantmateriet"), default=None)
+    m.add_argument("--byggnader-kalla", choices=("filpaket", "wfs", "lantmateriet"), default=None)
+    m.add_argument(
+        "--hojdmodell-url", action="append", default=[],
+        help="Höjdmodellens ZIP-paket (https, tillåten värd). Kan anges flera gånger; ersätter kommunfilens lista.",
+    )
+    m.add_argument(
+        "--hojdmodell-fil", action="append", default=[], type=Path,
+        help="Redan nedladdat höjdmodell-paket (ZIP eller GeoTIFF). Kan anges flera gånger.",
+    )
     m.add_argument("--nmd", default=None, help="NMD-GeoTIFF (EPSG:3006, CC0, hämtad av dig): valfritt marktäckelager (ekologi).")
     m.add_argument("--vmi", default=None, help="VMI-polygoner (känd våtmark, äldre inventering): valfritt lager, kräver helst --nmd.")
     m.add_argument(
@@ -134,6 +142,7 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
             konfig_fil=rot / "config.toml", version=args.version,
             villkor_kontrollerade=args.villkor_kontrollerade, byggnadslager=args.byggnadslager,
             byggnader_kalla=args.byggnader_kalla,
+            hojdmodell_urlar=tuple(args.hojdmodell_url), hojdmodell_filer=tuple(args.hojdmodell_fil),
             nmd_fil=_abs(rot, args.nmd) if args.nmd else None,
             vmi_fil=_abs(rot, args.vmi) if args.vmi else None, nmd_troskel_m=args.nmd_troskel_m,
         )  # fmt: skip

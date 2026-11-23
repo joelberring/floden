@@ -27,7 +27,8 @@ KONTRAKT = "floden-kommun/v1"
 KOMMUNMAPP_REL = Path("data") / "kommuner"
 _ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 _PRODUKTER = ("laser", "orto")
-_BYGGNADSKALLOR = ("wfs", "lantmateriet")
+_BYGGNADSKALLOR = ("filpaket", "wfs", "lantmateriet")
+_HOJDKALLOR = ("filpaket", "lantmateriet")
 _REPO_ROT = Path(__file__).resolve().parents[2]
 
 
@@ -73,6 +74,34 @@ class ByggnadsKonfig:
 
 
 @dataclass(frozen=True)
+class HojdKonfig:
+    """Varifrån markhöjden kommer. `reserv_lantmateriet`: använd Lantmäteriets laser om kommunens fil fallerar och kontot har nyckel."""
+
+    kalla: str
+    reserv_lantmateriet: bool
+
+
+@dataclass(frozen=True)
+class PaketKalla:
+    """Ett eller flera ZIP-paket på kommunens öppna datasida."""
+
+    urlar: tuple[str, ...]
+    index_url: str          # HTML-sida vars .zip-länkar används när `urlar` är tom ("" = ingen)
+    epsg: int
+    lager_monster: str      # bara baskartan: lagernamn (uttryck), t.ex. "(?i)^tak$"
+    licens: str
+    licens_anmarkning: str
+
+
+@dataclass(frozen=True)
+class FilpaketKonfig:
+    tillatna_varddomaner: tuple[str, ...]
+    max_gib: float
+    baskarta: PaketKalla | None
+    hojdmodell: PaketKalla | None
+
+
+@dataclass(frozen=True)
 class BaskartaKonfig:
     lager: tuple[str, ...]
     licens: str
@@ -97,6 +126,8 @@ class KommunKonfig:
     lantmateriet: LantmaterietKonfig
     byggnader: ByggnadsKonfig
     baskarta: BaskartaKonfig
+    hojd: HojdKonfig
+    filpaket: FilpaketKonfig | None
     dagsljus: Mapping[str, Any]
     skyfall: Mapping[str, Any]
     geografier: Mapping[str, GeografiDef]
@@ -159,7 +190,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         "kommunfilen",
         (
             "kontrakt", "id", "namn", "publicering_epsg", "intern_epsg", "standard_omrade",
-            "omraden", "geografier", "lantmateriet", "byggnader", "baskarta", "dagsljus", "skyfall",
+            "omraden", "geografier", "lantmateriet", "hojd", "filpaket", "byggnader", "baskarta", "dagsljus", "skyfall",
         ),
     )  # fmt: skip
     if data.get("kontrakt") != KONTRAKT:
@@ -238,8 +269,60 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
     produkter = _textlista(lm, "produkter", "[lantmateriet]")
     if not produkter or any(p not in _PRODUKTER for p in produkter):
         raise KommunKonfigFel(f"[lantmateriet]: 'produkter' ska vara delmängd av {_PRODUKTER}.")
-    if "laser" not in produkter:
-        raise KommunKonfigFel("[lantmateriet]: 'laser' krävs (markmodellen byggs ur laser).")
+
+    hj = data.get("hojd", {})
+    if not isinstance(hj, Mapping):
+        raise KommunKonfigFel("[hojd] ska vara en tabell.")
+    _stram(hj, "[hojd]", ("kalla", "reserv_lantmateriet"))
+    hojd_kalla = _text(hj, "kalla", "[hojd]") if "kalla" in hj else "lantmateriet"
+    if hojd_kalla not in _HOJDKALLOR:
+        raise KommunKonfigFel(f"[hojd]: 'kalla' ska vara en av {_HOJDKALLOR}.")
+    reserv = hj.get("reserv_lantmateriet", False)
+    if not isinstance(reserv, bool):
+        raise KommunKonfigFel("[hojd]: 'reserv_lantmateriet' ska vara true eller false.")
+    if "laser" not in produkter and (hojd_kalla == "lantmateriet" or reserv):
+        raise KommunKonfigFel("[lantmateriet]: 'laser' krävs när höjden hämtas från Lantmäteriet (kalla eller reserv).")
+
+    fp_raa = data.get("filpaket")
+    filpaket: FilpaketKonfig | None = None
+    if fp_raa is not None:
+        if not isinstance(fp_raa, Mapping):
+            raise KommunKonfigFel("[filpaket] ska vara en tabell.")
+        _stram(fp_raa, "[filpaket]", ("tillatna_varddomaner", "max_gib", "baskarta", "hojdmodell"))
+        fdom = _textlista(fp_raa, "tillatna_varddomaner", "[filpaket]")
+        if not fdom:
+            raise KommunKonfigFel("[filpaket]: 'tillatna_varddomaner' får inte vara tom.")
+
+        def _paket(namn: str, med_lager: bool) -> PaketKalla | None:
+            t = fp_raa.get(namn)
+            if t is None:
+                return None
+            var = f"[filpaket.{namn}]"
+            if not isinstance(t, Mapping):
+                raise KommunKonfigFel(f"{var} ska vara en tabell.")
+            _stram(t, var, ("urlar", "index_url", "epsg", "lager_monster", "licens", "licens_anmarkning"))
+            urlar = _textlista(t, "urlar", var)
+            index_url = _text(t, "index_url", var, tom_ok=True)
+            if not urlar and not index_url:
+                raise KommunKonfigFel(f"{var}: ange 'urlar' eller 'index_url'.")
+            monster_p = _text(t, "lager_monster", var, tom_ok=not med_lager) if med_lager else ""
+            if med_lager:
+                try:
+                    re.compile(monster_p)
+                except re.error as exc:
+                    raise KommunKonfigFel(f"{var}: 'lager_monster' är inte ett giltigt uttryck: {exc}") from exc
+            return PaketKalla(
+                urlar=urlar, index_url=index_url, epsg=int(_tal(t, "epsg", var, minst=1.0)),
+                lager_monster=monster_p, licens=_text(t, "licens", var),
+                licens_anmarkning=_text(t, "licens_anmarkning", var),
+            )  # fmt: skip
+
+        filpaket = FilpaketKonfig(
+            tillatna_varddomaner=fdom,
+            max_gib=_tal(fp_raa, "max_gib", "[filpaket]", minst=0.1),
+            baskarta=_paket("baskarta", True),
+            hojdmodell=_paket("hojdmodell", False),
+        )
 
     by = _tabell(
         data, "byggnader",
@@ -248,6 +331,10 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
             "licens", "licens_anmarkning", "falt",
         ),
     )  # fmt: skip
+    if (by.get("kalla") == "filpaket" and (filpaket is None or filpaket.baskarta is None)) or (
+        hojd_kalla == "filpaket" and (filpaket is None or filpaket.hojdmodell is None)
+    ):
+        raise KommunKonfigFel("[byggnader]/[hojd] med kalla = filpaket kräver [filpaket.baskarta] resp. [filpaket.hojdmodell].")
     kalla = _text(by, "kalla", "[byggnader]")
     if kalla not in _BYGGNADSKALLOR:
         raise KommunKonfigFel(f"[byggnader]: 'kalla' ska vara en av {_BYGGNADSKALLOR}.")
@@ -260,10 +347,10 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         re.compile(monster)
     except re.error as exc:
         raise KommunKonfigFel(f"[byggnader]: 'lager_monster' är inte ett giltigt uttryck: {exc}") from exc
-    wfs_url = _text(by, "wfs_url", "[byggnader]", tom_ok=kalla != "wfs")
+    wfs_url = _text(by, "wfs_url", "[byggnader]", tom_ok=True)
     domaner = _textlista(by, "tillatna_varddomaner", "[byggnader]")
-    if kalla == "wfs" and not domaner:
-        raise KommunKonfigFel("[byggnader]: 'tillatna_varddomaner' får inte vara tom för kalla = wfs.")
+    if kalla == "wfs" and not (wfs_url and domaner):
+        raise KommunKonfigFel("[byggnader]: 'wfs_url' och 'tillatna_varddomaner' krävs för kalla = wfs.")
 
     bk = _tabell(data, "baskarta", ("lager", "licens"))
     sky = _tabell(data, "skyfall", ("regn_id", "takvatten"))
@@ -313,6 +400,8 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         baskarta=BaskartaKonfig(
             lager=_textlista(bk, "lager", "[baskarta]"), licens=_text(bk, "licens", "[baskarta]")
         ),
+        hojd=HojdKonfig(kalla=hojd_kalla, reserv_lantmateriet=reserv),
+        filpaket=filpaket,
         dagsljus=dict(dag),
         skyfall=dict(sky),
         geografier=geos,

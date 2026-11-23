@@ -177,10 +177,21 @@ Geografi först (`docs/ARKITEKTUR-DRIFT.md` 0b): området mappas en gång som en
 kontrakt K46), sedan skapas projekt i den. Kommunen är konfigurerad i `data/kommuner/goteborg.toml`, inget är kodat.
 Allt körs i containern, ett kommando per rad (kör dem ett i taget och läs svaret mellan varje).
 
+**Källor (öppna filpaket, ingen nyckel krävs för Göteborgs egna data)**
+
+Göteborgs WFS är avstängd ("Service WFS is disabled"), så kommunfilen använder stadens öppna filpaket (CC0, EPSG:3007, RH 2000):
+
+- Byggnader: baskartan, lagret TAK (takkonturer): `https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip` (DWG, 3D, uppdateras dagligen).
+- Höjd: höjdmodell 2022 (GeoTIFF, Float32, 0,5 m, plattor om 1 x 1 km i paket om 10 x 10 km, bara mark). Paketens adresser är **inte verifierade**: se steg 1.
+- Paketen hämtas en gång till `data/lokal/geo/_filcache/<sha256>/` och klipps till geografins område. `geo/<id>/v1` sparar den klippta höjden (`radata/hojd/hojdmodell_klippt.tif`), takkonturerna (`radata/kommun/byggnader.gpkg`) och paketens sha256 (`radata/filpaket/kallor.json`).
+- **Byggnadshöjd:** baskartans lager har inget höjdattribut. Höjden är takkonturens z (RH 2000, medel av hörnen) minus markhöjden ur höjdmodellen. Konturer utan z (2D) får standardhöjd och en varning; höjdmodellen är en markmodell och ger ingen takhöjd. Utan en kontur för ett hus finns inget hus.
+- DWG kräver LibreDWG:s `dwgread` (`FLODEN_DWGREAD`; inte installerat i containern). Finns en GeoPackage- eller Shapefile-variant i paketet läses den i stället (inget dwgread behövs); en dwgread-JSON i ZIP-filen läses också.
+- Lantmäteriets laser är bara **reserv** för höjden (`[hojd] reserv_lantmateriet`): om höjdmodellen inte går att hämta och kontot har en nyckel. Då varnar manifestet. Lantmäteriets byggnadsprodukter är avstängda som förval (de kan kosta).
+- Använder du Lantmäteri-nyckeln: Geotorgets användarnamn och lösenord kräver **Metod = basic** på sidan Nycklar; förvalet oauth2 gäller API-portalens nyckel och hemlighet. Produkten är STAC Höjd, Laserdata Nedladdning, skog (gratis). Ortofoto Nedladdning är gratis och får användas, men är avstängd som förval för Göteborg (`produkter = ["laser"]`).
+
 **Före första körningen**
 
-- Superadmin-kontot ska ha en egen Lantmäteri-nyckel på sidan **Nycklar** i webben (servernyckeln används aldrig).
-- Kontot som blir utredare i projektet ska vara medlem i en organisation (steg 2 och 3 nedan om det saknas).
+- Kontot som blir utredare i projektet ska vara medlem i en organisation (steg 2 och 3 nedan om det saknas). Superadmin-kontot behöver ingen Lantmäteri-nyckel för Göteborg, men en nyckel (Metod = basic för Geotorgets inloggning) ger reserven.
 
 ```bash
 docker compose -f docker-compose.prod.yml exec floden python -m konto.admin konto-id <superadmin-epost>
@@ -190,23 +201,18 @@ docker compose -f docker-compose.prod.yml exec floden python -m konto.admin gor-
 
 (Första raden skriver konto-id. Andra raden skriver organisations-id; hoppa över de två sista om kontot redan är medlem.)
 
-**1. Lista Göteborgs byggnadslager** (läser bara GetCapabilities; lagernamnen i Göteborgs WFS är inte kända)
+**1. Höjdmodellens paket** (adresserna är inte verifierade; kommunfilen försöker läsa `.zip`-länkar på `https://opengeodata.goteborg.se/files/hojdmodell/2022/hojdmodell_2022.html`, en gissning)
+
+Hämta adresserna på `http://www.goteborg.se/psidata` (Höjdmodell 2022). Ange sedan paketen som täcker Haga (E 147400-147900, N 6397500-6398000 i EPSG:3007) i nästa steg med `--hojdmodell-url`, eller lägg dem i `[filpaket.hojdmodell] urlar` i `data/kommuner/goteborg.toml`. Har du hämtat en ZIP för hand: `--hojdmodell-fil <sökväg>`. WFS-lagerlistan (`floden projekt kommun-lager goteborg`) fungerar bara om WFS-tjänsten är på; den är valfri.
+
+**2. Mappa geografin** (bara superadmin; hämtar höjdmodell och baskarta, tar minuter vid första körningen)
 
 ```bash
-docker compose -f docker-compose.prod.yml exec floden floden projekt kommun-lager goteborg
+docker compose -f docker-compose.prod.yml exec floden floden geografi mappa goteborg-test --konto <superadmin-konto-id> --hojdmodell-url <adress-till-ett-paket>
 ```
 
-Står rätt lager inte först i listan: sätt `lager = "<namn>"` under `[byggnader]` i `data/kommuner/goteborg.toml` (eller ge
-`--byggnadslager <namn>` i nästa steg).
-
-**2. Mappa geografin** (bara superadmin; hämtar Lantmäteriets laser och Göteborgs byggnader, tar minuter)
-
-```bash
-docker compose -f docker-compose.prod.yml exec floden floden geografi mappa goteborg-test --konto <superadmin-konto-id>
-```
-
-Utskriften visar buffert (dagsljus 686 m vid 60 m och 5 grader, och tillrinningens krav), terrängens höjdspann och lägsta
-punkt i kärnan, och skalfelet. Kan köras om: en version som finns lämnas orörd (`--version v2` för en ny mappning).
+Utskriften visar vilka paket som hämtades (storlek, sha256), buffert (dagsljus 686 m vid 60 m och 5 grader, och tillrinningens krav), terrängens höjdspann och lägsta
+punkt i kärnan, och skalfelet. Kan köras om: en version som finns lämnas orörd (`--version v2` för en ny mappning), och paketen hämtas inte om.
 Resultatet ligger i `data/lokal/geo/goteborg-test/v1/manifest.json` och `data/lokal/geo/_lager/<sha256>/`.
 
 ```bash

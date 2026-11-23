@@ -391,7 +391,11 @@ def _vantetid(retry_after: str | None, forsok: int) -> float:
 
 def _nyckelmeddelande(status: int) -> str:
     return (
-        f"Lantmäteriet sa nej ({status}). Antingen stämmer inte nycklarna, eller så är produkten "
-        "inte beställd för kontot på Geotorget (Laserdata Nedladdning skog, Ortofoto Nedladdning, "
-        "Byggnad): Lantmäteriet svarar likadant i båda fallen. Kontrollera båda."
+        f"Lantmäteriet sa nej ({status}). Använder du Geotorgets användarnamn och "
+        "lösenord? Sätt Metod = basic på sidan Nycklar (förvalet oauth2 gäller bara "
+        "API-portalens nyckel och hemlighet). Stämmer metoden kan produkten saknas för "
+        "kontot: Floden behöver STAC Höjd med Laserdata Nedladdning, skog (gratis); "
+        "kontrollera på Geotorget under dina beställningar att den finns och är aktiv. "
+        "Lantmäteriet svarar likadant vid fel nyckel och obeställd produkt. "
+        "För Göteborg finns kommunens egen höjdmodell som reserv (CC0, ingen nyckel)."
     )

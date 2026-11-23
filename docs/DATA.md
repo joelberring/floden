@@ -84,9 +84,12 @@ Nycklarna skrivs aldrig i loggar, manifest eller felmeddelanden (`Nycklar` har e
 O-Tid sparar kontots nycklar krypterade och **visar dem aldrig igen** (bara fyra tecken): har du lagt in dem under
 Mitt konto i O-Tid kan de inte läsas ut därifrån. Hämta dem på nytt hos Lantmäteriet (API-portalen
 `apimanager.lantmateriet.se` för nyckel och hemlighet, eller använd Geotorgets inloggning med `basic`).
-Produkterna måste vara **beställda på Geotorget** för kontot: Laserdata Nedladdning, skog; Ortofoto Nedladdning;
-Byggnad. Lantmäteriet svarar 401/403 både vid fel nyckel och vid obeställd produkt; det går inte att skilja dem,
-och felet säger det.
+Produkterna måste vara **beställda på Geotorget** för kontot. Floden använder de gratis: STAC Höjd med **Laserdata
+Nedladdning, skog** och Ortofoto Nedladdning (gratis, men av som förval för Göteborg). Lantmäteriets byggnadsprodukter
+kan kosta och är avstängda som förval (kommunens egna öppna data används: se `docs/DRIFT.md`, "Göteborg"). Geotorgets
+användarnamn och lösenord kräver **Metod = basic** på sidan Nycklar; förvalet oauth2 gäller API-portalens nyckel och
+hemlighet. Lantmäteriet svarar 401/403 både vid fel nyckel eller metod och vid obeställd produkt; det går inte att skilja
+dem, och felet säger det och nämner metoden.
 Adresserna kan ändras med `LANTMATERIET_TOKEN_URL`, `LANTMATERIET_STAC_HOJD_URL`, `LANTMATERIET_STAC_BILD_URL` och
 `LANTMATERIET_STAC_VEKTOR_URL` (som O-Tids `OTID_LM_*`).
 
