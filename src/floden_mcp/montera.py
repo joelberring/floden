@@ -24,6 +24,10 @@ class McpAvstangd(Exception):
     """`/mcp` monteras inte. Texten säger varför (visas vid start)."""
 
 
+MCP_KLIENT_ORIGINS: tuple[str, ...] = ("https://claude.ai", "https://claude.com")
+"""Origin som MCP-klienter i molnet (Claude-appen) skickar. Släpps igenom av MCP-bibliotekets kontroll."""
+
+
 @dataclass
 class MonteradMcp:
     """Den monterade MCP-appen och dess livscykel (sessionshanteraren måste köras)."""
@@ -56,7 +60,10 @@ def montera_mcp(webb_app: Any, rot: Path, *, host: str) -> MonteradMcp:
         transport = TransportSecuritySettings(
             enable_dns_rebinding_protection=True,
             allowed_hosts=[vard, f"{vard}:*", "127.0.0.1:*", "localhost:*"],
-            allowed_origins=[konto.konfig.origin],
+            # Claude-appens anrop kommer från Anthropics moln med Origin claude.ai/claude.com. Kakbaserade
+            # anrop skyddas ändå av KontoSkydd (CSRF och egen Origin); bearer-anrop behöver inget skydd mot
+            # CSRF. Värdkontrollen ovan är det som skyddar mot DNS rebinding.
+            allowed_origins=[konto.konfig.origin, *MCP_KLIENT_ORIGINS],
         )
     starlette = server.streamable_http_app(host=host, transport_security=transport)
     return MonteradMcp(
