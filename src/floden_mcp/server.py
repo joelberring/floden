@@ -423,9 +423,13 @@ def bygg_server(
         }
 
     # ------------------------------------------------------------------ verktyg: läsa
-    @verktyg("projekt_lista", "Listar projekten Floden kan räkna på (just nu bara demokvarteret).")
+    @verktyg(
+        "projekt_lista",
+        "Listar projekten du har tillgång till: lokalt demokvarteret; på en server med inloggning "
+        "kontots projekt (med roll) och demokvarteret. Projekt utan beräkningar har finns=false.",
+    )
     def projekt_lista(modell: Modell = None, roll: Roll = None) -> dict[str, Any]:
-        return tjanst.projekt_lista()
+        return tjanst.projekt_lista(tillstand.konto)
 
     @verktyg(
         "projekt_info",

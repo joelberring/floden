@@ -158,22 +158,23 @@ class FlodenTjanst:
 
     # ------------------------------------------------------------------ läsa: projekt
 
-    def projekt_lista(self) -> dict[str, Any]:
+    def projekt_lista(self, konto_id: str | None = None) -> dict[str, Any]:
+        """Projekten som anroparen har tillgång till. Med inloggning på är det kontots projekt
+        (`FlodenApiApp.projekt_lista_for`, samma lista som webben); utan konto på en server med
+        inloggning är listan tom. Inloggning av (lokalt): demokvarteret som förut."""
         with _oversatt():
-            lista = self.app.projekt.lista()["projekt"]
+            lista = self.app.projekt_lista_for(konto_id)["projekt"]
             demo = self.fragor.demo()
         ut: list[dict[str, Any]] = []
         for p in lista:
             ut.append({**p, "paahittat": bool(p.get("paahittat"))})
-        return {
-            "projekt": ut,
-            "demon_byggd": bool(demo.get("finns")),
-            "tips": (
-                None
-                if demo.get("finns")
-                else "Demokvarteret är inte byggt. Kör `floden demo` på datorn där Floden körs."
-            ),
-        }
+        inloggning_pa = self.app.konto.aktiv
+        tips = None
+        if inloggning_pa and konto_id is None:
+            tips = "Inloggning krävs: projekten visas per konto (anslut över HTTP med en session)."
+        elif not demo.get("finns"):
+            tips = "Demokvarteret är inte byggt. Kör `floden demo` på datorn där Floden körs."
+        return {"projekt": ut, "demon_byggd": bool(demo.get("finns")), "tips": tips}
 
     def projekt_info(self, projekt: str) -> dict[str, Any]:
         with _oversatt():

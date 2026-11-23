@@ -12,7 +12,7 @@ from typing import Any
 
 from data_inlasning.cache import DataInlasningFel
 from lantmateriet.klient import LantmaterietFel, LmKlient, Tjanster
-from lantmateriet.nycklar import NyckelFel, las_nycklar
+from lantmateriet.nycklar import NyckelFel, las_nycklar_for_konto
 
 
 def registrera(subparsers: Any) -> None:
@@ -60,6 +60,13 @@ def registrera(subparsers: Any) -> None:
     )
     lm.add_argument(
         "--max-km2", type=float, default=25.0, help="Största tillåtna yta (standard 25)."
+    )
+    lm.add_argument(
+        "--konto",
+        type=str,
+        default=None,
+        help="Konto-id vars sparade Lantmäteri-nyckel används (krävs när [konto] inloggning = "
+        '"pa"; annars används nyckeln i miljön eller config.local.toml).',
     )
     lm.add_argument(
         "--lista-samlingar",
@@ -141,7 +148,7 @@ def _kor_data(args: argparse.Namespace) -> int:
     from lantmateriet.omrade import las_omrade
     from lantmateriet.stac import lista_samlingar
 
-    klient = LmKlient(las_nycklar(), Tjanster.fran_miljo())
+    klient = LmKlient(las_nycklar_for_konto(args.konto), Tjanster.fran_miljo())
     if args.lista_samlingar:
         t = klient.tjanster
         for namn, url in (("hojd", t.hojd), ("bild", t.bild), ("vektor", t.vektor)):

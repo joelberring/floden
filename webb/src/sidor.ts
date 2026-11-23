@@ -7,7 +7,7 @@
  * (AGENTS.md: tal kommer bara ur beräkningar). Det som saknas döljs eller förklaras.
  */
 import { forvaltningSynlig, halsningsnamn, kontoHjalteHtml, kontoHuvudHtml, kontoLage } from "./konto.ts";
-import type { ModulInfo, OmradeSammanfattning, ProjektAvsnitt, ProjektSvar, RapportRad } from "./types.ts";
+import type { ModulInfo, OmradeSammanfattning, ProjektAvsnitt, ProjektListaPost, ProjektSvar, RapportRad } from "./types.ts";
 
 export function esc(text: string): string {
   return text
@@ -18,7 +18,7 @@ export function esc(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export type SidId = "start" | "projekt" | "karta" | "fragor" | "om" | "forvaltning";
+export type SidId = "start" | "projekt" | "karta" | "fragor" | "om" | "forvaltning" | "nycklar" | "administration";
 
 export const PROJEKT_ID = "demokvarteret";
 
@@ -92,7 +92,32 @@ export function sidhuvud(aktiv: SidId): string {
 
 /* ---------- Startsida ---------- */
 
-export function sidaStart(moduler: ModulInfo[], harProjekt: boolean): string {
+/** Projektlistan på startsidan för en inloggad användare: ett kort per projekt med länk. */
+export function dinaProjekt(projekt: ProjektListaPost[]): string {
+  if (kontoLage().lage !== "in" || projekt.length === 0) return "";
+  const rader = projekt
+    .map(
+      (p) => `
+        <li>
+          <a class="textlank" href="#/projekt/${encodeURIComponent(p.id)}">${esc(p.namn)}</a>
+          <span class="dampad">${esc([p.undertitel, p.roll].filter(Boolean).join(" · "))}</span>
+        </li>`,
+    )
+    .join("");
+  return `
+    <section id="dina-projekt" class="linje-topp">
+      <div class="sidbredd">
+        <div class="sektionsrad">${etikett("Dina projekt")}</div>
+        <ul class="enkel-lista rader">${rader}</ul>
+      </div>
+    </section>`;
+}
+
+/**
+ * Startsidan. `harProjekt` gäller demokvarteret (som förut); `projekt` är listan från
+ * `/api/projekt` och styr "Dina projekt" och knapparna när användaren är inloggad.
+ */
+export function sidaStart(moduler: ModulInfo[], harProjekt: boolean, projekt: ProjektListaPost[] = []): string {
   const namn = halsningsnamn();
   const modulKort = moduler
     .map(
@@ -109,16 +134,23 @@ export function sidaStart(moduler: ModulInfo[], harProjekt: boolean): string {
     ["2", "Se före och efter", "Kartan visar hur sol och skyfall ser ut i dag och efter att ett hus byggts eller höjts."],
     ["3", "Läs av värden", "För markören över kartan: värdena för före, efter och skillnad står under den."],
   ];
-  const cta = harProjekt
+  const harDemo = projekt.length > 0 ? projekt.some((p) => p.id === PROJEKT_ID && p.finns !== false) : harProjekt;
+  const forsta = projekt[0];
+  const cta = harDemo
     ? `<a class="knapp knapp-svart knapp-stor" href="#/projekt/${PROJEKT_ID}">Öppna demokvarteret</a>
        <a class="knapp knapp-stor" href="#/karta/${PROJEKT_ID}">Gå direkt till kartan</a>`
-    : `<a class="knapp knapp-stor" href="#/fragor">Öppna utredningsfrågorna</a>`;
+    : forsta
+      ? `<a class="knapp knapp-svart knapp-stor" href="#/projekt/${encodeURIComponent(forsta.id)}">Öppna ${esc(forsta.namn)}</a>
+         <a class="knapp knapp-stor" href="#/fragor">Öppna utredningsfrågorna</a>`
+      : `<a class="knapp knapp-stor" href="#/fragor">Öppna utredningsfrågorna</a>`;
   // Utloggad på en server med inloggning: projektlistan svarar 401, demon finns ändå.
-  const demoSaknas = harProjekt
-    ? ""
-    : kontoLage().lage === "ut"
-      ? `<p class="hjalp-ruta" role="note">Logga in för att öppna demokvarteret.</p>`
-      : `<p class="hjalp-ruta" role="note">Demokvarteret är inte byggt på den här datorn än. Kör <code>floden demo</code> i en terminal och ladda om sidan.</p>`;
+  // Finns det projekt visas ingen text om att demon ska byggas.
+  const demoSaknas =
+    harDemo || projekt.length > 0
+      ? ""
+      : kontoLage().lage === "ut"
+        ? `<p class="hjalp-ruta" role="note">Logga in för att öppna demokvarteret.</p>`
+        : `<p class="hjalp-ruta" role="note">Demokvarteret är inte byggt på den här datorn än. Kör <code>floden demo</code> i en terminal och ladda om sidan.</p>`;
   return `
     <section class="hjalte sidbredd">
       <div>
@@ -126,11 +158,13 @@ export function sidaStart(moduler: ModulInfo[], harProjekt: boolean): string {
         <h1 class="hjalte-rubrik">Se hur ett nytt hus påverkar sol och skyfall.</h1>
       </div>
       <div class="hjalte-text">
-        <p class="ingress">Floden räknar på mark, byggnader och regn och visar före och efter på en karta. Exemplet här är ett påhittat kvarter.</p>
+        <p class="ingress">Floden räknar på mark, byggnader och regn och visar före och efter på en karta.${harDemo ? " Exemplet här är ett påhittat kvarter." : ""}</p>
         <div class="knapp-par">${cta}${kontoHjalteHtml()}</div>
         ${demoSaknas}
       </div>
     </section>
+
+    ${dinaProjekt(projekt)}
 
     <section id="steg" class="linje-topp">
       <div class="sidbredd">
@@ -345,6 +379,23 @@ export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): 
     </div>`;
 }
 
+/** Ett projekt ur kontoregistret som ännu saknar beräkningar (inget påhittat innehåll). */
+export function sidaProjektUtanData(p: ProjektListaPost | null): string {
+  if (!p) {
+    return `
+    <div class="sidbredd innehall">
+      <h1 class="sidrubrik stor">Projekt</h1>
+      <p class="hjalp-ruta" role="note">Projektet finns inte, eller så har du inte tillgång till det.</p>
+    </div>`;
+  }
+  return `
+    <div class="sidbredd innehall">
+      <p class="projekt-etikett">${p.roll ? `<span class="chip">${esc(p.roll)}</span>` : ""}</p>
+      <h1 class="sidrubrik stor">${esc(p.namn)}</h1>
+      <p class="hjalp-ruta" role="note">Projektet har inga beräkningar än. Det du ser här kommer från kontoregistret; beräkningar och karta kopplas till projektet när de finns.</p>
+    </div>`;
+}
+
 /* ---------- Om beräkningarna ---------- */
 
 export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[]): string {
@@ -376,7 +427,6 @@ export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[
       <li class="kontroll-rad">
         <span><strong>${esc(o.kod)}</strong> ${esc(o.namn)}</span>
         <span class="dampad">${esc(o.beskrivning)}</span>
-        <a class="textlank" href="#/arbetsbank/${encodeURIComponent(o.omrade_id)}">Öppna i arbetsbänken</a>
       </li>`,
     )
     .join("");

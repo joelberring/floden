@@ -10,7 +10,17 @@ export type KontoLage =
   | { lage: "okand" }
   | { lage: "av" }
   | { lage: "ut" }
-  | { lage: "in"; namn: string; epost: string; medlemskap: Medlemskap[]; projekt: KontoProjekt[] };
+  | {
+      lage: "in";
+      namn: string;
+      epost: string;
+      medlemskap: Medlemskap[];
+      projekt: KontoProjekt[];
+      /** Superadmin (sätts bara med serverkommando). */
+      superadmin?: boolean;
+      /** Superadmin eller organisationsadmin: får använda Administration. */
+      admin?: boolean;
+    };
 
 export interface Medlemskap {
   organisation: string;
@@ -70,7 +80,7 @@ export function tolkaKontoSvar(status: number, data: unknown): KontoLage {
   if (status === 401) return { lage: "ut" };
   const d = (data ?? {}) as {
     inloggning?: string;
-    konto?: { namn?: string; epost?: string };
+    konto?: { namn?: string; epost?: string; superadmin?: boolean; admin?: boolean };
     medlemskap?: Array<{ organisation?: string; forvaltning?: string | null; roll?: string }>;
     projekt?: Array<{ id?: string; namn?: string; roll?: string }>;
   };
@@ -80,6 +90,8 @@ export function tolkaKontoSvar(status: number, data: unknown): KontoLage {
       lage: "in",
       namn: d.konto.namn ?? "",
       epost: d.konto.epost ?? "",
+      superadmin: d.konto.superadmin === true,
+      admin: d.konto.admin === true || d.konto.superadmin === true,
       medlemskap: (d.medlemskap ?? []).map((m) => ({
         organisation: m.organisation ?? "",
         forvaltning: m.forvaltning ?? null,
@@ -130,7 +142,9 @@ export function kontoHuvudHtml(): string {
   }
   if (l.lage === "in") {
     const vem = l.namn || l.epost;
-    return `<span class="konto-inloggad" data-konto="inloggad">Inloggad som <strong>${esc(vem)}</strong></span>
+    return `<a href="#/nycklar" data-konto="nycklar">Nycklar</a>
+      ${l.admin ? `<a href="#/administration" data-konto="administration">Administration</a>` : ""}
+      <span class="konto-inloggad" data-konto="inloggad">Inloggad som <strong>${esc(vem)}</strong></span>
       <button type="button" class="knapp" data-konto="logga-ut">Logga ut</button>`;
   }
   return "";
@@ -151,6 +165,20 @@ export function kontoHjalteHtml(): string {
  */
 export function forvaltningSynlig(l: KontoLage = aktuellt): boolean {
   return l.lage === "in" && l.medlemskap.length > 0;
+}
+
+/**
+ * Arbetsbänken (den äldre kartan med kontrollfallen) nås bara med adressen `#/arbetsbank` och
+ * visas bara för superadmin, eller alltid när inloggning är av (lokalt). Servern avgör inte detta:
+ * det är en synlighetsregel i klienten, inte ett skydd.
+ */
+export function arbetsbankTillaten(l: KontoLage = aktuellt): boolean {
+  return l.lage === "av" || (l.lage === "in" && l.superadmin === true);
+}
+
+/** Administration visas för superadmin och organisationsadmin. */
+export function adminTillaten(l: KontoLage = aktuellt): boolean {
+  return l.lage === "in" && l.admin === true;
 }
 
 /** Namn att hälsa med, eller null när ingen är inloggad (då hälsar sidan inte alls). */
