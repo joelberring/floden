@@ -352,6 +352,34 @@ class ProjektTjanst:
         }
         return avsnitt, vyer, regn_ut
 
+    def marksiffror_for(self, korning_id: str, lager_id: str) -> dict[str, Any]:
+        """Ytor och största förändring på mark för ett skillnadslager (Resultat-steget).
+
+        Samma funktion och samma regler som projektsidans tal (`FragaTjanst.marksiffror`, utan
+        byggnadernas tak): tröskeln är soltimmar 1 timme (som projektsidan) och annars
+        jämförelsens egen tröskel i körningen. Finns inget markvärde är `siffror` `None`."""
+        res = self.fragor.resultat(korning_id)
+        lager = next((x for x in res["lager"] if x["id"] == lager_id), None)
+        if lager is None:
+            raise FlodenWebbFel(f"Okänt lager '{lager_id}'.", status_kod=404)
+        if lager["typ"] != "skillnad":
+            raise FlodenWebbFel("Markytor finns bara för skillnadslager.", status_kod=422)
+        if lager["roll"] == "soltimmar":
+            troskel = SOL_GRANS_H
+        else:
+            troskel = float(
+                next(
+                    (j["troskel"] for j in res["jamforelser"] if j["analys"] == lager["analys"]),
+                    0.01,
+                )
+            )
+        return {
+            "lager_id": lager_id,
+            "enhet": lager.get("enhet"),
+            "troskel": troskel,
+            "siffror": self._marksiffror(korning_id, lager, troskel),
+        }
+
     # ------------------------------------------------------------------ API
 
     def lista(self) -> dict[str, Any]:

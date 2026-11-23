@@ -71,7 +71,8 @@ Enter avslutar, Esc avbryter, Backsteg tar bort senaste punkten, Delete tar bort
 
 | Adress | Sida |
 | --- | --- |
-| `#/` | Start: tre steg och modulernas status (`GET /api/moduler`) |
+| `#/` | Flödet, steg 1 Projekt: projektlistan (`GET /api/projekt`) och kartan för det valda projektet |
+| `#/p/<projekt>/forslag`, `/fragor`, `/resultat`, `/rapport` | Flödets steg 2 till 5 (kod i `webb/src/flode/`, stilen i `flode.css`; se *Flödet* nedan) |
 | `#/projekt` (alias `#/oversikt`) | Demokvarteret med siffror ur körningarna (`GET /api/projekt`) |
 | `#/karta/<projekt>?vy=<vy>` | Kartan: lagerpanel, rita planförslag, före, efter, skillnad, svep, sida vid sida, avläsning |
 | `#/fragor` och `#/fragor/<ref>` | Utredningsfrågor (se ovan) |
@@ -93,4 +94,15 @@ npm run build
 ```
 
 API-testerna ligger i `tests/webb/` (`PYTHONPATH=src python -m pytest -q tests/webb`). Skärmbilderna i
-`docs/bilder/webb-*.png` tas med `python tools/webb_skarmbild.py` (playwright och Chrome).
+`docs/bilder/flode-*.png` (fem steg, 1440x900 och `-smal` 390x844) tas med `python tools/flode_skarmbild.py`; `docs/bilder/webb-*.png` tas med `python tools/webb_skarmbild.py` (playwright och Chrome).
+
+## Flödet (`#/` och `#/p/<projekt>/<steg>`)
+
+Fem steg med en stegrad överst: 1 Projekt, 2 Förslag, 3 Frågor, 4 Resultat, 5 Rapport. Adresstolkningen
+(`flode/adress.ts`), statusetiketterna (`flode/status.ts`: Floden svarar, Delvis, Underlag saknas) och
+nyckeltalen (`flode/nyckeltal.ts`, saknade tal blir "–") är ren kod med tester (`npm test`).
+Ritlogik, scenario-API:erna, 3D-vyn och svepet är de befintliga. Små tillägg på servern:
+`GET /api/korningar/<id>/marksiffror?lager=` (samma mark-siffror som projektsidan) och
+`GET /api/projekt/<id>/rapporter/<rapport>` (rubriker, påståenden och kontrollpunkter till förhandsvisningen).
+Inte byggt än: att skapa projekt (knappen visar "kommer snart") och att skapa rapporter från webben.
+Om beräkningarna och Utredningsfrågor nås via kontomenyn.

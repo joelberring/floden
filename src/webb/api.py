@@ -680,6 +680,20 @@ class FlodenApiApp:
         arkiv = RapportArkiv(self.rapportmapp)
         return [sammanfattning(r, arkiv) for r in arkiv.lista(projekt_id)]
 
+    def rapport_innehall(self, projekt_id: str, rapport_id: str) -> dict[str, Any]:
+        """En rapports rubriker, påståenden och kontrollpunkter (förhandsvisning i webben)."""
+        from rapport.skissrapport import RapportArkiv, RapportFel
+        from webb.rapportvy import rapport_innehall
+
+        arkiv = RapportArkiv(self.rapportmapp)
+        try:
+            r = arkiv.las(rapport_id)
+        except RapportFel as exc:
+            raise FlodenWebbFel(str(exc), status_kod=404) from exc
+        if r.projekt != projekt_id:
+            raise FlodenWebbFel("Rapporten hör inte till projektet.", status_kod=404)
+        return rapport_innehall(r, arkiv)
+
     def rapportfil(
         self, projekt_id: str, rapport_id: str, fmt: str
     ) -> tuple[int, dict[str, str], bytes]:
@@ -2029,6 +2043,10 @@ class FlodenApiApp:
             return _json_svar(200, self.fragor.korning_status(delar[0]))
         if verb == "GET" and len(delar) == 2 and delar[1] == "resultat":
             return _json_svar(200, self.fragor.resultat(delar[0]))
+        if verb == "GET" and len(delar) == 2 and delar[1] == "marksiffror":
+            return _json_svar(
+                200, self.projekt.marksiffror_for(delar[0], query.get("lager", [""])[0])
+            )
         if verb == "GET" and len(delar) == 2 and delar[1] == "avlasning":
             try:
                 e = float(query.get("e", [""])[0])
@@ -2087,6 +2105,8 @@ class FlodenApiApp:
                     return _json_svar(200, svar)
                 if len(delar) == 2 and delar[1] == "rapporter":
                     return _json_svar(200, {"rapporter": self.rapporter_for(delar[0])})
+                if len(delar) == 3 and delar[1] == "rapporter":
+                    return _json_svar(200, self.rapport_innehall(delar[0], delar[2]))
                 if len(delar) == 5 and delar[1] == "rapporter" and delar[3] == "fil":
                     return self.rapportfil(delar[0], delar[2], delar[4])
 

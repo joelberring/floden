@@ -1,0 +1,287 @@
+/*
+ * Flödet: 1 Projekt → 2 Förslag → 3 Frågor → 4 Resultat → 5 Rapport. Utseendet följer de godkända
+ * skisserna: avskalat, små rubriker (16 px), data (karta, 3D, siffror) störst, alltid synligt var man
+ * är i flödet. Inter om det finns på datorn, annars systemets sans-serif; ingen typsnittsfil hämtas
+ * från någon tjänst (löftet i tema.css). Brödtexten i rapporten är serif (Gelasio, Georgia).
+ */
+body[data-sida="flode"] {
+  --fl-bg: #fafaf7;
+  --fl-ink: #1b1c17;
+  --fl-mute: #5d6157;
+  --fl-line: #e4e2da;
+  --fl-line-in: #d6d3c8;
+  --fl-yta: #ffffff;
+  --fl-karta: #f1f0ea;
+  --fl-ny: #c8611a;
+  background: var(--fl-bg);
+  color: var(--fl-ink);
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+body[data-sida="flode"] .sidhuvud {
+  border-bottom: 1px solid var(--fl-line);
+  background: var(--fl-yta);
+}
+body[data-sida="flode"] a { color: var(--fl-ink); }
+body[data-sida="flode"] a:hover { color: #000; }
+
+/* ---------- Huvud ---------- */
+.flode-huvud {
+  height: 56px;
+  box-sizing: border-box;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.flode-ordmarke { font-size: 15px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.flode-ordmarke-projekt { font-weight: 400; color: var(--fl-mute); }
+.flode-stegrad { display: flex; gap: 4px; flex: 1 1 auto; justify-content: center; }
+.flode-steg {
+  padding: 6px 12px;
+  border-radius: 999px;
+  color: var(--fl-mute) !important;
+  text-decoration: none;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.flode-steg:hover { background: #f1f0ea; }
+.flode-steg.aktivt { background: var(--fl-ink); color: #fff !important; font-weight: 500; }
+.flode-steg-nr { opacity: 0.75; }
+.flode-konto { position: relative; }
+.flode-konto-knapp {
+  width: 32px; height: 32px; border: 0; border-radius: 999px; background: #e9e7df;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0;
+}
+.flode-meny {
+  position: absolute; right: 0; top: 40px; z-index: 30; min-width: 220px; margin: 0; padding: 6px; list-style: none;
+  background: #fff; border: 1px solid var(--fl-line); border-radius: 8px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+}
+.flode-meny li:empty { display: none; }
+.flode-meny-vem { padding: 8px 10px; color: var(--fl-mute); font-size: 12px; }
+.flode-meny-rad {
+  display: block; width: 100%; box-sizing: border-box; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent;
+  text-align: left; text-decoration: none; font-size: 13px; cursor: pointer;
+}
+.flode-meny-rad:hover { background: #f1f0ea; }
+.flode-konto-knapp:focus-visible, .flode-steg:focus-visible, .flode-meny-rad:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
+
+/* ---------- Sidstomme ---------- */
+.flode-sida { display: flex; flex-wrap: wrap; min-height: calc(100vh - 57px); }
+.flode-sida > * { box-sizing: border-box; }
+.flode-h { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.4; }
+.flode-h:focus, .flode-slutsats:focus, .flode-rapport-titel:focus { outline: none; }
+.flode-dampad { color: var(--fl-mute); }
+.flode-liten { font-size: 12px; }
+.flode-fel { color: #9c2b1d; }
+.flode-varning { color: #6b4a12; }
+.flode-pad { padding: 24px; }
+.flode-sida code { font-size: 12px; background: #f1f0ea; padding: 1px 4px; border-radius: 3px; }
+
+.flode-karta { flex: 999 1 560px; min-width: 0; position: relative; background: var(--fl-karta); min-height: 420px; }
+.flode-karta-yta { position: absolute; inset: 0; }
+.flode-karta-yta.flode-b { z-index: 1; }
+.flode-panel {
+  flex: 1 1 320px; max-width: 360px; padding: 24px; display: flex; flex-direction: column; gap: 20px;
+  border-left: 1px solid var(--fl-line); background: var(--fl-yta);
+}
+.flode-lista {
+  flex: 1 1 360px; max-width: 400px; padding: 24px; display: flex; flex-direction: column; gap: 16px;
+  border-right: 1px solid var(--fl-line); background: var(--fl-yta);
+}
+.flode-bred { flex: 999 1 560px; min-width: 0; padding: 24px 32px; display: flex; flex-direction: column; gap: 16px; }
+.flode-panelhuvud { display: flex; flex-direction: column; gap: 4px; }
+.flode-panelinnehall { display: flex; flex-direction: column; gap: 20px; }
+.flode-rad-slut { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+
+/* ---------- Knappar och fält ---------- */
+.flode-knapp {
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; height: 36px; padding: 0 14px;
+  border: 1px solid var(--fl-line-in); border-radius: 6px; background: #fff; color: var(--fl-ink); font: inherit; font-size: 13px;
+  font-weight: 500; text-decoration: none; cursor: pointer;
+}
+.flode-knapp.svart { background: var(--fl-ink); border-color: var(--fl-ink); color: #fff !important; }
+.flode-knapp.stor { height: 44px; font-size: 14px; }
+.flode-knapp:disabled, .flode-knapp.inaktiv { opacity: 0.45; cursor: not-allowed; }
+.flode-knapp:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
+.flode-falt { display: flex; flex-direction: column; gap: 8px; }
+.flode-falt label, .flode-fieldset legend { font-size: 12px; color: var(--fl-mute); }
+.flode-sida input[type="text"], .flode-sida select, .flode-sida textarea {
+  box-sizing: border-box; width: 100%; border: 1px solid var(--fl-line-in); border-radius: 6px; background: #fff; font: inherit; color: inherit;
+}
+.flode-sida input[type="text"], .flode-sida select { height: 40px; padding: 0 10px; }
+.flode-sida textarea { padding: 8px 10px; resize: vertical; }
+.flode-sida input:disabled, .flode-sida select:disabled { background: #f6f5f0; color: var(--fl-mute); }
+.flode-tva { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.flode-ruta { padding: 12px; border-radius: 8px; background: #f6f5f0; font-size: 13px; line-height: 1.5; color: #3f4239; }
+.flode-ruta p { margin: 0 0 6px; }
+.flode-ruta p:last-child { margin: 0; }
+.flode-ruta.ok { background: #e3efe0; color: #24521d; }
+.flode-ruta.varning { background: #f6ecd9; color: #6b4a12; }
+.flode-fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.flode-fieldset legend { padding: 0; margin-bottom: 8px; }
+
+/* Segment och flikar */
+.flode-segment { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: #f1f0ea; border-radius: 8px; }
+.flode-segment button { height: 36px; border: 0; border-radius: 6px; background: transparent; font: inherit; font-size: 13px; color: var(--fl-mute); cursor: pointer; }
+.flode-segment button[aria-pressed="true"] { background: #fff; color: var(--fl-ink); font-weight: 500; }
+.flode-segment.liten button { height: 28px; font-size: 12px; }
+.flode-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.flode-chips button {
+  height: 32px; padding: 0 12px; border: 1px solid var(--fl-line-in); border-radius: 999px; background: #fff; font: inherit; font-size: 13px; cursor: pointer;
+}
+.flode-chips button.tom { color: var(--fl-mute); }
+.flode-chips button[aria-pressed="true"] { background: var(--fl-ink); border-color: var(--fl-ink); color: #fff; }
+.flode-chips.liten button { height: 28px; font-size: 12px; }
+.flode-flikar { display: flex; gap: 16px; border-bottom: 1px solid var(--fl-line); }
+.flode-flikar button {
+  height: 36px; padding: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; font: inherit; font-size: 13px; color: var(--fl-mute); cursor: pointer;
+}
+.flode-flikar button[aria-selected="true"] { border-bottom-color: var(--fl-ink); color: var(--fl-ink); font-weight: 600; }
+
+/* ---------- 1 Projekt ---------- */
+.flode-listhuvud { display: flex; align-items: center; justify-content: space-between; }
+.flode-knapp.liten { height: 36px; }
+.flode-rader { display: flex; flex-direction: column; gap: 16px; }
+.flode-projekt {
+  display: flex; gap: 12px; padding: 12px; border: 1px solid var(--fl-line); border-radius: 8px; text-decoration: none;
+}
+.flode-projekt.vald { border-color: var(--fl-ink); }
+.flode-projekt img, .flode-miniatyr-tom { width: 64px; height: 64px; flex: 0 0 auto; object-fit: cover; border-radius: 4px; background: #eeece4; }
+.flode-projekt-text { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 0; }
+.flode-projekt-namn { font-weight: 600; font-size: 14px; }
+.flode-not { margin: auto 0 0; color: var(--fl-mute); font-size: 13px; line-height: 1.5; }
+.flode-not.framhav { color: var(--fl-ink); font-weight: 500; }
+.flode-kartkort {
+  position: absolute; left: 24px; bottom: 24px; z-index: 2; padding: 10px 14px; background: #fff; border: 1px solid var(--fl-line);
+  border-radius: 8px; font-size: 13px; display: flex; gap: 16px; max-width: calc(100% - 48px);
+}
+.flode-kartkort-hoger { left: auto; right: 24px; }
+
+/* ---------- 2 Förslag ---------- */
+.flode-verktyg {
+  position: absolute; left: 24px; top: 24px; z-index: 2; display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  background: #fff; border: 1px solid var(--fl-line); border-radius: 8px;
+}
+.flode-verktyg button {
+  height: 40px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--fl-ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
+}
+.flode-verktyg button:hover:not(:disabled) { background: #f1f0ea; }
+.flode-verktyg button[aria-pressed="true"] { background: var(--fl-ink); color: #fff; }
+.flode-verktyg button:disabled { color: #a3a69b; cursor: not-allowed; }
+.flode-verktyg button:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
+.flode-hjalp { color: var(--fl-mute); }
+.flode-hjalp.fel { color: #9c2b1d; }
+
+/* ---------- 3 Frågor ---------- */
+.flode-rubrikrad { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.flode-fraglista { display: flex; flex-direction: column; background: #fff; border: 1px solid var(--fl-line); border-radius: 8px; }
+.flode-fraglista > p { padding: 12px 16px; margin: 0; }
+.flode-fraga { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #efede6; cursor: pointer; }
+.flode-fraga:last-child { border-bottom: 0; }
+.flode-fraga-text { flex: 1 1 auto; }
+.flode-fraga-text.dampad { color: var(--fl-mute); }
+.flode-fraga input { width: 16px; height: 16px; flex: 0 0 auto; }
+.flode-etikett { font-size: 12px; padding: 3px 8px; border-radius: 999px; white-space: nowrap; }
+.flode-etikett.svarar { background: #e3efe0; color: #24521d; }
+.flode-etikett.delvis { background: #f6ecd9; color: #6b4a12; }
+.flode-etikett.saknas { background: #efede6; color: #4a4d44; }
+.flode-sammanfattning { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 8px; font-size: 13px; }
+.flode-sammanfattning dt { color: var(--fl-mute); }
+.flode-sammanfattning dd { margin: 0; font-weight: 600; text-align: right; }
+
+/* ---------- 4 Resultat ---------- */
+.flode-vaxel {
+  position: absolute; left: 50%; top: 20px; transform: translateX(-50%); z-index: 3; display: flex; gap: 4px; padding: 4px;
+  background: #fff; border: 1px solid var(--fl-line); border-radius: 999px; max-width: calc(100% - 24px);
+}
+.flode-vaxel button { height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; font: inherit; font-size: 13px; color: var(--fl-mute); cursor: pointer; }
+.flode-vaxel button[aria-pressed="true"] { background: var(--fl-ink); color: #fff; }
+.flode-svep {
+  position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; background: #fff; border: 1px solid var(--fl-line); border-radius: 999px; font-size: 12px; color: var(--fl-mute);
+}
+.flode-svep input { width: 220px; }
+.flode-forklaring { flex-direction: column; gap: 8px; font-size: 12px; z-index: 3; }
+.flode-kort-rubrik { font-weight: 600; }
+.flode-band { display: block; width: 200px; height: 10px; border-radius: 2px; }
+.flode-bandtext { display: flex; justify-content: space-between; width: 200px; color: var(--fl-mute); }
+.flode-klasser { display: flex; flex-direction: column; gap: 4px; color: var(--fl-mute); }
+.flode-klasser i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -2px; border-radius: 2px; }
+.flode-slutsats { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; }
+.flode-tal { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.flode-tal div { display: flex; flex-direction: column; gap: 4px; }
+.flode-tal dt { font-size: 12px; color: var(--fl-mute); }
+.flode-tal dd { margin: 0; font-size: 22px; font-weight: 600; }
+.flode-staplar { display: flex; flex-direction: column; gap: 6px; }
+.flode-stapel { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.flode-stapel > span:first-child { width: 64px; flex: 0 0 auto; }
+.flode-stapel { white-space: nowrap; }
+.flode-stapel-fyll { display: block; height: 10px; max-width: 120px; flex: 0 1 auto; background: #2171b5; border-radius: 2px; }
+.flode-stapel-fyll.ljus { background: #9ecae1; }
+
+/* ---------- 5 Rapport ---------- */
+.flode-innehall {
+  flex: 1 1 260px; max-width: 300px; padding: 24px; display: flex; flex-direction: column; gap: 12px;
+  border-right: 1px solid var(--fl-line); background: #fff;
+}
+.flode-liten-rubrik { margin: 0; font-size: 13px; font-weight: 600; color: var(--fl-mute); }
+.flode-innehall-rad {
+  display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; color: var(--fl-ink);
+}
+.flode-innehall-rad:hover { text-decoration: underline; }
+.flode-prick { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 999px; }
+.flode-prick.gron { background: #3c8a3a; }
+.flode-prick.gul { background: #c58a13; }
+.flode-prick.gra { background: #8c8f84; }
+.flode-forhandsvisning { flex: 999 1 520px; min-width: 0; background: #eeede7; padding: 32px; display: flex; justify-content: center; overflow: auto; }
+.flode-papper {
+  width: 100%; max-width: 620px; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08); padding: 48px 56px;
+  display: flex; flex-direction: column; gap: 16px; height: max-content;
+}
+.flode-papper h2 { margin: 8px 0 0; font-size: 14px; font-weight: 600; scroll-margin-top: 16px; }
+.flode-rapport-huvud { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--fl-mute); border-bottom: 1px solid var(--fl-ink); padding-bottom: 8px; }
+.flode-rapport-huvud strong { color: var(--fl-ink); }
+.flode-rapport-titel { margin: 8px 0 0; font-size: 22px; line-height: 1.2; font-weight: 600; }
+.flode-brodtext { margin: 0; font-family: Gelasio, Georgia, serif; font-size: 14px; line-height: 1.55; }
+.flode-brodtext mark { background: #fff1cc; padding: 0 2px; }
+.flode-rapport-meta { margin: 0; font-size: 11px; color: var(--fl-mute); }
+.flode-kontrollista { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.flode-kontrollista li { display: flex; justify-content: space-between; gap: 12px; }
+.flode-kontrollista .ok { color: #24521d; }
+.flode-kontrollista .fel { color: #9c2b1d; }
+.flode-export { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+
+/* Skalstapeln från kartmotorn flyttas åt höger så att korten till vänster inte täcker den. */
+.flode-karta .maplibregl-ctrl-bottom-left { left: auto; right: 0; }
+
+@media (min-width: 861px) {
+  .flode-rapportsida { height: calc(100vh - 57px); min-height: 0; flex-wrap: nowrap; }
+  .flode-rapportsida > * { overflow: auto; min-height: 0; }
+}
+
+/* ---------- Mobil: karta och paneler staplas ---------- */
+@media (max-width: 860px) {
+  .flode-huvud { height: auto; min-height: 56px; flex-wrap: wrap; gap: 8px 16px; padding: 8px 16px; }
+  .flode-stegrad { order: 3; flex: 1 0 100%; justify-content: flex-start; overflow-x: auto; }
+  .flode-konto { margin-left: auto; }
+  .flode-sida { flex-direction: column; min-height: 0; }
+  .flode-karta { flex: none; height: 62vh; min-height: 360px; }
+  .flode-panel, .flode-lista, .flode-innehall { flex: none; max-width: none; border: 0; border-top: 1px solid var(--fl-line); }
+  .flode-bred { padding: 16px; }
+  .flode-forhandsvisning { padding: 12px; }
+  .flode-papper { padding: 24px 20px; }
+  .flode-kartkort { left: 12px; bottom: 12px; }
+  .flode-kartkort-hoger { right: 12px; left: auto; }
+  .flode-verktyg { left: 12px; top: 12px; right: 12px; flex-direction: row; flex-wrap: wrap; }
+  .flode-stegrad { gap: 0; }
+  .flode-steg { padding: 6px 8px; font-size: 12px; }
+  .flode-vaxel { top: 10px; overflow-x: auto; }
+  .flode-svep input { width: 120px; }
+}
+
+/* 3D-vyn i Resultat: kameraknapparna ligger under växeln, i flödets stil. */
+.flode-karta-yta .vy3d-knappar { position: absolute; top: 72px; left: 16px; z-index: 5; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.flode-karta-yta .vy3d-knappar .knapp { background: #fff; border: 1px solid #e4e4e0; border-radius: 8px; padding: 6px 12px; font: 500 13px/1.2 inherit; color: #1a1a1a; text-align: left; }
+.flode-karta-yta .vy3d-knappar .knapp:hover { background: #f4f4f1; }
+.flode-karta-yta .vy3d-knappar .knapp:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 2px; }
