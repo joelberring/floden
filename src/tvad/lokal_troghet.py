@@ -82,6 +82,10 @@ class TvadResultat:
     takvatten: bool = False
     takvatten_ut_rand_m3: float = 0.0
     takvatten_till_ledning_m3: float = 0.0
+    courant_hast_max: float = 0.0
+    """Diagnostik (Python-lösaren): största u_max · dt / dx över alla tidssteg, med den u_max
+    (m/s) som tidssteget valdes med. CFL-steget garanterar att värdet är högst `cfl`.
+    0,0 = inte mätt (Rust-kärnan, SFINCS-import, hybrid)."""
 
     def volymbalans(self) -> dict[str, float | bool]:
         """Regn på hela rutan (mark + tak) mot lagrat, utflöde, infiltration, avtappning och
@@ -752,6 +756,7 @@ def kor_2d_lokal_troghet(
     min_dx = min(dx, dy)
     safe_area = np.where(aktiv, aktiv_area, 1.0)
     u_max = 0.0
+    courant_hast_max = 0.0
     # Förallokerade arbetsbuffertar i tidsloopen (undviker heap-allokering per steg)
     ut_vol = np.zeros((hojd, bredd), dtype=np.float64)
     q_cell_x = np.zeros((hojd, bredd), dtype=np.float64)
@@ -767,6 +772,7 @@ def kor_2d_lokal_troghet(
             dt = min(_DT_MIN_S, nasta_t - t_nu)
         if dt <= 0.0:
             break
+        courant_hast_max = max(courant_hast_max, u_max * dt / min_dx)
 
         # 1. Regntillskott under [t_nu, t_nu + dt]
         regn_m = integrera_regn_m(t_nu, t_nu + dt, tider, intens_m_s)
@@ -1086,6 +1092,7 @@ def kor_2d_lokal_troghet(
         takvatten=takvatten is not None,
         takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
         takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
+        courant_hast_max=courant_hast_max,
     )
 
 

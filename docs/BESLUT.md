@@ -4,6 +4,7 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 
 | Datum | Beslut | Skäl |
 | --- | --- | --- |
+| 2026-11-23 | **2D-vattenkärnans numeriska rättelser godtas och dokumenteras** (en annan AI, Neon, ändrade förvalen i `cbaba1d`, `7132e0e` och `1350379` utan beslut, dokumentation eller facittest; granskat 2026-11-23, före `6ef22ae`, efter `5b84a43`). **Hastighet:** v = \|q\| / max(h_före, h_efter) i stället för q / h (`src/tvad/hybrid.py`, `src/tvad/lokal_troghet.py`, `rust/tvad_karna/src/losare.rs`); fara räknas bara i våta celler; utbytet mellan noder i hybriden begränsas av vattnet över tröskeln och delas med antalet kopplingar (`grad_nn`). **Friktion:** punkt-implicit friktion och CFL med u_max (`7132e0e`). **Subgrid:** ny konveyans i subgrid-kanterna (`1350379`). **Brytlinjer och öppningar** räknas nu med i `losare_2d._kor_2d`. Ingen lösarversion och inget kontraktsformat är ändrat; alla förändrade tal står i tabellen *Underlag 2026-11-23* under beslutstabellen. **D2 (Bates-parametrar, bara upplysning) blev något sämre**: RMSE 0,0569 → 0,0593 m (+4,2 %); hybridens MAE mot full 2D blev också större i EA2 (0,0217 → 0,0239) och EA8A (0,0185 → 0,0200), och EA2:s IoU sjönk (0,864 → 0,850), medan EA8A:s IoU steg (0,924 → 0,930). D1 blev bättre (RMSE −2,7 % till −5,4 %). **Cachenyckeln** i `src/karna/graf.py` (`_katalognyckel`) har ändrats: filer i undermappar räknas med och dolda filer eller mappar (namn som börjar på `.`) hoppas över; utdatalistan i manifestet innehåller nu undermappsfiler med relativ sökväg. Nycklarna för kataloger med undermappar eller dolda filer blir därför andra än förut, så gamla cachade körningar återanvänds inte (de räknas om, ingenting tolkas fel). **Facittest** tillagda 2026-11-23 (`tests/tvad/test_hastighet_facit.py`): hastighet mot Manning i jämn lutande ränna och CFL-steget (u_max · dt / dx ≤ Courant-talet); se `docs/VALIDERING.md`. *Fattat i samlad tråd på Joels uppdrag 2026-11-23; Joel kan ändra.* | Skäl enligt granskningen: spikar i hastighet och fara vid urtappning (tunt vatten), hybriden kunde föra över mer vatten mellan noder än vad som fanns över tröskeln, och friktion och CFL behövde vara stabila. Samordnaren bedömer dem som rimliga numeriska rättelser som inte ska rullas tillbaka. Facittestet bekräftar spikarna: på en jämn ränna gav gamla beräkningen upp till +2 407 % fel vid tunt vatten, den nya högst 4,0 %. Kvarstår: D2, EA2 och EA8A:s MAE blev något sämre och granskningen har ingen förklaring; de ändrar inga rapporttal (demon och rapporttalen är oförändrade, grupp E oförändrad). |
 | 2026-11-22 | **Drift på server** (Joel 2026-11-22: "vi kör på detta", "det skulle behöva finnas månadsbudgetar", "avvakta med att dela till folk och istället köra demo"): basserver hos Hetzner (`floden.berring.se`, x86, eget Cloud-projekt `floden`, skilt från O-Tids); beräkningsarbetare som startas vid behov och raderas efter tomgång (O-Tids geo-server-mönster), CPU hos Hetzner och GPU per timme hos annan leverantör (förslag Verda); egen bucket `floden` i O-Tids Object Storage tills vidare (S3-nyckeln bara på basservern, arbetarna får presignerade URL:er); ingen separat backup utöver en timkopia av `konto.sqlite`; **fasta månadsbudgetar** per serverklass, uppskattning och godkännande per körning, kvot 0 för nya konton; **demo först**, ingen delning med inloggade användare förrän kvoterna finns. Servern startar aldrig utan inloggning (`deploy/start.sh`). Ersätter raden 2026-11-21 i delen *lagring* (resultat i objektlagring när S4 finns). | Snabbt och billigt att komma igång (ca 6 €/mån plus körningar), skalbart genom fler arbetare, och kostnaderna under Joels kontroll innan andra kan starta körningar. |
 | 2026-11-22 | **Rapporter: AI:n äger aldrig ett tal** (Joel 2026-11-22). Floden räknar; AI:n ställer frågor, väljer körningar och skriver. En rapport är påståenden bundna till belägg (körnings-id, K0-manifest, resultatfil, mottagare/nämnare, mått, enhet, tidsdefinition, statistik); tal i text är typade platshållare som Floden fyller. Status per fråga: visat, avvikelse, villkorat (förutsättning + ansvarig funktion), underlag saknas, ej tillämpligt (motivering). Kontroll inför export enligt `utredningar-stockholm/rapportstod.md`; fel stoppar exporten. Kontrakt K32 och K33 (`docs/RAPPORTER.md`). | Ett tal som ser rimligt ut men är fel ska inte kunna nå en planhandling. |
 | 2026-11-22 | **Modeller: alla rimliga, användaren kopplar** (Joel 2026-11-22). Floden binder sig inte till en språkmodell; den som kopplar en klient till `floden mcp` väljer modell. Modellen deklareras och loggas i körloggen och står i metodnotisen. Datapolicyn (dataklasser) gäller oavsett modell. | Besvarar T08:s stoppfråga om vilken modell som får användas. |
@@ -44,6 +45,43 @@ Fattade beslut. Ändras bara av Joel. Nya beslut läggs överst med datum.
 | 2026-11-21 | **Luftens lösare skrivs mot ett array-API (NumPy/CuPy)** i stället för Rust/wgpu i första versionen. Samma kod körs på CPU i tester och CUDA-GPU på server. | LBM är minnesbandbreddsbunden och enkel att uttrycka vektoriserat; Rust/wgpu kan bli aktuellt när lösaren är validerad. |
 | 2026-11-20 | **Provområde i Hägersten-Älvsjö**, ca 1 km². | Joels arbetsområde och lokalkännedom. |
 | 2026-11-21 | **K20 får det valfria fältet `fokus` per analys (förblir v1)** och IDF-parametrar i `vatten.statisk_fyllning` (lösarversion förblir 1). Båda är tillägg: frågor och körningar utan dem är byte-identiska. `fokus` begränsar rutvisa jobb till rutor vars mittpunkt ligger i en ruta (EPSG:3011) så att demons kantzon bara är kontext. *Mitt val i demo-spåret; Joel kan kräva K20/v2.* | Dagsljuset ska inte ge trunkeringsvarningar på kvarterets kant, och demon ska visa regn ur Stockholmsregn 2024 utan att fuska med artefakter. |
+
+## Underlag 2026-11-23: vattenkärnans förändrade tal
+
+Alla tal är uppmätta 2026-11-23 med `floden testsvit` (alla grupper och `--grupp D`) på `6ef22ae` (före) och
+`5b84a43` (efter; `main` vid mätningen hade dessutom drift- och webbändringar som inte rör lösaren). "Före" och
+"efter" gäller alla tre vattenändringarna tillsammans; delsteg som `cbaba1d` ensam (EA8A v_max 4,23 → 2,35 m/s enligt
+granskningen) är inte mätta här. Körtider ingår inte, de varierar mellan körningar.
+
+| Fall | Mått | Före | Efter |
+| --- | --- | ---: | ---: |
+| EA8A | MAE hybrid+subgrid(f=2) mot full 2D (m) | 0,0185 | 0,0200 |
+| EA8A | IoU | 0,924 | 0,930 |
+| EA8A | v_max (m/s) | 4,23 | 2,26 |
+| EA8A | fara_max (m²/s) | 0,194 | 0,191 |
+| EA8A | maxdjup (m) | 0,558 | 0,557 |
+| EA2 | MAE hybrid mot full 2D (m) | 0,0217 | 0,0239 |
+| EA2 | IoU | 0,864 | 0,850 |
+| EA2 | största skillnad (m) | 0,0986 | 0,1173 |
+| EA2 | maxdjup (m) | 0,576 | 0,577 |
+| EA1 | MAE (cm) / std (cm) | 0,53 / 0,036 | 0,53 / 0,032 |
+| D1 | dx 20 m, t 1 800 s: RMSE (m) | 0,0205 | 0,0199 |
+| D1 | dx 10 m, t 1 800 s: RMSE (m) | 0,0130 | 0,0125 |
+| D1 | dx 5 m, t 1 800 s: RMSE (m) | 0,0074 | 0,0071 |
+| D1 | dx 20 m, t 3 600 s: RMSE (m) | 0,0182 | 0,0177 |
+| D1 | dx 10 m, t 3 600 s: RMSE (m) | 0,0109 | 0,0105 |
+| D1 | dx 5 m, t 3 600 s: RMSE (m) | 0,0056 | 0,0053 |
+| D1 | största fel (m), samma sex fall i ordning | 0,0768 / 0,0636 / 0,0490 / 0,0880 / 0,0698 / 0,0507 | 0,0754 / 0,0621 / 0,0476 / 0,0865 / 0,0684 / 0,0493 |
+| D1 | frontfel (m), samma sex fall | +40 / +20 / +10 / +60 / +30 / +10 | oförändrat |
+| D2 | dx 25 m, t 1 200 s: RMSE (m) | 0,0569 | 0,0593 |
+| D2 | största fel (m) | 0,1866 | 0,1883 |
+| A12 | 2D-avvikelse från 106 mm (m) | 1,3e-6 | 1,2e-6 |
+| A13 | 2D mot grafen i långsidornas tråg (m³) | −0,0368 | −0,0365 |
+| A13 | 2D mot grafen i gavlarnas tråg (m³) | −0,0234 | −0,0233 |
+
+Oförändrat (mätt, jämfört rad för rad): A0–A11 (utfall, volymfel 0,0000 %, maxdjupsfel 0,0000 m och kommentarernas tal); A12 och A13 har samma utfall och 0,0000 % volymfel men de två raderna ovan, grupp E 7/7 (avvikelserna enligt
+`docs/VALIDERING.md`), volymfel i D1 och D2 under 1,5e-15. D1:s krav (RMSE < 0,01 m vid finaste rutnätet och
+fallande RMSE för varje förfining) klaras före och efter.
 
 ## Öppna beslut (Joel)
 

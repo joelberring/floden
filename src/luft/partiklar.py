@@ -16,6 +16,10 @@ Varför två fraktioner + 2–3 vindhastighetsklasser?
   - PM10 årsmedel ≤ 40 µg/m³
   - PM10 dygnsmedel > 50 µg/m³ högst 35 dygn/år (36:e högsta dygnet ≤ 50 µg/m³)
   - PM2.5 årsmedel ≤ 25 µg/m³ (precisering/miljömål 10 µg/m³)
+
+**Status: fristående.** Modulen är testad (`tests/test_fysik_numerik_fixar.py`) men inte
+inkopplad i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan
+modul i `src` använder den utom andra fristående moduler; se `STATUS.md` (2026-11-23).
 """
 
 from __future__ import annotations
