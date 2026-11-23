@@ -333,6 +333,147 @@ class Register:
             self.notera(c, "inbjudan-skapad", utforare, f"inbjudan={inbjudan_id} roll={roll}")
         return inbjudan_id
 
+    # --- administration i webben (organisationsadmin och superadmin) ---------------------------
+
+    def ar_admin(self, konto_id: str) -> bool:
+        """Superadmin, eller organisationsadmin i någon organisation (och inte spärrad)."""
+        with self.db.lasning() as c:
+            rad = c.execute(
+                "SELECT superadmin, sparrad FROM konto WHERE id = ?", (konto_id,)
+            ).fetchone()
+            if not rad or rad["sparrad"] is not None:
+                return False
+            if rad["superadmin"]:
+                return True
+            return (
+                c.execute(
+                    "SELECT 1 FROM medlemskap WHERE konto_id = ? AND roll = 'organisationsadmin'",
+                    (konto_id,),
+                ).fetchone()
+                is not None
+            )
+
+    def _projekt_for_admin(self, c: sqlite3.Connection, utforare: str, projekt_id: str) -> str:
+        """Projektets organisation, om utföraren får administrera den. Annars `BehorighetFel`."""
+        org = c.execute(
+            "SELECT organisation_id FROM projekt WHERE id = ?", (projekt_id,)
+        ).fetchone()
+        if not org:
+            raise RegisterFel("Okänt projekt")
+        if not self._far_administrera(c, utforare, org["organisation_id"]):
+            raise BehorighetFel("Kräver organisationsadmin")
+        return str(org["organisation_id"])
+
+    def admin_projekt(self, utforare: str) -> list[dict[str, object]]:
+        """Projekten utföraren får administrera: alla för superadmin, annars organisationernas."""
+        if not self.ar_admin(utforare):
+            raise BehorighetFel("Kräver organisationsadmin")
+        with self.db.lasning() as c:
+            rader = c.execute(
+                "SELECT p.id, p.namn, p.organisation_id, o.namn AS organisation,"
+                " (SELECT COUNT(*) FROM projektbehorighet b"
+                "  WHERE b.projekt_id = p.id) AS medlemmar,"
+                " (SELECT COUNT(*) FROM projektinbjudan i WHERE i.projekt_id = p.id"
+                "  AND i.anvand_av IS NULL AND i.giltig_till > ?) AS oppna_inbjudningar"
+                " FROM projekt p JOIN organisation o ON o.id = p.organisation_id"
+                " WHERE (SELECT superadmin FROM konto WHERE id = ?) = 1 OR p.organisation_id IN"
+                "  (SELECT organisation_id FROM medlemskap WHERE konto_id = ?"
+                "   AND roll = 'organisationsadmin')"
+                " ORDER BY o.namn, p.namn",
+                (self.nu(), utforare, utforare),
+            ).fetchall()
+        return [dict(r) for r in rader]
+
+    def projekt_medlemmar(self, utforare: str, projekt_id: str) -> list[dict[str, object]]:
+        """Konton med en projektroll (id, namn, e-post, roll, källa, spärrad)."""
+        with self.db.lasning() as c:
+            self._projekt_for_admin(c, utforare, projekt_id)
+            rader = c.execute(
+                "SELECT k.id AS konto_id, k.namn, k.epost, b.roll, b.kalla, b.skapad,"
+                " k.sparrad IS NOT NULL AS sparrad FROM projektbehorighet b"
+                " JOIN konto k ON k.id = b.konto_id WHERE b.projekt_id = ?"
+                " ORDER BY k.namn, k.id",
+                (projekt_id,),
+            ).fetchall()
+        return [{**dict(r), "sparrad": bool(r["sparrad"])} for r in rader]
+
+    def projekt_inbjudningar(self, utforare: str, projekt_id: str) -> list[dict[str, object]]:
+        """Projektets inbjudningar med status `oppen`, `anvand` eller `utgangen`."""
+        with self.db.lasning() as c:
+            self._projekt_for_admin(c, utforare, projekt_id)
+            rader = c.execute(
+                "SELECT id, epost, roll, skapad, giltig_till, anvand_tid, anvand_av"
+                " FROM projektinbjudan WHERE projekt_id = ? ORDER BY skapad DESC, id",
+                (projekt_id,),
+            ).fetchall()
+        nu = self.nu()
+        ut: list[dict[str, object]] = []
+        for r in rader:
+            status = (
+                "anvand"
+                if r["anvand_av"] is not None
+                else "utgangen"
+                if r["giltig_till"] <= nu
+                else "oppen"
+            )
+            ut.append(
+                {
+                    "id": r["id"],
+                    "epost": r["epost"],
+                    "roll": r["roll"],
+                    "skapad": r["skapad"],
+                    "giltig_till": r["giltig_till"],
+                    "status": status,
+                }
+            )
+        return ut
+
+    def satt_sparrad(self, utforare: str, konto_id: str, sparrad: bool) -> None:
+        """Spärrar eller öppnar ett konto. Superadmin: alla utom sig själv och andra superadmin.
+        Organisationsadmin: bara konton med medlemskap eller projektroll i den egna organisationen,
+        och aldrig en annan organisationsadmin. Spärrade konton har inga giltiga sessioner."""
+        with self.db.transaktion() as c:
+            if not self.ar_admin(utforare):
+                raise BehorighetFel("Kräver organisationsadmin")
+            if utforare == konto_id:
+                raise BehorighetFel("Du kan inte spärra ditt eget konto")
+            mal = c.execute("SELECT superadmin FROM konto WHERE id = ?", (konto_id,)).fetchone()
+            if not mal:
+                raise RegisterFel("Okänt konto")
+            if mal["superadmin"]:
+                raise BehorighetFel("Ett superadmin-konto spärras bara med serverkommando")
+            ar_super = c.execute(
+                "SELECT superadmin FROM konto WHERE id = ?", (utforare,)
+            ).fetchone()["superadmin"]
+            if not ar_super:
+                egna = (
+                    "SELECT organisation_id FROM medlemskap WHERE konto_id = ?"
+                    " AND roll = 'organisationsadmin'"
+                )
+                i_orgen = c.execute(
+                    "SELECT 1 FROM medlemskap WHERE konto_id = ?"
+                    " AND organisation_id IN (" + egna + ")"
+                    " UNION SELECT 1 FROM projektbehorighet b JOIN projekt p ON p.id = b.projekt_id"
+                    " WHERE b.konto_id = ? AND p.organisation_id IN (" + egna + ")",
+                    (konto_id, utforare, konto_id, utforare),
+                ).fetchone()
+                if not i_orgen:
+                    raise BehorighetFel("Kontot tillhör inte din organisation")
+                kollega = c.execute(
+                    "SELECT 1 FROM medlemskap WHERE konto_id = ? AND roll = 'organisationsadmin'"
+                    " AND organisation_id IN (" + egna + ")",
+                    (konto_id, utforare),
+                ).fetchone()
+                if kollega:
+                    raise BehorighetFel("En organisationsadmin spärras av superadmin")
+            c.execute(
+                "UPDATE konto SET sparrad = ? WHERE id = ?",
+                (self.nu() if sparrad else None, konto_id),
+            )
+            self.notera(
+                c, "konto-sparrat" if sparrad else "konto-oppnat", konto_id, f"av={utforare}"
+            )
+
     # --- sammanfattning till /konto/jag -------------------------------------------------------
 
     def sammanfattning(self, konto_id: str) -> dict[str, object]:

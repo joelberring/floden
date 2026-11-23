@@ -639,12 +639,79 @@ export interface RapportRad {
   dataklass: string;
 }
 
+export interface ProjektListaPost {
+  id: string;
+  namn: string;
+  undertitel: string;
+  paahittat: boolean;
+  beskrivning: string;
+  /** Kontots roll i projektet (bara när inloggning är på). */
+  roll?: string;
+  /** Falskt för ett projekt ur kontoregistret som ännu saknar beräkningar. */
+  finns?: boolean;
+}
+
 export interface ProjektListaSvar {
-  projekt: Array<{
-    id: string;
-    namn: string;
-    undertitel: string;
-    paahittat: boolean;
-    beskrivning: string;
-  }>;
+  projekt: ProjektListaPost[];
+}
+
+/* ---------- Nycklar och administration (/konto/nycklar, /konto/admin) ---------- */
+
+export interface NyckelFaltInfo {
+  id: string;
+  namn: string;
+  krav: boolean;
+  val: string[];
+}
+
+/** Status för en sparad nyckel. Själva nyckeln lämnar aldrig servern efter att den sparats. */
+export interface NyckelStatus {
+  typ: string;
+  namn: string;
+  beskrivning: string;
+  falt: NyckelFaltInfo[];
+  sparad: number | null;
+  sparad_datum: string | null;
+  slutar_pa: string | null;
+}
+
+export interface NycklarSvar {
+  paslagen: boolean;
+  orsak: string | null;
+  text: string | null;
+  typer: NyckelStatus[];
+}
+
+export interface AdminProjekt {
+  id: string;
+  namn: string;
+  organisation_id: string;
+  organisation: string;
+  medlemmar: number;
+  oppna_inbjudningar: number;
+}
+
+export interface AdminMedlem {
+  konto_id: string;
+  namn: string;
+  epost: string | null;
+  roll: string;
+  kalla: string;
+  sparrad: boolean;
+}
+
+export interface AdminInbjudan {
+  id: string;
+  epost: string;
+  roll: string;
+  skapad: number;
+  giltig_till: number;
+  status: "oppen" | "anvand" | "utgangen";
+}
+
+export interface AdminProjektDetalj {
+  projekt: AdminProjekt;
+  roller: string[];
+  medlemmar: AdminMedlem[];
+  inbjudningar: AdminInbjudan[];
 }

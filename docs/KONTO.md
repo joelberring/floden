@@ -19,6 +19,8 @@ Logiken är porterad från O-Tid (MIT, joelberring/otid @ 4a446af): `google-oidc
 | `sessioner.py` | sessioner, kakor, CSRF |
 | `adapter.py` | HTTP-adaptern och `kraver_inloggning` |
 | `admin.py` | serverkommandon (bootstrap) |
+| `nycklar.py` | användarens egna API-nycklar, krypterade (Fernet) i tabellen `konto_nyckel` (avsnitt 10) |
+| `kontoapi.py` | HTTP-API:t `/konto/nycklar` och `/konto/admin` (avsnitt 10 och 11) |
 
 ## 2. Sätt upp Google-klienten (Joel)
 
@@ -63,6 +65,7 @@ konto ──< identitet (leverantör, tenant, subject)   unik; nyckeln är aldri
       ──< medlemskap (organisation, forvaltning?, roll, kalla)
       ──< projektbehorighet (projekt, roll, kalla)
 projekt ──< projektinbjudan (e-post, roll, giltig_till, anvand_av)
+konto ──< konto_nyckel (typ, krypterad, slutar_pa, sparad)    en rad per konto och typ (schemaversion 2)
 session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personuppgifter)
 ```
 
@@ -133,7 +136,7 @@ PYTHONPATH=src python -m konto.admin mappa-grupp <org-id> <forvaltning-id> <grup
 PYTHONPATH=src python -m konto.admin registrera-doman <org-id> kommun.se        # kräver Googles hd
 ```
 
-`forbered-konto` skapar ett konto utan identitet. Första gången samma adress loggar in med Google (verifierad) kopplas Googles identitet till det kontot, och därmed får personen superadmin eller de medlemskap som förbereddes. Inbjudningar till projekt skapas med `Register.bjud_in(utforare, projekt_id, epost, roll)` (kräver organisationsadmin eller superadmin) och tas emot automatiskt vid inloggning.
+`forbered-konto` skapar ett konto utan identitet. Första gången samma adress loggar in med Google (verifierad) kopplas Googles identitet till det kontot, och därmed får personen superadmin eller de medlemskap som förbereddes. Inbjudningar till projekt skapas med `Register.bjud_in(utforare, projekt_id, epost, roll)` (kräver organisationsadmin eller superadmin) och tas emot automatiskt vid inloggning. Samma sak görs i webben på sidan Administration (avsnitt 11); kommandona här behövs bara för det första steget (superadmin, organisation, projekt) och för regler.
 
 ## 8. Integrationsguide för `src/webb/api.py`
 
@@ -197,6 +200,68 @@ Att tänka på vid anslutningen:
 - **Hälsokollen** `/api/halsa` är öppen (`oppna_sokvagar`); lägg till fler öppna sökvägar där det behövs, till exempel statiska filer.
 - `ThreadingHTTPServer` och SQLite: varje anrop öppnar en egen anslutning (WAL, `BEGIN IMMEDIATE`), så trådarna blockerar inte varandra.
 - Starta bara servern öppet (`0.0.0.0`) bakom Caddy med https och `inloggning = "pa"`; på localhost fungerar `cookie_secure = false`.
+
+## 10. Nycklar (`/konto/nycklar`, sidan Nycklar)
+
+Varje inloggad användare lägger in sina egna API-nycklar: `lantmateriet` (Lantmäteriets STAC/nedladdning: nyckel,
+hemlighet och metod `oauth2`/`basic`, samma som `lantmateriet.nycklar`) och `anthropic` (Claude, för framtida AI-körningar
+på servern; ingen kod anropar den än). Lagring och regler (`src/konto/nycklar.py`):
+
+- **Krypterat.** Fernet (`cryptography`) med hemligheten i miljövariabeln `FLODEN_NYCKELHEMLIGHET` (flera nycklar skiljs
+  med komma, den första krypterar och alla läser, så att hemligheten kan bytas). En rad per konto och typ i
+  `konto_nyckel`; chiffertexten bär konto-id och typ, så en rad som flyttas till ett annat konto går inte att läsa.
+  Skapande, drift och byte av hemligheten: `docs/DRIFT.md`.
+- **Saknas hemligheten** (eller är den ogiltig) är funktionen avstängd: `GET` svarar `paslagen: false` med en text om
+  att nyckelhanteringen inte är påslagen på servern, `PUT` ger 503 `nycklar-av`, och ingenting sparas okrypterat.
+  Borttagning kräver ingen hemlighet och fungerar även då. Med inloggning av finns ingen nyckelsida (404).
+- **Visas aldrig igen.** Databasen har chiffertexten och de fyra sista tecknen av det fält som identifierar nyckeln
+  (`slutar_pa`; för Lantmäteriet hemligheten). Svaren har bara `sparad`, `sparad_datum` och `slutar_pa`. Användaren kan
+  ersätta (ny `PUT`) eller ta bort sin nyckel.
+- **Aldrig i loggar, felmeddelanden, körlogg, `run.json` eller svar.** Felen nämner fältets id, aldrig värdet (inte
+  heller namnet på ett okänt fält); händelser och loggrader har konto-id och typ. Klartexten når bara serverkod som
+  ska använda nyckeln (`NyckelForrad.las`): det finns ingen väg till den från HTTP eller MCP.
+- **Bara kontots egna.** Adressen bär ingen konto-id; kontot kommer ur sessionen.
+
+| Anrop | Gör |
+| --- | --- |
+| `GET /konto/nycklar` | alla typer med status, fälten de består av, och `paslagen`/`orsak`/`text` |
+| `GET /konto/nycklar/<typ>` | en typ: `sparad`, `sparad_datum`, `slutar_pa`, `paslagen` |
+| `PUT /konto/nycklar/<typ>` | sparar eller ersätter; kropp `{"nyckel": …}` (`anthropic`) eller `{"klient_id": …, "klient_hemlighet": …, "metod": …}` (`lantmateriet`; `metod` förval `oauth2`) |
+| `DELETE /konto/nycklar/<typ>` | tar bort (`borttagen` eller `fanns-inte`) |
+
+Inloggning krävs (401). `PUT` och `DELETE` kräver CSRF (kaka och `X-Floden-CSRF`) och rätt `Origin`, som alla andra skrivande
+anrop (403 annars). Okänd typ ger 404, ogiltigt värde 400 (8 till 512 synliga tecken utan blanksteg), kropp över 4 kB 413.
+
+**Lantmäteri-hämtningen.** Med `[konto] inloggning = "pa"` läser `floden data lantmateriet --konto <konto-id>` kontots egen
+nyckel (`lantmateriet.nycklar.las_nycklar_for_konto`) och aldrig servernyckeln i miljön eller `config.local.toml`; saknas
+kontots nyckel, eller är nyckelhanteringen avstängd, stoppar hämtningen med ett tydligt fel. Med inloggningen av (lokalt)
+gäller `LANTMATERIET_KLIENT_ID`, `LANTMATERIET_KLIENT_HEMLIGHET` och `[lantmateriet]` som förut. Webben har ännu ingen
+Lantmäteri-hämtning; när den kommer ska den anropa `las_nycklar_for_konto` med den inloggades konto.
+
+## 11. Administration i webben (`/konto/admin`, sidan Administration)
+
+Synlig för superadmin och organisationsadmin (`GET /konto/jag` har `konto.admin`); alla andra får 403 (utloggade 401).
+Använder registrets funktioner (`bjud_in`, `ge_projektroll`, `aterkalla_projektroll`) och deras behörighetskontroller:
+en organisationsadmin når bara projekt i sina organisationer, en superadmin alla. Projekt-id:n är slumpade; demokvarteret
+behöver ingen inbjudan (`demoprojekt_roll`, avsnitt 5) och visas inte här. Skrivande anrop kräver CSRF som ovan.
+
+| Anrop | Gör |
+| --- | --- |
+| `GET /konto/admin/projekt` | projekt som får administreras (organisation, antal medlemmar, öppna inbjudningar) |
+| `GET /konto/admin/projekt/<id>` | projektet, `roller`, `medlemmar` (namn, e-post, roll, källa, spärrad) och `inbjudningar` (`oppen`, `anvand`, `utgangen`) |
+| `POST /konto/admin/projekt/<id>/inbjudningar` | `{"epost", "roll"}` med roll `lasare` eller `utredare`; 201. Tas emot när personen loggar in med en verifierad adress |
+| `PUT /konto/admin/projekt/<id>/medlemmar/<konto>` | `{"roll"}` ändrar (eller ger) rollen |
+| `DELETE /konto/admin/projekt/<id>/medlemmar/<konto>` | tar bort projektrollen |
+| `PUT /konto/admin/konton/<konto>` | `{"sparrad": true|false}` spärrar eller öppnar kontot |
+
+Spärr (`Register.satt_sparrad`): ingen kan spärra sig själv eller en superadmin (det sker bara med serverkommando); en
+organisationsadmin kan bara spärra konton som har medlemskap eller projektroll i den egna organisationen, och aldrig en annan
+organisationsadmin (det gör superadmin). Ett spärrat konto loggas ut direkt och kommer inte in igen. Att administrera ger
+ingen läsrätt till projektdata (avsnitt 5).
+
+**Projektlistan.** `GET /api/projekt` (och MCP-verktyget `projekt_lista`) visar med inloggning på bara kontots projekt:
+demokvarteret (om `demoprojekt_roll` inte är `av`, med den rollen) och projekt där kontot har en uttrycklig roll. Projekt ur
+registret har ännu inga beräkningar (`finns: false`) och en enkel projektsida utan siffror.
 
 ## 9. Köra testerna
 

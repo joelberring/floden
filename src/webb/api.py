@@ -2049,6 +2049,56 @@ class FlodenApiApp:
             return _json_svar(200, self.fragor.tabell(delar[0], "/".join(delar[2:])))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
 
+    def projekt_lista_for(self, konto_id: str | None) -> dict[str, Any]:
+        """Projekten ett konto har tillgång till (`GET /api/projekt` och MCP `projekt_lista`).
+
+        Inloggning av (lokalt): demokvarteret om det är byggt, som förut. Inloggning på:
+        demokvarteret (om `demoprojekt_roll` inte är `av`) och projekten där kontot har en
+        uttrycklig roll; inget annat, och ingenting alls utan konto. Projekt ur registret har
+        ännu inga beräkningar (`finns` är falskt) tills projekten kopplas till körningar."""
+        demo: list[dict[str, Any]] = self.projekt.lista()["projekt"]
+        if not self.konto.aktiv:
+            return {"projekt": demo}
+        if konto_id is None:
+            return {"projekt": []}
+        demo_roll = self.konto.demoroll()
+        ut: list[dict[str, Any]] = (
+            [{**p, "roll": demo_roll, "finns": True} for p in demo] if demo_roll else []
+        )
+        for p in self.konto.projekt_for_konto(konto_id):
+            ut.append(
+                {
+                    "id": p["id"],
+                    "namn": p["namn"],
+                    "undertitel": "Projekt",
+                    "paahittat": False,
+                    "beskrivning": "",
+                    "roll": p["roll"],
+                    "finns": False,
+                }
+            )
+        return {"projekt": ut}
+
+    def _projekt_svar_for_konto(
+        self, sokvag: str, konto_id: str
+    ) -> tuple[int, list[tuple[str, str]], bytes] | None:
+        """`GET /api/projekt` (kontots projekt) och `GET /api/projekt/<id>` för ett projekt ur
+        registret. Demokvarteret och allt annat lämnas åt `hantera_forfragan` (None)."""
+        delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d]
+        if delar[:2] != ["api", "projekt"] or len(delar) > 3:
+            return None
+        if len(delar) == 2:
+            svar = self.projekt_lista_for(konto_id)
+        else:
+            lista = self.projekt_lista_for(konto_id)["projekt"]
+            rad = next((p for p in lista if p["id"] == delar[2]), None)
+            if rad is None or rad.get("finns"):
+                return None
+            svar = {**rad, "beskrivning": "Projektet har inga beräkningar än."}
+        status, headers, kropp = _json_svar(200, svar)
+        ut = [(k, v) for k, v in headers.items() if not k.lower().startswith("access-control-")]
+        return status, ut, kropp
+
     def hantera_forfragan(
         self,
         metod: str,
@@ -2200,6 +2250,10 @@ class FlodenApiApp:
         if not kontroll.tillaten:
             assert kontroll.svar is not None
             return kontroll.svar
+        if verb == "GET" and self.konto.aktiv and kontroll.inloggad is not None:
+            eget = self._projekt_svar_for_konto(req.sokvag, kontroll.inloggad.konto_id)
+            if eget is not None:
+                return eget
         try:
             kropp_in = las_kropp() if verb == "POST" else b""
         except FlodenWebbFel as exc:

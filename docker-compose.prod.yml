@@ -28,6 +28,8 @@ services:
       FLODEN_SERVER: ${FLODEN_SERVER:-asgi}
       FLODEN_KONTO_GOOGLE_KLIENT_ID: ${FLODEN_KONTO_GOOGLE_KLIENT_ID:-}
       FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET: ${FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET:-}
+      # Krypterar användarnas API-nycklar (sidan Nycklar). Saknas den är nyckelsidan avstängd. docs/DRIFT.md.
+      FLODEN_NYCKELHEMLIGHET: ${FLODEN_NYCKELHEMLIGHET:-}
     volumes:
       - ./config.local.toml:/app/config.local.toml:ro
       # Bara på serverns disk tills förrådet (S4) finns. Kontodatabasen är det enda som inte går att räkna om.
