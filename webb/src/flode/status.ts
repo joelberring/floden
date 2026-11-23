@@ -14,7 +14,7 @@ export const NIVA_TEXT: Record<Niva, string> = {
 
 export interface FlodeFraga {
   id: string;
-  /** Ämnesnyckel: skyfall, dagsljus, luft, buller. */
+  /** Ämnesnyckel: skyfall, dagsljus, luft, buller, ekologi. */
   amne: string;
   text: string;
   niva: Niva;
@@ -29,6 +29,7 @@ export const AMNEN: ReadonlyArray<{ id: string; namn: string }> = [
   { id: "dagsljus", namn: "Dagsljus och sol" },
   { id: "luft", namn: "Luft" },
   { id: "buller", namn: "Buller" },
+  { id: "ekologi", namn: "Ekologi" },
 ];
 
 export function etikett(n: Niva): string {
@@ -54,6 +55,7 @@ export function amneFranOmrade(omrade: string): string {
 export function domanFranAmne(amne: string): string[] {
   if (amne === "skyfall") return ["vatten"];
   if (amne === "dagsljus") return ["dagsljus"];
+  if (amne === "ekologi") return ["ekologi"];
   return [];
 }
 

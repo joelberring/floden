@@ -23,7 +23,11 @@ export interface FragelistaSvar {
 export async function hamtaFragelista(): Promise<FragelistaSvar> {
   try {
     const kat = tolkaKatalog(await lasJson<unknown>("/api/fragekatalog"));
-    if (kat && kat.length > 0) return { fragor: kat, kalla: "katalog", anmarkning: "Frågorna kommer ur frågekatalogen för Stockholm." };
+    if (kat && kat.length > 0) {
+      // Katalogen har inga ekologifrågor än; de beräkningsfrågor som finns läggs till (skiss).
+      const eko = await hamtaFragor().then((s) => franK20(s.fragor).filter((f) => f.amne === "ekologi" && !f.id.startsWith("api-"))).catch(() => []);
+      return { fragor: [...kat, ...eko], kalla: "katalog", anmarkning: "Frågorna kommer ur frågekatalogen för Stockholm; ekologifrågorna (skiss) är beräkningsfrågor." };
+    }
   } catch {
     /* Ingen katalog på servern: reserven nedan. */
   }

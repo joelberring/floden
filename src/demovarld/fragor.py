@@ -14,6 +14,8 @@ from demovarld.varld import DemoVarld
 
 FRAGA_DAGSLJUS = "demo_dagsljus"
 FRAGA_VATTEN = "demo_vatten"
+FRAGA_EKOLOGI = "demo_ekologi"
+EKOLOGI_ARTPROFIL = "pollinerare"
 
 HOJD_MAX_M = 30.0
 H_MIN_GRADER = 10.0
@@ -142,6 +144,47 @@ parametrar = {{ idf = "stockholmsregn-2024", aterkomsttid_ar = {ATERKOMSTTID_AR:
 [[jamforelser]]
 analys = "skyfall"
 utdata = "max_djup"
+fore = "fore"
+efter = "efter"
+troskel = 0.01
+"""  # noqa: E501
+
+
+def text_ekologi(v: DemoVarld, fragedir: Path, varld_dir: Path) -> str:
+    """Frågefilen: ekologisk konnektivitet före/efter ett nytt hus (skiss, profilen är ett val)."""
+    bas = _rel(fragedir, varld_dir / "vatten" / "bas")
+    k9n = _rel(fragedir, varld_dir / "vatten" / "k9_nytt_hus.json")
+    return f"""# Demo: ekologisk konnektivitet före/efter ett nytt hus i demovärlden (syntetisk, K1 v2). Bygg
+# världen och kör frågan med
+#   floden demo
+#
+# SKISS. Artprofilen `{EKOLOGI_ARTPROFIL}` (vildbin och humlor) är en skissprofil: dess parametrar saknar
+# exakta källhänvisningar (docs/EKOLOGI.md). Resultatet visar hur ett nytt hus ändrar konnektiviteten
+# för just den profilen i det påhittade kvarteret; det säger ingenting om verkliga arter.
+#
+# Samma bas och samma K9 som vattenfrågan: fokusområdet ({v.fokus_m[2] - v.fokus_m[0]:g} x {v.fokus_m[3] - v.fokus_m[1]:g} m) som en ruta, ett 18 m-hus i sydvästra
+# gården. Gårdarnas gräs är habitat för profilen, gatorna är hårdgjorda hinder, träden längs gatan
+# ger trädskikt (vegetation.tif). Rutnätet är 4 m. Intervallet [ECA_min, ECA_max] kommer ur två
+# extremkörningar (motstånd x0,7 och x1,4, spridningsavstånd x0,8 och x1,25).
+kontrakt = "K20/v1"
+fraga_id = "demo-ekologi"
+beskrivning = "Ekologisk konnektivitet (ECA och flaskhalsar, skiss) före och efter ett nytt hus."
+
+[scenarier.fore]
+bas = "{bas}"
+
+[scenarier.efter]
+bas = "{bas}"
+k9 = ["{k9n}"]
+
+[[analyser]]
+id = "konnektivitet"
+losare = "ekologi.konnektivitet"
+parametrar = {{ artprofil = "{EKOLOGI_ARTPROFIL}", cellstorlek_m = 4 }}
+
+[[jamforelser]]
+analys = "konnektivitet"
+utdata = "stromtathet"
 fore = "fore"
 efter = "efter"
 troskel = 0.01

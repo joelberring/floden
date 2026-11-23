@@ -1,0 +1,34 @@
+# Demo: ekologisk konnektivitet före/efter ett nytt hus i demovärlden (syntetisk, K1 v2). Bygg
+# världen och kör frågan med
+#   floden demo
+#
+# SKISS. Artprofilen `pollinerare` (vildbin och humlor) är en skissprofil: dess parametrar saknar
+# exakta källhänvisningar (docs/EKOLOGI.md). Resultatet visar hur ett nytt hus ändrar konnektiviteten
+# för just den profilen i det påhittade kvarteret; det säger ingenting om verkliga arter.
+#
+# Samma bas och samma K9 som vattenfrågan: fokusområdet (300 x 300 m) som en ruta, ett 18 m-hus i sydvästra
+# gården. Gårdarnas gräs är habitat för profilen, gatorna är hårdgjorda hinder, träden längs gatan
+# ger trädskikt (vegetation.tif). Rutnätet är 4 m. Intervallet [ECA_min, ECA_max] kommer ur två
+# extremkörningar (motstånd x0,7 och x1,4, spridningsavstånd x0,8 och x1,25).
+kontrakt = "K20/v1"
+fraga_id = "demo-ekologi"
+beskrivning = "Ekologisk konnektivitet (ECA och flaskhalsar, skiss) före och efter ett nytt hus."
+
+[scenarier.fore]
+bas = "../../data/demo/varld/vatten/bas"
+
+[scenarier.efter]
+bas = "../../data/demo/varld/vatten/bas"
+k9 = ["../../data/demo/varld/vatten/k9_nytt_hus.json"]
+
+[[analyser]]
+id = "konnektivitet"
+losare = "ekologi.konnektivitet"
+parametrar = { artprofil = "pollinerare", cellstorlek_m = 4 }
+
+[[jamforelser]]
+analys = "konnektivitet"
+utdata = "stromtathet"
+fore = "fore"
+efter = "efter"
+troskel = 0.01

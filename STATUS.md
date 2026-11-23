@@ -2,6 +2,21 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-23 – Ekologi Etapp 2 – Ekologiläget i K21, webb-API och webbflöde (skiss)
+Gjort:
+- **Kontrakt K44 och K45** i `docs/DATAKONTRAKT.md`: artprofilens filformat (`src/ekologi/artprofil_format.py`, strikt läsning) och lösaren `ekologi.konnektivitet` med `stromtathet.tif`, `kansighet.tif`, `ekologi.json` och webb-API:t `floden-ekologi/v1`. K21:s domänlista har `ekologi`. K0-K43 orörda. `tests/ekologi/test_losare_k21.py` kontrollerar `ekologi.json`, API-svaret och begäran mot tabellerna i kontraktet.
+- **Lösaren** (`src/karna/ekologi_losare.py`, registrerad i `karna.inbyggda`): K1 (+ K9 för ritade hus) till 4 m-mosaik, Flodens markslag till kärnans koder i `data/ekologi/markslag.toml` (konfiguration; filens sha256 ingår i cachenyckeln), kärnan med monotona intervall. Gränser `max_flackar` och `max_celler` ger tydliga fel. Kärnan fick `kanslighet_sammanlagd` (samma vikter som strömtätheten); i övrigt orörd. Metodstatus `skiss` i `data/mcp/metodstatus.toml` med anmärkning att profilernas parametrar saknar exakta källhänvisningar.
+- **API** `POST /api/analys/ekologi` (projektbehörighet via `_projekt_for_analys`): ECA och PC före/efter med intervall, ΔECA, lagerreferenser och största flaskhalsar. Inget MCP-verktyg (inga andra analyser har ett).
+- **Demo och webb**: frågan `demo_ekologi` (`exempel/fragor/demo_ekologi.toml`, genereras av `floden demo`), mallen `ekologi` i kartverktyget (ritade hus kan köras), avsnittet Ekologi på projektsidan, ämnet Ekologi i Frågor och fliken Ekologi i Resultat (flaskhalskarta före/efter/skillnad, ECA med intervall, ΔECA, PC, antal fläckar, slutsats; saknat tal är "–"). Skärmbilder: `docs/bilder/flode-3-fragor-ekologi*.png` och `flode-4-resultat-ekologi*.png` (bred och smal); `tools/flode_skarmbild.py` tar dem.
+- `docs/EKOLOGI.md` (metod, mått, osäkerhet, begränsningar). Docstringarna i `src/ekologi` som kallade profilerna källbelagda är rättade.
+- **Grupp G i `floden testsvit`: inte gjord, avsiktligt.** G1-G6 finns som pytest i `tests/ekologi/test_facit_g.py` och G7 (ΔECA ≤ 0 genom hela kedjan) i `test_losare_k21.py`; de är kod och inte indatamappar. Dokumenterat i `docs/VALIDERING.md` (G, och de tidigare "Verkliga händelser" blev H).
+Mätt (demon i litet läge, profilen `pollinerare`, 4 m): ECA före 31 789 m² (intervall 27 552-37 243), efter 31 551 m² (27 343-36 960), ΔECA -238 m² (-0,75 %); PC 0,1248 före och 0,1229 efter; 4 habitatfläckar före och efter. Pytest (FLODEN_TIDSFAKTOR=4) 2356 godkända, 50 hoppade vid sista fullkörningen; därefter rättades `test_mcp` (tre körningar i stället för två) och docstrings; ruff och mypy rena; `npm` typecheck, test (170) och build gröna.
+Öppet:
+- Profilernas parametrar och faktorerna för intervallen är egna val utan källa. Kopplingen till K1 är grov: gräs är grönyta, ingen våtmark, okänd mark får profilens standardmotstånd.
+- 4 m-rastrering kan i enstaka fall ge ΔECA > 0 för ett nytt hus (API:t varnar); demon ger -238 m². Siffran ovan gäller litet läge; normalläget (1 m-rutor) är inte kört för ekologi.
+- Klienten är inte klickad igenom i webbläsare utöver skärmbilderna (flikbyte med piltangenter, ritat förslag med ekologi och felmeddelanden är inte prövade i webbläsare).
+- Inget MCP-verktyg och ingen R2-rapport för ekologi.
+Nästa: NMD-inläsning som markunderlag och R2-rapport för ekologi (se `PLAN.md`).
 ## 2026-11-23 – Ekologi Etapp 1 – Beräkningskärna `src/ekologi/` och analytiska facitfall G1–G6
 Gjort: Implementerat kärnan för ekologiska nätverksstudier i `src/ekologi/` (enbart `numpy` + `scipy`, alla metoder märkta `skiss`, inga brutna kontrakt):
 (1) **Typer & källbelagda artprofiler (`typer.py`, `artprofiler.py`):** 4 svenska fokusartprofiler (`ek_insekter`, `barrskogsfagel`, `groddjur`, `pollinerare`) med källhänvisning till Naturvårdsverket/Stockholms ESBO.

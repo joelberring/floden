@@ -24,6 +24,11 @@ STEG = [
     ("4-resultat", "resultat"),
     ("5-rapport", "rapport"),
 ]
+# Ekologiläget (skiss): Frågor med ämnet Ekologi och Resultat med fliken Ekologi.
+EKOLOGI_STEG = [
+    ("3-fragor-ekologi", "fragor", 'button[data-amne="ekologi"]'),
+    ("4-resultat-ekologi", "resultat", 'button[role="tab"][data-amne="ekologi"]'),
+]
 STORLEKAR = [("", 1440, 900, False), ("-smal", 390, 844, True)]
 
 
@@ -60,6 +65,13 @@ def main() -> None:
                 adress = "#/" if not steg else f"#/p/{args.projekt}/{steg}"
                 sida.goto(f"{args.url}/{adress}")
                 _vanta(sida, steg)
+                sida.screenshot(path=str(UT / f"flode-{namn}{suffix}.png"), full_page=hel)
+                print(f"flode-{namn}{suffix}.png")
+            for namn, steg, knapp in EKOLOGI_STEG:
+                sida.goto(f"{args.url}/#/p/{args.projekt}/{steg}")
+                _vanta(sida, steg)
+                sida.locator(knapp).first.click()
+                sida.wait_for_timeout(6000)
                 sida.screenshot(path=str(UT / f"flode-{namn}{suffix}.png"), full_page=hel)
                 print(f"flode-{namn}{suffix}.png")
             sida.close()

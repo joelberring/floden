@@ -1,9 +1,11 @@
-"""Källbelagda svenska skissprofiler för fokusarter/artgrupper (`src/ekologi/`).
+"""Svenska skissprofiler för fokusarter/artgrupper (`src/ekologi/`).
 
-Markslagskoder följer Flodens K1-konvention (0 = öppen mark/gräs/grus, 1 = asfalt/gata/hårdgjord,
-2 = byggnad, 3 = vatten, 4 = skog/träd/buskage, 5 = våtmark/damm, 6 = äng/grönyta).
-Samtliga profiler är märkta `skiss` med explicita källhänvisningar till svensk grön
-infrastruktur-metodik (Naturvårdsverket / Stockholms stads ESBO).
+Parametrarna saknar exakta källhänvisningar.
+
+Markslagskoderna är kärnans (0 = öppen mark/grus, 1 = hårdgjord, 2 = byggnad, 3 = vatten,
+4 = skog/träd/buskage, 5 = våtmark/damm, 6 = äng/grönyta), inte K1:s; Flodens markslag översätts
+i `data/ekologi/markslag.toml`. Profilerna är skiss: varje parameter är ett eget val som är
+inspirerat av svensk grön infrastruktur-metodik, men saknar exakt källhänvisning.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ import math
 
 from ekologi.typer import ArtProfil, EkologiFel
 
-# K1-kompatibla markslagskoder med ekologisk utbyggnad (4–6)
+# Kärnans markslagskoder (inte K1:s), 4–6 är ekologiska klasser
 MARKSLAG_OPPEN = 0
 MARKSLAG_HARDGJORD = 1
 MARKSLAG_BYGGNAD = 2
@@ -115,7 +117,7 @@ STANDARD_ARTPROFILER: dict[str, ArtProfil] = {
 
 
 def hamta_artprofil(profil_id: str) -> ArtProfil:
-    """Hämtar en källbelagd artprofil efter id, eller lyfter `EkologiFel`."""
+    """Hämtar en artprofil (skiss) efter id, eller lyfter `EkologiFel`."""
     profil = STANDARD_ARTPROFILER.get(profil_id)
     if profil is None:
         giltiga = ", ".join(sorted(STANDARD_ARTPROFILER))

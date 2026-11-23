@@ -68,6 +68,8 @@ ETIKETTER: dict[str, tuple[str, str]] = {
     "soltimmar": ("Soltimmar på marken", "h"),
     "max_djup": ("Största vattendjup", "m"),
     "svf": ("Andel himmel som syns", ""),
+    "stromtathet": ("Strömtäthet (flaskhalsar)", ""),
+    "kansighet": ("Känslighet för motstånd", ""),
     "lutning": ("Lutning", "grader"),
     "trunkering": ("Kontroll: avskuren horisont", ""),
     "standardhojd": ("Kontroll: byggnad utan känd höjd", ""),

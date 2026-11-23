@@ -233,6 +233,14 @@ def _tolka_tal(payload: Mapping[str, Any], namn: str, standard: float) -> float:
     return tal
 
 
+def _tolka_heltal(payload: Mapping[str, Any], namn: str, standard: int, lo: int, hi: int) -> int:
+    """Ett valfritt heltal i [lo, hi] ur JSON-kroppen (som `_tolka_tal`, men utan decimaler)."""
+    v = _tolka_tal(payload, namn, float(standard))
+    if v != int(v) or not lo <= v <= hi:
+        raise FlodenWebbFel(f"Fältet '{namn}' ska vara ett heltal mellan {lo} och {hi}.")
+    return int(v)
+
+
 def _json_svar(status_kod: int, payload: Mapping[str, Any]) -> tuple[int, dict[str, str], bytes]:
     kropp = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     headers = {
@@ -1260,6 +1268,62 @@ class FlodenApiApp:
             if horisont_ost.size > 0
             else 0.0,
         }
+
+    def kor_ekologi_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/ekologi`: ECA och PC före/efter (skiss), flaskhalsar (K45)."""
+        from ekologi import STANDARD_ARTPROFILER
+        from webb.ekologi_analys import ekologi_svar
+
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
+        omrade_id = payload.get("omrade_id")
+        if not isinstance(omrade_id, str) or not omrade_id.strip():
+            raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
+        if not self.projekt.ar_projekt(omrade_id):
+            raise FlodenWebbFel(f"Okänt projekt '{omrade_id}'.", status_kod=404)
+        artprofil = payload.get("artprofil", "pollinerare")
+        if not isinstance(artprofil, str) or artprofil not in STANDARD_ARTPROFILER:
+            raise FlodenWebbFel(
+                f"Fältet 'artprofil' ska vara en av: {', '.join(sorted(STANDARD_ARTPROFILER))}."
+            )
+        scenario = payload.get("scenario")
+        if scenario is not None and (not isinstance(scenario, str) or not scenario.strip()):
+            raise FlodenWebbFel("Fältet 'scenario' ska vara ett sparat scenarios id (text).")
+
+        max_flackar = _tolka_heltal(payload, "max_flackar", 40, 2, 200)
+        antal_flaskhalsar = _tolka_heltal(payload, "antal_flaskhalsar", 5, 1, 20)
+        cell_m = _tolka_tal(payload, "cellstorlek_m", 4.0)
+        if not 0.25 <= cell_m <= 100.0:
+            raise FlodenWebbFel("Fältet 'cellstorlek_m' ska ligga mellan 0,25 och 100 m.")
+        avstand_m = _tolka_tal(payload, "flaskhals_avstand_m", 20.0)
+        if avstand_m < cell_m:
+            raise FlodenWebbFel("Fältet 'flaskhals_avstand_m' ska vara minst cellstorleken.")
+        try:
+            k = self.kartverktyg.kor_ekologi(
+                omrade_id,
+                scenario.strip() if isinstance(scenario, str) else None,
+                {"artprofil": artprofil, "cellstorlek_m": cell_m, "max_flackar": max_flackar},
+            )
+        except FlodenWebbFel as exc:
+            if exc.status_kod == 500 and "LosarFel" in str(exc):
+                raise FlodenWebbFel(str(exc), status_kod=400) from exc
+            raise
+        return ekologi_svar(
+            self.fragor,
+            korning_id=k["korning_id"],
+            analys=k["analys"],
+            omrade_id=omrade_id,
+            scenario=scenario if isinstance(scenario, str) else None,
+            antal_flaskhalsar=antal_flaskhalsar,
+            flaskhals_avstand_m=avstand_m,
+            max_flackar=max_flackar,
+        )
 
     def kor_buller_optimering_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/analys/buller-skarmar`: CELF-skärmval + skuggzonsdetektor."""
@@ -2707,6 +2771,9 @@ class FlodenApiApp:
             if verb == "POST" and ren_sokvag == "/api/analys/svf-intervall":
                 return _json_svar(200, self.kor_svf_intervall_analys(kropp))
 
+            if verb == "POST" and ren_sokvag == "/api/analys/ekologi":
+                return _json_svar(200, self.kor_ekologi_analys(kropp))
+
             if verb == "POST" and ren_sokvag == "/api/analys/buller-skarmar":
                 return _json_svar(200, self.kor_buller_optimering_analys(kropp))
 
@@ -2869,6 +2936,7 @@ class FlodenApiApp:
             "/api/analys/bifurkationer",
             "/api/analys/intervall",
             "/api/analys/svf-intervall",
+            "/api/analys/ekologi",
         ):
             return None
         try:

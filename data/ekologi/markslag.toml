@@ -1,0 +1,65 @@
+# Översättning av K1:s markslagskoder till ekologikärnans markslagskoder (src/ekologi/artprofiler.py).
+# Konfiguration, inte kod: ändra här, inte i lösaren. Filens sha256 ingår i lösarens parametrar och
+# därmed i cachenyckeln och K0-manifestet.
+#
+# ALLA val nedan är EGNA val (skiss, `preliminar = true`), inte ur någon källa.
+#
+# Ekologikärnans koder: 0 öppen mark/grus, 1 hårdgjord, 2 byggnad, 3 vatten, 4 skog/träd/buskage,
+# 5 våtmark, 6 äng/grönyta.
+version = 1
+preliminar = true
+
+# K1-kod 0 (okänt) gissas inte: den får en kärnkod som ingen artprofil har ett eget motstånd för,
+# så att profilens `standard_motstand` gäller. Antalet okända celler redovisas som varning.
+okant_karnkod = 99
+
+[markslag.0]
+namn = "okänt"
+karnkod = 99
+
+[markslag.1]
+namn = "hårdgjort"
+karnkod = 1
+
+[markslag.2]
+namn = "tak"
+karnkod = 2
+
+[markslag.3]
+namn = "grönt tak"
+karnkod = 2
+anmarkning = "Grönt tak räknas som byggnad (hinder på marknivå); takets värde som habitat ingår inte i v1."
+
+[markslag.4]
+namn = "gräs"
+karnkod = 6
+anmarkning = "K1 skiljer inte klippt gräsmatta från äng; båda blir grönyta."
+
+[markslag.5]
+namn = "skog"
+karnkod = 4
+
+[markslag.6]
+namn = "berg i dagen"
+karnkod = 0
+
+[markslag.7]
+namn = "grus"
+karnkod = 0
+
+[markslag.8]
+namn = "vatten"
+karnkod = 3
+
+[markslag.9]
+namn = "byggnad"
+karnkod = 2
+
+# Trädskikt: celler där vegetation.tif (K1 v2) visar vegetation räknas som skog/träd/buskage
+# ovanpå de angivna markslagen. Tröskeln 0,5 m är K1:s egen nedre gräns för vegetation; kronhöjds-
+# kravet för en viss art sätts av artprofilen (`min_kronhojd_m`), inte här. Byggnad och vatten
+# får aldrig trädskikt.
+[vegetation]
+tradskikt_min_hojd_m = 0.5
+tradskikt_karnkod = 4
+tradskikt_pa_k1_markslag = [1, 4, 5, 6, 7]

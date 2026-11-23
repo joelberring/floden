@@ -236,8 +236,10 @@ def berakna_konnektivitet(
     )
 
     strom_sam: FloatRaster | None = None
+    kansl_sam: FloatRaster | None = None
     if berakna_flaskhalsar and len(habitat.flackar) >= 2:
         strom_acc = np.zeros(motstand.motstand.shape, dtype=np.float64)
+        kansl_acc = np.zeros(motstand.motstand.shape, dtype=np.float64)
         vikt_sum = 0.0
         m = len(habitat.flackar)
         for i in range(m):
@@ -257,8 +259,10 @@ def berakna_konnektivitet(
                 )
                 if par.sammankopplad:
                     strom_acc += vikt * par.stromtathet
+                    kansl_acc += vikt * par.kanslighet_cell
                     vikt_sum += vikt
         strom_sam = strom_acc / vikt_sum if vikt_sum > 0.0 else strom_acc
+        kansl_sam = kansl_acc / vikt_sum if vikt_sum > 0.0 else kansl_acc
 
     return KonnektivitetsResultat(
         profil_id=profil.profil_id,
@@ -271,6 +275,7 @@ def berakna_konnektivitet(
         p_stjarna=p_stjarna,
         flack_betydelse=betydelse,
         stromtathet_sammanlagd=strom_sam,
+        kanslighet_sammanlagd=kansl_sam,
     )
 
 

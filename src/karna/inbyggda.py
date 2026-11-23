@@ -6,6 +6,7 @@
 - `vatten.dynamik`: global; händelsestyrd dynamik (T03) med takvatten och avtappning.
 - `luft.vindkomfort`, `luft.halt`: globala lösare på K1 v2 (`karna/luft_losare.py`; luftdelen är
   MIT).
+- `ekologi.konnektivitet`: global; ekologisk konnektivitet (`karna/ekologi_losare.py`, K44/K45).
 - `geometri.lutning`: rutvis med kort påverkansradie; lutning i grader ur markmodellen.
   Visar och testar den lokala omräkningen.
 """
@@ -20,6 +21,7 @@ from typing import Any, ClassVar
 import numpy as np
 
 from karna.analyslosare import Analyslosare, LosarFel, LosarKontext, LosarUtdata
+from karna.ekologi_losare import LOSARE as _EKOLOGI_LOSARE
 from karna.luft_losare import LOSARE as _LUFT_LOSARE  # luftimporterna i den filen är lata
 
 
@@ -462,4 +464,6 @@ class Lutning(Analyslosare):
         )
 
 
-LOSARE: list[Analyslosare] = [StatiskFyllning(), Dynamik(), Lutning(), *_LUFT_LOSARE]
+LOSARE: list[Analyslosare] = [
+    StatiskFyllning(), Dynamik(), Lutning(), *_LUFT_LOSARE, *_EKOLOGI_LOSARE
+]

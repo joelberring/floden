@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 KONTRAKT_K21 = "K21/v1"
 GILTIGA_DOMANER: frozenset[str] = frozenset(
-    {"vatten", "luft", "buller", "dagsljus", "geometri", "ovrigt"}
+    {"vatten", "luft", "buller", "dagsljus", "ekologi", "geometri", "ovrigt"}
 )
 _NAMN_MONSTER = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 _ROLL_MONSTER = re.compile(r"^[a-z][a-z0-9_]*$")

@@ -4,7 +4,7 @@
  */
 import { formatera } from "../sidor.ts";
 
-export type Amne = "vatten" | "dagsljus";
+export type Amne = "vatten" | "dagsljus" | "ekologi";
 
 export interface Marksiffror {
   yta_minskning_m2: number;
@@ -21,11 +21,33 @@ export interface Underlag {
   efterDjup_m?: number | null;
   foreLagrat_m3?: number | null;
   efterLagrat_m3?: number | null;
+  /** Svaret från `POST /api/analys/ekologi` (K45); null när det saknas. */
+  ekologi?: EkologiSvar | null;
+}
+
+export interface EkologiLage {
+  ECA_m2?: number | null;
+  ECA_intervall_m2?: [number, number] | null;
+  PC?: number | null;
+  PC_intervall?: [number, number] | null;
+  antal_flackar?: number | null;
+}
+
+/** Det av `floden-ekologi/v1` som panelen visar. */
+export interface EkologiSvar {
+  fore?: EkologiLage;
+  efter?: EkologiLage;
+  delta_eca_m2?: number | null;
+  delta_eca_procent?: number | null;
+  delta_pc?: number | null;
+  varningar?: string[];
 }
 
 export interface Tal {
   etikett: string;
   varde: string;
+  /** Liten rad under talet, t.ex. osäkerhetsintervallet. */
+  under?: string;
 }
 
 export interface Stapel {
@@ -48,7 +70,49 @@ function troskelText(amne: Amne, t: number | null): string {
   return `${formatera(t, 0)} ${t === 1 ? "timme" : "timmar"}`;
 }
 
+/** Enhet för en yta: hektar (1 ha = 10 000 m²) när den är minst en hektar, annars m². */
+const arHektar = (v: number): boolean => Math.abs(v) >= 10000;
+
+function ytaI(v: number, hektar: boolean, decimaler: number): string {
+  return hektar ? tal(v / 10000, 2, "ha") : tal(v, decimaler, "m²");
+}
+
+/** Yta i m² eller ha. Saknat tal blir "–". */
+export function yta(v: number | null | undefined, decimaler = 0): string {
+  const n = nummer(v);
+  return n === null ? "–" : ytaI(n, arHektar(n), decimaler);
+}
+
+/** Yta med intervall i samma enhet som värdet; intervallet utelämnas när det saknas. */
+export function ytaMedIntervall(v: number | null | undefined, iv: readonly number[] | null | undefined): string {
+  const n = nummer(v);
+  if (n === null) return "–";
+  const h = arHektar(n);
+  const i = intervallText(iv, (x) => ytaI(x, h, 0));
+  return i ? `${ytaI(n, h, 0)} (${i})` : ytaI(n, h, 0);
+}
+
+/** "a till b" för ett giltigt intervall, annars tom text. */
+function intervallText(iv: readonly number[] | null | undefined, f: (x: number) => string): string {
+  if (!iv || iv.length !== 2 || !Number.isFinite(iv[0]) || !Number.isFinite(iv[1])) return "";
+  return `${f(iv[0] as number)} till ${f(iv[1] as number)}`;
+}
+
+/** ECA visas alltid i hektar, så att före, efter och staplar har samma enhet. */
+const ecaHa = (v: number): string => tal(v / 10000, 2, "ha");
+
+function slutsatsEkologi(e: EkologiSvar | null | undefined): string {
+  const d = nummer(e?.delta_eca_m2);
+  if (d === null) return "Resultatet har ingen ekologisk konnektivitet att sammanfatta.";
+  const pst = nummer(e?.delta_eca_procent);
+  const andel = pst === null ? "" : ` (${tal(Math.abs(pst), 1, "%")})`;
+  if (d < 0) return `Förslaget minskar den effektiva konnektivitetsytan (ECA) med ${yta(Math.abs(d))}${andel}.`;
+  if (d > 0) return `Beräkningen ger en ökning av ECA med ${yta(d)}${andel}; kontrollera den innan den tolkas som en förbättring.`;
+  return "Förslaget ändrar inte ECA.";
+}
+
 export function slutsats(amne: Amne, u: Underlag): string {
+  if (amne === "ekologi") return slutsatsEkologi(u.ekologi);
   const s = u.siffror;
   if (!s) return "Resultatet har inga markvärden att sammanfatta.";
   const tr = troskelText(amne, u.troskel);
@@ -62,6 +126,20 @@ export function slutsats(amne: Amne, u: Underlag): string {
 
 export function nyckeltal(amne: Amne, u: Underlag): Tal[] {
   const s = u.siffror;
+  if (amne === "ekologi") {
+    const e = u.ekologi;
+    const f = e?.fore;
+    const ef = e?.efter;
+    const flackar = (v: number | null | undefined): string => (nummer(v) === null ? "–" : formatera(v as number, 0));
+    return [
+      { etikett: "ECA före", varde: nummer(f?.ECA_m2) === null ? "–" : ecaHa(f?.ECA_m2 as number), under: intervallText(f?.ECA_intervall_m2, ecaHa) },
+      { etikett: "ECA efter", varde: nummer(ef?.ECA_m2) === null ? "–" : ecaHa(ef?.ECA_m2 as number), under: intervallText(ef?.ECA_intervall_m2, ecaHa) },
+      { etikett: "Förändring av ECA", varde: yta(e?.delta_eca_m2) },
+      { etikett: "PC före", varde: tal(nummer(f?.PC), 4, "").trim(), under: intervallText(f?.PC_intervall, (x) => tal(x, 4, "").trim()) },
+      { etikett: "PC efter", varde: tal(nummer(ef?.PC), 4, "").trim(), under: intervallText(ef?.PC_intervall, (x) => tal(x, 4, "").trim()) },
+      { etikett: "Habitatfläckar före och efter", varde: nummer(f?.antal_flackar) === null && nummer(ef?.antal_flackar) === null ? "–" : `${flackar(f?.antal_flackar)} och ${flackar(ef?.antal_flackar)}` },
+    ];
+  }
   if (amne === "vatten") {
     return [
       { etikett: "Största djup före", varde: tal(nummer(u.foreDjup_m), 2, "m") },
@@ -78,6 +156,11 @@ export function nyckeltal(amne: Amne, u: Underlag): Tal[] {
   ];
 }
 
+const ecaHaTal = (v: number | null | undefined): number | null => {
+  const n = nummer(v);
+  return n === null ? null : n / 10000;
+};
+
 function staplar(poster: Array<[string, number | null, number, string]>): Stapel[] {
   const stor = Math.max(0, ...poster.map(([, v]) => v ?? 0));
   return poster.map(([etikett, v, dec, enhet]) => ({
@@ -88,6 +171,15 @@ function staplar(poster: Array<[string, number | null, number, string]>): Stapel
 }
 
 export function jamforelse(amne: Amne, u: Underlag): { rubrik: string; staplar: Stapel[] } {
+  if (amne === "ekologi") {
+    return {
+      rubrik: "Effektiv konnektivitetsyta (ECA)",
+      staplar: staplar([
+        ["Före", ecaHaTal(u.ekologi?.fore?.ECA_m2), 2, "ha"],
+        ["Efter", ecaHaTal(u.ekologi?.efter?.ECA_m2), 2, "ha"],
+      ]),
+    };
+  }
   if (amne === "vatten") {
     return {
       rubrik: "Stående vatten i lågpunkter",

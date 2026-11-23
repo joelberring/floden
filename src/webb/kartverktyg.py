@@ -139,7 +139,11 @@ class KartverktygTjanst:
             return []
         delar = d.get("delar", {})
         ut = []
-        for ref, kort in (("demo_dagsljus", "dagsljus"), ("demo_vatten", "vatten")):
+        for ref, kort in (
+            ("demo_dagsljus", "dagsljus"),
+            ("demo_vatten", "vatten"),
+            ("demo_ekologi", "ekologi"),
+        ):
             if isinstance(delar.get(ref), dict) and "jobb" in delar[ref]:
                 ut.append((ref, kort))
         return ut
@@ -422,7 +426,11 @@ class KartverktygTjanst:
         """Varningar: delar av förslaget som inte når en analys område."""
         ut: list[str] = []
         for kort, (sc, utel) in k9.items():
-            namn = {"dagsljus": "soltimmarna", "vatten": "vattenberäkningen"}.get(kort, kort)
+            namn = {
+                "dagsljus": "soltimmarna",
+                "vatten": "vattenberäkningen",
+                "ekologi": "ekologiberäkningen",
+            }.get(kort, kort)
             for aid in utel:
                 ut.append(
                     f"Ändringen '{aid}' ligger utanför området för {namn} och räknas inte med där."
@@ -568,8 +576,13 @@ class KartverktygTjanst:
         namn_slug: str,
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
+        *,
+        prefix: str = "rita",
+        parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster."""
+        """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster.
+
+        `parametrar_over` (analys-id -> parametrar) ersätter mallens parametrar för analysen."""
         mallar = self._kravs_projekt(projekt)
         d = self._las(projekt, namn_slug)
         urval: dict[str, list[str]] = {}
@@ -595,11 +608,12 @@ class KartverktygTjanst:
             k9_fil = self.mapp / projekt / "k9" / f"{namn_slug}__{kort}.json"
             skriv_scenario(sc, k9_fil)
             self.fragedir.mkdir(parents=True, exist_ok=True)
-            max_slug = 60 - len("rita-") - 1 - len(kort)
-            fraga_id = f"rita-{namn_slug[:max_slug]}-{kort}"
+            max_slug = 60 - len(prefix) - 2 - len(kort)
+            fraga_id = f"{prefix}-{namn_slug[:max_slug]}-{kort}"
             fil = self.fragedir / f"{fraga_id}.json"
             innehall = self._k20(
-                m, fil, k9_fil, fraga_id, d["namn"], analyser, avtappning_mm_h=avtappning_mm_h
+                m, fil, k9_fil, fraga_id, d["namn"], analyser,
+                avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over,
             )
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             ref = self._ref_for(fil)
@@ -631,6 +645,7 @@ class KartverktygTjanst:
         analyser: Sequence[str],
         *,
         avtappning_mm_h: float | None = None,
+        parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
         valda = [a for a in m.fraga.analyser if a.id in analyser]
@@ -642,6 +657,8 @@ class KartverktygTjanst:
                 "scenarier": ["fore", "ritat"],
                 "parametrar": dict(a.parametrar),
             }
+            if parametrar_over and a.id in parametrar_over:
+                post["parametrar"] = {**post["parametrar"], **parametrar_over[a.id]}
             if avtappning_mm_h is not None and a.losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
             if a.fokus is not None:
@@ -756,6 +773,56 @@ class KartverktygTjanst:
         fil.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return {"slug": namn_slug, "fragor": ut}
 
+    def kor_ekologi(
+        self,
+        projekt: str,
+        namn_slug: str | None,
+        parametrar: Mapping[str, Any],
+        konto_projekt: str | None = None,
+    ) -> dict[str, Any]:
+        """Kör (eller återanvänder ur cachen) ekologianalysen före/efter synkront.
+
+        `namn_slug` är ett sparat scenario; utan det används projektets förslag (demons K9).
+        Körningen får ett id som beror på parametrarna och scenariots K9-nyckel, så samma anrop
+        ger samma körning. Fel i lösaren (t.ex. för många fläckar) kastas som 400.
+        """
+        import hashlib
+
+        mallar = self._kravs_projekt(projekt)
+        m = mallar.get("ekologi")
+        if m is None:
+            raise _fel("Projektet har ingen ekologianalys (kör `floden demo`).", 404)
+        analys = next((a.id for a in m.fraga.analyser if a.losare == "ekologi.konnektivitet"), None)
+        if analys is None:
+            raise _fel("Ekologimallen saknar lösaren ekologi.konnektivitet.", 500)
+        over = {analys: dict(parametrar)}
+        tag = hashlib.sha256(json.dumps(over, sort_keys=True).encode()).hexdigest()[:8]
+        if namn_slug is None:
+            k9 = next((s.k9 for s in m.fraga.scenarier.values() if s.k9), ())
+            if not k9:
+                raise _fel("Ekologimallen har inget förslag att jämföra med.", 500)
+            fraga_id = f"api-ekologi-{tag}"
+            fil = self.fragedir / f"{fraga_id}.json"
+            self.fragedir.mkdir(parents=True, exist_ok=True)
+            innehall = self._k20(m, fil, k9[-1], fraga_id, "projektets förslag", [analys],
+                                 parametrar_over=over)
+            scen_nyckel = sha256_fil(k9[-1])
+        else:
+            poster = self._skriv_fragor(
+                projekt, namn_slug, [f"ekologi.{analys}"], prefix=f"api{tag}", parametrar_over=over
+            )
+            p = poster[0]
+            fil = self.fragedir / f"{p['fraga_id']}.json"
+            innehall = None
+            scen_nyckel = str(p["k9_nyckel"])
+            fraga_id = str(p["fraga_id"])
+        if innehall is not None:
+            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
+        ref = self._ref_for(fil)
+        korning_id = f"api-ekologi-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
+        status, _ = self.fragor.kor_synkront(ref, korning_id, konto_projekt or projekt)
+        return {"korning_id": korning_id, "status": status, "analys": analys, "ref": ref}
+
     def status(self, projekt: str, namn_slug: str) -> dict[str, Any]:
         """Körningarnas status och, för klara, vyerna (före, efter, skillnad) för kartan."""
         self._kravs_projekt(projekt)
@@ -804,7 +871,9 @@ class KartverktygTjanst:
             vyer.append(
                 {
                     "id": f"{korning_id}:{la['id']}",
-                    "avsnitt": "vatten" if la["analys"] == "skyfall" else "dagsljus",
+                    "avsnitt": {"skyfall": "vatten", "konnektivitet": "ekologi"}.get(
+                        la["analys"], "dagsljus"
+                    ),
                     "rubrik": f"{namn}: {la.get('etikett') or la['analys']}",
                     "mattnamn": la.get("etikett") or la["analys"],
                     "korning_id": korning_id,

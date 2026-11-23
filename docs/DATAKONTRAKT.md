@@ -418,7 +418,7 @@ Python-gränssnitt `karna.losare.Losare`. Se `docs/ANSLUTA_LOSARE.md`.
 
 | Del | Krav |
 | --- | --- |
-| `namn` | `<doman>.<namn>`, domän ∈ {vatten, luft, buller, dagsljus, geometri, ovrigt} |
+| `namn` | `<doman>.<namn>`, domän ∈ {vatten, luft, buller, dagsljus, ekologi, geometri, ovrigt} (`ekologi` tillagd 2026-11-23 för `ekologi.konnektivitet`, K45; ett värde till i listan, bakåtkompatibelt, K21 förblir v1) |
 | `version` | Sträng. Höjs när resultatet kan ändras för samma indata. Ingår i nyckeln |
 | `indataroller`, `valfria_indataroller` | Roller frågan måste ange resp. får ange (tillägg 2026-11-21, bakåtkompatibelt: lösare utan `valfria_indataroller` beter sig som förut; K21 förblir v1) |
 | `validera_parametrar(p)` | Returnerar fullständiga parametrar med standardvärden; okända ger `LosarFel` |
@@ -911,3 +911,122 @@ underlag, och 90,4-percentilen jämförs inte med något värde här.
 **Fel:** 400 för ogiltig JSON, `timvis_lokal_ug_m3` med färre än 24 eller fler än 8784 värden, icke-tal eller
 NaN/oändligt, intervall som bryter ovan, `max_dygn_ar` som inte är ett heltal ≥ 0, `LuftFel`; 401 när inloggning
 är på och kontot saknas. **Behörighet:** som K42 (inloggat konto, ingen projektroll).
+
+## K44 – Artprofil `floden-artprofil/v1` (v1)
+
+Registrerat 2026-11-23 (ekologiläget, BESLUT 2026-11-23). En JSON-fil som beskriver en artgrupps eller en generell
+spridningsprofil för `ekologi.konnektivitet` (K45). **Skiss:** profilernas parametrar saknar exakta källhänvisningar
+(källa, tabell, sida); de är till för att jämföra planalternativ, inte värden ur en granskad källa. En profil är en
+artgrupp eller en generell profil, aldrig fynd av enskilda arter eller lokaler: skyddsklassade artfynd får inte
+förekomma i Floden. De fyra standardprofilerna (`ek_insekter`, `barrskogsfagel`, `groddjur`, `pollinerare`) ligger i
+`src/ekologi/artprofiler.py`; en egen profil anges som valfri indataroll `artprofil` till lösaren (och ska ha ett id
+som inte är en standardprofils). Läses av `ekologi.artprofil_format.artprofil_fran_dict` (strikt: okända och saknade fält
+ger fel) och skrivs av `artprofil_till_dict`.
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-artprofil/v1"` |
+| `profil_id` | text | | `a–z`, `0–9`, `_`, börjar med bokstav, högst 40 tecken |
+| `namn`, `beskrivning`, `kalla` | text | | Icke tomma. `kalla` är fritext och är inte en exakt källhänvisning |
+| `habitat_markslag` | lista av heltal | | Ekologikärnans markslagskoder som är habitat (icke tom) |
+| `min_area_m2` | tal > 0 | m² | Minsta (effektiva) area för en habitatfläck |
+| `spridningsavstand_m` | tal > 0 | m | Spridningsavstånd (p = 0,5 vid detta kostnadsavstånd) |
+| `motstand_per_markslag` | objekt | | Kod (text) → motstånd ≥ 1, eller `null` = total barriär (oändligt motstånd) |
+| `standard_motstand` | tal ≥ 1 | | Motstånd för markslag som saknas i tabellen (bl.a. okänt markslag) |
+| `min_kronhojd_m` | tal ≥ 0 | m | Habitat kräver minst denna kronhöjd (0 = inget krav; kräver vegetation.tif) |
+| `motstand_osakerhet_faktor` | `[lo, hi]` | (faktor) | 0 < lo ≤ hi; skalar motståndet i de två extremkörningarna |
+| `metodstatus` | text | | Alltid `"skiss"` |
+
+Ekologikärnans markslagskoder: 0 öppen mark/grus, 1 hårdgjord, 2 byggnad, 3 vatten, 4 skog/träd/buskage, 5 våtmark, 6
+äng/grönyta. K1:s koder översätts till dessa i `data/ekologi/markslag.toml` (konfiguration, egna val, skiss).
+
+## K45 – Ekologisk konnektivitet `floden-ekologi-konnektivitet/v1` (v1)
+
+Registrerat 2026-11-23 (ekologiläget). Lösaren `ekologi.konnektivitet` (K21, version 1, domän `ekologi`, **global**,
+metodstatus `skiss`) räknar kretsteoretisk och grafbaserad konnektivitet (McRae m.fl. 2008; Saura och Pascual-Hortal
+2007; Saura och Rubio 2010) för en artprofil (K44) på K1 v2-rutor efter K9. Rutorna läggs som en mosaik på `cellstorlek_m`
+(största vegetationshöjd och vanligaste markslag per cell), K1:s markslag översätts enligt `data/ekologi/markslag.toml`
+(sha256 ingår i parametrarna och i `ekologi.json`) och celler med vegetation.tif ≥ 0,5 m får trädskikt.
+
+Parametrar: `artprofil` (standardprofilens id; eller indataroll `artprofil`, exakt en av dem), `cellstorlek_m` (förval 4),
+`max_flackar` (förval 40), `max_celler` (förval 250000), `motstand_faktor_intervall` (förval profilens) och
+`spridning_faktor_intervall` (förval `[0,8, 1,25]`). För många fläckar eller celler ger `LosarFel` med text, inte ett
+avkortat resultat.
+
+Utdataroller (alla lämnas alltid):
+
+| Roll | Fil | Innehåll |
+| --- | --- | --- |
+| `stromtathet` | `stromtathet.tif` | float32, värden i [0, 1], EPSG:3011, `cellstorlek_m` stora celler, NaN = nodata. Normaliserad strömtäthet J_u summerad över fläckparen med vikt a_i·a_j·p*_ij (flaskhalsar: högt värde = mycket av förflyttningen passerar cellen). NaN överallt om det finns färre än två habitatfläckar |
+| `kansighet` | `kansighet.tif` | float32, ≤ 0, samma rutnät. Viktat medel (samma vikter) av dR_eff/dG per cell: hur mycket det effektiva motståndet ändras om cellens konduktans ökar. NaN överallt om färre än två fläckar |
+| `ekologi` | `ekologi.json` | Se tabellen nedan |
+
+Skillnaden före/efter tas med `[[jamforelser]]` på `stromtathet`. Fälten i `ekologi.json`:
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-ekologi-konnektivitet/v1"` |
+| `metodstatus` | text | | `"skiss"` |
+| `artprofil_id` | text | | Profilens id (K44) |
+| `artprofil` | objekt | | Hela profilen i K44-format, så att resultatet går att återskapa |
+| `parameterkallor` | text | | Att profilens parametrar saknar exakta källhänvisningar |
+| `cellstorlek_m` | tal | m | Rutnätets cellstorlek |
+| `analys_area_m2` | tal | m² | Rutnätets area |
+| `antal_flackar` | heltal | st | Habitatfläckar (area ≥ `min_area_m2`) |
+| `total_habitat_area_m2` | tal | m² | Summa effektiv habitatarea |
+| `ECA_m2` | tal | m² | Equivalent Connected Area, sqrt(Σ a_i a_j p*_ij) |
+| `PC` | tal | (andel) | Probability of Connectivity: Σ a_i a_j p*_ij delat med rutnätets area i kvadrat |
+| `ECA_intervall_m2` | `[min, max]` | m² | Från två extremkörningar: (motstånd × hi, spridningsavstånd × lo) och (motstånd × lo, spridningsavstånd × hi) |
+| `PC_intervall` | `[min, max]` | (andel) | Samma två körningar |
+| `intervall_faktorer` | objekt | | `motstand` och `spridning`: `[lo, hi]` som användes |
+| `dPC` | lista | | En post per habitatfläck, störst `dPC_procent` först |
+| `markslagsmappning` | objekt | | `sha256` och `version` för `data/ekologi/markslag.toml` |
+| `varningar` | lista av text | | T.ex. okänt markslag, saknad vegetation, färre än två fläckar |
+
+`dPC[]`: `flack_id` (heltal), `area_m2`, `effektiv_area_m2` (m²), `centroid_e_m`, `centroid_n_m` (m, EPSG:3011),
+`dPC_procent` (hur många procent av PC som försvinner om fläcken tas bort) och dess tre komponenter `dPC_intra_procent`
+(fläckens egen area), `dPC_flux_procent` (flöde till och från fläcken) och `dPC_connector_procent` (fläcken som
+länk mellan andra). Intervallet är monotont garanterat men säger inget om osäkerheten i profilens parametrar eller i
+kartunderlaget. Att ett nytt hus ger ΔECA ≤ 0 gäller exakt på ett givet rutnät; rastreringen av K1 till `cellstorlek_m`
+kan i enstaka fall bryta det (API:t varnar då).
+
+### Webb-API `floden-ekologi/v1`
+
+**Anrop:** `POST /api/analys/ekologi`. **Skrivs av** `FlodenApiApp.kor_ekologi_analys` (`src/webb/api.py`) som låter
+kärnan köra `ekologi.konnektivitet` före och efter (ett sparat scenario eller projektets förslag) och läser filerna.
+Körningen är synkron och återanvänds ur cachen vid samma anrop.
+
+Begäran:
+
+| Fält | Typ | Enhet | Förval | Innehåll |
+| --- | --- | --- | --- | --- |
+| `omrade_id` | text | | krävs | Projektet (demokvarteret) |
+| `artprofil` | text | | `"pollinerare"` | En standardprofil (K44) |
+| `scenario` | text | | projektets förslag | Id på ett sparat scenario (ritat förslag) |
+| `max_flackar` | heltal 2–200 | st | 40 | Fler habitatfläckar än så ger 400 |
+| `cellstorlek_m` | tal 0,25–100 | m | 4 | Rutnätets cellstorlek; ett för stort antal celler (`max_celler`) ger 400 |
+| `antal_flaskhalsar` | heltal 1–20 | st | 5 | Antal flaskhalsar per läge i svaret |
+| `flaskhals_avstand_m` | tal ≥ `cellstorlek_m` | m | 20 | Minsta avstånd mellan två redovisade flaskhalsar |
+
+Svar (200):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-ekologi/v1"` |
+| `omrade_id`, `scenario` | text | | Som i begäran (`scenario` är `null` för projektets förslag) |
+| `metodstatus` | text | | `"skiss"` |
+| `artprofil_id`, `parameterkallor` | text | | Som i K45 |
+| `korning_id` | text | | Körningen som beläggen hör till |
+| `cellstorlek_m`, `max_flackar` | tal | m, st | Som användes |
+| `fore`, `efter` | objekt | | `ECA_m2`, `ECA_intervall_m2`, `PC`, `PC_intervall`, `antal_flackar`, `total_habitat_area_m2` (som K45) |
+| `delta_eca_m2` | tal | m² | `efter.ECA_m2 − fore.ECA_m2` |
+| `delta_eca_procent` | tal eller `null` | % | `null` om ECA före är 0 |
+| `delta_pc` | tal | (andel) | `efter.PC − fore.PC` |
+| `lager` | objekt | | `stromtathet_fore`, `stromtathet_efter`, `stromtathet_skillnad`: `lager_id`, `png`, `utbredning` (lagerreferenser i körningen, flaskhalskartan) |
+| `storsta_flaskhalsar` | objekt | | `fore` och `efter`: listor av `e_m`, `n_m` (m, EPSG:3011), `stromtathet` (J, 0–1), störst först, plus `minsta_avstand_m` |
+| `dPC_efter` | lista | | `dPC[]` ur K45 för läget efter, högst `max_flackar` poster |
+| `varningar` | lista av text | | Lösarens varningar och en varning om ΔECA är positiv |
+
+**Fel:** 400 för tom eller ogiltig JSON, saknat `omrade_id`, okänd `artprofil`, tal utanför intervallen och fel från
+lösaren (för många fläckar eller celler, `LosarFel`); 404 okänt projekt eller sparat scenario; 401 inte inloggad (när
+inloggning är på). **Behörighet:** som K40 (projektet i `omrade_id` kräver minst `lasare` när inloggning är på).

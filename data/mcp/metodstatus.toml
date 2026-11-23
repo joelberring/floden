@@ -48,3 +48,8 @@ underlag = ["docs/LUFT.md avsnitt 6 (L1-L8)"]
 
 ["geometri.lutning"]
 status = "skiss"
+
+["ekologi.konnektivitet"]
+status = "skiss"
+underlag = ["tests/ekologi/test_facit_g.py (G1-G6, analytiska facit)", "tests/ekologi/test_losare_k21.py (G7)", "docs/EKOLOGI.md"]
+anmarkning = "Artprofilernas parametrar (habitat, minsta area, spridningsavstånd, motstånd per markslag, osäkerhetsfaktorer) saknar exakta källhänvisningar och är skissparametrar. Markslagsöversättningen (data/ekologi/markslag.toml) är egna val. Resultatet jämför planalternativ för en artgrupp; det säger inget om verkliga arter."
