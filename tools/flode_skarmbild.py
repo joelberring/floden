@@ -1,4 +1,5 @@
-"""Tar skärmbilder av flödets fem steg (docs/bilder/flode-*.png), bred 1440x900 och smal 390x844.
+"""Tar skärmbilder av flödets fem steg (docs/bilder/flode-*.png) och av Matematik och forskning
+(docs/bilder/matematik*.png), bred 1440x900 och smal 390x844.
 
 Förutsätter `floden demo` och `floden webb` (serverar klienten, standard http://127.0.0.1:8765):
 
@@ -74,6 +75,12 @@ def main() -> None:
                 sida.wait_for_timeout(6000)
                 sida.screenshot(path=str(UT / f"flode-{namn}{suffix}.png"), full_page=hel)
                 print(f"flode-{namn}{suffix}.png")
+            # Matematik och forskning (#/matematik): lång sida, hela sidan tas även på bred skärm.
+            sida.goto(f"{args.url}/#/matematik")
+            sida.wait_for_selector("h1", timeout=30_000)
+            sida.wait_for_timeout(1500)
+            sida.screenshot(path=str(UT / f"matematik{suffix}.png"), full_page=True)
+            print(f"matematik{suffix}.png")
             sida.close()
             if fel:
                 raise SystemExit("Sidfel: " + "; ".join(fel))
