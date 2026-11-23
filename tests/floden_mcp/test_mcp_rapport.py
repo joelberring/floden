@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Rapportverktygen över MCP (in-process): frågekatalog, rapport, påståenden, kontroll, export."""
 
 from __future__ import annotations
@@ -17,7 +18,8 @@ from tests.floden_mcp.test_mcp import Mcp
 
 RAPPORTVERKTYG = {
     "fragekatalog_sok", "rapport_skapa", "rapport_installningar", "pastaende_lagg_till",
-    "rapport_kontrollera", "rapport_exportera", "rapport_hamta",
+    "rapport_kontrollera", "rapport_exportera", "rapport_hamta", "bestallning_skapa",
+    "bestallning_hamta",
 }  # fmt: skip
 
 
@@ -163,3 +165,49 @@ def test_rapport_installningar_via_mcp_utan_sokvagar(mcp: Mcp, tmp_path: Path) -
     assert "hemlig_mapp" not in h and str(tmp_path) not in h
     logg = json.dumps(list(mcp.logg.las()), ensure_ascii=False)
     assert "hemlig_mapp" not in logg
+
+
+def test_bestallning_till_export_via_mcp_for_dagsljus(mcp: Mcp) -> None:
+    """Hela kedjan beställning, frågor, rapport, påståenden, kontroll och export via MCP."""
+    from rapport.referensflode_dagsljus import kontekst_fran_rapport
+    from rapport.referensflode_dagsljus import pastaenden as pastaenden_dagsljus
+    from rapport.skissrapport import RapportTjanst
+
+    kat = mcp.ok("fragekatalog_sok", {"omrade": "dagsljus"})
+    assert kat["antal"] == 15
+    assert mcp.ok("fragekatalog_sok", {"omrade": "sol"})["antal"] == 15
+    dl10 = next(f for f in kat["fragor"] if f["id"] == "DL-10")
+    assert dl10["floden"]["markning"] == "visat"
+    assert any(f["floden"]["markning"] == "ej_tillampligt" for f in kat["fragor"])
+
+    b = mcp.ok("bestallning_skapa", {
+        "syfte": "Skissa hur ett höjt hus påverkar sol på marken och dagsljus vid fasad",
+        "amnen": ["dagsljus", "sol"],
+        "bara_med_underlag": True,
+        "scenario": {"fore": "bas", "efter": ["hojd", "nytt_hus"]},
+    })  # fmt: skip
+    assert b["antal_fragor"] == 15 and b["utelamnade"] == 15
+    assert mcp.ok("bestallning_hamta", {"bestallning_id": b["bestallning_id"]})["syfte"] == b["syfte"]
+    assert b["bestallning_id"] in {x["bestallning_id"] for x in mcp.ok("bestallning_hamta", {})["bestallningar"]}
+
+    # skedet planunderlag kan inte köras än
+    pu = mcp.ok("bestallning_skapa", {"syfte": "Granska", "amnen": ["dagsljus"], "skede": "planunderlag"})
+    nej = mcp.anropa("rapport_skapa", {"korningar": ["demo-dagsljus"], "bestallning_id": pu["bestallning_id"]})
+    assert nej.is_error and "R3" in nej.content[0].text
+
+    r = mcp.ok("rapport_skapa", {
+        "korningar": ["demo-dagsljus"], "bestallning_id": b["bestallning_id"],
+        "mottagare": [gardens_mottagare()],
+    })  # fmt: skip
+    rid = r["rapport_id"]
+    assert len(r["fragor"]) == 15 and len(r["kartor"]) == 5
+    assert "fasadjamforelse.vsc.bas.hojd.antal_under_grans_efter" in r["belagg_adresser"]
+
+    rt = RapportTjanst(mcp.tjanst)  # samma arkiv som servern (läser bara kontext, inga tal)
+    rapport = rt.hamta(rid)
+    for kw in pastaenden_dagsljus(kontekst_fran_rapport(rt, rapport), rapport.fragor):
+        p = _lagg(mcp, rid, kw)
+        assert not p.is_error, p.content[0].text
+    assert mcp.ok("rapport_kontrollera", {"rapport_id": rid})["godkand"]
+    e = mcp.ok("rapport_exportera", {"rapport_id": rid, "format": "pdf"})
+    assert Path(e["fil"]).is_file()

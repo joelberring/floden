@@ -31,7 +31,15 @@ from floden_mcp.dataklass import DataKlass, Policy
 from floden_mcp.karna_api import FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, hash_av
 from gemensamt.hash import sha256_bytes, sha256_fil
+from rapport.amnestext import TITEL, bildtext_lagrad, tomvarde_lagrad
+from rapport.amnestext import kartrubrik as kartrubrik_text
 from rapport.belaggskalla import BelaggFel, FlodenBelaggKalla
+from rapport.bestallning import (
+    Bestallning,
+    BestallningArkiv,
+    BestallningFel,
+    skapa_bestallning,
+)
 from rapport.fragekatalog import AMNESPREFIX, Fraga, Fragekatalog, FragekatalogFel
 from rapport.installningar import (
     FILROLLER,
@@ -48,19 +56,16 @@ from rapport.pastaende import (
     statusfel,
     textfel,
 )
-from rapport.skissmall import kartrubrik
 
 KONTRAKT_K33: Final[str] = "K33/v1"
 STANDARD_RAPPORTMAPP: Final[str] = "data/lokal/rapporter"
-AMNEN_NIVA1: Final[tuple[str, ...]] = ("skyfall",)
-"""Ämnen med skissrapport i R1. Ordning enligt Joel 2026-11-22: skyfall, dagsljus/sol, luft, buller."""
-_AMNESDOMAN: Final[dict[str, str]] = {"skyfall": "vatten"}
+AMNEN_NIVA1: Final[tuple[str, ...]] = ("skyfall", "dagsljus")
+"""Ämnen med skissrapport: skyfall (R1) och dagsljus/sol (R2). Ordning enligt Joel 2026-11-22:
+skyfall, dagsljus/sol, luft, buller."""
+_AMNESDOMAN: Final[dict[str, str]] = {"skyfall": "vatten", "dagsljus": "dagsljus"}
 _ID_RE: Final[re.Pattern[str]] = re.compile(r"^r-[0-9a-f]{12}$")
 KART_PX: Final[int] = 560
-TOMVARDE_TEXT: Final[str] = (
-    "Vitt: mark under teckenförklaringens lägsta klass. Ljusgrått: byggnadernas tak eller "
-    "celler utan värde."
-)
+TOMVARDE_TEXT: Final[str] = tomvarde_lagrad("skyfall")
 
 
 class RapportFel(Exception):
@@ -169,6 +174,8 @@ class Rapport:
     signering: dict[str, Any] | None = None
     installningar: RapportInstallningar = field(default_factory=RapportInstallningar)
     """Språk och layout (valfritt i K33/v1; saknas fältet gäller förvalen)."""
+    bestallning: Bestallning | None = None
+    """Beställningen (K30) som rapporten bygger på (valfritt i K33/v1, tillagt i R2)."""
     kontrakt: str = KONTRAKT_K33
 
     def till_dict(self) -> dict[str, Any]:
@@ -198,6 +205,7 @@ class Rapport:
             "granskning": self.granskning,
             "signering": self.signering,
             "installningar": self.installningar.till_dict(),
+            "bestallning": None if self.bestallning is None else self.bestallning.till_dict(),
         }
 
     @classmethod
@@ -230,8 +238,11 @@ class Rapport:
                 granskning=d.get("granskning"),
                 signering=d.get("signering"),
                 installningar=RapportInstallningar.fran_dict(d.get("installningar")),
+                bestallning=(
+                    None if not d.get("bestallning") else Bestallning.fran_dict(d["bestallning"])
+                ),
             )
-        except (KeyError, TypeError, ValueError) as exc:
+        except (KeyError, TypeError, ValueError, BestallningFel) as exc:
             raise RapportFel(f"rapport.json är ofullständig: {exc}.") from exc
 
     @property
@@ -414,6 +425,7 @@ class RapportTjanst:
         )
         mapp = Path(rapportmapp) if rapportmapp is not None else _rapportmapp_for(tjanst)
         self.arkiv = RapportArkiv(mapp)
+        self.bestallningar = BestallningArkiv(mapp / "bestallningar")
         self.policy = policy or Policy()
         self._katalog = katalog
         self.korlogg = korlogg
@@ -454,7 +466,9 @@ class RapportTjanst:
 
     # ------------------------------------------------------------------ skapa
 
-    def _korningspost(self, korning_id: str, amne: str) -> dict[str, Any]:
+    def _korningspost(
+        self, korning_id: str, amne: str, scenario: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
         try:
             status = self.tjanst.korning_status(korning_id)
         except FlodenFel as exc:
@@ -474,6 +488,23 @@ class RapportTjanst:
             )
         utmapp = self.kalla.utmapp(korning_id)
         manifest = json.loads((utmapp / "run.json").read_text(encoding="utf-8"))
+        jamforelser = [
+            {k: j[k] for k in ("namn", "analys", "utdata", "fore", "efter", "troskel")}
+            for j in res["jamforelser"]
+            if any(j["analys"] == t["analys"] for t in analyser)
+        ]
+        if scenario is not None:
+            jamforelser = [
+                j
+                for j in jamforelser
+                if j["fore"] == scenario["fore"] and j["efter"] in scenario["efter"]
+            ]
+            if not jamforelser:
+                raise RapportFel(
+                    f"Körningen '{korning_id}' har ingen jämförelse av "
+                    f"{', '.join(scenario['efter'])} mot {scenario['fore']} (beställningens "
+                    "scenario). Jämförelser anges i frågan ([[jamforelser]], K20)."
+                )
         return {
             "korning_id": korning_id,
             "fraga_id": res["fraga_id"],
@@ -490,11 +521,7 @@ class RapportTjanst:
                 }
                 for t in analyser
             ],
-            "jamforelser": [
-                {k: j[k] for k in ("namn", "analys", "utdata", "fore", "efter", "troskel")}
-                for j in res["jamforelser"]
-                if any(j["analys"] == t["analys"] for t in analyser)
-            ],
+            "jamforelser": jamforelser,
             "antaganden": _antaganden(res, [t["analys"] for t in analyser]),
             "scenarier": [s["id"] for s in res["scenarier"]],
         }
@@ -519,15 +546,25 @@ class RapportTjanst:
                 }
         return list(losare.values())
 
-    def _kartor(self, rapport_id: str, korningar: Sequence[Mapping[str, Any]]) -> list[Karta]:
+    def _kartor(
+        self, rapport_id: str, amne: str, korningar: Sequence[Mapping[str, Any]]
+    ) -> list[Karta]:
         mapp = self.arkiv.rapportmapp(rapport_id) / "kartor"
         mapp.mkdir(parents=True, exist_ok=True)
         ut: list[Karta] = []
+        gjorda_bas: set[tuple[Any, ...]] = set()
         for k in korningar:
             res = self.kalla._resultat(k["korning_id"])  # noqa: SLF001
+            losare_per_analys = {a["analys"]: a["losare"] for a in k["analyser"]}
             for j in k["jamforelser"]:
                 utsnitt = kartutsnitt(res, j)
-                for typ, scen in (("bas", j["fore"]), ("scenario", j["efter"]), ("skillnad", None)):
+                for typ, scen in (("bas", j["fore"]), ("scenario", j["efter"]), ("skillnad", j["efter"])):
+                    if typ == "bas":
+                        # Före-kartan är densamma för alla alternativ med samma utsnitt: en bild.
+                        nyckel = (k["korning_id"], j["analys"], j["fore"], tuple(utsnitt or ()))
+                        if nyckel in gjorda_bas:
+                            continue
+                        gjorda_bas.add(nyckel)
                     try:
                         png, meta = self.tjanst.karta(
                             k["korning_id"],
@@ -536,7 +573,7 @@ class RapportTjanst:
                             scenario=scen,
                             utsnitt=utsnitt,
                             max_px=KART_PX,
-                            rubrik=kartrubrik(typ, scen, j["fore"], j["efter"]),
+                            rubrik=kartrubrik_text(amne, typ, scen, j["fore"], j["efter"]),
                         )
                     except FlodenFel as exc:
                         raise RapportFel(f"Kartan kunde inte ritas: {exc}") from exc
@@ -554,7 +591,10 @@ class RapportTjanst:
                             scenario=str(meta["scenario"]),
                             fil=fil,
                             png_sha256=str(meta["png_sha256"]),
-                            bildtext=_bildtext(typ, j, meta, k),
+                            bildtext=bildtext_lagrad(
+                                amne, typ, j, meta, losare_per_analys.get(j["analys"], ""),
+                                str(k["korning_id"]),
+                            ),
                             meta={
                                 key: meta[key]
                                 for key in (
@@ -570,7 +610,7 @@ class RapportTjanst:
                             }
                             | {
                                 "utsnitt": utsnitt,
-                                "rubrik": kartrubrik(typ, scen, j["fore"], j["efter"]),
+                                "rubrik": kartrubrik_text(amne, typ, scen, j["fore"], j["efter"]),
                             },
                         )
                     )
@@ -580,7 +620,7 @@ class RapportTjanst:
         self,
         *,
         projekt: str,
-        amne: str,
+        amne: str | None = None,
         korningar: Sequence[str],
         niva: int = 1,
         titel: str | None = None,
@@ -592,9 +632,45 @@ class RapportTjanst:
         ansvarig_utredare: str | None = None,
         av: str | None = None,
         installningar: Mapping[str, Any] | None = None,
+        bestallning: Bestallning | str | None = None,
     ) -> Rapport:
         """Skapar rapporten. `installningar` (se `rapport.installningar.NYCKLAR`) läggs ovanpå
-        förvalen och `[rapport]` i config.local.toml."""
+        förvalen och `[rapport]` i config.local.toml.
+
+        `bestallning` (K30, objekt eller id) styr ämne, frågor, scenario och ingress; då anges
+        varken `amne` eller `fragor` (de kommer ur beställningen)."""
+        best: Bestallning | None = None
+        if bestallning is not None:
+            try:
+                best = (
+                    self.bestallningar.las(bestallning)
+                    if isinstance(bestallning, str)
+                    else bestallning
+                )
+            except BestallningFel as exc:
+                raise RapportFel(str(exc)) from exc
+            if best.skede != "skiss":
+                raise RapportFel(
+                    "Beställningen gäller skedet 'planunderlag' (nivå 2: bedömning mot "
+                    "bedömningsgrunder, granskning och signering). Det kommer i R3; än finns "
+                    "bara skissunderlag (skede 'skiss')."
+                )
+            if best.projekt != projekt:
+                raise RapportFel(
+                    f"Beställningen gäller projektet '{best.projekt}', inte '{projekt}'."
+                )
+            if amne is not None and amne != best.rapportamne:
+                raise RapportFel(
+                    f"Beställningen gäller ämnet '{best.rapportamne}', inte '{amne}'."
+                )
+            if fragor:
+                raise RapportFel(
+                    "Frågorna kommer ur beställningen; ange inte fragor när bestallning anges."
+                )
+            amne = best.rapportamne
+            fragor = list(best.urval)
+        if amne is None:
+            raise RapportFel("Ange ämne (amne) eller en beställning (bestallning).")
         if niva != 1:
             raise RapportFel(
                 "Bara nivå 1 (skissunderlag) finns i R1. Nivå 2 (publicerbart planunderlag med "
@@ -615,15 +691,20 @@ class RapportTjanst:
             if fragor:
                 valda: list[Fraga] = [self.katalog.hamta(f) for f in fragor]
             else:
-                valda = self.katalog.sok(omrade=amne, villkor=villkor)
+                valda = self.katalog.for_amne(amne, villkor=villkor)
         except FragekatalogFel as exc:
             raise RapportFel(str(exc)) from exc
         for f in valda:
-            if not f.id.startswith(prefix + "-"):
-                raise RapportFel(f"Frågan {f.id} hör inte till ämnet {amne} ({prefix}-xx).")
+            if f.id[:2] not in prefix:
+                raise RapportFel(
+                    f"Frågan {f.id} hör inte till ämnet {amne} ({'/'.join(prefix)}-xx)."
+                )
         if not valda:
             raise RapportFel("Inga frågor ur katalogen matchar urvalet.")
-        posts = [self._korningspost(k, amne) for k in dict.fromkeys(korningar)]
+        posts = [
+            self._korningspost(k, amne, None if best is None else best.scenario)
+            for k in dict.fromkeys(korningar)
+        ]
         mott = tuple(Mottagare.fran_dict(m) for m in mottagare)
         if len({m.namn for m in mott}) != len(mott):
             raise RapportFel("Två mottagare har samma namn.")
@@ -649,13 +730,13 @@ class RapportTjanst:
             niva=niva,
             amne=amne,
             projekt=projekt,
-            titel=titel or f"Skissunderlag skyfall – {projekt}",
+            titel=titel or f"{TITEL[amne]} – {projekt}",
             skapad=skapad,
             fragor=tuple(f.id for f in valda),
             korningar=tuple(posts),
             mottagare=mott,
             pastaenden=(),
-            kartor=tuple(self._kartor(rid, posts)),
+            kartor=tuple(self._kartor(rid, amne, posts)),
             metoder=tuple(self._metoder(posts)),
             metodnotis={
                 "ai_stod": bool(ai_stod),
@@ -678,9 +759,50 @@ class RapportTjanst:
                 "fragor": {f.id: f.till_dict() for f in valda},
             },
             installningar=inst,
+            bestallning=best,
         )
+        if best is not None:
+            self.bestallningar.spara(best)
         self.arkiv.spara(rapport)
         return rapport
+
+    # ------------------------------------------------------------------ beställning (K30)
+
+    def bestallning_skapa(
+        self,
+        *,
+        syfte: str,
+        amnen: Sequence[str],
+        projekt: str,
+        skede: str = "skiss",
+        mottagare_roll: str = "planhandlaggare",
+        fragor: Sequence[str] = (),
+        villkor: Sequence[str] = (),
+        bara_med_underlag: bool = False,
+        scenario: Mapping[str, Any] | None = None,
+    ) -> Bestallning:
+        """Skapar och sparar en beställning (K30). Urvalet av frågor beräknas ur katalogen."""
+        self.tjanst._kravs_projekt(projekt)  # noqa: SLF001 - samma regel som webben
+        b = skapa_bestallning(
+            self.katalog,
+            syfte=syfte,
+            skede=skede,
+            mottagare_roll=mottagare_roll,
+            amnen=amnen,
+            projekt=projekt,
+            fragor=fragor,
+            villkor=villkor,
+            bara_med_underlag=bara_med_underlag,
+            scenario=scenario,
+        )
+        self.bestallningar.spara(b)
+        return b
+
+    def bestallning_hamta(self, bestallning_id: str) -> Bestallning:
+        try:
+            return self.bestallningar.las(bestallning_id)
+        except BestallningFel as exc:
+            raise RapportFel(str(exc)) from exc
 
     def andra_installningar(
         self, rapport_id: str, andringar: Mapping[str, Any], av: str | None = None
@@ -948,6 +1070,8 @@ class RapportTjanst:
             VATTEN_MATVARDEN,
         )
 
+        if r.amne == "dagsljus":
+            return self._adresser_dagsljus(r)
         ut: list[str] = []
         for k in r.korningar:
             for j in k["jamforelser"]:
@@ -963,6 +1087,49 @@ class RapportTjanst:
                             for st in ("max", "medel")
                         ]
                     ut += [f"omrade.{m.namn}.skillnad.{j['namn']}.{st}" for st in OMRADESSTATISTIK]
+        return list(dict.fromkeys(ut))
+
+    def _adresser_dagsljus(self, r: Rapport) -> list[str]:
+        """Beläggsadresser för dagsljus och sol (se `rapport.fasadbelagg` och `belaggskalla`)."""
+        from rapport.fasadbelagg import JAMFORMATT, PARAMETRAR, PUNKTMATT
+
+        ut: list[str] = []
+        for k in r.korningar:
+            for a in k["analyser"]:
+                if a["losare"] == "dagsljus.soltimmar_mark":
+                    for s in a["scenarier"]:
+                        ut += [
+                            f"omrade.hela_omradet.{a['analys']}.{s}.soltimmar.{st}"
+                            for st in ("min", "medel", "median", "max", "yta_m2")
+                        ]
+                        for m in r.mottagare:
+                            ut += [
+                                f"omrade.{m.namn}.{a['analys']}.{s}.soltimmar.{st}"
+                                for st in ("medel", "max", "min")
+                            ]
+                if a["losare"] == "dagsljus.vsc_fasad":
+                    ut += [f"fasad.{a['analys']}.{p}" for p in PARAMETRAR]
+                    for s in a["scenarier"]:
+                        ut += [f"fasad.{a['analys']}.{s}.{m}" for m in PUNKTMATT]
+            for j in k["jamforelser"]:
+                ut += [
+                    f"jamforelse.{j['namn']}.{m}"
+                    for m in (
+                        "max_okning", "max_minskning", "yta_okning_m2", "yta_minskning_m2",
+                        "yta_minskning_over_<X>h_m2 (X heltal, t.ex. 1 eller 2)",
+                    )
+                ]  # fmt: skip
+                for a in k["analyser"]:
+                    if a["losare"] == "dagsljus.vsc_fasad":
+                        ut += [
+                            f"fasadjamforelse.{a['analys']}.{j['fore']}.{j['efter']}.{m}"
+                            for m in JAMFORMATT
+                        ]
+                for m in r.mottagare:
+                    ut += [
+                        f"omrade.{m.namn}.skillnad.{j['namn']}.{st}"
+                        for st in ("medel", "min", "yta_minskning_m2")
+                    ]
         return list(dict.fromkeys(ut))
 
     def lista(self, projekt: str | None = None) -> list[dict[str, Any]]:
@@ -1007,9 +1174,13 @@ def _rapportmapp_for(tjanst: FlodenTjanst) -> Path:
 
 
 def _antaganden(res: Mapping[str, Any], analyser: Iterable[str]) -> list[str]:
-    """Antaganden som Floden själv har skrivit (regn, takvatten, avtappning) för analyserna."""
+    """Antaganden som Floden själv har skrivit (regn, takvatten, avtappning; för dagsljus datum,
+    tidssteg och avgränsningar ur lösarnas parametrar) för analyserna."""
     valda = set(analyser)
     ut: list[str] = []
+    for a in res.get("antaganden", {}).get("analyser", []):
+        if a.get("analys") in valda and str(a.get("losare", "")).startswith("dagsljus."):
+            ut.append(_dagsljusantagande(a))
     for r in res.get("antaganden", {}).get("regn", []):
         if r.get("analys") in valda:
             ut.append(
@@ -1026,30 +1197,42 @@ def _antaganden(res: Mapping[str, Any], analyser: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(ut))
 
 
+def _dagsljusantagande(a: Mapping[str, Any]) -> str:
+    """Dagsljuslösarens parametrar som en mening (Floden skriver, ur K0-manifestets parametrar)."""
+    from rapport.sprak import datum_text
+
+    p = a.get("parametrar", {})
+    losare = str(a["losare"])
+    delar: list[str] = []
+    if losare == "dagsljus.soltimmar_mark":
+        datum = p.get("datum") or []
+        delar.append(
+            "Soltimmar på mark för "
+            + ", ".join(datum_text(str(d), True) for d in datum)
+            + f" (tidssteg {_sv(p.get('steg_min'))} min, {_sv(p.get('azimutriktningar'))} "
+            "riktningar)"
+        )
+    elif losare == "dagsljus.vsc_fasad":
+        delar.append(
+            "Vertikal himmelskomponent (VSC) vid fasadpunkter, mulen CIE-himmel, en punkt var "
+            f"{_sv(p.get('fasad_steg_m'))} m längs fasaden och var {_sv(p.get('vaningshojd_m'))} m "
+            f"i höjd, {_sv(p.get('hojd_over_golv_m'))} m över golv"
+        )
+    else:
+        delar.append(f"{losare}")
+    delar.append(
+        f"cellstorlek {_sv(p.get('cellstorlek_m'))} m, påverkansradie ur högsta hinder "
+        f"{_sv(p.get('hojd_max_m'))} m och lägsta solhöjd {_sv(p.get('h_min_grader'))} grader, "
+        f"vegetation {'med' if p.get('vegetation') else 'utan'}"
+    )
+    return "; ".join(delar) + "."
+
+
 def _sv(v: Any) -> str:
     try:
         return f"{float(v):g}".replace(".", ",")
     except (TypeError, ValueError):
         return str(v)
-
-
-def _bildtext(typ: str, j: Mapping[str, Any], meta: Mapping[str, Any], k: Mapping[str, Any]) -> str:
-    vad = {
-        "bas": f"före (scenario {j['fore']})",
-        "scenario": f"efter (scenario {j['efter']})",
-        "skillnad": f"skillnad, efter minus före ({j['efter']} − {j['fore']})",
-    }[typ]
-    enhet = meta.get("enhet") or ""
-    losare = next((a["losare"] for a in k["analyser"] if a["analys"] == j["analys"]), "")
-    tid = (
-        "Statisk fyllning: läget vid regnets slut."
-        if losare == "vatten.statisk_fyllning"
-        else "Högsta djup per cell under händelsen."
-    )
-    return (
-        f"Största vattendjup över mark, {vad}, i {enhet}. {tid} Körning {k['korning_id']}. "
-        f"Norr uppåt; skalstock i kartan. {TOMVARDE_TEXT}"
-    )
 
 
 __all__ = [

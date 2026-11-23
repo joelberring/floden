@@ -213,12 +213,15 @@ def test_fragekatalogen_och_filter() -> None:
     plan = k.sok(omrade="skyfall", villkor=["planförslag"])
     assert {"SK-03", "SK-06"} <= {f.id for f in plan}  # 'Alla områden' gäller alltid
     assert "SK-08" not in {f.id for f in plan}
-    assert set(FLODEN_FORMAGA) == {f.id for f in sk}
+    # kartlagda frågor: SK (R1) samt DL och SO (R2)
+    kartlagda = {f.id for f in k.fragor if f.id[:2] in ("SK", "DL", "SO")}
+    assert set(FLODEN_FORMAGA) == kartlagda and len(kartlagda) == 45
 
 
 def test_fragemappningen_i_rapporter_md_stammer_med_koden() -> None:
     doc = (REPO / "docs" / "RAPPORTER.md").read_text(encoding="utf-8")
     assert formagetabell_markdown() in doc
+    assert formagetabell_markdown("dagsljus") in doc
     # ingen fråga har förvald status 'visat' utan att Floden kan ge belägg för den
     for fid, fm in FLODEN_FORMAGA.items():
         if fm.forval_status == "visat":

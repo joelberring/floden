@@ -20,6 +20,7 @@ Ett mått får bara användas om dess storhet, tidsdefinition och statistik är 
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,12 +108,46 @@ MATTKATALOG: Final[dict[tuple[str, str], Matt]] = {
     },
 }
 
+_SOL_TID = "dygnssumma (timmar per dygn), medel över de valda datumen"
+DAGSLJUS_MATT: Final[dict[tuple[str, str], Matt]] = {
+    # 0,1 h: tidssteget (10 min = 0,17 h) och metodens medelfel (0,02-0,08 h, DAGSLJUS.md avsnitt 6)
+    ("dagsljus.soltimmar_mark", "soltimmar"): Matt(
+        "direkt solljus på markytan", _SOL_TID, "per cell", 0.1
+    ),
+    ("dagsljus.svf_mark", "svf"): Matt(
+        "himmelsandel (SVF) på markytan",
+        "ingen tidsdimension (isotrop himmel, andel av hela himlen)",
+        "per cell",
+        0.01,
+    ),
+}
+_SOLLAGE_TID = "ingen tidsdimension (en gång per ruta)"
+DAGSLJUS_MATT.update(
+    {
+        ("dagsljus.soltimmar_mark", "matvarde:lat_grader"): Matt(
+            "latitud för solläget", _SOLLAGE_TID, "rutans mittpunkt", 0.01
+        ),
+        ("dagsljus.soltimmar_mark", "matvarde:lon_grader"): Matt(
+            "longitud för solläget", _SOLLAGE_TID, "rutans mittpunkt", 0.01
+        ),
+        ("dagsljus.soltimmar_mark", "matvarde:datum"): Matt(
+            "antal datum som soltimmarna är medelvärde över", _SOL_TID, "parameter (indata)", 1.0
+        ),
+    }
+)
+MATTKATALOG.update(DAGSLJUS_MATT)
+
 JAMFORELSEMATT: Final[dict[str, str]] = {
     "max_okning": "största ökning i en cell på mark (efter minus före)",
     "max_minskning": "största minskning i en cell på mark (före minus efter)",
     "yta_okning_m2": "yta på mark där värdet ökat mer än tröskeln",
     "yta_minskning_m2": "yta på mark där värdet minskat mer än tröskeln",
 }
+_YTA_OVER_RE: Final[re.Pattern[str]] = re.compile(
+    r"^yta_(minskning|okning)_over_(\d+(?:_\d+)?)h_m2$"
+)
+"""Jämförelsemått `yta_minskning_over_<X>h_m2`: yta på mark som förlorat (eller fått) mer än X
+timmar; X som heltal eller med `_` som decimaltecken (`0_5`)."""
 OMRADESSTATISTIK: Final[tuple[str, ...]] = (
     "min",
     "medel",
@@ -120,7 +155,10 @@ OMRADESSTATISTIK: Final[tuple[str, ...]] = (
     "max",
     "yta_okning_m2",
     "yta_minskning_m2",
+    "yta_m2",
 )
+HELA_OMRADET_NAMN = "hela_omradet"
+"""Reserverad mottagare: lagrets hela utbredning (mark, tak undantagna)."""
 _IGNORERA_PARAM: Final[frozenset[str]] = frozenset({"nyckel"})
 HELA_OMRADET_MARK = "mark i hela beräkningsområdet; byggnadernas tak undantagna"
 HELA_OMRADET = "hela beräkningsområdet (en siffra per körning)"
@@ -133,6 +171,13 @@ class Mottagare(Protocol):
     def polygon(self) -> Sequence[Sequence[float]]: ...
     @property
     def beskrivning(self) -> str: ...
+
+
+@dataclass(frozen=True)
+class _HelaOmradet:
+    polygon: Sequence[Sequence[float]]
+    namn: str = HELA_OMRADET_NAMN
+    beskrivning: str = "hela beräkningsområdet"
 
 
 class BelaggKalla(Protocol):
@@ -261,16 +306,22 @@ class FlodenBelaggKalla:
             return self._omrade(
                 adress, korning_id, delar[1], ".".join(delar[2:-1]), delar[-1], mottagare
             )
+        if typ in ("fasad", "fasadjamforelse"):
+            from rapport.fasadbelagg import fasad_belagg
+
+            return fasad_belagg(self, adress, korning_id, delar)
         raise BelaggFel(
-            f"Okänd beläggstyp '{typ}' i '{adress}'. Tillåtna: jamforelse, matvarde, omrade."
+            f"Okänd beläggstyp '{typ}' i '{adress}'. Tillåtna: jamforelse, matvarde, omrade, "
+            "fasad, fasadjamforelse."
         )
 
     def _jamforelse(self, adress: str, korning_id: str, namn: str, matt: str) -> Belagg:
-        if matt not in JAMFORELSEMATT:
+        yta_over = _YTA_OVER_RE.match(matt)
+        if matt not in JAMFORELSEMATT and yta_over is None:
             raise BelaggFel(
                 f"Okänt jämförelsemått '{matt}' i '{adress}'. Tillåtna: "
                 + ", ".join(JAMFORELSEMATT)
-                + "."
+                + ", yta_minskning_over_<X>h_m2 och yta_okning_over_<X>h_m2 (soltimmar)."
             )
         try:
             svar = self.tjanst.jamfor(korning_id)
@@ -293,9 +344,31 @@ class FlodenBelaggKalla:
         lager = next(la for la in res["lager"] if la["id"] == f"skillnad.{namn}")
         px = float(lager["pixelstorlek_m"])
         upplosning = px * px if matt.startswith("yta") else float(grund.upplosning or 0.001)
-        enhet = post[matt]["enhet"]
-        tros = _sv(float(post["troskel"]))
-        statistik = JAMFORELSEMATT[matt].replace("tröskeln", f"tröskeln {tros} {lager['enhet']}")
+        if yta_over is not None:
+            if lager["enhet"] != "h":
+                raise BelaggFel(
+                    f"Måttet '{matt}' gäller timmar (soltimmar); lagret '{lager['id']}' har "
+                    f"enheten '{lager['enhet']}'."
+                )
+            x = float(yta_over.group(2).replace("_", "."))
+            riktn = yta_over.group(1)
+            try:
+                yta = self.tjanst.fragor.markyta_over(korning_id, lager, x, riktn)
+            except Exception as exc:  # FlodenWebbFel
+                raise BelaggFel(str(exc)) from exc
+            if yta is None:
+                raise BelaggFel(f"Lagret '{lager['id']}' har inga markceller med värde.")
+            varde = yta
+            enhet = "m²"
+            ord_ = "minskat" if riktn == "minskning" else "ökat"
+            statistik = f"yta på mark där värdet {ord_} mer än {_sv(x)} {lager['enhet']}"
+        else:
+            varde = float(post[matt]["varde"])
+            enhet = post[matt]["enhet"]
+            tros = _sv(float(post["troskel"]))
+            statistik = JAMFORELSEMATT[matt].replace(
+                "tröskeln", f"tröskeln {tros} {lager['enhet']}"
+            )
         manifest, msha = self._manifest(korning_id, "run.json")
         rasterfil = str(post["rasterfil"])
         fil = self.utmapp(korning_id) / rasterfil
@@ -316,7 +389,7 @@ class FlodenBelaggKalla:
             enhet=enhet,
             tidsdefinition=grund.tidsdefinition,
             statistik=statistik,
-            varde=float(post[matt]["varde"]),
+            varde=varde,
             upplosning=upplosning,
             jamforbarhet=self._jamforbarhet(
                 korning_id, str(post["analys"]), (str(post["fore"]), str(post["efter"]))
@@ -397,6 +470,15 @@ class FlodenBelaggKalla:
                 f"Okänd statistik '{stat}' i '{adress}'. Tillåtna: {', '.join(OMRADESSTATISTIK)}."
             )
         m = mottagare.get(mottagarnamn)
+        hela = m is None and mottagarnamn == HELA_OMRADET_NAMN
+        if hela:
+            res0 = self._resultat(korning_id)
+            la0 = next((x for x in res0["lager"] if x["id"] == lager_id), None)
+            if la0 is None:
+                raise BelaggFel(f"Lagret '{lager_id}' finns inte i '{korning_id}'.")
+            u = la0["utbredning"]
+            x0, x1, y0, y1 = (float(u[k]) for k in ("x_min", "x_max", "y_min", "y_max"))
+            m = _HelaOmradet(((x0, y0), (x1, y0), (x1, y1), (x0, y1)))
         if m is None:
             raise BelaggFel(
                 f"Mottagaren '{mottagarnamn}' finns inte i rapporten. Lägg till den (namn och "
@@ -420,7 +502,16 @@ class FlodenBelaggKalla:
         except FlodenFel as exc:
             raise BelaggFel(str(exc)) from exc
         st = next(s for s in svar["statistik"] if s["lager_id"] == lager_id)
-        v = st.get(stat)
+        v: Any
+        if stat == "yta_m2":
+            n = int(st["antal_celler_med_varde"])
+            v = (
+                {"varde": n * float(st["cellstorlek_m"]) ** 2, "enhet": "m²", "belagg": {"fil": ""}}
+                if n > 0
+                else None
+            )
+        else:
+            v = st.get(stat)
         if v is None:
             raise BelaggFel(f"Mottagaren '{mottagarnamn}' har inga markceller med värde i lagret.")
         losare = self._losare(korning_id, la["analys"])
@@ -436,19 +527,22 @@ class FlodenBelaggKalla:
             "max": "största värde",
             "yta_okning_m2": "yta där värdet ökat mer än tröskeln",
             "yta_minskning_m2": "yta där värdet minskat mer än tröskeln",
+            "yta_m2": "markyta med värde",
         }[stat]
         return Belagg(
             adress=adress,
             korning_id=korning_id,
-            fil=fil,
+            fil=fil or str(la["id"]),
             fil_sha256=None,
             manifest="run.json",
             manifest_sha256=msha,
             analys=str(la["analys"]),
             losare=losare,
             scenarier=tuple(str(s) for s in scen),
-            mottagare=f"mottagare {mottagarnamn}",
-            namnare=f"markceller i mottagaren {mottagarnamn} ({m.beskrivning}); tak undantagna",
+            mottagare="hela beräkningsområdet" if hela else f"mottagare {mottagarnamn}",
+            namnare=HELA_OMRADET_MARK
+            if hela
+            else f"markceller i mottagaren {mottagarnamn} ({m.beskrivning}); tak undantagna",
             matt=f"{la['roll']}:{stat}",
             storhet=("skillnad i " if la["typ"] == "skillnad" else "") + grund.storhet,
             enhet=v["enhet"],
@@ -462,7 +556,9 @@ class FlodenBelaggKalla:
 
 
 __all__ = [
+    "DAGSLJUS_MATT",
     "HELA_OMRADET",
+    "HELA_OMRADET_NAMN",
     "HELA_OMRADET_MARK",
     "JAMFORELSEMATT",
     "MATTKATALOG",
