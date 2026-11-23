@@ -70,3 +70,13 @@ test("avkodaFalt läser base64 från servern (little endian) och kontrollerar l�
   assert.throws(() => avkodaFalt({ dtyp: "float32", form: [4], base64: b64 }), JamforFel);
   assert.throws(() => avkodaFalt({ dtyp: "float64", form: [1], base64: b64 }), /dtyp/);
 });
+
+test("godkänt tillåter enstaka celler över toleransen men inga stora fel", async () => {
+  const { godkand } = await import("./jamfor.ts");
+  const bas = { antal: 90000, storstaFelIndex: 0, medelFel: 1e-6, antalOverTolerans: 13, antalIckeAndliga: 0, tolerans: 0.01 };
+  // Macens prov 2026-11-23: 0,0126 i 0,0144 % av cellerna.
+  assert.equal(godkand({ ...bas, storstaFel: 0.0126, andelOverTolerans: 0.000144 }), true);
+  assert.equal(godkand({ ...bas, storstaFel: 0.0126, andelOverTolerans: 0.002 }), false);
+  assert.equal(godkand({ ...bas, storstaFel: 0.03, andelOverTolerans: 0.00001 }), false);
+  assert.equal(godkand({ ...bas, storstaFel: 0.005, andelOverTolerans: 0, antalIckeAndliga: 1 }), false);
+});
