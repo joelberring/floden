@@ -35,13 +35,13 @@ export interface DagsljusGpuResultat {
 }
 
 // Minimala WebGPU-gränssnitt så att `tsc --noEmit` fungerar utan `@webgpu/types`.
-interface GpuBufferLike {
+export interface GpuBufferLike {
   mapAsync(mode: number): Promise<void>;
   getMappedRange(): ArrayBuffer;
   unmap(): void;
   destroy(): void;
 }
-interface GpuDeviceLike {
+export interface GpuDeviceLike {
   createShaderModule(desc: { code: string }): unknown;
   createComputePipeline(desc: {
     layout: "auto";
@@ -73,20 +73,43 @@ interface GpuDeviceLike {
     submit(cmds: unknown[]): void;
   };
   destroy(): void;
+  /** Felomfång (valfria i typen så att äldre implementationer och tester utan dem fungerar). */
+  pushErrorScope?(filter: "validation" | "out-of-memory" | "internal"): void;
+  popErrorScope?(): Promise<{ message?: string } | null>;
 }
-interface GpuNavigatorLike {
+export interface GpuNavigatorLike {
   gpu?: {
     requestAdapter(): Promise<{ requestDevice(): Promise<GpuDeviceLike> } | null>;
   };
 }
 
 // WebGPU standardflaggor (GPUBufferUsage & GPUMapMode)
-const USAGE_MAP_READ = 0x0001;
-const USAGE_COPY_SRC = 0x0004;
-const USAGE_COPY_DST = 0x0008;
-const USAGE_UNIFORM = 0x0040;
-const USAGE_STORAGE = 0x0080;
-const MAP_MODE_READ = 0x0001;
+export const USAGE_MAP_READ = 0x0001;
+export const USAGE_COPY_SRC = 0x0004;
+export const USAGE_COPY_DST = 0x0008;
+export const USAGE_UNIFORM = 0x0040;
+export const USAGE_STORAGE = 0x0080;
+export const MAP_MODE_READ = 0x0001;
+
+/**
+ * Kör `arbete` i ett valideringsomfång och gör WebGPU:s tysta valideringsfel (felaktig WGSL,
+ * fel bindgrupp, felaktig buffertanvändning) till ett riktigt undantag. Utan detta kan ett
+ * misslyckat pipeline-bygge ge tomma resultat eller bara ett meddelande i konsolen.
+ */
+export async function medFelkontroll<T>(device: GpuDeviceLike, arbete: () => Promise<T>): Promise<T> {
+  device.pushErrorScope?.("validation");
+  let resultat: T | undefined;
+  let kastat: unknown = null;
+  try {
+    resultat = await arbete();
+  } catch (e) {
+    kastat = e;
+  }
+  const fel = device.popErrorScope ? await device.popErrorScope() : null;
+  if (fel) throw new Error(`WebGPU-valideringsfel: ${fel.message ?? "okänt fel"}`);
+  if (kastat !== null) throw kastat;
+  return resultat as T;
+}
 
 /** True om webbläsaren exponerar WebGPU (`navigator.gpu`). */
 export function harWebGpu(): boolean {
@@ -145,16 +168,22 @@ export class WebGpuDagsljusMotor {
     const adapter = await gpu.requestAdapter();
     if (!adapter) return null;
     const device = await adapter.requestDevice();
-    const modul = device.createShaderModule({ code: shaderKod });
-    const pipeline = device.createComputePipeline({
-      layout: "auto",
-      compute: { module: modul, entryPoint: "berakna_svf_och_soltimmar" },
+    const pipeline = await medFelkontroll(device, async () => {
+      const modul = device.createShaderModule({ code: shaderKod });
+      return device.createComputePipeline({
+        layout: "auto",
+        compute: { module: modul, entryPoint: "berakna_svf_och_soltimmar" },
+      });
     });
     return new WebGpuDagsljusMotor(device, pipeline);
   }
 
   /** Kör SVF + direkta soltimmar på GPU och returnerar f32-fält utan kvarlämnat VRAM. */
   async korSvfOchSoltimmar(indata: DagsljusGpuIndata): Promise<DagsljusGpuResultat> {
+    return medFelkontroll(this.device, () => this.korUtanFelkontroll(indata));
+  }
+
+  private async korUtanFelkontroll(indata: DagsljusGpuIndata): Promise<DagsljusGpuResultat> {
     const t0 = performance.now();
     const nCeller = indata.nx * indata.ny;
     if (indata.z_m.length !== nCeller) {

@@ -639,3 +639,63 @@ Registrerat 2026-11-23 i efterhand (ingen formatändring). Ett JSON-svar, ingen 
 `felindikator`: `andel_2d_yta` (andel 0–1, ingen procent), `antal_2d_celler`, `antal_aktiva_celler`
 (celler utan byggnad), `antal_noder_2d`, `antal_noder_totalt` (heltal, st). Masken över rekommenderade
 2D-celler (`rekommenderad_2d_mask`) ingår inte i svaret.
+
+## K37 – Benchmark `floden-benchmark/v1` och provfall `floden-prov-webgpu/v1` (v1)
+
+Nästa lediga nummer efter K36 (kontrollerat mot `main` 2026-11-23). Två JSON-format som hör ihop:
+benchmarkdokumentet som både servern och webbläsaren skriver, och API-svaret med provfallets indata och facit.
+
+### Benchmarkdokumentet `floden-benchmark/v1`
+
+**Skrivs av** `floden benchmark --ut fil.json` (`src/benchmark/`, källa `"server"`) och av provsidan
+`#/prov/webgpu` (`webb/src/prov/benchmarkFormat.ts`, källa `"webblasare"`). **Läses av** `floden benchmark --jamfor`
+och människor. Reglerna kontrolleras av `benchmark.format.kontrollera` (Python) och `kontrolleraDokument` (TypeScript);
+filen `tests/benchmark/exempel_webblasare.json` kontrolleras av båda.
+
+| Fält | Typ | Innehåll |
+| --- | --- | --- |
+| `format` | text | `"floden-benchmark/v1"` |
+| `kalla` | text | `"server"` eller `"webblasare"` |
+| `skapad_utc` | text | ÅÅÅÅ-MM-DDTHH:MM:SSZ |
+| `kodversion` | text | git-revision (K0). För webbläsaren: serverns revision vid hämtningen av provfallet |
+| `maskin` | objekt | Server: `cpu`, `karnor`, `karnor_tillgangliga`, `minne_totalt_mb`, `os`, `python`, `numpy`, `rust_karna` (`tillganglig`, `sokvag`, `anvands_i_svit`). Webbläsare: `gpu` (`tillganglig`, `adapter`, `begransningar`) och `webblasare` (`user_agent`, `sprak`, `enhetsminne_gb`); övriga fält `null`. Fält utan värde är `null`, aldrig utelämnade |
+| `installning` | objekt | `uppvarmning`, `upprepningar`, `tidsmatt`, `minnesmatt` (text om hur det mättes) |
+| `anmarkning` | text | Fri text. Webbläsardokument anger alltid att klientens f32-tal bara är skissläge |
+| `delar` | objekt | Nycklar `skyfall`, `dagsljus`, `luft`, `buller`; varje värde `{status, skal, fall}` |
+
+`delar.<namn>.status`: `"kord"`, `"hoppas_over"` eller `"kraver_lokal_kallmapp"`. Är den inte `"kord"` ska `skal`
+vara en text. `fall` är en lista; varje fall har `id`, `namn`, `status` (`"ok"`, `"fel"`, `"hoppas_over"`) och, när
+status inte är `"ok"`, ett `skal`. Ett fall med status `"ok"` har:
+
+| Fält | Enhet | Innehåll |
+| --- | --- | --- |
+| `tid_s` | s | `{median, min, max, n, alla}`: tidtagna körningar efter uppvärmning. Medianen jämförs |
+| `minne` | MB | Server: `rss_start_mb`, `rss_topp_mb`, `rss_okning_mb` (processens högsta RSS, `VmHWM`, egen process per fall) och `tracemalloc_topp_mb` (separat körning). Webbläsare: `gpu_buffrar_mb` (summan av skapade buffertar, beräknad). Får vara `{}` |
+| `avvikelse` | | `null` om fallet saknar facit. Annars `{varde, enhet, grans, godkand, beskrivning, matt}`: `varde` är fallets eget mått mot facit (största fel), `grans` är gränsen testsviten använder (eller `null`), `godkand = varde <= grans`, `matt` är extra tal (t.ex. `medelfel`, `andel_over_tolerans`) |
+| `extra` | | Fri ordbok med uppgifter om fallet (storlekar, delresultat). Jämförs inte |
+
+Inga värden får vara `NaN` eller oändliga (de går inte att skriva som JSON). Ett oändligt GPU-fel skrivs som
+`avvikelse.varde = 1.797e308` med `godkand = false` och `matt.antal_ickeandliga > 0`.
+
+**Jämförelse** (`--jamfor gammal.json`): fall matchas på `delar.<del>` och `id`; måtten `tid_s.median`,
+`minne.rss_topp_mb`, `minne.tracemalloc_topp_mb` och `avvikelse.varde` jämförs, och ett mått som ökat med mer än
+tröskeln (förval 25 %, `--troskel-procent`) flaggas som försämring (slutkod 1). Dokument från olika maskiner eller
+källor jämförs men märks som osäkra.
+
+### Provfall `floden-prov-webgpu/v1` (webb-API)
+
+`GET /api/prov/webgpu/fall` ger katalogen och `GET /api/prov/webgpu/fall/<id>` ger indata och facit, som JSON.
+Bara superadmin när inloggning är på (403 annars); öppet lokalt när inloggning är av. Skrivs av `webb/prov.py`
+med `benchmark.provfall`; läses av `webb/src/prov/webgpuProv.ts`. Fält (matriser):
+`{"dtyp": "float32" | "uint8", "form": [rader, kolumner], "base64": "…"}`, little endian, rad 0 = norr.
+
+| Fält | Innehåll |
+| --- | --- |
+| `format`, `id`, `typ` (`"dagsljus"` eller `"vatten_2d"`), `namn`, `beskrivning`, `kodversion` | |
+| `markning` | Skisslägestexten |
+| `indata` | Dagsljus: `nx`, `ny`, `cell_m`, `rmax_celler`, `n_riktningar`, `steg_h`, matriserna `z_m`, `sol_hojd_rad`, `sol_azimut_rad`. Vatten: `nx`, `ny`, `dx`, `dy`, `dt`, `theta`, `min_djup`, matriserna `z_bed`, `manning`, `aktiv` och `steg` (`[{antal, regn_m}]`) |
+| `facit` | `beraknad_med` (text), `kortid_s`, `falt` (namn → matris + `enhet`), `tolerans` (förslag per fält, absolut fel i fältets enhet), vatten också `massbalans_rel` |
+
+Facit är serverns f64-beräkning: dagsljus med `dagsljus.horisont`, vatten med referensschemat
+`benchmark.provfall.vatten_schema` (samma schema som `vatten_2d.wgsl`, inte hela lösaren `tvad.lokal_troghet`).
+Klientens tal är f32 och får bara användas i skissläge.
