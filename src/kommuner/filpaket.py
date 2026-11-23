@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Öppna filpaket (ZIP) från en kommun: hämtas en gång till en cache med sha256 och öppnas därifrån.
 
 Göteborgs Stad publicerar baskartan och höjdmodellen som nedladdningsbara filpaket (CC0, utan

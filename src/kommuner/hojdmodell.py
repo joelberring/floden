@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Kommunens höjdmodell (GeoTIFF-plattor i ZIP-paket) som markhöjd för K1-rutor.
 
 Göteborgs höjdmodell 2022: marknivå (DTM), Float32, 0,5 m, plattor om 1 x 1 km i paket om 10 x 10 km,

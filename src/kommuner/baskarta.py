@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Byggnader ur kommunens baskarta (filpaket): takkonturerna klipps ut och sparas som `byggnader.gpkg`.
 
 Göteborgs baskarta (CC0, EPSG:3007, RH 2000, 3D) har lagren TAK (takkonturer), FASAD och BYGGNADSLINJE.

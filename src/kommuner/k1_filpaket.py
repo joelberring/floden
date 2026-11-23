@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """K1 v2-rutor ur kommunens filpaket: höjdmodell (markhöjd) och baskartans takkonturer (byggnader).
 
 Motsvarar `lantmateriet.bygg.bygg_omrade` men utan laserpunktmoln: markhöjden är kommunens höjdmodell

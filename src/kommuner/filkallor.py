@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Löser kommunfilens `[filpaket]` till nedladdade paket i cachen och en höjdmodell att räkna på."""
 
 from __future__ import annotations

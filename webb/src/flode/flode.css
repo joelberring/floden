@@ -286,3 +286,23 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-karta-yta .vy3d-knappar .knapp { background: #fff; border: 1px solid #e4e4e0; border-radius: 8px; padding: 6px 12px; font: 500 13px/1.2 inherit; color: #1a1a1a; text-align: left; }
 .flode-karta-yta .vy3d-knappar .knapp:hover { background: #f4f4f1; }
 .flode-karta-yta .vy3d-knappar .knapp:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 2px; }
+
+/* ---------- Matematik och forskning (#/matematik) ---------- */
+.mat-sida { max-width: 880px; margin: 0 auto; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-sizing: border-box; }
+.mat-sida h1:focus { outline: none; }
+.mat-h2 { margin: 16px 0 0; font-size: 16px; font-weight: 600; line-height: 1.4; padding-bottom: 8px; border-bottom: 1px solid var(--fl-line); }
+.mat-h3 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; }
+.mat-q { display: inline-block; min-width: 28px; color: var(--fl-mute); font-weight: 500; }
+.mat-text { margin: 0; font-size: 13px; line-height: 1.5; }
+.mat-nav { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
+.mat-doman { display: flex; flex-direction: column; gap: 16px; }
+.mat-metod { display: flex; flex-direction: column; gap: 8px; padding: 16px; background: #fff; border: 1px solid var(--fl-line); border-radius: 8px; }
+.mat-etiketter { display: flex; flex-wrap: wrap; gap: 4px; }
+.mat-formler { display: flex; flex-direction: column; gap: 4px; }
+.mat-sida code.mat-formel { display: block; padding: 8px 10px; font-size: 13px; line-height: 1.5; background: #f6f5f0; border-radius: 6px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.mat-lista { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.6; }
+.mat-lista code { overflow-wrap: anywhere; }
+.mat-mer summary { cursor: pointer; font-size: 13px; color: var(--fl-mute); }
+.mat-mer[open] summary { margin-bottom: 8px; }
+.mat-mer { display: flex; flex-direction: column; gap: 8px; }
+@media (max-width: 600px) { .mat-sida { padding: 16px; } .mat-metod { padding: 12px; } }

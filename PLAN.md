@@ -104,7 +104,8 @@ användarflöde (se modulernas docstrings).
 | Q2 bifurkationer | `sankgraf.bifurkation` (K34, K35), a posteriori-felindikator `tvad.felindikator` och `POST /api/analys/bifurkationer` (K36) med panel i webbklienten; `tools/exportera_q2_underlag.py` | klar, inkopplad i webben (endpunkten) |
 | Ekologi (Etapp 2) | K44 (artprofil) och K45 (lösaren `ekologi.konnektivitet`, `stromtathet.tif`, `ekologi.json`, `POST /api/analys/ekologi`), demofrågan `demo_ekologi`, ämnet Ekologi i webbflödet, `docs/EKOLOGI.md`. Allt skiss. | klar (skiss; profilparametrar utan källa) |
 | Ekologi, nästa steg | NMD-inläsning som markunderlag (våtmark, skogstyper) och R2-rapport för ekologi; källhänvisning för artprofilernas parametrar | väntar |
-| Fristående moduler | CELF i ruttanalysen (`rutt.kritiska`), `luft.kanslighet`, `buller.optimering`, `dagsljus.intervall`, `dynamik.intervall`, `rapport.r2_domaner`, `luft.partiklar`, `dagsljus.uppdatera_horisont_inkrementellt`, `buller.operator.energi.pruna_med_energibudget` | klar som moduler, fristående |
+| Matematikmoduler: inkopplade i API:t, inte i klienten | CELF i ruttanalysen (`rutt.kritiska`, `POST /api/rutt`), `dynamik.intervall`, `dagsljus.intervall`, `luft.kanslighet` (bara MKN-intervallet), `buller.optimering` (`POST /api/analys/...`, K40–K43, PR #57); **fortfarande fristående:** adjungerad känslighet och CELF i `luft.kanslighet`, CELF i `ekologi.intervall`, `rapport.r2_domaner`, `luft.partiklar`, `dagsljus.uppdatera_horisont_inkrementellt`, `buller.operator.energi.pruna_med_energibudget` | klar som moduler (kontrollerat mot koden 2026-11-23) |
+| Matematik och forskning | `docs/MATEMATIK.md` per domän (formel, kod, kontrakt, facittest, status; öppna frågor Q1–Q5) genererat ur `data/matematik/metoder.toml` och `data/mcp/metodstatus.toml` (`tools/generera_matematik.py`, test `tests/gemensamt/test_metodregister.py`); sidan `#/matematik` i appen (kontomenyn, inloggning krävs) | klar (PR öppen) |
 | Göteborg | `data_inlasning.goteborg`, lagerprofil `goteborg_baskarta`: testkommun i EPSG:3007; formatet är antaget och aldrig provat mot tjänsten, testerna är syntetiska | klar (syntetiskt) |
 | Webb och drift | ASGI-adapter (`webb.asgi`), projektisolerad 3D-terrängcache, 2D/3D-svep, WebGPU-motor för dagsljus med fallback, WGSL-skuggare, säkerhetsfixar inför server | klar |
 | Övrigt | alla 13 SWEREF 99-zoner (EPSG:3006–3018), SMHI MetObs-klient, tvåfraktions-PM10 (`luft.partiklar`, fristående) | klar |
@@ -115,7 +116,7 @@ användarflöde (se modulernas docstrings).
 - Uppdrag som bara rör kontrakt och tester (T00, T09) passar en snabbare, billigare modell.
 - Uppdrag med numerik eller geometrisk robusthet (T01b, T02, T03, T05) behöver den starkaste modellen och en
   människa som granskar mätvärdena.
-- T03 innehåller frågor till Samuel. De samlas i `docs/MATEMATIK.md` i stället för att lösas av agenten.
+- T03 innehåller frågor till forskningsparten. De samlas i `docs/MATEMATIK.md` i stället för att lösas av agenten.
 
 ## Spår L – Luft (3D)
 
@@ -191,7 +192,7 @@ Storage, månadsbudgetar och demo först. Se `docs/DRIFT.md`.
 | S8 Stockholm | Hela Stockholm som geografi | S7 | väntar |
 | S5k Kö, arbetare och kostnadsbok | Jobbkö med pull över HTTPS (O-Tids `geo-server.ts`), klass `liten`; kostnadsbok, månadstak per klass, uppskattning och godkännande per körning, larm 50/80/100 %, daglig avstämning mot leverantören (var S5 före "geografi först", 2026-11-23) | S4 | väntar |
 | S6d Demoläge | Färdigräknade exempel, besökare läser och gör lätta skisser, tunga körningar bara för superadmin (var S6) | S5k | väntar |
-| S7b Benchmarksvit | `floden benchmark`: fasta fall (skyfall, dagsljus, luft, buller), tid (median), minne (RSS och tracemalloc) och avvikelse mot facit, format `floden-benchmark/v1` (K37), jämförelse `--jamfor`; GPU-prov i webbläsaren `#/prov/webgpu` (superadmin) mot serverns f64-facit (`docs/benchmark/README.md`, `docs/WEBGPU-ARKITEKTUR.md` 5) | D1 | klar för servern (baslinje i delad container, `docs/benchmark/2026-11-23-container.json`); GPU-provet är byggt men inte körts på grafikkort |
+| S7b Benchmarksvit | `floden benchmark`: fasta fall (skyfall, dagsljus, luft, buller), tid (median), minne (RSS och tracemalloc) och avvikelse mot facit, format `floden-benchmark/v1` (K37), jämförelse `--jamfor`; GPU-prov i webbläsaren `#/prov/webgpu` (superadmin) mot serverns f64-facit (`docs/benchmark/README.md`, `docs/WEBGPU-ARKITEKTUR.md` 5) | D1 | klar för servern (baslinje i delad container, `docs/benchmark/2026-11-23-container.json`); GPU-provet kördes på Joels Mac 2026-11-23 (`docs/benchmark/2026-11-23-mac-webgpu.json`: dagsljus ≈ 79 ×, vatten 2D ≈ 25 ×; SVF-fältet 0,0126 över toleransen 0,01) |
 | S9 GPU | Klass `gpu` hos Verda (L40S), L-b-mätning, vindbibliotek för ett kvarter med höga hus | S5k, L-b | väntar (Joel: konto och budget) |
 | S10 Kvoter | Kvot per konto och organisation (förval 0), inbjudan med kvot; först därefter delning | S5k, S6d | väntar |
 
@@ -202,6 +203,7 @@ körande servern, utan serverkommandon. Backup (S4) ingår inte.
 
 | Uppdrag | Beskrivning | Beroenden | Status |
 | --- | --- | --- | --- |
+| E2 Organisationsroller | Roller medlem < ledare < organisationsadmin < ägare; ledare läser och organisationsadmin/ägare utreder i organisationens delade projekt (`organisation_synlig`, förval privat; `Register.effektiv_projektroll`, används av webb, API, körningar och MCP); inbjudan till organisationen i webben (Administration) och serverkommandona `skapa-organisation --agare`, `bjud-in-organisation`, `kontostatus`; schemaversion 5-6 | E1 | klar (PR öppen; regeln väntar på att föras in i BESLUT, se STATUS) |
 | E1 Nycklar, administration, städning, MCP | **Nyckelsida** (`/konto/nycklar`, `#/nycklar`): egna API-nycklar för Lantmäteriet och Anthropic, krypterade med Fernet i `konto_nyckel`, hemlighet i `FLODEN_NYCKELHEMLIGHET` (avstängd utan den), visas aldrig igen (bara datum och fyra sista tecken), aldrig i loggar eller svar; Lantmäteri-hämtningen använder kontots nyckel när inloggning är på. **Administration** (`/konto/admin`, `#/administration`, superadmin och organisationsadmin): bjud in till projekt (`lasare`/`utredare`), se inbjudningar och medlemmar, ändra och ta bort roll, spärra konto. **Städning:** arbetsbänken ut ur menyn och Om beräkningarna (bara adressen, bara superadmin eller lokalt); startsidan visar kontots projekt (`/api/projekt` per konto, demokvarteret inräknat); länkarna Nycklar och Administration i sidhuvudet. **MCP:** `projekt_lista` per konto; nycklar och administration når inte AI:n (`docs/MCP.md`). Dokumenterat i `docs/DRIFT.md`, `docs/KONTO.md` avsnitt 10-11, `deploy/prod.env.example` och `docker-compose.prod.yml` | S3, D1, R0 | klar (PR öppen; klienten är typkontrollerad och enhetstestad men inte prövad i webbläsare; `FLODEN_NYCKELHEMLIGHET` ska sättas på servern, se STATUS) |
 
 

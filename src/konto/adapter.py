@@ -228,7 +228,9 @@ class KontoAdapter:
     def kraver_projektbehorighet(
         self, request: Forfragan, projekt_id: str, minst: str = "lasare"
     ) -> Kontroll:
-        """Inloggning och en uttrycklig projektroll. Medlemskap och superadmin räcker inte.
+        """Inloggning och en effektiv projektroll (uttrycklig, eller av organisationsrollen ledare,
+        organisationsadmin eller ägare i projektets organisation). Enkelt medlemskap, förvaltning
+        och superadmin räcker inte.
 
         Undantag: det påhittade demoprojektet (`[konto] demoprojekt`, inga verkliga data), där
         varje inloggat konto har rollen `demoprojekt_roll` (beslut 2026-11-23, Joel kan ändra)."""
@@ -243,10 +245,18 @@ class KontoAdapter:
 
     def har_roll(self, konto_id: str, projekt_id: str, minst: str = "lasare") -> bool:
         """Har kontot minst rollen i projektet? Samma regel som `kraver_projektbehorighet`
-        (uttrycklig roll, eller demoprojektets roll) men utan HTTP: för MCP-verktygen."""
+        (effektiv projektroll, eller demoprojektets roll) men utan HTTP: för MCP-verktygen."""
         if self.register is None:
             return True  # inloggning av: ingen rollkontroll (lokal körning)
-        if self.register.har_projektroll(konto_id, projekt_id, minst):
+        effektiv = self.register.effektiv_projektroll(konto_id, projekt_id)
+        if effektiv.raeckar(minst):
+            if effektiv.kalla == "organisation":
+                logg.info(
+                    "projektatkomst via organisationsroll konto=%s projekt=%s roll=%s",
+                    konto_id,
+                    projekt_id,
+                    effektiv.roll,
+                )
             return True
         demo_roll = self.konfig.demoprojekt_roll
         return (
@@ -278,14 +288,13 @@ class KontoAdapter:
             return self.oauth.verifiera(token)
         return None
 
-    def projekt_for_konto(self, konto_id: str) -> list[dict[str, str]]:
-        """Registrets projekt där kontot har en uttrycklig roll (id, namn, roll). Demokvarteret
-        ingår inte här: det följer `demoprojekt_roll` (se `demoroll`)."""
+    def projekt_for_konto(self, konto_id: str) -> list[dict[str, Any]]:
+        """Registrets projekt där kontot har rätt (id, namn, roll, kalla), med samma regel som
+        `har_roll` (`Register.effektiv_projektroll`): uttrycklig roll eller organisationsroll.
+        Demokvarteret ingår inte här: det följer `demoprojekt_roll` (se `demoroll`)."""
         if self.register is None:
             return []
-        proj = self.register.sammanfattning(konto_id)["projekt"]
-        assert isinstance(proj, list)  # noqa: S101
-        return [{"id": p["id"], "namn": p["namn"], "roll": p["roll"]} for p in proj]
+        return self.register.projekt_med_effektiv_roll(konto_id)
 
     def demoroll(self) -> str | None:
         """Rollen varje inloggat konto har på demoprojektet, eller None när den är `av`."""
@@ -338,11 +347,13 @@ class KontoAdapter:
             if req.metod != "POST":
                 return _fel(405, "metod", "Metod ej tillåten")
             return self._logga_ut(req)
-        if len(delar) >= 2 and delar[1] in ("nycklar", "admin", "mcp-token", "oauth"):
+        if len(delar) >= 2 and delar[1] in ("nycklar", "admin", "mcp-token", "oauth", "projekt"):
             from konto import kontoapi
 
             if delar[1] == "nycklar":
                 return kontoapi.hantera_nycklar(self, req, delar[2:])
+            if delar[1] == "projekt":
+                return kontoapi.hantera_projekt_delning(self, req, delar[2:])
             if delar[1] == "mcp-token":
                 return kontoapi.hantera_mcp_token(self, req, delar[2:])
             if delar[1] == "oauth":

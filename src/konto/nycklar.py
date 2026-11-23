@@ -76,16 +76,23 @@ NYCKELTYPER: dict[str, NyckelTyp] = {
         id="lantmateriet",
         namn="Lantmäteriet (STAC och nedladdning)",
         beskrivning=(
-            "Två fall. (1) API-portalens nyckel och hemlighet (apimanager.lantmateriet.se): Metod = oauth2. "
-            "(2) Geotorgets användarnamn och lösenord, som i O-Tid: Metod = basic. Använder du Geotorgets "
-            "inloggning och lämnar Metod på oauth2 svarar Lantmäteriet 401. Floden använder höjddata "
-            "(STAC Höjd, Laserdata Nedladdning, skog, gratis) och ortofoto (Ortofoto Nedladdning, gratis); "
-            "Lantmäteriets byggnadsprodukter är avstängda som förval."
+            "Två fall. (1) API-portalens nyckel och hemlighet (apimanager.lantmateriet.se): "
+            "Metod = oauth2. (2) Geotorgets användarnamn och lösenord, som i O-Tid: Metod = basic. "
+            "Använder du Geotorgets inloggning och lämnar Metod på oauth2 svarar Lantmäteriet 401. "
+            "Floden använder höjddata (STAC Höjd, Laserdata Nedladdning, skog, gratis) "
+            "och ortofoto (Ortofoto Nedladdning, gratis); Lantmäteriets "
+            "byggnadsprodukter är avstängda som förval."
         ),
         falt=(
             NyckelFalt("klient_id", "Nyckel (oauth2) eller Geotorgets användarnamn (basic)"),
             NyckelFalt("klient_hemlighet", "Hemlighet (oauth2) eller Geotorgets lösenord (basic)"),
-            NyckelFalt("metod", "Metod (oauth2 = nyckel och hemlighet, basic = Geotorgets inloggning)", krav=False, val=("oauth2", "basic"), standard="oauth2"),
+            NyckelFalt(
+                "metod",
+                "Metod (oauth2 = nyckel och hemlighet, basic = Geotorgets inloggning)",
+                krav=False,
+                val=("oauth2", "basic"),
+                standard="oauth2",
+            ),
         ),
         identifierande="klient_hemlighet",
     ),

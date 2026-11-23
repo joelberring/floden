@@ -39,32 +39,43 @@ fn horisont_riktning(r0: i32, c0: i32, z0: f32, phi: f32) -> f32 {
     if (abs(ex) < AXEL_NOLL) { ex = 0.0; }
     if (abs(ey) < AXEL_NOLL) { ey = 0.0; }
 
+    let aex = abs(ex);
+    let aey = abs(ey);
     let sx: i32 = select(-1, 1, ex >= 0.0);
     let sy: i32 = select(-1, 1, ey >= 0.0);
-    let tdx: f32 = select(1e30, 1.0 / abs(ex), ex != 0.0);
-    let tdy: f32 = select(1e30, 1.0 / abs(ey), ey != 0.0);
+    let tdx: f32 = select(1e30, 1.0 / aex, ex != 0.0);
+    let tdy: f32 = select(1e30, 1.0 / aey, ey != 0.0);
 
-    var tmx: f32 = select(1e30, 0.5 * tdx, ex != 0.0);
-    var tmy: f32 = select(1e30, 0.5 * tdy, ey != 0.0);
+    var ix: i32 = 0;
+    var iy: i32 = 0;
     var cj: i32 = c0;
     var ci: i32 = r0;
     var max_lutning: f32 = 0.0;
 
+    // Heltalsräknare (ix, iy) + korsprodukt eliminerar kumulativ f32-drift och ULP-fel i GPU sin/cos.
     let max_steg = u32(2.0 * params.rmax_celler) + 4u;
     for (var steg: u32 = 0u; steg < max_steg; steg = steg + 1u) {
+        let fx = f32(ix) + 0.5;
+        let fy = f32(iy) + 0.5;
+        let tmx: f32 = select(1e30, fx * tdx, ex != 0.0);
+        let tmy: f32 = select(1e30, fy * tdy, ey != 0.0);
         let t = min(tmx, tmy);
         if (t > params.rmax_celler) {
             break;
         }
-        let steg_x = tmx <= tmy + 1e-5;
-        let steg_y = tmy <= tmx + 1e-5;
+        let lhs: f32 = select(1e30, fx * aey, ex != 0.0);
+        let rhs: f32 = select(1e30, fy * aex, ey != 0.0);
+        let tie_tol = 1e-5 * max(lhs, rhs);
+        let tie = (ex != 0.0) && (ey != 0.0) && (abs(lhs - rhs) <= tie_tol);
+        let steg_x = (ex != 0.0) && (tie || lhs < rhs);
+        let steg_y = (ey != 0.0) && (tie || rhs < lhs);
         if (steg_x) {
             cj = cj + sx;
-            tmx = tmx + tdx;
+            ix = ix + 1;
         }
         if (steg_y) {
             ci = ci + sy;
-            tmy = tmy + tdy;
+            iy = iy + 1;
         }
         if (cj < 0 || cj >= nx_i || ci < 0 || ci >= ny_i) {
             break;
