@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { adminTillaten, arbetsbankTillaten, kontoHuvudHtml, settKontoLage, tolkaKontoSvar } from "./konto.ts";
-import { adminProjektHtml, mcpKommando, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
+import { adminOrganisationHtml, adminProjektHtml, mcpKommando, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
 import type { McpAvsnitt } from "./kontosidor-html.ts";
 import { sidaOm, sidaProjektUtanData, sidaStart, sidhuvud, type SidId } from "./sidor.ts";
-import type { AdminProjektDetalj, ModulInfo, NycklarSvar, OmradeSammanfattning, ProjektListaPost } from "./types.ts";
+import type { AdminOrganisationDetalj, AdminProjektDetalj, ModulInfo, NycklarSvar, OmradeSammanfattning, ProjektListaPost } from "./types.ts";
 
 const text = (html: string): string => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/g, " ");
 const avkoda = (html: string): string =>
@@ -220,5 +220,76 @@ test("Anslutna appar: adressen till Claude-appen, namn maskeras och ta bort finn
   assert.match(text(tom), /Inga anslutna appar/);
   const hamtar = sidaNycklar(nycklar(true), null, mcpSvar(0));
   assert.match(hamtar, /data-anslutna-appar/);
+  settKontoLage({ lage: "av" });
+});
+
+const orgDetalj = (tillatna: string[], medlemmar = [
+  { konto_id: "k1", namn: "Joel <b>", epost: "j@x.se", roll: "agare", kalla: "manuell", sparrad: false },
+  { konto_id: "k2", namn: "Samuel", epost: "s@x.se", roll: "organisationsadmin", kalla: "inbjudan", sparrad: false },
+  { konto_id: "k3", namn: "Lena", epost: "l@x.se", roll: "ledare", kalla: "inbjudan", sparrad: false },
+]): AdminOrganisationDetalj => ({
+  organisation: {
+    id: "o1",
+    namn: "Floden",
+    din_roll: tillatna.includes("agare") ? "agare" : "organisationsadmin",
+    far_byta_namn: tillatna.includes("agare"),
+    roller: ["medlem", "ledare", "organisationsadmin", "agare"],
+    tillatna_roller: tillatna,
+  },
+  roller: ["medlem", "ledare", "organisationsadmin", "agare"],
+  medlemmar,
+  inbjudningar: [{ id: "i1", epost: "ny@x.se", roll: "ledare", skapad: 1800000000, giltig_till: 1801209600, status: "oppen" }],
+});
+
+test("organisationsadmin: inbjudan, medlemmar och roller; ägaren får alla roller och byta namn", () => {
+  const agare = adminOrganisationHtml(orgDetalj(["medlem", "ledare", "organisationsadmin", "agare"]));
+  assert.match(agare, /data-org-bjud-in="o1"/);
+  assert.match(agare, /data-org-namn="o1"/);
+  // Formuläret erbjuder alla fyra rollerna.
+  const bjudRoller = /data-org-bjud-in[\s\S]*?<select[^>]*name="roll">([\s\S]*?)<\/select>/.exec(agare)?.[1] ?? "";
+  assert.deepEqual([...bjudRoller.matchAll(/value="([a-z]+)"/g)].map((m) => m[1]), ["medlem", "ledare", "organisationsadmin", "agare"]);
+  assert.match(agare, /data-org-roll="o1" data-org-konto="k2"/);
+  assert.match(agare, /data-org-ta-bort="o1\|k2"/);
+  assert.doesNotMatch(agare, /Joel <b>/); // namnet är maskerat
+  assert.match(text(agare), /ny@x\.se\s+ledare\s+Öppen\s+2027-01-29/);
+});
+
+test("organisationsadmin kan bara bjuda in medlem och ledare och inte röra en annan admin eller ägare", () => {
+  const admin = adminOrganisationHtml(orgDetalj(["medlem", "ledare"]));
+  const bjudRoller = /data-org-bjud-in[\s\S]*?<select[^>]*name="roll">([\s\S]*?)<\/select>/.exec(admin)?.[1] ?? "";
+  assert.deepEqual([...bjudRoller.matchAll(/value="([a-z]+)"/g)].map((m) => m[1]), ["medlem", "ledare"]);
+  assert.doesNotMatch(admin, /data-org-namn/); // namnet byter bara ägaren
+  assert.doesNotMatch(admin, /data-org-konto="k1"|data-org-konto="k2"/); // ägare och admin är bara text
+  assert.doesNotMatch(admin, /data-org-ta-bort="o1\|k1"|data-org-ta-bort="o1\|k2"/);
+  assert.match(admin, /data-org-konto="k3"/); // ledaren kan ändras
+});
+
+test("administrationssidan visar organisationen före projekten, och utan organisation som förut", () => {
+  const sida = sidaAdministration([detalj], null, "", [orgDetalj(["medlem", "ledare"])]);
+  assert.ok(sida.indexOf("data-admin-organisation") < sida.indexOf("data-admin-projekt"));
+  assert.match(text(sida), /Organisation: Floden/);
+  assert.doesNotMatch(sidaAdministration([detalj]), /data-admin-organisation/);
+});
+
+test("delning: kryssrutan finns på projektets administrationssida och kan bara ändras av utredare och skapare", () => {
+  const privat = adminProjektHtml(detalj);
+  assert.match(privat, /data-delning="p1"/);
+  assert.match(text(privat), /Synligt för organisationen Staden/);
+  assert.match(privat, /data-delning="p1" disabled/); // inget kan_andra_delning: avstängd
+  assert.doesNotMatch(privat, /data-delning="p1" checked/);
+  const delad = adminProjektHtml({ ...detalj, projekt: { ...detalj.projekt, organisation_synlig: true, kan_andra_delning: true } });
+  assert.match(delad, /data-delning="p1" checked \//);
+  assert.doesNotMatch(delad, /data-delning="p1"[^>]*disabled/);
+  assert.match(text(delad), /ledare läser/);
+});
+
+test("projektlistan visar vilka projekt som är delade med organisationen", () => {
+  settKontoLage(anvandare());
+  const lista: ProjektListaPost[] = [{ ...projekt[1]!, organisation_synlig: true, roll: "utredare" }, { ...projekt[1]!, id: "x", namn: "Privat" }];
+  const html = sidaStart(moduler, false, lista);
+  assert.match(text(html), /Provområdet\s+Projekt · utredare · delat med organisationen/);
+  assert.doesNotMatch(text(html), /Privat\s+Projekt · lasare · delat/);
+  assert.match(sidaProjektUtanData(lista[0]!), /Delat med organisationen/);
+  assert.doesNotMatch(sidaProjektUtanData(lista[1]!), /Delat med organisationen/);
   settKontoLage({ lage: "av" });
 });

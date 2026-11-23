@@ -2633,8 +2633,9 @@ class FlodenApiApp:
 
         Inloggning av (lokalt): demokvarteret om det är byggt, som förut. Inloggning på:
         demokvarteret (om `demoprojekt_roll` inte är `av`) och projekten där kontot har en
-        uttrycklig roll; inget annat, och ingenting alls utan konto. Projekt ur registret har
-        ännu inga beräkningar (`finns` är falskt) tills projekten kopplas till körningar."""
+        effektiv roll (uttrycklig, eller ur organisationsrollen: `Register.effektiv_projektroll`,
+        fältet `kalla` säger vilket); inget annat, och ingenting alls utan konto. Projekt ur
+        registret har ännu inga beräkningar (`finns` är falskt) tills de kopplas till körningar."""
         demo: list[dict[str, Any]] = self.projekt.lista()["projekt"]
         if not self.konto.aktiv:
             return {"projekt": demo}
@@ -2653,6 +2654,8 @@ class FlodenApiApp:
                     "paahittat": False,
                     "beskrivning": "",
                     "roll": p["roll"],
+                    "kalla": p["kalla"],
+                    "organisation_synlig": p["organisation_synlig"],
                     "finns": False,
                 }
             )

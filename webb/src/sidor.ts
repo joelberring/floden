@@ -100,7 +100,7 @@ export function dinaProjekt(projekt: ProjektListaPost[]): string {
       (p) => `
         <li>
           <a class="textlank" href="#/projekt/${encodeURIComponent(p.id)}">${esc(p.namn)}</a>
-          <span class="dampad">${esc([p.undertitel, p.roll].filter(Boolean).join(" · "))}</span>
+          <span class="dampad">${esc([p.undertitel, p.roll, p.organisation_synlig ? "delat med organisationen" : ""].filter(Boolean).join(" · "))}</span>
         </li>`,
     )
     .join("");
@@ -390,7 +390,7 @@ export function sidaProjektUtanData(p: ProjektListaPost | null): string {
   }
   return `
     <div class="sidbredd innehall">
-      <p class="projekt-etikett">${p.roll ? `<span class="chip">${esc(p.roll)}</span>` : ""}</p>
+      <p class="projekt-etikett">${p.roll ? `<span class="chip">${esc(p.roll)}</span>` : ""}${p.organisation_synlig ? ` <span class="chip">Delat med organisationen</span>` : ""}</p>
       <h1 class="sidrubrik stor">${esc(p.namn)}</h1>
       <p class="hjalp-ruta" role="note">Projektet har inga beräkningar än. Det du ser här kommer från kontoregistret; beräkningar och karta kopplas till projektet när de finns.</p>
     </div>`;

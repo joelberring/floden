@@ -73,7 +73,7 @@ oauth_klient (namn, redirect_uris) och oauth_kod (kod_hash, utmaning, förbrukad
 session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personuppgifter)
 ```
 
-- **Roller:** `superadmin` är ett fält på kontot (sätts bara med serverkommando). Medlemskapets roll är `medlem` eller `organisationsadmin`. Projektroll är `lasare` eller `utredare`.
+- **Roller:** `superadmin` är ett fält på kontot (sätts bara med serverkommando). Medlemskapets roll (organisationsroll) är, i stigande ordning, **`medlem` < `ledare` < `organisationsadmin` < `agare`** (schemaversion 5; de två första värdena är de gamla). Projektroll är `lasare` eller `utredare`. Organisationens inbjudningar ligger i `organisationsinbjudan` (schemaversion 5). Projektet har `organisation_synlig` (0/1, förval 0) och `skapad_av` (schemaversion 6).
 - **`kalla`** på medlemskap: `idp-tenant`, `idp-grupp`, `doman` eller `manuell`, så att automatiska medlemskap kan prövas om. På projektbehörighet: `inbjudan` eller `manuell`.
 - E-postadressen är unik bara bland **verifierade** adresser (partiellt index). En overifierad adress, som Entras, kan därför inte uppta en adress någon annan kan verifiera.
 
@@ -85,9 +85,10 @@ session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personup
 | IdP-grupp (mappningsregel) | förvaltning (medlem), omprövas vid varje inloggning | projekt, organisationsadmin |
 | E-postdomän | organisation, **bara** om leverantören intygar domänen (Googles `hd`, och adressen slutar på samma domän) | förvaltning, projekt |
 | Inbjudan till verifierad adress | projektroll (`lasare`/`utredare`), en gång | |
-| Organisationsadmin/superadmin (uttryckligt) | hantera medlemskap, inbjudningar och projektroller | läsa projektdata utan egen projektroll |
+| Organisationsroll (uttryckligt, av ägare, organisationsadmin, superadmin eller serverkommando) | `ledare`: läsare, `organisationsadmin` och `agare`: utredare, i de projekt som tillhör organisationen **och är delade med den** (`organisation_synlig`) | rätt i privata projekt, rätt i andra organisationers projekt |
+| Superadmin | hantera medlemskap, inbjudningar och projektroller, allt i servern | läsa projektdata utan egen projektroll eller organisationsroll |
 
-- `har_projektroll`/`kraver_projektbehorighet` ser bara `projektbehorighet`. Medlemskap i organisation eller förvaltning, och superadmin, ger ingen projektdata; en admin får tilldela sig själv en roll, och det loggas.
+- **Effektiv projektroll (`Register.effektiv_projektroll`, Joels beslut 2026-11-23, väntar på att föras in i BESLUT).** Den enda platsen där organisationsroller blir projekträtt. Kontots rätt i ett projekt är den uttryckliga projektrollen (`projektbehorighet`) och, **bara om projektet är delat med organisationen (`organisation_synlig`, förval falskt)**, den högsta av den och det organisationsrollen ger i projektets egen organisation: `ledare` ger `lasare`, `organisationsadmin` och `agare` ger `utredare`, `medlem` ger inget. Den används av `kraver_projektbehorighet`, `har_roll` (körningar, `konto_far_se_korning`, MCP-verktygen), `/api/projekt` och MCP `projekt_lista` (fältet `kalla` är `projekt` eller `organisation`). Åtkomst som beror på organisationsrollen loggas med konto-id och projekt-id (`projektatkomst via organisationsroll`), aldrig e-post. **Ett privat projekt (förval) ger organisationsroller ingenting; förvaltningsmedlemskap, enkelt `medlem` och superadmin ger aldrig projektdata**, och ett spärrat konto har ingen rätt. Delningen ändras av projektets utredare (uttrycklig roll) och den som skapade projektet, och av ingen annan: inte organisationens ägare eller admin, inte superadmin (utan egen roll). Växlar man tillbaka till privat gäller det vid nästa anrop. **Självtilldelning:** en administratör kan inte ge sig själv en roll (direkt eller med en inbjudan till den egna adressen) i ett privat projekt; superadmin får, och det loggas (`projektroll-sjalvtilldelad`, konto-id och projekt-id). I ett delat projekt ger en egen roll inget extra. En admin får fortfarande tilldela andra roller i projektet; tidigare fick en admin tilldela sig själv en roll, och det loggas.
 - **Ingen e-postkoppling mellan konton utom** (a) verifierad adress från en betrodd leverantör, till ett verifierat konto eller ett av servern förberett konto utan identitet. Ett konto som skapats via Entra (med identitet och overifierad adress) kan aldrig bli målet för en sådan koppling (skydd mot att någon i förväg skapar ett konto med någon annans adress).
 - `demoprojekt_roll = "utredare"` (standard): varje inloggat, ej spärrat konto har den rollen på det påhittade demokvarteret (`demoprojekt = "demokvarteret"`), utan inbjudan. `"lasare"` ger bara läsning, `"av"` kräver uttrycklig roll även där. Riktiga projekt påverkas inte (BESLUT 2026-11-23).
 - `nya_konton = "inbjudan"` (standard): ett nytt konto skapas bara om identiteten har en väg in (registrerad tenant, intygad domän som är registrerad, eller en öppen inbjudan till den verifierade adressen). Annars ger callback 403 `ingen-inbjudan` och inget sparas. `"oppen"` skapar konto åt vem som helst, utan någon behörighet.
@@ -132,6 +133,9 @@ Körs på servern (läser `config.toml` och `config.local.toml`; skriver id:n, a
 PYTHONPATH=src python -m konto.admin forbered-konto joel@example.se         # skriver konto-id
 PYTHONPATH=src python -m konto.admin ge-superadmin <konto-id>
 PYTHONPATH=src python -m konto.admin skapa-organisation "Stockholms stad"    # skriver organisations-id
+PYTHONPATH=src python -m konto.admin skapa-organisation "Floden" --agare <konto-id>   # med en ägare
+PYTHONPATH=src python -m konto.admin bjud-in-organisation <org-id> <epost> <roll>   # medlem, ledare, organisationsadmin eller agare
+PYTHONPATH=src python -m konto.admin kontostatus <konto-id>                  # superadmin, spärr och organisationsroller
 PYTHONPATH=src python -m konto.admin gor-organisationsadmin <konto-id> <org-id>
 PYTHONPATH=src python -m konto.admin skapa-forvaltning <org-id> "Stadsbyggnadskontoret"
 PYTHONPATH=src python -m konto.admin skapa-projekt <org-id> "Provområdet"
@@ -264,10 +268,46 @@ organisationsadmin (det gör superadmin). Ett spärrat konto loggas ut direkt oc
 ingen läsrätt till projektdata (avsnitt 5).
 
 **Projektlistan.** `GET /api/projekt` (och MCP-verktyget `projekt_lista`) visar med inloggning på bara kontots projekt:
-demokvarteret (om `demoprojekt_roll` inte är `av`, med den rollen) och projekt där kontot har en uttrycklig roll. Projekt ur
+demokvarteret (om `demoprojekt_roll` inte är `av`, med den rollen) och projekt där kontot har en effektiv roll (uttrycklig, eller ur organisationsrollen, avsnitt 5). Projekt ur
 registret har ännu inga beräkningar (`finns: false`) och en enkel projektsida utan siffror.
 
 **Körningar.** Med inloggning på gäller en projektregel på `/api/korningar/<id>/*` (status, resultat, `marksiffror`, `avlasning`, lager, filer, tabeller) och i MCP-verktygen som tar ett körnings-id (`korning_id`, `korning_ids`, `korningar`): kontot ska ha minst rollen `lasare` i körningens projekt. Projektet är körningens `projekt_id` i `korning.json` (valfritt fält), och för demokörningarna som `demo.json` pekar ut demokvarteret, som följer `demoprojekt_roll`. K0-manifestet har ingen projektuppgift, och registrets projekt har inga körningar än. En körning utan projekt (testsvit, äldre körningar) kan bara superadmin läsa; superadmin har ingen läsrätt i ett projekts körningar utan egen projektroll. Saknad behörighet ger **404** (samma svar som för ett id som inte finns, så att id:n inte läcker; `/api/projekt/<id>` ger 403). `GET /api/korningar` och MCP `korningar_lista` visar bara körningar kontot har rätt till. Med inloggning av gäller ingen av reglerna. Varje körning som startas får `projekt_id`: `POST /api/fragor/<ref>/kor` tar `projekt_id` i kroppen (valfritt; annars demokvarteret när frågan hör till demon), scenariokörningar i webbflödet och MCP-verktyget `kor` tar projektet de gäller. Med inloggning på krävs minst `utredare` i projektet för att starta (403 annars); en fråga som inte hör till något projekt kan bara superadmin starta (körningen blir då utan projekt). En pågående körning av samma fråga återanvänds bara inom samma projekt. `POST /api/kor`, `/api/risk` och `/api/rutt` (beräkningar på `omrade_id`, inget sparas) kräver minst `lasare` när `omrade_id` är ett projekt (demokvarteret eller ett projekt i kontoregistret); saknad roll ger **404** `Okänt område '<id>'` (inte 403, så att projekt-id:n inte går att pröva sig fram till). Ett `omrade_id` som inte är ett projekt (testsvitens områden) kräver bara inloggning. Med inloggning av gäller ingen projektkontroll. Projekt som skapas med `floden projekt skapa` registreras i kontoregistret med skaparen som `utredare` (registrets id står i `projekt.json` som `register_id`).
+
+**Organisationen (organisationsroller).** Samma sida och samma `/konto/admin`; synlig för superadmin, organisationsadmin och ägare. Vad var och en får:
+
+| Roll | Får | Får inte |
+| --- | --- | --- |
+| `medlem` | ingen administration, ingen projektdata av organisationen | |
+| `ledare` | läsa (`lasare`) organisationens delade projekt | administrera |
+| `organisationsadmin` | utreda i organisationens delade projekt; administrera medlemmar och inbjudningar även i privata (utan att se data); bjuda in till organisationen (roll medlem eller ledare) och dess projekt; ändra och ta bort medlem och ledare; ändra projektroller; skapa projekt i en befintlig geografi (serverkommandot `floden projekt skapa --konto`) | mappa geografier, ge superadmin, se andras nycklar, ändra serverinställningar, bjuda in eller ändra organisationsadmin och ägare, byta namn |
+| `agare` | som organisationsadmin, och bjuda in med alla roller, utse och ta bort organisationsadmin (och ägare), byta organisationens namn | mappa geografier, ge superadmin, se andras nycklar, ändra serverinställningar; lämna organisationen utan ägare |
+| superadmin (fält på kontot) | allt ovan i alla organisationer, mappa geografier, ge superadmin (bara serverkommando) | läsa projektdata utan egen roll |
+
+Bara superadmin och organisationens ägare kan bjuda in med rollen `agare` eller `organisationsadmin`. Att mappa geografier kräver superadmin (`geografi.mappa`) oavsett organisationsroll (test: `tests/kommuner/test_skapa.py`). Den sista ägaren kan bara lämnas av superadmin. Att ta bort ett medlemskap tar inte bort uttryckliga projektroller, och en medlem som kommer in via IdP-tenant eller intygad domän blir `medlem` igen vid nästa inloggning.
+
+| Anrop | Gör |
+| --- | --- |
+| `GET /konto/admin/organisationer` | organisationer som får administreras: `din_roll`, `far_byta_namn`, `roller`, `tillatna_roller` (rollerna utföraren får bjuda in med och ge) |
+| `GET /konto/admin/organisationer/<id>` | `organisation`, `roller`, `medlemmar` (namn, e-post, roll, källa, spärrad) och `inbjudningar` (`oppen`, `anvand`, `utgangen`) |
+| `PUT /konto/admin/organisationer/<id>` | `{"namn"}` byter namn (ägare) |
+| `POST /konto/admin/organisationer/<id>/inbjudningar` | `{"epost", "roll"}`; 201. Tas emot vid inloggning med en verifierad adress, precis som projektinbjudningar. Ett nytt konto får komma in på en sådan inbjudan (`nya_konton = "inbjudan"`). En högre befintlig roll sänks aldrig |
+| `PUT /konto/admin/organisationer/<id>/medlemmar/<konto>` | `{"roll"}` ändrar rollen |
+| `DELETE /konto/admin/organisationer/<id>/medlemmar/<konto>` | tar bort medlemskapet |
+
+**Delning av ett projekt.** `PUT /konto/projekt/<id>/delning` med `{"organisation_synlig": true|false}` (inloggad, CSRF; 403 för alla utom projektets utredare och skaparen, och för okänt projekt). `GET /konto/admin/projekt[/<id>]` har `organisation_synlig` och `kan_andra_delning`; `GET /api/projekt` och MCP `projekt_lista` har `organisation_synlig` (och `kalla`) för projekt ur registret. På sidan Administration finns kryssrutan "Synligt för organisationen <namn>" (avstängd för den som inte får ändra), och projektlistan på startsidan visar "delat med organisationen". Projekt som skapas med `floden projekt skapa --konto` är privata och skaparen är utredare och `skapad_av`.
+
+Händelser och loggar har bara konto-id, organisations-id, inbjudnings-id och roll. Webbklienten visar på sidan Administration organisationens medlemmar, roller, inbjudningsformulär (e-post och roll; bara de roller utföraren får ge) och knappar för att ändra och ta bort.
+
+**Så gör Joel (superadmin) Samuel till organisationsadmin i en ny organisation "Floden".** Ett kommando per rad, på servern (`docs/DRIFT.md` visar `docker compose … exec floden` framför). `<epost>` är adressen Joel loggar in med respektive Samuels Google-adress; `<konto-id>` och `<org-id>` är id:n som föregående rad skrev.
+
+```
+PYTHONPATH=src python -m konto.admin konto-id <epost>
+PYTHONPATH=src python -m konto.admin kontostatus <konto-id>
+PYTHONPATH=src python -m konto.admin skapa-organisation "Floden" --agare <konto-id>
+PYTHONPATH=src python -m konto.admin bjud-in-organisation <org-id> <epost> organisationsadmin
+```
+
+Rad 2 ska börja med `superadmin=ja`; gör den inte det, kör först `ge-superadmin <konto-id>`. Rad 3 skriver organisations-id. Rad 4 skriver inbjudningens id; Samuel får organisationsadmin när han loggar in med den adressen (ingen e-post skickas, han måste få veta det på annat sätt). Därefter ser han Administration och är utredare i de projekt i Floden-organisationen som är delade med den (kryssrutan "Synligt för organisationen Floden" på projektets administrationssida, som bara projektets utredare och skaparen kan sätta). Privata projekt ser han inte. Projekt i en annan organisation ligger kvar där och ger honom ingenting.
 
 ## 12. MCP-token (`/konto/mcp-token`, avsnittet "MCP-token" på sidan Nycklar)
 

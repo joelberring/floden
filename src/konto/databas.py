@@ -210,7 +210,51 @@ CREATE TABLE oauth_token (
 CREATE INDEX oauth_token_grant ON oauth_token (grant_id);
 """
 
-MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4)
+# Version 5: organisationsroller medlem < ledare < organisationsadmin < agare och inbjudan till
+# organisationen. SQLite kan inte ändra en CHECK, så `medlemskap` byggs om med samma kolumner och
+# samma rader (additivt: alla gamla värden gäller som förut) och med källan `inbjudan` tillagd.
+SCHEMA_V5 = """
+CREATE TABLE medlemskap_ny (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  organisation_id TEXT NOT NULL REFERENCES organisation (id) ON DELETE CASCADE,
+  forvaltning_id TEXT REFERENCES forvaltning (id) ON DELETE CASCADE,
+  roll TEXT NOT NULL CHECK (roll IN ('medlem', 'ledare', 'organisationsadmin', 'agare')),
+  kalla TEXT NOT NULL CHECK (kalla IN ('idp-tenant', 'idp-grupp', 'doman', 'manuell', 'inbjudan')),
+  skapad INTEGER NOT NULL,
+  bekraftad_av TEXT
+);
+INSERT INTO medlemskap_ny (id, konto_id, organisation_id, forvaltning_id, roll, kalla, skapad,
+  bekraftad_av)
+  SELECT id, konto_id, organisation_id, forvaltning_id, roll, kalla, skapad, bekraftad_av
+  FROM medlemskap;
+DROP TABLE medlemskap;
+ALTER TABLE medlemskap_ny RENAME TO medlemskap;
+CREATE UNIQUE INDEX medlemskap_unik
+  ON medlemskap (konto_id, organisation_id, COALESCE(forvaltning_id, ''));
+CREATE TABLE organisationsinbjudan (
+  id TEXT PRIMARY KEY,
+  organisation_id TEXT NOT NULL REFERENCES organisation (id) ON DELETE CASCADE,
+  epost TEXT NOT NULL,
+  roll TEXT NOT NULL CHECK (roll IN ('medlem', 'ledare', 'organisationsadmin', 'agare')),
+  skapad_av TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  giltig_till INTEGER NOT NULL,
+  anvand_av TEXT,
+  anvand_tid INTEGER
+);
+CREATE INDEX organisationsinbjudan_epost ON organisationsinbjudan (epost);
+"""
+
+# Version 6: projektets inställning `organisation_synlig` (förval 0: privat för uttryckliga
+# medlemmar) och vem som skapade projektet. Additivt: befintliga projekt blir privata, som förut.
+SCHEMA_V6 = """
+ALTER TABLE projekt ADD COLUMN organisation_synlig INTEGER NOT NULL DEFAULT 0
+  CHECK (organisation_synlig IN (0, 1));
+ALTER TABLE projekt ADD COLUMN skapad_av TEXT;
+"""
+
+MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6)
 
 
 class Databas:

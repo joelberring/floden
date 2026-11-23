@@ -278,6 +278,19 @@ def test_mappa_kraver_superadmin_nar_inloggning_ar_pa(varld: dict[str, Any]) -> 
         mappa(varld, konto_id=sa, konfig=konfig_pa(), register=reg, nycklar_fran=ingen)
 
 
+def test_mappa_kraver_superadmin_aven_for_organisationens_agare(varld: dict[str, Any]) -> None:
+    """Ägare och organisationsadmin har stora rättigheter i organisationen men får inte mappa."""
+    reg = Register(Databas(varld["rot"] / "konto.sqlite"))
+    agare = reg.forbered_konto("agare@example.test")
+    org = reg.skapa_organisation("Floden", agare=agare)
+    admin = reg.forbered_konto("admin@example.test")
+    reg.gor_organisationsadmin(admin, org)
+    for konto in (agare, admin):
+        with pytest.raises(SkapaFel, match="superadmin"):
+            mappa(varld, konto_id=konto, konfig=konfig_pa(), register=reg)
+    assert varld["lm"].antal("GET", "/stac") == 0  # inget hämtades
+
+
 def test_saknad_nyckel_stoppar_fore_hamtning(varld: dict[str, Any]) -> None:
     def ingen(_k: str | None) -> Nycklar:
         raise NyckelFel("Kontot har ingen Lantmäteri-nyckel. Lägg in den på sidan Nycklar i webben.")
