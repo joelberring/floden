@@ -346,3 +346,6 @@ Mätt: demokvarteret ger 5 instabila överfallspunkter (k = 2σ, 100 mm), alla p
 Nästa: prova i webbläsare; ev. CSS för `.overfall-popup`.
 - (Samordnare, samma gren) Demoprojektet på servern: sedan projektbehörigheten (9c814d4) krävdes en uttrycklig roll för `/api/projekt/demokvarteret`, men demon finns inte i kontoregistret, så ingen inloggad kom åt den. Nu ger `[konto] demoprojekt_roll` (förval `"utredare"`) varje inloggat konto den rollen på just demokvarteret; riktiga projekt kräver fortfarande uttrycklig roll. BESLUT 2026-11-23, `docs/KONTO.md`, tester i `tests/konto/test_sessioner.py`.
 - (Samordnare) EA-tidstestet föll i CI (5,74–5,75 s mot gränsen 5,0 s) efter vattenkärnans rättelser. Profilering på samma maskin: 3,29 s före (6ef22ae) och 5,93 s efter; 2D-lösaren tar 6055 tidssteg mot 3901, och hybriden gör 1858 subgridomräkningar mot 825. Orsaken är CFL med u_max, inte långsammare kod per steg. Gränsen höjd till 7,5 s med motivering i testet.
+
+### 2026-11-23 – Kort README (samordnare, på Joels begäran)
+- README.md är nu tre rader; den tidigare texten ligger oförändrad i `docs/KOM-IGANG.md`. CLAUDE.md pekar dit. Repot är fortsatt öppet (Joels val).
