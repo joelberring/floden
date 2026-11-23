@@ -46,3 +46,28 @@ Mål: köra så mycket som möjligt lokalt på användarens egen GPU (**WebGPU /
 3. **Statisk stad + redigerbart förslag:** Omgivande kvarter hålls i en enda sammanslagen buffert (1 draw call); bara planförslagets 1–20 hus är separat redigerbara (höjddragning via `scale.y` utan CPU-extrudering).
 4. **Terräng-LOD & instancing:** Statisk rutnätsmesh med vertex-displacement från `r32float`-höjdtextur + `InstancedMesh` för fasadpunkter, träd (`lad_m2_m3`) och 50 000 animerade partikelspår (`partikel_spar.wgsl`).
 
+
+---
+
+## 5. Prov på riktigt grafikkort: `#/prov/webgpu`
+
+Skuggarna och `WebGpuDagsljusMotor` har bara provats mot Python-ekvivalenter (`tests/test_wgsl_referens.py`,
+`tests/benchmark/test_shaderport.py`), aldrig på ett grafikkort. Provsidan i klienten gör det provet.
+
+- **Åtkomst:** adressen `#/prov/webgpu`, ingen länk i menyn. Med `inloggning = "av"` (lokalt) öppen; med inloggning på
+  bara för superadmin (servern svarar 403 från `/api/prov/*` till alla andra, klienten döljer sidan).
+- **Vad den gör:** (1) upptäcker WebGPU (adapter, begränsningar, funktioner); (2) kör `dagsljus_horisont.wgsl` på
+  det syntetiska kvarteret 300 x 300 m och mäter tiden; (3) hämtar serverns f64-facit för samma fall via
+  `GET /api/prov/webgpu/fall/<id>` och visar största fel, medelfel och andel celler över en tolerans du kan ändra;
+  (4) gör samma sak för `vatten_2d.wgsl` (64 x 64 celler, 1 000 tidssteg, facit är samma schema i f64);
+  (5) visar tabellen och kan ladda ned resultatet som JSON i `floden-benchmark/v1` med källa `"webblasare"` (K37).
+- **Skissläge:** klientens tal är f32 och får bara användas som skiss, inte som rapporttal. Det står på sidan, i
+  det nedladdade dokumentets `anmarkning` och här. Formella resultat räknas i f64 på servern (avsnitt 2 och 3).
+- **Facit:** dagsljus med serverns horisontkärna (`dagsljus.horisont`), vatten med referensschemat
+  `benchmark.provfall.vatten_schema`. Det är **inte** hela lösaren `tvad.lokal_troghet` (som har flödesutjämning,
+  dynamiskt tidssteg och ränder), så vattenprovet mäter GPU-genomförandets avvikelse från skuggarens eget schema,
+  inte skuggarens avvikelse från den validerade lösaren. Den jämförelsen återstår.
+- **Fel i skuggarna:** pipeline-bygget och varje körning ligger i ett valideringsomfång (`medFelkontroll`), så att
+  felaktig WGSL eller bindgrupp ger ett svenskt felmeddelande på sidan i stället för tomma resultat.
+- **Serverns tider:** `floden benchmark --del dagsljus` och `--del skyfall` tidtar samma beräkningar på servern
+  (fallen `kvarter300-svf-soltimmar` och `vatten2d-ref-64x64`), för jämförelse med GPU-tiden. Se `docs/benchmark/`.
