@@ -1,4 +1,11 @@
-"""Tester för Göteborgs öppna testområde, baskarteprofil och datahämtare (Pass 2)."""
+"""Tester för Göteborgs testområde, baskarteprofil och datahämtare (Pass 2).
+
+**SYNTETISKA data.** Alla mätvärden i filen (PM10, PM2.5, NO2, tider) är påhittade för testet.
+JSON-formatet som `tolka_goteborg_luft_json` läser är *antaget* och inte bekräftat mot Göteborgs
+tjänst, och WFS-hämtningen är aldrig körd mot nätet (injicerad `hamta_bytes`). Testen visar att
+kedjan hänger ihop, inte att Göteborgs verkliga data ser ut så eller ger de här talen. Inga
+slutsatser om luftkvaliteten i Göteborg får dras ur dem.
+"""
 
 from __future__ import annotations
 
@@ -72,7 +79,7 @@ def test_goteborg_wfs_cache_och_domanskydd(tmp_path: Path) -> None:
 
 
 def test_tolka_goteborg_luft_json() -> None:
-    """Öppna timvisa mätdata (PM10, PM2.5, NO2) ska tolkas rent med NaN för saknade värden."""
+    """Syntetiska timdata (PM10, PM2.5, NO2; antaget format) tolkas med NaN för saknade värden."""
     ra = {
         "values": [
             {"time": "2026-03-15T08:00:00Z", "PM10": 32.5, "PM2.5": 9.1, "NO2": 28.0},
@@ -88,7 +95,10 @@ def test_tolka_goteborg_luft_json() -> None:
 
 
 def test_goteborg_luft_till_mkn_intervall_och_r2_sammanfattning() -> None:
-    """Helhetskedja: Göteborgs öppna timdata -> monotont MKN-intervall -> R2-rapport."""
+    """SYNTETISK helhetskedja: påhittade timvärden i antaget Göteborg-format -> MKN-intervall -> R2.
+
+Värdena (42/18 µg/m³ PM10, 365 dygn) är konstruerade, formatet är inte bekräftat mot tjänsten.
+"""
     from luft.kanslighet import kor_monoton_mkn_intervall
     from rapport.r2_domaner import skapa_r2_fleromans_sammanfattning
 

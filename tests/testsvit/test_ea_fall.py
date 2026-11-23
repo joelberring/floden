@@ -169,9 +169,12 @@ class TestEaBenchmarkKorning(unittest.TestCase):
 
     def test_alla_fall_tabell_och_kortid(self) -> None:
         self.assertEqual([r.fall_id for r in self.resultat], ["EA1", "EA2", "EA8A"])
-        # Gränsen är 5,0 s. FLODEN_TIDSFAKTOR (standard 1) skalar den på delade eller
-        # belastade maskiner; CI och vanlig lokal körning använder 1.
-        grans_s = 5.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        # Gränsen är 7,5 s (var 5,0 s före 2026-11-23). CFL-steget räknar nu med u_max
+        # (BESLUT 2026-11-23, vattenkärnans rättelser), vilket ger 55 % fler tidssteg i 2D
+        # (3901 -> 6055) och 2,25 gånger fler subgridomräkningar i hybriden (825 -> 1858) på de
+        # tre fallen; CI mätte 5,75 s. FLODEN_TIDSFAKTOR (standard 1) skalar gränsen på delade
+        # eller belastade maskiner; CI och vanlig lokal körning använder 1.
+        grans_s = 7.5 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
         self.assertLess(
             self.total_kortid_s,
             grans_s,

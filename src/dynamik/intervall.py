@@ -9,6 +9,11 @@ När en uppströms sadel är topologiskt instabil (en `BifurkationsPunkt` från
 `sankgraf.bifurkation`) flaggas berörda noder med `monoton_garanterad = False`,
 och en styrd gren-analys kör de alternativa utloppsgrenarna för topp-N kritiska
 bifurkationer och tar unionen av intervallen.
+
+**Status: fristående.** Modulen är testad (`tests/dynamik/test_intervall.py`) men inte inkopplad
+i något användarflöde (CLI, webb, MCP, K20-lösare eller rapportkedja). Ingen annan modul i `src`
+använder den (`dynamik/__init__.py` återexporterar den, men inget anropar den); se `STATUS.md`
+(2026-11-23).
 """
 
 from __future__ import annotations

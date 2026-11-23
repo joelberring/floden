@@ -522,3 +522,86 @@ typsnitt, namngivna efter sha256). `rapport_id` = `r-` + 12 hex.
 
 MCP-körloggens rader får fältet `rapport_id` (lista) när ett anrop rör en rapport
 (tillägg i `floden-korlogg/v1`, äldre rader saknar fältet).
+
+## K34 – Bifurkationspunkter `floden-bifurkationer/v1` (v1)
+
+Registrerat 2026-11-23 i efterhand: formatet fanns redan i koden (`sankgraf.bifurkation`) utan kontrakt.
+Ingen ändring av formatet, så versionen är v1. Topologiskt känsliga överfallspunkter i sänkgrafen:
+punkter där vattnets utlopp kan byta väg inom höjdosäkerheten (Q2, `docs/MATEMATIK.md`).
+
+**Skrivs av** `sankgraf.bifurkation.skriv_bifurkationer_json` (fil `bifurkationer.json`; anropas av
+`tools/exportera_q2_underlag.py`). Samma punkter skrivs som GeoPackage av `skriv_bifurkationer_gpkg`
+(`bifurkationer.gpkg`, lager `bifurkationer`, punktgeometri på överfallet, EPSG från argumentet, förval
+3011; attributen som nedan utom koordinaterna, och den alternativa sadelns läge ingår inte). **Läses av** inget i Floden idag (testerna
+`tests/sankgraf/test_bifurkation.py` läser tillbaka filen); avsedd för skissrapport, webb och Samuels analys.
+Punkterna finns också inbäddade i svaret från `POST /api/analys/bifurkationer` (K36).
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-bifurkationer/v1"` |
+| `k_sigma` | tal | (antal σ) | Instabil om säkerhetsmarginalen ≤ `k_sigma` (förval 2,0) |
+| `referensregn_mm` | tal | mm | Regndjup som `paverkad_volym_m3` räknas med (förval 100) |
+| `antal_instabila`, `antal_totalt` | heltal | st | Antal punkter med `instabil = true` respektive alla punkter i listan |
+| `punkter` | lista | | Sorterad: störst `paverkad_volym_m3` först, sedan minst `sakerhetsmarginal`, sedan `nod_id` |
+
+Punkt (`punkter[]`):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `nod_id` | heltal | | Sänkgrafens nod vars utlopp är känsligt |
+| `primar_ut_till_id`, `alternativ_ut_till_id` | heltal eller null | | Nuvarande utloppsmål och konkurrerande mål (null = havet/rutans rand, eller okänt) |
+| `overfall_hojd_m`, `alternativ_hojd_m` | tal | m RH 2000 | Höjd på primär respektive lägsta alternativa sadel |
+| `marginal_m` | tal | m | `max(0, alternativ − överfall)` |
+| `osakerhet_komb_m` | tal | m | `√(σ_överfall² + σ_alternativ²)`, 1 σ i höjd |
+| `sakerhetsmarginal` | tal eller null | (antal σ) | `marginal_m / osakerhet_komb_m`; null när σ = 0 och marginalen > 0 (oändlig) |
+| `instabil` | bool | | `sakerhetsmarginal ≤ k_sigma` |
+| `overfall_x`, `overfall_y`, `alternativ_x`, `alternativ_y` | tal | m, EPSG:3011 | Sadlarnas lägen (grafens koordinatsystem; filen har inget eget `epsg`-fält) |
+| `paverkad_avrinningsyta_m2` | tal | m² | Uppströms avrinningsyta som når noden |
+| `paverkad_volym_m3` | tal | m³ | `paverkad_avrinningsyta_m2 × referensregn_mm / 1000` |
+
+## K35 – Bifiltreringsunderlag `floden-bifiltrering/v1` (v1)
+
+Registrerat 2026-11-23 i efterhand (ingen formatändring). Rent, GIS-fritt dataset av sänkgrafen för
+bigraderade k[x, y]-experiment (2-parameterpersistens, Q2).
+
+**Skrivs av** `sankgraf.bifurkation.exportera_bifiltrering_json` (fil `bifiltrering_q2.json`; anropas av
+`tools/exportera_q2_underlag.py`). **Läses av** inget i Floden (testerna läser tillbaka filen); avsedd för
+Samuels externa experiment i Python eller Macaulay2.
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-bifiltrering/v1"` |
+| `epsg` | heltal | | Grafens koordinatsystem (3011) |
+| `hav_nod_id` | heltal | | Nod-id som betyder havet/rutans rand i `till_nod` (−1) |
+| `antal_noder`, `antal_sadelkanter` | heltal | st | Längden på listorna nedan |
+| `noder` | lista | | En post per sänkgrafsnod, sorterad på `nod_id` |
+| `sadelkanter` | lista | | Lägsta sadel mellan varje par av grannlövregioner (4-grannar) och mellan en lövregion och havet |
+
+Nod (`noder[]`): `nod_id` (heltal), `ar_lov`, `ar_slutsanka` (bool), `forald_id`, `ut_till_id` (heltal
+eller null), `barn_id` (lista av heltal), `botten_hojd_m` (m RH 2000), `overfall_hojd_m` (m RH 2000, null för
+slutsänka), `persistens_m` (m), `osakerhet_m` (m, 1 σ i höjd), `avrinningsyta_m2` (m²), `max_volym_m3` (m³).
+
+Sadelkant (`sadelkanter[]`): `fran_nod`, `till_nod` (heltal; −1 = havet), `sadel_hojd_m` (m RH 2000),
+`sadel_osakerhet_m` (m, 1 σ), `x`, `y` (m, EPSG i `epsg`).
+
+## K36 – Bifurkationsanalys i webb-API `floden-bifurkation-felindikator/v1` (v1)
+
+Registrerat 2026-11-23 i efterhand (ingen formatändring). Ett JSON-svar, ingen fil: svaret på
+`POST /api/analys/bifurkationer` med kroppen `{omrade_id, k_sigma (förval 2,0), referensregn_mm (förval 100)}`.
+
+**Skrivs av** `FlodenWebbTjanst.kor_bifurkation_analys` i `src/webb/api.py`, som kör
+`detektera_bifurkationer` och `tvad.felindikator.berakna_2d_felindikator` på områdets basgraf.
+**Läses av** webbklienten (`webb/src/karta/kartapi.ts`, `BifurkationAnalysSvar`, panelen i `kartsida.ts`).
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `format` | text | | `"floden-bifurkation-felindikator/v1"` |
+| `omrade_id` | text | | Området som analyserades |
+| `k_sigma`, `referensregn_mm` | tal | (antal σ), mm | Som i K34 |
+| `antal_instabila` | heltal | st | Antal punkter i `punkter` (bara instabila) |
+| `punkter` | lista | | Punkter enligt K34, bara de med `instabil = true`; koordinater i EPSG:3011 (m) |
+| `felindikator` | objekt | | A posteriori-bedömning av var 2D-lösaren behövs, se nedan |
+
+`felindikator`: `andel_2d_yta` (andel 0–1, ingen procent), `antal_2d_celler`, `antal_aktiva_celler`
+(celler utan byggnad), `antal_noder_2d`, `antal_noder_totalt` (heltal, st). Masken över rekommenderade
+2D-celler (`rekommenderad_2d_mask`) ingår inte i svaret.
