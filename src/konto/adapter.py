@@ -215,19 +215,31 @@ class KontoAdapter:
         kontroll = self.kraver_inloggning(request)
         if not kontroll.tillaten or kontroll.inloggad is None:
             return kontroll
-        assert self.register is not None  # noqa: S101
-        if self.register.har_projektroll(kontroll.inloggad.konto_id, projekt_id, minst):
-            return kontroll
-        demo_roll = self.konfig.demoprojekt_roll
-        if (
-            projekt_id == self.konfig.demoprojekt
-            and demo_roll != "av"
-            and _roll_niva(demo_roll) >= _roll_niva(minst)
-        ):
+        if self.har_projektroll(kontroll.inloggad.konto_id, projekt_id, minst):
             return kontroll
         logg.info("projekt nekat konto=%s projekt=%s", kontroll.inloggad.konto_id, projekt_id)
         svar = _fel(403, "ingen-behorighet", "Saknar behörighet till projektet")
         return Kontroll(False, svar=svar)
+
+    def har_projektroll(self, konto_id: str, projekt_id: str, minst: str = "lasare") -> bool:
+        """Har kontot minst rollen `minst` i projektet? Uttrycklig roll, eller för demoprojektet
+        `demoprojekt_roll`. Samma regel som `kraver_projektbehorighet`, men utan förfrågan (för
+        MCP-verktygen och körningsrutterna). Inloggning av: alltid sant."""
+        if not self.aktiv:
+            return True
+        assert self.register is not None  # noqa: S101
+        if self.register.har_projektroll(konto_id, projekt_id, minst):
+            return True
+        demo_roll = self.konfig.demoprojekt_roll
+        return (
+            projekt_id == self.konfig.demoprojekt
+            and demo_roll != "av"
+            and _roll_niva(demo_roll) >= _roll_niva(minst)
+        )
+
+    def ar_superadmin(self, konto_id: str) -> bool:
+        """Är kontot superadmin? Alltid falskt när inloggning är av (ingen konto-gräns finns då)."""
+        return self.aktiv and self.register is not None and self.register.ar_superadmin(konto_id)
 
     def projekt_for_konto(self, konto_id: str) -> list[dict[str, str]]:
         """Registrets projekt där kontot har en uttrycklig roll (id, namn, roll). Demokvarteret

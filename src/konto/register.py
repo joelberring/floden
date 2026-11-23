@@ -263,6 +263,14 @@ class Register:
         roll = self.projektroll(konto_id, projekt_id)
         return roll is not None and _roll_niva(roll) >= _roll_niva(minst)
 
+    def ar_superadmin(self, konto_id: str) -> bool:
+        """Är kontot en icke spärrad superadmin? (Ger ingen projektdata, se `har_projektroll`.)"""
+        with self.db.transaktion() as c:
+            rad = c.execute(
+                "SELECT superadmin FROM konto WHERE id = ? AND sparrad IS NULL", (konto_id,)
+            ).fetchone()
+        return bool(rad and rad["superadmin"])
+
     def ge_projektroll(self, utforare: str, konto_id: str, projekt_id: str, roll: str) -> None:
         """Uttrycklig tilldelning (organisationsadmin i projektets organisation, superadmin)."""
         _roll_niva(roll)

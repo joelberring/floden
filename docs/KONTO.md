@@ -263,6 +263,8 @@ ingen läsrätt till projektdata (avsnitt 5).
 demokvarteret (om `demoprojekt_roll` inte är `av`, med den rollen) och projekt där kontot har en uttrycklig roll. Projekt ur
 registret har ännu inga beräkningar (`finns: false`) och en enkel projektsida utan siffror.
 
+**Körningar.** Med inloggning på gäller en projektregel på `/api/korningar/<id>/*` (status, resultat, `marksiffror`, `avlasning`, lager, filer, tabeller) och i MCP-verktygen som tar ett körnings-id (`korning_id`, `korning_ids`, `korningar`): kontot ska ha minst rollen `lasare` i körningens projekt. Projektet är körningens `projekt_id` i `korning.json` (valfritt fält), och för demokörningarna som `demo.json` pekar ut demokvarteret, som följer `demoprojekt_roll`. K0-manifestet har ingen projektuppgift, och registrets projekt har inga körningar än. En körning utan projekt (testsvit, äldre körningar) kan bara superadmin läsa; superadmin har ingen läsrätt i ett projekts körningar utan egen projektroll. Saknad behörighet ger **404** (samma svar som för ett id som inte finns, så att id:n inte läcker; `/api/projekt/<id>` ger 403). `GET /api/korningar` och MCP `korningar_lista` visar bara körningar kontot har rätt till. Med inloggning av gäller ingen av reglerna. Att starta en körning (`POST /api/fragor/<ref>/kor`) sätter inget projekt än, så nystartade körningar ser bara superadmin.
+
 ## 9. Köra testerna
 
 ```

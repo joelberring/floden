@@ -130,6 +130,23 @@ def _hitta_korningar(obj: Any, ut: set[str], djup: int = 0) -> None:
             _hitta_korningar(x, ut, djup + 1)
 
 
+def _korningar_i_indata(obj: Any, ut: set[str], djup: int = 0) -> None:
+    """Körnings-id i verktygets indata: `korning_id`, `korning_ids` och `korningar`."""
+    if djup > 8:
+        return
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            if k == "korning_id" and isinstance(v, str):
+                ut.add(v)
+            elif k in ("korning_ids", "korningar") and isinstance(v, list):
+                ut.update(x for x in v if isinstance(x, str))
+            elif isinstance(v, Mapping | list):
+                _korningar_i_indata(v, ut, djup + 1)
+    elif isinstance(obj, list):
+        for x in obj[:500]:
+            _korningar_i_indata(x, ut, djup + 1)
+
+
 class _SessionData:
     __slots__ = ("session_id", "modell", "roll")
 
@@ -342,6 +359,16 @@ def bygg_server(
             rapporter_set: set[str] = set()
             _hitta_rapporter(argument, rapporter_set)
             post["rapport_id"] = rapporter_set
+            if ctx.method == "tools/call" and tjanst.app.konto.aktiv:
+                # Samma körningsbehörighet som webben (`/api/korningar/<id>/*`): minst lasare i
+                # körningens projekt, annars "okänd körning" (ingen skillnad mot en som saknas).
+                begarda: set[str] = set()
+                _korningar_i_indata(argument, begarda)
+                for kid in sorted(begarda):
+                    if not tjanst.app.konto_far_se_korning(tillstand.konto, kid):
+                        text = f"Okänd körning '{kid}'."
+                        _skriv(logg, post, "nekad_policy", korningar, text, None, t0)
+                        return _result_fel(text)
             try:
                 policy.kontrollera(str(klient["namn"]), effektiv)
             except PolicyNekad as exc:
@@ -489,7 +516,7 @@ def bygg_server(
         modell: Modell = None,
         roll: Roll = None,
     ) -> dict[str, Any]:
-        return tjanst.korningar_lista(max_antal)
+        return tjanst.korningar_lista(max_antal, tillstand.konto)
 
     @verktyg("korning_status", "Status och framsteg (klara jobb av totalt) för en körning.")
     def korning_status(

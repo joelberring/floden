@@ -122,6 +122,7 @@ from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
 from webb.kartverktyg import KartverktygTjanst
 from webb.moduler import lista_moduler
+from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
 from webb.projekt import ProjektTjanst
 from webb.prov import PREFIX as PROV_PREFIX
 from webb.prov import prov_svar
@@ -2499,6 +2500,46 @@ class FlodenApiApp:
             return _json_svar(200, self.fragor.tabell(delar[0], "/".join(delar[2:])))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
 
+    def projekt_for_korning(self, korning_id: str) -> str | None:
+        """Projektet en körning hör till, eller None (testsvit, äldre körningar).
+
+        Körningens eget `projekt_id` (`korning.json`) gäller först. Demokörningarna som
+        `demo.json` pekar ut hör till demokvarteret. Annat finns inte att gå på: K0-manifestet
+        (`run.json`) har ingen projektuppgift, och registrets projekt har inga körningar än."""
+        k = self.fragor.korning_eller_none(korning_id)
+        if k is not None and k.projekt_id:
+            return k.projekt_id
+        demo = self.fragor.demo()
+        if demo.get("finns"):
+            for post in demo.get("delar", {}).values():
+                if isinstance(post, Mapping) and post.get("korning_id") == korning_id:
+                    return PROJEKT_ID_DEMO
+        return None
+
+    def konto_far_se_korning(self, konto_id: str | None, korning_id: str) -> bool:
+        """Får kontot läsa körningen? Inloggning av: alltid. På: minst `lasare` i körningens
+        projekt (demokvarteret följer `demoprojekt_roll`); körning utan projekt bara för
+        superadmin; utan konto aldrig. Samma regel för webben och MCP-verktygen."""
+        if not self.konto.aktiv:
+            return True
+        if konto_id is None:
+            return False
+        projekt_id = self.projekt_for_korning(korning_id)
+        if projekt_id is None:
+            return self.konto.ar_superadmin(konto_id)
+        return self.konto.har_projektroll(konto_id, projekt_id, "lasare")
+
+    def korningar_for_konto(self, konto_id: str | None) -> dict[str, Any]:
+        """`GET /api/korningar` och MCP `korningar_lista`: bara körningar kontot får se."""
+        alla = self.fragor.lista_korningar()
+        if not self.konto.aktiv:
+            return alla
+        return {
+            "korningar": [
+                k for k in alla["korningar"] if self.konto_far_se_korning(konto_id, k["korning_id"])
+            ]
+        }
+
     def projekt_lista_for(self, konto_id: str | None) -> dict[str, Any]:
         """Projekten ett konto har tillgång till (`GET /api/projekt` och MCP `projekt_lista`).
 
@@ -2742,6 +2783,21 @@ class FlodenApiApp:
                 exc.status_kod, {"fel": str(exc), "status": exc.status_kod}
             )
             return status, list(headers.items()), kropp
+        if self.konto.aktiv and (req.sokvag.rstrip("/") + "/").startswith("/api/korningar/"):
+            delar = [urllib.parse.unquote(d) for d in req.sokvag.split("/") if d]
+            konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
+            if len(delar) >= 3 and not self.konto_far_se_korning(konto_id, delar[2]):
+                # 404 i stället för 403: ett körnings-id får inte gå att pröva sig fram till.
+                return _utan_cors(
+                    _json_svar(404, {"fel": f"Okänd körning '{delar[2]}'.", "status": 404})
+                )
+        if (
+            self.konto.aktiv
+            and verb == "GET"
+            and (req.sokvag.rstrip("/") or "/") == "/api/korningar"
+        ):
+            konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
+            return _utan_cors(_json_svar(200, self.korningar_for_konto(konto_id)))
         analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in)
         if analys_projekt is not None and self.konto.aktiv:
             # Som projektets övriga API: en uttrycklig projektroll krävs, inte bara inloggning.
@@ -2799,6 +2855,15 @@ class FlodenApiApp:
 
 
 _logg = logging.getLogger(__name__)
+
+
+def _utan_cors(
+    svar: tuple[int, dict[str, str], bytes],
+) -> tuple[int, list[tuple[str, str]], bytes]:
+    """Svaret som rubriklista utan `Access-Control-*` (med inloggning på: samma ursprung)."""
+    status, headers, kropp = svar
+    ut = [(k, v) for k, v in headers.items() if not k.lower().startswith("access-control-")]
+    return status, ut, kropp
 
 
 def _projekt_krav(verb: str, sokvag: str) -> tuple[str, str] | None:

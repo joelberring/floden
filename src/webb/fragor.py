@@ -108,13 +108,18 @@ class Korning:
     """sha256 över planens jobbnycklar: samma nyckel betyder att körningen redan är gjord."""
     plan: Plan | None = None
     """Planen hålls i minnet så länge körningen pågår (för framstegsmätning)."""
+    projekt_id: str | None = None
+    """Projektet körningen hör till (valfritt tillägg i `korning.json`). Saknas det hör körningen
+    inte till något projekt, utom demokörningarna som `demo.json` pekar ut."""
 
     @property
     def utmapp(self) -> Path:
         return self.mapp / "resultat"
 
     def som_dict(self) -> dict[str, Any]:
+        projekt = {} if self.projekt_id is None else {"projekt_id": self.projekt_id}
         return {
+            **projekt,
             "korning_id": self.korning_id,
             "ref": self.ref,
             "fraga_id": self.fraga_id,
@@ -357,6 +362,9 @@ class FragaTjanst:
                         fel=d.get("fel"),
                         jobb_totalt=int(d.get("jobb_totalt", 0)),
                         plan_nyckel=d.get("plan_nyckel"),
+                        projekt_id=(
+                            d["projekt_id"] if isinstance(d.get("projekt_id"), str) else None
+                        ),
                     )
                 except (OSError, ValueError, KeyError):
                     continue  # en trasig post hindrar inte de andra
@@ -367,7 +375,7 @@ class FragaTjanst:
                     self._skriv_status(k)
                 self._korningar[k.korning_id] = k
 
-    def starta_korning(self, ref: str) -> dict[str, Any]:
+    def starta_korning(self, ref: str, projekt_id: str | None = None) -> dict[str, Any]:
         fil, fraga = self._las(ref)
         self._lasta_korningar()
         with self._lock:
@@ -387,6 +395,7 @@ class FragaTjanst:
             jobb_totalt=len(plan.jobb),
             plan_nyckel=_plan_nyckel(plan),
             plan=plan,
+            projekt_id=projekt_id,
         )
         with self._lock:
             self._korningar[korning_id] = k
@@ -394,7 +403,9 @@ class FragaTjanst:
         self._exekutor.submit(self._kor, k, fraga, plan)
         return {**self._status(k), "ateranvand": False}
 
-    def kor_synkront(self, ref: str, korning_id: str) -> tuple[dict[str, Any], bool]:
+    def kor_synkront(
+        self, ref: str, korning_id: str, projekt_id: str | None = None
+    ) -> tuple[dict[str, Any], bool]:
         """Kör frågan i anropets tråd under ett fast `korning_id` (för `floden demo`).
 
         Är en körning med samma id redan klar för exakt samma plan (samma jobbnycklar) lämnas den
@@ -427,6 +438,7 @@ class FragaTjanst:
                 jobb_totalt=len(plan.jobb),
                 plan_nyckel=plan_nyckel,
                 plan=plan,
+                projekt_id=projekt_id,
             )
             self._korningar[korning_id] = k
             self._skriv_status(k)
@@ -459,6 +471,13 @@ class FragaTjanst:
         if k is None:
             raise FlodenWebbFel(f"Okänd körning '{korning_id}'.", status_kod=404)
         return k
+
+    def korning_eller_none(self, korning_id: str) -> Korning | None:
+        """Körningen om den finns, annars None (utan fel; för behörighetskontroller)."""
+        try:
+            return self._hamta(korning_id)
+        except FlodenWebbFel:
+            return None
 
     def _status(self, k: Korning) -> dict[str, Any]:
         plan = k.plan
