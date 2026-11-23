@@ -293,7 +293,7 @@ def test_inga_personuppgifter_i_loggar_eller_handelser(
         webb.anrop("POST", "/konto/logga-ut", headers=webb.csrf_headers())
     text = caplog.text
     assert "konto=" in text
-    for hemligt in ("anna@example.test", "Anna", "Exempel", "1001", miljo.idp.hemlighet):
+    for hemligt in ("anna@example.test", "Anna", "Exempel", ANNA["sub"], miljo.idp.hemlighet):
         assert hemligt not in text
     with miljo.register.db.transaktion() as c:
         detaljer = " ".join(r["detalj"] for r in c.execute("SELECT detalj FROM handelse"))
