@@ -136,6 +136,47 @@ export const hamtaBifurkationer = (
 ): Promise<BifurkationAnalysSvar> =>
   post("/api/analys/bifurkationer", { omrade_id, k_sigma, referensregn_mm });
 
+export interface VattenIntervallSvar {
+  format: string;
+  omrade_id: string;
+  antal_korningar: number;
+  antal_bifurkationsgrenar: number;
+  max_volymfel_rel: number;
+  sammanfattning: {
+    antal_noder: number;
+    antal_monoton_garanterad: number;
+    antal_bifurkationspaverkade: number;
+    storsta_min_djup_m: number;
+    storsta_max_djup_m: number;
+  };
+}
+
+export interface SvfIntervallSvar {
+  format: string;
+  omrade_id: string;
+  osakerhet_byggnad_m: number;
+  antal_riktningar: number;
+  svf_min_medel: number;
+  svf_max_medel: number;
+  bredd_max: number;
+  antal_osakra_celler: number;
+}
+
+/** Hämtar monotont garanterade vattenståndsintervall (K40). */
+export const hamtaVattenIntervall = (
+  omrade_id: string,
+  klimatfaktor_intervall: [number, number] = [1.0, 1.25],
+): Promise<VattenIntervallSvar> =>
+  post("/api/analys/intervall", { omrade_id, klimatfaktor_intervall });
+
+/** Hämtar monotont garanterade SVF-intervall vid byggnadshöjdsosäkerhet (K41). */
+export const hamtaSvfIntervall = (
+  omrade_id: string,
+  osakerhet_byggnad_m = 1.0,
+  antal_riktningar = 16,
+): Promise<SvfIntervallSvar> =>
+  post("/api/analys/svf-intervall", { omrade_id, osakerhet_byggnad_m, antal_riktningar });
+
 /** Hämtar en rasterbild med utbredningen ur huvudet `X-Floden-Utbredning` och ger en objekt-URL. */
 export async function hamtaBildMedUtbredning(url: string): Promise<{ url: string; utbredning: Utbredning }> {
   const svar = await fetch(url);

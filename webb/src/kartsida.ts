@@ -16,6 +16,8 @@ import {
   hamtaBildMedUtbredning,
   hamtaProjektInfo,
   hamtaScenario,
+  hamtaSvfIntervall,
+  hamtaVattenIntervall,
   korScenario,
   kontrolleraAndringar,
   lasWmsLager,
@@ -30,6 +32,8 @@ import {
   type PlanPost,
   type ProjektInfo,
   type ScenarioPost,
+  type SvfIntervallSvar,
+  type VattenIntervallSvar,
 } from "./karta/kartapi";
 import { infogaPunkter } from "./karta/formedit";
 import { btaUppskattning, yta, type Punkt } from "./karta/geom";
@@ -390,6 +394,14 @@ function sidHtml(p: ProjektSvar): string {
               <div id="bifurkation-svar" role="status"></div>
             </details>
           </section>
+          <section class="panel" aria-labelledby="ip-rubrik">
+            <details class="installningar" id="intervall-panel">
+              <summary id="ip-rubrik">Osäkerhetsintervall (vatten &amp; sol)</summary>
+              <p class="dampad">Beräknar monotont garanterade gränser [min, max] för vattendjup (klimatfaktor 1,0–1,25) och himmelsandel SVF (±1,0 m hushöjd).</p>
+              <button type="button" class="knapp knapp-liten" id="kontroll-intervall">Beräkna intervall</button>
+              <div id="intervall-svar" role="status"></div>
+            </details>
+          </section>
           <section class="lasruta" aria-labelledby="las-rubrik" id="lasruta" hidden>
             <h2 class="etikett-liten" id="las-rubrik">Så läser du kartan</h2>
             <p id="las-text"></p>
@@ -453,6 +465,69 @@ function kopplaKnappar(_p: ProjektSvar, _info: ProjektInfo): void {
   el<HTMLButtonElement>("kontroll-bifurkation")?.addEventListener("click", () => {
     void korBifurkationsKontroll();
   });
+  el<HTMLButtonElement>("kontroll-intervall")?.addEventListener("click", () => {
+    void korIntervallKontroll();
+  });
+}
+
+function formateraIntervallHtml(
+  vatten: VattenIntervallSvar | null,
+  vattenFel: string | null,
+  svf: SvfIntervallSvar | null,
+  svfFel: string | null,
+): string {
+  const delar: string[] = [];
+  if (vatten) {
+    const sam = vatten.sammanfattning;
+    delar.push(
+      `<p><strong>Skyfall (K40):</strong> största djup ${sam.storsta_min_djup_m.toFixed(2)}–${sam.storsta_max_djup_m.toFixed(2)} m ` +
+        `(${vatten.antal_korningar} körningar; ${sam.antal_monoton_garanterad}/${sam.antal_noder} monotont garanterade).</p>`,
+    );
+  } else if (vattenFel) {
+    delar.push(`<p class="dampad">Skyfall: ${esc(vattenFel)}</p>`);
+  }
+  if (svf) {
+    delar.push(
+      `<p><strong>Dagsljus SVF (K41, ±${svf.osakerhet_byggnad_m.toFixed(1)} m):</strong> medel ${svf.svf_min_medel.toFixed(3)}–${svf.svf_max_medel.toFixed(3)} ` +
+        `(största bredd ${svf.bredd_max.toFixed(3)}).</p>`,
+    );
+  } else if (svfFel) {
+    delar.push(`<p class="dampad">Dagsljus: ${esc(svfFel)}</p>`);
+  }
+  return delar.join("");
+}
+
+async function korIntervallKontroll(): Promise<void> {
+  const sida = s;
+  const ut = el("intervall-svar");
+  const knapp = el<HTMLButtonElement>("kontroll-intervall");
+  if (!sida || !ut) return;
+  if (knapp) knapp.disabled = true;
+  ut.innerHTML = `<p class="dampad">Beräknar monotona intervall för vatten och sol …</p>`;
+  try {
+    const [vRes, sRes] = await Promise.allSettled([
+      hamtaVattenIntervall(PROJEKT_ID),
+      hamtaSvfIntervall(PROJEKT_ID),
+    ]);
+    if (s !== sida) return;
+    const vatten = vRes.status === "fulfilled" ? vRes.value : null;
+    const vattenFel =
+      vRes.status === "rejected"
+        ? vRes.reason instanceof Error
+          ? vRes.reason.message
+          : String(vRes.reason)
+        : null;
+    const svf = sRes.status === "fulfilled" ? sRes.value : null;
+    const svfFel =
+      sRes.status === "rejected"
+        ? sRes.reason instanceof Error
+          ? sRes.reason.message
+          : String(sRes.reason)
+        : null;
+    ut.innerHTML = formateraIntervallHtml(vatten, vattenFel, svf, svfFel);
+  } finally {
+    if (s === sida && knapp) knapp.disabled = false;
+  }
 }
 
 function formateraBifurkationHtml(svar: BifurkationAnalysSvar): string {
