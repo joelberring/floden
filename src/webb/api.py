@@ -770,6 +770,8 @@ class FlodenApiApp:
         return {
             "status": "ok",
             "version": API_VERSION,
+            # Commiten avbildningen byggdes från (Dockerfile ARG FLODEN_COMMIT), annars null.
+            "commit": os.environ.get("FLODEN_COMMIT") or None,
             "kontrakt": {
                 "manifest": KONTRAKT_K0,
                 "lapp": KONTRAKT_K3,

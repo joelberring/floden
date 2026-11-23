@@ -49,10 +49,14 @@ mcp = [
     "reportlab==5.0.1",
 ]
 # Rapportexport (src/rapport, R1): Word med python-docx, PDF med reportlab (ren Python, inga
-# systemberoenden; typsnittet Bitstream Vera följer med reportlab).
+# systemberoenden; typsnitten Gelasio och Liberation Sans följer med i src/rapport/typsnitt).
 rapport = [
     "python-docx==1.2.0",
     "reportlab==5.0.1",
+]
+# Produktionsserver (S1, docs/DRIFT.md): `floden webb --server asgi` kör src/webb/asgi.py i uvicorn.
+server = [
+    "uvicorn==0.54.0",
 ]
 dev = [
     "python-docx==1.2.0",

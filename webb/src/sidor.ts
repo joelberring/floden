@@ -85,9 +85,12 @@ export function sidaStart(moduler: ModulInfo[], harProjekt: boolean): string {
     ? `<a class="knapp knapp-svart knapp-stor" href="#/projekt/${PROJEKT_ID}">Öppna demokvarteret</a>
        <a class="knapp knapp-stor" href="#/karta/${PROJEKT_ID}">Gå direkt till kartan</a>`
     : `<a class="knapp knapp-stor" href="#/fragor">Öppna utredningsfrågorna</a>`;
+  // Utloggad på en server med inloggning: projektlistan svarar 401, demon finns ändå.
   const demoSaknas = harProjekt
     ? ""
-    : `<p class="hjalp-ruta" role="note">Demokvarteret är inte byggt på den här datorn än. Kör <code>floden demo</code> i en terminal och ladda om sidan.</p>`;
+    : kontoLage().lage === "ut"
+      ? `<p class="hjalp-ruta" role="note">Logga in för att öppna demokvarteret.</p>`
+      : `<p class="hjalp-ruta" role="note">Demokvarteret är inte byggt på den här datorn än. Kör <code>floden demo</code> i en terminal och ladda om sidan.</p>`;
   return `
     <section class="hjalte sidbredd">
       <div>

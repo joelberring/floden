@@ -107,6 +107,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.list }}
+          build-args: |
+            FLODEN_COMMIT=${{ github.event.workflow_run.head_sha }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}

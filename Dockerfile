@@ -34,7 +34,7 @@ RUN useradd --uid 1000 --create-home --shell /usr/sbin/nologin floden
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
-RUN pip install -e ".[konto,mcp,rapport]"
+RUN pip install -e ".[konto,mcp,rapport,server]"
 COPY . .
 COPY --from=webb /src/webb/dist ./webb/dist
 COPY --from=rust /src/tools/lasclip/target/release/lasclip /usr/local/bin/lasclip
@@ -42,6 +42,10 @@ COPY --from=rust /src/rust/tvad_karna/target/release/tvad_karna /usr/local/bin/t
 RUN mkdir -p data/cache data/konto data/demo data/lokal \
  && chown -R floden:floden data \
  && chmod 755 deploy/start.sh
+# Commiten som byggs (sätts av .github/workflows/avbildning.yml), visas i GET /api/halsa.
+# Sist i filen, så att ett nytt värde inte bygger om de tidigare lagren.
+ARG FLODEN_COMMIT=
+ENV FLODEN_COMMIT=${FLODEN_COMMIT}
 USER floden
 EXPOSE 8765
 HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=5 \

@@ -26,4 +26,6 @@ if [ ! -d data/demo/varld ] && [ "${FLODEN_DEMO:-1}" = "1" ]; then
   floden demo || echo "Floden: demovärlden kunde inte byggas; webben startar ändå." >&2
 fi
 
-exec floden webb --ingen-bygg --host 0.0.0.0 --port 8765 --konfig config.toml "$@"
+# 4. Serverläge: asgi (uvicorn, förval) eller trad (standardbibliotekets trådserver, reserv).
+exec floden webb --ingen-bygg --server "${FLODEN_SERVER:-asgi}" --host 0.0.0.0 --port 8765 \
+  --konfig config.toml "$@"
