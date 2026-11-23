@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { adminTillaten, arbetsbankTillaten, kontoHuvudHtml, settKontoLage, tolkaKontoSvar } from "./konto.ts";
-import { adminProjektHtml, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
+import { adminProjektHtml, mcpKommando, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
+import type { McpAvsnitt } from "./kontosidor-html.ts";
 import { sidaOm, sidaProjektUtanData, sidaStart, sidhuvud, type SidId } from "./sidor.ts";
 import type { AdminProjektDetalj, ModulInfo, NycklarSvar, OmradeSammanfattning, ProjektListaPost } from "./types.ts";
 
 const text = (html: string): string => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/g, " ");
+const avkoda = (html: string): string =>
+  html.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 const moduler: ModulInfo[] = [];
 const kontrollfall = [{ omrade_id: "A1_x", kod: "A1", namn: "Enkel sänka", grupp: "A", beskrivning: "Provfall." }] as unknown as OmradeSammanfattning[];
 
@@ -142,4 +145,80 @@ test("adminsidan: inbjudan, medlemmar, roll och spärr, med utskriven text", () 
   assert.match(text(sidaAdministration([detalj])), /Staden: Provområdet/);
   assert.match(text(sidaAdministration([])), /administrerar inga projekt/);
   assert.match(text(sidaAdministration(null, "Kräver administratör")), /Kräver administratör/);
+});
+
+
+const MCP_URL = "https://floden.berring.se/mcp";
+const mcpSvar = (antal: number): McpAvsnitt => ({
+  svar: {
+    max: 5,
+    mcp_url: MCP_URL,
+    tokens: Array.from({ length: antal }, (_, i) => ({
+      id: `id${i}`,
+      namn: i === 0 ? "Laptop <b>" : `Dator ${i}`,
+      skapad_datum: "2027-01-15",
+      senast_anvand_datum: i === 0 ? null : "2027-01-16",
+      slutar_pa: "wxyz",
+    })),
+  },
+  ny: null,
+  fel: null,
+});
+
+test("MCP-token: kommandot har platshållare tills en token just skapats, då står den i klartext en gång", () => {
+  settKontoLage(anvandare());
+  const utan = sidaNycklar(nycklar(true), null, mcpSvar(1));
+  assert.match(avkoda(utan), /claude mcp add --transport http floden https:\/\/floden\.berring\.se\/mcp --header "Authorization: Bearer <token>"/);
+  assert.doesNotMatch(utan, /data-ny-mcp-token|data-kopiera-mcp/);
+  const hemlig = "fl_mcp_" + "A".repeat(43);
+  const ny: McpAvsnitt = { ...mcpSvar(1), ny: { id: "id0", namn: "Laptop", skapad_datum: "2027-01-15", senast_anvand_datum: null, slutar_pa: "AAAA", token: hemlig } };
+  const med = sidaNycklar(nycklar(true), null, ny);
+  assert.match(avkoda(med), new RegExp(`--header "Authorization: Bearer ${hemlig}"`));
+  assert.match(med, /data-ny-mcp-token/);
+  assert.equal(mcpKommando(MCP_URL, hemlig), `claude mcp add --transport http floden ${MCP_URL} --header "Authorization: Bearer ${hemlig}"`);
+  // Listan har bara namn, datum och fyra sista tecken: aldrig token.
+  const lista = sidaNycklar(nycklar(true), null, mcpSvar(2));
+  assert.doesNotMatch(lista, /fl_mcp_/);
+  assert.match(text(lista), /Dator 1\s+2027-01-15\s+2027-01-16\s+…wxyz/);
+  settKontoLage({ lage: "av" });
+});
+
+test("MCP-token: namn maskeras, återkalla finns per rad och skapa-formuläret stängs vid fem", () => {
+  settKontoLage(anvandare());
+  const fyra = sidaNycklar(nycklar(true), null, mcpSvar(4));
+  assert.doesNotMatch(fyra, /Laptop <b>/); // maskerat
+  assert.match(fyra, /data-aterkalla-mcp="id0"/);
+  assert.match(fyra, /data-mcp-token-form/);
+  const fem = sidaNycklar(nycklar(true), null, mcpSvar(5));
+  assert.doesNotMatch(fem, /data-mcp-token-form/);
+  assert.match(text(fem), /högsta antalet/);
+  const fel = sidaNycklar(nycklar(true), null, { svar: null, ny: null, fel: "Inloggning krävs" });
+  assert.match(text(fel), /Inloggning krävs/);
+  assert.doesNotMatch(fel, /data-mcp-token-form/);
+  settKontoLage({ lage: "av" });
+});
+
+test("MCP-token: avsnittet finns även när nyckelhanteringen är avstängd, men inte utan inloggning", () => {
+  settKontoLage(anvandare());
+  assert.match(sidaNycklar(nycklar(false), null, mcpSvar(0)), /data-mcp-token-form/);
+  settKontoLage({ lage: "av" });
+  assert.doesNotMatch(sidaNycklar(null, null, mcpSvar(0)), /data-mcp-token/);
+});
+
+test("Anslutna appar: adressen till Claude-appen, namn maskeras och ta bort finns per rad", () => {
+  settKontoLage(anvandare());
+  const sida = sidaNycklar(nycklar(true), null, {
+    ...mcpSvar(0),
+    appar: [{ id: "g0", namn: "Claude <i>", skapad_datum: "2027-01-15", senast_anvand_datum: null }],
+  });
+  assert.match(sida, /data-aterkalla-app="g0"/);
+  assert.doesNotMatch(sida, /Claude <i>/);
+  assert.match(sida, /Claude &lt;i&gt;/);
+  assert.match(text(sida), /2027-01-15\s+Aldrig/);
+  assert.match(sida, new RegExp(MCP_URL.replace(/\./g, "\\.")));
+  const tom = sidaNycklar(nycklar(true), null, { ...mcpSvar(0), appar: [] });
+  assert.match(text(tom), /Inga anslutna appar/);
+  const hamtar = sidaNycklar(nycklar(true), null, mcpSvar(0));
+  assert.match(hamtar, /data-anslutna-appar/);
+  settKontoLage({ lage: "av" });
 });

@@ -20,7 +20,8 @@ Logiken är porterad från O-Tid (MIT, joelberring/otid @ 4a446af): `google-oidc
 | `adapter.py` | HTTP-adaptern och `kraver_inloggning` |
 | `admin.py` | serverkommandon (bootstrap) |
 | `nycklar.py` | användarens egna API-nycklar, krypterade (Fernet) i tabellen `konto_nyckel` (avsnitt 10) |
-| `kontoapi.py` | HTTP-API:t `/konto/nycklar` och `/konto/admin` (avsnitt 10 och 11) |
+| `kontoapi.py` | HTTP-API:t `/konto/nycklar`, `/konto/admin` och `/konto/mcp-token` (avsnitt 10, 11 och 12) |
+| `mcptoken.py` | personliga MCP-token, bara sha256 sparas (avsnitt 12) |
 
 ## 2. Sätt upp Google-klienten (Joel)
 
@@ -66,6 +67,9 @@ konto ──< identitet (leverantör, tenant, subject)   unik; nyckeln är aldri
       ──< projektbehorighet (projekt, roll, kalla)
 projekt ──< projektinbjudan (e-post, roll, giltig_till, anvand_av)
 konto ──< konto_nyckel (typ, krypterad, slutar_pa, sparad)    en rad per konto och typ (schemaversion 2)
+      ──< mcp_token (namn, token_hash, slutar_pa, skapad, senast_anvand, aterkallad)  (schemaversion 3)
+      ──< oauth_grant (klient, resurs, aterkallad) ──< oauth_token (access_hash, refresh_hash)   (schemaversion 4)
+oauth_klient (namn, redirect_uris) och oauth_kod (kod_hash, utmaning, förbrukad) hör till OAuth för MCP, avsnitt 13
 session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personuppgifter)
 ```
 
@@ -117,7 +121,7 @@ session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personup
 **Avgränsningar (ska inte antas vara löst)**
 
 - Ingen spärr mot upprepade inloggningsförsök per IP (O-Tids `account-throttle.ts` är inte portad; det finns inga lösenord att gissa, men `/konto/logga-in/*` skriver en rad per anrop, begränsad till 2000). Lägg hastighetsgräns i Caddy framför servern.
-- Ingen "logga ut överallt" i adaptern (finns som `Sessioner.aterkalla_alla`), ingen ta-bort-konto, ingen e-postverifiering (Google intygar adressen), ingen OAuth-server för AI-kopplingar. Kontohantering för användaren och organisationsadmin finns som funktioner i `Register` men inte som HTTP-ändpunkter ännu.
+- Ingen "logga ut överallt" i adaptern (finns som `Sessioner.aterkalla_alla`), ingen ta-bort-konto, ingen e-postverifiering (Google intygar adressen), OAuth för AI-kopplingar finns i avsnitt 13 (personliga MCP-token i avsnitt 12). Kontohantering för användaren och organisationsadmin finns som funktioner i `Register` men inte som HTTP-ändpunkter ännu.
 - Inget är provat mot riktiga Google- eller Entra-slutpunkter. De första riktiga inloggningarna kan avslöja skillnader (t.ex. Googles `hd`, Entras `groups`).
 
 ## 7. Administratörskommandon (bootstrap)
@@ -263,7 +267,80 @@ ingen läsrätt till projektdata (avsnitt 5).
 demokvarteret (om `demoprojekt_roll` inte är `av`, med den rollen) och projekt där kontot har en uttrycklig roll. Projekt ur
 registret har ännu inga beräkningar (`finns: false`) och en enkel projektsida utan siffror.
 
-**Körningar.** Med inloggning på gäller en projektregel på `/api/korningar/<id>/*` (status, resultat, `marksiffror`, `avlasning`, lager, filer, tabeller) och i MCP-verktygen som tar ett körnings-id (`korning_id`, `korning_ids`, `korningar`): kontot ska ha minst rollen `lasare` i körningens projekt. Projektet är körningens `projekt_id` i `korning.json` (valfritt fält), och för demokörningarna som `demo.json` pekar ut demokvarteret, som följer `demoprojekt_roll`. K0-manifestet har ingen projektuppgift, och registrets projekt har inga körningar än. En körning utan projekt (testsvit, äldre körningar) kan bara superadmin läsa; superadmin har ingen läsrätt i ett projekts körningar utan egen projektroll. Saknad behörighet ger **404** (samma svar som för ett id som inte finns, så att id:n inte läcker; `/api/projekt/<id>` ger 403). `GET /api/korningar` och MCP `korningar_lista` visar bara körningar kontot har rätt till. Med inloggning av gäller ingen av reglerna. Att starta en körning (`POST /api/fragor/<ref>/kor`) sätter inget projekt än, så nystartade körningar ser bara superadmin.
+**Körningar.** Med inloggning på gäller en projektregel på `/api/korningar/<id>/*` (status, resultat, `marksiffror`, `avlasning`, lager, filer, tabeller) och i MCP-verktygen som tar ett körnings-id (`korning_id`, `korning_ids`, `korningar`): kontot ska ha minst rollen `lasare` i körningens projekt. Projektet är körningens `projekt_id` i `korning.json` (valfritt fält), och för demokörningarna som `demo.json` pekar ut demokvarteret, som följer `demoprojekt_roll`. K0-manifestet har ingen projektuppgift, och registrets projekt har inga körningar än. En körning utan projekt (testsvit, äldre körningar) kan bara superadmin läsa; superadmin har ingen läsrätt i ett projekts körningar utan egen projektroll. Saknad behörighet ger **404** (samma svar som för ett id som inte finns, så att id:n inte läcker; `/api/projekt/<id>` ger 403). `GET /api/korningar` och MCP `korningar_lista` visar bara körningar kontot har rätt till. Med inloggning av gäller ingen av reglerna. Varje körning som startas får `projekt_id`: `POST /api/fragor/<ref>/kor` tar `projekt_id` i kroppen (valfritt; annars demokvarteret när frågan hör till demon), scenariokörningar i webbflödet och MCP-verktyget `kor` tar projektet de gäller. Med inloggning på krävs minst `utredare` i projektet för att starta (403 annars); en fråga som inte hör till något projekt kan bara superadmin starta (körningen blir då utan projekt). En pågående körning av samma fråga återanvänds bara inom samma projekt. `POST /api/kor` (testsvitens områden) skapar ingen körning i körregistret och berörs inte.
+
+## 12. MCP-token (`/konto/mcp-token`, avsnittet "MCP-token" på sidan Nycklar)
+
+Med en personlig token styr du Floden på servern från Claude Code (eller Codex, ett skript) via MCP på
+`https://<värd>/mcp`, som ditt konto. Koden är `src/konto/mcptoken.py`, testerna `tests/konto/test_mcptoken.py` och
+`tests/floden_mcp/test_mcp_http.py`.
+
+- **Format och lagring.** `fl_mcp_` + 32 slumpbyte (`secrets`) som base64url (43 tecken). Databasen (`mcp_token`, schemaversion
+  3) har bara **sha256 av hela token**, aldrig klartext. Token visas **en enda gång**, i svaret på skapandet; därefter syns bara
+  namn, skapad, senast använd (upplösning en minut) och de fyra sista tecknen. En glömd token kan inte läsas ut: skapa en ny.
+- **Livscykel.** Skapa (namn 1 till 60 tecken), använd, återkalla. Högst **5 aktiva** per konto (409 `for-manga` därefter).
+  En återkallad token slutar gälla vid nästa anrop, även mitt i en MCP-session.
+- **Spärrade konton nekas.** Kontrollen går mot kontots status vid varje anrop, så en spärr gäller direkt för redan skapade token,
+  och ett spärrat konto kan inte skapa nya.
+- **Bara `/mcp`.** Token godtas av `KontoSkydd` (`floden_mcp.http`) som alternativ till session-kakan: `Authorization: Bearer
+  fl_mcp_...`, **utan CSRF** (en webbläsare skickar aldrig rubriken av sig själv). Webbens API, `/konto/nycklar`, `/konto/admin` och
+  `/konto/mcp-token` tar aldrig emot en token (401): en token kan inte skapa, återkalla eller läsa token eller nycklar.
+  Har ett anrop en bearer-rubrik avgör den ensam; en ogiltig token faller aldrig tillbaka på en kaka.
+- **Fel.** Ogiltig, okänd, återkallad och spärrad ger samma 401 med `WWW-Authenticate: Bearer realm="floden", error="invalid_token"`
+  (och `resource_metadata=...`, adressen till resursens metadata, avsnitt 13). Svaret nämner aldrig token eller orsak. Utan inloggning alls: 401 utan `error`.
+- **Loggning.** Körloggen (`docs/MCP.md`) får `konto` (konto-id) och `token` (token-id) på varje rad; händelser och loggrader har
+  bara id:n. Token, namn och e-post loggas aldrig (test).
+- **MCP-sessioner binds till kontot.** Ett annat konto som känner till ett `Mcp-Session-Id` nekas (404).
+- **Rättigheter i verktygen.** Se `docs/MCP.md`: bara projekt kontot har en roll i, och skrivande verktyg kräver `utredare`.
+
+| Anrop | Gör |
+| --- | --- |
+| `GET /konto/mcp-token` | `{tokens: [{id, namn, skapad_datum, senast_anvand_datum, slutar_pa}], max, mcp_url}` |
+| `POST /konto/mcp-token` | `{"namn"}` skapar; 201 med `token` (en gång) och uppgifterna ovan |
+| `DELETE /konto/mcp-token/<id>` | återkallar kontots egen token (404 om den inte finns eller redan är återkallad) |
+
+Samma krav som nyckelsidan: session (401), CSRF-kaka och `X-Floden-CSRF` för POST och DELETE samt rätt `Origin` (403), kropp
+högst 4 kB. Med inloggning av finns ingen tokenfunktion (404).
+
+## 13. OAuth 2.1 för MCP (Claude-appen) och sidan Nycklar > Anslutna appar
+
+Claude-appen lägger till Floden som en egen koppling (adress `https://<värd>/mcp`) utan token: appen upptäcker att `/mcp` kräver
+inloggning, hämtar metadata, registrerar sig, skickar dig till Floden, du loggar in med Google och godkänner, och appen får en kortlivad
+token. Koden är `src/konto/oauth.py` (lagring, regler) och `src/konto/oauthapi.py` (HTTP), testerna `tests/konto/test_oauth.py`
+och `tests/webb/test_asgi_mcp.py`. Följer MCP-specifikationens auktorisering (2025-11-25) och Claudes krav på anslutningar
+(kontrollerat mot modelcontextprotocol.io och claude.com/docs/connectors/building/authentication).
+
+| Ändpunkt | Gör |
+| --- | --- |
+| `GET /.well-known/oauth-protected-resource` (och `/mcp`-varianten) | Resursens metadata (RFC 9728): `resource` = `<offentlig_url>/mcp`, `authorization_servers` = `[<offentlig_url>]` |
+| `GET /.well-known/oauth-authorization-server` | Serverns metadata (RFC 8414): endpoints, `S256`, `none`, `authorization_response_iss_parameter_supported` |
+| `POST /oauth/register` | Dynamisk klientregistrering (RFC 7591), publika klienter (`none`). `client_id` är 32 hextecken |
+| `GET /oauth/authorize` | Utan session: till Googles inloggning (`/konto/logga-in/<lev>?atervand=...`) och tillbaka hit. Med session: sidan "Ge <app> tillgång till Floden som <konto>?" |
+| `POST /oauth/authorize` | Svaret från sidan. Kräver session, CSRF-fält mot kakan och rätt `Origin`. Omdirigerar med `code`, `state` och `iss` (RFC 9207) |
+| `POST /oauth/token` | `authorization_code` (PKCE `S256`) och `refresh_token` (rotation). Formulärkropp (`application/x-www-form-urlencoded`) |
+| `POST /oauth/revoke` | RFC 7009: återkallar behörigheten bakom en access- eller refresh-token |
+| `GET /konto/oauth`, `DELETE /konto/oauth/<id>` | Kontots egna anslutna appar (namn, godkänd, senast använd) och att ta bort tillgången. Session och CSRF som nyckelsidan; en token kan inte röra sina egna anslutningar |
+
+Regler:
+
+- **Klienter.** `redirect_uris` (1 till 5): `https`, eller `http://localhost[:port]/...`. Aldrig fragment, användarinfo eller andra scheman;
+  `127.0.0.1` tillåts inte (se STATUS, Öppet). Vid auktorisering och token-utbyte ska adressen vara **exakt** den registrerade, annars en felsida
+  (aldrig en omdirigering, RFC 6749 4.1.2.1). Klientnamnet visas på godkännandesidan, maskat, med adressens värdnamn.
+- **PKCE.** Kravet `code_challenge_method=S256` och en utmaning på 43 tecken. Fel verifierare ger `invalid_grant` och koden är förbrukad.
+- **Koden** `fl_oac_...`: engångs, 60 s, bunden till klient, `redirect_uri` och utmaning. Används den två gånger återkallas allt den gav.
+- **Access-token** `fl_oat_...` 1 timme. **Refresh-token** `fl_ort_...` 30 dagar, **roteras** vid varje användning; visas en redan använd
+  refresh-token igen återkallas hela behörigheten (grant). Bara sha256 av kod, access och refresh sparas (tabellerna `oauth_klient`,
+  `oauth_grant`, `oauth_kod`, `oauth_token`, schemaversion 4). En token visas bara i svaret på utbytet.
+- **Resurs (RFC 8707).** `resource`, om den skickas, ska vara `<offentlig_url>/mcp`; annars `invalid_target`. Token gäller bara `/mcp`
+  (`KontoSkydd` godtar `fl_oat_...` som bearer, utan CSRF), aldrig webbens API eller kontoändpunkterna.
+- **Samma rättigheter som med session.** Tokenen är kontot: rollkontroll per projekt, skrivverktyg kräver `utredare`, öppenhetsspärren
+  och körloggen (`konto`, `token` = grant-id) gäller som för en MCP-token. Spärrat konto, återkallad behörighet och återkallad klient
+  nekas direkt, även för redan utfärdade token (kontrolleras vid varje anrop och vid varje förnyelse).
+- **Hastighetsgräns** i minnet per klientadress: 10 registreringar per timme och 60 token- eller revoke-anrop per 10 minuter (429 med
+  `Retry-After`). Klientadressen sätts av ASGI-lagret (`X-Floden-Klient-Ip`, en inkommande rubrik räknas aldrig); bakom Caddy används
+  `X-Forwarded-For` som Caddy skriver. Gränsen nollställs vid omstart.
+- **Loggning.** Konto-id, klient-id och grant-id; aldrig kod, token eller namn.
+- Med inloggning av finns ingen OAuth (404) och `WWW-Authenticate` saknar `resource_metadata`.
 
 ## 9. Köra testerna
 

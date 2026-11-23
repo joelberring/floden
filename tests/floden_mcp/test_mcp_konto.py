@@ -140,3 +140,16 @@ def test_korningsverktyg_oforandrade_med_inloggning_av(tmp_path: Path) -> None:
     tjanst = FlodenTjanst(app, rot=tmp_path, mcp_mapp=tmp_path / "mcp")
     assert [k["korning_id"] for k in tjanst.korningar_lista(20, None)["korningar"]] == ["k-utan"]
     assert app.konto_far_se_korning(None, "k-utan") is True
+
+
+def test_mcp_kor_sparar_projektet_i_korregistret(
+    tmp_path: Path, miljo: Miljo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.webb.test_korningar_behorighet import _stubba_start
+
+    app = _app(tmp_path, miljo.adapter)
+    _stubba_start(monkeypatch)
+    tjanst = FlodenTjanst(app, rot=tmp_path, mcp_mapp=tmp_path / "mcp")
+    svar = tjanst.kor(projekt="demokvarteret", fraga="demo_vatten")
+    kid = svar["korningar"][0]["korning_id"]
+    assert app.projekt_for_korning(kid) == "demokvarteret"

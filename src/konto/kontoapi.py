@@ -10,6 +10,12 @@ Nycklar (`/konto/nycklar`, bara kontots egna; ingen väg att läsa en annans):
 - `PUT    /konto/nycklar/<typ>`    sparar eller ersätter (kryptering krävs: annars 503 `nycklar-av`)
 - `DELETE /konto/nycklar/<typ>`    tar bort
 
+MCP-token (`/konto/mcp-token`, bara kontots egna; kräver session, aldrig bearer):
+
+- `GET    /konto/mcp-token`        aktiva token (namn, skapad, senast använd, fyra sista tecken)
+- `POST   /konto/mcp-token`        `{"namn"}` skapar; svaret (201) har `token` en enda gång
+- `DELETE /konto/mcp-token/<id>`   återkallar
+
 Administration (`/konto/admin`, bara superadmin och organisationsadmin, annars 403):
 
 - `GET    /konto/admin/projekt`                              projekt som får administreras
@@ -30,6 +36,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from konto.adapter import Forfragan, Svar, _fel, _json
+from konto.mcptoken import MAX_PER_KONTO, McpTokenFel
 from konto.nycklar import NyckelForradFel
 from konto.register import PROJEKTROLLER, BehorighetFel, RegisterFel
 
@@ -110,6 +117,51 @@ def hantera_nycklar(adapter: KontoAdapter, req: Forfragan, delar: list[str]) -> 
         return _fel(exc.status, exc.kod, exc.text)
     except Exception as exc:  # noqa: BLE001 - aldrig ett undantag (kan bära data) till klienten
         logg.error("nyckelhantering misslyckades konto=%s fel=%s", konto_id, type(exc).__name__)
+        return _fel(500, "internt", "Internt fel")
+
+
+# ------------------------------------------------------------------------------- MCP-token
+
+
+def hantera_mcp_token(adapter: KontoAdapter, req: Forfragan, delar: list[str]) -> Svar:
+    """`delar` är sökvägen efter `/konto/mcp-token` (tom eller `[id]`). Bara session och CSRF:
+    en MCP-token kan varken skapa eller återkalla token."""
+    konto_id, nekad = _inloggad(adapter, req)
+    if konto_id is None:
+        assert nekad is not None  # noqa: S101
+        return nekad
+    forrad = adapter.mcp_tokens
+    assert forrad is not None  # noqa: S101 - aktiv => skapad
+    try:
+        if not delar:
+            if req.metod == "GET":
+                return _json(
+                    200,
+                    {
+                        "tokens": forrad.lista(konto_id),
+                        "max": MAX_PER_KONTO,
+                        "mcp_url": f"{adapter.konfig.origin}/mcp",
+                    },
+                )
+            if req.metod == "POST":
+                ny = forrad.skapa(konto_id, _json_kropp(req).get("namn"))
+                logg.info("mcp-token skapad konto=%s token=%s", konto_id, ny["id"])
+                return _json(201, {"status": "skapad", **ny})
+            return _metod_ej_tillaten()
+        if len(delar) != 1 or not _id_ok(delar[0]):
+            return _fel(404, "okand", "Okänd ändpunkt")
+        if req.metod != "DELETE":
+            return _metod_ej_tillaten()
+        if not forrad.aterkalla(konto_id, delar[0]):
+            return _fel(404, "okand", "Okänd token")
+        logg.info("mcp-token aterkallad konto=%s token=%s", konto_id, delar[0])
+        return _json(200, {"status": "aterkallad", "id": delar[0]})
+    except _Avvisad as exc:
+        return exc.svar
+    except McpTokenFel as exc:
+        return _fel(exc.status, exc.kod, exc.text)
+    except Exception as exc:  # noqa: BLE001 - aldrig ett undantag till klienten
+        logg.error("mcp-token misslyckades konto=%s fel=%s", konto_id, type(exc).__name__)
         return _fel(500, "internt", "Internt fel")
 
 
@@ -212,4 +264,4 @@ def _admin(adapter: KontoAdapter, req: Forfragan, delar: list[str], utforare: st
     return _fel(404, "okand", "Okänd ändpunkt")
 
 
-__all__ = ["hantera_admin", "hantera_nycklar"]
+__all__ = ["hantera_admin", "hantera_mcp_token", "hantera_nycklar"]

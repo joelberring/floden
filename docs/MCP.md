@@ -92,6 +92,55 @@ Maskinåtkomst med token är inte byggd (R4).
 
 Skriptet `tools/mcp_provflode.py` är ett körbart exempel på hela flödet med SDK-klienten.
 
+### Floden på servern (`https://floden.berring.se/mcp`)
+
+Servern (`floden webb --server asgi`, `docs/DRIFT.md`) monterar MCP:s Streamable HTTP på `/mcp` i samma process som webben. **`/mcp`
+är av när inloggningen är av och värden inte är loopback.** Med inloggning på krävs på varje anrop antingen en personlig
+**MCP-token** (`Authorization: Bearer fl_mcp_...`, `docs/KONTO.md` avsnitt 12) eller en session; Claude-appen använder OAuth
+(`docs/KONTO.md` avsnitt 13). Claude Code:
+
+```bash
+claude mcp add --transport http floden https://floden.berring.se/mcp --header "Authorization: Bearer <token>"
+```
+
+Token skapas under *Nycklar > MCP-token* i webben (visas en gång). Så kopplar man klienterna: `docs/KOM-IGANG.md`.
+
+## Rättigheter: bara dina projekt
+
+Med inloggning på (servern) kräver varje projektverktyg ett konto med en roll i projektet; det kontrolleras i verktygslagret
+(`floden_mcp.server`, `behorighet`) före allt annat, med samma regel som `/api/projekt` (`KontoAdapter.har_roll`):
+
+| Verktyg | Krav |
+| --- | --- |
+| `scenario_skapa`, `fraga_skapa`, `kor`, `bestallning_skapa`, `rapport_skapa`, `rapport_installningar`, `pastaende_lagg_till`, `rapport_exportera` | rollen **utredare** i projektet |
+| övriga projekt- och körningsverktyg | minst **lasare** |
+| `projekt_lista`, `korlogg_hamta`, `metoder_lista`, `fragekatalog_sok`, `session_deklarera` | ingen projektroll (listan och loggen visar bara kontots egna) |
+
+- Projektet är argumentet `projekt` (förval `demokvarteret`). Verktyg utan `projekt` (körningar, resultat, rapporter) gäller i dag
+  bara demokvarteret och kräver rollen där (`demoprojekt_roll`, förval `utredare`; `av` stänger dem för alla).
+- Anrop utan konto (stdio mot en server med inloggning) nekas med "Inloggning krävs". Nekade anrop loggas som `nekad_behorighet`.
+- Rapporter och körningar är ännu inte knutna till ett konto: ett konto med roll på demokvarteret ser de rapporter som skapats
+  där (se `STATUS.md`, Öppet).
+
+## Data som inte är öppna
+
+En MCP-klient är en extern AI-tjänst, och `AGENTS.md` förbjuder att ledningsdata och stadens icke-öppna data lämnas till en
+extern AI-tjänst. Därför finns en **uttrycklig spärr i verktygslagret** (`floden_mcp.oppenhet`, alltid på, tester i
+`tests/floden_mcp/test_oppenhet.py`):
+
+- **Före** varje anrop kontrolleras varje `korning_id` i argumenten; **efter** anropet kontrolleras varje körning som svaret nämner,
+  och svaret lämnas inte ut om någon bygger på icke-öppna data (`nekad_oppenhet` i körloggen, felet nämner aldrig en sökväg).
+  `korningar_lista` döljer sådana körningar (och anger hur många). `fraga_skapa` kontrollerar varje sökväg.
+- En körning är öppen bara om **alla källor** i dess manifest (frågefilens scenarier och analysernas indata) är öppna.
+- **Regeln (K38 i `docs/DATAKONTRAKT.md`):** (1) ledningsdata, `data/intern`, `data/konto` och `config.local.toml` är alltid stängda.
+  (2) Utan metadata är bara demon och det som följer med repot öppet: `data/demo`, `testsvit`, `exempel`, `docs`, `data/regn`,
+  `data/mcp`, `data/lagerprofiler`, samt MCP:s och kartverktygets arbetsmappar (där AI:n själv skriver). (3) En mapp med
+  `oppenhet.toml` (`oppen = true` **och** en känd öppen licens, annars stängt) eller ett lager i `config.local.toml`
+  (`[oppenhet.lager.<namn>]`) följer sin metadata; `oppen = false` stänger alltid. (4) **Allt annat är stängt**: `data/lokal`,
+  stadens `baskarta_mapp` och `tat_laser_mapp`, och varje mapp utan metadata. *Saknas metadata: neka.*
+- Konsekvens i dag: data som hämtats med `floden data lantmateriet` till en egen mapp är stängda för MCP tills mappen fått en
+  `oppenhet.toml` (Lantmäteriets öppna geodata är CC0: `oppen = true`, `licens = "CC0-1.0"`).
+
 ## Verktyg
 
 Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla svar har `dataklass`.
@@ -138,7 +187,7 @@ Det finns **inget MCP-verktyg, ingen resurs och ingen prompt för nyckelhanterin
 aldrig läsa eller skriva en användares API-nycklar (Lantmäteriet, Anthropic; `docs/KONTO.md` avsnitt 10). Nycklarna lagras
 krypterade, visas aldrig igen ens för användaren, och klartexten (`NyckelForrad.las`) når bara serverkod som själv ska
 använda nyckeln. MCP-koden importerar inte nyckelförrådet, och ett test (`tests/floden_mcp/test_mcp_konto.py`) stoppar både
-verktyg med nyckelrelaterade namn och sådana importer. Detsamma gäller administrationen (inbjudningar, roller och spärr av
+verktyg med nyckelrelaterade namn och sådana importer; `tests/floden_mcp/test_mcp_nycklar.py` kontrollerar dessutom (AST) att ingen MCP-modul importerar nyckelförrådet och kör alla verktyg och resurser med ett lagrat nyckelvärde utan att `NyckelForrad.las` anropas eller något värde syns i ett svar eller i körloggen. Detsamma gäller administrationen (inbjudningar, roller och spärr av
 konton, `docs/KONTO.md` avsnitt 11): e-postadresser är personuppgifter och behörighet ges av människor. Verktygen ser bara
 vad kontot redan har tillgång till (`projekt_lista`); körloggen har konto-id men aldrig nyckelvärden.
 
@@ -171,7 +220,7 @@ tillägg-endast och ligger under `data/lokal/` (inte i git). En rad har: tid, kl
 deklarerad modell och roll (argument, annars `session_deklarera`, annars `FLODEN_MCP_MODELL` och
 `FLODEN_MCP_ROLL`), session, verktyg, `indata_hash` och `indata_nycklar`, körnings-id, dataklass,
 utfall, `svar_sha256`, tid och `rapport_id` (de rapporter anropet rör). **Argumentvärdena skrivs inte**, och inga hemligheter eller
-personuppgifter (med inloggning: bara ett opakt konto-id). Raderna är hashkedjade (`foregaende`,
+personuppgifter (med inloggning: bara ett opakt konto-id, och token-id när anropet kom med en MCP-token). Raderna är hashkedjade (`foregaende`,
 `hash`); `korlogg_hamta` och `Korlogg.verifiera()` visar om något ändrats. Kan loggen inte skrivas
 lämnas inget resultat ut. Loggens rader för en rapport och dess körningar är bilaga 2 i rapporten (bilaga B med språkprofilen neutral).
 
@@ -179,6 +228,7 @@ lämnas inget resultat ut. Loggens rader för en rapport och dess körningar är
 
 - Middleware-API:t i MCP-SDK 2.x är markerat som preliminärt; versionen är låst (`mcp==2.3.0`).
 - Alla metoder är `skiss`; ingen validering för rapport är gjord.
+- Rapporter är inte knutna till ett konto; alla med roll på demokvarteret ser dem.
 - Policyn känner bara standardprojektet för körningsbaserade verktyg (ett projekt finns i dag).
 - Klientinstruktionerna ovan är bara provade med SDK-klienten (stdio och HTTP), inte med Claude
   Desktop, Claude Code eller Codex.

@@ -380,7 +380,9 @@ class FragaTjanst:
         self._lasta_korningar()
         with self._lock:
             for k in self._korningar.values():
-                if k.ref == ref and k.status in ("ko", "kor"):
+                # Återanvänd bara en pågående körning i samma projekt: annars skulle någon få ett
+                # körnings-id som den inte har rätt att läsa.
+                if k.ref == ref and k.status in ("ko", "kor") and k.projekt_id == projekt_id:
                     return {**self._status(k), "ateranvand": True}
         plan = self._planera(fraga)  # tydligt fel direkt, innan något köas
         korning_id = (

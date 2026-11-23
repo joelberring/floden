@@ -35,6 +35,7 @@ from floden_mcp import MCP_VERSION
 from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad
 from floden_mcp.karna_api import PROJEKT_ID, FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, KorloggFel, hash_av, nu, rensa_text
+from floden_mcp.oppenhet import Oppenhet, OppenhetNekad
 from rapport.bestallning import (
     BESTALLNINGSAMNEN,
     MOTTAGARROLLER,
@@ -222,6 +223,32 @@ class Sessionstillstand:
         self._nu().roll = varde
 
 
+UTAN_ROLLKRAV = frozenset(
+    {"session_deklarera", "korlogg_hamta", "metoder_lista", "projekt_lista", "fragekatalog_sok"}
+)
+"""Verktyg som inte rör ett projekts data: de kräver ingen projektroll (projekt_lista visar bara
+kontots egna projekt, korlogg_hamta bara kontots egna rader)."""
+
+SKRIVVERKTYG = frozenset(
+    {
+        "scenario_skapa",
+        "fraga_skapa",
+        "kor",
+        "bestallning_skapa",
+        "rapport_skapa",
+        "rapport_installningar",
+        "pastaende_lagg_till",
+        "rapport_exportera",
+    }
+)
+"""Verktyg som skriver (scenarier, frågor, körningar, rapporter, export): rollen utredare krävs.
+Alla andra verktyg läser och kräver minst lasare. Verktyg utan `projekt`-argument (körningar,
+resultat, rapporter) gäller i dag bara demokvarteret och kräver rollen där."""
+
+Behorighet = Callable[[str, str, str], bool]
+"""(konto-id, projekt-id, minsta roll) -> har kontot rollen? Ges bara när inloggning är på."""
+
+
 def _result_fel(text: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
 
@@ -233,9 +260,17 @@ def bygg_server(
     logg: Korlogg | None = None,
     miljo: Mapping[str, str] | None = None,
     tillatna_resursrotter: Sequence[str | Path] | None = None,
+    behorighet: Behorighet | None = None,
+    oppenhet: Oppenhet | None = None,
 ) -> MCPServer:
-    """Skapar MCP-servern. `policy` standard: bara `oppet`; `logg` standard: data/lokal/mcp."""
+    """Skapar MCP-servern. `policy` standard: bara `oppet`; `logg` standard: data/lokal/mcp.
+
+    `behorighet` ges när inloggning är på: då kräver varje projektverktyg en roll i projektet
+    (lasare, eller utredare för `SKRIVVERKTYG`) och anrop utan konto nekas. `oppenhet` är spärren för
+    data som inte är öppna (`floden_mcp.oppenhet`); den är alltid på, standard är `Oppenhet.for_tjanst`."""
     policy = policy or Policy()
+    oppenhet = oppenhet or Oppenhet.for_tjanst(tjanst)
+    tjanst.oppenhet = oppenhet
     logg = logg or Korlogg(tjanst.mcp_mapp / "korlogg.jsonl")
     tillstand = Sessionstillstand(miljo)
     if tillatna_resursrotter is None:
@@ -302,14 +337,18 @@ def bygg_server(
             return {"namn": "okand", "version": None}
         return {"namn": rensa_text(info.name) or "okand", "version": rensa_text(info.version)}
 
-    def _http(ctx: ServerRequestContext[Any, Any]) -> tuple[str | None, str | None]:
-        """(Mcp-Session-Id, konto-id) när anropet kom över HTTP."""
+    def _http(ctx: ServerRequestContext[Any, Any]) -> tuple[str | None, str | None, str | None]:
+        """(Mcp-Session-Id, konto-id, token-id) när anropet kom över HTTP."""
         req = ctx.request
         if req is None:
-            return None, None
+            return None, None, None
         sid = getattr(req, "headers", {}).get("mcp-session-id")
         scope = getattr(req, "scope", {})
-        return rensa_text(sid), rensa_text(scope.get("floden_konto"))
+        return (
+            rensa_text(sid),
+            rensa_text(scope.get("floden_konto")),
+            rensa_text(scope.get("floden_token")),
+        )
 
     LOGGADE = {"tools/call", "resources/read", "prompts/get"}
 
@@ -329,7 +368,7 @@ def bygg_server(
         else:
             vilket = "prompt:" + str(params.get("name"))
         klient = _klient(ctx)
-        sid, konto = _http(ctx)
+        sid, konto, token_id = _http(ctx)
         token = tillstand.aktivera(sid, konto)
         try:
             modell = rensa_text(argument.pop("modell", None)) or tillstand.modell
@@ -349,6 +388,7 @@ def bygg_server(
                 "modell": modell,
                 "roll": roll,
                 "konto": konto,
+                "token": token_id,
                 "verktyg": vilket,
                 "indata_hash": hash_av(argument),
                 "indata_nycklar": sorted(argument),
@@ -359,6 +399,22 @@ def bygg_server(
             rapporter_set: set[str] = set()
             _hitta_rapporter(argument, rapporter_set)
             post["rapport_id"] = rapporter_set
+            if behorighet is not None and ctx.method == "tools/call" and vilket not in UTAN_ROLLKRAV:
+                minst = "utredare" if vilket in SKRIVVERKTYG else "lasare"
+                if konto is None:
+                    text = (
+                        "Inloggning krävs: den här servern kräver ett konto. Anslut över HTTP med "
+                        "en personlig MCP-token eller via Claude-appens koppling (docs/KONTO.md)."
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, "inget konto", None, t0)
+                    return _result_fel(text)
+                if not behorighet(konto, str(projekt), minst):
+                    text = (
+                        f"Nekad: kontot saknar rollen {minst} i projektet. Verktyget gäller "
+                        "bara projekt där du har en roll."
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, f"saknar {minst}", None, t0)
+                    return _result_fel(text)
             if ctx.method == "tools/call" and tjanst.app.konto.aktiv:
                 # Samma körningsbehörighet som webben (`/api/korningar/<id>/*`): minst lasare i
                 # körningens projekt, annars "okänd körning" (ingen skillnad mot en som saknas).
@@ -375,12 +431,26 @@ def bygg_server(
                 _skriv(logg, post, "nekad_policy", korningar, str(exc), None, t0)
                 return _result_fel(str(exc))
             try:
+                for kid in sorted(korningar):
+                    oppenhet.kontrollera_korning(kid)
+            except OppenhetNekad as exc:
+                _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
+                return _result_fel(str(exc))
+            try:
                 resultat = await call_next(ctx)
             except Exception as exc:
                 _skriv(logg, post, "fel", korningar, f"{type(exc).__name__}", None, t0)
                 raise
             d = _till_dict(resultat)
             _hitta_korningar(d.get("structuredContent") or d.get("structured_content"), korningar)
+            try:
+                # Efterkontroll: allt som svaret nämner ska också vara öppet (t.ex. en rapport som
+                # bygger på körningar), annars lämnas svaret inte ut.
+                for kid in sorted(korningar):
+                    oppenhet.kontrollera_korning(kid)
+            except OppenhetNekad as exc:
+                _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
+                return _result_fel(str(exc))
             _hitta_rapporter(
                 d.get("structuredContent") or d.get("structured_content"), rapporter_set
             )
@@ -516,7 +586,12 @@ def bygg_server(
         modell: Modell = None,
         roll: Roll = None,
     ) -> dict[str, Any]:
-        return tjanst.korningar_lista(max_antal, tillstand.konto)
+        svar = tjanst.korningar_lista(max_antal, tillstand.konto)
+        synliga = [k for k in svar["korningar"] if oppenhet.oppen_korning(k["korning_id"])]
+        dolda = len(svar["korningar"]) - len(synliga)
+        if dolda:
+            svar = {**svar, "korningar": synliga, "dolda_icke_oppna": dolda}
+        return svar
 
     @verktyg("korning_status", "Status och framsteg (klara jobb av totalt) för en körning.")
     def korning_status(

@@ -152,8 +152,8 @@ def test_k8_tillagg_antal_insatser_ar_additivt(app: FlodenApiApp) -> None:
     assert "antal_insatser" in _lasta_fält(FlodenApiApp.kor_rutt_analys)
 
 
-def test_k38_och_k39_ar_reserverade_for_mcp_grenen() -> None:
-    """Numren K38 och K39 används av PR #58; de här formaten ska ligga på K40-K43."""
-    rubriker = re.findall(r"^## (K\d+) ", KONTRAKT, flags=re.M)
-    assert rubriker.count("K40") == rubriker.count("K43") == 1
-    assert "K38" not in rubriker and "K39" not in rubriker
+def test_kontraktsnumren_ligger_i_ordning() -> None:
+    """K38 och K39 kom med MCP-grenen (PR #58); formaten här är K40-K43, i nummerordning."""
+    nummer = [int(n) for n in re.findall(r"^## K(\d+) ", KONTRAKT, flags=re.M)]
+    assert {38, 39, 40, 41, 42, 43} <= set(nummer)
+    assert nummer == sorted(nummer)

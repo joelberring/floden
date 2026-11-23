@@ -170,3 +170,90 @@ def test_projekt_id_sparas_i_korregistret(tmp_path: Path) -> None:
     assert "projekt_id" in k.som_dict()
     k0 = app.fragor.korning_eller_none("k-0")
     assert k0 is not None and "projekt_id" not in k0.som_dict()
+
+
+# ---------------------------------------------------------------- start av körningar
+
+
+def _stubba_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Låter `starta_korning` skriva körregistret utan att räkna något."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        FragaTjanst, "_las", lambda self, ref: (Path(ref), SimpleNamespace(fraga_id=ref))
+    )
+    monkeypatch.setattr(FragaTjanst, "_planera", lambda self, fraga: SimpleNamespace(jobb=[]))
+
+    def klar(self: FragaTjanst, k: Any, fraga: Any, plan: Any) -> None:
+        k.status = "klar"
+        self._skriv_status(k)
+
+    monkeypatch.setattr(FragaTjanst, "_kor", klar)
+    monkeypatch.setattr(
+        FragaTjanst, "demo", lambda self: {"finns": True, "delar": {"demo_vatten": {"jobb": 1}}}
+    )
+
+
+def _starta(app: FlodenApiApp, w: Webblasare, ref: str, kropp: dict[str, Any] | None = None) -> Any:
+    data = json.dumps(kropp).encode() if kropp is not None else b""
+    status, _, svar = _http(app, "POST", f"/api/fragor/{ref}/kor", w, w.csrf_headers(), data)
+    return status, json.loads(svar)
+
+
+def test_utredare_i_demokvarteret_ser_och_kan_lasa_sin_egen_korning(
+    tmp_path: Path, miljo: Miljo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from webb.projekt import ProjektTjanst
+
+    st = _setup(miljo)
+    app = _app(tmp_path, miljo.adapter)
+    _stubba_start(monkeypatch)
+    monkeypatch.setattr(ProjektTjanst, "marksiffror_for", lambda self, kid, lager: {"ok": kid})
+    bo, anna = miljo.webblasare(), miljo.webblasare()
+    assert bo.logga_in(miljo.idp, BO)[0] == 302 and anna.logga_in(miljo.idp, ANNA)[0] == 302
+
+    # Bo är vanlig utredare (demoprojekt_roll = utredare): demofrågan startas utan projekt_id.
+    status, svar = _starta(app, bo, "demo_vatten")
+    assert status == 202, svar
+    kid = svar["korning_id"]
+    assert app.fragor.korning_eller_none(kid).projekt_id == "demokvarteret"  # type: ignore[union-attr]
+    # Samma konto ser den i listan och kan hämta marksiffrorna.
+    lista = json.loads(_http(app, "GET", "/api/korningar", bo)[2])["korningar"]
+    assert kid in {k["korning_id"] for k in lista}
+    status, _, kropp = _http(app, "GET", f"/api/korningar/{kid}/marksiffror?lager=x", bo)
+    assert status == 200 and json.loads(kropp) == {"ok": kid}
+    # Demokvarteret är öppet för varje inloggat konto, så Anna ser den också.
+    assert _status(app, anna, f"/api/korningar/{kid}") == 200
+
+    # Med uttryckligt projekt: Bo är utredare i sitt projekt, Anna bara läsare i sitt.
+    status, svar = _starta(app, bo, "annan_fraga", {"projekt_id": st.bo_projekt})
+    assert status == 202
+    egen = svar["korning_id"]
+    assert _status(app, bo, f"/api/korningar/{egen}") == 200
+    assert _status(app, anna, f"/api/korningar/{egen}") == 404
+    assert _starta(app, anna, "annan_fraga", {"projekt_id": st.anna_projekt})[0] == 403
+    assert _starta(app, anna, "annan_fraga", {"projekt_id": st.bo_projekt})[0] == 403
+    # En fråga utan projekt får inte en vanlig utredare starta.
+    assert _starta(app, bo, "annan_fraga")[0] == 403
+
+
+def test_demoprojekt_roll_lasare_kan_inte_starta(
+    tmp_path: Path, miljo: Miljo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _setup(miljo)
+    miljo.adapter.konfig = replace(miljo.adapter.konfig, demoprojekt_roll="lasare")
+    app = _app(tmp_path, miljo.adapter)
+    _stubba_start(monkeypatch)
+    bo = miljo.webblasare()
+    bo.logga_in(miljo.idp, BO)
+    assert _starta(app, bo, "demo_vatten")[0] == 403
+
+
+def test_start_med_inloggning_av_taggar_demokorningen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = _app(tmp_path, KontoAdapter(KontoKonfig()))
+    _stubba_start(monkeypatch)
+    status, _, kropp = _http(app, "POST", "/api/fragor/demo_vatten/kor")
+    assert status == 202
+    assert app.projekt_for_korning(json.loads(kropp)["korning_id"]) == "demokvarteret"

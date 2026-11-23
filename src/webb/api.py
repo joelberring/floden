@@ -2338,7 +2338,28 @@ class FlodenApiApp:
             svar_rutt["rekommenderade_insatser"] = rekommenderade_insatser
         return svar_rutt
 
-    def _hantera_fragor(self, verb: str, sokvag: str) -> tuple[int, dict[str, str], bytes]:
+    def projekt_for_start(self, ref: str, kropp: bytes) -> str | None:
+        """Projektet en körning av frågan `ref` startas i: `projekt_id` i begäran, annars
+        demokvarteret när frågan hör till demon, annars None (inget projekt)."""
+        if kropp.strip():
+            try:
+                payload = json.loads(kropp.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+                raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+            valt = payload.get("projekt_id") if isinstance(payload, Mapping) else None
+            if valt is not None:
+                if not isinstance(valt, str) or not valt.strip():
+                    raise FlodenWebbFel("Fältet 'projekt_id' ska vara en text.")
+                return valt
+        demo = self.fragor.demo()
+        delar = demo.get("delar", {}) if demo.get("finns") else {}
+        if ref in delar:
+            return PROJEKT_ID_DEMO
+        return None
+
+    def _hantera_fragor(
+        self, verb: str, sokvag: str, kropp: bytes = b""
+    ) -> tuple[int, dict[str, str], bytes]:
         delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d][2:]
         if verb == "GET" and not delar:
             return _json_svar(200, self.fragor.lista_fragor())
@@ -2347,7 +2368,7 @@ class FlodenApiApp:
         if verb == "POST" and len(delar) == 2 and delar[1] == "plan":
             return _json_svar(200, self.fragor.planera_fraga(delar[0]))
         if verb == "POST" and len(delar) == 2 and delar[1] == "kor":
-            svar = self.fragor.starta_korning(delar[0])
+            svar = self.fragor.starta_korning(delar[0], self.projekt_for_start(delar[0], kropp))
             return _json_svar(202, svar)
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
 
@@ -2527,7 +2548,7 @@ class FlodenApiApp:
         projekt_id = self.projekt_for_korning(korning_id)
         if projekt_id is None:
             return self.konto.ar_superadmin(konto_id)
-        return self.konto.har_projektroll(konto_id, projekt_id, "lasare")
+        return self.konto.har_roll(konto_id, projekt_id, "lasare")
 
     def korningar_for_konto(self, konto_id: str | None) -> dict[str, Any]:
         """`GET /api/korningar` och MCP `korningar_lista`: bara körningar kontot får se."""
@@ -2637,7 +2658,7 @@ class FlodenApiApp:
                     return self.rapportfil(delar[0], delar[2], delar[4])
 
             if ren_sokvag == "/api/fragor" or ren_sokvag.startswith("/api/fragor/"):
-                return self._hantera_fragor(verb, ren_sokvag)
+                return self._hantera_fragor(verb, ren_sokvag, kropp)
 
             if ren_sokvag.startswith("/api/kartverktyg/"):
                 return self._hantera_kartverktyg(verb, ren_sokvag, kropp, query)
@@ -2798,6 +2819,34 @@ class FlodenApiApp:
         ):
             konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
             return _utan_cors(_json_svar(200, self.korningar_for_konto(konto_id)))
+        if self.konto.aktiv and verb == "POST":
+            start = [urllib.parse.unquote(d) for d in req.sokvag.split("/") if d]
+            if len(start) == 4 and start[:2] == ["api", "fragor"] and start[3] == "kor":
+                konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
+                try:
+                    projekt_id = self.projekt_for_start(start[2], kropp_in)
+                except FlodenWebbFel as exc:
+                    return _utan_cors(
+                        _json_svar(exc.status_kod, {"fel": str(exc), "status": exc.status_kod})
+                    )
+                # Utredare i projektet krävs. Utan projekt (en fråga som inte hör till något) får
+                # bara superadmin starta; körningen blir då en körning utan projekt.
+                ok = konto_id is not None and (
+                    self.konto.har_roll(konto_id, projekt_id, "utredare")
+                    if projekt_id is not None
+                    else self.konto.ar_superadmin(konto_id)
+                )
+                if not ok:
+                    return _utan_cors(
+                        _json_svar(
+                            403,
+                            {
+                                "fel": "Saknar behörighet att starta körningar i projektet "
+                                "(ange 'projekt_id' där du är utredare).",
+                                "status": 403,
+                            },
+                        )
+                    )
         analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in)
         if analys_projekt is not None and self.konto.aktiv:
             # Som projektets övriga API: en uttrycklig projektroll krävs, inte bara inloggning.
