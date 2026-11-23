@@ -680,3 +680,35 @@ def test_forklara_fel_okanda_fel_ger_inget_klartext() -> None:
     assert forklara_fel(None) is None
     assert forklara_fel("ValueError: något annat") is None
     assert forklara_fel("SankGrafFel: Nod 3 saknar utloppssadel mot randen.") == INSTANGT_TEXT
+
+
+def test_ekologi_ritat_hus_ger_samma_eca_som_demons_och_api_kan_ta_scenariot(kv: Kv) -> None:
+    status, _ = kv.json(
+        "POST", f"{P}/scenarier/demohuset/kor", {"analyser": ["ekologi.konnektivitet"]}
+    )
+    assert status == 202
+    slut = time.monotonic() + 300
+    while True:
+        _, st = kv.json("GET", f"{P}/scenarier/demohuset/status")
+        ek = [x for x in st["korningar"] if x["mall"] == "ekologi"]
+        assert not ek or ek[0]["status"]["status"] != "fel", ek
+        if ek and ek[0]["status"]["status"] == "klar":
+            break
+        assert time.monotonic() < slut
+        time.sleep(0.5)
+    assert ek[0]["vyer"] and ek[0]["vyer"][0]["avsnitt"] == "ekologi"
+
+    def eca(res: dict[str, Any], scen: str) -> float:
+        tab = next(t for t in res["tabeller"] if t["losare"] == "ekologi.konnektivitet")
+        return float(next(r for r in tab["rader"] if r["scenario"] == scen)["varden"]["eca_m2"])
+
+    rit = kv.app.fragor.resultat(ek[0]["vyer"][0]["korning_id"])
+    demo_res = kv.demo.app.fragor.resultat(kv.demo.forsta["delar"]["demo_ekologi"]["korning_id"])
+    assert eca(rit, "ritat") == eca(demo_res, "efter")
+    status, svar = kv.json(
+        "POST", "/api/analys/ekologi", {"omrade_id": "demokvarteret", "scenario": "demohuset"}
+    )
+    assert status == 200, svar
+    assert svar["scenario"] == "demohuset"
+    assert svar["efter"]["ECA_m2"] == eca(demo_res, "efter")
+    assert svar["delta_eca_m2"] <= 0.0

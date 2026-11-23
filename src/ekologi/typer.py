@@ -24,7 +24,10 @@ class EkologiFel(ValueError):
 
 @dataclass(frozen=True)
 class ArtProfil:
-    """Källbelagd fokusart-/artgruppsprofil för habitat och spridningsmotstånd."""
+    """Fokusart-/artgruppsprofil för habitat och spridningsmotstånd (skiss).
+
+    Parametrarna saknar exakta källhänvisningar.
+    """
 
     profil_id: str
     namn: str
@@ -114,6 +117,8 @@ class KonnektivitetsResultat:
     p_stjarna: FloatRaster  # (m, m) maximal produktsannolikhet p*_ij
     flack_betydelse: tuple[FlackBetydelse, ...]
     stromtathet_sammanlagd: FloatRaster | None = None
+    kanslighet_sammanlagd: FloatRaster | None = None
+    """Viktat medel av dR_eff/dG (<= 0) per cell över fläckparen, samma vikter som strömtätheten."""
 
 
 @dataclass(frozen=True)

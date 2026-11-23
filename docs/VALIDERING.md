@@ -117,7 +117,15 @@ steg), cfl 0,3 → 0,158 (7 416 steg), cfl 0,5 med dx 0,5 m → 0,264 (8 902 ste
 och CFL-steget (inte `dt_max_s`) styr tidssteget. Observera att talet använder u_max från föregående steg: det
 mäter att tidssteget följer regeln, inte att den nya hastigheten efter steget aldrig överstiger den.
 
-### G. Verkliga händelser (senare)
+### G. Ekologisk konnektivitet (`pytest tests/ekologi`)
+
+Analytiska facit för kretsteorikärnan i `src/ekologi/` (G1 homogen korridor, G2 parallella korridorer, G3 port, G4 PC/ECA/dPC
+på tre fläckar, G5 derivatan dR/dG mot differenskvot, G6 inneslutna slumpscenarier) och G7 genom hela kedjan (`tests/ekologi/
+test_losare_k21.py`): ett nytt hus ritat som K9 ger ΔECA ≤ 0 i demokvarteret, intervallen innesluter nominellt värde och
+`ekologi.json` följer K45. Gruppen körs med pytest och inte med `floden testsvit --grupp G`: facitfallen är kod, inte
+indatamappar, och bokstaven används av dessa tester. Allt är skiss (`docs/EKOLOGI.md`).
+
+### H. Verkliga händelser (senare)
 
 Dokumenterade skyfall med felanmälningar, räddningstjänstens insatser och försäkringsskador.
 

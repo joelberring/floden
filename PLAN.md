@@ -102,6 +102,8 @@ användarflöde (se modulernas docstrings).
 | --- | --- | --- |
 | Vattenkärnan | Hastighet v = \|q\| / max(h_före, h_efter), punkt-implicit friktion med u_max i CFL, ny subgrid-konveyans, brytlinjer och öppningar i `losare_2d._kor_2d` (`cbaba1d`, `7132e0e`, `1350379`); facittest för hastighet och CFL tillagda 2026-11-23 | klar, beslutet i `docs/BESLUT.md` |
 | Q2 bifurkationer | `sankgraf.bifurkation` (K34, K35), a posteriori-felindikator `tvad.felindikator` och `POST /api/analys/bifurkationer` (K36) med panel i webbklienten; `tools/exportera_q2_underlag.py` | klar, inkopplad i webben (endpunkten) |
+| Ekologi (Etapp 2) | K44 (artprofil) och K45 (lösaren `ekologi.konnektivitet`, `stromtathet.tif`, `ekologi.json`, `POST /api/analys/ekologi`), demofrågan `demo_ekologi`, ämnet Ekologi i webbflödet, `docs/EKOLOGI.md`. Allt skiss. | klar (skiss; profilparametrar utan källa) |
+| Ekologi, nästa steg | NMD-inläsning som markunderlag (våtmark, skogstyper) och R2-rapport för ekologi; källhänvisning för artprofilernas parametrar | väntar |
 | Fristående moduler | CELF i ruttanalysen (`rutt.kritiska`), `luft.kanslighet`, `buller.optimering`, `dagsljus.intervall`, `dynamik.intervall`, `rapport.r2_domaner`, `luft.partiklar`, `dagsljus.uppdatera_horisont_inkrementellt`, `buller.operator.energi.pruna_med_energibudget` | klar som moduler, fristående |
 | Göteborg | `data_inlasning.goteborg`, lagerprofil `goteborg_baskarta`: testkommun i EPSG:3007; formatet är antaget och aldrig provat mot tjänsten, testerna är syntetiska | klar (syntetiskt) |
 | Webb och drift | ASGI-adapter (`webb.asgi`), projektisolerad 3D-terrängcache, 2D/3D-svep, WebGPU-motor för dagsljus med fallback, WGSL-skuggare, säkerhetsfixar inför server | klar |

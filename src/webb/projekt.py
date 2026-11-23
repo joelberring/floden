@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from demovarld.fragor import FRAGA_DAGSLJUS, FRAGA_VATTEN
+from demovarld.fragor import FRAGA_DAGSLJUS, FRAGA_EKOLOGI, FRAGA_VATTEN
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
 from webb.moduler import visningsnamn
@@ -82,7 +82,7 @@ class ProjektTjanst:
         delar: dict[str, dict[str, Any]] = d.get("delar", {})
         return {
             ref: delar[ref]
-            for ref in (FRAGA_DAGSLJUS, FRAGA_VATTEN)
+            for ref in (FRAGA_DAGSLJUS, FRAGA_VATTEN, FRAGA_EKOLOGI)
             if ref in delar and "korning_id" in delar[ref]
         }
 
@@ -352,6 +352,67 @@ class ProjektTjanst:
         }
         return avsnitt, vyer, regn_ut
 
+    def _ekologi(
+        self, delar: dict[str, dict[str, Any]]
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+        """Ekologiavsnittet (skiss) ur demons ekologikörning, om den finns."""
+        if FRAGA_EKOLOGI not in delar:
+            return None
+        ref = FRAGA_EKOLOGI
+        kid = delar[ref]["korning_id"]
+        res = self.fragor.resultat(kid)
+        fraga = self.fragor.hamta_fraga(ref)
+        tab = next((t for t in res["tabeller"] if t["losare"].startswith("ekologi.")), None)
+        per = {r["scenario"]: r["varden"] for r in tab["rader"]} if tab is not None else {}
+        lager = self._skillnadslager(res, "efter")
+        rader: list[dict[str, Any]] = []
+        if "fore" in per and "efter" in per:
+            for kol, namn, enhet, dec in (
+                ("eca_m2", "Effektiv konnektivitetsyta (ECA)", "m²", 0),
+                ("pc", "Sannolikhet för konnektivitet (PC)", "", 3),
+                ("antal_flackar", "Antal habitatfläckar", "st", 0),
+            ):
+                if all(isinstance(per[s].get(kol), int | float) for s in ("fore", "efter")):
+                    rader.append(
+                        {
+                            "namn": namn,
+                            "enhet": enhet,
+                            "decimaler": dec,
+                            "varden": {s: float(per[s][kol]) for s in ("fore", "efter")},
+                        }
+                    )
+        vyer: list[dict[str, Any]] = []
+        if lager is not None:
+            vyer.append(
+                {
+                    "id": "ekologi-nytt-hus",
+                    "avsnitt": "ekologi",
+                    "rubrik": "Ekologi: nytt hus",
+                    "mattnamn": "Strömtäthet (flaskhalsar)",
+                    "korning_id": kid,
+                    "fore_lager": self._lager_for(res, lager["analys"], lager["fore"]),
+                    "efter_lager": self._lager_for(res, lager["analys"], "efter"),
+                    "skillnad_lager": lager["id"],
+                    "efter_namn": "Nytt hus",
+                    "andring": self._k9_text("vatten/k9_nytt_hus.json", "Ett nytt hus byggs."),
+                }
+            )
+        avsnitt = {
+            "id": "ekologi",
+            "rubrik": "Ekologi: konnektivitet (skiss)",
+            "ingress": (
+                "Hur ett nytt hus ändrar möjligheten för en artgrupp att ta sig mellan "
+                "habitatfläckar. Skiss: artprofilens parametrar saknar exakta källhänvisningar."
+            ),
+            "kolumner": [
+                {"id": "fore", "rubrik": "Före"},
+                {"id": "efter", "rubrik": "Efter: nytt hus"},
+            ],
+            "matt": rader,
+            "teknisk": self._teknisk(res, fraga),
+        }
+        return avsnitt, vyer
+
     def marksiffror_for(self, korning_id: str, lager_id: str) -> dict[str, Any]:
         """Ytor och största förändring på mark för ett skillnadslager (Resultat-steget).
 
@@ -406,6 +467,7 @@ class ProjektTjanst:
         delar = self._demo_delar()
         dagsljus, andringar, vyer_d = self._dagsljus(delar)
         vatten, vyer_v, _ = self._vatten(delar)
+        ekologi = self._ekologi(delar)
         demo = self.fragor.demo()
         varld = demo.get("varld", {})
         return {
@@ -423,6 +485,6 @@ class ProjektTjanst:
             ),
             "demo_nyckel": varld.get("nyckel"),
             "andringar": andringar,
-            "avsnitt": [dagsljus, vatten],
-            "vyer": [*vyer_d, *vyer_v],
+            "avsnitt": [dagsljus, vatten, *([ekologi[0]] if ekologi else [])],
+            "vyer": [*vyer_d, *vyer_v, *(ekologi[1] if ekologi else [])],
         }

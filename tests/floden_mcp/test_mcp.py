@@ -299,7 +299,7 @@ def test_ritat_hus_fran_scenario_till_jamforelse(mcp: Mcp) -> None:
     sc = mcp.ok("scenario_skapa", {"namn": "mitt hus", "hus": [hus(24)]})
     assert sc["sparat"] and sc["scenario"] == "mitt-hus" and sc["antal_andringar"] == 1
     plan = mcp.ok("korplan", {"scenario": "mitt-hus"})
-    assert {f["mall"] for f in plan["fragor"]} == {"dagsljus", "vatten"}
+    assert {f["mall"] for f in plan["fragor"]} == {"dagsljus", "vatten", "ekologi"}
     assert all(f["plan"]["sammanfattning"]["att_kora"] > 0 for f in plan["fragor"]), [
         (f["mall"], f["plan"]["sammanfattning"]) for f in plan["fragor"]
     ]
@@ -313,7 +313,7 @@ def test_ritat_hus_fran_scenario_till_jamforelse(mcp: Mcp) -> None:
     # Kör asynkront, vänta, läs.
     kor = mcp.ok("kor", {"scenario": "mitt-hus"})
     ids = [k["korning_id"] for k in kor["korningar"]]
-    assert len(ids) == 2
+    assert len(ids) == 3
     v = mcp.ok("vanta", {"korning_ids": ids, "tidsgrans_s": 600})
     assert v["alla_klara"], v
     jam: dict[str, dict[str, Any]] = {}
@@ -323,7 +323,7 @@ def test_ritat_hus_fran_scenario_till_jamforelse(mcp: Mcp) -> None:
         assert j["max_okning"]["belagg"]["korning_id"] == kid
         sam = mcp.ok("resultat_sammanfattning", {"korning_id": kid})
         assert sam["jamforelser"] and sam["varningar"] is not None and sam["antaganden"]
-    assert set(jam) == {"sol", "skyfall"}
+    assert set(jam) == {"sol", "skyfall", "konnektivitet"}
     assert (
         jam["sol"]["max_minskning"]["enhet"] == "h" and jam["skyfall"]["max_okning"]["enhet"] == "m"
     )

@@ -15,7 +15,14 @@ from pathlib import Path
 from typing import Any
 
 from demovarld import varld as w
-from demovarld.fragor import FRAGA_DAGSLJUS, FRAGA_VATTEN, text_dagsljus, text_vatten
+from demovarld.fragor import (
+    FRAGA_DAGSLJUS,
+    FRAGA_EKOLOGI,
+    FRAGA_VATTEN,
+    text_dagsljus,
+    text_ekologi,
+    text_vatten,
+)
 from gemensamt.hash import sha256_bytes, sha256_fil
 from gemensamt.manifest import FilPost, hamta_kodversion, skapa_manifest, skriv_manifest
 from karna.scenario import Planscenario, skriv_scenario
@@ -132,6 +139,7 @@ def skriv_fragor(fragedir: Path, varld_dir: Path, lage: DemoLage) -> dict[str, P
     for namn, text in (
         (FRAGA_DAGSLJUS, text_dagsljus(v, fragedir, varld_dir, riktningar=lage.riktningar)),
         (FRAGA_VATTEN, text_vatten(v, fragedir, varld_dir)),
+        (FRAGA_EKOLOGI, text_ekologi(v, fragedir, varld_dir)),
     ):
         fil = fragedir / f"{namn}.toml"
         if not fil.is_file() or fil.read_text(encoding="utf-8") != text:
@@ -159,10 +167,10 @@ def kor_demo(
     fragor = (
         skriv_fragor(fragedir, varld_dir, lage)
         if skriv_fragefiler
-        else {n: fragedir / f"{n}.toml" for n in (FRAGA_DAGSLJUS, FRAGA_VATTEN)}
+        else {n: fragedir / f"{n}.toml" for n in (FRAGA_DAGSLJUS, FRAGA_VATTEN, FRAGA_EKOLOGI)}
     )
     delar: dict[str, Any] = {}
-    for namn in (FRAGA_DAGSLJUS, FRAGA_VATTEN):
+    for namn in (FRAGA_DAGSLJUS, FRAGA_VATTEN, FRAGA_EKOLOGI):
         t1 = time.perf_counter()
         status, oforandrad = tjanst.kor_synkront(namn, namn.replace("_", "-"))
         delar[namn] = {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nyckeltal, tal } from "./nyckeltal.ts";
+import { jamforelse, nyckeltal, slutsats, tal } from "./nyckeltal.ts";
 
 test("saknade tal visas som –, aldrig som noll", () => {
   assert.equal(tal(null, 1, "m"), "–");
@@ -26,4 +26,38 @@ test("siffrorna kommer från underlaget", () => {
   });
   assert.ok(t.some((x) => x.varde.includes("0,36")));
   assert.ok(t.some((x) => x.varde.includes("120")));
+});
+
+test("ekologi: sex nyckeltal, alla – utan underlag, och inget räknas fram", () => {
+  const tom = nyckeltal("ekologi", { troskel: null, siffror: null });
+  assert.equal(tom.length, 6);
+  for (const x of tom) assert.equal(x.varde, "–", x.etikett);
+  assert.match(slutsats("ekologi", { troskel: null, siffror: null }), /ingen ekologisk konnektivitet/);
+});
+
+test("ekologi: ECA med intervall, ΔECA och patchantal kommer ur svaret; hektar från 10 000 m²", () => {
+  const u = {
+    troskel: null,
+    siffror: null,
+    ekologi: {
+      fore: { ECA_m2: 12000, ECA_intervall_m2: [9000, 15000] as [number, number], PC: 0.25, PC_intervall: [0.2, 0.3] as [number, number], antal_flackar: 4 },
+      efter: { ECA_m2: 11742, ECA_intervall_m2: [8800, 14800] as [number, number], PC: 0.24, antal_flackar: 4 },
+      delta_eca_m2: -258,
+      delta_eca_procent: -2.15,
+    },
+  };
+  const t = nyckeltal("ekologi", u);
+  assert.match(t[0]?.varde ?? "", /1,20\s?ha \(0,90\s?ha till 1,50\s?ha\)/);
+  assert.match(t[1]?.varde ?? "", /^1,17\s?ha/);
+  assert.match(t[2]?.varde ?? "", /^−?-?258\s?m²$/);
+  assert.match(t[3]?.varde ?? "", /0,2500 \(0,2000 till 0,3000\)/);
+  assert.equal(t[4]?.varde, "0,2400");
+  assert.match(t[5]?.varde ?? "", /^4 och 4$/);
+  assert.match(slutsats("ekologi", u), /minskar .* med 258\s?m² \(2,2\s?%\)/);
+  assert.equal(jamforelse("ekologi", u).staplar.length, 2);
+});
+
+test("ekologi: en positiv ΔECA får ingen framgångsmening", () => {
+  const s = slutsats("ekologi", { troskel: null, siffror: null, ekologi: { delta_eca_m2: 10 } });
+  assert.match(s, /kontrollera/);
 });

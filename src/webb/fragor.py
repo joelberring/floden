@@ -1192,6 +1192,10 @@ class FragaTjanst:
             raise FlodenWebbFel(f"Okänd fil '{rel}'.", status_kod=404)
         return fil
 
+    def fil_sokvag(self, korning_id: str, rel: str) -> Path:
+        """Sökväg till en fil i en klar körnings resultat (för kod i webbpaketet)."""
+        return self._fil_i_resultat(self._hamta(korning_id), rel)
+
     def fil(self, korning_id: str, rel: str) -> tuple[bytes, str]:
         fil = self._fil_i_resultat(self._hamta(korning_id), rel)
         typer = {
