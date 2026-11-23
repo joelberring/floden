@@ -6,10 +6,14 @@
 #   floden geografi mappa goteborg-test --konto <superadmin-id>
 #   floden projekt skapa --geografi goteborg-test@v1 --avgransning <xmin,ymin,xmax,ymax> --namn "..." --konto <konto-id>
 #
-# STATUS: formaten nedan är ANTAGNA och aldrig provade mot Göteborgs tjänster eller Lantmäteriet
-# (utvecklingsmiljön når bara GitHub). Lagernamn och attributnamn i Göteborgs WFS är inte kända:
-# `floden projekt kommun-lager goteborg` listar lagren (GetCapabilities) och `--byggnadslager` på
-# `floden geografi mappa` åsidosätter valet utan att den här filen behöver ändras.
+# KÄLLOR (öppna filpaket, CC0, ingen inloggning, EPSG:3007, RH 2000; Göteborgs Stad, opengeodata.goteborg.se):
+#   - baskartan (DWG, 3D): https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip
+#     Lager TAK (takkonturer), FASAD, BYGGNADSLINJE. Ingen byggnadshöjd som attribut: höjden är takkonturens z.
+#   - höjdmodellen 2022 (GeoTIFF, Float32, 0,5 m, plattor om 1 x 1 km i paket om 10 x 10 km, bara mark).
+#     Paketens adresser är INTE verifierade (produktbladet anger ingen). Se [filpaket.hojdmodell].
+# Göteborgs WFS är avstängd ("Service WFS is disabled") och används därför inte som förval; den finns kvar som
+# valfri källa ([byggnader] kalla = "wfs"). Lantmäteriets laser är bara reserv för höjden ([hojd]).
+# Detaljer och osäkerheter: docs/DRIFT.md, avsnittet om Göteborg.
 
 kontrakt = "floden-kommun/v1"
 id = "goteborg"
@@ -49,6 +53,37 @@ omrade = "haga"
 tillrinning_cell_m = 2.0     # cellstorlek för tillrinningsberäkningen (nedsamplad höjdmodell)
 max_buffert_m = 1500.0       # största buffert: tillrinning som når längre ger en varning
 
+# --- Höjd ---------------------------------------------------------------------------------------
+# kalla = "filpaket": kommunens höjdmodell (öppen, ingen nyckel). reserv_lantmateriet: om den fallerar och
+# kontot har en nyckel används Lantmäteriets laser (STAC Höjd, Laserdata Nedladdning, skog, gratis).
+[hojd]
+kalla = "filpaket"
+reserv_lantmateriet = true
+
+# --- Filpaket (ZIP) --------------------------------------------------------------------------------
+# Hämtas en gång till en cache (geo/_filcache, sha256 per paket) och klipps till geografins område.
+[filpaket]
+tillatna_varddomaner = ["opengeodata.goteborg.se"]
+max_gib = 8.0
+
+[filpaket.baskarta]
+urlar = ["https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip"]
+index_url = ""
+epsg = 3007
+# Bara lager TAK. DWG kräver LibreDWG:s dwgread (FLODEN_DWGREAD); GeoPackage/Shapefile/dwgread-JSON i paketet går före.
+lager_monster = "(?i)(^|[^a-z])tak($|[^a-z])"
+licens = "CC0-1.0"
+licens_anmarkning = "Göteborgs Stads öppna baskarta (CC0), filpaket baskarta_dwg_v2.zip. Taklinjernas höjd (z, RH 2000) är byggnadens takhöjd; kontrollera mot data.goteborg.se."
+
+[filpaket.hojdmodell]
+urlar = []
+# OVERIFIERAD gissning (efter mönstret för ortofoto): sidan listar .zip-paketen. Stämmer den inte, ange
+# paketen med `floden geografi mappa ... --hojdmodell-url <adress>` eller `--hojdmodell-fil <zip>`.
+index_url = "https://opengeodata.goteborg.se/files/hojdmodell/2022/hojdmodell_2022.html"
+epsg = 3007
+licens = "CC0-1.0"
+licens_anmarkning = "Göteborgs Stads höjdmodell 2022 (CC0), markmodell (DTM) 0,5 m, RH 2000."
+
 # --- Lantmäteriet (höjddata) -------------------------------------------------------------------
 # Hämtas med kontots egen nyckel (sidan Nycklar), aldrig servernyckeln.
 [lantmateriet]
@@ -65,7 +100,9 @@ licens_anmarkning = "Laserdata Nedladdning, skog: CC0 enligt produktsidan; kontr
 
 # --- Byggnader ---------------------------------------------------------------------------------
 [byggnader]
-kalla = "wfs"               # "wfs" (kommunens) eller "lantmateriet" (STAC-vektor, kräver beställd produkt)
+# "filpaket" (baskartans TAK, förval), "wfs" (kommunens WFS: avstängd i Göteborg, valfri) eller "lantmateriet"
+# (STAC-vektor: Lantmäteriets byggnadsprodukter kan kosta, därför avstängda som förval).
+kalla = "filpaket"
 wfs_url = "https://opengeodata.goteborg.se/services/baskarta/wfs"
 tillatna_varddomaner = ["goteborg.se"]   # https, och värden ska vara eller sluta på någon av dem
 lager = ""                  # lagernamn; tomt = hitta ur GetCapabilities med lager_monster
@@ -84,8 +121,7 @@ andamal = ["andamal", "anvandning"]
 takform = ["takform"]
 
 # --- Baskarta (valfria lager) ---------------------------------------------------------------------
-# Hämtas och sparas som GeoPackage i EPSG:3011 för granskning. De används inte i K1-bygget än
-# (lagerprofilens prefixregler är för DWG/DXF). Tomt = ingen baskarta hämtas, om inte --baskartelager anges.
+# Valfria WFS-lager (GeoPackage i EPSG:3011 för granskning). Kräver en fungerande WFS: tomt = ingen hämtas.
 [baskarta]
 lager = []
 licens = "CC0-1.0"

@@ -213,6 +213,6 @@ http-adresser och värdnamn utanför listan avvisas. Då räcker det att:
 3. `floden geografi mappa <geografi-id> --konto <superadmin>` (bara superadmin), därefter
    `floden projekt skapa --geografi <geografi-id>@v1 --avgransning ... --namn ... --konto <konto-id>`.
 
-Serverkommandona står rad för rad i `docs/DRIFT.md` ("Göteborg"). Okända lagernamn och attribut i kommunens WFS löses utan
+Serverkommandona står rad för rad i `docs/DRIFT.md` ("Göteborg"). Kommunfilen kan i stället för WFS och Lantmäteriet peka på öppna filpaket (`[hojd]`, `[filpaket.*]`, `[byggnader] kalla = "filpaket"`): ZIP med GeoTIFF/SHP/GPKG/DWG, hämtas en gång till en cache med sha256 (`src/kommuner/filpaket.py`). Okända lagernamn och attribut i kommunens WFS löses utan
 kodändring: `floden projekt kommun-lager <id>` listar lagren och `lager = "..."` eller `--byggnadslager` väljer. Villkoren för
 AI-visning kontrolleras av en människa (`--villkor-kontrollerade`); tills dess är det härledda stängt för MCP.

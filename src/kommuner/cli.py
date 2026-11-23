@@ -48,7 +48,15 @@ def registrera(subparsers: Any) -> None:
     m.add_argument("--georot", default=STANDARD_GEOROT, help="Rotmapp för geografier.")
     m.add_argument("--kommunfil", default=None, help="Annan kommunfil än data/kommuner/<kommun>.toml.")
     m.add_argument("--byggnadslager", default=None, help="Åsidosätter byggnadslagret.")
-    m.add_argument("--byggnader-kalla", choices=("wfs", "lantmateriet"), default=None)
+    m.add_argument("--byggnader-kalla", choices=("filpaket", "wfs", "lantmateriet"), default=None)
+    m.add_argument(
+        "--hojdmodell-url", action="append", default=[],
+        help="Höjdmodellens ZIP-paket (https, tillåten värd). Kan anges flera gånger; ersätter kommunfilens lista.",
+    )
+    m.add_argument(
+        "--hojdmodell-fil", action="append", default=[], type=Path,
+        help="Redan nedladdat höjdmodell-paket (ZIP eller GeoTIFF). Kan anges flera gånger.",
+    )
     m.add_argument(
         "--villkor-kontrollerade", action="store_true",
         help="Jag har läst Lantmäteriets och kommunens villkor: lagret öppnas för MCP (annars stängt).",
@@ -128,6 +136,7 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
             konfig_fil=rot / "config.toml", version=args.version,
             villkor_kontrollerade=args.villkor_kontrollerade, byggnadslager=args.byggnadslager,
             byggnader_kalla=args.byggnader_kalla,
+            hojdmodell_urlar=tuple(args.hojdmodell_url), hojdmodell_filer=tuple(args.hojdmodell_fil),
         )  # fmt: skip
         return 0
     if kommando == "projekt skapa":

@@ -19,9 +19,10 @@ förberäknas inte här: den bygges och cachas av kärnan (K22) vid första kör
 
 from __future__ import annotations
 
+import json
 import math
 import shutil
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,7 @@ from kommuner.skapa import (
     skriv_oppenhet_toml,
     terrangstatistik_mosaik,
 )
-from kommuner.wfs import Hamtare, hamta_geojson, lista_lager, valj_lager
+from kommuner.wfs import Hamtare, KommunKallaFel, hamta_geojson, lista_lager, valj_lager
 
 Skriv = Callable[[str], None]
 
@@ -141,11 +142,18 @@ def mappa_geografi(
     byggnader_kalla: str | None = None,
     skriv: Skriv = print,
     hamta_bytes: Hamtare | None = None,
+    filhamtare: Any = None,
+    hojdmodell_urlar: Sequence[str] = (),
+    hojdmodell_filer: Sequence[Path] = (),
     nycklar_fran: Callable[[str | None], Any] | None = None,
     klient_fabrik: Callable[[Any], Any] | None = None,
     register: Any = None,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
+    from kommuner.baskarta import tak_till_gpkg
+    from kommuner.filkallor import hamta_baskarta, hamta_hojdmodell
+    from kommuner.hojdmodell import Hojdmodell, skriv_klippt_hojd
+    from kommuner.k1_filpaket import bygg_omrade_filpaket
     from lantmateriet.bygg import bygg_omrade
     from lantmateriet.hamta import hamta_omrade
     from lantmateriet.klient import LmKlient, Tjanster
@@ -186,9 +194,20 @@ def mappa_geografi(
             list(d.get("varningar", [])), bool(d.get("oppen_for_mcp")),
         )  # fmt: skip
 
-    # 3. Nyckeln före all hämtning.
-    nycklar = nycklar_fran(konto_id) if nycklar_fran else las_nycklar_for_konto(konto_id, konfig=konfig)
-    klient = (klient_fabrik or (lambda n: LmKlient(n, Tjanster.fran_miljo())))(nycklar)
+    # 3. Höjdkälla. Kommunens filpaket kräver ingen nyckel; Lantmäteriets laser kräver kontots egen nyckel
+    # (och är reserven om kommunens fil fallerar). Nyckeln kontrolleras före all hämtning när den behövs.
+    fil_hojd = kommun.hojd.kalla == "filpaket"
+    klient: Any = None
+    try:
+        if not fil_hojd or kommun.hojd.reserv_lantmateriet:
+            nycklar = nycklar_fran(konto_id) if nycklar_fran else las_nycklar_for_konto(konto_id, konfig=konfig)
+            klient = (klient_fabrik or (lambda n: LmKlient(n, Tjanster.fran_miljo())))(nycklar)
+    except Exception as exc:
+        if not fil_hojd:
+            raise
+        skriv(f"Ingen Lantmäteri-nyckel ({exc}); reserven används inte. Kommunens höjdmodell används.")
+    if fil_hojd:
+        skriv("Höjd: kommunens höjdmodell (filpaket, öppna data, ingen nyckel).")
 
     h_min = float(kommun.dagsljus["h_min_grader"])
     hojd_max = float(kommun.dagsljus["hojd_max_m"])
@@ -196,6 +215,7 @@ def mappa_geografi(
     kalla_bygg = byggnader_kalla or kommun.byggnader.kalla
     bygge = geo_rot / geografi_id / f".bygge-{version}"
     varningar: list[str] = []
+    hojd_anvand = "lantmateriet"
     buffert = math.ceil(r_dagsljus)
     skriv(f"Buffert (dagsljus): {r_dagsljus:.0f} m = {hojd_max:g} / tan({h_min:g} grader).")
 
@@ -210,18 +230,12 @@ def mappa_geografi(
             skriv_omrade_gpkg(extent, ra / "omrade" / "geografi.gpkg"),
             max_km2=max(25.0, (extent[2] - extent[0]) * (extent[3] - extent[1]) / 1e6 + 1.0),
         )
-        skriv(f"Hämtar Lantmäteriets laser (kontots egen nyckel), område {extent[2]-extent[0]:.0f} x {extent[3]-extent[1]:.0f} m ...")
-        lm = hamta_omrade(
-            klient, omr, ra / "lantmateriet", laser=True,
-            orto="orto" in kommun.lantmateriet.produkter,
-            byggnader=kalla_bygg == "lantmateriet",
-            marginal_m=kommun.lantmateriet.marginal_m, skriv=skriv,
-        )  # fmt: skip
-        varningar.extend(v for v in lm.varningar if v not in varningar)
-        bygg_fil: Path | None = None
         wfs_bbox = bbox_till_kommun(kommun.publicering_epsg, extent)
         by = kommun.byggnader
-        if kalla_bygg == "wfs":
+        bygg_fil: Path | None = None
+        bygg: Any = None
+
+        def _wfs_byggnader(ra: Path = ra, wfs_bbox: tuple[float, float, float, float] = wfs_bbox, by: Any = by) -> Path:
             lager = byggnadslager or by.lager
             if not lager:
                 lager = valj_lager(
@@ -232,13 +246,15 @@ def mappa_geografi(
                 by.wfs_url, lager, wfs_bbox, kommun.publicering_epsg, by.tillatna_varddomaner,
                 max_objekt=by.max_objekt, hamta_bytes=hamta_bytes,
             )  # fmt: skip
-            bygg_fil, antal, v = geojson_till_gpkg(
+            fil, antal, v = geojson_till_gpkg(
                 fc, epsg_antagen=kommun.publicering_epsg, ut=ra / "kommun" / "byggnader.gpkg",
                 forvantad_bbox=wfs_bbox, falt=by.falt, lagernamn=lager,
             )  # fmt: skip
             varningar.extend(x for x in v if x not in varningar)
             skriv(f"Byggnader: {antal} polygoner sparade (bara attribut ur kommunfilen).")
-        for namn in kommun.baskarta.lager:
+            return fil
+
+        for namn in kommun.baskarta.lager:  # valfria WFS-lager (tom lista = ingen WFS)
             fc = hamta_geojson(
                 by.wfs_url, namn, wfs_bbox, kommun.publicering_epsg, by.tillatna_varddomaner,
                 max_objekt=by.max_objekt, hamta_bytes=hamta_bytes,
@@ -248,11 +264,86 @@ def mappa_geografi(
                 ut=ra / "kommun" / f"baskarta_{namn.replace(':', '_')}.gpkg", forvantad_bbox=wfs_bbox,
                 falt={}, lagernamn=namn, kravs_objekt=False,
             )  # fmt: skip
-        skriv("Bygger K1-markmodellen (rutor om 500 m) ...")
-        bygg = bygg_omrade(
-            omr, ra / "lantmateriet", k1, byggnader_fil=bygg_fil, upplosning_m=kommun.lantmateriet.upplosning_m,
-            anvand_orto="orto" in kommun.lantmateriet.produkter, skriv=skriv,
-        )  # fmt: skip
+
+        def _baskarta_byggnader(ra: Path = ra, wfs_bbox: tuple[float, float, float, float] = wfs_bbox) -> tuple[Path, list[Any]]:
+            fk = kommun.filpaket
+            assert fk is not None and fk.baskarta is not None
+            bpaket = hamta_baskarta(kommun, geo_rot / "_filcache", hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv)
+            fil, antal, v = tak_till_gpkg(
+                [q.fil for q in bpaket], bbox_publicering=wfs_bbox, epsg_publicering=fk.baskarta.epsg,
+                lager_monster=fk.baskarta.lager_monster, ut=ra / "kommun" / "byggnader.gpkg",
+            )  # fmt: skip
+            varningar.extend(x for x in v if x not in varningar)
+            skriv(f"Byggnader: {antal} takkonturer ur baskartan.")
+            return fil, bpaket
+
+        if fil_hojd:
+            if kalla_bygg == "lantmateriet":
+                raise SkapaFel("Byggnader från Lantmäteriet kan inte kombineras med kommunens höjdmodell: välj filpaket eller wfs.")
+            try:
+                cache = geo_rot / "_filcache"
+                fk = kommun.filpaket
+                assert fk is not None
+                hoj, hpaket = hamta_hojdmodell(
+                    kommun, cache, extent, extra_urlar=hojdmodell_urlar, extra_filer=hojdmodell_filer,
+                    hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv,
+                )  # fmt: skip
+                bpaket: list[Any] = []
+                if kalla_bygg == "filpaket":
+                    bygg_fil, bpaket = _baskarta_byggnader()
+                elif kalla_bygg == "wfs":
+                    bygg_fil = _wfs_byggnader()
+                klippt = ra / "hojd" / "hojdmodell_klippt.tif"
+                varningar.extend(x for x in skriv_klippt_hojd(hoj, extent, kommun.lantmateriet.upplosning_m, klippt) if x not in varningar)
+                (ra / "filpaket").mkdir(parents=True, exist_ok=True)
+                (ra / "filpaket" / "kallor.json").write_text(
+                    json.dumps(
+                        {
+                            "hojdmodell": [{"url": q.url, "fil": q.namn, "sha256": q.sha256} for q in hpaket],
+                            "baskarta": [{"url": q.url, "fil": q.namn, "sha256": q.sha256} for q in bpaket],
+                        },
+                        indent=2, sort_keys=True, ensure_ascii=False,
+                    ) + "\n",
+                    encoding="utf-8",
+                )
+                hojd_anvand = "filpaket"
+                skriv("Bygger K1-markmodellen ur kommunens höjdmodell (rutor om 500 m) ...")
+                bygg = bygg_omrade_filpaket(
+                    omr, k1, hojdmodell=Hojdmodell([klippt], epsg_antagen=3011), hojd_paket=hpaket,
+                    byggnader_fil=bygg_fil, byggnader_paket=bpaket,
+                    upplosning_m=kommun.lantmateriet.upplosning_m, skriv=skriv,
+                )  # fmt: skip
+            except KommunKallaFel as exc:
+                if klient is None:
+                    raise SkapaFel(
+                        f"Kommunens höjdmodell kunde inte användas: {exc} Ingen Lantmäteri-nyckel finns som reserv "
+                        "([hojd] reserv_lantmateriet) eller den saknas på sidan Nycklar."
+                    ) from exc
+                varningar.append(f"Kommunens höjdmodell kunde inte användas ({exc}); reserv: Lantmäteriets laser.")
+                skriv(varningar[-1])
+                if k1.exists():
+                    shutil.rmtree(k1)
+        if bygg is None:
+            if klient is None:
+                raise SkapaFel("Ingen höjdkälla: kommunens höjdmodell gav inget och ingen Lantmäteri-nyckel finns.")
+            hojd_anvand = "lantmateriet"
+            skriv(f"Hämtar Lantmäteriets laser (kontots egen nyckel), område {extent[2]-extent[0]:.0f} x {extent[3]-extent[1]:.0f} m ...")
+            lm = hamta_omrade(
+                klient, omr, ra / "lantmateriet", laser=True,
+                orto="orto" in kommun.lantmateriet.produkter,
+                byggnader=kalla_bygg == "lantmateriet",
+                marginal_m=kommun.lantmateriet.marginal_m, skriv=skriv,
+            )  # fmt: skip
+            varningar.extend(v for v in lm.varningar if v not in varningar)
+            if kalla_bygg == "wfs":
+                bygg_fil = _wfs_byggnader()
+            elif kalla_bygg == "filpaket":
+                bygg_fil, _ = _baskarta_byggnader()
+            skriv("Bygger K1-markmodellen (rutor om 500 m) ...")
+            bygg = bygg_omrade(
+                omr, ra / "lantmateriet", k1, byggnader_fil=bygg_fil, upplosning_m=kommun.lantmateriet.upplosning_m,
+                anvand_orto="orto" in kommun.lantmateriet.produkter, skriv=skriv,
+            )  # fmt: skip
         varningar.extend(f"{x}" for x in bygg.varningar if x not in varningar)
         tr = _tillrinning_for_kärna(k1, karna, gdef.tillrinning_cell_m, extent)
         skriv(
@@ -286,7 +377,14 @@ def mappa_geografi(
         lm_manifest_sha = sha256_fil(lmf)
     lager_ra = lagra(geo_rot, bygge / "radata")
     lager_k1 = lagra(geo_rot, bygge / "k1_rutnat")
-    licenser = [kommun.lantmateriet.licens] + ([kommun.byggnader.licens] if kalla_bygg == "wfs" else [])
+    fk = kommun.filpaket
+    licenser = [kommun.lantmateriet.licens] if hojd_anvand == "lantmateriet" else []
+    if hojd_anvand == "filpaket" and fk is not None and fk.hojdmodell is not None:
+        licenser.append(fk.hojdmodell.licens)
+    if kalla_bygg == "wfs":
+        licenser.append(kommun.byggnader.licens)
+    elif kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None:
+        licenser.append(fk.baskarta.licens)
     lic = _strangaste_licens(licenser)
     skriv_oppenhet_toml(
         lager_ra.mapp, oppen=False, licens=kommun.lantmateriet.licens,
@@ -327,7 +425,7 @@ def mappa_geografi(
         },
         "parametrar": {
             "hojd_max_m": hojd_max, "h_min_grader": h_min, "upplosning_m": kommun.lantmateriet.upplosning_m,
-            "ruta_storlek_m": 500.0, "byggnadskalla": kalla_bygg,
+            "ruta_storlek_m": 500.0, "byggnadskalla": kalla_bygg, "hojdkalla": hojd_anvand,
         },  # fmt: skip
         "lager": {
             "k1_rutnat": {
@@ -347,8 +445,19 @@ def mappa_geografi(
             "sankgraf": "inte förberäknad: byggs och cachas av kärnan (K22) vid första körningen",
         },
         "kallor": {
-            "lantmateriet": {"licens": kommun.lantmateriet.licens, "anmarkning": kommun.lantmateriet.licens_anmarkning},
-            "byggnader": {"kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning},
+            "hojd": {
+                "kalla": hojd_anvand,
+                **(
+                    {"licens": fk.hojdmodell.licens, "anmarkning": fk.hojdmodell.licens_anmarkning}
+                    if hojd_anvand == "filpaket" and fk is not None and fk.hojdmodell is not None
+                    else {"licens": kommun.lantmateriet.licens, "anmarkning": kommun.lantmateriet.licens_anmarkning}
+                ),
+            },
+            "byggnader": (
+                {"kalla": kalla_bygg, "licens": fk.baskarta.licens, "anmarkning": fk.baskarta.licens_anmarkning}
+                if kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None
+                else {"kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning}
+            ),
         },
         "motivering_karna": omrade.motivering,
         "oppen_for_mcp": villkor_kontrollerade,

@@ -54,6 +54,9 @@ def liten_kommun() -> KommunKonfig:
     d["dagsljus"]["hojd_max_m"] = 3
     d["geografier"]["goteborg-test"]["max_buffert_m"] = 400.0
     d["lantmateriet"]["upplosning_m"] = 2.0
+    # Dessa tester prövar Lantmäteri- och WFS-vägen (valfria källor); filpaketvägen prövas i test_filpaket_mappa.py.
+    d["hojd"] = {"kalla": "lantmateriet", "reserv_lantmateriet": False}
+    d["byggnader"]["kalla"] = "wfs"
     d["dagsljus"]["cellstorlek_m"] = 2
     return tolka_kommun(d)
 
