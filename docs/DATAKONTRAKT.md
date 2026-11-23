@@ -699,3 +699,25 @@ med `benchmark.provfall`; läses av `webb/src/prov/webgpuProv.ts`. Fält (matris
 Facit är serverns f64-beräkning: dagsljus med `dagsljus.horisont`, vatten med referensschemat
 `benchmark.provfall.vatten_schema` (samma schema som `vatten_2d.wgsl`, inte hela lösaren `tvad.lokal_troghet`).
 Klientens tal är f32 och får bara användas i skissläge.
+
+## K38 – Öppenhetsmetadata `floden-oppenhet/v1` (v1)
+
+Tillägg (inget K0–K37 ändras). En fil `oppenhet.toml` i en datamapp säger om innehållet är öppet. MCP-lagret
+(`floden_mcp.oppenhet`) lämnar aldrig ut innehåll härlett ur data som inte är öppna; regeln står i `docs/MCP.md`
+("Data som inte är öppna").
+
+```toml
+kontrakt = "floden-oppenhet/v1"      # valfritt
+oppen = true                         # true | false; allt annat än true räknas som false
+licens = "CC0-1.0"                   # SPDX-id; krävs när oppen = true
+kalla = "Lantmäteriet, Laserdata Nedladdning skog"   # fri text
+```
+
+- Närmaste `oppenhet.toml` i mappen eller en överordnad mapp (högst 12 nivåer) gäller. Filen som inte går att tolka stänger mappen.
+- Öppet kräver `oppen = true` **och** en känd öppen licens: `CC0-1.0`, `CC-BY-4.0`, `CC-BY-SA-4.0`, `ODbL-1.0`, `ODC-By-1.0`,
+  `PDDL-1.0`. Annars stängt. `oppen = false` stänger alltid, även inom demon.
+- Ledningsdata (en sökvägsdel som börjar på `ledning`, `data/ledningar`, `[lokal_data] ledningar_mapp`), `data/intern`, `data/konto`
+  och `config.local.toml` är aldrig öppna, vad en metadatafil än säger.
+- Utan metadata är bara demon och material som följer med repot öppet (`data/demo`, `testsvit`, `exempel`, `docs`, `data/regn`,
+  `data/mcp`, `data/lagerprofiler`) samt MCP:s och kartverktygets egna arbetsmappar. Allt annat (inklusive `data/lokal`) är stängt.
+- I `config.local.toml` kan lager anges utan fil: `[oppenhet.lager.<namn>]` med `sokvag`, `oppen` och `licens` (samma regler).

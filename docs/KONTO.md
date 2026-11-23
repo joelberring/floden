@@ -20,7 +20,8 @@ Logiken är porterad från O-Tid (MIT, joelberring/otid @ 4a446af): `google-oidc
 | `adapter.py` | HTTP-adaptern och `kraver_inloggning` |
 | `admin.py` | serverkommandon (bootstrap) |
 | `nycklar.py` | användarens egna API-nycklar, krypterade (Fernet) i tabellen `konto_nyckel` (avsnitt 10) |
-| `kontoapi.py` | HTTP-API:t `/konto/nycklar` och `/konto/admin` (avsnitt 10 och 11) |
+| `kontoapi.py` | HTTP-API:t `/konto/nycklar`, `/konto/admin` och `/konto/mcp-token` (avsnitt 10, 11 och 12) |
+| `mcptoken.py` | personliga MCP-token, bara sha256 sparas (avsnitt 12) |
 
 ## 2. Sätt upp Google-klienten (Joel)
 
@@ -66,6 +67,7 @@ konto ──< identitet (leverantör, tenant, subject)   unik; nyckeln är aldri
       ──< projektbehorighet (projekt, roll, kalla)
 projekt ──< projektinbjudan (e-post, roll, giltig_till, anvand_av)
 konto ──< konto_nyckel (typ, krypterad, slutar_pa, sparad)    en rad per konto och typ (schemaversion 2)
+      ──< mcp_token (namn, token_hash, slutar_pa, skapad, senast_anvand, aterkallad)  (schemaversion 3)
 session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personuppgifter)
 ```
 
@@ -117,7 +119,7 @@ session, pagaende_inloggning (flödets tillstånd), handelse (logg utan personup
 **Avgränsningar (ska inte antas vara löst)**
 
 - Ingen spärr mot upprepade inloggningsförsök per IP (O-Tids `account-throttle.ts` är inte portad; det finns inga lösenord att gissa, men `/konto/logga-in/*` skriver en rad per anrop, begränsad till 2000). Lägg hastighetsgräns i Caddy framför servern.
-- Ingen "logga ut överallt" i adaptern (finns som `Sessioner.aterkalla_alla`), ingen ta-bort-konto, ingen e-postverifiering (Google intygar adressen), ingen OAuth-server för AI-kopplingar. Kontohantering för användaren och organisationsadmin finns som funktioner i `Register` men inte som HTTP-ändpunkter ännu.
+- Ingen "logga ut överallt" i adaptern (finns som `Sessioner.aterkalla_alla`), ingen ta-bort-konto, ingen e-postverifiering (Google intygar adressen), ingen OAuth-server för AI-kopplingar (personliga MCP-token finns, avsnitt 12). Kontohantering för användaren och organisationsadmin finns som funktioner i `Register` men inte som HTTP-ändpunkter ännu.
 - Inget är provat mot riktiga Google- eller Entra-slutpunkter. De första riktiga inloggningarna kan avslöja skillnader (t.ex. Googles `hd`, Entras `groups`).
 
 ## 7. Administratörskommandon (bootstrap)
@@ -262,6 +264,39 @@ ingen läsrätt till projektdata (avsnitt 5).
 **Projektlistan.** `GET /api/projekt` (och MCP-verktyget `projekt_lista`) visar med inloggning på bara kontots projekt:
 demokvarteret (om `demoprojekt_roll` inte är `av`, med den rollen) och projekt där kontot har en uttrycklig roll. Projekt ur
 registret har ännu inga beräkningar (`finns: false`) och en enkel projektsida utan siffror.
+
+## 12. MCP-token (`/konto/mcp-token`, avsnittet "MCP-token" på sidan Nycklar)
+
+Med en personlig token styr du Floden på servern från Claude Code (eller Codex, ett skript) via MCP på
+`https://<värd>/mcp`, som ditt konto. Koden är `src/konto/mcptoken.py`, testerna `tests/konto/test_mcptoken.py` och
+`tests/floden_mcp/test_mcp_http.py`.
+
+- **Format och lagring.** `fl_mcp_` + 32 slumpbyte (`secrets`) som base64url (43 tecken). Databasen (`mcp_token`, schemaversion
+  3) har bara **sha256 av hela token**, aldrig klartext. Token visas **en enda gång**, i svaret på skapandet; därefter syns bara
+  namn, skapad, senast använd (upplösning en minut) och de fyra sista tecknen. En glömd token kan inte läsas ut: skapa en ny.
+- **Livscykel.** Skapa (namn 1 till 60 tecken), använd, återkalla. Högst **5 aktiva** per konto (409 `for-manga` därefter).
+  En återkallad token slutar gälla vid nästa anrop, även mitt i en MCP-session.
+- **Spärrade konton nekas.** Kontrollen går mot kontots status vid varje anrop, så en spärr gäller direkt för redan skapade token,
+  och ett spärrat konto kan inte skapa nya.
+- **Bara `/mcp`.** Token godtas av `KontoSkydd` (`floden_mcp.http`) som alternativ till session-kakan: `Authorization: Bearer
+  fl_mcp_...`, **utan CSRF** (en webbläsare skickar aldrig rubriken av sig själv). Webbens API, `/konto/nycklar`, `/konto/admin` och
+  `/konto/mcp-token` tar aldrig emot en token (401): en token kan inte skapa, återkalla eller läsa token eller nycklar.
+  Har ett anrop en bearer-rubrik avgör den ensam; en ogiltig token faller aldrig tillbaka på en kaka.
+- **Fel.** Ogiltig, okänd, återkallad och spärrad ger samma 401 med `WWW-Authenticate: Bearer realm="floden", error="invalid_token"`
+  (och, från steg 2, `resource_metadata=...`). Svaret nämner aldrig token eller orsak. Utan inloggning alls: 401 utan `error`.
+- **Loggning.** Körloggen (`docs/MCP.md`) får `konto` (konto-id) och `token` (token-id) på varje rad; händelser och loggrader har
+  bara id:n. Token, namn och e-post loggas aldrig (test).
+- **MCP-sessioner binds till kontot.** Ett annat konto som känner till ett `Mcp-Session-Id` nekas (404).
+- **Rättigheter i verktygen.** Se `docs/MCP.md`: bara projekt kontot har en roll i, och skrivande verktyg kräver `utredare`.
+
+| Anrop | Gör |
+| --- | --- |
+| `GET /konto/mcp-token` | `{tokens: [{id, namn, skapad_datum, senast_anvand_datum, slutar_pa}], max, mcp_url}` |
+| `POST /konto/mcp-token` | `{"namn"}` skapar; 201 med `token` (en gång) och uppgifterna ovan |
+| `DELETE /konto/mcp-token/<id>` | återkallar kontots egen token (404 om den inte finns eller redan är återkallad) |
+
+Samma krav som nyckelsidan: session (401), CSRF-kaka och `X-Floden-CSRF` för POST och DELETE samt rätt `Origin` (403), kropp
+högst 4 kB. Med inloggning av finns ingen tokenfunktion (404).
 
 ## 9. Köra testerna
 

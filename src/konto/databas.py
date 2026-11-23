@@ -153,7 +153,22 @@ CREATE TABLE konto_nyckel (
 );
 """
 
-MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2)
+# Version 3: personliga MCP-token (bara sha256 sparas, se mcptoken.py).
+SCHEMA_V3 = """
+CREATE TABLE mcp_token (
+  id TEXT PRIMARY KEY,
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  namn TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  slutar_pa TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  senast_anvand INTEGER,
+  aterkallad INTEGER
+);
+CREATE INDEX mcp_token_konto ON mcp_token (konto_id);
+"""
+
+MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3)
 
 
 class Databas:

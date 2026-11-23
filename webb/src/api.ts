@@ -6,6 +6,8 @@ import type {
   KorSvar,
   ModulerSvar,
   NyckelStatus,
+  McpTokenSvar,
+  NyMcpToken,
   NycklarSvar,
   OmradenSvar,
   ProjektListaSvar,
@@ -201,6 +203,24 @@ export function sparaNyckel(typ: string, varden: Record<string, string>): Promis
 
 export function taBortNyckel(typ: string): Promise<{ status: string }> {
   return lasJson<{ status: string }>(`/konto/nycklar/${encodeURIComponent(typ)}`, { method: "DELETE" });
+}
+
+/* ---------- MCP-token (/konto/mcp-token): visas en gång vid skapandet ---------- */
+
+export function hamtaMcpTokens(): Promise<McpTokenSvar> {
+  return lasJson<McpTokenSvar>("/konto/mcp-token");
+}
+
+export function skapaMcpToken(namn: string): Promise<NyMcpToken> {
+  return lasJson<NyMcpToken>("/konto/mcp-token", {
+    method: "POST",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ namn }),
+  });
+}
+
+export function aterkallaMcpToken(id: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/mcp-token/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
 /* ---------- Administration (/konto/admin): superadmin och organisationsadmin ---------- */

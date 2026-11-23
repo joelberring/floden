@@ -10,6 +10,8 @@ Adaptern känner inte till `http.server`: den tar (metod, sökväg, query, heade
 - `POST /konto/logga-ut` återkallar sessionen (CSRF-header, eller exakt Origin)
 - `GET  /konto/jag` visar vem som är inloggad (401 om ingen)
 - `GET/PUT/DELETE /konto/nycklar[/<typ>]` kontots egna API-nycklar, krypterade (`konto.nycklar`)
+- `GET/POST /konto/mcp-token`, `DELETE /konto/mcp-token/<id>` personliga MCP-token
+  (`konto.mcptoken`)
 - `/konto/admin/...` inbjudningar, roller och spärr för admin (`konto.kontoapi`)
 
 Med `inloggning = "av"` kräver ingenting inloggning och `/konto/jag` svarar `{"inloggning": "av"}`.
@@ -49,6 +51,7 @@ from konto.sessioner import (
 from konto.tilldelning import InloggningNekad, logga_in_identitet
 
 if TYPE_CHECKING:
+    from konto.mcptoken import McpTokenForrad
     from konto.nycklar import NyckelForrad
 
 logg = logging.getLogger("konto")
@@ -151,16 +154,19 @@ class KontoAdapter:
         self.register: Register | None = None
         self.sessioner: Sessioner | None = None
         self.nycklar: NyckelForrad | None = None
+        self.mcp_tokens: McpTokenForrad | None = None
         self._klienter: dict[str, Any] = {}
         if not konfig.aktiv:
             return
         # Importen sker först här: läget "av" kräver varken PyJWT eller databas.
+        from konto.mcptoken import McpTokenForrad
         from konto.nycklar import NyckelForrad
         from konto.oidc import OidcKlient
 
         self.register = register or Register(Databas(konfig.databas), klocka)
         # Hemligheten för nyckelkrypteringen: FLODEN_NYCKELHEMLIGHET (saknas den är sidan avstängd).
         self.nycklar = NyckelForrad(self.register, nyckelhemlighet, klocka)
+        self.mcp_tokens = McpTokenForrad(self.register)
         self.sessioner = Sessioner(self.register, konfig)
         levs = (
             dict(leverantorer)
@@ -229,6 +235,35 @@ class KontoAdapter:
         svar = _fel(403, "ingen-behorighet", "Saknar behörighet till projektet")
         return Kontroll(False, svar=svar)
 
+    def har_roll(self, konto_id: str, projekt_id: str, minst: str = "lasare") -> bool:
+        """Har kontot minst rollen i projektet? Samma regel som `kraver_projektbehorighet`
+        (uttrycklig roll, eller demoprojektets roll) men utan HTTP: för MCP-verktygen."""
+        if self.register is None:
+            return True  # inloggning av: ingen rollkontroll (lokal körning)
+        if self.register.har_projektroll(konto_id, projekt_id, minst):
+            return True
+        demo_roll = self.konfig.demoprojekt_roll
+        return (
+            projekt_id == self.konfig.demoprojekt
+            and demo_roll != "av"
+            and _roll_niva(demo_roll) >= _roll_niva(minst)
+        )
+
+    def resurs_metadata_url(self) -> str | None:
+        """Adressen till skyddade resursens metadata (RFC 9728) för `WWW-Authenticate`, eller None
+        när Floden inte är en OAuth-server (steg 2 slår på den)."""
+        return None
+
+    def kontrollera_bearer(self, token: str) -> tuple[str, str] | None:
+        """(konto-id, token-id) för en giltig bearer-token (MCP-token `fl_mcp_...`), annars None.
+
+        Bara för `/mcp` (`floden_mcp.http.KontoSkydd`): webbens API tar aldrig emot bearer."""
+        if not self.aktiv or self.mcp_tokens is None:
+            return None
+        if token.startswith("fl_mcp_"):
+            return self.mcp_tokens.verifiera(token)
+        return None
+
     def projekt_for_konto(self, konto_id: str) -> list[dict[str, str]]:
         """Registrets projekt där kontot har en uttrycklig roll (id, namn, roll). Demokvarteret
         ingår inte här: det följer `demoprojekt_roll` (se `demoroll`)."""
@@ -285,11 +320,13 @@ class KontoAdapter:
             if req.metod != "POST":
                 return _fel(405, "metod", "Metod ej tillåten")
             return self._logga_ut(req)
-        if len(delar) >= 2 and delar[1] in ("nycklar", "admin"):
+        if len(delar) >= 2 and delar[1] in ("nycklar", "admin", "mcp-token"):
             from konto import kontoapi
 
             if delar[1] == "nycklar":
                 return kontoapi.hantera_nycklar(self, req, delar[2:])
+            if delar[1] == "mcp-token":
+                return kontoapi.hantera_mcp_token(self, req, delar[2:])
             return kontoapi.hantera_admin(self, req, delar[2:])
         return _fel(404, "okand", "Okänd ändpunkt")
 

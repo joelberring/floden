@@ -38,10 +38,17 @@ def hitta_rot(rot: str | Path | None) -> Path:
 
 
 def bygg(
-    rot: Path, tillat_klass: str | None = None, logg: str | None = None
+    rot: Path,
+    tillat_klass: str | None = None,
+    logg: str | None = None,
+    app: Any = None,
 ) -> tuple[Any, Policy, Korlogg, Any]:
-    """Bygger (server, policy, logg, konfig) ur repots konfiguration. Ändrar aktuell mapp till `rot`."""
+    """Bygger (server, policy, logg, app) ur repots konfiguration. Ändrar aktuell mapp till `rot`.
+
+    Med `app` (en `FlodenApiApp`) delas appen, och därmed kontodatabasen, med den som ropar: så
+    monteras `/mcp` i webbens ASGI-server (`floden webb --server asgi`) i samma process."""
     from floden_mcp.karna_api import FlodenTjanst
+    from floden_mcp.oppenhet import Oppenhet
     from floden_mcp.server import bygg_server
     from gemensamt.konfig import las_konfig
     from webb.api import FlodenApiApp
@@ -55,11 +62,20 @@ def bygg(
             policy = Policy(standard, policy.per_klient, policy.projektklasser)
     except PolicyFel as exc:
         raise McpStartFel(f"Ogiltig datapolicy: {exc}") from exc
-    app = FlodenApiApp(testsvit_rot=rot / "testsvit", konfig_fil=rot / "config.toml")
+    if app is None:
+        app = FlodenApiApp(testsvit_rot=rot / "testsvit", konfig_fil=rot / "config.toml")
     tjanst = FlodenTjanst(app, rot=rot)
     logg_fil = Path(logg or dict(konfig.get("mcp", {})).get("logg", STANDARD_LOGG))
     korlogg = Korlogg(logg_fil if logg_fil.is_absolute() else rot / logg_fil)
-    server = bygg_server(tjanst, policy=policy, logg=korlogg)
+    # Med inloggning på kräver varje projektverktyg en roll (docs/KONTO.md); spärren för icke-öppna
+    # data är alltid på (docs/MCP.md).
+    server = bygg_server(
+        tjanst,
+        policy=policy,
+        logg=korlogg,
+        behorighet=app.konto.har_roll if app.konto.aktiv else None,
+        oppenhet=Oppenhet.for_tjanst(tjanst, konfig),
+    )
     return server, policy, korlogg, app
 
 

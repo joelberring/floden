@@ -7,7 +7,15 @@
  */
 import { kontoLage } from "./konto.ts";
 import { esc } from "./sidor.ts";
-import type { AdminInbjudan, AdminMedlem, AdminProjektDetalj, NyckelStatus, NycklarSvar } from "./types.ts";
+import type {
+  AdminInbjudan,
+  AdminMedlem,
+  AdminProjektDetalj,
+  McpTokenSvar,
+  NyckelStatus,
+  NycklarSvar,
+  NyMcpToken,
+} from "./types.ts";
 
 function etikett(text: string, tagg = "h2"): string {
   return `<${tagg} class="etikett">${esc(text)}</${tagg}>`;
@@ -58,7 +66,66 @@ function nyckelFormular(n: NyckelStatus): string {
     </section>`;
 }
 
-export function sidaNycklar(svar: NycklarSvar | null, fel: string | null = null): string {
+/* ---------- MCP-token ---------- */
+
+/** Vad avsnittet MCP-token ritas av: listan, en nyss skapad token (visas en enda gång) och ett fel. */
+export interface McpAvsnitt {
+  svar: McpTokenSvar | null;
+  ny: NyMcpToken | null;
+  fel: string | null;
+}
+
+/** Kommandot för Claude Code. `token` är den nyss skapade token, annars platshållaren `<token>`. */
+export function mcpKommando(mcpUrl: string, token: string | null): string {
+  return `claude mcp add --transport http floden ${mcpUrl} --header "Authorization: Bearer ${token ?? "<token>"}"`;
+}
+
+export function mcpTokenAvsnitt(a: McpAvsnitt): string {
+  const huvud = `<div class="sektionsrad linje-under-stark">${etikett("MCP-token")}</div>
+      <p class="avsnitt-ingress">Med en personlig token kan Claude Code (eller ett annat verktyg) styra Floden som dig, via MCP. Du ser bara dina egna projekt, och tokenen gäller bara <code>/mcp</code>. Tokenen visas en enda gång, direkt efter att du skapat den; sedan finns bara namn, datum och de fyra sista tecknen kvar.</p>`;
+  if (a.fel) return `<section class="nyckel-avsnitt" data-mcp-token>${huvud}<p class="hjalp-ruta" role="alert">${esc(a.fel)}</p></section>`;
+  if (!a.svar) return `<section class="nyckel-avsnitt" data-mcp-token>${huvud}<p class="dampad">Hämtar …</p></section>`;
+  const svar = a.svar;
+  const kommando = mcpKommando(svar.mcp_url, a.ny?.token ?? null);
+  const nyttMeddelande = a.ny
+    ? `<p class="hjalp-ruta" role="status" data-ny-mcp-token>Token <strong>${esc(a.ny.namn)}</strong> är skapad. Kopiera kommandot nu: tokenen visas inte igen.</p>`
+    : "";
+  const rader = svar.tokens
+    .map(
+      (t) => `<tr>
+        <td>${esc(t.namn)}</td><td>${esc(t.skapad_datum ?? "–")}</td><td>${esc(t.senast_anvand_datum ?? "Aldrig")}</td><td>…${esc(t.slutar_pa)}</td>
+        <td><button type="button" class="knapp knapp-liten" data-aterkalla-mcp="${esc(t.id)}" data-aterkalla-namn="${esc(t.namn)}">Återkalla</button></td></tr>`,
+    )
+    .join("");
+  const tabell = svar.tokens.length
+    ? `<div class="tabell-ruta"><table class="data-tabell">
+        <thead><tr><th scope="col">Namn</th><th scope="col">Skapad</th><th scope="col">Senast använd</th><th scope="col">Slutar på</th><th scope="col">Åtgärd</th></tr></thead>
+        <tbody>${rader}</tbody></table></div>`
+    : `<p class="dampad">Inga token än.</p>`;
+  const full = svar.tokens.length >= svar.max;
+  const formular = full
+    ? `<p class="hjalp-ruta" role="note">Du har ${svar.max} token, det högsta antalet. Återkalla en för att skapa en ny.</p>`
+    : `<form data-mcp-token-form class="knapp-par" autocomplete="off">
+        <label class="falt-rad" for="mcp-token-namn">Namn (t.ex. vilken dator)
+          <input id="mcp-token-namn" class="kontroll" type="text" name="namn" maxlength="60" required autocomplete="off" /></label>
+        <button type="submit" class="knapp knapp-svart">Skapa token</button>
+      </form>`;
+  return `<section class="nyckel-avsnitt" data-mcp-token>
+      ${huvud}
+      ${nyttMeddelande}
+      <p class="avsnitt-ingress">Lägg till Floden i Claude Code med kommandot${a.ny ? "" : " (fyll i token du skapar nedan)"}:</p>
+      <pre class="kodruta"><code data-mcp-kommando>${esc(kommando)}</code></pre>
+      ${a.ny ? `<div class="knapp-par"><button type="button" class="knapp" data-kopiera-mcp>Kopiera kommandot</button></div>` : ""}
+      ${tabell}
+      ${formular}
+    </section>`;
+}
+
+export function sidaNycklar(
+  svar: NycklarSvar | null,
+  fel: string | null = null,
+  mcp?: McpAvsnitt,
+): string {
   const l = kontoLage();
   let innehall: string;
   if (l.lage === "av") {
@@ -77,6 +144,7 @@ export function sidaNycklar(svar: NycklarSvar | null, fel: string | null = null)
       <h1 class="sidrubrik stor">Nycklar</h1>
       <p class="ingress">Dina egna API-nycklar. De lagras krypterade på servern och visas aldrig igen efter att du sparat dem: du ser bara när de sparades och hur de slutar. Att ersätta eller ta bort en nyckel gör du här.</p>
       ${innehall}
+      ${mcp && l.lage !== "av" ? mcpTokenAvsnitt(mcp) : ""}
     </div>`;
 }
 

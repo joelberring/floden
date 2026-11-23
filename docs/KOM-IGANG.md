@@ -56,6 +56,23 @@ för skyfall; Floden fyller talen, kontrollerar allt före export och skriver Wo
 `docs/RAPPORTER.md` och exemplet `docs/exempel/skissunderlag_skyfall_demo.pdf`. Utan AI:
 `PYTHONPATH=src python tools/rapport_demo.py`.
 
+## Koppla Claude till Floden på servern
+
+Servern `https://floden.berring.se` har en MCP-server på `/mcp` (`docs/MCP.md`, `docs/DRIFT.md`). Du ser bara projekt där du har en roll,
+och skrivande verktyg (rita, köra, skapa rapport) kräver rollen *utredare*. Allt som inte är öppna data stängs av spärren i
+verktygslagret.
+
+**Claude Code (personlig token).**
+
+1. Logga in på https://floden.berring.se, öppna *Nycklar*, avsnittet *MCP-token*, ge tokenen ett namn (till exempel datorns) och
+   tryck *Skapa token*. Tokenen visas **en enda gång**; sidan visar kommandot färdigt ifyllt.
+2. Kör kommandot i en terminal:
+   `claude mcp add --transport http floden https://floden.berring.se/mcp --header "Authorization: Bearer <token>"`
+3. `claude mcp list` ska visa `floden`. Be Claude Code: "lista mina Floden-projekt" (verktyget `projekt_lista`).
+4. Tappade du tokenen, eller ska en dator inte ha tillgång längre: återkalla den på samma sida och skapa en ny. Högst 5 token.
+
+**Claude-appen (egen koppling, OAuth).** *Steg 2, beskrivs här när det är byggt och provat.*
+
 ## Köra ett verkligt område på din dator
 
 Hämtar Lantmäteriets öppna laser, byggnader och ortofoto för ditt provområde och kör dagsljus och vatten på det. Allt

@@ -682,6 +682,27 @@ export interface NycklarSvar {
   typer: NyckelStatus[];
 }
 
+/** En personlig MCP-token som lista: aldrig själva token, bara namn, datum och fyra sista tecken. */
+export interface McpTokenPost {
+  id: string;
+  namn: string;
+  skapad_datum: string | null;
+  senast_anvand_datum: string | null;
+  slutar_pa: string;
+}
+
+export interface McpTokenSvar {
+  tokens: McpTokenPost[];
+  max: number;
+  /** Adressen klienten ska ansluta till, t.ex. https://floden.berring.se/mcp */
+  mcp_url: string;
+}
+
+/** Svaret på att skapa en token: `token` finns bara i det här svaret och visas en gång. */
+export interface NyMcpToken extends McpTokenPost {
+  token: string;
+}
+
 export interface AdminProjekt {
   id: string;
   namn: string;

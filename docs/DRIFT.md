@@ -74,6 +74,38 @@ docker compose -f docker-compose.prod.yml up -d
   och hamnar aldrig i loggar, felmeddelanden, körlogg, `run.json` eller MCP. Med inloggning på använder Lantmäteri-
   hämtningen (`floden data lantmateriet --konto <konto-id>`) användarens egen nyckel och aldrig servernyckeln i miljön.
 
+## MCP på servern (`/mcp`)
+
+`floden webb --server asgi` (förvalet i avbildningen) monterar MCP:s Streamable HTTP på `https://floden.berring.se/mcp`, i samma
+process som webben (`src/floden_mcp/montera.py`): samma konton, samma körningar, ett enda `data/`. Inloggning krävs på varje anrop,
+antingen en personlig MCP-token (`Authorization: Bearer fl_mcp_...`) eller en session; kopplingen från Claude-appen (OAuth) beskrivs i
+`docs/KONTO.md` och `docs/KOM-IGANG.md`. `/mcp` är **av** när inloggningen är av och värden inte är loopback (servern skriver då varför
+vid start); `--ingen-mcp` stänger den uttryckligen. Skyddet mot DNS rebinding släpper bara in `Host: floden.berring.se`
+(`[konto] offentlig_url` i `config.local.toml` måste därför vara `https://floden.berring.se`).
+
+Caddy (`deploy/Caddyfile`) skickar `/mcp` utan komprimering och utan buffring (`flush_interval -1`), så att SSE-strömmarna når klienten
+direkt; resten av sajten är som förut. Caddyfilen är kontrollerad med `caddy validate` (Caddy 2.10).
+
+**Det här gör Joel på servern** (`/srv/floden` är inte en git-klon, så filerna hämtas med `curl`; först när ändringen är mergad till `main`
+och avbildningen byggts efter grön CI):
+
+```bash
+cd /srv/floden
+curl -fsSLO https://raw.githubusercontent.com/joelberring/floden/main/docker-compose.prod.yml
+curl -fsSL -o deploy/Caddyfile https://raw.githubusercontent.com/joelberring/floden/main/deploy/Caddyfile
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml exec caddy caddy reload --config /etc/caddy/Caddyfile   # Caddyfilen är en bind-montering: ladda om den
+```
+
+Inget nytt i `.env` eller `config.local.toml` behövs. Kontrollera att `config.local.toml` har `offentlig_url = "https://floden.berring.se"`.
+Prova sedan: logga in på https://floden.berring.se, skapa en token under *Nycklar > MCP-token* och kör kommandot som visas
+(`docs/KOM-IGANG.md`). Kontodatabasen migreras av sig själv vid start (schemaversion 3, tabellen `mcp_token`; version 4 med OAuth, se
+`docs/KONTO.md`); ta en kopia av `data/konto/konto.sqlite` före uppdateringen om du vill kunna backa.
+
+Körloggen för MCP-anrop ligger i `data/lokal/mcp/korlogg.jsonl` (volymen `./data/lokal`) och har konto-id och token-id, aldrig token.
+Spärren för data som inte är öppna (`docs/MCP.md`) är alltid på; data under `data/lokal` räknas som stängda för MCP.
+
 ## Uppdatera
 
 ```bash

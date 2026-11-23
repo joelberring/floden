@@ -46,7 +46,9 @@ VERKTYG = {
 class Mcp:
     """Servern, tjänsten och en hjälpare som anropar verktyg via protokollet."""
 
-    def __init__(self, demo: Demo, rot: Path, policy: Policy | None = None) -> None:
+    def __init__(
+        self, demo: Demo, rot: Path, policy: Policy | None = None, konto: Any = None
+    ) -> None:
         self.rot = rot
         self.app = FlodenApiApp(
             testsvit_rot=REPO / "testsvit",
@@ -56,6 +58,7 @@ class Mcp:
             korningsmapp=demo.rot / "korningar",
             kartverktygsmapp=rot / "kartverktyg",
             datamappar=[rot / "data"],
+            konto=konto,
         )
         self.app.fragor.demomapp = demo.varld
         self.tjanst = FlodenTjanst(self.app, rot=REPO, mcp_mapp=rot / "mcp")

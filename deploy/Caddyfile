@@ -1,8 +1,6 @@
 # Automatisk HTTPS (Let's Encrypt) för FLODEN_DOMAIN. "localhost" ger ett lokalt certifikat.
 # Lyft från O-Tid (github.com/joelberring/otid, MIT): deploy/Caddyfile.
 {$FLODEN_DOMAIN} {
-	encode zstd gzip
-
 	# HSTS: webbläsaren använder bara HTTPS mot domänen i ett år (inte includeSubDomains: berring.se har andra tjänster).
 	header Strict-Transport-Security "max-age=31536000"
 	header X-Content-Type-Options "nosniff"
@@ -17,7 +15,20 @@
 		max_size 25MB
 	}
 
-	reverse_proxy floden:8765 {
-		lb_try_duration 10s
+	# MCP (Streamable HTTP med SSE-strömmar): ingen komprimering och ingen buffring, så att
+	# händelser når klienten direkt. flush_interval -1 skickar varje bit så fort den kommer.
+	# Inloggningen (personlig token eller session) sköts av Floden själv, inte av Caddy.
+	@mcp path /mcp /mcp/*
+	handle @mcp {
+		reverse_proxy floden:8765 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		encode zstd gzip
+		reverse_proxy floden:8765 {
+			lb_try_duration 10s
+		}
 	}
 }

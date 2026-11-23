@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,7 @@ class FlodenAsgiApp:
         max_kropp_bytes: int = STANDARD_MAX_KROPP_BYTES,
         max_samtidiga_berakningar: int = STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
         ko_timeout_s: float = STANDARD_KO_TIMEOUT_S,
+        mcp: Any = None,
     ) -> None:
         if max_kropp_bytes <= 0:
             raise ValueError("max_kropp_bytes måste vara > 0.")
@@ -125,6 +127,8 @@ class FlodenAsgiApp:
         if ko_timeout_s < 0.0:
             raise ValueError("ko_timeout_s måste vara >= 0.")
         self.app = app
+        self.mcp = mcp
+        """`floden_mcp.montera.MonteradMcp` eller None: MCP:s Streamable HTTP på `/mcp`."""
         self.max_kropp_bytes = int(max_kropp_bytes)
         self.max_samtidiga_berakningar = int(max_samtidiga_berakningar)
         self.ko_timeout_s = float(ko_timeout_s)
@@ -189,12 +193,23 @@ class FlodenAsgiApp:
         return b"".join(delar), None, None
 
     async def _hantera_lifespan(self, receive: AsgiReceive, send: AsgiSend) -> None:
+        stack = AsyncExitStack()
         while True:
             meddelande = await receive()
             typ = meddelande.get("type")
             if typ == "lifespan.startup":
+                try:
+                    # MCP:s sessionshanterare måste köra så länge servern lever.
+                    if self.mcp is not None:
+                        await stack.enter_async_context(self.mcp.livscykel())
+                except Exception as exc:  # noqa: BLE001 - startfel rapporteras till servern
+                    await send(
+                        {"type": "lifespan.startup.failed", "message": f"MCP: {type(exc).__name__}"}
+                    )
+                    return
                 await send({"type": "lifespan.startup.complete"})
             elif typ == "lifespan.shutdown":
+                await stack.aclose()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
 
@@ -210,6 +225,12 @@ class FlodenAsgiApp:
             return
         if scope_typ != "http":
             raise ValueError(f"ASGI-scopetyp stöds inte: {scope_typ!r}")
+
+        if self.mcp is not None and self.mcp.ager(str(scope.get("path", "/"))):
+            # MCP har egen kroppsgräns och sin egen inloggningskontroll (KontoSkydd); strömmen
+            # (SSE) får inte läsas in eller buffras här.
+            await self.mcp.app(scope, receive, send)
+            return
 
         metod = str(scope.get("method", "GET")).upper()
         sokvag = str(scope.get("path", "/"))
@@ -282,8 +303,13 @@ def skapa_asgi_app(
     max_kropp_bytes: int = STANDARD_MAX_KROPP_BYTES,
     max_samtidiga_berakningar: int = STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
     ko_timeout_s: float = STANDARD_KO_TIMEOUT_S,
+    mcp_host: str | None = None,
 ) -> FlodenAsgiApp:
-    """Skapar en produktionsklar ASGI-app för t.ex. `uvicorn --factory`."""
+    """Skapar en produktionsklar ASGI-app för t.ex. `uvicorn --factory`.
+
+    Med `mcp_host` (adressen servern lyssnar på) monteras MCP:s Streamable HTTP på `/mcp` i samma
+    process (`floden_mcp.montera`). Är inloggningen av och värden inte loopback monteras den inte
+    (`McpAvstangd`)."""
     api_app = FlodenApiApp(
         testsvit_rot=testsvit_rot,
         konfig_fil=konfig_fil,
@@ -293,11 +319,18 @@ def skapa_asgi_app(
         konto=konto,
         klientmapp=klientmapp,
     )
+    monterad = None
+    if mcp_host is not None:
+        from floden_mcp.montera import montera_mcp
+
+        rot = Path(konfig_fil).resolve().parent
+        monterad = montera_mcp(api_app, rot, host=mcp_host)
     return FlodenAsgiApp(
         api_app,
         max_kropp_bytes=max_kropp_bytes,
         max_samtidiga_berakningar=max_samtidiga_berakningar,
         ko_timeout_s=ko_timeout_s,
+        mcp=monterad,
     )
 
 

@@ -4,43 +4,80 @@
  * ändringar (med CSRF-huvud via `lasJson`). Servern avgör allt; klienten visar bara svaren.
  */
 import {
+  aterkallaMcpToken,
   bjudIn,
   hamtaAdminProjekt,
   hamtaAdminProjektDetalj,
+  hamtaMcpTokens,
   hamtaNycklar,
   sattProjektRoll,
+  skapaMcpToken,
   sparaNyckel,
   sparraKonto,
   taBortNyckel,
   taBortProjektRoll,
 } from "./api";
 import { kontoLage } from "./konto";
-import { felText, sidaAdministration, sidaNycklar } from "./kontosidor-html";
-import type { NycklarSvar } from "./types";
+import { felText, mcpKommando, sidaAdministration, sidaNycklar } from "./kontosidor-html";
+import type { McpAvsnitt } from "./kontosidor-html";
+import type { NycklarSvar, NyMcpToken } from "./types";
 
 export async function visaNycklar(vy: HTMLElement): Promise<void> {
-  const rita = (svar: NycklarSvar | null, fel: string | null = null, meddelande = ""): void => {
-    vy.innerHTML = sidaNycklar(svar, fel);
+  // Tillstånd för MCP-avsnittet. En ny token (med klartexten) finns bara i minnet tills sidan ritas
+  // om av något annat än skapandet; den lagras aldrig i webbläsaren och hämtas aldrig från servern.
+  let mcp: McpAvsnitt = { svar: null, ny: null, fel: null };
+  let nycklar: NycklarSvar | null = null;
+  let nyckelFel: string | null = null;
+  const visaMeddelande = (text: string): void => {
     const m = vy.querySelector<HTMLElement>("[data-meddelande]");
-    if (m && meddelande) {
-      m.textContent = meddelande;
+    if (m) {
+      m.textContent = text;
       m.hidden = false;
     }
   };
+  const rita = (meddelande = ""): void => {
+    vy.innerHTML = sidaNycklar(nycklar, nyckelFel, mcp);
+    if (meddelande) visaMeddelande(meddelande);
+  };
   if (kontoLage().lage === "av") {
-    rita(null);
+    nycklar = null;
+    rita();
     return;
   }
-  rita(null);
-  const ladda = async (meddelande = ""): Promise<void> => {
+  rita();
+  const laddaMcp = async (ny: NyMcpToken | null = null): Promise<void> => {
     try {
-      rita(await hamtaNycklar(), null, meddelande);
+      mcp = { svar: await hamtaMcpTokens(), ny, fel: null };
     } catch (e) {
-      rita(null, felText(e));
+      mcp = { svar: null, ny: null, fel: felText(e) };
     }
+  };
+  const ladda = async (meddelande = "", ny: NyMcpToken | null = null): Promise<void> => {
+    try {
+      nycklar = await hamtaNycklar();
+      nyckelFel = null;
+    } catch (e) {
+      nycklar = null;
+      nyckelFel = felText(e);
+    }
+    await laddaMcp(ny);
+    rita(meddelande);
   };
   vy.onsubmit = (h: SubmitEvent): void => {
     const form = h.target instanceof HTMLFormElement ? h.target : null;
+    if (form?.hasAttribute("data-mcp-token-form")) {
+      h.preventDefault();
+      const namn = (form.elements.namedItem("namn") as HTMLInputElement).value;
+      void skapaMcpToken(namn).then(
+        // Svaret med token ritas direkt; allt annat (lista, status) hämtas på nytt från servern.
+        (ny) => ladda("", ny),
+        (e: unknown) => {
+          mcp = { ...mcp, fel: felText(e) };
+          rita();
+        },
+      );
+      return;
+    }
     const typ = form?.dataset.nyckelform;
     if (!form || !typ) return;
     h.preventDefault();
@@ -51,24 +88,42 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
     void sparaNyckel(typ, varden).then(
       // Hela sidan ritas om från serverns status: de ifyllda fälten försvinner med den gamla DOM:en.
       () => ladda("Nyckeln är sparad."),
-      (e: unknown) => {
-        const m = vy.querySelector<HTMLElement>("[data-meddelande]");
-        if (m) {
-          m.textContent = felText(e);
-          m.hidden = false;
-        }
-      },
+      (e: unknown) => visaMeddelande(felText(e)),
     );
   };
   vy.onclick = (h: MouseEvent): void => {
-    const knapp = h.target instanceof Element ? h.target.closest("[data-ta-bort-nyckel]") : null;
+    const mal = h.target instanceof Element ? h.target : null;
+    const aterkalla = mal?.closest("[data-aterkalla-mcp]");
+    if (aterkalla) {
+      h.preventDefault();
+      const id = aterkalla.getAttribute("data-aterkalla-mcp") ?? "";
+      const namn = aterkalla.getAttribute("data-aterkalla-namn") ?? "";
+      if (!window.confirm(`Återkalla tokenen "${namn}"? Verktyg som använder den slutar fungera direkt.`)) return;
+      void aterkallaMcpToken(id).then(
+        () => ladda("Tokenen är återkallad."),
+        (e: unknown) => {
+          mcp = { ...mcp, fel: felText(e) };
+          rita();
+        },
+      );
+      return;
+    }
+    if (mal?.closest("[data-kopiera-mcp]")) {
+      h.preventDefault();
+      if (mcp.svar && mcp.ny) void navigator.clipboard?.writeText(mcpKommando(mcp.svar.mcp_url, mcp.ny.token));
+      return;
+    }
+    const knapp = mal?.closest("[data-ta-bort-nyckel]") ?? null;
     const typ = knapp?.getAttribute("data-ta-bort-nyckel");
     if (!typ) return;
     h.preventDefault();
     if (!window.confirm("Ta bort den sparade nyckeln?")) return;
     void taBortNyckel(typ).then(
       () => ladda("Nyckeln är borttagen."),
-      (e: unknown) => rita(null, felText(e)),
+      (e: unknown) => {
+        nyckelFel = felText(e);
+        rita();
+      },
     );
   };
   await ladda();
