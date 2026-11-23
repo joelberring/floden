@@ -1,8 +1,12 @@
 import type {
+  AdminProjekt,
+  AdminProjektDetalj,
   HalsaSvar,
   KorBegaran,
   KorSvar,
   ModulerSvar,
+  NyckelStatus,
+  NycklarSvar,
   OmradenSvar,
   ProjektListaSvar,
   ProjektSvar,
@@ -177,4 +181,64 @@ export function hamtaAvlasning(
 ): Promise<AvlasningSvar> {
   const q = `lager=${encodeURIComponent(lagerId)}&e=${e.toFixed(2)}&n=${n.toFixed(2)}`;
   return lasJson<AvlasningSvar>(`${API_BAS}/korningar/${encodeURIComponent(korningId)}/avlasning?${q}`);
+}
+
+/* ---------- Nycklar (/konto/nycklar): bara kontots egna, aldrig utläsbara ---------- */
+
+const JSON_HUVUD = { "Content-Type": "application/json" };
+
+export function hamtaNycklar(): Promise<NycklarSvar> {
+  return lasJson<NycklarSvar>("/konto/nycklar");
+}
+
+export function sparaNyckel(typ: string, varden: Record<string, string>): Promise<NyckelStatus> {
+  return lasJson<NyckelStatus>(`/konto/nycklar/${encodeURIComponent(typ)}`, {
+    method: "PUT",
+    headers: JSON_HUVUD,
+    body: JSON.stringify(varden),
+  });
+}
+
+export function taBortNyckel(typ: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/nycklar/${encodeURIComponent(typ)}`, { method: "DELETE" });
+}
+
+/* ---------- Administration (/konto/admin): superadmin och organisationsadmin ---------- */
+
+export function hamtaAdminProjekt(): Promise<{ projekt: AdminProjekt[] }> {
+  return lasJson<{ projekt: AdminProjekt[] }>("/konto/admin/projekt");
+}
+
+export function hamtaAdminProjektDetalj(id: string): Promise<AdminProjektDetalj> {
+  return lasJson<AdminProjektDetalj>(`/konto/admin/projekt/${encodeURIComponent(id)}`);
+}
+
+export function bjudIn(projektId: string, epost: string, roll: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/admin/projekt/${encodeURIComponent(projektId)}/inbjudningar`, {
+    method: "POST",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ epost, roll }),
+  });
+}
+
+export function sattProjektRoll(projektId: string, kontoId: string, roll: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(
+    `/konto/admin/projekt/${encodeURIComponent(projektId)}/medlemmar/${encodeURIComponent(kontoId)}`,
+    { method: "PUT", headers: JSON_HUVUD, body: JSON.stringify({ roll }) },
+  );
+}
+
+export function taBortProjektRoll(projektId: string, kontoId: string): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(
+    `/konto/admin/projekt/${encodeURIComponent(projektId)}/medlemmar/${encodeURIComponent(kontoId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export function sparraKonto(kontoId: string, sparrad: boolean): Promise<{ status: string }> {
+  return lasJson<{ status: string }>(`/konto/admin/konton/${encodeURIComponent(kontoId)}`, {
+    method: "PUT",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ sparrad }),
+  });
 }

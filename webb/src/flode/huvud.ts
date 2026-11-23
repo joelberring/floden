@@ -1,9 +1,9 @@
 /*
  * Sidhuvudet i flödet: 56 px, "Floden / <projekt>", stegraden och kontoknappen. Kontomenyn har
- * platser för Nycklar och Administration (fylls av drift-spåret) och en diskret länk till Om
+ * Nycklar (inloggade) och Administration (admin) och en diskret länk till Om
  * beräkningarna och utredningsfrågorna utan projekt.
  */
-import { kontoLage } from "../konto.ts";
+import { adminTillaten, kontoLage } from "../konto.ts";
 import { esc } from "../sidor.ts";
 import { stegradHtml, type Steg } from "./adress.ts";
 
@@ -36,8 +36,8 @@ export function kontoMenyHtml(): string {
       }</button>
       <ul class="flode-meny" id="flode-konto-meny" hidden>
         ${vem}
-        <li data-plats="nycklar"></li>
-        <li data-plats="administration"></li>
+        ${l.lage === "in" ? `<li><a class="flode-meny-rad" href="#/nycklar">Nycklar</a></li>` : ""}
+        ${adminTillaten(l) ? `<li><a class="flode-meny-rad" href="#/administration">Administration</a></li>` : ""}
         <li><a class="flode-meny-rad" href="#/om">Om beräkningarna</a></li>
         <li><a class="flode-meny-rad" href="#/fragor">Utredningsfrågor</a></li>
         ${ut}

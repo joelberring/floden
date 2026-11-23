@@ -141,7 +141,19 @@ CREATE TABLE handelse (
 );
 """
 
-MIGRERINGAR = (SCHEMA_V1,)
+# Version 2: användarens egna API-nycklar (krypterade, en rad per konto och typ, se nycklar.py).
+SCHEMA_V2 = """
+CREATE TABLE konto_nyckel (
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  typ TEXT NOT NULL,
+  krypterad TEXT NOT NULL,
+  slutar_pa TEXT NOT NULL,
+  sparad INTEGER NOT NULL,
+  PRIMARY KEY (konto_id, typ)
+);
+"""
+
+MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2)
 
 
 class Databas:

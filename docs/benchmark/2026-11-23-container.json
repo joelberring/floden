@@ -1,0 +1,578 @@
+{
+  "format": "floden-benchmark/v1",
+  "kalla": "server",
+  "skapad_utc": "2026-11-23T09:15:26Z",
+  "kodversion": "29216fe724a4",
+  "maskin": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+    "karnor": 2,
+    "karnor_tillgangliga": 2,
+    "minne_totalt_mb": 8024.0,
+    "os": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39",
+    "python": "3.13.18",
+    "numpy": "2.1.3",
+    "rust_karna": {
+      "tillganglig": false,
+      "sokvag": null,
+      "anvands_i_svit": false
+    },
+    "gpu": null,
+    "webblasare": null
+  },
+  "installning": {
+    "uppvarmning": 1,
+    "upprepningar": 5,
+    "tidsmatt": "median av upprepningar, time.perf_counter",
+    "minnesmatt": [
+      "rss_topp_mb: VmHWM (Linux) eller ru_maxrss, egen process per fall",
+      "tracemalloc_topp_mb: separat körning"
+    ]
+  },
+  "anmarkning": "Ungefärliga siffror: tiderna beror på maskinen och på vad som annars körs där. Tid = median av upprepningar efter uppvärmning. Minne: RSS-topp (VmHWM/ru_maxrss, egen process per fall) och tracemalloc-topp (separat körning). Se docs/benchmark/README.md.",
+  "delar": {
+    "skyfall": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "EA1",
+          "namn": "EA Test 1: sänka över tröskel (10 m)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.5480920090001291,
+            "min": 0.43218476099991676,
+            "max": 0.6622074920001069,
+            "n": 5,
+            "alla": [
+              0.612876,
+              0.548092,
+              0.432185,
+              0.662207,
+              0.493289
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 47.9,
+            "rss_okning_mb": 16.4,
+            "tracemalloc_topp_mb": 0.29
+          },
+          "avvikelse": {
+            "varde": 0.005334827729634587,
+            "enhet": "m",
+            "grans": 0.015,
+            "godkand": true,
+            "beskrivning": "MAE för vattennivån i bakre sänkan mot analytisk jämviktsnivå (gräns 1,5 cm)",
+            "matt": {
+              "iou": 0.9803921568627451
+            }
+          },
+          "extra": {
+            "svit_godkand": true,
+            "volymfel_rel": 5.718092272206274e-16,
+            "max_djup_m": 0.40501564741134644,
+            "kortid_2d_s_enligt_fallet": 0.4930227820000255
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "EA2",
+          "namn": "EA Test 2: 4x4 sänkor, hybrid mot full 2D (5 m)",
+          "status": "ok",
+          "tid_s": {
+            "median": 3.429450827999972,
+            "min": 3.1276327959999435,
+            "max": 4.381025213999919,
+            "n": 5,
+            "alla": [
+              3.287166,
+              3.757598,
+              3.127633,
+              4.381025,
+              3.429451
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 81.3,
+            "rss_okning_mb": 49.8,
+            "tracemalloc_topp_mb": 3.71
+          },
+          "avvikelse": {
+            "varde": 0.023894904438660502,
+            "enhet": "m",
+            "grans": 0.05,
+            "godkand": true,
+            "beskrivning": "MAE för maxdjup, hybrid 2D + sänkgraf mot full 2D (gräns 5 cm)",
+            "matt": {
+              "iou": 0.8504875406283857
+            }
+          },
+          "extra": {
+            "svit_godkand": true,
+            "volymfel_rel": 3.784830219612686e-15,
+            "max_djup_m": 0.5765387415885925,
+            "kortid_2d_s_enligt_fallet": 2.0087013620000107
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "EA8A",
+          "namn": "EA Test 8A: urbant regn, subgrid mot full 2D (2 m)",
+          "status": "ok",
+          "tid_s": {
+            "median": 1.7498565230000622,
+            "min": 1.6175038799999584,
+            "max": 2.1842407520000506,
+            "n": 5,
+            "alla": [
+              1.749857,
+              1.617504,
+              2.184241,
+              1.642662,
+              1.801426
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.6,
+            "rss_topp_mb": 108.9,
+            "rss_okning_mb": 77.3,
+            "tracemalloc_topp_mb": 2.5
+          },
+          "avvikelse": {
+            "varde": 0.019968427988995358,
+            "enhet": "m",
+            "grans": 0.05,
+            "godkand": true,
+            "beskrivning": "MAE för maxdjup, subgrid/hybrid mot full 2D (gräns 5 cm)",
+            "matt": {
+              "iou": 0.9299719887955182
+            }
+          },
+          "extra": {
+            "svit_godkand": true,
+            "volymfel_rel": 2.636779683484747e-15,
+            "max_djup_m": 0.5572608113288879,
+            "kortid_2d_s_enligt_fallet": 1.1150200489998952
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "D1",
+          "namn": "D1: Hunter, friktionsdominerad (dx 5 m, 3 600 s)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.8333847690000766,
+            "min": 0.7893116079999345,
+            "max": 0.929581902000109,
+            "n": 5,
+            "alla": [
+              0.843986,
+              0.789752,
+              0.789312,
+              0.929582,
+              0.833385
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.4,
+            "rss_topp_mb": 48.1,
+            "rss_okning_mb": 16.7,
+            "tracemalloc_topp_mb": 0.25
+          },
+          "avvikelse": {
+            "varde": 0.005349951947377009,
+            "enhet": "m",
+            "grans": 0.01,
+            "godkand": true,
+            "beskrivning": "RMSE för djupet mot Hunters analytiska lösning (dx 5 m, t 3 600 s)",
+            "matt": {
+              "max_fel_m": 0.04930615797638893
+            }
+          },
+          "extra": {
+            "volymfel_rel": 1.2885912758493033e-15,
+            "front_fel_m": 10.0,
+            "antal_tidssteg": 3045
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "vatten2d-ref-64x64",
+          "namn": "Vatten 2D-schemat i f64, 64x64 (serversidan av GPU-provet)",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.27953485400007594,
+            "min": 0.2629992210002001,
+            "max": 0.28694844299980105,
+            "n": 5,
+            "alla": [
+              0.286948,
+              0.278418,
+              0.279535,
+              0.284224,
+              0.262999
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.4,
+            "rss_topp_mb": 32.8,
+            "rss_okning_mb": 1.4,
+            "tracemalloc_topp_mb": 0.8
+          },
+          "avvikelse": {
+            "varde": 4.390402470094539e-15,
+            "enhet": "relativ volym",
+            "grans": 1e-06,
+            "godkand": true,
+            "beskrivning": "volymbalans i schemat (regn in = volym ut)",
+            "matt": {}
+          },
+          "extra": {
+            "max_djup_m": 0.10946186580307007,
+            "celler": 4096
+          },
+          "uppvarmning": 1
+        }
+      ]
+    },
+    "dagsljus": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "grupp-E",
+          "namn": "Grupp E: dagsljus mot analytiska facit (E1-E7)",
+          "status": "ok",
+          "tid_s": {
+            "median": 6.438463413000136,
+            "min": 5.937248947999933,
+            "max": 7.614363793999928,
+            "n": 5,
+            "alla": [
+              6.108568,
+              7.271987,
+              7.614364,
+              6.438463,
+              5.937249
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.6,
+            "rss_topp_mb": 63.8,
+            "rss_okning_mb": 32.3,
+            "tracemalloc_topp_mb": 21.1
+          },
+          "avvikelse": {
+            "varde": 0.8286641875280646,
+            "enhet": "andel av gräns",
+            "grans": 1.0,
+            "godkand": true,
+            "beskrivning": "största avvikelse som andel av sin gräns (fall E1); 7 fall E1-E7",
+            "matt": {}
+          },
+          "extra": {
+            "fall": [
+              {
+                "id": "E1",
+                "avvikelse": 2.485992562584194e-06,
+                "grans": 3e-06,
+                "enhet": "andel",
+                "godkand": true,
+                "andel_av_grans": 0.8286641875280646,
+                "kortid_s": 8.50260000788694e-05
+              },
+              {
+                "id": "E2",
+                "avvikelse": 2.7755575615628914e-16,
+                "grans": 1e-12,
+                "enhet": "rad",
+                "godkand": true,
+                "andel_av_grans": 0.00027755575615628914,
+                "kortid_s": 0.08591578000005029
+              },
+              {
+                "id": "E3",
+                "avvikelse": 9.2148511043888e-15,
+                "grans": 1e-09,
+                "enhet": "andel",
+                "godkand": true,
+                "andel_av_grans": 9.2148511043888e-06,
+                "kortid_s": 0.022264646999929028
+              },
+              {
+                "id": "E4",
+                "avvikelse": 2.316749427355713e-06,
+                "grans": 1e-05,
+                "enhet": "andel",
+                "godkand": true,
+                "andel_av_grans": 0.2316749427355713,
+                "kortid_s": 0.07868836099987675
+              },
+              {
+                "id": "E5",
+                "avvikelse": 0.011904761904761927,
+                "grans": 0.03,
+                "enhet": "h",
+                "godkand": true,
+                "andel_av_grans": 0.3968253968253976,
+                "kortid_s": 2.443671509000069
+              },
+              {
+                "id": "E6",
+                "avvikelse": 0.0,
+                "grans": 1e-09,
+                "enhet": "h",
+                "godkand": true,
+                "andel_av_grans": 0.0,
+                "kortid_s": 1.8060928919999242
+              },
+              {
+                "id": "E7",
+                "avvikelse": 0.0,
+                "grans": 0.0,
+                "enhet": "h",
+                "godkand": true,
+                "andel_av_grans": 0.0,
+                "kortid_s": 1.500422818999823
+              }
+            ],
+            "alla_godkanda": true
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "kvarter300-svf-soltimmar",
+          "namn": "SVF och soltimmar, kvarter 300x300 m (serversidan av GPU-provet)",
+          "status": "ok",
+          "tid_s": {
+            "median": 5.032545419999906,
+            "min": 4.778546772000027,
+            "max": 5.394263502000058,
+            "n": 5,
+            "alla": [
+              4.778547,
+              5.032545,
+              4.979021,
+              5.394264,
+              5.210067
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 58.5,
+            "rss_okning_mb": 27.0,
+            "tracemalloc_topp_mb": 5.7
+          },
+          "avvikelse": null,
+          "extra": {
+            "celler": 90000,
+            "riktningar": 64,
+            "svf_min": 0.22114527795444577,
+            "soltimmar_max_h": 12.0
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "demokvarter-liten",
+          "namn": "Demokvarteret (liten): bygg + dagsljus + vatten, tom cache",
+          "status": "ok",
+          "tid_s": {
+            "median": 11.42093408300002,
+            "min": 10.83074531699981,
+            "max": 11.56817113299985,
+            "n": 3,
+            "alla": [
+              11.420934,
+              10.830745,
+              11.568171
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 146.4,
+            "rss_okning_mb": 114.9,
+            "tracemalloc_topp_mb": 7.48
+          },
+          "avvikelse": null,
+          "extra": {
+            "varld_s": 1.852,
+            "dagsljus_s": 9.231,
+            "dagsljus_jobb": 54,
+            "vatten_s": 0.318,
+            "lage": "liten (2 m-celler, 64 riktningar)"
+          },
+          "uppvarmning": 1
+        }
+      ]
+    },
+    "luft": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "L4-punktkalla",
+          "namn": "L4: punktkälla mot analytisk lösning, 48x28x16",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.11058445499998015,
+            "min": 0.11004575699985253,
+            "max": 0.11122834000002513,
+            "n": 5,
+            "alla": [
+              0.110046,
+              0.11042,
+              0.110584,
+              0.111228,
+              0.110793
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 87.9,
+            "rss_okning_mb": 56.5,
+            "tracemalloc_topp_mb": 17.48
+          },
+          "avvikelse": {
+            "varde": 0.06559012842915708,
+            "enhet": "relativt fel",
+            "grans": 0.1,
+            "godkand": true,
+            "beskrivning": "största relativa fel mot analytisk punktkälla (anisotrop diffusion), gräns 10 %",
+            "matt": {
+              "l2_rel": 0.011287308775603891
+            }
+          },
+          "extra": {
+            "celler": 21504,
+            "massbalans_rel_fel": 2.5947022308514534e-11
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "L5-dualitet",
+          "namn": "L5: adjungerad dualitet, 24x12x10",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.06127032800009147,
+            "min": 0.0607352910001282,
+            "max": 0.06168608799998765,
+            "n": 5,
+            "alla": [
+              0.061098,
+              0.06127,
+              0.061339,
+              0.061686,
+              0.060735
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 71.3,
+            "rss_okning_mb": 39.8,
+            "tracemalloc_topp_mb": 2.28
+          },
+          "avvikelse": {
+            "varde": 0.0,
+            "enhet": "relativt fel",
+            "grans": 1e-08,
+            "godkand": true,
+            "beskrivning": "dualitet framåt mot adjungerad (gräns 1e-8)",
+            "matt": {}
+          },
+          "extra": {
+            "celler": 2880
+          },
+          "uppvarmning": 1
+        }
+      ]
+    },
+    "buller": {
+      "status": "kord",
+      "skal": null,
+      "fall": [
+        {
+          "id": "helkedja-300m",
+          "namn": "Hela kedjan scen -> operatorlager, 300 m, 20 mottagare",
+          "status": "ok",
+          "tid_s": {
+            "median": 7.392466559000013,
+            "min": 7.146813274000124,
+            "max": 7.842001859999982,
+            "n": 3,
+            "alla": [
+              7.392467,
+              7.842002,
+              7.146813
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.5,
+            "rss_topp_mb": 1174.0,
+            "rss_okning_mb": 1142.5,
+            "tracemalloc_topp_mb": 993.05
+          },
+          "avvikelse": {
+            "varde": 0.005242661108383118,
+            "enhet": "dB",
+            "grans": 0.4721100655245004,
+            "godkand": true,
+            "beskrivning": "klustringens största fel mot oklustrad beräkning, mot garanterad felgräns",
+            "matt": {}
+          },
+          "extra": {
+            "mottagare": 20,
+            "kallor": 300,
+            "par": 6000,
+            "banor": 21902,
+            "markning": "Skiss – ej för beslut"
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "nord2000-tvastrale",
+          "namn": "Nord2000-kärnan: plan mark mot tvåstrålesumma, 180 profiler",
+          "status": "ok",
+          "tid_s": {
+            "median": 0.22839281500000652,
+            "min": 0.15040607399987493,
+            "max": 0.335899339999969,
+            "n": 5,
+            "alla": [
+              0.150406,
+              0.16392,
+              0.228393,
+              0.30399,
+              0.335899
+            ]
+          },
+          "minne": {
+            "rss_start_mb": 31.6,
+            "rss_topp_mb": 35.8,
+            "rss_okning_mb": 4.2,
+            "tracemalloc_topp_mb": 0.4
+          },
+          "avvikelse": {
+            "varde": 0.009766186316472414,
+            "enhet": "dB",
+            "grans": 0.02,
+            "godkand": true,
+            "beskrivning": "största avvikelse mot analytisk tvåstrålesumma, 25-315 Hz, d 40-600 m (gräns satt av benchmarken; testsviten använder 0,005 dB vid d = 100 m)",
+            "matt": {}
+          },
+          "extra": {
+            "profiler": 180,
+            "band": 12
+          },
+          "uppvarmning": 1
+        },
+        {
+          "id": "nord2000-rl18-18",
+          "namn": "Nord2000-testfallen RL 18-18 (grupp N, 84 fall)",
+          "status": "hoppas_over",
+          "skal": "kräver lokal källmapp: testsvit/N_nord2000 ligger inte i det publika repot (se docs/buller/kallor.md); fallen körs av tests/buller/test_testsvit_n.py"
+        }
+      ]
+    }
+  }
+}

@@ -1688,6 +1688,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_demo(subparsers)
 
+    from benchmark.cli import registrera as registrera_benchmark
+
+    registrera_benchmark(subparsers)
+
     from lantmateriet.cli import registrera as registrera_lantmateriet
 
     registrera_lantmateriet(subparsers)
@@ -1824,6 +1828,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from luft.cli import kor as kor_luft
 
         return kor_luft(args)
+    if args.kommando == "benchmark":
+        from benchmark.cli import kor as kor_benchmark
+
+        return kor_benchmark(args)
     if args.kommando == "demo":
         from demovarld.cli import kor as kor_demo
 

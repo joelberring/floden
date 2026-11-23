@@ -79,6 +79,7 @@ Enter avslutar, Esc avbryter, Backsteg tar bort senaste punkten, Delete tar bort
 | `#/om` | Om beräkningarna: modulerna och *Kontroll av beräkningarna* (A1–A9) |
 | `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om beräkningarna* |
 | `#/forvaltning` | Visas bara när inloggning är på och kontoservern har data för kontot |
+| `#/prov/webgpu` | Prov av WebGPU-skuggarna mot serverns facit (`GET /api/prov/webgpu/fall`); ingen länk i menyn, bara superadmin med inloggning, öppen lokalt. Skissläge (f32). Se `docs/WEBGPU-ARKITEKTUR.md` 5 |
 
 Menyn är densamma på alla sidor och blir en *Meny*-knapp under 1100 px. Inget i gränssnittet visar
 hakparentes eller påhittade tal; ett test (`tests/webb/test_klient_platshallare.py`,

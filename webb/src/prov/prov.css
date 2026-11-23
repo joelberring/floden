@@ -1,0 +1,16 @@
+/* Provsidan #/prov/webgpu. Använder temats variabler; ingen egen färgpalett. */
+.prov { max-width: var(--f-sidbredd); margin: 0 auto; padding: 32px var(--f-marginal) 64px; }
+.prov h2.etikett { margin-top: 32px; }
+.prov-skiss { border-left: 4px solid var(--f-varning); background: var(--f-yta-dampad); padding: 12px 16px; }
+.prov-ingen-webgpu, .prov-fel, .prov-forbjuden { border-left: 4px solid var(--f-varning); padding: 12px 16px; background: var(--f-yta-dampad); }
+.prov-kontroller { display: flex; flex-wrap: wrap; gap: 16px 32px; margin: 16px 0; }
+.prov-falt-rad { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.prov-falt-rad input { min-height: var(--f-mal-yta); min-width: 120px; padding: 0 8px; font: inherit; }
+.prov-knappar { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
+.prov-knappar button[disabled] { opacity: 0.45; cursor: not-allowed; }
+.prov-tabell { border-collapse: collapse; width: 100%; font-size: 14px; }
+.prov-tabell th, .prov-tabell td { border-bottom: 1px solid var(--f-linje); padding: 8px 12px 8px 0; text-align: left; vertical-align: top; }
+.prov-tabell tr.prov-over td:last-child { color: var(--f-varning); font-weight: 600; }
+.prov-sma, .prov-falt { color: var(--f-text-dampad); font-size: 12px; }
+.prov-fall { padding-left: 20px; }
+.prov-problem { color: var(--f-varning); }
