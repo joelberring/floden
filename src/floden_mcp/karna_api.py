@@ -30,7 +30,7 @@ from shapely.geometry import Polygon, box
 from floden_mcp.belagg import belagg, enhet_for, varde_med_belagg
 from floden_mcp.karta import rendera_karta
 from gemensamt.hash import sha256_fil
-from gemensamt.manifest import hamta_kodversion
+from gemensamt.manifest import visningsversion
 from karna.analyslosare import LosarFel, lista_losare
 from karna.geometri import GeometriFel, las_byggnader, las_terrang
 from karna.ritat import HOJD_MAX_M, RitatFel
@@ -136,7 +136,7 @@ class FlodenTjanst:
     @property
     def kodversion(self) -> str:
         if self._kodversion is None:
-            self._kodversion = hamta_kodversion(self.rot)
+            self._kodversion = visningsversion(self.rot)
         return self._kodversion
 
     def _kravs_projekt(self, projekt: str) -> None:

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -200,6 +203,28 @@ def hamta_kodversion(repo_rot: str | Path | None = None) -> str:
         return sha
     except (OSError, subprocess.CalledProcessError):
         return "okand"
+
+
+_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+
+
+def kort_commit_ur_miljo(miljo: Mapping[str, str] | None = None) -> str | None:
+    """Commiten avbildningen byggdes från (`FLODEN_COMMIT`, satt av publiceringsflödet) som kort
+    sha (högst 12 tecken, som `hamta_kodversion`), eller None om variabeln saknas eller inte är en
+    sha. Ett värde som inte ser ut som en sha används aldrig, så att fel text inte hamnar i en
+    kartas sidfot."""
+    env = os.environ if miljo is None else miljo
+    varde = (env.get("FLODEN_COMMIT") or "").strip().lower()
+    return varde[:12] if _COMMIT_RE.match(varde) else None
+
+
+def visningsversion(
+    repo_rot: str | Path | None = None, miljo: Mapping[str, str] | None = None
+) -> str:
+    """Versionen som visas för människor (kartornas sidfot): `FLODEN_COMMIT` när den finns, annars
+    git-revisionen (`hamta_kodversion`). I avbildningen finns ingen git, så utan `FLODEN_COMMIT`
+    stod det annars "okand"."""
+    return kort_commit_ur_miljo(miljo) or hamta_kodversion(repo_rot)
 
 
 def skapa_manifest(

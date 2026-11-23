@@ -230,6 +230,69 @@ class Register:
             self.notera(c, "projekt-skapat", None, f"projekt={projekt_id}")
         return projekt_id
 
+    def projekt_finns(self, projekt_id: str) -> bool:
+        """Finns projektet i registret? (Utan att säga något om vem som får se det.)"""
+        with self.db.transaktion() as c:
+            rad = c.execute("SELECT 1 FROM projekt WHERE id = ?", (projekt_id,)).fetchone()
+        return rad is not None
+
+    def organisationer_for_konto(self, konto_id: str) -> list[str]:
+        """Id:n på organisationerna kontot är medlem i (sorterade)."""
+        with self.db.transaktion() as c:
+            rader = c.execute(
+                "SELECT DISTINCT organisation_id FROM medlemskap WHERE konto_id = ?"
+                " ORDER BY organisation_id",
+                (konto_id,),
+            ).fetchall()
+        return [str(r["organisation_id"]) for r in rader]
+
+    def registrera_projekt_for_konto(
+        self, konto_id: str, organisation_id: str, namn: str, forvaltning_id: str | None = None
+    ) -> tuple[str, bool]:
+        """Serverkommandot (`floden projekt skapa`): ett projekt i organisationen med
+        kontot som utredare. Returnerar `(projekt_id, nytt)`.
+
+        Samma namn i samma organisation ger det befintliga projektet (kommandot kan köras om).
+        Kontots roll höjs till `utredare` men sänks aldrig. Det här är ett kommando på servern, inte
+        en åtgärd i webben, och därför prövas ingen utförare: kontot ska finnas och inte vara
+        spärrat, och organisationen ska finnas. Händelserna har bara id:n."""
+        with self.db.transaktion() as c:
+            konto = c.execute(
+                "SELECT sparrad FROM konto WHERE id = ?", (konto_id,)
+            ).fetchone()
+            if not konto or konto["sparrad"] is not None:
+                raise RegisterFel("Okänt eller spärrat konto")
+            if not c.execute(
+                "SELECT 1 FROM organisation WHERE id = ?", (organisation_id,)
+            ).fetchone():
+                raise RegisterFel("Okänd organisation")
+            rad = c.execute(
+                "SELECT id FROM projekt WHERE organisation_id = ? AND namn = ?",
+                (organisation_id, namn.strip()),
+            ).fetchone()
+            nytt = rad is None
+            if rad is None:
+                projekt_id = _ny_id()
+                c.execute(
+                    "INSERT INTO projekt (id, organisation_id, forvaltning_id, namn, skapad)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (projekt_id, organisation_id, forvaltning_id, namn.strip(), self.nu()),
+                )
+                self.notera(c, "projekt-skapat", None, f"projekt={projekt_id} via=serverkommando")
+            else:
+                projekt_id = str(rad["id"])
+            c.execute(
+                "INSERT INTO projektbehorighet (konto_id, projekt_id, roll, kalla, beviljad_av,"
+                " skapad) VALUES (?, ?, 'utredare', 'manuell', 'serverkommando', ?)"
+                " ON CONFLICT (konto_id, projekt_id) DO UPDATE SET roll = 'utredare',"
+                " kalla = 'manuell', beviljad_av = 'serverkommando'",
+                (konto_id, projekt_id, self.nu()),
+            )
+            self.notera(
+                c, "projektroll-beviljad", konto_id, f"projekt={projekt_id} roll=utredare"
+            )
+        return projekt_id, nytt
+
     # --- behörighet -------------------------------------------------------------------------
 
     def _far_administrera(self, c: sqlite3.Connection, utforare: str, organisation_id: str) -> bool:

@@ -20,7 +20,7 @@ services:
     build: .
     restart: unless-stopped
     # Minnestak för en CX23/CAX11 (4 GB): Floden 3 GB, resten till Caddy och systemet. Tunga körningar ska gå till
-    # arbetarna (S5), inte hit.
+    # arbetarna (S5k), inte hit.
     mem_limit: 3g
     environment:
       FLODEN_TILLAT_UTAN_INLOGGNING: ${FLODEN_TILLAT_UTAN_INLOGGNING:-0}

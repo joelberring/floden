@@ -1030,3 +1030,60 @@ Svar (200):
 **Fel:** 400 för tom eller ogiltig JSON, saknat `omrade_id`, okänd `artprofil`, tal utanför intervallen och fel från
 lösaren (för många fläckar eller celler, `LosarFel`); 404 okänt projekt eller sparat scenario; 401 inte inloggad (när
 inloggning är på). **Behörighet:** som K40 (projektet i `omrade_id` kräver minst `lasare` när inloggning är på).
+
+## K46 – Geografi `floden-geografi/v1` (v1)
+
+Registrerat 2026-11-23 (Joels beslut "geografi först", `docs/ARKITEKTUR-DRIFT.md` 0b). K44 och K45 är ekologins
+(`docs/BESLUT.md` 2026-11-23) och används inte här. En geografi är ett kartlagt område som projekt byggs i: en **giltig
+kärna** (hela området där alla villkor nedan gäller) och en **buffert** runt den. Projekten delar geografins lager och
+låser dess version.
+
+**Skrivs av** `floden geografi mappa <geografi-id>` (`src/geografi/mappa.py`, `src/geografi/modell.py`). **Läses av**
+`floden projekt skapa --geografi <id>@<version>` (`src/kommuner/projekt.py`) och `floden geografi visa <id>@<version>`.
+Geografin definieras i kommunfilen (`[geografier.<id>]` i `data/kommuner/<kommun>.toml`, `docs/KOM-IGANG.md`).
+
+**Mappar** under geo-roten (förval `data/lokal/geo`):
+
+```text
+<geo-rot>/<id>/<version>/manifest.json   manifestet (detta kontrakt), ingen tid, inga nycklar, inga sökvägar
+<geo-rot>/<id>/<version>/oppenhet.toml   K38, följer lagrens öppenhet
+<geo-rot>/_lager/<sha256>/               ett lager, adresserat med trädhashen över sina filer (delas mellan versioner)
+```
+
+Trädhashen är sha256 över sorterade rader `<sha256 av filen>  <relativ sökväg>` (en per fil, åtskilda av radbrytning); dolda filer, `oppenhet.toml` och körloggar (`run.json`, K0: starttid och körtid) ingår
+inte. Två versioner med samma innehåll i ett lager pekar på samma mapp (lagras en gång).
+
+Manifest (JSON, nycklarna sorterade, UTF-8):
+
+| Fält | Typ | Enhet | Innehåll |
+| --- | --- | --- | --- |
+| `kontrakt` | text | | `"floden-geografi/v1"` |
+| `id`, `version`, `namn`, `kommun` | text | | Id (`[a-z][a-z0-9-]*`), version (`v1`, `v2` ...), visningsnamn, kommunens id |
+| `koordinater` | objekt | | `publicering_epsg` (kommunens), `intern_epsg` (3011), `skalfel_langd_procent`, `skalfel_yta_procent` (mätt i kärnans mitt) |
+| `karna_3011` | `[x0, y0, x1, y1]` | m, EPSG:3011 | Den giltiga kärnan |
+| `gransen_3011` | `[x0, y0, x1, y1]` | m, EPSG:3011 | Yttre gräns (kärnan plus vald buffert): data finns överallt inom den |
+| `buffert` | objekt | m | `dagsljus_paverkansradie_m` (= `hojd_max_m / tan(h_min_grader)`), `skyfall_tillrinning_krav_m` (avstånd från kärnan till tillrinningsområdets yttersta cell), `vald_m`, `max_m`, `tillrinning_nar_kanten` (bool: sant betyder att bufferten är för liten) |
+| `parametrar` | objekt | | `hojd_max_m`, `h_min_grader`, `upplosning_m`, `ruta_storlek_m` (500), `byggnadskalla` |
+| `lager.k1_rutnat` | objekt | | `sha256` (trädhash), `rutor` (`mm_<E>_<N>`), `filer` (`fil`, `sha256`): K1 v2-rutor med DTM (`mark.tif`), DSM/takhöjd, byggnader och markklass |
+| `lager.radata` | objekt | | `sha256`, `lantmateriet_manifest_sha256`, `filer`: Lantmäteriets filer och kommunens byggnader (så att ett projekt kan beskära en egen ruta) |
+| `forberakningar` | objekt | | `terrang_karna` (höjdspann, lägsta punkt), `tillrinning` (`cell_m`, `celler`, `yta_m2`, `krav_buffert_m`, `nar_kanten`), `sankgraf` (text: inte förberäknad; byggs och cachas av kärnan, K22, vid första körningen) |
+| `kallor` | objekt | | Licens och anmärkning per källa (`lantmateriet`, `byggnader`) |
+| `motivering_karna` | text | | Varför kärnan valdes |
+| `oppen_for_mcp` | bool | | Sant bara om mappningen gjordes med `--villkor-kontrollerade` |
+| `varningar` | lista av text | | T.ex. tillrinning som når kanten vid största bufferten |
+
+**Buffertregler.** Dagsljus: påverkansradien `hojd_max_m / tan(h_min_grader)` (60 m och 5 grader ger 686 m).
+Skyfall: hela tillrinningsområdet uppströms kärnan, ur höjdmodellen (D8 med fyllning av sänkor, nedsamplad till
+`tillrinning_cell_m`). Bufferten är den större; når tillrinningsområdet kanten av det hämtade området vidgas området
+(högst `max_buffert_m`), och räcker inte det står det som varning. Kärnan är giltig när alla projekt i den får full
+tillrinning och skuggor utifrån; ett projekt som sticker utanför kärnan får en varning, inget fel.
+
+**Öppenhet (K38).** Lagret `radata` är alltid stängt för MCP. Det härledda (`k1_rutnat`, versionens `oppenhet.toml`) är
+stängt tills mappningen gjorts med `--villkor-kontrollerade`; en ny version behövs för att ändra det.
+
+**Version och projekt.** En version ändras aldrig; ny mappning ger ny version (`--version v2`). Ett projekt
+(`projekt.json`, `floden-projekt/v1`) bär `geografi` (`id@version`) och `geografi_manifest_sha256` och låser därmed
+versionen. `las_manifest` kontrollerar att varje fil i lagren har sin sha256 och stoppar om något ändrats.
+
+**Fel:** geografi eller version som saknas, lager vars sha256 inte stämmer och manifest med fel kontrakt ger `GeografiFel`
+(CLI: slutkod 4 med en rad som säger vad som ska göras).

@@ -536,6 +536,8 @@ STANDARD_DATAMAPPAR = ["data/lokal"]
 
 
 STANDARD_RAPPORTMAPP = "data/lokal/rapporter"
+STANDARD_PROJEKTMAPP = "data/lokal/projekt"
+"""Kommunprojekten (`floden projekt skapa`); deras `fragor/` syns i frågelistan."""
 
 
 def _rapportmapp(konfig_fil: Path, rapportmapp: str | Path | None) -> Path:
@@ -583,6 +585,7 @@ def _skapa_fragetjanst(
         cachemapp=abs_(cachemapp or webb.get("cachemapp", STANDARD_CACHEMAPP)),
         korningsmapp=abs_(korningsmapp or webb.get("korningsmapp", STANDARD_KORNINGSMAPP)),
         demomapp=abs_(webb.get("demomapp", STANDARD_DEMOMAPP)),
+        projektrot=abs_(STANDARD_PROJEKTMAPP),
     )
 
 
@@ -2916,11 +2919,20 @@ class FlodenApiApp:
                     )
         analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in)
         if analys_projekt is not None and self.konto.aktiv:
-            # Som projektets övriga API: en uttrycklig projektroll krävs, inte bara inloggning.
-            kontroll = self.konto.kraver_projektbehorighet(req, analys_projekt, minst="lasare")
-            if not kontroll.tillaten:
-                assert kontroll.svar is not None
-                return kontroll.svar
+            if (req.sokvag.rstrip("/") or "/") in BERAKNINGS_SOKVAGAR:
+                # Beräkningarna (`/api/kor|risk|rutt`) sparar inget: läsare räcker. Saknad roll
+                # ger 404, som för körningar: ett projekt-id får inte gå att pröva sig fram till.
+                konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
+                if konto_id is None or not self.konto.har_roll(konto_id, analys_projekt, "lasare"):
+                    return _utan_cors(
+                        _json_svar(404, {"fel": f"Okänt område '{analys_projekt}'.", "status": 404})
+                    )
+            else:
+                # Som projektets övriga API: en uttrycklig projektroll krävs, inte bara inloggning.
+                kontroll = self.konto.kraver_projektbehorighet(req, analys_projekt, minst="lasare")
+                if not kontroll.tillaten:
+                    assert kontroll.svar is not None
+                    return kontroll.svar
         status, headers, kropp = self.hantera_forfragan(verb, ra_sokvag, kropp_in)
         ut = list(headers.items())
         if self.konto.aktiv:
@@ -2936,7 +2948,11 @@ class FlodenApiApp:
             "/api/analys/bifurkationer",
             "/api/analys/intervall",
             "/api/analys/svf-intervall",
+<<<<<<< HEAD
             "/api/analys/ekologi",
+=======
+            *BERAKNINGS_SOKVAGAR,
+>>>>>>> f3862e2 (Etapp 3: geografi först (K46), floden geografi mappa, projekt i geografin, scenario som diff, projektbehörighet på rutter och MCP, commit i kartans sidfot)
         ):
             return None
         try:
@@ -2944,9 +2960,16 @@ class FlodenApiApp:
         except (UnicodeDecodeError, ValueError, RecursionError):
             return None
         omrade_id = payload.get("omrade_id") if isinstance(payload, Mapping) else None
-        if isinstance(omrade_id, str) and self.projekt.ar_projekt(omrade_id):
+        if isinstance(omrade_id, str) and (
+            self.projekt.ar_projekt(omrade_id) or self._registrerat_projekt(omrade_id)
+        ):
             return omrade_id
         return None
+
+    def _registrerat_projekt(self, projekt_id: str) -> bool:
+        """Finns `projekt_id` i kontoregistret? (Då har det roller, det är inget öppet område.)"""
+        register = self.konto.register
+        return register is not None and bool(register.projekt_finns(projekt_id))
 
     def _statisk(
         self, sokvag: str, bara_huvud: bool
@@ -2972,6 +2995,10 @@ class FlodenApiApp:
 
 
 _logg = logging.getLogger(__name__)
+
+
+BERAKNINGS_SOKVAGAR = ("/api/kor", "/api/risk", "/api/rutt")
+"""Beräkningar som tar `omrade_id` i kroppen och inte sparar något: projektroll `lasare` räcker."""
 
 
 def _utan_cors(

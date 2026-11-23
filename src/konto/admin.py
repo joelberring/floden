@@ -7,6 +7,7 @@ Mönster från O-Tids `scripts/account-superadmin.ts`: superadmin sätts bara me
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -29,6 +30,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "skapa-forvaltning": ["organisation", "namn"],
         "mappa-grupp": ["organisation", "forvaltning", "grupp"],
         "forbered-konto": ["epost"],
+        "konto-id": ["epost"],
         "ge-superadmin": ["konto"],
         "gor-organisationsadmin": ["konto", "organisation"],
         "skapa-projekt": ["organisation", "namn"],
@@ -55,6 +57,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(r.mappa_grupp(a.organisation, a.forvaltning, a.grupp))
     elif a.kommando == "forbered-konto":
         print(r.forbered_konto(a.epost))
+    elif a.kommando == "konto-id":
+        k = r.konto_via_epost(a.epost)
+        if k is None:
+            print("Inget konto med den adressen. Logga in en gång eller kör forbered-konto.", file=sys.stderr)  # noqa: E501
+            return 1
+        print(k.id)
     elif a.kommando == "ge-superadmin":
         r.ge_superadmin(a.konto)
         print("ok")
