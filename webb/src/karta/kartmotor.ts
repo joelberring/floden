@@ -13,6 +13,7 @@ import maplibregl from "maplibre-gl";
 import type { Utbredning } from "../fragor-typer";
 import { swerefTillWgs84, wgs84TillSweref } from "../sweref";
 import type { Punkt, Ring } from "./geom";
+import { overfallTillGeoJson, MAT_I_FALT, type OverfallPunkt } from "./overfall";
 import type { Pekare } from "./ritverktyg";
 
 export type RasterKalla =
@@ -89,11 +90,13 @@ export function bildHorn(u: Utbredning): [[number, number], [number, number], [n
 const BYGGNADER = "byggnader";
 const RUTOR = "rutor";
 const RIT = "rit";
+const OVERFALL = "overfall";
 // Lagerordning ovanför rasterlagren, nerifrån.
 const OVERLAGER = [
   "byggnader-fyll",
   "byggnader-kant",
   "rutor-linje",
+  "overfall-punkter",
   "rit-hus-fyll",
   "rit-hus-kant",
   "rit-bort-kant",
@@ -116,6 +119,8 @@ export class Kartmotor {
   private byggnader: VyByggnad[] = [];
   private rutor: Utbredning[] = [];
   private rit: RitVy = TOM_RITVY;
+  private overfall: OverfallPunkt[] = [];
+  private overfallPopup: maplibregl.Popup | null = null;
   private lyssnare: PekarLyssnare | null = null;
   private dragPan = true;
   private readonly slappLyssnare: () => void;
@@ -164,6 +169,7 @@ export class Kartmotor {
 
     this.karta.on("load", () => {
       this.byggOverlager();
+      this.kopplaOverfall();
       this.klar = true;
       for (const f of this.vantande.splice(0)) f();
       this.synkaRaster();
@@ -220,6 +226,7 @@ export class Kartmotor {
     window.removeEventListener("mouseup", this.slappLyssnare);
     window.removeEventListener("blur", this.slappLyssnare);
     this.karta.remove();
+    this.overfallPopup?.remove();
     this.notisEl.remove();
     this.etikettEl.remove();
   }
@@ -282,7 +289,7 @@ export class Kartmotor {
 
   private byggOverlager(): void {
     const k = this.karta;
-    for (const s of [BYGGNADER, RUTOR, `${RIT}-hus`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
+    for (const s of [BYGGNADER, RUTOR, OVERFALL, `${RIT}-hus`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -304,6 +311,12 @@ export class Kartmotor {
       },
     });
     k.addLayer({ id: "rutor-linje", type: "line", source: RUTOR, paint: { "line-color": "#111111", "line-opacity": 0.5, "line-width": 1, "line-dasharray": [4, 3] } });
+    k.addLayer({
+      id: "overfall-punkter",
+      type: "circle",
+      source: OVERFALL,
+      paint: { "circle-radius": 7, "circle-color": "#c2410c", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 },
+    });
     k.addLayer({
       id: "rit-hus-fyll",
       type: "fill",
@@ -373,6 +386,47 @@ export class Kartmotor {
     });
   }
 
+  /** Överfallspunkterna (SWEREF-meter, ur bifurkationsanalysen) som eget lager. */
+  settOverfall(p: OverfallPunkt[]): void {
+    this.overfall = p;
+    this.nar(() => this.synkaOverlager());
+  }
+
+  /** Tänder eller släcker överfallslagret (lagret "Känsliga överfall" i lagerpanelen). */
+  settOverfallStil(stil: { synlig: boolean; opacitet: number }): void {
+    this.nar(() => {
+      const k = this.karta;
+      k.setLayoutProperty("overfall-punkter", "visibility", stil.synlig ? "visible" : "none");
+      k.setPaintProperty("overfall-punkter", "circle-opacity", stil.opacitet);
+      k.setPaintProperty("overfall-punkter", "circle-stroke-opacity", stil.opacitet);
+      if (!stil.synlig) this.overfallPopup?.remove();
+    });
+  }
+
+  /** Hovring och klick på en överfallspunkt visar punktens värden (samma text som panelen). */
+  private kopplaOverfall(): void {
+    const k = this.karta;
+    const visa = (e: maplibregl.MapLayerMouseEvent): void => {
+      const f = e.features?.[0];
+      const text = f?.properties?.beskrivning;
+      if (!f || typeof text !== "string") return;
+      const ruta = document.createElement("div");
+      const rad = document.createElement("div");
+      rad.textContent = text;
+      const not = document.createElement("strong");
+      not.textContent = MAT_I_FALT.charAt(0).toUpperCase() + MAT_I_FALT.slice(1);
+      ruta.append(rad, not);
+      this.overfallPopup?.remove();
+      this.overfallPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, className: "overfall-popup" })
+        .setLngLat((f.geometry as GeoJSON.Point).coordinates as [number, number])
+        .setDOMContent(ruta)
+        .addTo(k);
+    };
+    k.on("mousemove", "overfall-punkter", visa);
+    k.on("click", "overfall-punkter", visa);
+    k.on("mouseleave", "overfall-punkter", () => this.overfallPopup?.remove());
+  }
+
   settRutor(r: Utbredning[]): void {
     this.rutor = r;
     this.nar(() => this.synkaOverlager());
@@ -402,6 +456,7 @@ export class Kartmotor {
         geometry: { type: "Polygon", coordinates: [llRing([[u.x_min, u.y_min], [u.x_max, u.y_min], [u.x_max, u.y_max], [u.x_min, u.y_max]])] },
       })),
     });
+    this.satt(OVERFALL, overfallTillGeoJson(this.overfall));
     const r = this.rit;
     this.satt(`${RIT}-hus`, {
       type: "FeatureCollection",

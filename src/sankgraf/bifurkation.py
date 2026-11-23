@@ -215,8 +215,39 @@ def _samla_lov_sadelkanter(
     ]
 
 
+def _takyta_per_lov(graf: SankGraf) -> dict[int, float]:
+    """Takyta (m²) vars regn avvattnas till respektive lövsänka, enligt grafens takvatten.
+
+    Byggnadernas celler ingår inte i sänkgrafen (`BYGGNAD_NOD_ID`), men regnet på taken rinner ned
+    längs fasaderna till marken (`sankgraf.takvatten`) och fyller sänkorna i vattenflödet. Utan
+    det här tillskottet skulle det berörda flödet underskattas där en sänka tar emot takvatten.
+    Tom dict utan takvatten, eller när byggnaderna saknas.
+    """
+    tv = graf.takvatten
+    if tv is None or tv.tom:
+        return {}
+    extra = np.asarray(tv.extra_area_m2, dtype=np.float64)
+    ct = graf.cell_till_nod
+    if extra.shape != ct.shape:
+        return {}
+    traff = (ct >= 0) & (extra > 0.0)
+    if not np.any(traff):
+        return {}
+    ids = ct[traff].astype(np.int64)
+    summa = np.bincount(ids, weights=extra[traff])
+    return {
+        int(nid): float(summa[nid])
+        for nid in np.nonzero(summa)[0].tolist()
+        if nid in graf.noder and graf.noder[nid].ar_lov
+    }
+
+
 def _berakna_uppstroms_avrinningsyta(graf: SankGraf) -> dict[int, float]:
-    """Kumulativ avrinningsyta (m²) som når varje nod (egna löv + uppströms överfall)."""
+    """Kumulativ avrinningsyta (m²) som når varje nod (egna löv + uppströms överfall).
+
+    Inkluderar takyta som avvattnas till lövsänkorna (se `_takyta_per_lov`), som vattenflödet.
+    """
+    tak_per_lov = _takyta_per_lov(graf)
     in_kanter: dict[int, list[int]] = {nid: [] for nid in graf.noder}
     for nid, nod in graf.noder.items():
         if nod.ut_till_id is not None and nod.ut_till_id in in_kanter:
@@ -235,7 +266,10 @@ def _berakna_uppstroms_avrinningsyta(graf: SankGraf) -> dict[int, float]:
             besokta.add(akt)
             lov_summa.update(lov_cache[akt])
             stack.extend(in_kanter.get(akt, ()))
-        ut[nid] = sum(float(graf.noder[lid].avrinningsyta_m2) for lid in lov_summa)
+        ut[nid] = sum(
+            float(graf.noder[lid].avrinningsyta_m2) + tak_per_lov.get(lid, 0.0)
+            for lid in sorted(lov_summa)
+        )
     return ut
 
 

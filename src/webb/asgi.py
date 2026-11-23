@@ -272,7 +272,7 @@ class FlodenAsgiApp:
 
 def skapa_asgi_app(
     *,
-    testsvit_rot: str | Path = "testsvit",
+    testsvit_rot: str | Path | None = None,
     konfig_fil: str | Path = "config.toml",
     fragemappar: Sequence[str | Path] | None = None,
     cachemapp: str | Path | None = None,

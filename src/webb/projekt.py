@@ -16,6 +16,7 @@ om vad som ändrats i kvarteret kommer ur K9-scenariofilerna (`beskrivning`).
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from demovarld.fragor import FRAGA_DAGSLJUS, FRAGA_VATTEN
@@ -90,6 +91,32 @@ class ProjektTjanst:
             return bool(self.fragor.korning_status(korning_id)["status"] == "klar")
         except FlodenWebbFel:
             return False
+
+    @staticmethod
+    def ar_projekt(projekt_id: str) -> bool:
+        """Är `projekt_id` ett projekt som projektsidan känner till (byggt eller inte)?"""
+        return projekt_id == PROJEKT_ID
+
+    def markmodell_mapp(self, projekt_id: str) -> Path:
+        """Projektets K1-mapp (en ruta med `mark.tif`, `markslag.tif`, `byggnader.gpkg` ...).
+
+        Demokvarteret: vattenrutan (fokusområdet), samma K1-ruta som vattenlösaren räknar på.
+        Inget krav på att demokörningarna är klara; bara markmodellen behövs. Okänt projekt eller
+        ingen byggd markmodell ger 404."""
+        if not self.ar_projekt(projekt_id):
+            raise FlodenWebbFel(f"Okänt projekt '{projekt_id}'.", status_kod=404)
+        rot = self.fragor.demomapp
+        rutor = (
+            sorted(p for p in (rot / "vatten" / "bas").glob("mm_*") if (p / "mark.tif").is_file())
+            if rot is not None
+            else []
+        )
+        if len(rutor) != 1:
+            raise FlodenWebbFel(
+                f"Projektet '{projekt_id}' har ingen byggd markmodell. Bygg den med: floden demo",
+                status_kod=404,
+            )
+        return rutor[0]
 
     def finns(self) -> bool:
         delar = self._demo_delar()

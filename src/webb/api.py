@@ -82,7 +82,11 @@ from rutt.parametrar import (
 )
 from rutt.risk import berakna_vag_kumulativ_risk
 from rutt.vagnat import VagKant, VagNat, VagNatFel, VagNod
-from sankgraf.bifurkation import detektera_bifurkationer
+from sankgraf.bifurkation import (
+    STANDARD_K_SIGMA,
+    STANDARD_REFERENSREGN_MM,
+    detektera_bifurkationer,
+)
 from sankgraf.fyllning import statisk_fyllning
 from sankgraf.hierarki import bygg_sankgraf
 from sankgraf.takvatten import med_takvatten_graf
@@ -150,6 +154,68 @@ class LaddatOmrade:
     bas_recept_sha256: str
     kallor: tuple[str, ...]
     bas_graf: SankGraf
+
+
+@dataclass(frozen=True)
+class _K1Markmodell:
+    """Det bifurkationsanalysen behöver ur en K1-mapp: raster, geo och sänkgraf (med takvatten)."""
+
+    mark_z: NDArray[np.float32]
+    osakerhet_z: NDArray[np.float32]
+    markslag: NDArray[np.uint8]
+    geo: GeoTransformInfo
+    brytlinjer: tuple[BrytlinjePost, ...]
+    oppningar: tuple[OppningPost, ...]
+    bas_graf: SankGraf
+
+
+def _las_k1_markmodell(indata: Path, *, takvatten_mapp: Path | None = None) -> _K1Markmodell:
+    """Läser en K1-mapp (`mark.tif`, `osakerhet.tif`, `markslag.tif`, valfria gpkg) och bygger
+    sänkgrafen. Med `takvatten_mapp` (K1 v2-ruta) tas byggnaderna ur rutans `byggnader.gpkg`, som i
+    vattenlösaren (`sankgraf.fyllning.kor_statisk_k1_mapp`); annars ur grafens markslag."""
+    mark_raw, geo = las_geotiff(indata / "mark.tif")
+    osak_raw, _ = las_geotiff(indata / "osakerhet.tif")
+    slag_raw, _ = las_geotiff(indata / "markslag.tif")
+    mark_z = np.asarray(mark_raw, dtype=np.float32)
+    osak_z = np.asarray(osak_raw, dtype=np.float32)
+    markslag = np.asarray(slag_raw, dtype=np.uint8)
+    bryt_fil = indata / "brytlinjer.gpkg"
+    brytlinjer = tuple(las_brytlinjer_fran_gpkg(bryt_fil)) if bryt_fil.is_file() else ()
+    opp_fil = indata / "oppningar.gpkg"
+    oppningar = tuple(las_oppningar_fran_gpkg(opp_fil)) if opp_fil.is_file() else ()
+    graf = bygg_sankgraf(
+        mark_z, osak_z, markslag, geo, brytlinjer=brytlinjer, oppningar=oppningar
+    )
+    return _K1Markmodell(
+        mark_z=mark_z,
+        osakerhet_z=osak_z,
+        markslag=markslag,
+        geo=geo,
+        brytlinjer=brytlinjer,
+        oppningar=oppningar,
+        bas_graf=med_takvatten_graf(graf, takvatten_mapp),
+    )
+
+
+def _tolka_tal(payload: Mapping[str, Any], namn: str, standard: float) -> float:
+    """Ett valfritt tal ur JSON-kroppen: ändligt och minst 0, annars 400 med ett svenskt fel.
+
+    Text och sant/falskt godtas inte som tal (`"2"` och `true` är fel, inte 2 och 1), och
+    `NaN`/`Infinity`, som Pythons JSON-läsare släpper igenom, avvisas."""
+    if namn not in payload or payload[namn] is None:
+        return standard
+    varde = payload[namn]
+    if isinstance(varde, bool) or not isinstance(varde, int | float):
+        raise FlodenWebbFel(f"Fältet '{namn}' ska vara ett tal.")
+    try:
+        tal = float(varde)
+    except OverflowError as exc:
+        raise FlodenWebbFel(f"Fältet '{namn}' är för stort för att vara ett tal.") from exc
+    if not math.isfinite(tal):
+        raise FlodenWebbFel(f"Fältet '{namn}' ska vara ett ändligt tal, inte NaN eller oändligt.")
+    if tal < 0.0:
+        raise FlodenWebbFel(f"Fältet '{namn}' får inte vara negativt (fick {tal:g}).")
+    return tal
 
 
 def _json_svar(status_kod: int, payload: Mapping[str, Any]) -> tuple[int, dict[str, str], bytes]:
@@ -551,7 +617,7 @@ class FlodenApiApp:
     def __init__(
         self,
         *,
-        testsvit_rot: str | Path = "testsvit",
+        testsvit_rot: str | Path | None = None,
         konfig_fil: str | Path = "config.toml",
         fragemappar: Sequence[str | Path] | None = None,
         cachemapp: str | Path | None = None,
@@ -567,14 +633,15 @@ class FlodenApiApp:
         self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
         self._kartverktyg: KartverktygTjanst | None = None
         self._vy3d: Vy3dTjanst | None = None
-        self.testsvit_rot = Path(testsvit_rot)
         self.konfig_fil = Path(konfig_fil)
+        self.testsvit_rot = _testsvitrot(self.konfig_fil, testsvit_rot)
         self.konto = konto if konto is not None else _skapa_konto(self.konfig_fil)
         self.klientmapp = _klientmapp(self.konfig_fil, klientmapp)
         self._fragekonfig = (fragemappar, cachemapp, korningsmapp)
         self._fragor: FragaTjanst | None = None
         self._lock = threading.Lock()
         self._omrade_cache: dict[str, LaddatOmrade] = {}
+        self._projektmodell_cache: dict[tuple[str, str, int], _K1Markmodell] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
 
     @property
@@ -708,21 +775,8 @@ class FlodenApiApp:
 
         indata = fall.mapp / "indata"
         try:
-            mark_raw, geo = las_geotiff(indata / "mark.tif")
-            osak_raw, _ = las_geotiff(indata / "osakerhet.tif")
-            slag_raw, _ = las_geotiff(indata / "markslag.tif")
-            mark_z = np.asarray(mark_raw, dtype=np.float32)
-            osak_z = np.asarray(osak_raw, dtype=np.float32)
-            markslag = np.asarray(slag_raw, dtype=np.uint8)
-
-            bryt_fil = indata / "brytlinjer.gpkg"
-            brytlinjer = tuple(las_brytlinjer_fran_gpkg(bryt_fil)) if bryt_fil.is_file() else ()
-
-            opp_fil = indata / "oppningar.gpkg"
-            oppningar = tuple(las_oppningar_fran_gpkg(opp_fil)) if opp_fil.is_file() else ()
-
-            regn_fil = indata / "regn.csv"
-            regn_rader = las_regn_csv(regn_fil)
+            modell = _las_k1_markmodell(indata)
+            regn_rader = las_regn_csv(indata / "regn.csv")
             regn_tid = tuple(float(r[0]) for r in regn_rader)
             regn_int = tuple(float(r[1]) for r in regn_rader)
 
@@ -731,15 +785,6 @@ class FlodenApiApp:
                 bas_sha = sha256_fil(recept_fil)
             else:
                 bas_sha = sha256_bytes(omrade_id.encode("utf-8"))
-
-            bas_graf = bygg_sankgraf(
-                mark_z,
-                osak_z,
-                markslag,
-                geo,
-                brytlinjer=brytlinjer,
-                oppningar=oppningar,
-            )
         except (K1FormatFel, SankGrafFel, OSError) as exc:
             raise FlodenWebbFel(
                 f"Kunde inte ladda område '{omrade_id}': {exc}",
@@ -749,21 +794,46 @@ class FlodenApiApp:
         laddat = LaddatOmrade(
             omrade_id=omrade_id,
             fall=fall,
-            mark_z=mark_z,
-            osakerhet_z=osak_z,
-            markslag=markslag,
-            geo=geo,
-            brytlinjer=brytlinjer,
-            oppningar=oppningar,
+            mark_z=modell.mark_z,
+            osakerhet_z=modell.osakerhet_z,
+            markslag=modell.markslag,
+            geo=modell.geo,
+            brytlinjer=modell.brytlinjer,
+            oppningar=modell.oppningar,
             regn_tid_s=regn_tid,
             regn_intensitet_mm_h=regn_int,
             bas_recept_sha256=bas_sha,
             kallor=DEFAULT_KALLOR,
-            bas_graf=med_takvatten_graf(bas_graf),
+            bas_graf=modell.bas_graf,
         )
         with self._lock:
             self._omrade_cache[omrade_id] = laddat
         return laddat
+
+    def ladda_projektmodell(self, projekt_id: str) -> _K1Markmodell:
+        """Projektets egen markmodell (K1-mappen), cachad tills filen ändras.
+
+        Oberoende av testsviten. Okänt projekt eller saknad markmodell ger 404; behörigheten
+        kontrolleras av anroparen (`hantera_http`)."""
+        mapp = self.projekt.markmodell_mapp(projekt_id)
+        nyckel = (projekt_id, str(mapp), (mapp / "mark.tif").stat().st_mtime_ns)
+        with self._lock:
+            cachad = self._projektmodell_cache.get(nyckel)
+        if cachad is not None:
+            return cachad
+        try:
+            modell = _las_k1_markmodell(mapp, takvatten_mapp=mapp)
+        except (K1FormatFel, SankGrafFel, OSError) as exc:
+            raise FlodenWebbFel(
+                f"Kunde inte ladda markmodellen för projektet '{projekt_id}': {exc}",
+                status_kod=500,
+            ) from exc
+        with self._lock:
+            self._projektmodell_cache = {
+                k: v for k, v in self._projektmodell_cache.items() if k[0] != projekt_id
+            }
+            self._projektmodell_cache[nyckel] = modell
+        return modell
 
     def halsa(self) -> dict[str, Any]:
         """Svar för `GET /api/halsa`."""
@@ -892,7 +962,7 @@ class FlodenApiApp:
             raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
         try:
             payload = json.loads(kropp_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
             raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
         if not isinstance(payload, Mapping):
             raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
@@ -900,9 +970,13 @@ class FlodenApiApp:
         if not isinstance(omrade_id, str) or not omrade_id.strip():
             raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
 
-        k_sigma = float(payload.get("k_sigma", 2.0))
-        referensregn_mm = float(payload.get("referensregn_mm", 100.0))
-        omrade = self.ladda_omrade(omrade_id)
+        k_sigma = _tolka_tal(payload, "k_sigma", STANDARD_K_SIGMA)
+        referensregn_mm = _tolka_tal(payload, "referensregn_mm", STANDARD_REFERENSREGN_MM)
+        # Ett projekt (t.ex. demokvarteret) läses ur sin egen markmodell; övriga id är testsviten.
+        if self.projekt.ar_projekt(omrade_id):
+            omrade: _K1Markmodell | LaddatOmrade = self.ladda_projektmodell(omrade_id)
+        else:
+            omrade = self.ladda_omrade(omrade_id)
 
         punkter = detektera_bifurkationer(
             omrade.bas_graf,
@@ -2133,11 +2207,34 @@ class FlodenApiApp:
                 exc.status_kod, {"fel": str(exc), "status": exc.status_kod}
             )
             return status, list(headers.items()), kropp
+        analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in)
+        if analys_projekt is not None and self.konto.aktiv:
+            # Som projektets övriga API: en uttrycklig projektroll krävs, inte bara inloggning.
+            kontroll = self.konto.kraver_projektbehorighet(req, analys_projekt, minst="lasare")
+            if not kontroll.tillaten:
+                assert kontroll.svar is not None
+                return kontroll.svar
         status, headers, kropp = self.hantera_forfragan(verb, ra_sokvag, kropp_in)
         ut = list(headers.items())
         if self.konto.aktiv:
             ut = [(k, v) for k, v in ut if not k.lower().startswith("access-control-")]
         return status, ut, kropp
+
+    def _projekt_for_analys(self, verb: str, sokvag: str, kropp: bytes) -> str | None:
+        """Projektet en analys (`POST /api/analys/...`) gäller, om `omrade_id` är ett projekt.
+
+        Analyserna har projektet i kroppen, inte i sökvägen, så `_projekt_krav` når dem inte.
+        Kroppen som inte går att tolka lämnas åt endpointen att avvisa (400)."""
+        if verb != "POST" or (sokvag.rstrip("/") or "/") != "/api/analys/bifurkationer":
+            return None
+        try:
+            payload = json.loads(kropp.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError):
+            return None
+        omrade_id = payload.get("omrade_id") if isinstance(payload, Mapping) else None
+        if isinstance(omrade_id, str) and self.projekt.ar_projekt(omrade_id):
+            return omrade_id
+        return None
 
     def _statisk(
         self, sokvag: str, bara_huvud: bool
@@ -2203,6 +2300,21 @@ def _skapa_konto(konfig_fil: Path) -> KontoAdapter:
     return KontoAdapter(konto_konf)
 
 
+REPO_ROT = Path(__file__).resolve().parents[2]
+"""Repots rot: `src/webb/api.py` ligger två nivåer ner. I Docker är det `/app`."""
+
+
+def _testsvitrot(konfig_fil: Path, testsvit_rot: str | Path | None) -> Path:
+    """Testsvitens rot. Utan eget val: `testsvit` bredvid konfigurationsfilen, annars i repots rot.
+
+    Aldrig relativt arbetskatalogen, så att servern hittar sina områden oavsett var den startas
+    (som `klientmapp`). Ett uttryckligt värde används som det är."""
+    if testsvit_rot is not None:
+        return Path(testsvit_rot)
+    rot = konfig_fil.resolve().parent if konfig_fil.is_file() else REPO_ROT
+    return rot / "testsvit"
+
+
 def _klientmapp(konfig_fil: Path, klientmapp: str | Path | None) -> Path | None:
     """Mappen med den byggda klienten, om `index.html` finns där (annars serveras ingen klient)."""
     rot = konfig_fil.resolve().parent
@@ -2219,7 +2331,7 @@ def skapa_http_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     *,
-    testsvit_rot: str | Path = "testsvit",
+    testsvit_rot: str | Path | None = None,
     konfig_fil: str | Path = "config.toml",
     fragemappar: Sequence[str | Path] | None = None,
     cachemapp: str | Path | None = None,

@@ -25,6 +25,7 @@ import {
   sparaScenario,
   taBortScenario,
   type BifurkationAnalysSvar,
+  type BifurkationsPunktPost,
   type Kontroll,
   type PlanPost,
   type ProjektInfo,
@@ -34,6 +35,7 @@ import { infogaPunkter } from "./karta/formedit";
 import { btaUppskattning, yta, type Punkt } from "./karta/geom";
 import { Kartmotor, TOM_RITVY, type RasterLager, type RitVy, type VyByggnad } from "./karta/kartmotor";
 import { LagerLista } from "./karta/lager";
+import { OVERFALL_LAGER_ID, overfallBeskrivning, overfallLager, ritadeOverfall, MAT_I_FALT } from "./karta/overfall";
 import { monteraLagerpanel } from "./karta/lagerpanel";
 import { PlanDok } from "./karta/plandok";
 import { webGpuSkissStatus } from "./gpu/webgpuMotor";
@@ -92,6 +94,8 @@ interface Sida {
   wmsFel: string | null;
   vy3d: { avmontera(): void; uppdatera?(): void } | null;
   ritaPanel: () => void;
+  /** Överfallspunkterna från senaste analysen (lagret `ana:overfall`). */
+  overfall: BifurkationsPunktPost[];
 }
 
 let s: Sida | null = null;
@@ -227,6 +231,7 @@ function byggSida(container: HTMLElement, p: ProjektSvar, info: ProjektInfo): vo
     wmsFel: null,
     vy3d: null,
     ritaPanel: () => undefined,
+    overfall: [],
   };
   const sida = s;
 
@@ -460,7 +465,7 @@ function formateraBifurkationHtml(svar: BifurkationAnalysSvar): string {
       : `<ul class="enkel-lista">${instabila
           .map(
             (p) =>
-              `<li>Nod ${p.nod_id} (E ${Math.round(p.overfall_x)}, N ${Math.round(p.overfall_y)}): marginal ${p.marginal_m.toFixed(3)} m, berör ${Math.round(p.paverkad_volym_m3)} m³ — <strong>mät in i fält</strong></li>`,
+              `<li>${esc(overfallBeskrivning(p))} — <strong>${MAT_I_FALT}</strong></li>`,
           )
           .join("")}</ul>`;
   return `<p><strong>2D-behov:</strong> ${andelPct} % av ytan (${f.antal_noder_2d} av ${f.antal_noder_totalt} sänkor). <strong>Instabila överfall:</strong> ${svar.antal_instabila} st.</p>${lista}`;
@@ -477,6 +482,7 @@ async function korBifurkationsKontroll(): Promise<void> {
     const svar = await hamtaBifurkationer(PROJEKT_ID);
     if (s !== sida) return;
     ut.innerHTML = formateraBifurkationHtml(svar);
+    visaOverfallILager(sida, svar);
   } catch (e) {
     if (s !== sida) return;
     const msg = e instanceof Error ? e.message : String(e);
@@ -484,6 +490,15 @@ async function korBifurkationsKontroll(): Promise<void> {
   } finally {
     if (s === sida && knapp) knapp.disabled = false;
   }
+}
+
+/** Överfallspunkterna som eget lager i 2D-kartan (kan tändas och släckas i lagerpanelen). */
+function visaOverfallILager(sida: Sida, svar: BifurkationAnalysSvar): void {
+  const punkter = ritadeOverfall(svar.punkter);
+  sida.overfall = punkter;
+  sida.lager.registrera(overfallLager(punkter.length));
+  sida.ritaPanel();
+  synka();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -614,6 +629,11 @@ function rasterLista(sida: Sida, motor: "a" | "b"): RasterLager[] {
   return ut;
 }
 
+/** Är något beräkningsresultat (före, efter, skillnad) tänt? Överfallslagret räknas inte. */
+function harSynligtResultat(sida: Sida): boolean {
+  return sida.lager.iGrupp("resultat").some((l) => l.synlig && l.id.startsWith("res:"));
+}
+
 function resultatSynligt(id: string, motor: "a" | "b", panel: boolean): boolean {
   const delat = t.lage === "svep" || t.lage === "sidavid";
   if (!delat) return panel;
@@ -641,12 +661,18 @@ function synka(): void {
   }
   const byggnaderLager = sida.lager.hamta("geo:byggnader");
   const byggStil = { synlig: Boolean(byggnaderLager?.synlig), opacitet: byggnaderLager?.opacitet ?? 1 };
-  const medVarden = [...sida.lager.iGrupp("resultat")].some((l) => l.synlig) && t.visaTak;
+  const medVarden = harSynligtResultat(sida) && t.visaTak;
   for (const m of [sida.a, sida.b]) {
     if (!m) continue;
     m.settByggnadStil({ ...byggStil, opacitet: medVarden ? byggStil.opacitet * 0.25 : byggStil.opacitet });
     m.settByggnader(byggnaderAtt());
     m.settNotis(notis());
+  }
+  const overfallLagret = sida.lager.hamta(OVERFALL_LAGER_ID);
+  for (const m of [sida.a, sida.b]) {
+    if (!m) continue;
+    m.settOverfall(sida.overfall);
+    m.settOverfallStil({ synlig: Boolean(overfallLagret?.synlig), opacitet: overfallLagret?.opacitet ?? 1 });
   }
   const plan = sida.lager.hamta("plan:aktuellt");
   sida.a.settPlanStil({ synlig: Boolean(plan?.synlig), opacitet: plan?.opacitet ?? 1 });
@@ -819,7 +845,7 @@ function notis(): string | null {
   const vy = t.vy;
   const r = vy ? t.resultat.get(vy.korning_id) : undefined;
   const fore = r ? lagerPost(r, vy?.fore_lager ?? null) : null;
-  return fore?.tak_maskat && !t.visaTak && (s as Sida).lager.iGrupp("resultat").some((l) => l.synlig) ? "Ljusgrå yta: tak, inte mark" : null;
+  return fore?.tak_maskat && !t.visaTak && harSynligtResultat(s as Sida) ? "Ljusgrå yta: tak, inte mark" : null;
 }
 
 /** Byggnaderna som ritas: projektets befintliga med ändringarna i förslaget (ändrad höjd, riven). */
@@ -1512,7 +1538,7 @@ function planeraAvlasning(e: number | null, n: number | null): void {
   if (rad) {
     rad.textContent = e === null || n === null ? "Markörens läge visas här." : `E ${Math.round(e).toLocaleString("sv-SE")} · N ${Math.round(n).toLocaleString("sv-SE")}`;
   }
-  if (e === null || n === null || !vy || !t.resultat.has(vy.korning_id) || !(s as Sida).lager.iGrupp("resultat").some((l) => l.synlig)) {
+  if (e === null || n === null || !vy || !t.resultat.has(vy.korning_id) || !harSynligtResultat(s as Sida)) {
     avlasningSeq += 1;
     visaAvlasning(null);
     return;
