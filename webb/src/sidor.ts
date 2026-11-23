@@ -60,7 +60,7 @@ export function sidaInloggning(inloggningsHref: string): string {
         alt="Målning av en bäck som rinner genom grönska mot ett ljust gult ljus" />
       <div class="inloggning-text">
         <h1 id="inloggning-rubrik" class="inloggning-namn">Floden</h1>
-        <p class="inloggning-mening">Hantera floden av utredningsfrågor på ett ställe.</p>
+        <p class="inloggning-mening">Hantera floden av utredningsfrågor<br />på&nbsp;ett&nbsp;ställe.</p>
         <div class="inloggning-handling">
           <a class="inloggning-knapp" href="${esc(inloggningsHref)}" data-konto="logga-in">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path><path d="M10 17l5-5-5-5"></path><path d="M15 12H3"></path></svg>
