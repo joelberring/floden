@@ -68,7 +68,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
           <legend>Skede</legend>
           <div class="flode-segment" id="fr-skede">
             <button type="button" data-skede="skiss">Skiss</button>
-            <button type="button" data-skede="planunderlag">Planunderlag</button>
+            <button type="button" data-skede="planunderlag">Planunderlag (inte än)</button>
           </div>
           <p class="flode-liten flode-dampad" id="fr-skede-not" hidden>Rapporten för planunderlag finns inte än. Beräkningarna körs som vanligt.</p>
         </fieldset>
@@ -86,7 +86,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
         <div class="flode-rad-slut">
           <p class="flode-liten flode-dampad" id="fr-kor-not" role="status"></p>
           <p class="flode-liten flode-dampad" id="fr-gpu"></p>
-          <button type="button" class="flode-knapp svart stor" id="fr-kor">Kör beräkningarna</button>
+          <button type="button" class="flode-knapp svart stor" id="fr-kor" aria-describedby="fr-kor-not">Kör beräkningarna</button>
         </div>
       </aside>
     </div>`;
@@ -136,14 +136,14 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     const valda = valdaPoster();
     const analyser = info ? analyserFor(info, valda) : [];
     el("fr-sammanfattning").innerHTML = `
-      <dt>Valda frågor</dt><dd>${valda.length}</dd>
+      <dt>Valda frågor (alla ämnen)</dt><dd>${valda.length}</dd>
       <dt>Beräkningar</dt><dd>${analyser.length > 0 ? esc(analyser.map((a) => a.namn).join(", ")) : "–"}</dd>
       <dt>Uppskattad tid</dt><dd>${esc(tidText)}</dd>`;
     const kor = el<HTMLButtonElement>("fr-kor");
     const nu = arPagaende(t);
     const not = el("fr-kor-not");
     let hinder = "";
-    if (!t.scenario) hinder = `Rita först ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a>. Utan förslag visar Resultat projektets färdiga beräkningar.`;
+    if (!t.scenario) hinder = `Rita först ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a>. Utan förslag visar <a href="${flodeAdress(projekt, "resultat")}">Resultat</a> projektets färdiga beräkningar.`;
     else if (analyser.length === 0) hinder = "Välj minst en fråga som Floden kan räkna på (skyfall eller dagsljus och sol).";
     if (avtappningFel) hinder = "Rätta avtappningen först.";
     kor.disabled = nu || hinder !== "";

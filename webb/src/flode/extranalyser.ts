@@ -16,7 +16,8 @@ import {
 export function extraAnalyserHtml(): string {
   return `
     <details class="flode-extra" id="rs-extra">
-      <summary class="flode-liten">Fler analyser: MKN-intervall (PM10) och bullerskärmar</summary>
+      <summary class="flode-liten">Fristående räknare: MKN-intervall (PM10) och bullerskärmar</summary>
+      <p class="flode-ruta varning">Egna värden: fälten nedan är förifyllda med exempeltal och hör inte till projektet eller ditt förslag. Skriv in dina egna värden innan du läser av något.</p>
       <div class="flode-extra-block">
         <p class="flode-liten flode-dampad"><strong>Luft · MKN-intervall (PM10)</strong> – ange minst 24 timvärden (µg/m³, lokalt bidrag).</p>
         <textarea id="rs-mkn-serie" rows="2" class="flode-inmatning" aria-label="Timvärden PM10">32, 38, 45, 52, 60, 58, 49, 41, 35, 30, 28, 26, 30, 36, 44, 55, 62, 57, 48, 40, 34, 31, 29, 27</textarea>
