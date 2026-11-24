@@ -757,34 +757,26 @@ class TestTackning(unittest.TestCase):
             self.assertGreater(float(np.max(np.abs(krokt.markeffekt_db - rak))), 0.01)
 
     def test_plan_mark_i_segment_med_refraktion_ar_delmodell_1(self) -> None:
-        """Plan mark delad i segment: vikterna summerar till 1 och ΔL₃ = ΔL₁, även med vind."""
+        """Plan mark delad i segment: vikterna summerar till 1 och ΔL₃ = ΔL₁, även med motvind."""
         p = _profil([0.0, 20.0, 60.0, 100.0], [0.0, 0.0, 0.0, 0.0], 200.0, 0.3, 1.5)
         geo = terranggeometri(p)
-        for a, s_a in ((0.4, 0.1), (0.1, 0.0)):  # nedåtbrytning; uppåt blir kantsegmenten övergång
+        for a, s_a in ((0.4, 0.1), (0.1, 0.0), (-0.3, 0.0)):
             atmosfar = self._atmosfar(a=a, s_a=s_a)
             resultat = delmodell3(self.f, geo, atmosfar)
             vantat = markeffekt_plan_mark_db(self.f, 100.0, 0.3, 1.5, 200.0, 0.0, atmosfar)
             np.testing.assert_allclose(np.sum(resultat.vikt, axis=0), 1.0, rtol=0, atol=1e-9)
             np.testing.assert_allclose(resultat.markeffekt_db, vantat, rtol=0, atol=1e-9)
 
-    def test_kil_som_inte_gar_att_bilda_kan_skjutas_upp(self) -> None:
-        """Motvind över en dal: första segmentet blir övergångssegment utan möjlig kil.
-
-        Utan `uppskjut_fel` ges `BullerFel`; med den blir ΔL₃ NaN i de berörda banden och
-        beskedet sparas, medan vikterna och w_con räknas i alla band.
-        """
+    def test_dal_i_motvind_ar_korbar(self) -> None:
+        """Motvind över en dal: geometriskt konkava segment behåller h_rel = 1 (P-S5)."""
         dal = terranggeometri(
             _profil([0.0, 40.0, 100.0, 160.0, 200.0], [0.0, -2.0, -3.0, -2.0, 0.0], 200.0, 0.5, 1.5)
         )
         motvind = self._atmosfar(a=-0.566)  # motvind ca 3 m/s på 10 m höjd
-        with self.assertRaises(BullerFel):
-            delmodell3(self.f, dal, motvind)
-        resultat = delmodell3(self.f, dal, motvind, uppskjut_fel=True)
-        berorda = [b for b, besked in enumerate(resultat.fel) if besked is not None]
-        self.assertGreater(len(berorda), 0)
-        for b in range(self.f.shape[0]):
-            self.assertEqual(bool(np.isnan(resultat.markeffekt_db[b])), b in berorda)
+        resultat = delmodell3(self.f, dal, motvind)
+        self.assertTrue(bool(np.all(np.isfinite(resultat.markeffekt_db))))
         self.assertTrue(bool(np.all(np.isfinite(resultat.summa_konkav_vikt))))
+        self.assertTrue(all(f is None for f in resultat.fel))
 
     def test_overgangshojd_bis_ror_bara_overgangssegment(self) -> None:
         prim = delmodell3(self.f, self.geo, STILLA)

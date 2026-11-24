@@ -186,8 +186,9 @@ def skarmstralar_tva(
 
     Vinklarna: θ_1S = 2π − θ₁₁ − β₁₂ − Δθ_S och θ_2R = θ₂₂ − β₂₂ + Δθ_R. θ_1R och θ_2S mäts
     enligt `vinkelregel`. Med förvalet mäts θ_1R mot T₂ (θ₁₂ mot T₂, + Δθ_M) när T₂ ligger över
-    linjen T₁–R och annars mot R; θ_2S mot T₁ (− Δθ_M) när T₁ ligger över linjen T₂–S och annars
-    mot S. Fallet "annars" är bara definierat för räta strålar och ger `BullerFel` med refraktion.
+    linjen T₁–R och annars mot R (med Δθ ur DirectRay T₁–R och CalcEqSSP(h″_SCR1, h_Rv) enligt
+    avsnitt 5.5.2 och 5.7.3); θ_2S mot T₁ (− Δθ_M) när T₁ ligger över linjen T₂–S och annars mot S
+    (med −Δθ ur DirectRay S–T₂ och CalcEqSSP(h_Sv, h″_SCR2)).
 
     Δℓ (ekv. 307) räknas alltid mot grannkanten: för T₁ med R_S, R_M, θ_1S och θ_1R mot T₂, för
     T₂ med R_M, R_R, θ_2S mot T₁ och θ_2R, i den rättade formen i
@@ -265,22 +266,34 @@ def skarmstralar_tva(
     forsta_over = vertikalt_avstand_m(x_t2, z_t2, geo.x_s_m, geo.z_s_m, x_t1, z_t1) > 0.0
     mot_t2 = andra_over and vinkelregel == "avsnitt_5_7_3"
     mot_t1 = forsta_over and vinkelregel == "avsnitt_5_7_3"
-    if atmosfar.har_refraktion and not (mot_t2 and mot_t1):
-        raise BullerFel(
-            "Delmodell 6 med refraktion: θ_1R mot mottagaren eller θ_2S mot källan (en skärmtopp "
-            "under linjen från den andra, eller vinkelregeln ekv_227_228) är bara definierat för "
-            "räta strålar; Δθ för strålarna T₁–R och S–T₂ ges inte av AV 1106/07 ekv. (226)."
+    if mot_t2:
+        theta_1r = theta_1r_mot_t2
+    else:
+        dtheta_1r = 0.0
+        if atmosfar.har_refraktion:
+            profil_1r = calc_eq_ssp(h_bis1, h_rv, atmosfar)
+            strale_1r = direkt_strale(
+                d2 + d3, h_scr1, h_rb, profil_1r.xi_per_m, profil_1r.c0_m_s, uppat
+            )
+            dtheta_1r = strale_1r.vinkelandring_rad
+        theta_1r = (
+            _vinkel_mottagarsida_rad(x_t1, z_t1, kil_1.beta_mottagarsida_rad, geo.x_r_m, geo.z_r_m)
+            + dtheta_1r
         )
-    theta_1r = (
-        theta_1r_mot_t2
-        if mot_t2
-        else _vinkel_mottagarsida_rad(x_t1, z_t1, kil_1.beta_mottagarsida_rad, geo.x_r_m, geo.z_r_m)
-    )
-    theta_2s = (
-        theta_2s_mot_t1
-        if mot_t1
-        else _vinkel_kallsida_rad(x_t2, z_t2, kil_2.beta_mottagarsida_rad, geo.x_s_m, geo.z_s_m)
-    )
+    if mot_t1:
+        theta_2s = theta_2s_mot_t1
+    else:
+        dtheta_2s = 0.0
+        if atmosfar.har_refraktion:
+            profil_2s = calc_eq_ssp(h_sv, h_bis2, atmosfar)
+            strale_2s = direkt_strale(
+                d1 + d2, h_sb, h_scr2, profil_2s.xi_per_m, profil_2s.c0_m_s, uppat
+            )
+            dtheta_2s = strale_2s.vinkelandring_rad
+        theta_2s = (
+            _vinkel_kallsida_rad(x_t2, z_t2, kil_2.beta_mottagarsida_rad, geo.x_s_m, geo.z_s_m)
+            - dtheta_2s
+        )
     kanter = TvaKanter(
         beta_1_rad=kil_1.beta_rad,
         theta_1s_rad=theta_1s,

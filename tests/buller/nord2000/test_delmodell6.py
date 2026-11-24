@@ -401,10 +401,22 @@ class TestSkarmstralar(unittest.TestCase):
         self.assertTrue(bool(np.all(niva_med[8:] > niva_rak[8:])))
         self.assertTrue(bool(np.all(niva_mot[8:] < niva_rak[8:])))
 
-    def test_refraktion_med_topp_under_linjen_ger_bullerfel(self) -> None:
+    def test_refraktion_med_topp_under_linjen_matchar_delmodell4(self) -> None:
         profil = _tva_tunna(3.0, 1.0)
-        with self.assertRaises(BullerFel):
-            d6.skarmstralar_tva(profil, FORSTA, ANDRA, atmosfar_ur_vader(Vader(vind_m_s=3.0)))
+        for vind in (-3.0, 3.0):
+            atm = atmosfar_ur_vader(Vader(vind_m_s=vind))
+            st6 = d6.skarmstralar_tva(profil, FORSTA, ANDRA, atm)
+            st4 = d4.skarmstralar(profil, FORSTA, atm)
+            self.assertFalse(st6.andra_over_linjen_t1_r)
+            self.assertAlmostEqual(st6.kanter.theta_1r_rad, st4.kil.theta_r_rad, places=12)
+        # Speglad profil: T₁ under linjen T₂–S ger θ_2S lika med delmodell 4 för T₂.
+        profil_speg = _tva_tunna(0.5, 3.0)
+        for vind in (-3.0, 3.0):
+            atm = atmosfar_ur_vader(Vader(vind_m_s=vind))
+            st6 = d6.skarmstralar_tva(profil_speg, FORSTA, ANDRA, atm)
+            st4 = d4.skarmstralar(profil_speg, ANDRA, atm)
+            self.assertFalse(st6.forsta_over_linjen_t2_s)
+            self.assertAlmostEqual(st6.kanter.theta_2s_rad, st4.kil.theta_s_rad, places=12)
 
     def test_skarmeffekt_fritt_falt_ar_resultatets_skarmdel(self) -> None:
         profil = _tva_tunna(2.0, 3.0)
