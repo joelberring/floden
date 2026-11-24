@@ -33,9 +33,12 @@ import math
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from buller.testfall.kurvig_vag import KurvigVagGeometri
 
 from buller.emission.direktivitet import Kallriktning
 from buller.emission.modell import Trafikflode, Vagforhallanden
@@ -61,6 +64,8 @@ from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Terrangprofil
 _VADERFALT = frozenset(Vader.__dataclass_fields__)
 _VILLKOR_MOTTAGARHOJD = "mottagare_hojd_m"
 _VINDRIKTNING = "vindriktning_grader"  # bladens φ, i fallets [vader_tillagg]
+_VINDRIKTNING_NORR = "vindriktning_grader_fran_norr"
+TYP_KURVIG_VAG = "nord2000_kurvig_vag"
 VILLKOR_REGELVARIANT = "regelvariant"
 
 
@@ -384,6 +389,49 @@ def berakna_rak_vag(
     return Berakning(totaler, spektrum, direktivitet=riktad is not None, anmarkning=anmarkning)
 
 
+def _berakna_kurvig_vag_serie(
+    karna: P2PKarna,
+    emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
+    fall: N2kFall,
+    serie: Facitserie,
+    a_vagning_db: Flyttal,
+    geometri: KurvigVagGeometri,
+    *,
+    direktivitet: bool = True,
+) -> Berakning:
+    """Beräknar en serie för ett kurvig-väg-fall (`nord2000_kurvig_vag`)."""
+    from buller.testfall.kurvig_vag import TjockSkarmTyp, berakna_kurvig_vag
+
+    fall_serie = _fall_med_villkor(fall, serie)
+    if fall_serie.vader is None:
+        raise BullerFel(f"Fall {fall.id} saknar väder.")
+    pos = str(fall.ovrigt.get("mottagarposition", "")).strip()
+    if not pos:
+        raise BullerFel(f"Fall {fall.id} saknar [ovrigt] mottagarposition.")
+    skarm_typ: TjockSkarmTyp = "vall" if fall.id.endswith("-2") else "byggnad"
+    vindriktning_norr = float(fall.vader_tillagg.get(_VINDRIKTNING_NORR, 315.0))
+    forhallanden = forhallanden_for_fall(fall_serie)
+    if forhallanden is None:
+        forhallanden = Vagforhallanden("DAC", 12.0, lufttemperatur_c=fall_serie.vader.temperatur_c)
+    laeq_db, leq_db = berakna_kurvig_vag(
+        karna,
+        emission,
+        geometri,
+        pos,
+        fall_serie.vader,
+        a_vagning_db,
+        vindriktning_grader_fran_norr=vindriktning_norr,
+        tjock_skarm_typ=skarm_typ,
+        forhallanden=forhallanden,
+        direktivitet=direktivitet,
+    )
+    return Berakning(
+        totalnivaer_db={"LAeq_24h": laeq_db},
+        spektrum_db={"Leq_24h": leq_db},
+        direktivitet=direktivitet,
+    )
+
+
 def kor_fall(
     karna: P2PKarna,
     emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
@@ -394,6 +442,7 @@ def kor_fall(
     a_vagning_db: Flyttal | None = None,
     kravda_storheter: Collection[str] | None = None,
     direktivitet: bool = True,
+    kurvig_vag_geometri: KurvigVagGeometri | None = None,
 ) -> Fallresultat:
     """Kör ett fall och jämför med facit.
 
@@ -420,13 +469,24 @@ def kor_fall(
                 regelverk=facit.regelverk,
                 variant=str(serie.villkor.get(VILLKOR_REGELVARIANT, STANDARDVARIANT)),
             )
-            berakning = berakna_rak_vag(
-                karna,
-                emission,
-                _fall_med_villkor(fall, serie),
-                vagning,
-                direktivitet=direktivitet,
-            )
+            if fall.typ == TYP_KURVIG_VAG and kurvig_vag_geometri is not None:
+                berakning = _berakna_kurvig_vag_serie(
+                    karna,
+                    emission,
+                    fall,
+                    serie,
+                    vagning,
+                    kurvig_vag_geometri,
+                    direktivitet=direktivitet,
+                )
+            else:
+                berakning = berakna_rak_vag(
+                    karna,
+                    emission,
+                    _fall_med_villkor(fall, serie),
+                    vagning,
+                    direktivitet=direktivitet,
+                )
             if berakning.anmarkning and berakning.anmarkning not in anmarkningar:
                 anmarkningar.append(berakning.anmarkning)
             serier.append(
@@ -478,6 +538,7 @@ def kor_alla(
     regler: Avvikelseregler | None = None,
     a_vagning_db: Flyttal | None = None,
     direktivitet: bool = True,
+    kurvig_vag_geometri: KurvigVagGeometri | None = None,
 ) -> list[Fallresultat]:
     """Kör alla Nord2000-fall under `rot` (t.ex. `testsvit/N_nord2000`).
 
@@ -492,6 +553,7 @@ def kor_alla(
             regler=regler,
             a_vagning_db=a_vagning_db,
             direktivitet=direktivitet,
+            kurvig_vag_geometri=kurvig_vag_geometri,
         )
         for fall in hitta_fall(rot)
     ]

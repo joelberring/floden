@@ -23,10 +23,16 @@ import numpy as np
 
 from buller.emission.direktivitet import Kallriktning
 from buller.emission.modell import Trafikflode, Vagforhallanden
+from buller.nord2000.reflektion import (
+    VertikalReflektor,
+    linje_korsar_segment,
+    reflektionskorrektion_db,
+    reflektionspunkt_plan,
+)
 from buller.nord2000.terrang_forenkling import REGLER_TC_101327, forenkla_terrang
 from buller.testfall.excelimport import Celler, _som_tal
 from buller.testfall.korare import Emissionsmodell, EmissionsmodellMedDirektivitet
-from buller.typer import ANTAL_BAND, BullerFel, Flyttal, P2PKarna, Terrangprofil, Vader
+from buller.typer import ANTAL_BAND, TERSBAND_HZ, BullerFel, Flyttal, P2PKarna, Terrangprofil, Vader
 
 TjockSkarmTyp = Literal["byggnad", "vall"]
 
@@ -80,6 +86,7 @@ class KallpunktPlan:
     langd_m: float
     tangent_x: float
     tangent_y: float
+    avstand_till_vagkant_m: float = KORFALTSBREDD_M * 0.5 - AXELHALVA_M
 
 
 def _las_punktblock(celler: Celler, startrad: int) -> tuple[list[Punkt3D], int]:
@@ -252,6 +259,10 @@ def kallpunkter_langs_korfalt(
         # Flytta källan med halva axelbredden mot mottagaren vinkelrätt mot körfältet.
         nx, ny = ty, -tx  # höger normal
         tecken = 1.0 if (mottagare.x_m - x) * nx + (mottagare.y_m - y) * ny >= 0.0 else -1.0
+        # Avstånd vinkelrätt från källan till vägkanten på mottagarsidan (vägbredd 2 × 5 m).
+        avstand_kant = max(
+            0.0, KORFALTSBREDD_M - (tecken * sidoforskjutning_m + axel_forskjutning_m)
+        )
         punkter.append(
             KallpunktPlan(
                 x_m=x + tecken * axel_forskjutning_m * nx,
@@ -260,6 +271,7 @@ def kallpunkter_langs_korfalt(
                 langd_m=ds,
                 tangent_x=tx,
                 tangent_y=ty,
+                avstand_till_vagkant_m=avstand_kant,
             )
         )
     return punkter
@@ -317,21 +329,21 @@ def profil_for_strale(
     def markhojd(d_val: float) -> float:
         return float(np.interp(d_val, d_mark, z_mark))
 
-    # 2. Bestäm vägkantens läge längs strålen (hård mark σ = 20000 fram till vägkant).
-    vagkant_d = min(KORFALTSBREDD_M, dist * 0.5)
-    # Vägkanten på mottagarsidan: uppskatta ur strålens vinkel mot körfältet.
+    # 2. Bestäm vägkantens läge längs strålen (plan, hård vägyta σ = 20000 fram till vägkant).
+    vagkant_d = min(kalla.avstand_till_vagkant_m, dist * 0.5)
     ux = (mottagare.x_m - kalla.x_m) / dist
     uy = (mottagare.y_m - kalla.y_m) / dist
     sin_vinkel = abs(ux * kalla.tangent_y - uy * kalla.tangent_x)
     if sin_vinkel > 1.0e-3:
-        vagkant_d = min((KORFALTSBREDD_M * 0.5 - AXELHALVA_M) / sin_vinkel, dist * 0.5)
+        vagkant_d = min(kalla.avstand_till_vagkant_m / sin_vinkel, dist * 0.5)
 
-    # 3. Lägg in skärmkorsningar (tunn skärm och tjock skärm).
-    # Varje specialpunkt lagras som (d, z, sigma_efter).
-    punkter: list[tuple[float, float]] = list(rensade)
+    # 3. Lägg in vägkant (plan vägyta vid kalla.z_m) och skärmkorsningar.
+    punkter: list[tuple[float, float]] = [
+        p for p in rensade if p[0] <= 1.0e-6 or p[0] >= vagkant_d - 1.0e-3
+    ]
     harda_intervall: list[tuple[float, float]] = [(0.0, vagkant_d)]
     if vagkant_d > 1.0e-3 and vagkant_d < dist - 1.0e-3:
-        punkter.append((vagkant_d, markhojd(vagkant_d)))
+        punkter.append((vagkant_d, kalla.z_m))
 
     # Tunn skärm (3 m hög, lodrät, hård).
     for t, z_topp in _korsningar_med_polylinje(
@@ -445,6 +457,38 @@ def steglangd_for_position_m(position: str) -> float:
     return 50.0
 
 
+def reflektorer_for_kurvig_vag(
+    geo: KurvigVagGeometri, tjock_skarm_typ: TjockSkarmTyp = "byggnad"
+) -> list[VertikalReflektor]:
+    """Bygger vertikala reflektorer för tunn och (vid byggnad) tjock skärm (RL 18-18 s. 10)."""
+    reflektorer: list[VertikalReflektor] = []
+    for i in range(len(geo.tunn_skarm) - 1):
+        a, b = geo.tunn_skarm[i], geo.tunn_skarm[i + 1]
+        if math.hypot(b.x_m - a.x_m, b.y_m - a.y_m) > 1.0e-3:
+            reflektorer.append(
+                VertikalReflektor(
+                    a.x_m, a.y_m, b.x_m, b.y_m, 0.0, a.z_m, reflektionsfaktor_e=1.0, ensidig=False
+                )
+            )
+    if tjock_skarm_typ == "byggnad":
+        for i in range(len(geo.tjock_skarm_topp) - 1):
+            a, b = geo.tjock_skarm_topp[i], geo.tjock_skarm_topp[i + 1]
+            if math.hypot(b.x_m - a.x_m, b.y_m - a.y_m) > 1.0e-3:
+                reflektorer.append(
+                    VertikalReflektor(
+                        a.x_m,
+                        a.y_m,
+                        b.x_m,
+                        b.y_m,
+                        0.0,
+                        a.z_m,
+                        reflektionsfaktor_e=1.0,
+                        ensidig=False,
+                    )
+                )
+    return reflektorer
+
+
 def berakna_kurvig_vag(
     karna: P2PKarna,
     emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
@@ -457,6 +501,7 @@ def berakna_kurvig_vag(
     tjock_skarm_typ: TjockSkarmTyp = "byggnad",
     forhallanden: Vagforhallanden | None = None,
     direktivitet: bool = True,
+    inkludera_reflektioner: bool = True,
 ) -> tuple[float, Flyttal]:
     """Beräknar (LAeq_24h, Leq_24h-spektrum) för ett kurvig-väg-fall i RL 18-18 kap. 3."""
     pos_nyckel = position.split("-")[0]
@@ -476,6 +521,9 @@ def berakna_kurvig_vag(
     riktad = emission if isinstance(emission, EmissionsmodellMedDirektivitet) else None
     if not direktivitet or (riktad is not None and not riktad.stoder_direktivitet):
         riktad = None
+    reflektorer = reflektorer_for_kurvig_vag(geo, tjock_skarm_typ) if inkludera_reflektioner else []
+    frekv = np.asarray(TERSBAND_HZ, dtype=np.float64)
+    c0_m_s = 20.05 * math.sqrt(vader.temperatur_c + 273.15)
 
     energi = np.zeros(ANTAL_BAND, dtype=np.float64)
     for sido in (-KORFALTSBREDD_M * 0.5, KORFALTSBREDD_M * 0.5):
@@ -516,6 +564,106 @@ def berakna_kurvig_vag(
             for j, profil in enumerate(profiler):
                 h_db = np.asarray(karna.overforing_db(profil, vader_lokal), dtype=np.float64)
                 energi += np.power(10.0, (effekt_db[j, :] + h_db) / 10.0)
+
+            # 1:a ordningens reflektioner mot tunn skärm och byggnadsfasader (AV 1106/07 5.20).
+            for ref_idx, ref in enumerate(reflektorer):
+                rg = reflektionspunkt_plan(kp.x_m, kp.y_m, mottagare.x_m, mottagare.y_m, ref)
+                if rg is None:
+                    continue
+                # Blockering av annan vägg på samma eller annan reflektor.
+                blockerad = False
+                for j_idx, annan in enumerate(reflektorer):
+                    if j_idx == ref_idx:
+                        continue
+                    if linje_korsar_segment(
+                        kp.x_m,
+                        kp.y_m,
+                        rg.o_x_m,
+                        rg.o_y_m,
+                        annan.x1_m,
+                        annan.y1_m,
+                        annan.x2_m,
+                        annan.y2_m,
+                    ) or linje_korsar_segment(
+                        rg.o_x_m,
+                        rg.o_y_m,
+                        mottagare.x_m,
+                        mottagare.y_m,
+                        annan.x1_m,
+                        annan.y1_m,
+                        annan.x2_m,
+                        annan.y2_m,
+                    ):
+                        blockerad = True
+                        break
+                if blockerad:
+                    continue
+                d_tot = rg.d1_m + rg.d2_m
+                # Längdviktad vind längs S→O och O→R (AV 1106/07 ekv. 295).
+                v1 = vindkomponent_plan_m_s(
+                    vader.vind_m_s,
+                    vindriktning_grader_fran_norr,
+                    rg.o_x_m - kp.x_m,
+                    rg.o_y_m - kp.y_m,
+                )
+                v2 = vindkomponent_plan_m_s(
+                    vader.vind_m_s,
+                    vindriktning_grader_fran_norr,
+                    mottagare.x_m - rg.o_x_m,
+                    mottagare.y_m - rg.o_y_m,
+                )
+                vader_ref = replace(vader, vind_m_s=(v1 * rg.d1_m + v2 * rg.d2_m) / d_tot)
+                # Direktivitet i riktning från källan mot reflexpunkten O.
+                if riktad is not None:
+                    ox_d, oy_d = rg.o_x_m - kp.x_m, rg.o_y_m - kp.y_m
+                    cos_phi_r = min(
+                        1.0, max(-1.0, (ox_d * kp.tangent_x + oy_d * kp.tangent_y) / rg.d1_m)
+                    )
+                    phi_r = math.acos(cos_phi_r)
+                    psi_r = tuple(
+                        math.atan2(
+                            (mottagare.z_mark_m + mottagare.hojd_over_mark_m) - (kp.z_m + h),
+                            d_tot,
+                        )
+                        for h in hojder
+                    )
+                    eff_ref = riktad.ljudeffekt_db(
+                        trafik_per_korfalt,
+                        kp.langd_m,
+                        period_s,
+                        hojder,
+                        forhallanden,
+                        Kallriktning(phi_r, psi_r),
+                    )
+                else:
+                    eff_ref = effekt_db
+                # Utfälld 2D-profil över plan mark (vägyta + gräsmark).
+                x_r = np.array([0.0, d_tot], dtype=np.float64)
+                z_r = np.array([kp.z_m, mottagare.z_mark_m], dtype=np.float64)
+                sig_r = np.array([SIGMA_MARK_KNSM4], dtype=np.float64)
+                rah_r = np.array([0.0], dtype=np.float64)
+                for j, h in enumerate(hojder):
+                    dlr = reflektionskorrektion_db(
+                        frekv,
+                        c0_m_s,
+                        rg,
+                        ref,
+                        kp.z_m + h,
+                        mottagare.z_mark_m + mottagare.hojd_over_mark_m,
+                    )
+                    if not bool(np.any(np.isfinite(dlr))):
+                        continue
+                    prof_r = Terrangprofil(
+                        x_m=x_r,
+                        z_m=z_r,
+                        flodesresistivitet_kNsm4=sig_r,
+                        rahet_m=rah_r,
+                        kalla_hojd_m=h,
+                        mottagare_hojd_m=mottagare.hojd_over_mark_m,
+                    )
+                    h_r = np.asarray(karna.overforing_db(prof_r, vader_ref), dtype=np.float64)
+                    with np.errstate(over="ignore"):
+                        energi += np.power(10.0, (eff_ref[j, :] + h_r + dlr) / 10.0)
 
     with np.errstate(divide="ignore"):
         leq_db = np.asarray(10.0 * np.log10(energi), dtype=np.float64)
