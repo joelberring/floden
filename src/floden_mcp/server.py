@@ -226,7 +226,7 @@ class Sessionstillstand:
 
 
 UTAN_ROLLKRAV = frozenset(
-    {"session_deklarera", "korlogg_hamta", "metoder_lista", "projekt_lista", "fragekatalog_sok"}
+    {"session_deklarera", "korlogg_hamta", "metoder_lista", "projekt_lista", "fragekatalog_sok", "projekt_skapa"}
 )
 """Verktyg som inte rör ett projekts data: de kräver ingen projektroll (projekt_lista visar bara
 kontots egna projekt, korlogg_hamta bara kontots egna rader)."""
@@ -295,7 +295,7 @@ def bygg_server(
     )
     # Verktygets dataklass (alla öppna i R0) och om det gäller ett projekt.
     klasser: dict[str, DataKlass] = {}
-    utan_projekt = {"session_deklarera", "korlogg_hamta", "metoder_lista"}
+    utan_projekt = {"session_deklarera", "korlogg_hamta", "metoder_lista", "projekt_skapa"}
 
     def _objekt_nekas(argument: Mapping[str, Any], vilket: str, konto: str | None, minst: str) -> str | None:
         """Text om verktyget/resursen pekar på en rapport eller beställning i ett projekt som kontot inte har
@@ -569,6 +569,50 @@ def bygg_server(
     )
     def projekt_lista(modell: Modell = None, roll: Roll = None) -> dict[str, Any]:
         return tjanst.projekt_lista(tillstand.konto)
+
+    @verktyg(
+        "projekt_skapa",
+        "Skapar ett projekt i en mappad geografi (K46), som webbens 'Nytt projekt' och `floden projekt skapa`. "
+        "Kräver inloggning och superadmin, eller organisationsadmin eller ägare i en organisation; du blir "
+        "utredare och skapare. avgransning: GeoJSON-polygon eller [xmin, ymin, xmax, ymax] i EPSG:3011 (en "
+        "polygon räknas som sin omslutande rektangel). Svaret har projekt_id och varningar (till exempel "
+        "'utanför geografins giltiga kärna'); en avgränsning utanför geografins yttre gräns nekas. "
+        "Skriv inga personuppgifter i namnet.",
+    )
+    def projekt_skapa(
+        geografi: Annotated[str, Field(description="Geografi som id@version, t.ex. 'goteborg-test@v1'.")],
+        namn: Annotated[str, Field(description="Projektets namn (högst 120 tecken).")],
+        avgransning: Annotated[
+            dict[str, Any] | list[float] | str,
+            Field(description="GeoJSON-polygon, [xmin, ymin, xmax, ymax] eller samma text som i CLI; EPSG:3011."),
+        ],
+        organisation_synlig: Annotated[
+            bool, Field(description="Dela projektet med organisationen (förval: privat).")
+        ] = False,
+        organisation: Annotated[
+            str | None, Field(description="Organisationens id; krävs om du får skapa i flera.")
+        ] = None,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        from webb.fel import FlodenWebbFel
+
+        konto = tillstand.konto
+        if konto is None:
+            raise ToolError(
+                "Inloggning krävs för att skapa projekt: anslut med en personlig MCP-token eller via "
+                f"Claude-appens koppling (docs/KONTO.md). {_FEL_PREFIX}behorighet"
+            )
+        payload: dict[str, Any] = {
+            "geografi": geografi, "namn": namn, "avgransning": avgransning,
+            "organisation_synlig": organisation_synlig,
+        }  # fmt: skip
+        if organisation is not None:
+            payload["organisation"] = organisation
+        try:
+            return tjanst.app.projekt_skapa.skapa(konto, payload)
+        except FlodenWebbFel as exc:
+            raise ToolError(f"{exc} {_FEL_PREFIX}projekt_skapa_{exc.status_kod}") from exc
 
     @verktyg(
         "projekt_info",

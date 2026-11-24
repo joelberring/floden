@@ -348,6 +348,16 @@ body[data-sida="flode"] a:hover { color: #000; }
 .mat-mer { display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 600px) { .mat-sida { padding: 16px; } .mat-metod { padding: 12px; } }
 
+/* Nytt projekt (#/nytt) och Skapa rapport (steg 5) */
+.flode-nytt .flode-panel { flex: 0 0 380px; }
+.flode-varningar { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; color: #6b4a12; }
+.flode-varningar li { margin-bottom: 6px; }
+.flode-skapa { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; margin-bottom: 8px; border-bottom: 1px solid var(--fl-line); }
+.flode-forlopp { display: flex; flex-direction: column; gap: 6px; }
+.flode-forlopp progress { width: 100%; height: 8px; accent-color: var(--fl-ink); }
+.flode-forlopp p { margin: 0; }
+a.flode-knapp { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.flode-nytt .flode-panel { border-left: 0; border-right: 1px solid var(--fl-line); overflow-y: auto; }
 /* Kompletterande analyser i resultatpanelen (MKN-intervall & bullerskärmar) */
 .flode-extra {
   margin-top: 12px;
