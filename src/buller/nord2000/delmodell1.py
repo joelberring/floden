@@ -159,6 +159,7 @@ def markeffekt_plan_mark_db(
     uppat: Uppatmetod = "exakt",
     ct2_form: Ct2Form = "kvadrat",
     skuggzon: Skuggzonslasning | None = None,
+    koherens_spridningszon: Flyttal | None = None,
 ) -> Flyttal:
     """Funktionen SubModel1: markeffekten ΔL_flat per tersband, AV 1106/07 ekv. (115)–(123).
 
@@ -192,6 +193,7 @@ def markeffekt_plan_mark_db(
             uppat,
             ct2_form,
             Skuggzonslasning() if skuggzon is None else skuggzon,
+            koherens_spridningszon,
         )
     stralar = stralar_plan_mark(avstand_m, h_s, h_r, atm.c_m_s)
     kvot = stralar.r1_m / stralar.r2_m
@@ -200,7 +202,10 @@ def markeffekt_plan_mark_db(
         f = float(f_np)
         z = markimpedans(f, flodesresistivitet_kNsm4)
         q = sfarisk_reflektion(f, stralar.tau2_s, stralar.strykvinkel_rad, z)
-        koherens = koherens_plan_mark(f, avstand_m, h_s, h_r, rahet_m, atm, ct2_form=ct2_form)
+        f_s = 1.0 if koherens_spridningszon is None else float(koherens_spridningszon[i])
+        koherens = koherens_plan_mark(
+            f, avstand_m, h_s, h_r, rahet_m, atm, koherens_spridningszon=f_s, ct2_form=ct2_form
+        )
         fas = cmath.exp(1j * 2.0 * math.pi * f * stralar.gangtidsskillnad_s)
         koherent = abs(1.0 + koherens * kvot * fas * q) ** 2
         inkoherent = (1.0 - koherens**2) * (kvot * inkoherent_reflektion(z)) ** 2
@@ -250,6 +255,7 @@ def _markeffekt_med_refraktion_db(
     uppat: Uppatmetod,
     ct2_form: Ct2Form,
     skuggzon: Skuggzonslasning,
+    koherens_spridningszon: Flyttal | None = None,
 ) -> Flyttal:
     """Delmodell 1 med refraktion eller fluktuerande refraktion, AV 1106/07 ekv. (115)–(122).
 
@@ -325,6 +331,7 @@ def _markeffekt_med_refraktion_db(
             )
         else:
             dtau_ovre = dtau
+        f_s = 1.0 if koherens_spridningszon is None else float(koherens_spridningszon[i])
         koherens = koherens_med_refraktion(
             f,
             avstand_m,
@@ -337,6 +344,7 @@ def _markeffekt_med_refraktion_db(
             stralar.direkt.medelljudhastighet_m_s,
             0.0 if reflekterad is None else reflekterad.strykvinkel_rad,
             c0_mark,
+            koherens_spridningszon=f_s,
             ct2_form=ct2_form,
         )
         r_i = inkoherent_reflektion(z)

@@ -430,7 +430,7 @@ def bygg_dokument(
             dok.stycke(mening)
         dok.stycke(
             "Tabellen visar för varje fråga om den behöver utredas vidare. Frågorna kommer ur "
-            f"frågekatalogen för {r.amne if r.amne == 'skyfall' else 'dagsljus och sol'}."
+            f"frågekatalogen för {({'skyfall': 'skyfall', 'ekologi': 'ekologi'}).get(r.amne, 'dagsljus och sol')}."
         )
     else:
         dok.stycke(
@@ -457,7 +457,7 @@ def bygg_dokument(
     rubrik(1, "2", "Uppdrag och beräkningsfall")
     for k in r.korningar:
         if sbk:
-            if r.amne == "dagsljus":
+            if r.amne in ("dagsljus", "ekologi"):
                 jfr = " ".join(
                     f"Läget {amnestext.lage(r.amne, j['efter'])} jämförs med läget "
                     f"{amnestext.lage(r.amne, j['fore'])}."
@@ -652,7 +652,7 @@ def bygg_dokument(
             "alternativ men inte är granskad för en formell rapport. Bara en människa kan klassa "
             "en metod som 'rapport'."
         )
-    if r.amne == "dagsljus":
+    if r.amne in ("dagsljus", "ekologi"):
         inledning, osak = amnestext.osakerhet(r, sbk, bilaga(1) if sbk else bilref(1))
         if sbk:
             dok.stycke(inledning)

@@ -9,7 +9,7 @@ fält `bestallning`), så att rapporten är självbärande.
 Urvalsregler (i ordning; de är förval som ska granskas av Joel, liksom katalogen):
 
 1. `fragor` (uttryckligt urval av id) ersätter allt nedan; frågorna ska höra till `amnen`.
-2. Annars: frågorna i `amnen` (`dagsljus` = DL, `sol` = SO, `skyfall` = SK, `luft`, `buller`).
+2. Annars: frågorna i `amnen` (`dagsljus` = DL, `sol` = SO, `skyfall` = SK, `ekologi` = EK, `luft`, `buller`).
 3. `villkor` (valfri lista) filtrerar på frågans villkor (som i katalogen; "Alla …" gäller alltid).
 4. Mottagaren filtrerar på frågans typ: planhandläggare alla typer; byggaktör `Föreskrift`, `Lag`,
    `Lag/norm`, `Riktvärde`, `Kommunal riktlinje`, `Verksamhetsriktlinje`, `Vägledning` och `Metod`
@@ -50,11 +50,12 @@ MOTTAGARTEXT: Final[dict[str, str]] = {
     "byggaktor": "byggaktör",
     "granskare": "granskare",
 }
-BESTALLNINGSAMNEN: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "sol", "luft", "buller")
+BESTALLNINGSAMNEN: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "sol", "ekologi", "luft", "buller")
 _AMNE_OMRADE: Final[dict[str, str]] = {
     "skyfall": "skyfall",
     "dagsljus": "dagsljus",
     "sol": "solstudier",
+    "ekologi": "ekologi",
     "luft": "luft",
     "buller": "buller",
 }
@@ -62,6 +63,7 @@ AMNE_TILL_RAPPORTAMNE: Final[dict[str, str]] = {
     "skyfall": "skyfall",
     "dagsljus": "dagsljus",
     "sol": "dagsljus",
+    "ekologi": "ekologi",
     "luft": "luft",
     "buller": "buller",
 }

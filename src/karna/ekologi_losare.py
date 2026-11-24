@@ -159,7 +159,7 @@ class Konnektivitet(Analyslosare):
         "max_flackar och max_celler."
     )
     valfria_indataroller: ClassVar[tuple[str, ...]] = (
-        "artprofil", "nmd", "kand_vatmark", "biotopraster"
+        "artprofil", "nmd", "kand_vatmark", "biotopraster", "geografi"
     )
     utdataroller: ClassVar[tuple[str, ...]] = ("stromtathet", "kansighet", "ekologi")
 
@@ -465,19 +465,55 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     biotop = nv.omfattning == "biotop"
     roll = "biotopraster" if biotop else "nmd"
     fil = k.indata.get(roll)
-    if fil is None:
+    geo_fil = k.indata.get("geografi")
+    if geo_fil is not None and (fil is not None or biotop):
+        raise LosarFel(
+            f"{namn}: ange markunderlaget antingen som indata 'geografi' (K46-manifestet; NMD och VMI "
+            "ur geografins lager) eller som indata 'nmd', inte båda"
+            + (" (biotopnätverk läser bara 'biotopraster')." if biotop else ".")
+        )
+    klasskoder = p.get("biotop_klasskoder")
+    geo_mark = None
+    varningar: list[str] = []
+    if fil is None and geo_fil is None:
         raise LosarFel(
             f"{namn}: nätverket {nv.natverk_id} kräver indata '{roll}'"
             + (
                 " (stadens biotopklasser som heltalsraster; nätverket körs bara lokalt) och "
                 "parametern 'biotop_klasskoder'."
                 if biotop
-                else " (NMD-lager, EPSG:3011; skapas med `python -m data_inlasning.nmd klipp`)."
+                else " (NMD-lager, EPSG:3011; skapas med `python -m data_inlasning.nmd klipp`) eller "
+                "indata 'geografi' (manifestet för en geografi med lager.nmd, K46)."
             )
         )
-    klasskoder = p.get("biotop_klasskoder")
     try:
-        lager = las_nmd(fil) if not biotop else _las_klassraster(fil)
+        if geo_fil is not None:
+            from geografi.markunderlag import las_markunderlag
+            from geografi.modell import GeografiFel
+
+            rutor0 = k.scenario.rutor
+            troskel = max((s_.troskel_m for s_ in nv.scenarier if s_.troskel_m is not None), default=None)
+            if troskel is None:
+                raise LosarFel(f"{namn}: nätverket {nv.natverk_id} har ingen tröskel att sätta kontextbufferten efter.")
+            try:
+                geo_mark = las_markunderlag(
+                    geo_fil,
+                    (
+                        min(r.x_min for r in rutor0),
+                        min(r.y_min for r in rutor0),
+                        max(r.x_max for r in rutor0),
+                        max(r.y_max for r in rutor0),
+                    ),
+                    troskel,
+                    med_vmi=bool(p.get("anvand_vmi")) and k.indata.get("kand_vatmark") is None,
+                )
+            except GeografiFel as exc:
+                raise LosarFel(f"{namn}: {exc}") from exc
+            lager = geo_mark.nmd
+            varningar += geo_mark.varningar
+        else:
+            assert fil is not None  # kontrollerat ovan: fil eller geo_fil finns
+            lager = las_nmd(fil) if not biotop else _las_klassraster(fil)
         if biotop and klasskoder is None:
             raise LosarFel(f"{namn}: biotopnätverk kräver parametern 'biotop_klasskoder'.")
         profiler = {
@@ -489,7 +525,6 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     huvud = nv.scenario()
     profil = profiler[huvud.scenario_id]
     cell = float(p["cellstorlek_m"]) if p["cellstorlek_m"] is not None else lager.cell_m
-    varningar: list[str] = []
     klasser = lager.klasser
     x0, y1 = lager.x_min_m, lager.y_max_m
     if abs(cell - lager.cell_m) > 1e-9:
@@ -519,12 +554,16 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     )
     if p.get("anvand_vmi"):
         vfil = k.indata.get("kand_vatmark")
-        if vfil is None or nv.vmi_klass is None or klasskoder is None:
+        vmi_lager = geo_mark.vmi if geo_mark is not None else None
+        if (vfil is None and vmi_lager is None) or nv.vmi_klass is None or klasskoder is None:
             raise LosarFel(
-                f"{namn}: anvand_vmi kräver indata 'kand_vatmark', ett nätverk med vmi_klass "
-                "och 'biotop_klasskoder'."
+                f"{namn}: anvand_vmi kräver indata 'kand_vatmark' (eller VMI-lager i geografin), ett "
+                "nätverk med vmi_klass och 'biotop_klasskoder'."
             )
-        vm = stampla_pa_grid(las_vmi_mask(vfil), x0, y1, cell, klasser.shape)
+        if vmi_lager is None:
+            assert vfil is not None  # kontrollerat ovan
+            vmi_lager = las_vmi_mask(vfil)
+        vm = stampla_pa_grid(vmi_lager, x0, y1, cell, klasser.shape)
         klasser = np.where(vm & (klasser != hus_kod), np.uint8(klasskoder[nv.vmi_klass]), klasser)
         varningar.append(
             "Känd våtmark ur VMI (äldre inventering, 1981-2005) används som habitat; lagret kan vara inaktuellt."
@@ -609,7 +648,11 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         "total_habitat_area_m2": hr.total_habitat_area_m2, "ECA_m2": hr.eca_m2, "PC": hr.pc,
     }
     natverk_dok["habitatvarianter"] = variant_rader
-    natverk_dok["klassraster"] = {"roll": roll, "cellstorlek_m": cell}
+    natverk_dok["klassraster"] = {
+        "roll": roll if geo_mark is None else "geografi",
+        "cellstorlek_m": cell,
+        **({"markunderlag": geo_mark.som_dict()} if geo_mark is not None else {}),
+    }
     antaganden = list(natverk_dok["antaganden"])
     if iv.ett_scenario:
         antaganden.append("Ett enda scenario i källan: inget källbaserat intervall (intervallet är en punkt).")

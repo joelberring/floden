@@ -31,7 +31,7 @@ from floden_mcp.dataklass import DataKlass, Policy
 from floden_mcp.karna_api import FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, hash_av
 from gemensamt.hash import sha256_bytes, sha256_fil
-from rapport.amnestext import TITEL, bildtext_lagrad, tomvarde_lagrad
+from rapport.amnestext import EKOLOGI_ENHET, TITEL, bildtext_lagrad, tomvarde_lagrad
 from rapport.amnestext import kartrubrik as kartrubrik_text
 from rapport.belaggskalla import BelaggFel, FlodenBelaggKalla
 from rapport.bestallning import (
@@ -59,10 +59,10 @@ from rapport.pastaende import (
 
 KONTRAKT_K33: Final[str] = "K33/v1"
 STANDARD_RAPPORTMAPP: Final[str] = "data/lokal/rapporter"
-AMNEN_NIVA1: Final[tuple[str, ...]] = ("skyfall", "dagsljus")
-"""Ämnen med skissrapport: skyfall (R1) och dagsljus/sol (R2). Ordning enligt Joel 2026-11-22:
+AMNEN_NIVA1: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "ekologi")
+"""Ämnen med skissrapport: skyfall (R1), dagsljus/sol och ekologi (R2). Ordning enligt Joel 2026-11-22:
 skyfall, dagsljus/sol, luft, buller."""
-_AMNESDOMAN: Final[dict[str, str]] = {"skyfall": "vatten", "dagsljus": "dagsljus"}
+_AMNESDOMAN: Final[dict[str, str]] = {"skyfall": "vatten", "dagsljus": "dagsljus", "ekologi": "ekologi"}
 _ID_RE: Final[re.Pattern[str]] = re.compile(r"^r-[0-9a-f]{12}$")
 KART_PX: Final[int] = 560
 TOMVARDE_TEXT: Final[str] = tomvarde_lagrad("skyfall")
@@ -461,7 +461,7 @@ class RapportTjanst:
     def katalog(self) -> Fragekatalog:
         if self._katalog is None:
             fil = self.tjanst.rot / "docs" / "utredningar-stockholm" / "fragor.json"
-            self._katalog = Fragekatalog.las(fil) if fil.is_file() else Fragekatalog.las()
+            self._katalog = Fragekatalog.las_alla(fil) if fil.is_file() else Fragekatalog.las_alla()
         return self._katalog
 
     # ------------------------------------------------------------------ skapa
@@ -505,6 +505,19 @@ class RapportTjanst:
                     f"{', '.join(scenario['efter'])} mot {scenario['fore']} (beställningens "
                     "scenario). Jämförelser anges i frågan ([[jamforelser]], K20)."
                 )
+        antaganden = _antaganden(res, [t["analys"] for t in analyser])
+        if amne == "ekologi":
+            from rapport.ekologibelagg import ekologiantaganden
+
+            antaganden = ekologiantaganden(
+                self.kalla,
+                korning_id,
+                {
+                    t["analys"]: sorted({r["scenario"] for r in t["rader"]})
+                    for t in analyser
+                    if t["losare"] == "ekologi.konnektivitet"
+                },
+            )
         return {
             "korning_id": korning_id,
             "fraga_id": res["fraga_id"],
@@ -522,7 +535,7 @@ class RapportTjanst:
                 for t in analyser
             ],
             "jamforelser": jamforelser,
-            "antaganden": _antaganden(res, [t["analys"] for t in analyser]),
+            "antaganden": antaganden,
             "scenarier": [s["id"] for s in res["scenarier"]],
         }
 
@@ -608,6 +621,7 @@ class RapportTjanst:
                                     "roll",
                                 )
                             }
+                            | ({"enhet": EKOLOGI_ENHET} if amne == "ekologi" else {})
                             | {
                                 "utsnitt": utsnitt,
                                 "rubrik": kartrubrik_text(amne, typ, scen, j["fore"], j["efter"]),
@@ -677,9 +691,20 @@ class RapportTjanst:
                 "metodnotis och ansvarig utredare) kommer i R3."
             )
         if amne not in AMNEN_NIVA1:
+            extra = ""
+            if amne == "luft":
+                extra = (
+                    " Luft har lösaren luft.mkn med belägg för MKN-intervallet (docs/RAPPORTER.md, avsnittet "
+                    "om luft och buller), men ingen rapportmall, inga LU-frågor med belägg och ingen "
+                    "demokörning än."
+                )
+            elif amne == "buller":
+                from rapport.r2_domaner import buller_spar
+
+                extra = f" Spärrat: {buller_spar() or 'inget skäl kvar; rapportmall saknas'}"
             raise RapportFel(
                 f"Ämnet '{amne}' har ingen skissrapport än. Finns: {', '.join(AMNEN_NIVA1)} "
-                "(ordning: skyfall, dagsljus/sol, luft, buller)."
+                f"(ordning: skyfall, dagsljus/sol, ekologi, luft, buller).{extra}"
             )
         if not korningar:
             raise RapportFel("Ange minst en körning (korningar).")
@@ -1072,6 +1097,8 @@ class RapportTjanst:
 
         if r.amne == "dagsljus":
             return self._adresser_dagsljus(r)
+        if r.amne == "ekologi":
+            return self._adresser_ekologi(r)
         ut: list[str] = []
         for k in r.korningar:
             for j in k["jamforelser"]:
@@ -1087,6 +1114,27 @@ class RapportTjanst:
                             for st in ("max", "medel")
                         ]
                     ut += [f"omrade.{m.namn}.skillnad.{j['namn']}.{st}" for st in OMRADESSTATISTIK]
+        return list(dict.fromkeys(ut))
+
+    def _adresser_ekologi(self, r: Rapport) -> list[str]:
+        """Beläggsadresser för ekologi (se `rapport.ekologibelagg` och `belaggskalla.EKOLOGI_MATT`)."""
+        from rapport.belaggskalla import EKOLOGI_MATT
+        from rapport.ekologibelagg import DELTAMATT, NATVERKSPARAMETRAR
+
+        mv = [n.removeprefix("matvarde:") for (_l, n) in EKOLOGI_MATT if n.startswith("matvarde:")]
+        ut: list[str] = []
+        for k in r.korningar:
+            for a in k["analyser"]:
+                if a["losare"] != "ekologi.konnektivitet":
+                    continue
+                for s in a["scenarier"]:
+                    ut += [f"matvarde.{a['analys']}.{s}.{m}" for m in mv]
+                    ut += [f"ekonatverk.{a['analys']}.{s}.{p}" for p in NATVERKSPARAMETRAR]
+                for j in k["jamforelser"]:
+                    if j["analys"] == a["analys"]:
+                        ut += [
+                            f"ekojamforelse.{a['analys']}.{j['fore']}.{j['efter']}.{m}" for m in DELTAMATT
+                        ]
         return list(dict.fromkeys(ut))
 
     def _adresser_dagsljus(self, r: Rapport) -> list[str]:

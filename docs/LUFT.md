@@ -307,6 +307,18 @@ halten i en cell beror på alla källor uppströms. En radie vore ett antagande 
 "är du osäker, välj `None`". Följden är att en K9-ändring ger ett nytt jobb för hela scenariot (ingen lokal
 omräkning), och att luft bara körs på områden som ryms i minnet (mosaik av rutorna, buffertar utöver det).
 
+**`luft.mkn` (tillagd 2026-11-24, K21 oförändrat).** Monotont MKN-intervall för PM10 ur en *given* timserie av lokalt
+haltbidrag: indata `timserie` (CSV `tid,lokal_ug_m3`, timvis), parametrar `bakgrund_ug_m3` (**måste anges**, ingen
+standard: bakgrunden är en källbelagd siffra som frågan anger), `emissionsfaktor_intervall` och
+`depositionsfaktor_intervall` (standard [0,8; 1,25]), `grans_dygn_ug_m3` (50) och `max_dygn_ar` (35). Lösaren skalar
+bidraget med `luft.kanslighet.kor_monoton_mkn_intervall` (samma kod som `POST /api/analys/luft-mkn`) och skriver
+`mkn.json` samt mätvärden i K0-manifestet: `lagst_antal_dygn`, `hogst_antal_dygn`, `arsmedel_lagst_ug_m3`,
+`arsmedel_hogst_ug_m3`, `p90_4_lagst_ug_m3`, `p90_4_hogst_ug_m3` med flera (alla med post i
+`rapport.belaggskalla.MATTKATALOG`, utom flaggorna `klarar_garanterat` och `bryter_garanterat`, som inte är rapporttal).
+Den räknar **inte** fram haltbidraget: `luft.halt` ger bara årsmedel, ingen timserie, så timserien måste komma ur ett
+annat verktyg. Intervallet är en känslighet för två faktorer, inte en statistisk konfidens. En serie som inte är ett helt
+år ger en varning (antal dygn över gränsen gäller då bara perioden). Test: `tests/karna/test_luft_mkn.py`.
+
 ### 10.4 Mätt
 
 Syntetiskt K1 v2-kvarter byggt med markmodellens byggare (`dagsljus.exempelkvarter`, platt mark):

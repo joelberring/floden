@@ -104,9 +104,17 @@ nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt.
 - Webben: steg 4 Resultat, fliken Ekologi: välj habitatnätverk ("Barrskogssamband (Nacka/NMD)"); panelen visar signalart och
   källa på en rad, antaganden och intervallets typ.
 - API: `POST /api/analys/ekologi` med `natverk`; `GET /api/ekologi/natverk` listar nätverk och kommunförval.
-- Lösare: `ekologi.konnektivitet` (K21) med parametern `natverk` och indata `nmd`; exempel i `exempel/fragor/demo_ekologi.toml`.
+- Lösare: `ekologi.konnektivitet` (K21) med parametern `natverk` och markunderlag på ett av två sätt (aldrig båda):
+  - indata `nmd` (en NMD-fil; `exempel/fragor/demo_ekologi.toml`), eller
+  - indata `geografi = ".../<geo-rot>/<id>/<version>/manifest.json"` (K46): lösaren läser `lager.nmd` (och `lager.vmi` med
+    `anvand_vmi`), verifierar lagrens sha256, klipper ut rutorna plus kontextbuffert (nätverkets längsta tröskel, 2-5 km, aldrig
+    utanför lagret) och lägger K9-hus ovanpå som NMD 51. Är geografins buffert kortare än behovet, eller täcker lagret inte
+    bufferten, varnar lösaren. Markunderlagets ursprung (`ref`, manifestets och lagrens sha256, klippt utsnitt) skrivs i
+    `ekologi.json` under `natverk.klassraster.markunderlag`. Samma NMD ger samma ECA som med rollen `nmd` (testat). Höj `max_celler`
+    och `max_flackar` för en stor buffert.
+- Rapport: `ekologi` är ett skissunderlag (R2) med frågorna EK-01 till EK-12; se `docs/RAPPORTER.md`, avsnittet om ekologi.
+  Exempel: `docs/exempel/skissunderlag_ekologi_demo.pdf`.
 
 ## Nästa steg
 
-Se `PLAN.md`: köra NMD- och VMI-inläsarna mot riktiga filer på servern, R2-rapport för ekologi med nätverkens källrad och
-antaganden, lokal körning av Stockholms nätverk mot stadens biotopdatabas.
+Se `PLAN.md`: köra NMD- och VMI-inläsarna (och geografivägen) mot riktiga filer på servern, lokal körning av Stockholms nätverk mot stadens biotopdatabas.

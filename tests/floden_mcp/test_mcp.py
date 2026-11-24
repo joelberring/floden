@@ -117,6 +117,7 @@ def test_verktygslistan_har_alla_verktyg_med_beskrivning_och_schema(mcp: Mcp) ->
         "prova_nytt_hus",
         "skissunderlag_skyfall",
         "skissunderlag_dagsljus",
+        "skissunderlag_ekologi",
     }
 
 

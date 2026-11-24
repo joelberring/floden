@@ -301,7 +301,7 @@ def nivakorrektion_ae_db(
     if r_norm <= 0.0:
         raise BullerFel("A_e är bara definierad för R' > 0.")
     tab = tabeller if tabeller is not None else standardtabeller()
-    r = max(r_norm, float(tab.r_norm[0]))
+    r = min(max(r_norm, float(tab.r_norm[0])), float(tab.r_norm[-1]))
     return tabellvarde_dl_db(h_norm, alfa, r, tab) + 20.0 * math.log10(8.0 * r)
 
 
@@ -446,6 +446,71 @@ class RatStrale:
             r1_m=r1,
             r2_m=self.langd_m - r1,
         )
+
+
+@dataclass(frozen=True)
+class CirkelStrale:
+    """Cirkelkrökt direktstråle i refrakterande atmosfär (AV 1106/07 avsnitt 5.19 och 5.23.9).
+
+    `xi_per_m` > 0 ger nedåtbrytning (medvind, bågen böjer uppåt i mitten), `xi_per_m` < 0 ger
+    uppåtbrytning (motvind, bågen böjer nedåt i mitten). Vid `|xi_per_m| < 1e-12` sammanfaller
+    banan med `RatStrale`.
+    """
+
+    x_kalla_m: float
+    z_kalla_m: float
+    x_mottagare_m: float
+    z_mottagare_m: float
+    xi_per_m: float
+
+    def __post_init__(self) -> None:
+        if not self.x_kalla_m < self.x_mottagare_m:
+            raise BullerFel("Mottagaren ska ligga på större x än källan.")
+
+    @property
+    def x_start_m(self) -> float:
+        return self.x_kalla_m
+
+    @property
+    def x_slut_m(self) -> float:
+        return self.x_mottagare_m
+
+    def punkt(self, x_m: float) -> Stralpunkt:
+        dx = self.x_mottagare_m - self.x_kalla_m
+        dz = self.z_mottagare_m - self.z_kalla_m
+        korda = math.hypot(dx, dz)
+        andel = (x_m - self.x_kalla_m) / dx
+        if abs(self.xi_per_m) < 1.0e-12:
+            r1 = andel * korda
+            return Stralpunkt(
+                z_m=self.z_kalla_m + andel * dz,
+                r1_m=r1,
+                r2_m=korda - r1,
+            )
+        # Cirkel med radie R = 1 / |ξ| genom S och R (HeightOfCircularRay, avsnitt 5.23.9).
+        radie = 1.0 / abs(self.xi_per_m)
+        if 0.5 * korda >= radie:
+            r1 = andel * korda
+            return Stralpunkt(
+                z_m=self.z_kalla_m + andel * dz,
+                r1_m=r1,
+                r2_m=korda - r1,
+            )
+        tecken = 1.0 if self.xi_per_m > 0.0 else -1.0
+        # Cirkelns medelpunkt: vinkelrätt mot kordan (åt −z vid medvind, +z vid motvind).
+        h_mitt = math.sqrt(radie * radie - 0.25 * korda * korda)
+        nx, nz = dz / korda, -dx / korda  # enhetsnormal nedåt
+        cx = 0.5 * (self.x_kalla_m + self.x_mottagare_m) + tecken * h_mitt * nx
+        cz = 0.5 * (self.z_kalla_m + self.z_mottagare_m) + tecken * h_mitt * nz
+        rad_term = max(0.0, radie * radie - (x_m - cx) ** 2)
+        z_ray = cz + tecken * math.sqrt(rad_term)
+        # Båglängder R1 och R2 längs cirkeln.
+        phi_s = math.atan2(self.z_kalla_m - cz, self.x_kalla_m - cx)
+        phi_p = math.atan2(z_ray - cz, x_m - cx)
+        phi_r = math.atan2(self.z_mottagare_m - cz, self.x_mottagare_m - cx)
+        r1 = radie * abs(phi_p - phi_s)
+        r2 = radie * abs(phi_r - phi_p)
+        return Stralpunkt(z_m=z_ray, r1_m=r1, r2_m=r2)
 
 
 # --------------------------------------------------------------------------------------------

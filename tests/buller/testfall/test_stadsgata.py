@@ -24,10 +24,12 @@ def _syntetisk_gata() -> StadsgataGeometri:
             ByggnadPlan("Building #1", -90.0, -10.0, -500.0, 25.0),
             ByggnadPlan("Building #2", 10.0, 90.0, 5.0, 500.0),
             ByggnadPlan("Building #3", 10.0, 90.0, -500.0, -5.0),
+            ByggnadPlan("Building #4", 110.0, 190.0, -500.0, 500.0),
         ),
         mottagare={
             "1": (10.0, 60.0),
             "3": (10.0, -150.0),
+            "4": (110.0, -150.0),
         },
     )
 
@@ -76,6 +78,38 @@ class TestStadsgata(unittest.TestCase):
         self.assertEqual(spec2.shape, (ANTAL_BAND,))
         # Reflektioner i slutet gaturum ger högre ljudnivå än enbart direktljud.
         self.assertGreater(la2, la0 + 1.0)
+
+    def test_skarmad_parallellgata_far_tydligt_bidrag_av_andra_ordningens_reflektioner(
+        self,
+    ) -> None:
+        # Kortare parallellgata för snabb enhetstest (samma tvärsnitt som Pos 4).
+        geo = StadsgataGeometri(
+            byggnader=(
+                ByggnadPlan("Building #1", -90.0, -10.0, -400.0, 400.0),
+                ByggnadPlan("Building #3", 10.0, 90.0, -400.0, 400.0),
+                ByggnadPlan("Building #4", 110.0, 190.0, -400.0, 400.0),
+            ),
+            mottagare={"4": (110.0, 0.0)},
+        )
+        karna = Nord2000Karna()
+        em = Vagemission()
+        avag = np.asarray(a_vagning_db(), dtype=np.float64)
+        vader = Vader(
+            temperatur_c=15.0,
+            relativ_fuktighet_procent=70.0,
+            vind_m_s=0.0,
+            zu_m=10.0,
+            z0_m=0.05,
+            dt_dz_k_m=0.0,
+            std_vind_m_s=0.5,
+            std_dt_dz_k_m=0.0,
+            cv2=0.12,
+            ct2=0.008,
+        )
+        la1, _ = berakna_stadsgata(karna, em, geo, "4", 1.5, 1.0, vader, avag, max_ordning=1)
+        la2, _ = berakna_stadsgata(karna, em, geo, "4", 1.5, 1.0, vader, avag, max_ordning=2)
+        # 2:a ordningens reflektioner i både käll- och mottagargaturummet höjer nivån > 1,5 dB.
+        self.assertGreater(la2, la1 + 1.5)
 
 
 if __name__ == "__main__":

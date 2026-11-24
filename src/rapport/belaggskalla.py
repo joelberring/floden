@@ -137,6 +137,104 @@ DAGSLJUS_MATT.update(
 )
 MATTKATALOG.update(DAGSLJUS_MATT)
 
+_EKO_TID = "ingen tidsdimension (statisk landskapsmodell: ett läge, inget förlopp)"
+_EKO_STAT = "en siffra per körning, huvudscenariots spridningströskel"
+_EKO_INT = "{} mellan nätverkets tröskelscenarier (källbaserat intervall)"
+EKOLOGI_MATT: Final[dict[tuple[str, str], Matt]] = {
+    ("ekologi.konnektivitet", "matvarde:eca_m2"): Matt(
+        "ekvivalent sammanhängande habitatarea (ECA) för potentiell livsmiljö", _EKO_TID, _EKO_STAT, 1.0
+    ),
+    ("ekologi.konnektivitet", "matvarde:eca_min_m2"): Matt(
+        "ekvivalent sammanhängande habitatarea (ECA) för potentiell livsmiljö, lägsta värde",
+        _EKO_TID, _EKO_INT.format("lägsta värde"), 1.0,
+    ),
+    ("ekologi.konnektivitet", "matvarde:eca_max_m2"): Matt(
+        "ekvivalent sammanhängande habitatarea (ECA) för potentiell livsmiljö, högsta värde",
+        _EKO_TID, _EKO_INT.format("högsta värde"), 1.0,
+    ),
+    ("ekologi.konnektivitet", "matvarde:pc"): Matt(
+        "konnektivitetsindex PC (sannolikhet att två slumpvis valda punkter i habitatet kan nå varandra)",
+        _EKO_TID, _EKO_STAT, 1e-6,
+    ),
+    ("ekologi.konnektivitet", "matvarde:pc_min"): Matt(
+        "konnektivitetsindex PC, lägsta värde", _EKO_TID, _EKO_INT.format("lägsta värde"), 1e-6
+    ),
+    ("ekologi.konnektivitet", "matvarde:pc_max"): Matt(
+        "konnektivitetsindex PC, högsta värde", _EKO_TID, _EKO_INT.format("högsta värde"), 1e-6
+    ),
+    ("ekologi.konnektivitet", "matvarde:antal_flackar"): Matt(
+        "antal habitatfläckar (minst minsta area)", _EKO_TID, _EKO_STAT, 1.0
+    ),
+    ("ekologi.konnektivitet", "matvarde:total_habitat_area_m2"): Matt(
+        "total area potentiell livsmiljö (habitatfläckar)", _EKO_TID, _EKO_STAT, 1.0
+    ),
+    ("ekologi.konnektivitet", "matvarde:cellstorlek_m"): Matt(
+        "rastrets cellstorlek", _EKO_TID, "parameter (indata)", 0.1
+    ),
+    ("ekologi.konnektivitet", "stromtathet"): Matt(
+        "strömtäthet (normaliserad 0-1, flaskhalsar)", _EKO_TID, "per cell", 0.001
+    ),
+}
+MATTKATALOG.update(EKOLOGI_MATT)
+
+_MKN_INT = "{} i faktorintervallet för källa och deposition (känslighet, inte statistisk konfidens)"
+_MKN_DYGN = "kalenderdygn (medel av 24 timmar), alla hela dygn i den givna timserien"
+_MKN_ARS = "medel över alla timmar i den givna timserien (ett år om serien är ett helt år)"
+LUFT_MATT: Final[dict[tuple[str, str], Matt]] = {
+    ("luft.mkn", "matvarde:lagst_antal_dygn"): Matt(
+        "antal dygn med PM10-halt över dygnsgränsen (halt = bakgrund + lokalt bidrag)",
+        _MKN_DYGN, _MKN_INT.format("lägsta värde"), 1.0,
+    ),
+    ("luft.mkn", "matvarde:hogst_antal_dygn"): Matt(
+        "antal dygn med PM10-halt över dygnsgränsen (halt = bakgrund + lokalt bidrag)",
+        _MKN_DYGN, _MKN_INT.format("högsta värde"), 1.0,
+    ),
+    ("luft.mkn", "matvarde:arsmedel_lagst_ug_m3"): Matt(
+        "PM10-årsmedelhalt (bakgrund + lokalt bidrag)", _MKN_ARS, _MKN_INT.format("lägsta värde"), 0.1
+    ),
+    ("luft.mkn", "matvarde:arsmedel_hogst_ug_m3"): Matt(
+        "PM10-årsmedelhalt (bakgrund + lokalt bidrag)", _MKN_ARS, _MKN_INT.format("högsta värde"), 0.1
+    ),
+    ("luft.mkn", "matvarde:p90_4_lagst_ug_m3"): Matt(
+        "90,4-percentilen av PM10-dygnsvärdena (motsvarar 35:e högsta dygnet i ett helt år)",
+        _MKN_DYGN, _MKN_INT.format("lägsta värde"), 0.1,
+    ),
+    ("luft.mkn", "matvarde:p90_4_hogst_ug_m3"): Matt(
+        "90,4-percentilen av PM10-dygnsvärdena (motsvarar 35:e högsta dygnet i ett helt år)",
+        _MKN_DYGN, _MKN_INT.format("högsta värde"), 0.1,
+    ),
+    ("luft.mkn", "matvarde:bakgrund_ug_m3"): Matt(
+        "PM10-bakgrundshalt som lagts till det lokala bidraget", "konstant över hela serien",
+        "parameter (indata)", 0.1,
+    ),
+    ("luft.mkn", "matvarde:grans_dygn_ug_m3"): Matt(
+        "dygnsgräns för PM10", _MKN_DYGN, "parameter (indata)", 1.0
+    ),
+    ("luft.mkn", "matvarde:max_dygn_ar_antal_dygn"): Matt(
+        "högsta tillåtna antal dygn över dygnsgränsen per år", "ett kalenderår", "parameter (indata)", 1.0
+    ),
+    ("luft.mkn", "matvarde:antal_hela_dygn"): Matt(
+        "antal hela dygn i timserien", "givna timserien", "antal", 1.0
+    ),
+    ("luft.mkn", "matvarde:emissionsfaktor_lagst"): Matt(
+        "faktor på källstyrkan (lokalt bidrag), lägsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+    ("luft.mkn", "matvarde:emissionsfaktor_hogst"): Matt(
+        "faktor på källstyrkan (lokalt bidrag), högsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+    ("luft.mkn", "matvarde:depositionsfaktor_lagst"): Matt(
+        "faktor på deposition och utspädning, lägsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+    ("luft.mkn", "matvarde:depositionsfaktor_hogst"): Matt(
+        "faktor på deposition och utspädning, högsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+}
+MATTKATALOG.update(LUFT_MATT)
+
 JAMFORELSEMATT: Final[dict[str, str]] = {
     "max_okning": "största ökning i en cell på mark (efter minus före)",
     "max_minskning": "största minskning i en cell på mark (före minus efter)",
@@ -310,9 +408,13 @@ class FlodenBelaggKalla:
             from rapport.fasadbelagg import fasad_belagg
 
             return fasad_belagg(self, adress, korning_id, delar)
+        if typ in ("ekojamforelse", "ekonatverk"):
+            from rapport.ekologibelagg import ekologi_belagg
+
+            return ekologi_belagg(self, adress, korning_id, delar)
         raise BelaggFel(
             f"Okänd beläggstyp '{typ}' i '{adress}'. Tillåtna: jamforelse, matvarde, omrade, "
-            "fasad, fasadjamforelse."
+            "fasad, fasadjamforelse, ekojamforelse, ekonatverk."
         )
 
     def _jamforelse(self, adress: str, korning_id: str, namn: str, matt: str) -> Belagg:
@@ -557,6 +659,8 @@ class FlodenBelaggKalla:
 
 __all__ = [
     "DAGSLJUS_MATT",
+    "EKOLOGI_MATT",
+    "LUFT_MATT",
     "HELA_OMRADET",
     "HELA_OMRADET_NAMN",
     "HELA_OMRADET_MARK",

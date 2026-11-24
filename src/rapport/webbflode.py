@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from rapport.skissrapport import Rapport, RapportTjanst
 
 AMNEN_MED_MALL: Final[tuple[str, ...]] = ("skyfall", "dagsljus")
-"""Ämnen som webbflödet har påståenden för (R1 och R2). Ekologi saknar rapportmall tills R2-mallen finns."""
+"""Ämnen som webbflödet har påståenden för (R1 och R2). Ekologi har en R2-mall via MCP men inga påståenden i webbflödet än."""
 
 AMNESNAMN: Final[dict[str, str]] = {"skyfall": "Skyfall", "dagsljus": "Dagsljus och sol", "ekologi": "Ekologi"}
 
@@ -39,7 +39,10 @@ def saknad_mall(amne: str) -> str | None:
             "finns. Beräkningsresultaten finns i steg 4."
         )
     if amne not in AMNEN_MED_MALL:
-        return f"Webbflödet har inga påståenden för {AMNESNAMN[amne].lower()} än."
+        return (
+            f"Webbflödet har inga påståenden för {AMNESNAMN[amne].lower()} än. Skissunderlaget (R2) kan "
+            "skapas via MCP (rapport_skapa)."
+        )
     return None
 
 

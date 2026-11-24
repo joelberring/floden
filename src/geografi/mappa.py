@@ -347,7 +347,16 @@ def mappa_geografi(
                 )  # fmt: skip
                 bpaket: list[Any] = []
                 if kalla_bygg == "filpaket":
-                    bygg_fil, bpaket = _baskarta_byggnader()
+                    try:
+                        bygg_fil, bpaket = _baskarta_byggnader()
+                    except KommunKallaFel as exc:
+                        # Höjden är redan hämtad: ett fel i baskartan är inte ett höjdfel och ska inte
+                        # leda till Lantmäteriets laser (som inte ger några byggnader här).
+                        raise SkapaFel(
+                            f"Kommunens baskarta (byggnader) kunde inte användas: {exc} Höjdmodellen hämtades "
+                            "och ligger kvar i cachen. Kontrollera adressen i [filpaket.baskarta] eller välj "
+                            "--byggnader-kalla wfs."
+                        ) from exc
                 elif kalla_bygg == "wfs":
                     bygg_fil = _wfs_byggnader()
                 klippt = ra / "hojd" / "hojdmodell_klippt.tif"

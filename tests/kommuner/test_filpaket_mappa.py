@@ -139,3 +139,13 @@ def test_baskartans_objektfilter_utan_traff_visar_vardena(lm: FalskLm, tmp_path:
     )
     with pytest.raises(SkapaFel, match="Takkontur"):
         mappa(v, nycklar_fran=inga_nycklar, filhamtare=v["fh"])
+
+
+def test_baskartan_fallerar_ger_tydligt_fel_och_ingen_reserv(lm: FalskLm, tmp_path: Path) -> None:  # noqa: F811
+    """Ett fel i baskartan är inte ett höjdfel: ingen reserv till Lantmäteriets laser, och felet säger baskartan."""
+    v = varld(lm, tmp_path)
+    v["fh"].fel = KommunKallaFel("opengeodata.goteborg.se svarade med HTTP 404")
+    v["fh"].fel_for = BASK_URL
+    with pytest.raises(SkapaFel, match="baskarta"):
+        mappa(v, filhamtare=v["fh"])
+    assert lm.antal("GET", "/stac") == 0

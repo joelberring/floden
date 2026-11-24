@@ -487,10 +487,189 @@ def berakna_stadsgata(
                     with np.errstate(over="ignore"):
                         energi += np.power(10.0, (eff_r[j, :] + h_r + dlr) / 10.0)
 
-            if max_ordning < 2 or position == "4":
+            if max_ordning < 2:
                 continue
 
             # 3. Andra ordningens reflektioner S → O1 → O2 → R (O2 ej på egen fasad).
+            if position == "4":
+                # (a) Källgaturummet: S → O1 → O2 → [diffraktion över byggnad] → R.
+                for i1, ref1 in enumerate(alla_fasader):
+                    for i2, ref2 in enumerate(alla_fasader):
+                        if i2 == i1 or i2 in egen_fasad_idx:
+                            continue
+                        par = _andra_ordningens_reflektion(sx, sy, rx, ry, ref1, ref2)
+                        if par is None:
+                            continue
+                        g1, g2 = par
+                        if any(
+                            (
+                                idx_f != i1
+                                and linje_korsar_segment(
+                                    sx, sy, g1.o_x_m, g1.o_y_m, f.x1_m, f.y1_m, f.x2_m, f.y2_m
+                                )
+                            )
+                            or (
+                                idx_f not in (i1, i2)
+                                and linje_korsar_segment(
+                                    g1.o_x_m,
+                                    g1.o_y_m,
+                                    g2.o_x_m,
+                                    g2.o_y_m,
+                                    f.x1_m,
+                                    f.y1_m,
+                                    f.x2_m,
+                                    f.y2_m,
+                                )
+                            )
+                            for idx_f, f in enumerate(alla_fasader)
+                        ):
+                            continue
+                        s2x, s2y = spegelpunkt_plan(
+                            g1.spegel_x_m,
+                            g1.spegel_y_m,
+                            ref2.x1_m,
+                            ref2.y1_m,
+                            ref2.x2_m,
+                            ref2.y2_m,
+                        )
+                        d_tot = g1.d1_m + g1.d2_m
+                        if riktad is not None:
+                            phi_r2 = math.acos(min(1.0, max(-1.0, (g1.o_y_m - sy) / g1.d1_m)))
+                            psi_r2 = tuple(math.atan2(mottagare_hojd_m - h, d_tot) for h in hojder)
+                            eff_r2 = riktad.ljudeffekt_db(
+                                trafik_per_korfalt,
+                                ds,
+                                period_s,
+                                hojder,
+                                forhallanden,
+                                Kallriktning(phi_r2, psi_r2),
+                            )
+                        else:
+                            eff_r2 = eff_dir
+                        for j, h in enumerate(hojder):
+                            dlr1 = reflektionskorrektion_db(
+                                frekv, c0_m_s, g1, ref1, h, mottagare_hojd_m, z_mark_vid_o_m=0.0
+                            )
+                            dlr2 = reflektionskorrektion_db(
+                                frekv, c0_m_s, g2, ref2, h, mottagare_hojd_m, z_mark_vid_o_m=0.0
+                            )
+                            dlr_tot = dlr1 + dlr2
+                            if not bool(np.any(np.isfinite(dlr_tot))):
+                                continue
+                            prof_r2 = _profil_plan_och_byggnader(
+                                s2x, s2y, rx, ry, h, mottagare_hojd_m, geo.byggnader
+                            )
+                            h_r2 = np.asarray(karna.overforing_db(prof_r2, vader), dtype=np.float64)
+                            with np.errstate(over="ignore"):
+                                energi += np.power(10.0, (eff_r2[j, :] + h_r2 + dlr_tot) / 10.0)
+
+                # (b) Mottagargaturummet (reciprocitet): S → [diffraktion] → O1 → O2 → R.
+                for i2, ref2 in enumerate(alla_fasader):
+                    if i2 in egen_fasad_idx:
+                        continue
+                    for i1, ref1 in enumerate(alla_fasader):
+                        if i1 == i2:
+                            continue
+                        par_r = _andra_ordningens_reflektion(rx, ry, sx, sy, ref2, ref1)
+                        if par_r is None:
+                            continue
+                        gr2, gr1 = par_r
+                        # Fri sikt i mottagargaturummet (R→O2 och O2→O1); skärmning på S→O1.
+                        if any(
+                            (
+                                idx_f != i2
+                                and idx_f not in egen_fasad_idx
+                                and linje_korsar_segment(
+                                    rx, ry, gr2.o_x_m, gr2.o_y_m, f.x1_m, f.y1_m, f.x2_m, f.y2_m
+                                )
+                            )
+                            or (
+                                idx_f not in (i1, i2)
+                                and linje_korsar_segment(
+                                    gr2.o_x_m,
+                                    gr2.o_y_m,
+                                    gr1.o_x_m,
+                                    gr1.o_y_m,
+                                    f.x1_m,
+                                    f.y1_m,
+                                    f.x2_m,
+                                    f.y2_m,
+                                )
+                            )
+                            for idx_f, f in enumerate(alla_fasader)
+                        ):
+                            continue
+                        if not any(
+                            idx_f != i1
+                            and linje_korsar_segment(
+                                sx, sy, gr1.o_x_m, gr1.o_y_m, f.x1_m, f.y1_m, f.x2_m, f.y2_m
+                            )
+                            for idx_f, f in enumerate(alla_fasader)
+                        ):
+                            continue
+                        r2x, r2y = spegelpunkt_plan(
+                            gr2.spegel_x_m,
+                            gr2.spegel_y_m,
+                            ref1.x1_m,
+                            ref1.y1_m,
+                            ref1.x2_m,
+                            ref1.y2_m,
+                        )
+                        g1_fr = Reflektionsgeometri(
+                            gr1.o_x_m,
+                            gr1.o_y_m,
+                            gr1.d2_m,
+                            gr1.d1_m,
+                            gr1.s_langs_m,
+                            gr1.reflektor_langd_m,
+                            gr1.vinkel_mot_plan_rad,
+                            0.0,
+                            0.0,
+                        )
+                        g2_fr = Reflektionsgeometri(
+                            gr2.o_x_m,
+                            gr2.o_y_m,
+                            gr2.d2_m,
+                            gr2.d1_m,
+                            gr2.s_langs_m,
+                            gr2.reflektor_langd_m,
+                            gr2.vinkel_mot_plan_rad,
+                            0.0,
+                            0.0,
+                        )
+                        d_tot = g1_fr.d1_m + g1_fr.d2_m
+                        if riktad is not None:
+                            d_dir = math.hypot(r2x - sx, r2y - sy)
+                            phi_r2 = math.acos(min(1.0, max(-1.0, (r2y - sy) / d_dir)))
+                            psi_r2 = tuple(math.atan2(mottagare_hojd_m - h, d_tot) for h in hojder)
+                            eff_r2 = riktad.ljudeffekt_db(
+                                trafik_per_korfalt,
+                                ds,
+                                period_s,
+                                hojder,
+                                forhallanden,
+                                Kallriktning(phi_r2, psi_r2),
+                            )
+                        else:
+                            eff_r2 = eff_dir
+                        for j, h in enumerate(hojder):
+                            dlr1 = reflektionskorrektion_db(
+                                frekv, c0_m_s, g1_fr, ref1, h, mottagare_hojd_m, z_mark_vid_o_m=0.0
+                            )
+                            dlr2 = reflektionskorrektion_db(
+                                frekv, c0_m_s, g2_fr, ref2, h, mottagare_hojd_m, z_mark_vid_o_m=0.0
+                            )
+                            dlr_tot = dlr1 + dlr2
+                            if not bool(np.any(np.isfinite(dlr_tot))):
+                                continue
+                            prof_r2 = _profil_plan_och_byggnader(
+                                sx, sy, r2x, r2y, h, mottagare_hojd_m, geo.byggnader
+                            )
+                            h_r2 = np.asarray(karna.overforing_db(prof_r2, vader), dtype=np.float64)
+                            with np.errstate(over="ignore"):
+                                energi += np.power(10.0, (eff_r2[j, :] + h_r2 + dlr_tot) / 10.0)
+                continue
+
             for i1, ref1 in enumerate(alla_fasader):
                 for i2, ref2 in enumerate(alla_fasader):
                     if i2 == i1 or i2 in egen_fasad_idx:
