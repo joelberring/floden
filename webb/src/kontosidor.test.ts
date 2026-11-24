@@ -65,7 +65,7 @@ test("startsidan för en inloggad visar projekten med länkar och ingen demotext
   assert.match(html, /Dina projekt/);
   assert.match(html, /href="#\/projekt\/demokvarteret"/);
   assert.match(html, /href="#\/projekt\/abc123"/);
-  assert.match(text(html), /Provområdet\s+Projekt · lasare/);
+  assert.match(text(html), /Provområdet\s+Projekt · läsare/);
   assert.doesNotMatch(text(html), /floden demo/);
   // Bara projekt ur registret, inget demokvarter: ingen demotext och knappen går till projektet.
   const utanDemo = sidaStart(moduler, false, [projekt[1]!]);
@@ -162,7 +162,7 @@ test("adminsidan: inbjudan, medlemmar, roll och spärr, med utskriven text", () 
   const html = adminProjektHtml(detalj);
   assert.match(html, /data-bjud-in="p1"/);
   assert.match(html, /data-roll-projekt="p1" data-roll-konto="k1"/);
-  assert.match(html, /<option value="lasare" selected>/);
+  assert.match(html, /<option value="lasare" selected>läsare<\/option>/);
   assert.match(html, /data-sparra="k1" data-sparra-till="ja">Spärra kontot/);
   assert.match(text(html), /ny@x\.se\s+utredare\s+Öppen\s+2027-01-29/);
   assert.doesNotMatch(html, /Anna <b>/); // namnet är maskerat

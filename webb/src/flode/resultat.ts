@@ -118,7 +118,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         </div>
         <div id="rs-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar resultatet …</p></div>
         ${extraAnalyserHtml()}
-        <div class="flode-rad-slut"><a class="flode-knapp svart stor" href="${flodeAdress(projekt, "rapport")}">Skapa rapport</a></div>
+        <div class="flode-rad-slut"><a class="flode-knapp svart stor" href="${flodeAdress(projekt, "rapport")}">Gå vidare till rapport</a></div>
       </aside>
     </div>`;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
@@ -405,11 +405,14 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
            <button type="button" data-kalla="ritat" aria-pressed="${kalla === "ritat"}">Ditt förslag</button>
            <button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button></div>`
       : "";
+    const kallNot = !harRitat
+      ? `<p class="flode-liten flode-dampad" id="rs-kallnot">Du ser projektets färdiga beräkningar, inte ett eget förslag. Rita ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a> och kör det i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a> för att se ditt eget.</p>`
+      : "";
     const vyVal = vyer.length > 1
       ? `<div class="flode-chips liten" role="group" aria-label="Förändring">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.efter_namn)}</button>`).join("")}</div>`
       : "";
     inne.innerHTML = `
-      ${kallVal}${vyVal}${natverkVal}
+      ${kallVal}${kallNot}${vyVal}${natverkVal}
       ${kroppHtml({
         slutsats: slutsats(amne, u),
         tal,

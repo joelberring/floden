@@ -2,6 +2,11 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-24 – U1 – UX-genomgång av hela webbappen och små åtgärder (agent)
+Gjort (grenen `ux-genomgang`): (1) **Genomgång** i `docs/UX-GENOMGANG.md` (prioriterad lista P1/P2/P3 per vy med förslag och storlek; bilder bred och smal i `docs/bilder/ux/` och `docs/bilder/ux/efter/`; `tools/ux_skarmbild.py`, Nycklar och Administration med påhittade kontosvar). (2) **Åtgärder** i vyer som ingen annan agent rör: projektlistan (raden och kartkortet säger "Öppna projektet", "Nytt projekt" ersätts av förklaring i lokalt läge, ritas om när kontoläget är hämtat), steg 3 (länk till Resultat, "alla ämnen", "Planunderlag (inte än)", `aria-describedby`), steg 4 (källrad när projektets exempel visas, "Gå vidare till rapport", fristående räknare märkta), steg 5 (tomtext utan `floden mcp`), roller i klartext (läsare, ägare), formulär på kontosidorna. Nytt projekt och projektavgränsningen är orörda; fynden där står i dokumentet.
+Mätt: npm test 221 godkända (var 218; nya `flode/projektlogik.test.ts`), typkontroll och build gröna; ruff, mypy och berörda pytest: se nedan.
+Öppet: viktigaste fyndet är att rapporten (steg 5) bygger på förvald körning och inte på användarens förslag eller valda frågor; två skal och dubbla vägar utanför flödet. Se U2–U4 i `PLAN.md`.
+Nästa: U2 (rapport på användarens körning), U3 (ett skal).
 ## 2026-11-24 – Nord2000 (P-S5) – Kurvig väg i vind (10/10 godkända) och konkava segment i motvind (55/80 godkända)
 Gjort (grenen `nord2000-kurvig-och-motvind`, bara `src/buller`, `tests/buller`, `docs/buller` och `STATUS.md`; `BESLUT.md` orörd):
 - **Delmodell 6 (`src/buller/nord2000/delmodell6.py`):** Införde krökt `DirectRay` för $T_1\text{–}R$ (`CalcEqSSP(h″_SCR1, h_Rv)`) och $S\text{–}T_2$ (`CalcEqSSP(h_Sv, h″_SCR2)`) enligt AV 1106/07 avsnitt 5.5.2 och 5.7.3 när en skärmtopp ligger under linjen från den andra i refraktion (ersätter `BullerFel` i P-6 tolkning 11; exakt kontinuitet mot delmodell 4 verifierad i `test_delmodell6.py`).

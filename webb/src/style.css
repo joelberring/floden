@@ -173,6 +173,32 @@ select {
   margin-left: 20px;
 }
 
+/* Formulär på kontosidorna (Nycklar, Administration): fälten staplas med etikett ovanför och bryts på smal skärm. */
+form.knapp-par {
+  align-items: flex-end;
+  margin: 16px 0 24px;
+}
+.falt-rad {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 220px;
+  max-width: 420px;
+  margin: 0 16px 12px 0;
+  font-size: 13px;
+}
+.falt-rad select.kontroll,
+.data-tabell select.kontroll {
+  min-width: 140px;
+}
+form.knapp-par > button {
+  margin: 0 0 12px;
+}
+.data-tabell + p,
+.tabell-ruta + h3 {
+  margin-top: 24px;
+}
+
 /* ---------- Sidhuvud ---------- */
 
 .sidhuvud {
