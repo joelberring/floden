@@ -27,7 +27,8 @@ KONTRAKT = "floden-kommun/v1"
 KOMMUNMAPP_REL = Path("data") / "kommuner"
 _ID_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}$")
 _PRODUKTER = ("laser", "orto")
-_BYGGNADSKALLOR = ("filpaket", "wfs", "lantmateriet")
+_BYGGNADSKALLOR = ("filpaket", "wfs", "lantmateriet", "lokal_fil")
+_LOKAL_HOJD_FRAN = ("takkontur_z", "laser")
 _HOJDKALLOR = ("filpaket", "lantmateriet")
 _REPO_ROT = Path(__file__).resolve().parents[2]
 
@@ -61,6 +62,17 @@ class LantmaterietKonfig:
 
 
 @dataclass(frozen=True)
+class LokalBaskartaKonfig:
+    """`[byggnader.lokal]` för `kalla = "lokal_fil"`: byggnader ur en baskartefil som inte är öppna data."""
+
+    lagerprofil: str        # id för data/lagerprofiler/<id>.toml
+    epsg: int               # filens koordinatsystem (förval: publicering_epsg)
+    hojd_fran: str          # "takkontur_z" (baskartans z minus mark) eller "laser" (Lantmäteriets laser)
+    z_tillagg_m: float      # läggs till baskartans z för att få RH 2000 (0 = z antas redan vara RH 2000)
+    lager_monster: str      # tomt = lagerprofilens grammatik; annars uttryck mot lagernamn
+
+
+@dataclass(frozen=True)
 class ByggnadsKonfig:
     kalla: str
     wfs_url: str
@@ -71,6 +83,7 @@ class ByggnadsKonfig:
     licens: str
     licens_anmarkning: str
     falt: Mapping[str, tuple[str, ...]]
+    lokal: LokalBaskartaKonfig | None = None
 
 
 @dataclass(frozen=True)
@@ -328,7 +341,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         data, "byggnader",
         (
             "kalla", "wfs_url", "tillatna_varddomaner", "lager", "lager_monster", "max_objekt",
-            "licens", "licens_anmarkning", "falt",
+            "licens", "licens_anmarkning", "falt", "lokal",
         ),
     )  # fmt: skip
     if (by.get("kalla") == "filpaket" and (filpaket is None or filpaket.baskarta is None)) or (
@@ -351,6 +364,37 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
     domaner = _textlista(by, "tillatna_varddomaner", "[byggnader]")
     if kalla == "wfs" and not (wfs_url and domaner):
         raise KommunKonfigFel("[byggnader]: 'wfs_url' och 'tillatna_varddomaner' krävs för kalla = wfs.")
+
+    lokal: LokalBaskartaKonfig | None = None
+    if kalla == "lokal_fil":
+        lr = by.get("lokal")
+        if not isinstance(lr, Mapping):
+            raise KommunKonfigFel("[byggnader.lokal] krävs för kalla = lokal_fil.")
+        _stram(lr, "[byggnader.lokal]", ("lagerprofil", "epsg", "hojd_fran", "z_tillagg_m", "lager_monster"))
+        profil = _text(lr, "lagerprofil", "[byggnader.lokal]")
+        if not _ID_RE.match(profil.replace("_", "-")):
+            raise KommunKonfigFel("[byggnader.lokal]: 'lagerprofil' är ett id (namnet på data/lagerprofiler/<id>.toml).")
+        hf = _text(lr, "hojd_fran", "[byggnader.lokal]") if "hojd_fran" in lr else "takkontur_z"
+        if hf not in _LOKAL_HOJD_FRAN:
+            raise KommunKonfigFel(f"[byggnader.lokal]: 'hojd_fran' ska vara en av {_LOKAL_HOJD_FRAN}.")
+        lepsg = lr.get("epsg", epsg)
+        if isinstance(lepsg, bool) or not isinstance(lepsg, int) or lepsg not in SWEREF99_ZONER:
+            raise KommunKonfigFel("[byggnader.lokal]: 'epsg' ska vara en SWEREF 99-zon (EPSG:3006-3018).")
+        lmon = _text(lr, "lager_monster", "[byggnader.lokal]", tom_ok=True) if "lager_monster" in lr else ""
+        if lmon:
+            try:
+                re.compile(lmon)
+            except re.error as exc:
+                raise KommunKonfigFel(f"[byggnader.lokal]: 'lager_monster' är inte ett giltigt uttryck: {exc}") from exc
+        lokal = LokalBaskartaKonfig(
+            lagerprofil=profil, epsg=int(lepsg), hojd_fran=hf,
+            z_tillagg_m=_tal(lr, "z_tillagg_m", "[byggnader.lokal]", minst=-50.0) if "z_tillagg_m" in lr else 0.0,
+            lager_monster=lmon,
+        )  # fmt: skip
+        if by.get("licens") != "intern":
+            raise KommunKonfigFel("[byggnader]: kalla = lokal_fil är inte öppna data: licens ska vara \"intern\".")
+    elif "lokal" in by:
+        raise KommunKonfigFel("[byggnader.lokal] hör bara till kalla = lokal_fil.")
 
     bk = _tabell(data, "baskarta", ("lager", "licens"))
     sky = _tabell(data, "skyfall", ("regn_id", "takvatten"))
@@ -396,6 +440,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
             licens=_text(by, "licens", "[byggnader]"),
             licens_anmarkning=_text(by, "licens_anmarkning", "[byggnader]"),
             falt=falt,
+            lokal=lokal,
         ),
         baskarta=BaskartaKonfig(
             lager=_textlista(bk, "lager", "[baskarta]"), licens=_text(bk, "licens", "[baskarta]")

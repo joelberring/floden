@@ -1,0 +1,109 @@
+# Kommunkonfiguration för Stockholms stad (kontrakt floden-kommun/v1, docs/KOM-IGANG.md).
+#
+# Skillnad mot Göteborg: byggnaderna ligger i Stockholms 3D-baskarta (DWG), som INTE är öppna data. Joel har beslutat
+# (docs/BESLUT.md 2026-11-24) att delar av den får användas i projekt och ligga på Flodens server, men aldrig i git, loggar,
+# STATUS, PR-texter eller via MCP/AI. Därför:
+#   - byggnaderna kommer ur en LOKAL fil som anges vid körningen: `--baskarta-fil <sökväg>` (kalla = "lokal_fil"),
+#   - filen ligger i serverns lokala datamapp (/srv/floden/data/lokal/, i containern /app/data/lokal/), inte i repot,
+#   - geografin och allt som härleds direkt ur byggnaderna märks som stängt (oppenhet.toml oppen = false, licens "intern")
+#     och lämnas inte ut via MCP. `--villkor-kontrollerade` öppnar det INTE.
+# Inga filnamn, sökvägar eller lagernamn ur den riktiga baskartan står här eller någon annanstans i repot. Lagertolkningen
+# görs av lagerprofilen data/lagerprofiler/stockholm_baskarta.toml (som är "att bekräfta mot full lagerlista").
+#
+# Kommandot (se docs/DRIFT.md, avsnittet Stockholm):
+#   floden geografi mappa stockholm-test --konto <superadmin-id> --baskarta-fil /app/data/lokal/<fil>
+
+kontrakt = "floden-kommun/v1"
+id = "stockholm"
+namn = "Stockholms stad"
+
+# Stockholm använder SWEREF 99 18 00 (EPSG:3011) = Flodens interna system: inget skalfel och ingen omräkning.
+publicering_epsg = 3011
+intern_epsg = 3011
+
+# --- Testområden (--omrade <id>) -------------------------------------------------------------
+# bbox = [e_min, n_min, e_max, n_max] i publicering_epsg (här EPSG:3011).
+standard_omrade = "mariatorget"
+
+[omraden.mariatorget]
+namn = "PROVOMRÅDE: Mariatorget, Södermalm"
+beskrivning = "PROVOMRÅDE för att pröva kedjan (Stockholms 3D-baskarta, lokal fil), 500 x 500 m kring Mariatorget på Södermalm. Inget planområde."
+bbox = [153400.0, 6577750.0, 153900.0, 6578250.0]
+motivering = """\
+PROVOMRÅDE, inte ett planområde och inte ett uttalande om platsen. Valt för att vara neutralt och välkänt: tät kvartersbebyggelse \
+på Södermalm med kuperad terräng (Maria Magdalena-berget mot Hornsgatan), så att byggnader, brant mark och sänkor finns att \
+pröva kedjan på. TERRÄNGEN OCH BYGGNADERNA ÄR INTE KONTROLLERADE: kommandot mäter höjdspann och lägsta punkt \
+(forberakningar.terrang_karna) och antalet byggnader skrivs i varningarna, så att valet kan bytas om området visar sig olämpligt."""
+
+# --- Geografier (floden geografi mappa <id>) ---------------------------------------------------
+[geografier.stockholm-test]
+namn = "Stockholm, PROVOMRÅDE (Mariatorget)"
+omrade = "mariatorget"
+tillrinning_cell_m = 2.0
+max_buffert_m = 1500.0
+
+# --- Höjd ---------------------------------------------------------------------------------------
+# Marken kommer ur Lantmäteriets laser (STAC Höjd, Laserdata Nedladdning, skog, gratis) med kontots egen nyckel
+# (sidan Nycklar). Ingen reserv: Stockholm har ingen öppen höjdmodell i Flodens filpaketväg.
+[hojd]
+kalla = "lantmateriet"
+reserv_lantmateriet = false
+
+[lantmateriet]
+produkter = ["laser"]
+marginal_m = 50.0
+kontext_m = 100.0
+upplosning_m = 1.0
+licens = "CC0-1.0"
+licens_anmarkning = "Laserdata Nedladdning, skog: CC0 enligt produktsidan; kontrollera villkoren. ©Lantmäteriet."
+
+# --- Byggnader ----------------------------------------------------------------------------------
+[byggnader]
+# "lokal_fil": byggnaderna läses ur en lokal baskartefil (--baskarta-fil). Kräver [byggnader.lokal] och licens "intern".
+kalla = "lokal_fil"
+wfs_url = ""
+tillatna_varddomaner = ["stockholm.se"]
+lager = ""
+lager_monster = "(?i)byggnad"
+max_objekt = 5000
+licens = "intern"
+licens_anmarkning = "Stockholms stads 3D-baskarta: inte öppna data. Användning i projekt och lagring på Flodens server enligt Joels beslut 2026-11-24 (docs/BESLUT.md). Stängd för MCP och extern AI."
+
+[byggnader.falt]
+
+[byggnader.lokal]
+# Lagertolkning: data/lagerprofiler/stockholm_baskarta.toml (Stockholms grammatik). Tomt lager_monster = profilens regler.
+lagerprofil = "stockholm_baskarta"
+# Baskartans koordinatsystem. ANTAGET SWEREF 99 18 00; kontrollera mot filens metadata vid första körningen.
+epsg = 3011
+# Hur byggnadshöjden fås:
+#   "takkontur_z" = z (taknivå) på byggnadens linje i baskartan, medel av hörnen, minus mark (Lantmäteriets laser).
+#                   OKONTROLLERAT: att z är RH 2000 (annars z_tillagg_m), att z är takets och inte fotens höjd,
+#                   att medel av hörnen är representativt och att byggnadens linje finns med z för alla hus.
+#                   Hus utan giltig z skattas ur lasern (oklassade punkter) eller får standardhöjd, med varning.
+#   "laser"       = baskartans z används inte; höjden skattas ur Lantmäteriets laser (1-2 punkter/m2, ingen byggnadsklass).
+hojd_fran = "takkontur_z"
+# Läggs till baskartans z för att få RH 2000. 0 = z antas redan vara RH 2000. OKONTROLLERAT.
+z_tillagg_m = 0.0
+# Tomt = lagerprofilens grammatik avgör vilka lager som är byggnader.
+lager_monster = ""
+
+[baskarta]
+lager = []
+licens = "intern"
+
+# --- Beräkningar för nuläget ------------------------------------------------------------------
+[dagsljus]
+datum = ["2026-03-20"]
+steg_min = 10
+azimutriktningar = 180
+cellstorlek_m = 1
+hojd_max_m = 60
+h_min_grader = 5
+fasad_steg_m = 6.0
+vaningshojd_m = 3.0
+
+[skyfall]
+# Stockholms 100-årsregn 6 h, klimatfaktor 1,4 (förval i gemensamt.regn; ersätts när Stockholmsregn 2024 används i frågan).
+regn_id = "stockholm_cds_6h_100ar_kf140"
+takvatten = true

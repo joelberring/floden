@@ -241,7 +241,9 @@ def skapa_projekt(
         "Skyfallsfrågan räknar på en ruta runt avgränsningen (statisk fyllning): tillrinning från högre mark "
         "utanför rutan ingår inte. Geografins tillrinningsyta finns i manifestet (forberakningar.tillrinning)."
     )
-    oppen = bool(manifest.get("oppen_for_mcp"))
+    # Byggnader ur en baskarta som inte är öppna data (kalla = lokal_fil) är alltid stängda, vad manifestet än säger.
+    oppen = bool(manifest.get("oppen_for_mcp")) and not (manifest.get("kallor", {}).get("byggnader") or {}).get("stangd")
+    oppen = oppen and (manifest.get("kallor", {}).get("byggnader") or {}).get("kalla") != "lokal_fil"
     skriv_oppenhet_toml(
         mapp,
         oppen=oppen,

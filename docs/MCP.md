@@ -140,6 +140,7 @@ extern AI-tjänst. Därför finns en **uttrycklig spärr i verktygslagret** (`fl
   `oppenhet.toml` (`oppen = true` **och** en känd öppen licens, annars stängt) eller ett lager i `config.local.toml`
   (`[oppenhet.lager.<namn>]`) följer sin metadata; `oppen = false` stänger alltid. (4) **Allt annat är stängt**: `data/lokal`,
   stadens `baskarta_mapp` och `tat_laser_mapp`, och varje mapp utan metadata. *Saknas metadata: neka.*
+- Stockholms 3D-baskarta (inte öppna data, beslut 2026-11-24): byggnader ur en lokal baskartefil (`kalla = "lokal_fil"`) gör geografin, dess lager och projekten i den till `oppen = false`, licens `intern`, även med `--villkor-kontrollerade` (`docs/DRIFT.md`, avsnittet Stockholm).
 - Konsekvens i dag: data som hämtats med `floden data lantmateriet` till en egen mapp är stängda för MCP tills mappen fått en
   `oppenhet.toml` (Lantmäteriets öppna geodata är CC0: `oppen = true`, `licens = "CC0-1.0"`).
 
