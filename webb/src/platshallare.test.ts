@@ -46,7 +46,7 @@ function alla(): Record<string, string> {
     forvaltning: sidaForvaltning(),
     karta: [...LAGEN.map(([l]) => lasKartan(vy, l)), lasKartanText(null, true)].join(" "),
   };
-  for (const s of ["start", "projekt", "karta", "fragor", "om", "forvaltning"] as SidId[]) ut[`huvud-${s}`] = sidhuvud(s);
+  for (const s of ["start", "projekt", "fragor", "om", "forvaltning"] as SidId[]) ut[`huvud-${s}`] = sidhuvud(s);
   return ut;
 }
 
@@ -76,12 +76,12 @@ test("hälsning, förvaltning och organisationsväljare finns inte utan inloggni
   settKontoLage({ lage: "av" });
 });
 
-test("samma meny på alla sidor, med de fem punkterna", () => {
+test("samma meny på alla sidor, med de fyra punkterna", () => {
   settKontoLage({ lage: "av" });
-  const menyer = (["start", "projekt", "karta", "fragor", "om"] as SidId[]).map((s) =>
+  const menyer = (["start", "projekt", "fragor", "om"] as SidId[]).map((s) =>
     Array.from((sidhuvud(s).match(/<nav[\s\S]*<\/nav>/)?.[0] ?? "").matchAll(/<a href="([^"]+)"[^>]*>([^<]+)<\/a>/g)).map((m) => m[2]),
   );
-  for (const m of menyer) assert.deepEqual(m, ["Start", "Projekt", "Karta", "Utredningsfrågor", "Om beräkningarna"]);
+  for (const m of menyer) assert.deepEqual(m, ["Start", "Projekt", "Utredningsfrågor", "Om beräkningarna"]);
 });
 
 test("projektsidan visar talen ur svaret och inga knappar utan funktion", () => {

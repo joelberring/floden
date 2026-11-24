@@ -4,7 +4,7 @@
  * en knapp för att byta vy. Panelen har ingen egen logik utöver att visa modellen i `lager.ts`.
  * Upplägget är O-Tids lagerpanel (MIT, joelberring/otid @ 4a446af, map-project-layers-panel.tsx).
  */
-import { GRUPPER, type LagerDef, type LagerLista } from "./lager.ts";
+import { GRUPPER, type GruppId, type LagerDef, type LagerLista } from "./lager.ts";
 
 const esc = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
 
@@ -13,6 +13,8 @@ export interface PanelKrokar {
   andrad(): void;
   /** Ett lager som kan tas bort (egna underlag). */
   taBort?(id: string): void;
+  /** Vilka grupper som visas (förval alla). Steg 2 visar inte gruppen Resultat. */
+  grupper?: readonly GruppId[];
 }
 
 export function monteraLagerpanel(rot: HTMLElement, lista: LagerLista, krokar: PanelKrokar): () => void {
@@ -43,7 +45,7 @@ export function monteraLagerpanel(rot: HTMLElement, lista: LagerLista, krokar: P
   };
 
   const rita = (): void => {
-    rot.innerHTML = GRUPPER.map((g) => {
+    rot.innerHTML = GRUPPER.filter((g) => !krokar.grupper || krokar.grupper.includes(g.id)).map((g) => {
       const innehall = lista.iGrupp(g.id);
       const fallt = lista.arHopfalld(g.id);
       return `

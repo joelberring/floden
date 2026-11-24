@@ -48,7 +48,13 @@ def registrera(subparsers: Any) -> None:
     m.add_argument("--georot", default=STANDARD_GEOROT, help="Rotmapp för geografier.")
     m.add_argument("--kommunfil", default=None, help="Annan kommunfil än data/kommuner/<kommun>.toml.")
     m.add_argument("--byggnadslager", default=None, help="Åsidosätter byggnadslagret.")
-    m.add_argument("--byggnader-kalla", choices=("filpaket", "wfs", "lantmateriet"), default=None)
+    m.add_argument("--byggnader-kalla", choices=("filpaket", "wfs", "lantmateriet", "lokal_fil"), default=None)
+    m.add_argument(
+        "--baskarta-fil", action="append", default=[], type=Path,
+        help="Baskartan som lokal fil (ZIP, DWG eller dwgread-JSON; kan anges flera gånger), för kommuner med "
+        "byggnader ur en baskarta som inte är öppna data (kalla = lokal_fil, t.ex. Stockholm). Filen ligger i serverns "
+        "lokala datamapp (/app/data/lokal/), aldrig i git. Byggnaderna och det som härleds ur dem är stängda för MCP.",
+    )
     m.add_argument(
         "--hojdmodell-url", action="append", default=[],
         help="Höjdmodellens ZIP-paket (https, tillåten värd). Kan anges flera gånger; ersätter kommunfilens lista.",
@@ -141,7 +147,7 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
             kommun, args.geografi, konto_id=args.konto, geo_rot=_abs(rot, args.georot), konfig=konfig,
             konfig_fil=rot / "config.toml", version=args.version,
             villkor_kontrollerade=args.villkor_kontrollerade, byggnadslager=args.byggnadslager,
-            byggnader_kalla=args.byggnader_kalla,
+            byggnader_kalla=args.byggnader_kalla, baskarta_filer=tuple(args.baskarta_fil),
             hojdmodell_urlar=tuple(args.hojdmodell_url), hojdmodell_filer=tuple(args.hojdmodell_fil),
             nmd_fil=_abs(rot, args.nmd) if args.nmd else None,
             vmi_fil=_abs(rot, args.vmi) if args.vmi else None, nmd_troskel_m=args.nmd_troskel_m,

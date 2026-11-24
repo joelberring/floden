@@ -19,7 +19,6 @@ import type {
 
 const NIVA_KLASS: Record<FlodeNiva, string> = {
   flode: "svarar",
-  karta: "delvis",
   api: "delvis",
   cli: "delvis",
   fristaende: "saknas",

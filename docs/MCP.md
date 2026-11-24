@@ -115,6 +115,7 @@ Med inloggning på (servern) kräver varje projektverktyg ett konto med en roll 
 | `scenario_skapa`, `fraga_skapa`, `kor`, `bestallning_skapa`, `rapport_skapa`, `rapport_installningar`, `pastaende_lagg_till`, `rapport_exportera` | rollen **utredare** i projektet |
 | övriga projekt- och körningsverktyg | minst **lasare** |
 | `projekt_lista`, `korlogg_hamta`, `metoder_lista`, `fragekatalog_sok`, `session_deklarera` | ingen projektroll (listan och loggen visar bara kontots egna) |
+| `projekt_skapa` | ingen projektroll (projektet finns inte än): kräver inloggning och superadmin, eller organisationsadmin eller ägare i en organisation; kontot blir utredare (K48, `docs/KONTO.md`) |
 
 - Projektet är argumentet `projekt` (förval `demokvarteret`). Verktyg utan `projekt` (körningar, resultat, rapporter) gäller i dag
   bara demokvarteret och kräver rollen där (`demoprojekt_roll`, förval `utredare`; `av` stänger dem för alla).
@@ -140,6 +141,7 @@ extern AI-tjänst. Därför finns en **uttrycklig spärr i verktygslagret** (`fl
   `oppenhet.toml` (`oppen = true` **och** en känd öppen licens, annars stängt) eller ett lager i `config.local.toml`
   (`[oppenhet.lager.<namn>]`) följer sin metadata; `oppen = false` stänger alltid. (4) **Allt annat är stängt**: `data/lokal`,
   stadens `baskarta_mapp` och `tat_laser_mapp`, och varje mapp utan metadata. *Saknas metadata: neka.*
+- Stockholms 3D-baskarta (inte öppna data, beslut 2026-11-24): byggnader ur en lokal baskartefil (`kalla = "lokal_fil"`) gör geografin, dess lager och projekten i den till `oppen = false`, licens `intern`, även med `--villkor-kontrollerade` (`docs/DRIFT.md`, avsnittet Stockholm).
 - Konsekvens i dag: data som hämtats med `floden data lantmateriet` till en egen mapp är stängda för MCP tills mappen fått en
   `oppenhet.toml` (Lantmäteriets öppna geodata är CC0: `oppen = true`, `licens = "CC0-1.0"`).
 
@@ -149,6 +151,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 
 | Verktyg | Gör |
 | --- | --- |
+| `projekt_skapa` | skapar ett projekt i en mappad geografi (`geografi`, `namn`, `avgransning` som GeoJSON-polygon eller `[xmin, ymin, xmax, ymax]` i EPSG:3011, `organisation_synlig`, `organisation`): samma kod, behörighet och svar som webbens `POST /api/projekt` (K48); svaret har `projekt_id` och varningar |
 | `projekt_lista`, `projekt_info` | projekt (per konto: med inloggning på bara de som kontot har tillgång till, med roll), utbredning, antal byggnader, tillgängliga analyser |
 | `geometri_sammanfattning` | byggnader: antal, fotavtryck, höjder, takformer, höjdkälla |
 | `byggnader_lista` | byggnader (valfritt inom ett område) |

@@ -3,10 +3,12 @@
  * stegbyte. Anropas av routern; allt annat i flödet ligger i den här mappen.
  */
 import "./flode.css";
+import "../karta/karta.css";
 import { hamtaProjektLista } from "../api.ts";
 import { tolkaFlodeAdress, type FlodeRutt } from "./adress.ts";
 import { visaForslag } from "./forslag.ts";
 import { visaFragor } from "./fragor.ts";
+import { visaNyttProjekt } from "./nyttprojekt.ts";
 import { ritaFlodeHuvud, sattProjektNamn } from "./huvud.ts";
 import { visaProjektlista, type Avslutbar } from "./projektlista.ts";
 import { visaRapport } from "./rapport.ts";
@@ -48,7 +50,8 @@ export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt)
       .catch(() => undefined);
   }
   let steg: Avslutbar;
-  if (rutt.steg === "projekt" || p === null) steg = visaProjektlista(rot, null);
+  if (rutt.nytt) steg = visaNyttProjekt(rot);
+  else if (rutt.steg === "projekt" || p === null) steg = visaProjektlista(rot, null);
   else if (rutt.steg === "forslag") steg = visaForslag(rot, p);
   else if (rutt.steg === "fragor") steg = visaFragor(rot, p);
   else if (rutt.steg === "resultat") steg = visaResultat(rot, p);

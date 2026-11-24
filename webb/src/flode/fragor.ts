@@ -8,10 +8,11 @@ import { hamtaFragor, lasJson } from "../api.ts";
 import { hamtaProjektInfo, planeraScenario, type ProjektInfo } from "../karta/kartapi.ts";
 import { esc } from "../sidor.ts";
 import { flodeAdress } from "./adress.ts";
+import { webGpuSkissStatus } from "../gpu/webgpuMotor.ts";
 import { arPagaende, startaKorning, vidKorning } from "./korning.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { AMNEN, etikett, franK20, raknaPerAmne, tolkaKatalog, type FlodeFraga } from "./status.ts";
-import { MOTTAGARE, sparaTillstand, tillstandFor, type Skede } from "./tillstand.ts";
+import { lasAvtappning, MOTTAGARE, sparaTillstand, tillstandFor, type Skede } from "./tillstand.ts";
 
 export interface FragelistaSvar {
   fragor: FlodeFraga[];
@@ -75,9 +76,16 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
           <select id="fr-mottagare">${MOTTAGARE.map((m) => `<option value="${m.id}">${esc(m.namn)}</option>`).join("")}</select></div>
         <div class="flode-falt"><label for="fr-syfte">Syfte</label>
           <textarea id="fr-syfte" rows="3"></textarea></div>
+        <details class="flode-detalj" id="fr-antaganden">
+          <summary>Antaganden för skyfall</summary>
+          <div class="flode-falt"><label for="fr-avtappning">Avtappning till ledningsnätet (mm/h, valfritt)</label>
+            <input id="fr-avtappning" type="text" inputmode="decimal" placeholder="Tomt: ledningsnätet antas fullt (0 mm/h)" autocomplete="off" /></div>
+          <p class="flode-fel flode-liten" id="fr-avtappning-fel" role="alert" hidden></p>
+        </details>
         <dl class="flode-sammanfattning" id="fr-sammanfattning"></dl>
         <div class="flode-rad-slut">
           <p class="flode-liten flode-dampad" id="fr-kor-not" role="status"></p>
+          <p class="flode-liten flode-dampad" id="fr-gpu"></p>
           <button type="button" class="flode-knapp svart stor" id="fr-kor">Kör beräkningarna</button>
         </div>
       </aside>
@@ -119,6 +127,8 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     el("fr-skede-not").hidden = b.skede !== "planunderlag";
     el<HTMLSelectElement>("fr-mottagare").value = b.mottagare;
     el<HTMLTextAreaElement>("fr-syfte").value = b.syfte;
+    el<HTMLInputElement>("fr-avtappning").value = t.avtappning === null ? "" : String(t.avtappning).replace(".", ",");
+    el("fr-antaganden").toggleAttribute("open", t.avtappning !== null);
     ritaSammanfattning();
   };
 
@@ -135,6 +145,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     let hinder = "";
     if (!t.scenario) hinder = `Rita först ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a>. Utan förslag visar Resultat projektets färdiga beräkningar.`;
     else if (analyser.length === 0) hinder = "Välj minst en fråga som Floden kan räkna på (skyfall eller dagsljus och sol).";
+    if (avtappningFel) hinder = "Rätta avtappningen först.";
     kor.disabled = nu || hinder !== "";
     if (nu) not.textContent = t.korning?.text ?? "";
     else if (t.korning?.fel) not.innerHTML = `<span class="flode-fel" role="alert">${esc(t.korning.fel)}</span>`;
@@ -142,6 +153,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     kor.textContent = nu ? "Beräknar …" : "Kör beräkningarna";
   };
 
+  let avtappningFel = false;
   const uppskattaTid = async (): Promise<void> => {
     const nr = ++planNr;
     const analyser = info ? analyserFor(info, valdaPoster()) : [];
@@ -151,7 +163,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       return;
     }
     try {
-      const p = await planeraScenario(projekt, t.scenario.slug, analyser.map((a) => a.id), null);
+      const p = await planeraScenario(projekt, t.scenario.slug, analyser.map((a) => a.id), t.avtappning);
       if (nr !== planNr || avslutad) return;
       const tider = p.fragor.map((f) => f.uppskattad_tid_s);
       tidText = tider.every((x): x is number => x !== null) ? (tider.reduce((a, b) => a + b, 0) === 0 ? "klart i cachen" : `ungefär ${Math.round(tider.reduce((a, b) => a + b, 0))} s`) : "–";
@@ -186,6 +198,18 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       sparaTillstand(t);
       ritaSammanfattning();
       void uppskattaTid();
+    } else if (m.id === "fr-avtappning") {
+      const r = lasAvtappning(m.value);
+      avtappningFel = !r.ok;
+      const fel = el("fr-avtappning-fel");
+      fel.hidden = r.ok;
+      fel.textContent = r.ok ? "" : "Avtappningen måste vara ett tal som är minst 0 (eller tomt för 0).";
+      if (r.ok) {
+        t.avtappning = r.varde;
+        sparaTillstand(t);
+        void uppskattaTid();
+      }
+      ritaSammanfattning();
     } else if (m.id === "fr-mottagare") {
       t.bestallning.mottagare = m.value;
       sparaTillstand(t);
@@ -225,6 +249,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     ritaBestallning();
     void uppskattaTid();
   })();
+  el("fr-gpu").textContent = webGpuSkissStatus().beskrivning;
   ritaBestallning();
 
   return {

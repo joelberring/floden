@@ -41,7 +41,7 @@ test("kartan ritar bara instabila punkter med ändliga koordinater", () => {
 test("hovring och klick visar samma värden som panelen listar", () => {
   const punkt = p(5, 151345.5, 6580235.5);
   const text = overfallBeskrivning(punkt);
-  assert.equal(text, "Nod 5 (E 151346, N 6580236): marginal 0.029 m, berör 2309 m³");
+  assert.equal(text, "Nod 5 (E 151 346, N 6 580 236): marginal 0,029 m, berör 2 309 m³");
   const f = overfallTillGeoJson([punkt]).features[0];
   assert.equal(f?.properties?.beskrivning, text);
   assert.equal(f?.properties?.nod_id, 5);

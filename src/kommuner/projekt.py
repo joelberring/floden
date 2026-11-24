@@ -100,6 +100,35 @@ def tolka_avgransning(text: str, epsg: int = 3011) -> Rektangel:
     return r
 
 
+def tolka_avgransning_objekt(avgransning: Any, epsg: int = 3011) -> Rektangel:
+    """Avgränsningen som ett API-anrop ger den: en GeoJSON-polygon (objekt, `Feature` eller geometri), en
+    lista `[xmin, ymin, xmax, ymax]` eller samma text som `--avgransning`. Samma tolkning som kommandot
+    (`tolka_avgransning`): en polygon blir sin omslutande rektangel i EPSG:3011. Ogiltiga tal (NaN,
+    oändligt) och en yta utan utsträckning ger `SkapaFel`."""
+    import math
+
+    if isinstance(avgransning, str):
+        text = avgransning
+    elif isinstance(avgransning, Mapping):
+        text = json.dumps(avgransning)
+    elif isinstance(avgransning, Sequence) and len(avgransning) == 4:
+        try:
+            text = ",".join(repr(float(v)) for v in avgransning)
+        except (TypeError, ValueError) as exc:
+            raise SkapaFel("avgransning: koordinaterna ska vara tal.") from exc
+    else:
+        raise SkapaFel(
+            "avgransning: ange en GeoJSON-polygon eller en lista [xmin, ymin, xmax, ymax] (meter, EPSG:3011)."
+        )
+    try:
+        r = tolka_avgransning(text, epsg)
+    except (OverflowError, ValueError) as exc:
+        raise SkapaFel("avgransning: koordinaterna ska vara ändliga tal.") from exc
+    if not all(math.isfinite(v) for v in r):
+        raise SkapaFel("avgransning: koordinaterna ska vara ändliga tal.")
+    return r
+
+
 def _skriv_json(fil: Path, d: Mapping[str, Any]) -> None:
     fil.parent.mkdir(parents=True, exist_ok=True)
     fil.write_text(json.dumps(d, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -241,7 +270,9 @@ def skapa_projekt(
         "Skyfallsfrågan räknar på en ruta runt avgränsningen (statisk fyllning): tillrinning från högre mark "
         "utanför rutan ingår inte. Geografins tillrinningsyta finns i manifestet (forberakningar.tillrinning)."
     )
-    oppen = bool(manifest.get("oppen_for_mcp"))
+    # Byggnader ur en baskarta som inte är öppna data (kalla = lokal_fil) är alltid stängda, vad manifestet än säger.
+    oppen = bool(manifest.get("oppen_for_mcp")) and not (manifest.get("kallor", {}).get("byggnader") or {}).get("stangd")
+    oppen = oppen and (manifest.get("kallor", {}).get("byggnader") or {}).get("kalla") != "lokal_fil"
     skriv_oppenhet_toml(
         mapp,
         oppen=oppen,

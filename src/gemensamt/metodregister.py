@@ -25,7 +25,6 @@ MARKOR_DOMANER = "<!-- Per domän, genererat ur samma register -->"
 
 FLODE_TEXT = {
     "flode": "I användarflödet",
-    "karta": "I kartsidan (#/karta), inte i flödet",
     "api": "Bara i API:t",
     "cli": "Kommandorad, MCP och testsvit",
     "fristaende": "Fristående modul",

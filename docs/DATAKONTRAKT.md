@@ -634,7 +634,7 @@ Registrerat 2026-11-23 i efterhand (ingen formatändring). Ett JSON-svar, ingen 
 
 **Skrivs av** `FlodenWebbTjanst.kor_bifurkation_analys` i `src/webb/api.py`, som kör
 `detektera_bifurkationer` och `tvad.felindikator.berakna_2d_felindikator` på områdets basgraf.
-**Läses av** webbklienten (`webb/src/karta/kartapi.ts`, `BifurkationAnalysSvar`, panelen i `kartsida.ts`).
+**Läses av** webbklienten (`webb/src/karta/kartapi.ts`, `BifurkationAnalysSvar`, resultatpanelen i `webb/src/flode/resultat.ts` och `osakerhet.ts`).
 
 | Fält | Typ | Enhet | Innehåll |
 | --- | --- | --- | --- |
@@ -1136,3 +1136,45 @@ avklippning. Markunderlag för NMD-nätverk: indataroll `nmd` (uint8-GeoTIFF i E
 (`data_inlasning.vmi`), märkt som äldre. Metodstatus: `skiss`, parametrar källbelagda (kommunala modellval), biologisk
 säkerhet låg. K45 förblir v1; ändringarna i K45 (fälten `intervall_typ` och `natverk`, parametern `natverk`, indataroller) är
 additiva och bakåtkompatibla.
+
+## K48 – Skapa projekt och rapport i webben (API) `floden-webb-skapa/v1` (v1)
+
+Registrerat 2026-11-23. Additivt: inga befintliga format ändras (K30, K33, K46 och `floden-projekt/v1` är oförändrade). Beskriver
+HTTP-formen för det som tidigare bara gick med `floden projekt skapa` och MCP: **nytt projekt** (steg 1) och **skapa rapport** (steg 5).
+Koden: `src/webb/projektskapa.py`, `src/webb/rapportjobb.py`, `src/rapport/webbflode.py`; MCP-verktyget `projekt_skapa`. Alla skrivande anrop
+kräver inloggning, CSRF (`X-Floden-CSRF`) och samma ursprung (`docs/KONTO.md` avsnitt 8).
+
+**`GET /api/geografier`** (inloggad). `{geografier: [...], far_skapa_projekt, organisationer: [{id, namn}]}`. Per geografi (ur K46-manifestet,
+utan att lagren kontrollsummeras): `ref` (`id@version`), `id`, `version`, `namn`, `kommun`, `epsg` (3011), `karna_3011` och `gransen_3011`
+(`[x0, y0, x1, y1]`, m), `karna_polygon_3011` och `gransen_polygon_3011` (GeoJSON `Polygon`), `buffert_m`, `varningar`, `manifest_sha256`,
+`far_skapa_projekt`. `organisationer` är de kontot får skapa i (alla för superadmin; organisationsadmin och ägare i sina).
+
+**`POST /api/projekt`**. Kropp: `geografi` (`id@version`), `namn` (1–120 tecken, inga styrtecken, ingen e-postadress eller personnummer),
+`avgransning` (GeoJSON-`Polygon` eller `[xmin, ymin, xmax, ymax]`, EPSG:3011), `organisation_synlig` (förval falskt),
+`organisation` (id; krävs bara om kontot får skapa i flera). Okända fält ger 400. En polygon blir sin omslutande rektangel (samma
+tolkning som `--avgransning`), och svaret säger det i `varningar`. Minst 100 m². Behörighet: superadmin, eller organisationsadmin eller
+ägare i organisationen (`Register.organisationer_for_skapa`); skaparen blir `utredare` och `skapad_av`, projektet är privat om inte
+`organisation_synlig`. Ett namn som redan finns i organisationen, eller som ger samma projektmapp, ger **409** (inget befintligt projekt
+återanvänds, så att ingen kan ge sig själv en roll i ett privat projekt). Svar **201**: `kontrakt` (`K48/v1`), `projekt_id` (registrets id;
+det som alla `/api/projekt/<id>/...` använder), `namn`, `organisation`, `organisation_synlig`, `geografi`, `avgransning_3011`, `roll`
+(`utredare`), `varningar` (till exempel att delar ligger utanför giltig kärna). **400**: indata, och avgränsning utanför geografins yttre
+gräns. **403**: saknar behörighet, eller inloggning av. **404**: geografin finns inte. Utan inloggning finns inga roller; lokalt gäller
+`floden projekt skapa`.
+
+**`GET /api/projekt/<id>/rapporter`** (läsare). Det befintliga svaret (`rapporter`) får det additiva fältet `amnen`: per ämne (`skyfall`,
+`dagsljus`, `ekologi`) `id`, `namn`, `kan_skapas`, `forklaring` (varför inte: saknad rapportmall eller beräkning), `mall`, `forval_korning`
+(senaste klara körning i projektet med ämnets analys och en jämförelse före/efter) och `korningar`.
+
+**`POST /api/projekt/<id>/rapporter`** (utredare). Kropp: `amne` (`skyfall` förval, `dagsljus`, `ekologi`), `korning_id` (valfri; annars
+`forval_korning`; körningen ska höra till projektet), `bestallning` (valfri, K30-fält: `syfte`, `skede` (bara `skiss`), `mottagare_roll`,
+`amnen`, `villkor`, `fragor`, `bara_med_underlag`, `scenario`). Beställningen skapas direkt (K30), resten körs som **jobb**; svar **202**
+med jobbet. Ämnet utan rapportmall (`ekologi` tills R2-mallen finns) ger **409** med förklaringen; `planunderlag` ger 409; en körning som
+saknas, hör till ett annat projekt eller inte duger för ämnet ger 404.
+
+**`GET /api/projekt/<id>/rapporter/jobb/<jobb_id>`** (läsare). Jobb (`<rapportmapp>/jobb/j-<12 hex>.json`): `kontrakt`, `jobb_id`, `projekt`,
+`amne`, `korning_id`, `bestallning_id`, `status` (`ko`, `kor`, `klar`, `fel`), `steg` (`skapar`, `paastaenden`, `kontrollerar`,
+`exporterar`), `steg_nr`, `steg_totalt` (4), `text`, `rapport_id` (när rapporten är skapad), `kontroll` (`godkand`, `antal_fel`,
+`exporterad`), `lankar` (`pdf`, `word`: `GET .../rapporter/<rapport_id>/fil/pdf|word`, bara när exporten gjorts), `fel`, `status_url`. `klar`
+med `kontroll.godkand` falskt betyder att rapporten är skapad men kontrollen underkände den: ingen export. Ett jobb som var igång när
+servern stoppades blir `fel`. Ett jobb körs i taget. Påståendena skrivs av referensflödet (`forfattare` `referensflode`, ingen AI) ur
+körningens egna scenarier; talen är platshållare som Floden fyller (K32).
