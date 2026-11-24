@@ -18,14 +18,35 @@ COPY rust/tvad_karna rust/tvad_karna
 RUN cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml \
  && cargo build --release --locked --manifest-path rust/tvad_karna/Cargo.toml
 
-# 3. Körning: Python 3.12 med Floden installerat från repot (redigerbart, eftersom koden läser repots mappar)
+# 3. LibreDWG:s dwgread (GPL v3): läser kommunala baskartor i DWG, t.ex. Göteborgs baskarta_dwg_v2.zip
+#    (src/markmodell/dwg.py, FLODEN_DWGREAD). Statiskt länkad, så att körlagret inte behöver några bibliotek.
+FROM debian:bookworm-slim AS libredwg
+ARG LIBREDWG_VERSION=0.13.3
+ARG LIBREDWG_SHA256=83f1f6e78a744777a481ff4520e4cef3f8ac4b2c1c25671077ca12fe81e8816e
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential ca-certificates curl xz-utils \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl -fsSL -o libredwg.tar.xz \
+      "https://github.com/LibreDWG/libredwg/releases/download/${LIBREDWG_VERSION}/libredwg-${LIBREDWG_VERSION}.tar.xz" \
+ && echo "${LIBREDWG_SHA256}  libredwg.tar.xz" | sha256sum -c - \
+ && tar xf libredwg.tar.xz \
+ && cd "libredwg-${LIBREDWG_VERSION}" \
+ && ./configure --prefix=/opt/libredwg --disable-shared --enable-static \
+      --disable-bindings --disable-python --disable-docs \
+ && make -j2 \
+ && make install \
+ && /opt/libredwg/bin/dwgread --version
+
+# 4. Körning: Python 3.12 med Floden installerat från repot (redigerbart, eftersom koden läser repots mappar)
 FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     FLODEN_LASCLIP=/usr/local/bin/lasclip \
-    FLODEN_TVAD_KARNA=/usr/local/bin/tvad_karna
+    FLODEN_TVAD_KARNA=/usr/local/bin/tvad_karna \
+    FLODEN_DWGREAD=/usr/local/bin/dwgread
 # rasterio:s hjul har GDAL med sig men behöver libexpat från systemet.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends libexpat1 \
@@ -39,7 +60,9 @@ COPY . .
 COPY --from=webb /src/webb/dist ./webb/dist
 COPY --from=rust /src/tools/lasclip/target/release/lasclip /usr/local/bin/lasclip
 COPY --from=rust /src/rust/tvad_karna/target/release/tvad_karna /usr/local/bin/tvad_karna
-RUN mkdir -p data/cache data/konto data/demo data/lokal \
+COPY --from=libredwg /opt/libredwg/bin/dwgread /usr/local/bin/dwgread
+RUN dwgread --version \
+ && mkdir -p data/cache data/konto data/demo data/lokal \
  && chown -R floden:floden data \
  && chmod 755 deploy/start.sh
 # Commiten som byggs (sätts av .github/workflows/avbildning.yml), visas i GET /api/halsa.
