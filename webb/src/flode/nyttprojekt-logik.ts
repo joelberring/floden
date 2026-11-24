@@ -3,6 +3,7 @@
  * (EPSG:3011, meter). Servern gör de bindande kontrollerna (`POST /api/projekt`, K48); här visas bara samma
  * besked i förväg: ligger avgränsningen inom giltig kärna, delvis utanför (varning) eller utanför yttre gräns (fel).
  */
+import { formatera, formateraHogst } from "../tal.ts";
 import type { GeografiPost, Rektangel3011, SkapaProjektBegaran } from "../types.ts";
 
 export interface Pkt {
@@ -123,6 +124,6 @@ export function skapaBegaran(
 
 export function arealText(r: Rektangel3011): string {
   const a = yta(r);
-  const t = a >= 1e6 ? `${(a / 1e6).toLocaleString("sv-SE", { maximumFractionDigits: 2 })} km²` : `${Math.round(a).toLocaleString("sv-SE")} m²`;
-  return `${Math.round(r[2] - r[0]).toLocaleString("sv-SE")} × ${Math.round(r[3] - r[1]).toLocaleString("sv-SE")} m, ${t}`;
+  const t = a >= 1e6 ? `${formateraHogst(a / 1e6, 2)} km²` : `${formatera(a, 0)} m²`;
+  return `${formatera(r[2] - r[0], 0)} × ${formatera(r[3] - r[1], 0)} m, ${t}`;
 }
