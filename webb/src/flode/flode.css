@@ -423,3 +423,30 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 @media (max-width: 600px) {
   .flode-verktyg button, .flode-zoom button, .flode-segment button, .flode-chips button, .flode-flikar button, .flode-scen-knappar button { min-height: 40px; }
 }
+
+/* ---------- Skarvar (R5) ---------- */
+.skarv-lista { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 8px; }
+.skarv-fynd { display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; }
+.skarv-nr, .skarv-markor {
+  width: 24px; height: 24px; border-radius: 999px; border: 2px solid #fff; background: #0d47a1; color: #fff;
+  font-size: 12px; font-weight: 600; line-height: 20px; text-align: center; padding: 0; box-sizing: border-box;
+}
+.skarv-nr { cursor: pointer; }
+.skarv-nr:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
+.skarv-markor { cursor: pointer; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.skarv-forslag { margin-top: 10px; padding: 10px; border-radius: 8px; background: #fff; border: 1px solid var(--fl-line); }
+.skarv-forslag .skarv-rubrik { margin: 0 0 6px; font-size: 13px; }
+@media (pointer: coarse) { .skarv-nr, .skarv-markor { width: 32px; height: 32px; line-height: 28px; font-size: 14px; } }
+
+/* ---------- 3D-förhandsvisning i steg 2 (R6) ---------- */
+.flode-3d {
+  position: absolute; right: 24px; bottom: 24px; z-index: 3; width: min(48%, 600px); height: min(52%, 440px); display: flex; flex-direction: column;
+  background: #fff; border: 1px solid var(--fl-line); border-radius: 8px; overflow: hidden; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+.flode-3d[hidden] { display: none; }
+.flode-3d-huvud { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--fl-line); font-size: 13px; flex-wrap: wrap; }
+.flode-3d-huvud button { margin-left: auto; height: 28px; padding: 0 10px; border: 0; border-radius: 6px; background: #f1f0ea; font: inherit; font-size: 13px; cursor: pointer; }
+.flode-3d-huvud button:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
+.flode-3d-yta { position: relative; flex: 1 1 auto; min-height: 0; }
+@media (max-width: 760px) { .flode-3d { left: 12px; right: 12px; bottom: 12px; width: auto; height: 46%; } }
+.flode-zoom button[aria-pressed="true"] { background: var(--fl-ink); color: #fff; }

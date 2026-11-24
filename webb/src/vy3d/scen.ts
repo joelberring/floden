@@ -16,6 +16,7 @@ import {
   DirectionalLight,
   DoubleSide,
   Float32BufferAttribute,
+  GreaterDepth,
   Group,
   HemisphereLight,
   LineBasicMaterial,
@@ -63,6 +64,8 @@ import {
 import type { Hamtare, Vy3dInfo } from "./hamta.ts";
 import { franScen, kameraPosition, kameraVinklar, SYNFALT_GRADER, tillScen, type Kamera, type Origo } from "./koord.ts";
 import { arVattenYta, type SidKonfig, type Uppdelning } from "./lagerval.ts";
+import { markYta, murYta, type PlanMark, type PlanMur, type Yta3d } from "./planyta.ts";
+import { tolkaTakform, type Takform } from "./tak.ts";
 import { rutNyckel, valjRutor, type Rut } from "./rutnat.ts";
 
 // Färghanteringen är avslagen i farghantering.ts (datafärger = samma RGB som i 2D).
@@ -70,6 +73,9 @@ import { rutNyckel, valjRutor, type Rut } from "./rutnat.ts";
 const MARK_GRA = 0xe9e9e9;
 const HUS_OFORANDRAD = 0xd2d2d2;
 const HUS_FORSLAG = 0x7f93ad;
+const MARK_FARG = { mark: 0x8b5e3c, hardgjort: 0x6b6b6b, vegetation: 0x4f8f3a, vatten: 0x2b6cb0 } as const;
+const SLANT_FARG = { mark: 0xa88460, hardgjort: 0x8a8a8a, vegetation: 0x6fae55, vatten: 0x5b94cc } as const;
+const MUR_FARG = 0xa89f91;
 const KANT_OFORANDRAD = 0x757575;
 const KANT_FORSLAG = 0x111111;
 
@@ -88,6 +94,15 @@ export interface PlanHus {
   /** Yttre ring först, därefter hål; SWEREF (E, N). */
   ringar: Array<Array<[number, number]>>;
   hojd_m: number;
+  /** K9-takformen (text) för ett nytt hus (R6). Utan värde: brutet tak (sadel), som takvattnet; ändrade och rivna hus ritas platta. */
+  takform?: string;
+}
+
+/** Det ritade förslaget som ritas ovanpå basen: hus, ny mark (med slänter) och murar (R6). */
+export interface PlanInnehall {
+  hus: PlanHus[];
+  mark: PlanMark[];
+  murar: PlanMur[];
 }
 
 export interface Tillstand {
@@ -97,6 +112,10 @@ export interface Tillstand {
   /** Gräns för svep (0..1 av bredden). */
   svep: number;
   plan: PlanHus[];
+  /** Ny mark och slänter (R6): ytor ur ritlager med roll mark, hårdgjort, vegetation och vatten. */
+  planMark?: PlanMark[];
+  /** Murar och kanter (R6): brytlinjer ur ritlager. */
+  planMurar?: PlanMur[];
   /** Analysen vars VSC visas på fasaderna (null = inga fasader). */
   fasadAnalys: string | null;
   vattenTroskel: number;
@@ -601,8 +620,11 @@ export class Vy3d {
   private byggPlan(sida: Sida, t: Tillstand): void {
     for (const c of [...sida.plan.children]) {
       sida.plan.remove(c);
-      if ((c as Mesh).geometry) (c as Mesh).geometry.dispose();
+      const g = (c as Mesh).geometry;
+      if (g) g.dispose();
     }
+    this.byggPlanMark(sida, t.planMark ?? []);
+    this.byggPlanMurar(sida, t.planMurar ?? []);
     if (t.plan.length === 0) return;
     for (const slag of ["ny", "andrad", "bort"] as const) {
       const lista = t.plan.filter((p) => p.slag === slag);
@@ -612,10 +634,13 @@ export class Vy3d {
         const z = (p.ringar[0] ?? []).map(([e, n]) => this.markHojd(e, n)).sort((a, b) => a - b);
         const lagst = z[0] ?? this.info.hojd.z_min;
         const median = z[Math.floor(z.length / 2)] ?? lagst;
+        // Nya hus får sin takform (R6); höjden är fortfarande till det högsta på taket.
+        const takform: Takform = p.slag === "ny" ? tolkaTakform(p.takform) : "platt";
         return {
           ringar: p.ringar.map((r) => r.map(([e, n]) => [e - this.o.e, -(n - this.o.n)] as [number, number])),
           yFot: lagst - 0.3 - this.o.z,
           yTak: median + p.hojd_m - this.o.z,
+          takform,
         };
       });
       const e = extrudera(hus);
@@ -633,6 +658,63 @@ export class Vy3d {
       l.renderOrder = 5;
       sida.plan.add(l);
     }
+  }
+
+  private geometriAv(y: Yta3d): BufferGeometry {
+    const g = new BufferGeometry();
+    g.setAttribute("position", new BufferAttribute(y.position, 3));
+    g.setAttribute("normal", new BufferAttribute(y.normal, 3));
+    g.setIndex(new Uint32BufferAttribute(y.index, 1));
+    return g;
+  }
+
+  /** Ny mark och slänter som ytor på marken. Delar under terrängen syns som en ton genom den (schakt). */
+  private byggPlanMark(sida: Sida, lista: readonly PlanMark[]): void {
+    const hojd = (e: number, n: number): number => this.markHojd(e, n);
+    for (const m of lista) {
+      const { yta, slant } = markYta(m, hojd, this.o);
+      const farg = MARK_FARG[m.roll];
+      const delar: Array<[Yta3d, number]> = [[yta, farg]];
+      if (slant) delar.push([slant, SLANT_FARG[m.roll]]);
+      for (const [y, c] of delar) {
+        if (y.index.length === 0) continue;
+        const g = this.geometriAv(y);
+        const mat = new MeshLambertMaterial({ color: c, side: DoubleSide, transparent: true, opacity: 0.92, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+        const mesh = new Mesh(g, mat);
+        mesh.renderOrder = 3;
+        mesh.name = `plan-mark-${m.id}`;
+        sida.plan.add(mesh);
+        const spok = new Mesh(g.clone(), new MeshBasicMaterial({ color: c, side: DoubleSide, transparent: true, opacity: 0.28, depthFunc: GreaterDepth, depthWrite: false }));
+        spok.renderOrder = 3;
+        spok.name = `plan-schakt-${m.id}`;
+        sida.plan.add(spok);
+      }
+    }
+  }
+
+  private byggPlanMurar(sida: Sida, lista: readonly PlanMur[]): void {
+    const hojd = (e: number, n: number): number => this.markHojd(e, n);
+    for (const m of lista) {
+      const y = murYta(m, hojd, this.o);
+      if (y.index.length === 0) continue;
+      const mesh = new Mesh(this.geometriAv(y), new MeshLambertMaterial({ color: MUR_FARG, side: DoubleSide }));
+      mesh.renderOrder = 3;
+      mesh.name = `plan-mur-${m.id}`;
+      sida.plan.add(mesh);
+    }
+  }
+
+  /**
+   * Byter det ritade förslaget i den visade vyn utan att bygga om terräng, byggnader och resultat (live medan man ritar).
+   * Gör ingenting förrän vyn fått sitt första tillstånd.
+   */
+  settPlan(p: PlanInnehall): void {
+    const t = this.tillstand;
+    if (!t) return;
+    this.tillstand = { ...t, plan: p.hus, planMark: p.mark, planMurar: p.murar };
+    for (const sida of this.sidor) if (sida.config !== null) this.byggPlan(sida, this.tillstand);
+    this.tillampaStil();
+    this.behovRita = true;
   }
 
   // ------------------------------------------------------------------ stil

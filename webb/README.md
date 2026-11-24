@@ -56,12 +56,16 @@ någon extern tjänst som standard.
 | `ritlager.ts`, `ritlagerpanel.ts` | Ritlager (K50): roll, synlighet, låsning, valt lager att rita i, lägga till och ta bort lager; panelen i steg 2 (kommer ur `ritlager` i projektinfo, sparas med förslaget) |
 | `ritverktyg.ts` | Styrenhet för verktygen och kortkommandona (testbar utan webbläsare) |
 | `kartapi.ts` | Anrop till `/api/kartverktyg/...` |
+| `skarv.ts` | Skarvfynd (K49) som kartfigurer (yta, punkt, överfallspil), text i panelen, tillämpning av åtgärdsförslaget (R5) |
+| `fordrojning.ts` | `fordrojd(f, ms)`: debounce för 3D-förhandsvisningen (150 ms) |
 
 Klienten ritar bara geometri. Kontrollen (giltig form, höjd över 0 och högst 200 m, ligger inom K1-rutorna),
 K9, K20 och körningen görs av servern (`src/webb/kartverktyg.py`, `src/karna/ritat.py`). Porterad logik
 står med "Logik porterad från O-Tid (MIT, joelberring/otid @ 4a446af, ...)" i filhuvudet. Kortkommandon:
 Q markera, W rita hus, A lägg till hörn, S ta bort hörn, T fäst, R rät vinkel, Z ångra, Shift+Z gör om,
 Enter avslutar, Esc avbryter, Backsteg tar bort senaste punkten, Delete tar bort det markerade.
+
+**3D (R6, `src/vy3d/`).** `tak.ts` (takformer platt, sadel, pulpet, mansard i `extrudera`), `planyta.ts` (ny mark, slänt och murar som ytor), `planinnehall.ts` (urval ur planförslaget och ritlagren), `scen.ts` (`settPlan` bygger bara om planen). I steg 2 finns knappen "3D-förhandsvisning" som visar förslaget i 3D-vyn och uppdateras 150 ms efter senaste ritändring. **Jämna ut skarven** (R5) finns under skarvfynden i steg 2: föreslå, läs före och efter, tillämpa eller avbryt. Alla tal går genom `tal.ts`.
 
 ## Sidor och adresser
 

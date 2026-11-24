@@ -9,6 +9,7 @@ import { btaUppskattning, yta, type Punkt } from "../karta/geom.ts";
 import {
   bytScenarioNamn,
   hamtaProjektInfo,
+  foreslaSkarvatgard,
   hamtaScenario,
   kontrolleraAndringar,
   listaScenarier,
@@ -18,6 +19,11 @@ import {
   type ScenarioPost,
 } from "../karta/kartapi.ts";
 import { LagerLista } from "../karta/lager.ts";
+import { fordrojd } from "../karta/fordrojning.ts";
+import { skapa3dVy } from "../kartsida3d.ts";
+import { meterPerPxFranZoom } from "../vy3d/koord.ts";
+import { wgs84TillSweref } from "../sweref.ts";
+import { fyndUtbredning, skarvFigurer, skarvPanelHtml, tillampaAtgard, utfallText, type AtgardSvar, type Skarvar } from "../karta/skarv.ts";
 import { monteraRitlagerpanel } from "../karta/ritlagerpanel.ts";
 import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { TOM_RITVY, type RitVy } from "../karta/kartmotor.ts";
@@ -52,6 +58,13 @@ const FIGURFARG: Record<string, string> = {
   vatten: "#1565c0",
   brytlinje: "#111111",
   oppning: "#c2410c",
+};
+
+/** Förklaring under taktypen: vad 3D-vyn visar och vad takvattnet räknar med (docs/VATTEN.md). */
+const TAKHJALP: Record<string, string> = {
+  sadel: "Sadeltak: nocken längs husets längdaxel. Takvattnet räknas som för brutet tak.",
+  pulpet: "Pulpettak: 3D-vyn lutar taket mot söder; takfallets riktning anges inte i förslaget, så takvattnet räknas som för brutet tak.",
+  mansard: "Mansardtak: nocken längs husets längdaxel. Takvattnet räknas som för brutet tak.",
 };
 
 function hjalpText(v: Ritverktyg): string {
@@ -93,6 +106,17 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
   let sparat = "";
   let kontrollTimer: number | null = null;
   let ritaBegard = 0;
+  // Skarvar (R5): senaste kontrollens fynd, åtgärdsförslaget och dess tillstånd.
+  let skarvar: Skarvar | null = null;
+  let skarvForslag: AtgardSvar | null = null;
+  let skarvForslagNr = -1;
+  let skarvForeslar = false;
+  let skarvFel: string | null = null;
+  let skarvMeddelande: string | null = null;
+  let skarvTillampad = false;
+  // 3D-förhandsvisningen (R6): monteras när man trycker 3D och byggs om (bara förslaget) när något ritats, efter en kort paus.
+  let forhandsvisning: { avmontera(): void; uppdateraPlan?(): void } | null = null;
+  const planera3d = fordrojd(() => forhandsvisning?.uppdateraPlan?.(), 150);
   const avbryt: Array<() => void> = [];
   const ac = new AbortController();
 
@@ -129,7 +153,12 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" id="fs-in" aria-label="Zooma in">+</button>
           <button type="button" id="fs-ut" aria-label="Zooma ut">−</button>
           <button type="button" id="fs-anpassa">Anpassa</button>
+          <button type="button" id="fs-3d-knapp" aria-pressed="false" aria-controls="fs-3d" title="Visa förslaget i 3D. Vyn uppdateras när du ritar.">3D</button>
         </div>
+        <section class="flode-3d" id="fs-3d" aria-label="3D-förhandsvisning" hidden>
+          <div class="flode-3d-huvud"><strong>3D-förhandsvisning</strong><span class="flode-liten flode-dampad">Uppdateras när du ritar. Visning, inte beräkning.</span><button type="button" id="fs-3d-stang" aria-label="Stäng 3D-förhandsvisningen">Stäng</button></div>
+          <div class="flode-3d-yta" id="fs-3d-yta"></div>
+        </section>
         <div class="flode-kartkort flode-hjalp" id="fs-hjalp" role="status"></div>
         <div class="flode-kartkort flode-kartkort-hoger" id="fs-laddar">Hämtar kartan …</div>
       </section>
@@ -149,6 +178,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         <p class="flode-liten flode-dampad" id="fs-hojd-hjalp"></p>
         <p class="flode-liten flode-dampad" id="fs-projektkalla" hidden></p>
         <div class="flode-ruta" id="fs-info" role="status"></div>
+        <section class="flode-ruta" id="fs-skarv" aria-labelledby="skarv-rubrik" hidden></section>
         <section class="flode-ruta" id="fs-figur" aria-labelledby="fs-figur-rubrik" hidden>
           <h2 class="flode-h2" id="fs-figur-rubrik">Egenskaper</h2>
           <div id="fs-figur-falt"></div>
@@ -349,6 +379,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         etikett: v.ritText(),
         valdPunkt: v.linje.valdPunkt,
       });
+      motor.settSkarv(skarvFigurer(skarvar, motor.meterPerPx()), kontroll === null && skarvar !== null);
       motor.settMarkorstil(v.verktyg === "valj" ? (v.drar ? "grabbing" : "") : "crosshair");
       motor.settByggnader(byggnaderMedForslag(info, dok));
       uppdateraVerktyg();
@@ -451,13 +482,73 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         if (document.activeElement !== hojdFalt) hojdFalt.value = h === null ? "" : String(Math.round(h * 100) / 100);
         takFalt.disabled = !val.ny;
         takFalt.value = (val.ny ? t.takform.get(val.id) : null) ?? FORVALD_TAKFORM;
+        const tak = val.ny ? (t.takform.get(val.id) ?? FORVALD_TAKFORM) : FORVALD_TAKFORM;
         hjalp.textContent = val.ny
-          ? `Större än 0 och högst ${TAL0.format(info.hojd_max_m)} m.`
+          ? `Större än 0 och högst ${TAL0.format(info.hojd_max_m)} m, till det högsta på taket.${TAKHJALP[tak] ? ` ${TAKHJALP[tak]}` : ""}`
           : `Befintlig byggnad${riven ? ", riven" : ""}. Taktyp kan bara anges för nya hus.`;
       }
       el("fs-info").innerHTML = infoHtml();
+      ritaSkarv();
       uppdateraFigurPanel();
     };
+
+    // --- Skarvar: fynden, "Jämna ut skarven" och bekräftelsen (R5) ---
+    const skarvRot = el("fs-skarv");
+    const ritaSkarv = (): void => {
+      const html = skarvPanelHtml({ skarvar, vantar: kontroll === null && !dok.tom(), foreslar: skarvForeslar, forslag: skarvForslag, fel: skarvFel, meddelande: skarvMeddelande });
+      if (skarvRot.innerHTML === html) return;
+      skarvRot.innerHTML = html;
+      skarvRot.hidden = html === "";
+    };
+    skarvRot.addEventListener("click", (h) => {
+      const k = (h.target as Element).closest<HTMLElement>("[data-skarv],[data-skarv-fynd]");
+      if (!k) return;
+      if (k.dataset.skarvFynd) {
+        const f = skarvar?.fynd.find((x) => String(x.nr) === k.dataset.skarvFynd);
+        if (f) motor.anpassa(fyndUtbredning(f));
+        return;
+      }
+      const vad = k.dataset.skarv;
+      if (vad === "avbryt") {
+        skarvForslag = null;
+        skarvFel = null;
+      } else if (vad === "jamna") {
+        skarvFel = null;
+        skarvMeddelande = null;
+        skarvForeslar = true;
+        const nr = dok.andringsNr;
+        ritaSkarv();
+        void foreslaSkarvatgard(projekt, forslagKropp(dok, t.takform))
+          .then((r) => {
+            skarvForslag = r;
+            skarvForslagNr = nr;
+          })
+          .catch((e: unknown) => {
+            skarvFel = e instanceof Error ? e.message : String(e);
+          })
+          .finally(() => {
+            skarvForeslar = false;
+            if (!avslutad) ritaSkarv();
+          });
+      } else if (vad === "tillampa" && skarvForslag?.atgard) {
+        if (skarvForslagNr !== dok.andringsNr) {
+          skarvFel = "Förslaget har ändrats sedan åtgärden föreslogs. Välj Jämna ut skarven igen.";
+          skarvForslag = null;
+        } else {
+          const r = tillampaAtgard(dok, skarvForslag.atgard, info.ritlager?.roller ?? []);
+          if (r.ok) {
+            skarvMeddelande = "Åtgärden är tillämpad (Ångra tar tillbaka den). Kontrollen körs om.";
+            skarvTillampad = true;
+            skarvFel = null;
+            skarvForslag = null;
+            verktyg.markera(null);
+          } else {
+            skarvFel = r.fel;
+          }
+        }
+      }
+      ritaSkarv();
+    });
 
     // --- Egenskaper för en markerad linje eller yta (roll-specifika fält med enheter) ---
     const figurRot = el("fs-figur");
@@ -621,7 +712,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         hus,
         kontrollFel,
         fel: kontroll?.fel ?? [],
-        varningar: kontroll?.varningar ?? [],
+        varningar: (kontroll?.varningar ?? []).filter((v) => !(kontroll?.skarvar && /sänka vid skarven|sänkor till \(lista/.test(v))),
         information: kontroll?.information ?? [],
         sparFel,
         sparatSom: t.scenario && antal > 0 && kontroll?.giltig ? t.scenario.namn : null,
@@ -639,15 +730,23 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       if (dok.tom()) {
         kontroll = null;
         kontrollFel = null;
+        skarvar = null;
+        skarvForslag = null;
         planeraRitning();
         return;
       }
       try {
         kontroll = await kontrolleraAndringar(projekt, kropp);
         kontrollFel = null;
+        skarvar = kontroll.skarvar ?? null;
+        if (skarvTillampad) {
+          skarvTillampad = false;
+          skarvMeddelande = `Åtgärden är tillämpad. Kontrollen efter åtgärden: ${utfallText({ antal: skarvar?.antal ?? 0, tillkommande_volym_m3: skarvar?.tillkommande_volym_m3 ?? 0 })}.`;
+        }
       } catch (e) {
         kontroll = null;
         kontrollFel = e instanceof Error ? e.message : String(e);
+        skarvar = null;
       }
       if (avslutad) return;
       if (kontroll?.giltig) {
@@ -774,7 +873,62 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     dok.vidAndring(() => {
       kontroll = null;
       planeraKontroll();
+      planera3d();
     });
+
+    // --- 3D-förhandsvisning (R6) ---
+    const knapp3d = el<HTMLButtonElement>("fs-3d-knapp");
+    const ruta3d = el("fs-3d");
+    const stang3d = (): void => {
+      planera3d.avbryt();
+      forhandsvisning?.avmontera();
+      forhandsvisning = null;
+      ruta3d.hidden = true;
+      knapp3d.setAttribute("aria-pressed", "false");
+    };
+    const oppna3d = (): void => {
+      ruta3d.hidden = false;
+      knapp3d.setAttribute("aria-pressed", "true");
+      const lager3d = new LagerLista(projekt, null);
+      lager3d.registrera({ id: "geo:byggnader", grupp: "geometri", namn: "Byggnader", synlig: true, opacitet: 1 });
+      lager3d.registrera({ id: "plan:aktuellt", grupp: "planforslag", namn: "Aktuellt förslag", synlig: true, opacitet: 1 });
+      const yta3d = el("fs-3d-yta");
+      forhandsvisning = skapa3dVy({
+        projekt,
+        lager: lager3d,
+        info,
+        dok,
+        takform: () => t.takform,
+        vy: () => null,
+        resultat: () => undefined,
+        lage: () => "fore",
+        svep: () => 0.5,
+        arRitatResultat: () => false,
+        // Samma markyta som i kartan: kartans mitt, och skalan omräknad till 3D-ytans höjd.
+        kartvy: () => {
+          const v = motor.hamtaVy();
+          const [e, n] = wgs84TillSweref(v.lng, v.lat);
+          const kartH = el("fs-karta").clientHeight || 600;
+          const h3 = yta3d.clientHeight || 300;
+          return { e, n, mpp: (meterPerPxFranZoom(v.zoom, v.lat) * kartH) / h3, hojdPx: h3 };
+        },
+        settKartvy: () => undefined,
+        avlasning: () => undefined,
+        text: () => undefined,
+        fel: (text) => {
+          meddelande = { typ: "fel", text };
+          visaHjalp();
+        },
+      }).montera(yta3d);
+    };
+    knapp3d.addEventListener("click", () => (forhandsvisning ? stang3d() : oppna3d()));
+    el("fs-3d-stang").addEventListener("click", stang3d);
+    avbryt.push(() => {
+      planera3d.avbryt();
+      forhandsvisning?.avmontera();
+      forhandsvisning = null;
+    });
+
     verktyg.vidAndring(planeraRitning);
     visaHjalp();
     uppdateraRit();

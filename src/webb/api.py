@@ -2577,6 +2577,8 @@ class FlodenApiApp:
             return status, {**huvud, **extra}, ut
         if verb == "POST" and rest == ["validera"]:
             return _json_svar(200, kv.validera(projekt, json_kropp()))
+        if verb == "POST" and rest == ["skarvatgard"]:
+            return _json_svar(200, kv.skarvatgard(projekt, json_kropp()))
         if rest[:1] == ["lage-idag"]:
             # Läget idag (U5a): bara `fore`, inget förslag; utredare för POST.
             kropp_l = json_kropp() if verb == "POST" else {}

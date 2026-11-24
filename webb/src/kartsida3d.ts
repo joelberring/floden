@@ -14,8 +14,11 @@ import type { PlanDok } from "./karta/plandok";
 import { avstandFranMpp, mppFranKamera, SYNFALT_GRADER } from "./vy3d/koord";
 import { valjSidor, type Lage as Lage3, type LagerUrval } from "./vy3d/lagerval";
 import { VSC_TECKENFORKLARING } from "./vy3d/farger";
-import type { Hover, PlanHus, Stil, Tillstand, Vy3d, Hamtare, Vy3dInfo } from "./vy3d/index";
+import type { Hover, Stil, Tillstand, Vy3d, Hamtare, Vy3dInfo } from "./vy3d/index";
+import { planHus, planInnehall, planMark, planMurar } from "./vy3d/planinnehall.ts";
 import type { ProjektVy } from "./types";
+
+export { planHus, planInnehall, planMark, planMurar };
 
 export const VY3D_ID = "vy:3d";
 
@@ -28,6 +31,8 @@ export interface Kontext3d {
   resultat(): ResultatSvar | undefined;
   lage(): Lage;
   svep(): number;
+  /** Takform per nytt hus (id -> K9-takform), bara avvikelser från förvalet (brutet tak). Utan: alla hus brutet tak. */
+  takform?(): ReadonlyMap<string, string>;
   /** Visar resultatet av ett ritat förslag (då ritas förslaget inte om en gång till som överlägg). */
   arRitatResultat(): boolean;
   /** Kartans mitt (SWEREF), meter per pixel och ytans höjd i pixlar. */
@@ -72,7 +77,7 @@ export function skapa3dVy(ktx: Kontext3d): EgenVy {
   };
 }
 
-function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdatera(): void } {
+function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdatera(): void; uppdateraPlan(): void } {
   let vy: Vy3d | null = null;
   let hamtare: Hamtare | null = null;
   let info: Vy3dInfo | null = null;
@@ -119,6 +124,8 @@ function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdate
       stil,
       svep: ktx.svep(),
       plan: planHus(ktx),
+      planMark: planMark(ktx),
+      planMurar: planMurar(ktx),
       fasadAnalys,
       vattenTroskel: 0.02,
     };
@@ -184,6 +191,8 @@ function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdate
       yta.innerHTML = "";
     },
     uppdatera: () => void uppdatera(),
+    // Bara det ritade förslaget byts (live medan man ritar); terräng och byggnader byggs inte om.
+    uppdateraPlan: () => vy?.settPlan(planInnehall(ktx)),
   };
 }
 
@@ -196,24 +205,6 @@ function resultatStil(lager: LagerLista): { synlig: boolean; opacitet: number } 
   const tand = lager.iGrupp("resultat").filter((l) => l.id.startsWith("res:") && l.synlig);
   const forsta = tand[0];
   return { synlig: tand.length > 0, opacitet: forsta?.opacitet ?? 0.85 };
-}
-
-/** Förslagets hus (nya, höjda, rivna) som scenen ritar direkt: höjder över marken, inget beräknat. */
-export function planHus(ktx: Kontext3d): PlanHus[] {
-  const d = ktx.dok;
-  if (ktx.arRitatResultat()) return [];
-  const ut: PlanHus[] = [];
-  const bas = new Map(ktx.info.byggnader.map((b) => [b.id, b]));
-  for (const h of d.ny.values()) if (d.arSynligt(h)) ut.push({ slag: "ny", ringar: [h.ring.map((p) => [p.x, p.y] as [number, number])], hojd_m: h.hojd_m });
-  for (const [id, hojd] of d.hojd) {
-    const b = bas.get(id);
-    if (b) ut.push({ slag: "andrad", ringar: [b.ring, ...b.hal], hojd_m: hojd });
-  }
-  for (const id of d.bort) {
-    const b = bas.get(id);
-    if (b) ut.push({ slag: "bort", ringar: [b.ring, ...b.hal], hojd_m: b.hojd_m });
-  }
-  return ut;
 }
 
 function esc(s: string): string {

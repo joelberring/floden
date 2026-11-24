@@ -19,6 +19,9 @@ export const MOTTAGARE: ReadonlyArray<{ id: string; namn: string }> = [
 export const TAKFORMER: ReadonlyArray<{ id: string; namn: string }> = [
   { id: "brutet", namn: "Brutet tak" },
   { id: "platt", namn: "Platt tak" },
+  { id: "sadel", namn: "Sadeltak" },
+  { id: "pulpet", namn: "Pulpettak" },
+  { id: "mansard", namn: "Mansardtak" },
 ];
 /** Förvald takform skickas inte alls: okänd takform räknas som brutet tak (docs/VATTEN.md). */
 export const FORVALD_TAKFORM = "brutet";
