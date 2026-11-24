@@ -776,3 +776,85 @@ export interface AdminOrganisationDetalj {
   medlemmar: AdminMedlem[];
   inbjudningar: AdminInbjudan[];
 }
+
+/* ---------- Skapa projekt och rapport i webben (K48) ---------- */
+
+export type Rektangel3011 = [number, number, number, number];
+
+export interface GeografiPost {
+  ref: string;
+  id: string;
+  version: string;
+  namn: string;
+  kommun: string;
+  epsg: number;
+  karna_3011: Rektangel3011;
+  karna_polygon_3011: GeoJSON.Polygon;
+  gransen_3011: Rektangel3011;
+  gransen_polygon_3011: GeoJSON.Polygon;
+  buffert_m: number | null;
+  varningar: string[];
+  manifest_sha256: string;
+  far_skapa_projekt: boolean;
+}
+
+export interface GeografierSvar {
+  geografier: GeografiPost[];
+  far_skapa_projekt: boolean;
+  organisationer: Array<{ id: string; namn: string }>;
+}
+
+export interface SkapaProjektBegaran {
+  geografi: string;
+  namn: string;
+  avgransning: GeoJSON.Polygon | Rektangel3011;
+  organisation_synlig?: boolean;
+  organisation?: string;
+}
+
+export interface SkapaProjektSvar {
+  kontrakt: string;
+  projekt_id: string;
+  namn: string;
+  organisation: string;
+  organisation_synlig: boolean;
+  geografi: string;
+  avgransning_3011: Rektangel3011;
+  roll: string;
+  varningar: string[];
+}
+
+export interface RapportAmne {
+  id: string;
+  namn: string;
+  kan_skapas: boolean;
+  forklaring: string | null;
+  mall: boolean;
+  forval_korning: string | null;
+  korningar: Array<{ korning_id: string; fraga_id: string; skapad: string | null }>;
+}
+
+export interface RapportBestallningBegaran {
+  syfte?: string;
+  skede?: string;
+  mottagare_roll?: string;
+}
+
+export interface RapportJobb {
+  kontrakt: string;
+  jobb_id: string;
+  projekt: string;
+  amne: string;
+  korning_id: string;
+  bestallning_id: string;
+  status: "ko" | "kor" | "klar" | "fel";
+  steg: string | null;
+  steg_nr: number;
+  steg_totalt: number;
+  text: string;
+  rapport_id: string | null;
+  kontroll: { godkand: boolean; antal_fel: number; exporterad: boolean } | null;
+  lankar: { pdf: string; word: string } | null;
+  fel: string | null;
+  status_url: string;
+}

@@ -17,6 +17,12 @@ import type {
   ProjektSvar,
   OmradeLagerSvar,
   RapportBegaran,
+  GeografierSvar,
+  RapportAmne,
+  RapportBestallningBegaran,
+  RapportJobb,
+  SkapaProjektBegaran,
+  SkapaProjektSvar,
   RapportSvar,
   RegnKatalogSvar,
   RiskBegaran,
@@ -130,6 +136,40 @@ export function hamtaModuler(): Promise<ModulerSvar> {
 
 export function hamtaProjektLista(): Promise<ProjektListaSvar> {
   return lasJson<ProjektListaSvar>(`${API_BAS}/projekt`);
+}
+
+export function hamtaGeografier(): Promise<GeografierSvar> {
+  return lasJson<GeografierSvar>(`${API_BAS}/geografier`);
+}
+
+export function skapaProjekt(begaran: SkapaProjektBegaran): Promise<SkapaProjektSvar> {
+  return lasJson<SkapaProjektSvar>(`${API_BAS}/projekt`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(begaran),
+  });
+}
+
+/** Ämnen som en rapport kan skapas för (med förklaring när den inte kan det). */
+export function hamtaRapportAmnen(projekt: string): Promise<{ amnen: RapportAmne[] }> {
+  return lasJson<{ amnen: RapportAmne[] }>(`${API_BAS}/projekt/${encodeURIComponent(projekt)}/rapporter`);
+}
+
+export function startaRapportJobb(
+  projekt: string,
+  amne: string,
+  bestallning: RapportBestallningBegaran,
+  korningId?: string,
+): Promise<RapportJobb> {
+  return lasJson<RapportJobb>(`${API_BAS}/projekt/${encodeURIComponent(projekt)}/rapporter`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amne, bestallning, ...(korningId ? { korning_id: korningId } : {}) }),
+  });
+}
+
+export function hamtaRapportJobb(statusUrl: string): Promise<RapportJobb> {
+  return lasJson<RapportJobb>(statusUrl);
 }
 
 export function hamtaProjekt(id: string): Promise<ProjektSvar> {

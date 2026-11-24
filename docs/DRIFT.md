@@ -171,6 +171,12 @@ docker compose -f docker-compose.prod.yml exec floden python -m konto.admin bjud
 - Projekt som ska höra till organisationen skapas med `floden projekt skapa ... --konto <konto-id> --organisation <org-id>` (se nedan). Redan skapade projekt i en annan organisation ändras inte.
 - Databasen migreras av sig själv till schemaversion 5 vid nästa start (befintliga roller gäller som förut). Ta en kopia av `data/konto/konto.sqlite` före uppdateringen.
 
+## Nytt projekt och rapport i webben (K48)
+
+Inget nytt kommando och ingen ny inställning: webbens "Nytt projekt" och "Skapa rapport" använder samma mappar som kommandona. Servern måste ha en mappad geografi (`floden geografi mappa ...`, se nedan) för att listan i "Nytt projekt" ska ha något att visa; geografierna läses ur `data/lokal/geo/` (förval, `floden geografi mappa`; projekten ligger i `data/lokal/projekt/`, kontoregistret i `data/konto/konto.sqlite`). Ett projekt som skapas i webben får sin mapp i `data/lokal/projekt/<namn-som-slug>/` (samma som `floden projekt skapa`) och en rad i kontoregistret med skaparen som utredare. Den som får skapa är superadmin, organisationsadmin och ägare (`docs/KONTO.md`).
+
+Rapportjobb sparas som `<rapportmapp>/jobb/j-<12 hex>.json` bredvid rapporterna (en liten fil per jobb, utan personuppgifter) och körs ett i taget i serverprocessen. Startas servern om medan ett jobb pågår blir jobbet `fel` ("avbröts när servern stoppades"); starta det igen i webben. Ingen backup behövs för jobbfilerna, men de ligger med rapporterna i den vanliga lagringen.
+
 ## Göteborg: geografin `goteborg-test` och ett provprojekt (etapp 3, S5)
 
 Geografi först (`docs/ARKITEKTUR-DRIFT.md` 0b): området mappas en gång som en **geografi** (kärna Haga 500 x 500 m + buffert,
