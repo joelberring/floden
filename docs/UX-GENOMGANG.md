@@ -25,7 +25,7 @@ projektavgränsningen) och är inte rört.
 3. **P1 · Nytt projekt är en återvändsgränd lokalt (annan agent, plus åtgärdat i projektlistan). Åtgärdat i U4: sidan förklarar varför och ger en handling, se "U4".** Knappen visades alltid och ledde
    till "Geografierna gick inte att hämta: Att skapa projekt kräver inloggning". Knappen ersätts nu i lokalt läge av en förklaring.
    Själva sidans felhantering ligger hos den andra agenten (se "Nytt projekt").
-4. **P2 · Steg 3 kan inte köras utan ett ritat förslag, och säger det först nederst (S3, L). Åtgärdat i U4: förklaring överst och fast handlingsrad, se "U4".** Knappen "Kör beräkningarna" är grå
+4. **P2 · Steg 3 kan inte köras utan ett ritat förslag, och säger det först nederst (S3, L). Åtgärdat i U4: förklaring överst och fast handlingsrad, se "U4"; läget idag kan räknas utan förslag (U5a).** Knappen "Kör beräkningarna" är grå
    och ligger under skärmens nederkant i bredd 1440x900 på steg 3; orsaken står i en liten text ovanför. Åtgärdat delvis: länk till
    Resultat och `aria-describedby`. Kvar: knappen bör ligga synlig utan rullning.
 5. **P2 · Fristående räknare med exempeltal i Resultat (steg 4, L, åtgärdat).** "Fler analyser: MKN-intervall och bullerskärmar"
@@ -249,3 +249,12 @@ har `role="alert"` och får fokus på Nytt projekt.
 | **Osäkerhet** | Felmarginal | Intervall och känsliga överfall; gäller markmodellen före, inte förslaget |
 
 Termerna i ordlistan är genomgångna i steg 3, 5 och felmeddelandena; steg 4 och kartans lager återstår att läsa mot listan (se PLAN, U5).
+
+## U5a · Läget idag utan förslag (åtgärdat)
+
+Steg 3 hade ingen körväg utan ritat förslag (scenario-`kor` nekar ett förslag utan ändring, `/api/kor` är den äldre områdesberäkningen).
+
+- **Knapp:** när inget förslag finns har den fasta handlingsraden (`flode/korlage.ts`) tre handlingar: "Rita ett förslag", "Räkna läget idag" och "Visa projektets befintliga resultat". Raden och sammanfattningen visar uppskattad tid för läget idag (ur planen, `uppskattadTidText`; "klart i cachen" när allt redan är räknat). Knappen är grå utan valda frågor som Floden kan räkna.
+- **Steg 4:** källan "Läget idag" (bredvid "Ditt förslag" och "Projektets exempel") visar bara Före; Efter, Skillnad, Svep och 3D döljs, markörens värde heter "Läget idag", och panelen säger att ingen jämförelse finns. Inga nyckeltal räknas i klienten.
+- **Rapport (steg 5):** körningen är projektets egen och märkt `lage_idag` i underlaget, men rapportens mallar bygger på före och efter, så den väljs aldrig av sig själv och en uttrycklig begäran ger 409 med vad som ska göras (rita ett förslag, steg 3). En rapport om enbart läget idag är inte byggd.
+- **Kvar (P3):** steg 4 visar inga mätvärden för läget idag (bara kartan och värdet under markören); ekologi visas som karta utan nätverkssiffror.

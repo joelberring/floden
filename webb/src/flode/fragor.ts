@@ -5,14 +5,14 @@
  * (det finns inget API för den); körningen startas med de befintliga scenario-API:erna.
  */
 import { hamtaFragor, lasJson } from "../api.ts";
-import { hamtaProjektInfo, planeraScenario, type ProjektInfo } from "../karta/kartapi.ts";
+import { hamtaProjektInfo, planeraLageIdag, planeraScenario, type ProjektInfo } from "../karta/kartapi.ts";
 import { esc } from "../sidor.ts";
 import { flodeAdress } from "./adress.ts";
 import { webGpuSkissStatus } from "../gpu/webgpuMotor.ts";
-import { arPagaende, startaKorning, vidKorning } from "./korning.ts";
+import { arPagaende, startaKorning, startaLageIdag, vidKorning } from "./korning.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
 import { kontoLage } from "../konto.ts";
-import { korradHtml, utanForslagRuta } from "./korlage.ts";
+import { korradHtml, uppskattadTidText, utanForslagRuta } from "./korlage.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { AMNEN, etikett, franK20, raknaPerAmne, tolkaKatalog, type FlodeFraga } from "./status.ts";
 import { lasAvtappning, MOTTAGARE, sparaTillstand, tillstandFor, type Skede } from "./tillstand.ts";
@@ -53,6 +53,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
   let lista: FragelistaSvar | null = null;
   let info: ProjektInfo | null = null;
   let tidText = t.scenario ? "–" : "visas när ett förslag är ritat";
+  let lageTidText = "–";
   let planNr = 0;
 
   rot.innerHTML = `
@@ -143,11 +144,11 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     el("fr-sammanfattning").innerHTML = `
       <dt>Valda frågor (alla ämnen)</dt><dd>${valda.length}</dd>
       <dt>Beräkningar</dt><dd>${analyser.length > 0 ? esc(analyser.map((a) => a.namn).join(", ")) : "–"}</dd>
-      <dt>Uppskattad tid</dt><dd>${esc(tidText)}</dd>`;
+      <dt>Uppskattad tid</dt><dd>${esc(tidText)}</dd>${t.scenario ? "" : `<dt>Uppskattad tid, läget idag</dt><dd>${esc(lageTidText)}</dd>`}`;
     const nu = arPagaende(t);
     el("fr-forslagruta").innerHTML = t.scenario ? "" : utanForslagRuta(projekt, esc);
     el("fr-handlingsrad").innerHTML = korradHtml(
-      { harForslag: Boolean(t.scenario), antalBerakningar: analyser.length, avtappningFel, pagar: nu, forloppText: t.korning?.text, korFel: t.korning?.fel ?? null },
+      { harForslag: Boolean(t.scenario), antalBerakningar: analyser.length, avtappningFel, pagar: nu, forloppText: t.korning?.text, korFel: t.korning?.fel ?? null, lageTidText },
       projekt,
       esc,
     );
@@ -157,16 +158,31 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
   const uppskattaTid = async (): Promise<void> => {
     const nr = ++planNr;
     const analyser = info ? analyserFor(info, valdaPoster()) : [];
-    if (!t.scenario || analyser.length === 0) {
-      tidText = t.scenario ? "–" : "visas när ett förslag är ritat";
+    if (!t.scenario) {
+      // Utan förslag finns bara läget idag att räkna (U5a): tiden kommer ur dess plan.
+      tidText = "visas när ett förslag är ritat";
+      lageTidText = "–";
+      if (analyser.length > 0) {
+        try {
+          const p = await planeraLageIdag(projekt, analyser.map((a) => a.id), t.avtappning);
+          if (nr !== planNr || avslutad) return;
+          lageTidText = uppskattadTidText(p.fragor.map((f) => f.uppskattad_tid_s));
+        } catch {
+          lageTidText = "–";
+        }
+      }
+      if (!avslutad) ritaSammanfattning();
+      return;
+    }
+    if (analyser.length === 0) {
+      tidText = "–";
       ritaSammanfattning();
       return;
     }
     try {
       const p = await planeraScenario(projekt, t.scenario.slug, analyser.map((a) => a.id), t.avtappning);
       if (nr !== planNr || avslutad) return;
-      const tider = p.fragor.map((f) => f.uppskattad_tid_s);
-      tidText = tider.every((x): x is number => x !== null) ? (tider.reduce((a, b) => a + b, 0) === 0 ? "klart i cachen" : `ungefär ${Math.round(tider.reduce((a, b) => a + b, 0))} s`) : "–";
+      tidText = uppskattadTidText(p.fragor.map((f) => f.uppskattad_tid_s));
     } catch {
       tidText = "–";
     }
@@ -174,7 +190,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
   };
 
   lyssna(rot, "click", (h) => {
-    const m = (h.target as Element).closest<HTMLElement>("[data-amne],[data-skede],#fr-kor");
+    const m = (h.target as Element).closest<HTMLElement>("[data-amne],[data-skede],#fr-kor,#fr-lage");
     if (!m) return;
     if (m.dataset.amne) {
       amne = m.dataset.amne;
@@ -184,6 +200,8 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       t.bestallning.skede = m.dataset.skede as Skede;
       sparaTillstand(t);
       ritaBestallning();
+    } else if (m.id === "fr-lage" && info) {
+      void startaLageIdag(t, analyserFor(info, valdaPoster()).map((a) => a.id));
     } else if (m.id === "fr-kor" && info) {
       const analyser = analyserFor(info, valdaPoster()).map((a) => a.id);
       void startaKorning(t, analyser);

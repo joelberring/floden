@@ -34,6 +34,8 @@ export interface KorningLage {
   klar: boolean;
   fel: string | null;
   startadMs: number;
+  /** Sant när körningen gäller läget idag (inget förslag). */
+  lage?: boolean;
 }
 
 export interface FlodeTillstand {
@@ -51,6 +53,8 @@ export interface FlodeTillstand {
   korning: KorningLage | null;
   /** Vyer ur körningen av det ritade förslaget. */
   ritVyer: ProjektVy[];
+  /** Vyer ur körningen av läget idag (bara före, U5a). */
+  lageVyer: ProjektVy[];
 }
 
 const alla = new Map<string, FlodeTillstand>();
@@ -85,6 +89,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
     avtappning: null,
     korning: null,
     ritVyer: [],
+    lageVyer: [],
   };
   try {
     const s = JSON.parse(sessionStorage.getItem(NYCKEL + projekt) ?? "null") as Sparat | null;

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Kartverktyget: rita ett planförslag i kartan och räkna före och efter (webbens API).
 
 Klienten ritar bara geometri (hus och höjder). Allt annat görs här, med kärnans egna delar:
@@ -64,6 +65,9 @@ MAX_BYGGNADER = 20_000
 ORTOFOTO_MAX_PX = 2048
 
 _PROJEKT_ID = "demokvarteret"
+
+LAGE_IDAG_PREFIX = "lage-idag-"
+"""Frågeid-prefix för körningar av läget idag (U5a): bara `fore`, inget ritat förslag."""
 
 
 _LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
@@ -746,6 +750,10 @@ class KartverktygTjanst:
         poster = self._skriv_fragor(
             projekt, namn_slug, valda, avtappning_mm_h=_avtappning(avtappning_mm_h)
         )
+        return {"slug": namn_slug, "fragor": self._planposter(poster)}
+
+    def _planposter(self, poster: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        """Plan, påverkansradie och uppskattad tid (ur tidigare körtider) per skriven fråga."""
         tider = self._tid_per_losare()
         ut: list[dict[str, Any]] = []
         for p in poster:
@@ -773,7 +781,7 @@ class KartverktygTjanst:
                     ),
                 }
             )
-        return {"slug": namn_slug, "fragor": ut}
+        return ut
 
     def kor(
         self,
@@ -802,6 +810,183 @@ class KartverktygTjanst:
         fil = self._fil(projekt, namn_slug)
         fil.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         return {"slug": namn_slug, "fragor": ut}
+
+    # ------------------------------------------------------------------ läget idag (U5a)
+
+    def _lage_fil(self, projekt: str) -> Path:
+        return self.mapp / projekt / "lage-idag.json"
+
+    def _las_lage(self, projekt: str) -> dict[str, Any]:
+        fil = self._lage_fil(projekt)
+        if not fil.is_file():
+            return {}
+        try:
+            d = json.loads(fil.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    def _lage_k20(
+        self,
+        m: Mall,
+        fil: Path,
+        fraga_id: str,
+        analyser: Sequence[str],
+        avtappning_mm_h: float | None,
+    ) -> dict[str, Any]:
+        """K20 för läget idag: ett enda scenario (`fore`, projektets befintliga läge), inga jämförelser."""
+        bas = self._rel(fil, m.bas)
+        ut_analyser: list[dict[str, Any]] = []
+        for a in (a for a in m.fraga.analyser if a.id in analyser):
+            post: dict[str, Any] = {
+                "id": a.id,
+                "losare": a.losare,
+                "scenarier": ["fore"],
+                "parametrar": dict(a.parametrar),
+            }
+            if avtappning_mm_h is not None and a.losare in _LOSARE_MED_AVTAPPNING:
+                post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
+            if a.fokus is not None:
+                post["fokus"] = list(a.fokus)
+            if a.beror_pa:
+                post["beror_pa"] = [b for b in a.beror_pa if b in analyser]
+            if a.indata:
+                post["indata"] = {k: self._rel(fil, p) for k, p in a.indata.items()}
+            ut_analyser.append(post)
+        return {
+            "kontrakt": "K20/v1",
+            "fraga_id": fraga_id,
+            "beskrivning": "Läget idag: projektets befintliga läge, utan ritat förslag.",
+            "scenarier": {"fore": {"bas": bas}},
+            "analyser": ut_analyser,
+            "jamforelser": [],
+        }
+
+    def _skriv_lage_fragor(
+        self, projekt: str, valda: Sequence[str], avtappning_mm_h: float | None = None
+    ) -> list[dict[str, Any]]:
+        """Skriver en K20 per mall (bara `fore`) för de valda analyserna. Returnerar poster som `_skriv_fragor`."""
+        mallar = self._kravs_projekt(projekt)
+        urval: dict[str, list[str]] = {}
+        for v in valda:
+            kort, _, aid = v.partition(".")
+            if kort not in mallar or aid not in {a.id for a in mallar[kort].fraga.analyser}:
+                raise _fel(f"Okänd analys '{v}'.", 400)
+            urval.setdefault(kort, []).append(aid)
+        if not urval:
+            raise _fel("Välj minst en analys att räkna.", 400)
+        poster: list[dict[str, Any]] = []
+        self.fragedir.mkdir(parents=True, exist_ok=True)
+        proj = re.sub(r"[^a-z0-9_\-]+", "-", projekt.lower()).strip("-")[:38] or "projekt"
+        for kort, analyser in urval.items():
+            fraga_id = f"{LAGE_IDAG_PREFIX}{proj}-{kort}"
+            fil = self.fragedir / f"{fraga_id}.json"
+            innehall = self._lage_k20(mallar[kort], fil, fraga_id, analyser, avtappning_mm_h)
+            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
+            poster.append(
+                {"mall": kort, "ref": self._ref_for(fil), "fraga_id": fraga_id, "analyser": analyser}
+            )
+        return poster
+
+    def planera_lage_idag(
+        self,
+        projekt: str,
+        valda: Sequence[str],
+        avtappning_mm_h: float | None = None,
+    ) -> dict[str, Any]:
+        """Planen för läget idag (bara `fore`): jobb, vad som finns i cachen och uppskattad tid."""
+        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h))
+        fragor = self._planposter(poster)
+        tider = [f["uppskattad_tid_s"] for f in fragor]
+        return {
+            "lage": "idag",
+            "fragor": fragor,
+            "uppskattad_tid_s": (
+                round(sum(float(t) for t in tider), 1) if all(t is not None for t in tider) else None
+            ),
+        }
+
+    def kor_lage_idag(
+        self,
+        projekt: str,
+        valda: Sequence[str],
+        avtappning_mm_h: float | None = None,
+    ) -> dict[str, Any]:
+        """Startar körningen av läget idag och sparar den som projektets egen (`projekt_id` på körningen,
+        och `<projekt>/lage-idag.json` pekar ut den senaste per mall). Samma körkö, samma cache och
+        samma roll (utredare) som övriga körningar; en pågående körning av samma fråga återanvänds."""
+        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h))
+        d = self._las_lage(projekt)
+        korningar: dict[str, Any] = dict(d.get("korningar", {}))
+        ut: list[dict[str, Any]] = []
+        for p in poster:
+            svar = self.fragor.starta_korning(p["ref"], projekt)
+            korningar[p["mall"]] = {
+                "korning_id": svar["korning_id"],
+                "ref": p["ref"],
+                "fraga_id": p["fraga_id"],
+                "analyser": p["analyser"],
+            }
+            ut.append({**p, "korning": svar})
+        fil = self._lage_fil(projekt)
+        fil.parent.mkdir(parents=True, exist_ok=True)
+        fil.write_text(
+            json.dumps({"lage": "idag", "korningar": korningar}, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        return {"lage": "idag", "fragor": ut}
+
+    def status_lage_idag(self, projekt: str) -> dict[str, Any]:
+        """Körningarnas status för läget idag och, för klara, vyerna (bara före) för kartan."""
+        self._kravs_projekt(projekt)
+        ut: list[dict[str, Any]] = []
+        for kort, k in self._las_lage(projekt).get("korningar", {}).items():
+            try:
+                st = self.fragor.korning_status(k["korning_id"])
+            except FlodenWebbFel:
+                continue
+            post: dict[str, Any] = {"mall": kort, "status": st, "vyer": []}
+            if st["status"] == "klar":
+                try:
+                    res = self.fragor.resultat(k["korning_id"])
+                    post["vyer"] = self._lage_vyer(res, k["korning_id"])
+                    post["varningar"] = [str(v["text"]) for v in res.get("varningar", [])]
+                except FlodenWebbFel:
+                    pass
+            ut.append(post)
+        return {"lage": "idag", "korningar": ut}
+
+    def lage_idag_korningar(self, projekt: str) -> list[str]:
+        """Körnings-id för projektets senaste körning av läget idag per mall."""
+        return [str(k["korning_id"]) for k in self._las_lage(projekt).get("korningar", {}).values()]
+
+    @staticmethod
+    def _lage_vyer(res: Mapping[str, Any], korning_id: str) -> list[dict[str, Any]]:
+        """Vyer för läget idag: en per analys med primärt lager i `fore`. Ingen efter- eller skillnadsvy
+        (`efter_lager` är null, `skillnad_lager` pekar på samma lager som `fore_lager`, `lage_idag` är sant)."""
+        vyer: list[dict[str, Any]] = []
+        for la in res["lager"]:
+            if la["typ"] == "skillnad" or not la["primar"] or la["scenario"] != "fore":
+                continue
+            vyer.append(
+                {
+                    "id": f"{korning_id}:{la['id']}",
+                    "avsnitt": {"skyfall": "vatten", "konnektivitet": "ekologi"}.get(
+                        la["analys"], "dagsljus"
+                    ),
+                    "rubrik": f"Läget idag: {la.get('etikett') or la['analys']}",
+                    "mattnamn": la.get("etikett") or la["analys"],
+                    "korning_id": korning_id,
+                    "fore_lager": str(la["id"]),
+                    "efter_lager": None,
+                    "skillnad_lager": str(la["id"]),
+                    "markering_lager": None,
+                    "efter_namn": "Läget idag",
+                    "andring": "Projektets befintliga läge, utan ritat förslag.",
+                    "lage_idag": True,
+                }
+            )
+        return vyer
 
     def kor_ekologi(
         self,

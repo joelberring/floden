@@ -121,7 +121,7 @@ from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
 from tvad.felindikator import berakna_2d_felindikator
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
-from webb.kartverktyg import KartverktygTjanst
+from webb.kartverktyg import LAGE_IDAG_PREFIX, KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
 from webb.projekt import ProjektTjanst
@@ -2569,6 +2569,18 @@ class FlodenApiApp:
             return status, {**huvud, **extra}, ut
         if verb == "POST" and rest == ["validera"]:
             return _json_svar(200, kv.validera(projekt, json_kropp()))
+        if rest[:1] == ["lage-idag"]:
+            # Läget idag (U5a): bara `fore`, inget förslag; utredare för POST.
+            kropp_l = json_kropp() if verb == "POST" else {}
+            valda_l = [str(x) for x in kropp_l.get("analyser", [])]
+            avt_l = kropp_l.get("avtappning_mm_h")
+            if verb == "POST" and rest == ["lage-idag", "plan"]:
+                return _json_svar(200, kv.planera_lage_idag(projekt, valda_l, avt_l))
+            if verb == "POST" and rest == ["lage-idag", "kor"]:
+                return _json_svar(202, kv.kor_lage_idag(projekt, valda_l, avt_l))
+            if verb == "GET" and rest == ["lage-idag", "status"]:
+                return _json_svar(200, kv.status_lage_idag(projekt))
+            return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
         if verb == "GET" and rest == ["scenarier"]:
             return _json_svar(200, kv.lista_scenarier(projekt))
         if verb == "POST" and rest == ["scenarier"]:
@@ -2694,7 +2706,8 @@ class FlodenApiApp:
         """Vad en körning är för slags underlag (K48, additivt).
 
         `slag` är `forslag` (körd för ett ritat förslag; `scenario` har då `slug` och `namn` när
-        kopplingen finns kvar), `egen` (annan körning i projektet, till exempel via MCP), `demo`
+        kopplingen finns kvar), `lage_idag` (befintligt läge utan förslag, U5a; projektets egen
+        körning), `egen` (annan körning i projektet, till exempel via MCP), `demo`
         (demokörningen som följer med projektet, inget eget förslag) eller `okand`."""
         k = self.fragor.korning_eller_none(korning_id)
         projekt = self.projekt_for_korning(korning_id)
@@ -2703,6 +2716,8 @@ class FlodenApiApp:
         sc = self.kartverktyg.scenarier_per_korning(projekt).get(korning_id)
         if sc is not None:
             return {"slag": "forslag", "scenario": sc}
+        if str(k.fraga_id).startswith(LAGE_IDAG_PREFIX):
+            return {"slag": "lage_idag", "scenario": None}
         if str(k.fraga_id).startswith("rita-"):
             return {"slag": "forslag", "scenario": None}
         if not k.projekt_id:
