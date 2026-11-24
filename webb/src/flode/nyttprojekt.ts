@@ -6,10 +6,16 @@
  * ytan räknas på den, och en polygon som korsar sig själv nekas med ett svenskt besked redan här. Det som räknas
  * till projektet (byggnader, celler) är det som ligger inne i polygonen; beräkningsrutnätet och bufferten är
  * rektangeln runt den, och det sägs. Efter skapande visas varningarna och "Öppna projektet" leder till steg 2.
+ *
+ * Bakgrund: OpenStreetMap-plattor (`karta/osm.ts`, avstängbart, valet sparas) under kärnan och avgränsningen, så att man
+ * ser var på jorden geografin ligger. Geografins och projektets varningar visas som en rad ("32 varningar vid mappningen")
+ * med en hopfälld lista per slag (`varningar.ts`), inte som en lång text i vänsterspalten. En rad förklarar varför rutorna
+ * ser vridna ut långt från SWEREF 99 18 00:s mittmeridian (Göteborg).
  */
 import { ApiFel, hamtaGeografier, skapaProjekt } from "../api.ts";
 import { kontoLage, laddaKonto } from "../konto.ts";
-import { Kartmotor, type PekarLyssnare } from "../karta/kartmotor.ts";
+import { Kartmotor, type PekarLyssnare, type RasterLager } from "../karta/kartmotor.ts";
+import { lasOsmVal, OSM_ID, OSM_KALLA, sparaOsmVal, webbLagringOsm } from "../karta/osm.ts";
 import { esc } from "../sidor.ts";
 import { swerefTillWgs84 } from "../sweref.ts";
 import type { GeografiPost, GeografierSvar, Rektangel3011, SkapaProjektSvar } from "../types.ts";
@@ -25,8 +31,10 @@ import {
   punkterPolygon,
   rektangelPolygon,
   skapaBegaran,
+  vridningText,
   type Pkt,
 } from "./nyttprojekt-logik.ts";
+import { varningarHtml } from "./varningar.ts";
 import type { Avslutbar } from "./projektlista.ts";
 
 type Slag = "rektangel" | "polygon";
@@ -49,6 +57,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
   let skapar = false;
   let fel: string | null = null;
   let resultat: SkapaProjektSvar | null = null;
+  let osmPa = lasOsmVal(webbLagringOsm()) ?? true; // förvalt tänt: utan bakgrund syns inte var geografin ligger
   const ac = new AbortController();
 
   rot.innerHTML = `
@@ -61,6 +70,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       <section class="flode-karta" aria-label="Karta: rita projektets avgränsning">
         <div class="flode-karta-yta" id="np-karta"></div>
         <div class="flode-kartkort" id="np-kort" hidden></div>
+        <div class="flode-kartkort flode-osm" id="np-osm"><label class="flode-kryss"><input type="checkbox" id="np-osm-kryss" /> OpenStreetMap-bakgrund</label></div>
       </section>
     </div>`;
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
@@ -109,6 +119,12 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     lagg("np-avgr", "line", { "line-color": "#1a1a1a", "line-width": 2.5 });
     lagg("np-utkast", "line", { "line-color": "#1a1a1a", "line-width": 2, "line-dasharray": [2, 1.5] });
     synkaKarta();
+  };
+  const synkaOsm = (): void => {
+    const l: RasterLager = { id: OSM_ID, kalla: OSM_KALLA, opacitet: 1, synlig: osmPa };
+    motor?.settLager([l]);
+    const k = rot.querySelector<HTMLInputElement>("#np-osm-kryss");
+    if (k) k.checked = osmPa;
   };
   const synkaKarta = (): void => {
     if (!motor) return;
@@ -202,8 +218,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       const ar = resultat;
       inn.innerHTML = `
         <div class="flode-ruta ok" role="status"><p><strong>Projektet är skapat.</strong> Du är utredare i det.</p></div>
-        <h2 class="flode-liten-rubrik">Varningar</h2>
-        <ul class="flode-varningar">${ar.varningar.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>
+        ${ar.varningar.length > 0 ? `<h2 class="flode-liten-rubrik">Varningar</h2>${varningarHtml(ar.varningar, "när projektet skapades", "np-varningar")}` : ""}
         ${(ar.info ?? []).length > 0 ? `<h2 class="flode-liten-rubrik">Så räknas projektet</h2><ul class="flode-liten" id="np-info">${(ar.info ?? []).map((v) => `<li>${esc(v)}</li>`).join("")}</ul>` : ""}
         <div class="flode-rad-slut"><a class="flode-knapp svart stor" id="np-oppna" href="${flodeAdress(ar.projekt_id, "forslag")}">Öppna projektet (steg 2)</a></div>`;
       inn.querySelector<HTMLElement>("#np-oppna")?.focus();
@@ -226,7 +241,8 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       <div class="flode-falt"><label for="np-geo">Geografi</label>
         <select id="np-geo">${svar.geografier.map((g) => `<option value="${esc(g.ref)}"${g.ref === geo?.ref ? " selected" : ""}>${esc(g.namn)} (${esc(g.version)})</option>`).join("")}</select></div>
       <ul class="flode-liten flode-dampad" id="np-geolista" aria-label="Mappade geografier">${svar.geografier.map((g) => `<li>${esc(g.namn)} (${esc(g.ref)})${g.kommun ? `, ${esc(g.kommun)}` : ""}: kärna ${Math.round(g.karna_3011[2] - g.karna_3011[0])} x ${Math.round(g.karna_3011[3] - g.karna_3011[1])} m${g.buffert_m != null ? `, buffert ${Math.round(g.buffert_m)} m` : ""}</li>`).join("")}</ul>
-      ${geo && geo.varningar.length > 0 ? `<p class="flode-liten flode-dampad">${esc(geo.varningar.join(" "))}</p>` : ""}
+      ${geo && geo.varningar.length > 0 ? `<div class="flode-liten flode-dampad">${varningarHtml(geo.varningar, "vid mappningen", "np-geovarningar")}</div>` : ""}
+      ${geo && vridningText(geo.gransen_3011) ? `<p class="flode-liten flode-dampad" id="np-vridning">${esc(vridningText(geo.gransen_3011) ?? "")}</p>` : ""}
       <fieldset class="flode-fieldset"><legend>Rita avgränsningen</legend>
         <div class="flode-segment" id="np-slag">
           <button type="button" data-slag="rektangel" aria-pressed="${slag === "rektangel"}">Rektangel</button>
@@ -328,6 +344,15 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     if (!avslutad) rit();
   };
 
+  rot.querySelector("#np-osm")?.addEventListener(
+    "change",
+    (h) => {
+      osmPa = (h.target as HTMLInputElement).checked;
+      sparaOsmVal(webbLagringOsm(), osmPa);
+      synkaOsm();
+    },
+    { signal: ac.signal },
+  );
   const klar = (async () => {
     try {
       svar = await hamtaGeografier();
@@ -349,6 +374,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     geo = svar.geografier[svar.geografier.length - 1] ?? null;
     motor = new Kartmotor(el("np-karta"));
     motor.settRutor([]);
+    synkaOsm();
     motor.settPekare(lyssnare);
     motor.settMarkorstil("crosshair");
     if (geo) motor.anpassa({ x_min: geo.gransen_3011[0], y_min: geo.gransen_3011[1], x_max: geo.gransen_3011[2], y_max: geo.gransen_3011[3] });

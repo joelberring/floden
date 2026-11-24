@@ -23,7 +23,7 @@ from floden_mcp.korlogg import Korlogg
 from floden_mcp.server import bygg_server
 from tests.kommuner.test_skapa import geo  # noqa: F401
 from tests.konto.conftest import miljo  # noqa: F401
-from tests.webb.test_skapa_projekt import Varld, skapa, v  # noqa: F401
+from tests.webb.test_skapa_projekt import REPO, Varld, skapa, v  # noqa: F401
 
 
 def _hus(x0: float, y0: float, b: float = 12.0, d: float = 10.0, hojd: float = 15.0, aid: str = "hus-1") -> dict[str, Any]:
@@ -183,3 +183,69 @@ def test_mcp_nekar_stangt_projekt_och_ger_oppet_projekt_klassen_oppet(v: Varld, 
     r = anyio.run(lambda: anropa("scenario_skapa", namn="Mcp-hus", hus=[{"rektangel": [k[0] + 20, k[1] + 20, k[0] + 32, k[1] + 30], "hojd_m": 12}]))
     assert not r.is_error, r
     assert v.http("anna", "GET", f"/api/kartverktyg/{pid}/scenarier")[1]["scenarier"][0]["slug"] == "mcp-hus"
+
+
+def _bin(v: Varld, vem: str | None, sokvag: str) -> tuple[int, dict[str, str], bytes]:
+    """GET som ger binärt svar (PNG): status, rubriker (gemener) och kropp."""
+    rub: dict[str, str] = {}
+    if vem:
+        rub["Cookie"] = "; ".join(f"{k}={x}" for k, x in v.webb[vem].kakor.items())
+    status, huvud, kropp = v.app.hantera_http("GET", sokvag, rub, lambda: b"")
+    h = dict(huvud.items() if hasattr(huvud, "items") else huvud)
+    return status, {k.lower(): str(x) for k, x in h.items()}, kropp
+
+
+def test_markmodellen_som_underlag_och_markhojd_under_pekaren(v: Varld) -> None:
+    """Steg 2 och 4 i ett geografiprojekt: skuggning, höjdkurvor och markhöjd i färg ur K1:s `terrang.tif`, och höjden i en punkt.
+
+    Samma behörighet som övriga projektdata (roll i projektet; 401 utloggad, 403 utan roll)."""
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    pid, _ = _projekt(v, "Haga mark")
+    for vilket in ("skuggning", "hojdkurvor", "markhojd"):
+        st, h, png = _bin(v, "anna", f"/api/kartverktyg/{pid}/geometri/{vilket}.png")
+        assert st == 200 and png[:8] == b"\x89PNG\r\n\x1a\n", (vilket, st)
+        x0, y0, x1, y1 = (float(t) for t in h["x-floden-utbredning"].split(","))
+        assert x1 > x0 and y1 > y0
+        bild = np.asarray(Image.open(io.BytesIO(png)).convert("RGBA"))
+        assert (bild[..., 3] > 0).any(), f"{vilket} är helt genomskinlig"
+        if vilket == "hojdkurvor":
+            assert float(h["x-floden-ekvidistans"]) in (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0)
+            # Kurvor är linjer: bara en del av bilden är täckt (inte en heltäckande yta som skuggningen).
+            assert 0.001 < (bild[..., 3] > 0).mean() < 0.5
+        if vilket == "markhojd":
+            lag, hog = (float(t) for t in h["x-floden-hojdspann"].split(","))
+            assert lag < hog
+    # Okänt lager: 404; terrängen läses bara internt.
+    assert _bin(v, "anna", f"/api/kartverktyg/{pid}/geometri/okand.png")[0] == 404
+    # Markhöjden i mitten av projektet ligger inom höjdspannet; utanför rutorna finns ingen.
+    lag, hog = (float(t) for t in _bin(v, "anna", f"/api/kartverktyg/{pid}/geometri/markhojd.png")[1]["x-floden-hojdspann"].split(","))
+    st, d = v.http("anna", "GET", f"/api/kartverktyg/{pid}/hojd?e={(x0 + x1) / 2}&n={(y0 + y1) / 2}")
+    assert st == 200 and d["inom"] is True and d["hojdsystem"] == "RH 2000" and d["enhet"] == "m"
+    assert lag - 1e-3 <= d["hojd_m"] <= hog + 1e-3
+    st, d = v.http("anna", "GET", f"/api/kartverktyg/{pid}/hojd?e={x0 - 5000}&n={y0 - 5000}")
+    assert st == 200 and d["inom"] is False and d["hojd_m"] is None
+    assert v.http("anna", "GET", f"/api/kartverktyg/{pid}/hojd?e=abc&n=1")[0] == 400
+    assert v.http("anna", "GET", f"/api/kartverktyg/{pid}/hojd")[0] == 400
+    # Behörighet: utloggad 401, medlem utan roll i projektet och annan organisation 403 (för bilder och höjd).
+    for sokvag in (f"/api/kartverktyg/{pid}/geometri/hojdkurvor.png", f"/api/kartverktyg/{pid}/hojd?e={x0}&n={y0}"):
+        assert _bin(v, None, sokvag)[0] == 401
+        assert _bin(v, "bo", sokvag)[0] == 403
+        assert _bin(v, "di", sokvag)[0] == 403
+
+
+def test_klientfiler_ger_referer_till_tredje_part() -> None:
+    """OpenStreetMaps plattservrar kräver Referer: klientfilerna får inte skicka `Referrer-Policy: same-origin`."""
+    from webb.api import FlodenApiApp
+
+    app = FlodenApiApp(klientmapp=REPO / "webb" / "dist") if (REPO / "webb" / "dist" / "index.html").is_file() else None
+    if app is None:
+        import pytest
+
+        pytest.skip("webb/dist är inte byggd")
+    status, huvud, _ = app.hantera_http("GET", "/", {}, lambda: b"")
+    h = {k.lower(): x for k, x in (huvud.items() if hasattr(huvud, "items") else huvud)}
+    assert status == 200 and h["referrer-policy"] == "strict-origin-when-cross-origin"

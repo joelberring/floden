@@ -182,6 +182,12 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-zoom button:hover { background: #f1f0ea; }
 .flode-zoom button:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
 .flode-hjalp { color: var(--fl-mute); }
+.flode-osm { left: auto; right: 24px; bottom: auto; top: 76px; padding: 6px 12px; }
+.flode-sparrad { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.flode-sparrad .flode-knapp { flex: none; }
+.flode-sparstatus { margin: 0; flex: 1 1 160px; min-width: 0; }
+.flode-sparstatus.fel, .flode-sparstatus.ogiltigt { color: #9c2b1d; }
+.flode-sparstatus.sparat { color: #2d6a2d; }
 
 /* Paneler som fälls ihop: lager och underlag, sparade förslag, antaganden, så att läsrutan inte blir lång. */
 .flode-detalj { border-top: 1px solid var(--fl-line); padding-top: 12px; font-size: 13px; }
@@ -321,6 +327,7 @@ body[data-sida="flode"] a:hover { color: #000; }
   .flode-verktyg button { flex: none; white-space: nowrap; }
   .flode-verktyg-skil { flex: none; width: 1px; height: 22px; margin: 6px 2px; }
   .flode-zoom { top: auto; bottom: 96px; right: 12px; }
+  .flode-osm { top: auto; bottom: 148px; right: 12px; }
   .flode-stegrad { gap: 0; }
   .flode-steg { padding: 6px 8px; font-size: 12px; }
   .flode-vaxel { top: 10px; overflow-x: auto; }
@@ -357,6 +364,12 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-nytt .flode-panel { flex: 0 0 380px; }
 .flode-varningar { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; color: #6b4a12; }
 .flode-varningar li { margin-bottom: 6px; }
+.flode-varningar-ruta > summary, .flode-varningsgrupp > summary { cursor: pointer; font-weight: 500; }
+.flode-varningar-ruta > summary:focus-visible, .flode-varningsgrupp > summary:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
+.flode-varningar-ruta[open] > summary { margin-bottom: 8px; }
+.flode-varningar-ruta .flode-varningar { max-height: 260px; overflow-y: auto; list-style: disc; }
+.flode-varningsgrupp > ul { max-height: 160px; overflow-y: auto; margin: 4px 0 0; padding-left: 18px; font-size: 12px; color: var(--fl-mute); }
+.flode-nytt .flode-osm { top: 24px; }
 .flode-skapa { display: flex; flex-direction: column; gap: 12px; padding-bottom: 16px; margin-bottom: 8px; border-bottom: 1px solid var(--fl-line); }
 .flode-forlopp { display: flex; flex-direction: column; gap: 6px; }
 .flode-forlopp progress { width: 100%; height: 8px; accent-color: var(--fl-ink); }

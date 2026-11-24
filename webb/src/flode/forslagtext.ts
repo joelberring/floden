@@ -46,3 +46,40 @@ export function forslagInfoHtml(i: ForslagInfo): string {
   else if (i.sparatSom) delar.push(`<p class="flode-dampad">Sparat som ${esc(i.sparatSom)} på den här datorn.</p>`);
   return delar.join("");
 }
+
+/** Förslagets sparstatus bredvid knappen "Spara förslag". */
+export type SparTyp = "tomt" | "sparat" | "osparat" | "sparar" | "fel" | "ogiltigt";
+
+export interface SparIn {
+  /** Antal ändringar och figurer i förslaget. */
+  antal: number;
+  /** Förslagets innehåll och namn är det som senast sparades. */
+  likaSomSparat: boolean;
+  /** Namnet på det sparade förslaget (filen på datorn), om något sparats. */
+  sparatNamn: string | null;
+  /** Klockslag (redan formaterat) för senaste lyckade sparning i den här sessionen. */
+  tid: string | null;
+  /** Kontrollen: true giltig, false fel, null ej svarat (pågår eller ej startad). */
+  giltig: boolean | null;
+  kontrollFel: string | null;
+  sparFel: string | null;
+  sparar: boolean;
+}
+
+export function sparStatus(i: SparIn): { typ: SparTyp; text: string } {
+  if (i.sparar) return { typ: "sparar", text: "Sparar …" };
+  if (i.sparFel) return { typ: "fel", text: `Kunde inte spara: ${i.sparFel}` };
+  if (i.antal === 0) {
+    return {
+      typ: "tomt",
+      text: i.sparatNamn ? `Förslaget är tomt. Det sparade förslaget ${i.sparatNamn} finns kvar som det var.` : "Inget att spara än. Rita något först.",
+    };
+  }
+  if (i.kontrollFel || i.giltig === false) {
+    return { typ: "ogiltigt", text: "Kan inte sparas än: förslaget har fel som måste rättas först (se nedan). Det som sparades senast finns kvar." };
+  }
+  if (i.likaSomSparat && i.sparatNamn) {
+    return { typ: "sparat", text: `Sparat som ${i.sparatNamn}${i.tid ? ` kl. ${i.tid}` : ""} på den här datorn.` };
+  }
+  return { typ: "osparat", text: i.giltig === null ? "Osparade ändringar. Kontrollerar förslaget …" : "Osparade ändringar. Tryck Spara förslag." };
+}

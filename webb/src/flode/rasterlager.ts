@@ -5,11 +5,14 @@
  */
 import type { LagerDef } from "../karta/lager.ts";
 import type { RasterLager } from "../karta/kartmotor.ts";
+import { OSM_KALLA } from "../karta/osm.ts";
 import { wmsBrickmall, type Underlag } from "../karta/wms.ts";
 
 export const ORTO_ID = "underlag:orto";
 export const SKUGGNING_ID = "geo:skuggning";
 export const VEGETATION_ID = "geo:vegetation";
+export const HOJDKURVOR_ID = "geo:hojdkurvor";
+export const MARKHOJD_ID = "geo:markhojd";
 export const BYGGNADER_ID = "geo:byggnader";
 export const PLAN_ID = "plan:aktuellt";
 
@@ -17,6 +20,7 @@ export const PLAN_ID = "plan:aktuellt";
 export function rasterAv(l: Pick<LagerDef, "id" | "synlig" | "opacitet" | "data">, synlig?: boolean): RasterLager | null {
   const d = l.data;
   if (!d) return null;
+  if (d.osm) return { id: l.id, opacitet: l.opacitet, synlig: synlig ?? l.synlig, kalla: OSM_KALLA };
   if (d.underlag) {
     const u = d.underlag as Underlag;
     const mall = u.typ === "wms" ? wmsBrickmall(u) : u.url;

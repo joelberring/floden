@@ -11,7 +11,13 @@ sidan lämnar ut när `window.__FLODEN_PROV__` är satt (bara här), för att r�
 Skärmbilder hamnar i docs/bilder/ritverktyg/. Slutar med en tabell över vad som gick igenom och med felkod 1 om något föll.
 
     python tools/ritverktyg_prov.py [--url http://127.0.0.1:8795] [--chrome /usr/bin/google-chrome] [--ut docs/bilder/ritverktyg]
-        [--bara bred|smal] [--utan-korning]
+        [--bara bred|smal|tangenter|geografi|nytt] [--utan-korning]
+
+Geografiprovet (`--bara geografi`, och `--bara nytt` för Nytt projekt) går mot ett SYNTETISKT geografiprojekt, inte demokvarteret. Starta först
+`python tools/geografi_prov_server.py --port 8796` (påhittad geografi `goteborg-test`, falsk Lantmäteri- och WFS-värld, inloggning av) och ange
+`--geografi-url http://127.0.0.1:8796`. Provet ritar ett hus, sparar med "Spara förslag", går till "Välj frågor", kör, läser resultatet och kontrollerar
+OpenStreetMap-bakgrunden (plattorna ersätts med påhittade bilder, inget nät), Content-Security-Policy ur `deploy/Caddyfile`, markhöjden under pekaren och
+sparstatusen. Nytt projekt provas med ett påhittat svar från `/api/geografier` med 32 varningar.
 """
 
 from __future__ import annotations
@@ -60,6 +66,7 @@ class Prov:
         self.sv = 0
         self.fel_i_sidan: list[str] = []
         self.konsol_fel: list[str] = []
+        self.ctx: Any = None
 
     # --- redovisning -------------------------------------------------------------------------------------------------
     def ok(self, namn: str, villkor: bool, detalj: str = "") -> bool:
@@ -89,6 +96,7 @@ class Prov:
         )
         ctx.add_init_script("window.__FLODEN_PROV__ = true;")
         ctx.set_default_timeout(30_000)
+        self.ctx = ctx
         ctx.on("dialog", lambda d: self._dialog(d))
         self.sida = ctx.new_page()
         self.sida.on("pageerror", self._sidfel)
@@ -604,6 +612,331 @@ def _vanta(villkor: Callable[[], bool], sek: float = 30) -> bool:
 
 
 # =====================================================================================================================
+# Geografiprojekt (syntetiskt) och Nytt projekt
+# =====================================================================================================================
+GEO_PROJEKT = "haga-prov"
+GEO_NAMN = "Geoprov"  # förslagets namn; slug geoprov
+REPO = Path(__file__).resolve().parents[1]
+TILE_HOST = "https://tile.openstreetmap.org"
+
+
+def _stub_platta() -> bytes:
+    """En påhittad 256x256-bild som ersätter OpenStreetMaps plattor (provet har inget nät mot OSM och ska inte belasta deras servrar)."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    bild = Image.new("RGB", (256, 256), (222, 232, 214))
+    d = ImageDraw.Draw(bild)
+    for k in range(0, 256, 64):
+        d.line([(k, 0), (k, 255)], fill=(196, 208, 186))
+        d.line([(0, k), (255, k)], fill=(196, 208, 186))
+    buf = io.BytesIO()
+    bild.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def csp_overtradelser(meddelanden: list[str]) -> list[str]:
+    """CSP-överträdelser i konsolen (med Content-Security-Policy ur deploy/Caddyfile)."""
+    return [m for m in meddelanden if ("Content Security Policy" in m or "Content-Security-Policy" in m)]
+
+
+def _csp_ur_caddyfile() -> str:
+    import re
+
+    m = re.search(r'header Content-Security-Policy "([^"]+)"', (REPO / "deploy" / "Caddyfile").read_text(encoding="utf-8"))
+    assert m, "Content-Security-Policy saknas i deploy/Caddyfile"
+    return m.group(1)
+
+
+class Natet:
+    """Vad sidan hämtade: plattor från OSM (med Referer) och vår egen servers svar. Plattorna svaras med påhittade bilder."""
+
+    def __init__(self, ctx: Any, url: str, csp: str) -> None:
+        self.plattor: list[tuple[str, str | None]] = []  # (adress, referer)
+        self.svar: list[tuple[str, int]] = []
+        self.stub = _stub_platta()
+        self.fel_sparande: str | None = None  # påhittat serverfel för POST .../scenarier (provar felmeddelandet)
+        self.csp = csp
+        ctx.route(f"{url}/**", self._var)
+        ctx.route(f"{TILE_HOST}/**", self._platta)
+
+    def _platta(self, route: Any) -> None:
+        r = route.request
+        self.plattor.append((r.url, r.headers.get("referer")))
+        route.fulfill(
+            status=200,
+            body=self.stub,
+            headers={"content-type": "image/png", "cache-control": "max-age=3600", "access-control-allow-origin": "*"},
+        )
+
+    def _var(self, route: Any) -> None:
+        r = route.request
+        if self.fel_sparande and r.method == "POST" and r.url.split("?")[0].endswith("/scenarier"):
+            route.fulfill(status=500, content_type="application/json", body=json.dumps({"fel": self.fel_sparande, "status": 500}))
+            return
+        resp = route.fetch()
+        self.svar.append((r.url, resp.status))
+        route.fulfill(response=resp, headers={**resp.headers, "content-security-policy": self.csp})
+
+    def antal_plattor(self) -> int:
+        return len(self.plattor)
+
+    def z_max(self) -> int:
+        return max((int(u.removeprefix(TILE_HOST + "/").split("/")[0]) for u, _ in self.plattor), default=-1)
+
+
+def _stada_geo(url: str) -> None:
+    with contextlib.suppress(Exception):
+        _http(f"{url}/api/kartverktyg/{GEO_PROJEKT}/scenarier/geoprov/ta-bort", {})
+
+
+def geografi(p: Prov, webblasare: Browser, med_korning: bool) -> None:
+    """Rita, spara, välj frågor, kör och läs resultatet i ett syntetiskt geografiprojekt, med OSM-bakgrund, markhöjd och sparstatus."""
+    p.del_ = "geografi"
+    print("Geografiprojekt (syntetiskt, 1440x900, mus)", flush=True)
+    _stada_geo(p.url)
+    p.oppna(webblasare, 1440, 900, False)
+    s = p.s
+    net = Natet(p.ctx, p.url, _csp_ur_caddyfile())
+    info = _http(f"{p.url}/api/kartverktyg/{GEO_PROJEKT}")
+    a0, b0, a1, b1 = info["avgransning_3011"]
+    cx, cy = (a0 + a1) / 2, (b0 + b1) / 2
+    p.ok("projektet är ett geografiprojekt utan ortofoto", info["slag"] == "geografi" and info["ortofoto"] == {"finns": False})
+    s.goto(f"{p.url}/#/p/{GEO_PROJEKT}/forslag")
+    s.wait_for_selector("#fs-laddar", state="hidden", timeout=60_000)
+    s.wait_for_timeout(2500)
+    p.bild("40-geo-steg2-start")
+
+    # --- OpenStreetMap-bakgrunden ---
+    p.ok("OSM-bakgrunden är tänd från början i ett geografiprojekt", s.is_checked("#fs-osm-kryss"))
+    n0 = net.antal_plattor()
+    p.ok("plattor hämtas för det som syns (mer än 0, högst 40 vid första bilden)", 0 < n0 <= 40, f"{n0} plattor, högsta zoom {net.z_max()}")
+    p.ok("ingen platta över zoom 19", net.z_max() <= 19)
+    refs = {r for _, r in net.plattor}
+    p.ok("plattorna begärs med Referer = sidans ursprung (utan sökväg)", refs == {p.url + "/"}, str(refs))
+    attrib = s.inner_text(".maplibregl-ctrl-attrib")
+    p.ok("attributionen \"© OpenStreetMap-bidragsgivare\" syns", "© OpenStreetMap-bidragsgivare" in attrib and s.locator(".maplibregl-ctrl-attrib a[href='https://www.openstreetmap.org/copyright']").is_visible(), attrib)
+    csp_fel = csp_overtradelser(p.konsol_fel)
+    p.ok("Content-Security-Policy ur deploy/Caddyfile blockerar ingenting (plattor, bilder, 3D)", not csp_fel, "; ".join(csp_fel)[:300])
+    p.ok("höjdkurvor och skuggning hämtades från servern", all(any(f"/geometri/{v}.png" in u and st == 200 for u, st in net.svar) for v in ("hojdkurvor", "skuggning")))
+    p.ok("lagerlistan har OpenStreetMap, Höjdkurvor och Terräng", all(t in s.inner_text("#fs-lager-ruta") for t in ("OpenStreetMap", "Höjdkurvor", "Terräng")) or s.locator("#fs-lagerpanel").count() == 1)
+
+    # --- Markhöjden under pekaren ---
+    p.zooma_mot(cx, cy, steg=4)
+    a, b = p.skarm(cx, cy)
+    s.mouse.move(a, b, steps=4)
+    s.mouse.move(a + 6, b + 6, steps=2)
+    try:
+        s.wait_for_function("() => { const e = document.querySelector('#fs-markhojd'); return !!e && !e.hidden && /Markhöjd/.test(e.innerText); }", timeout=8000)
+    except Exception:  # noqa: BLE001
+        pass
+    mh = s.inner_text("#fs-markhojd")
+    import re
+
+    p.ok("markhöjden under pekaren visas med decimalkomma och höjdsystem", re.fullmatch(r"Markhöjd -?\d+,\d{2} m RH 2000", mh.strip()) is not None, mh.strip())
+    p.bild("41-geo-markhojd")
+
+    # --- OSM av och på: släckt lager hämtar ingenting ---
+    s.click("#fs-osm-kryss")
+    s.wait_for_timeout(500)
+    n1 = net.antal_plattor()
+    s.mouse.wheel(0, 240)
+    s.wait_for_timeout(1200)
+    s.mouse.move(a + 200, b + 120, steps=4)
+    s.mouse.down()
+    s.mouse.move(a + 120, b + 60, steps=6)
+    s.mouse.up()
+    s.wait_for_timeout(1200)
+    p.ok("släckt OSM-bakgrund hämtar inga plattor (zoom och panorering)", net.antal_plattor() == n1, f"{n1} -> {net.antal_plattor()}")
+    p.ok("attributionen försvinner när bakgrunden är av", "OpenStreetMap" not in s.inner_text(".maplibregl-ctrl-attrib"))
+    p.bild("42-geo-osm-av")
+    s.reload()
+    s.wait_for_selector("#fs-laddar", state="hidden", timeout=60_000)
+    s.wait_for_timeout(1200)
+    n2 = net.antal_plattor()
+    p.ok("valet 'av' sparas per projekt och överlever omladdning (inga plattor)", not s.is_checked("#fs-osm-kryss") and net.antal_plattor() == n2 == n1)
+    s.click("#fs-osm-kryss")
+    s.wait_for_timeout(1500)
+    p.ok("tänd igen hämtar plattor igen", net.antal_plattor() > n1)
+
+    # --- Rita, spara, välj frågor ---
+    s.fill("#fs-namn", GEO_NAMN)
+    s.keyboard.press("Tab")
+    p.ok("sparstatusen säger 'Inget att spara än' innan något ritats", "Inget att spara" in s.inner_text("#fs-sparstatus"), s.inner_text("#fs-sparstatus"))
+    s.click("#fs-spara")
+    s.wait_for_timeout(300)
+    p.ok("Spara förslag utan ritning ger ett begripligt besked och inget fel", "Inget att spara" in s.inner_text("#fs-sparstatus") and s.locator("#fs-sparstatus.fel").count() == 0)
+    s.click("#fs-anpassa")
+    s.wait_for_timeout(500)
+    p.zooma_mot(cx, cy, steg=6)
+    hus = [(a0 + 14, b0 + 14), (a0 + 30, b0 + 15), (a0 + 29, b0 + 27), (a0 + 13, b0 + 26)]
+    p.lager("hus")
+    p.verktyg("hus")
+    net.fel_sparande = "Disken är full (påhittat fel)"
+    p.klicka(hus)
+    p.tang("Enter")
+    s.wait_for_timeout(500)
+    s.fill("#fs-hojd", "12")
+    s.keyboard.press("Enter")
+    try:
+        s.wait_for_function("() => /Kunde inte spara/.test(document.querySelector('#fs-sparstatus')?.innerText ?? '')", timeout=20_000)
+    except Exception:  # noqa: BLE001
+        pass
+    st = s.inner_text("#fs-sparstatus")
+    p.ok("ett serverfel vid sparandet visas bredvid knappen med skälet", st.startswith("Kunde inte spara") and "Disken är full" in st, st)
+    p.ok("felet är en alert och röd", s.get_attribute("#fs-sparstatus", "role") == "alert" and s.locator("#fs-sparstatus.fel").count() == 1)
+    p.bild("43-geo-sparfel")
+    s.click("#fs-vidare")
+    s.wait_for_timeout(1500)
+    p.ok(
+        "Välj frågor går inte vidare med osparade ändringar och säger varför",
+        "forslag" in s.evaluate("location.hash") and s.inner_text("#fs-vidare") == "Gå vidare utan att spara" and "Kunde inte spara" in s.inner_text("#fs-sparstatus"),
+        f"{s.evaluate('location.hash')} / {s.inner_text('#fs-vidare')}",
+    )
+    net.fel_sparande = None
+    s.click("#fs-spara")
+    try:
+        s.wait_for_function("() => /^Sparat som/.test(document.querySelector('#fs-sparstatus')?.innerText ?? '')", timeout=30_000)
+    except Exception:  # noqa: BLE001
+        pass
+    st = s.inner_text("#fs-sparstatus")
+    p.ok("Spara förslag sparar och bekräftar med namn och klockslag", re.fullmatch(r"Sparat som Geoprov kl\. \d\d:\d\d på den här datorn\.", st.strip()) is not None, st)
+    p.ok("bekräftelsen står också i kartans hjälprad", "Förslaget är sparat som Geoprov" in p.hjalp(), p.hjalp())
+    lista = _http(f"{p.url}/api/kartverktyg/{GEO_PROJEKT}/scenarier")["scenarier"]
+    p.ok("servern har förslaget (en fil, ett hus)", [x["slug"] for x in lista] == ["geoprov"] and lista[0]["antal_andringar"] == 1, str(lista))
+    p.bild("44-geo-sparat")
+
+    # En ändring till och direkt "Välj frågor": den sparar först (tryck innan den automatiska sparningen hunnit).
+    s.fill("#fs-hojd", "15")
+    s.keyboard.press("Enter")
+    try:
+        s.wait_for_function("() => /Osparade/.test(document.querySelector('#fs-sparstatus')?.innerText ?? '')", timeout=3000)
+        osparat = True
+    except Exception:  # noqa: BLE001
+        osparat = False
+    p.ok("en ändring ger status 'Osparade ändringar' tills den sparats", osparat, s.inner_text("#fs-sparstatus"))
+    s.click("#fs-vidare")
+    klar = _vanta(lambda: "/fragor" in s.evaluate("location.hash"), 30)
+    p.ok("Välj frågor sparar först och går sedan till steg 3", klar, s.evaluate("location.hash"))
+    d = _http(f"{p.url}/api/kartverktyg/{GEO_PROJEKT}/scenarier/geoprov")
+    hojder = [float((a.get("egenskaper") or {}).get("hojd_m", 0)) for a in d.get("andringar", [])]
+    p.ok("det sparade förslaget har den senaste höjden (15 m)", hojder == [15.0], str(hojder))
+
+    # --- Steg 3 och 4 ---
+    s.wait_for_selector("#fr-kor", timeout=60_000)
+    s.wait_for_timeout(1500)
+    p.bild("45-geo-steg3")
+    p.ok("steg 3 har knappen Kör beräkningarna aktiv för geografiprojektet", s.is_enabled("#fr-kor"), s.inner_text("#fr-kor-not")[:140].replace("\n", " "))
+    if not med_korning:
+        return
+    s.click("#fr-kor")
+    klar = _vanta(lambda: "resultat" in s.evaluate("location.hash"), 480)
+    p.ok("körningen i geografiprojektet blir klar och Resultat öppnas", klar, s.inner_text("body")[:300].replace("\n", " ") if not klar else "")
+    if not klar:
+        return
+    s.wait_for_timeout(6000)
+    p.ok("resultatet visar förslaget", "inte ett eget förslag" not in s.inner_text("body") and s.locator("canvas").count() >= 1, s.inner_text(".flode-panel")[:160].replace("\n", " "))
+    a, b = _mitt(s, "#rs-a canvas")
+    s.mouse.move(a, b, steps=5)
+    s.mouse.move(a + 8, b + 5, steps=3)
+    try:
+        s.wait_for_function("() => /Markhöjd/.test(document.querySelector('#rs-avl')?.innerText ?? '')", timeout=8000)
+    except Exception:  # noqa: BLE001
+        pass
+    p.ok("steg 4 visar markhöjden under pekaren", re.search(r"Markhöjd -?\d+,\d{2} m RH 2000", s.inner_text("#rs-avl")) is not None, s.inner_text("#rs-avl").replace("\n", " "))
+    p.ok("steg 4 har OSM-kryssrutan och OSM-bakgrunden är tänd", s.is_checked("#rs-osm-kryss") and "© OpenStreetMap-bidragsgivare" in s.inner_text(".maplibregl-ctrl-attrib"))
+    p.bild("46-geo-steg4")
+    csp_fel = csp_overtradelser(p.konsol_fel)
+    p.ok("fortfarande inga CSP-överträdelser i steg 3 och 4", not csp_fel)
+    _stada_geo(p.url)
+
+
+def nytt_projekt(p: Prov, webblasare: Browser) -> None:
+    """Nytt projekt (`#/nytt`) med påhittade svar: geografin har 32 varningar; bakgrund, hopfälld lista och rutnätets lutning."""
+    p.del_ = "nytt"
+    print("Nytt projekt (påhittat svar med 32 varningar)", flush=True)
+    p.oppna(webblasare, 1440, 900, False)
+    s = p.s
+    net = Natet(p.ctx, p.url, _csp_ur_caddyfile())
+    import glob
+
+    mf = sorted(glob.glob("/tmp/floden-geoprov/geo/goteborg-test/v1/manifest.json"))
+    mani = json.loads(Path(mf[0]).read_text(encoding="utf-8")) if mf else {"karna_3011": [-210251.0, 6413249.0, -209749.0, 6413751.0], "gransen_3011": [-210500.0, 6413000.0, -209500.0, 6414000.0]}
+
+    def poly(r: list[float]) -> dict[str, Any]:
+        return {"type": "Polygon", "coordinates": [[[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]], [r[0], r[1]]]]}
+
+    varn = [f"byggnad-{i}: ingen markhöjd under eller kring byggnaden; utelämnad" for i in range(1, 25)]
+    varn += [f"mm_{i}: {2 + i * 3} % av cellerna saknar höjd (NaN) och fylls från grannrutan" for i in range(1, 7)]
+    varn += ["Träd: inga trädpunkter inom kärnan plus bufferten; lagret är tomt.", "Byggnadshöjd: ur Lantmäteriets laser (oklassade punkter), inte ur baskartans z."]
+    g = {
+        "ref": "goteborg-test@v2", "id": "goteborg-test", "version": "v2", "namn": "Göteborg (påhittad)", "kommun": "Göteborg", "epsg": 3011,
+        "karna_3011": mani["karna_3011"], "karna_polygon_3011": poly(mani["karna_3011"]), "gransen_3011": mani["gransen_3011"],
+        "gransen_polygon_3011": poly(mani["gransen_3011"]), "buffert_m": 250.0, "varningar": varn, "manifest_sha256": "0" * 64, "far_skapa_projekt": True,
+    }  # fmt: skip
+    p.ctx.route(f"{p.url}/api/geografier", lambda r: r.fulfill(status=200, content_type="application/json", body=json.dumps({"geografier": [g], "far_skapa_projekt": True, "organisationer": [{"id": "o1", "namn": "Exempelkommun"}]})))
+    s.goto(f"{p.url}/#/nytt")
+    s.wait_for_selector("#np-geovarningar", timeout=30_000)
+    s.wait_for_timeout(2500)
+    p.bild("50-nytt-start")
+    summa = s.inner_text("#np-geovarningar > summary")
+    p.ok("vänsterspalten visar en sammanfattning, inte alla varningar", summa == "32 varningar vid mappningen", summa)
+    p.ok("listan är hopfälld från början", s.evaluate("document.querySelector('#np-geovarningar').open") is False)
+    p.ok("hopfälld lista visar inga rader", not s.locator("#np-geovarningar li").first.is_visible())
+    s.click("#np-geovarningar > summary")
+    s.wait_for_timeout(300)
+    grupper = s.locator("#np-geovarningar .flode-varningsgrupp > summary").all_inner_texts()
+    p.ok("raderna är grupperade per slag (störst först)", len(grupper) == 2 and grupper[0].startswith("24 rader: ingen markhöjd") and grupper[1].startswith("6 rader:"), str(grupper))
+    p.bild("51-nytt-varningar-oppna")
+    vr = s.inner_text("#np-vridning") if s.locator("#np-vridning").count() else ""
+    p.ok("en rad förklarar varför rutorna ser vridna ut", vr.startswith("Rutorna ser vridna ut") and "18° ö" in vr and "cirka" in vr, vr)
+    p.ok("OSM-bakgrunden är tänd och plattor hämtas", s.is_checked("#np-osm-kryss") and net.antal_plattor() > 0, f"{net.antal_plattor()} plattor")
+    p.ok("plattorna begärs med Referer = sidans ursprung", {r for _, r in net.plattor} == {p.url + "/"})
+    p.ok("attribution syns på kartan", "© OpenStreetMap-bidragsgivare" in s.inner_text(".maplibregl-ctrl-attrib"))
+    # Rita en rektangel inom kärnan: kärnan och avgränsningen ritas ovanpå bakgrunden.
+    k = mani["karna_3011"]
+    mx, my = (k[0] + k[2]) / 2, (k[1] + k[3]) / 2
+    s.fill("#np-namn", "Haga nytt (prov)")
+    a, b = p.skarm(mx - 60, my - 40)
+    c, d = p.skarm(mx + 60, my + 40)
+    s.mouse.click(a, b)
+    s.mouse.move(c, d, steps=4)
+    s.mouse.click(c, d)
+    s.wait_for_timeout(500)
+    p.ok("avgränsningen ritas ovanpå bakgrunden och projektet kan skapas", s.is_enabled("#np-skapa"), s.inner_text("#np-hinder"))
+    p.bild("52-nytt-ritat")
+    s.wait_for_timeout(1500)  # plattor som redan var på väg när bilden ritades
+    n = net.antal_plattor()
+    s.click("#np-osm-kryss")
+    s.wait_for_timeout(300)
+    s.mouse.wheel(0, -240)
+    s.wait_for_timeout(1200)
+    p.ok(
+        "bakgrunden går att stänga av (inga fler plattor, ingen attribution)",
+        net.antal_plattor() == n and "OpenStreetMap" not in s.inner_text(".maplibregl-ctrl-attrib"),
+        f"plattor {n} -> {net.antal_plattor()}; attribution: {s.inner_text('.maplibregl-ctrl-attrib')!r}",
+    )
+    p.bild("53-nytt-osm-av")
+    s.click("#np-osm-kryss")  # tillbaka till förvalet
+    csp_fel = csp_overtradelser(p.konsol_fel)
+    p.ok("inga CSP-överträdelser på Nytt projekt", not csp_fel, "; ".join(csp_fel)[:300])
+    # Efter skapande: projektets varningar visas på samma sätt (påhittat svar).
+    p.ctx.route(
+        f"{p.url}/api/projekt",
+        lambda r: r.fulfill(status=201, content_type="application/json", body=json.dumps({
+            "kontrakt": "K48/v1", "projekt_id": "p-1", "namn": "Haga nytt (prov)", "organisation": "o1", "organisation_synlig": False,
+            "geografi": "goteborg-test@v2", "avgransning_3011": [0, 0, 1, 1], "roll": "utredare", "varningar": varn[:12], "info": ["Så räknas projektet (påhittat)."],
+        })) if r.request.method == "POST" else r.fallback(),
+    )
+    s.select_option("#np-org", "o1") if s.locator("#np-org").count() else None
+    s.click("#np-skapa")
+    s.wait_for_selector("#np-oppna", timeout=15_000)
+    p.ok("efter skapande: sammanfattning av projektets varningar, hopfälld", s.inner_text("#np-varningar > summary") == "12 varningar när projektet skapades" and s.evaluate("document.querySelector('#np-varningar').open") is False)
+    p.bild("54-nytt-skapat")
+
+
+# =====================================================================================================================
 # Smal skärm, beröring
 # =====================================================================================================================
 def smal(p: Prov, webblasare: Browser) -> None:
@@ -898,7 +1231,8 @@ def main() -> None:
     ap.add_argument("--url", default="http://127.0.0.1:8795")
     ap.add_argument("--chrome", default="/usr/bin/google-chrome")
     ap.add_argument("--ut", default=str(UT))
-    ap.add_argument("--bara", choices=["bred", "smal", "tangenter"], default=None)
+    ap.add_argument("--bara", choices=["bred", "smal", "tangenter", "geografi", "nytt"], default=None)
+    ap.add_argument("--geografi-url", default="http://127.0.0.1:8796", help="syntetiskt geografiprojekt (tools/geografi_prov_server.py)")
     ap.add_argument(
         "--utan-korning",
         action="store_true",
@@ -906,7 +1240,8 @@ def main() -> None:
     )
     a = ap.parse_args()
     p = Prov(a.url, Path(a.ut))
-    stada(a.url)
+    if a.bara not in ("geografi", "nytt"):
+        stada(a.url)
     with sync_playwright() as pw:
         pw_: Playwright = pw
         webblasare = pw_.chromium.launch(executable_path=a.chrome, args=ARGS)
@@ -917,6 +1252,15 @@ def main() -> None:
                 smal(p, webblasare)
             if a.bara in (None, "tangenter"):
                 tangentbord(p, webblasare)
+            if a.bara in ("geografi", "nytt"):
+                pg = Prov(a.geografi_url, Path(a.ut))
+                if a.bara == "geografi":
+                    geografi(pg, webblasare, not a.utan_korning)
+                else:
+                    nytt_projekt(pg, webblasare)
+                p.resultat += pg.resultat
+                p.konsol_fel += pg.konsol_fel
+                p.fel_i_sidan += pg.fel_i_sidan
         finally:
             webblasare.close()
     print()

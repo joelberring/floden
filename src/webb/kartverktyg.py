@@ -74,6 +74,8 @@ WMS_TIDSGRANS_S = 20.0
 MAX_BYGGNADER = 20_000
 MAX_BRYTLINJER = 20_000
 ORTOFOTO_MAX_PX = 2048
+GEOMETRILAGER = ("skuggning", "hojdkurvor", "markhojd", "vegetation", "terrang")
+"""Lagren `geometri/<namn>.png` som kan ritas (`terrang` är bara för intern läsning)."""
 
 _PROJEKT_ID = "demokvarteret"
 
@@ -118,6 +120,63 @@ def _rektangel(r: Ruta) -> tuple[float, float, float, float]:
     return (r.x_min, r.y_min, r.x_max, r.y_max)
 
 
+
+_EKVIDISTANSER_M = (0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0)
+
+
+def _hojdkurvor_rgba(glob: np.ndarray[Any, Any], cell: float) -> tuple[np.ndarray[Any, Any], float]:
+    """Höjdkurvor ur markhöjderna som transparent RGBA (norr uppåt) och ekvidistansen (m).
+
+    Ekvidistansen väljs ur höjdspannet (högst ca 25 kurvor). Matrisen interpoleras linjärt till ungefär
+    en halv meter per pixel (högst 4096 px) så att kurvorna blir tunna linjer och inte rasterceller;
+    kurvorna är ca 1,5 m breda och var femte (indexkurva) kraftigare. Visning av indata, inget resultat."""
+    from scipy import ndimage
+
+    ok = np.isfinite(glob)
+    if not ok.any():
+        return np.zeros((*glob.shape, 4), np.uint8), _EKVIDISTANSER_M[0]
+    lag, hog = float(np.nanmin(glob)), float(np.nanmax(glob))
+    spann = max(hog - lag, 1e-6)
+    ekv = next((e for e in _EKVIDISTANSER_M if spann / e <= 25.0), _EKVIDISTANSER_M[-1])
+    faktor = int(np.clip(round(cell / 0.5), 1, max(1, 4096 // max(glob.shape))))
+    fylld = np.where(ok, glob, lag)
+    if faktor > 1:
+        z = ndimage.zoom(fylld, faktor, order=1, mode="nearest", grid_mode=True)
+        giltig = ndimage.zoom(ok.astype(np.float32), faktor, order=0, mode="nearest", grid_mode=True) > 0.5
+    else:
+        z, giltig = fylld, ok
+    nivaer = np.floor((z - lag) / ekv).astype(np.int32)
+    kant = np.zeros(z.shape, dtype=bool)
+    kant[:, :-1] |= nivaer[:, :-1] != nivaer[:, 1:]
+    kant[:-1, :] |= nivaer[:-1, :] != nivaer[1:, :]
+    kant &= giltig
+    # Indexkurvan: kurvan vid en nivå som är jämnt delbar med 5 (nivån på den högre sidan), ritad en pixel bredare.
+    hogre = np.maximum(nivaer, np.pad(nivaer[:, 1:], ((0, 0), (0, 1)), constant_values=-1))
+    hogre = np.maximum(hogre, np.pad(nivaer[1:, :], ((0, 1), (0, 0)), constant_values=-1))
+    index = kant & (hogre % 5 == 0)
+    index = ndimage.binary_dilation(index, iterations=2) & giltig
+    kant = ndimage.binary_dilation(kant, iterations=1) & giltig
+    rgba = np.zeros((*z.shape, 4), np.uint8)
+    rgba[kant] = (138, 90, 43, 190)
+    rgba[index] = (110, 66, 24, 255)
+    return rgba, ekv
+
+
+def _markhojd_rgba(glob: np.ndarray[Any, Any]) -> np.ndarray[Any, Any]:
+    """Markhöjden i färg (grönt lågt, gult, brunt högt; 2:a till 98:e percentilen) som halvtransparent RGBA."""
+    ok = np.isfinite(glob)
+    rgba = np.zeros((*glob.shape, 4), np.uint8)
+    if not ok.any():
+        return rgba
+    lag, hog = (float(x) for x in np.nanpercentile(glob, (2, 98)))
+    t = np.clip((np.where(ok, glob, lag) - lag) / max(hog - lag, 1e-6), 0.0, 1.0)
+    stopp = np.array([[0.0, 120, 170, 110], [0.5, 235, 225, 140], [1.0, 150, 105, 70]])
+    for k in range(3):
+        rgba[..., k] = np.interp(t, stopp[:, 0], stopp[:, k + 1]).astype(np.uint8)
+    rgba[..., 3] = np.where(ok, 200, 0).astype(np.uint8)
+    return rgba
+
+
 class KartverktygTjanst:
     """Ritade planförslag: kontroll, K9/K20, sparade scenarier och underlag."""
 
@@ -147,6 +206,7 @@ class KartverktygTjanst:
         self._byggnader: dict[str, list[dict[str, Any]]] = {}
         self._kallor: dict[str, Projektkalla] = {}
         self._caps: dict[str, dict[str, Any]] = {}
+        self._terrang: dict[str, tuple[Any, list[tuple[np.ndarray[Any, Any], Any]]]] = {}
 
     # ------------------------------------------------------------------ mallar och bas
 
@@ -1577,30 +1637,35 @@ class KartverktygTjanst:
 
     # ------------------------------------------------------------------ geometri (visning)
 
-    def geometri_png(self, projekt: str, vilket: str) -> tuple[bytes, dict[str, str]]:
-        """Terrängskuggning eller vegetation som bild i EPSG:3011, ritad ur K1 v2-rutornas filer.
-
-        Det är en visning av indata (skuggning av `terrang.tif`, höjden i `vegetation.tif`),
-        inget resultat från någon lösare.
-        """
-        from PIL import Image
-
+    def _geometri_delar(
+        self, projekt: str, vilket: str
+    ) -> list[tuple[np.ndarray[Any, Any], Any]]:
+        """K1 v2-rutornas `terrang.tif` (eller `vegetation.tif`) för projektet, som (matris, geotransform)."""
         from karna.geometri import las_terrang, las_vegetation
 
         mallar = self._kravs_projekt(projekt)
-        if vilket not in ("skuggning", "vegetation"):
+        if vilket not in GEOMETRILAGER:
             raise _fel(f"Okänt geometrilager '{vilket}'.", 404)
         mall = max(mallar.values(), key=lambda m: len(m.rutor))
         delar: list[tuple[np.ndarray[Any, Any], Any]] = []
         for r in mall.rutor:
-            if vilket == "skuggning":
-                delar.append(las_terrang(r.mapp))
-            else:
+            if vilket == "vegetation":
                 v = las_vegetation(r.mapp)
                 if v is not None:
                     delar.append(v)
+            else:
+                delar.append(las_terrang(r.mapp))
         if not delar:
             raise _fel("Det finns inget sådant lager i projektets rutor.", 404)
+        return delar
+
+    @staticmethod
+    def _mosaik(
+        delar: Sequence[tuple[np.ndarray[Any, Any], Any]], max_px: int = ORTOFOTO_MAX_PX
+    ) -> tuple[np.ndarray[Any, Any], float, tuple[float, float, float, float]]:
+        """Rutorna som en matris (norr uppåt) i den finaste pixelstorleken; nedsamplad till högst `max_px`.
+
+        Ger (matris, cellstorlek efter nedsamplingen, (x_min, y_min, x_max, y_max))."""
         px = min(g.pixelstorlek_x for _, g in delar)
         x0 = min(g.x_min for _, g in delar)
         y1 = max(g.y_max for _, g in delar)
@@ -1615,12 +1680,27 @@ class KartverktygTjanst:
             c0 = round((g.x_min - x0) / px)
             r0 = round((y1 - g.y_max) / px)
             glob[r0 : r0 + a.shape[0], c0 : c0 + a.shape[1]] = a
-        steg = max(1, math.ceil(max(h, b) / ORTOFOTO_MAX_PX))
-        glob = glob[::steg, ::steg]
-        cell = px * steg
+        steg = max(1, math.ceil(max(h, b) / max_px))
+        return glob[::steg, ::steg], px * steg, (x0, y0, x1, y1)
+
+    def geometri_png(self, projekt: str, vilket: str) -> tuple[bytes, dict[str, str]]:
+        """Terrängskuggning, höjdkurvor, markhöjd i färg eller vegetation som bild i EPSG:3011, ritad ur K1 v2-rutornas filer.
+
+        Det är en visning av indata (skuggning av `terrang.tif`, höjden i `vegetation.tif`),
+        inget resultat från någon lösare. Höjdkurvorna ritas i transparent PNG med en ekvidistans
+        som väljs ur höjdspannet (rubriken `X-Floden-Ekvidistans`, meter).
+        """
+        from PIL import Image
+
+        delar = self._geometri_delar(projekt, vilket)
+        glob, cell, (x0, y0, x1, y1) = self._mosaik(delar)
+        extra: dict[str, str] = {}
         if vilket == "skuggning":
             z = np.where(np.isfinite(glob), glob, np.nanmean(glob))
-            dzdy, dzdx = np.gradient(z, cell)
+            # Låg relief ger en platt grå bild; höjden överdrivs så att marken syns (rubriken `X-Floden-Overdrift`).
+            spann = float(np.nanpercentile(glob, 98) - np.nanpercentile(glob, 2))
+            overdrift = float(np.clip(40.0 / max(spann, 1e-6), 1.0, 8.0))
+            dzdy, dzdx = np.gradient(z * overdrift, cell)
             az, al = math.radians(315.0), math.radians(45.0)
             lutning = np.arctan(np.hypot(dzdx, dzdy))
             aspekt = np.arctan2(dzdy, -dzdx)
@@ -1630,6 +1710,14 @@ class KartverktygTjanst:
             grå = (np.clip(skugga, 0, 1) * 200 + 30).astype(np.uint8)
             alfa = np.where(np.isfinite(glob), 255, 0).astype(np.uint8)
             rgba = np.dstack([grå, grå, grå, alfa])
+            extra["X-Floden-Overdrift"] = f"{overdrift:g}"
+        elif vilket == "hojdkurvor":
+            rgba, ekv = _hojdkurvor_rgba(glob, cell)
+            extra["X-Floden-Ekvidistans"] = f"{ekv:g}"
+        elif vilket == "markhojd":
+            rgba = _markhojd_rgba(glob)
+            lag, hog = float(np.nanmin(glob)), float(np.nanmax(glob))
+            extra["X-Floden-Hojdspann"] = f"{lag:.2f},{hog:.2f}"
         else:
             vh = np.nan_to_num(glob, nan=0.0)
             alfa = np.where(vh >= 0.5, np.clip(80 + vh * 8, 0, 190), 0).astype(np.uint8)
@@ -1639,7 +1727,39 @@ class KartverktygTjanst:
             )
         buf = io.BytesIO()
         Image.fromarray(rgba, "RGBA").save(buf, format="PNG")
-        return buf.getvalue(), {"X-Floden-Utbredning": f"{x0},{y0},{x1},{y1}"}
+        return buf.getvalue(), {"X-Floden-Utbredning": f"{x0},{y0},{x1},{y1}", **extra}
+
+    def markhojd(self, projekt: str, e: float, n: float) -> dict[str, Any]:
+        """Markhöjden (m RH 2000, `terrang.tif`: marken utan byggnader) i punkten (e, n), för avläsning under pekaren.
+
+        Läser cellen ur projektets rutor; inget räknas om. `hojd_m` är `None` utanför rutorna eller där
+        terrängen saknar värde, och `inom` säger om punkten ligger i en ruta."""
+        if not (math.isfinite(e) and math.isfinite(n)):
+            raise _fel("Ange e och n som tal (SWEREF 99 18 00).", 400)
+        delar = self._terrang_cache(projekt)
+        for arr, g in delar:
+            kol = int((e - g.x_min) // g.pixelstorlek_x)
+            rad = int((g.y_max - n) // g.pixelstorlek_y)
+            if 0 <= kol < arr.shape[1] and 0 <= rad < arr.shape[0]:
+                v = float(arr[rad, kol])
+                return {
+                    "inom": True,
+                    "hojd_m": v if math.isfinite(v) else None,
+                    "enhet": "m",
+                    "hojdsystem": "RH 2000",
+                    "kalla": "terrang.tif (marken utan byggnader)",
+                }
+        return {"inom": False, "hojd_m": None, "enhet": "m", "hojdsystem": "RH 2000", "kalla": "terrang.tif (marken utan byggnader)"}
+
+    def _terrang_cache(self, projekt: str) -> list[tuple[np.ndarray[Any, Any], Any]]:
+        """Terrängrutorna i minnet (en gång per projekt; byts när projektets filer ändrats)."""
+        kalla = self.kalla(projekt)
+        nyckel = (projekt, getattr(kalla, "stampel", None))
+        gammal = self._terrang.get(projekt)
+        if gammal is None or gammal[0] != nyckel:
+            gammal = (nyckel, self._geometri_delar(projekt, "terrang"))
+            self._terrang[projekt] = gammal
+        return gammal[1]
 
     # ------------------------------------------------------------------ ortofoto (GeoTIFF)
 

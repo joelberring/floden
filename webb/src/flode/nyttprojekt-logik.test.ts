@@ -6,6 +6,8 @@ import { tolkaFlodeAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import {
   arealText, avgransningsYta, formularFel, omslutande, placering, placeringText, polygonFel, polygonYta, punkterPolygon, rektangelPolygon,
   sjalvkorsning, skapaBegaran, ytaInomRektangel,
+  rutnatsVridning,
+  vridningText,
 } from "./nyttprojekt-logik.ts";
 
 const geo = {
@@ -115,4 +117,14 @@ test("ytan i texten är polygonens när avgränsningen är en polygon", () => {
   const p = punkterPolygon(L);
   assert.match(arealText([1000, 1000, 1100, 1100], p), /100 × 100 m, polygonens yta 6\s400 m²/);
   assert.doesNotMatch(arealText([1000, 1000, 1100, 1100]), /polygonens/);
+});
+
+test("rutnätets lutning förklaras långt från mittmeridianen men inte nära den", () => {
+  // Göteborg (ca 12° ö): rutnätet lutar ungefär 5 grader mot kartans norr.
+  const gbg = rutnatsVridning([-210500, 6413500, -209500, 6414000]);
+  assert.ok(gbg && gbg.grader < -4.5 && gbg.grader > -5.8, `${gbg?.grader}`);
+  assert.match(vridningText([-210500, 6413500, -209500, 6414000]) ?? "", /^Rutorna ser vridna ut: .*18° ö.*12,0° ö.*cirka 5,\d°\.$/);
+  // Stockholm ligger vid mittmeridianen: ingen förklaring behövs.
+  assert.equal(rutnatsVridning([150000, 6580000, 152000, 6581000]), null);
+  assert.equal(vridningText([150000, 6580000, 152000, 6581000]), null);
 });
