@@ -1,8 +1,8 @@
 /*
- * 3D-vyn på kartsidan: ett lager (egen vy) i samma lagerpanel som kartan. Den här filen är liten och
- * laddas med kartsidan; själva 3D-koden och Three.js hämtas först när användaren öppnar 3D.
+ * 3D-vyn i Resultat (steg 4): ett lager (egen vy) i samma lagerlista som kartan. Den här filen är liten och
+ * laddas med flödet; själva 3D-koden och Three.js hämtas först när användaren öppnar 3D.
  *
- * Här kopplas kartsidans tillstånd (valt resultat, läge, lager i panelen, ritat förslag) till
+ * Här kopplas stegets tillstånd (valt resultat, läge, lager i panelen, ritat förslag) till
  * 3D-scenen, och kameran synkas med kartan vid växling. Inget här räknar ett värde: scenen visar
  * serverns buffertar, och värden på marken läses av servern som i 2D.
  */
@@ -11,7 +11,7 @@ import { LAGEN, type Lage } from "./kartforklaring";
 import type { ProjektInfo } from "./karta/kartapi";
 import type { EgenVy, LagerDef, LagerLista } from "./karta/lager";
 import type { PlanDok } from "./karta/plandok";
-import { avstandFranMpp, mppFranKamera, SYNFALT_GRADER, type Kamera } from "./vy3d/koord";
+import { avstandFranMpp, mppFranKamera, SYNFALT_GRADER } from "./vy3d/koord";
 import { valjSidor, type Lage as Lage3, type LagerUrval } from "./vy3d/lagerval";
 import { VSC_TECKENFORKLARING } from "./vy3d/farger";
 import type { Hover, PlanHus, Stil, Tillstand, Vy3d, Hamtare, Vy3dInfo } from "./vy3d/index";
@@ -71,17 +71,6 @@ export function skapa3dVy(ktx: Kontext3d): EgenVy {
     montera: (yta) => montera(ktx, yta),
   };
 }
-
-export interface Styrning3d {
-  /** Kameran som ger samma ruta som kartan (rakt uppifrån), för mätning och test. */
-  kamera(): Kamera | null;
-  zooma(faktor: number): void;
-  anpassa(): void;
-  vy(): Vy3d | null;
-}
-
-let aktiv: Styrning3d | null = null;
-export const styrning3d = (): Styrning3d | null => aktiv;
 
 function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdatera(): void } {
   let vy: Vy3d | null = null;
@@ -170,18 +159,6 @@ function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdate
           ktx.text(hov.text);
         }
       };
-      aktiv = {
-        kamera: () => (vy ? vy.hamtaKamera() : null),
-        zooma: (f) => {
-          if (!vy) return;
-          const k2 = vy.hamtaKamera();
-          vy.settKamera({ ...k2, avstand: Math.min(3500, Math.max(15, k2.avstand * f)) });
-        },
-        anpassa: () => {
-          if (vy && info) fyllUtbredning(vy, info, ktx);
-        },
-        vy: () => vy,
-      };
       monteraKnappar(yta, ktx, () => vy, () => info);
       await uppdatera();
       // Snett från början så att höjder syns; synken till kartan är exakt i startögonblicket.
@@ -204,7 +181,6 @@ function montera(ktx: Kontext3d, yta: HTMLElement): { avmontera(): void; uppdate
         vy.avmontera();
       }
       vy = null;
-      aktiv = null;
       yta.innerHTML = "";
     },
     uppdatera: () => void uppdatera(),

@@ -8,14 +8,27 @@
 import { ritaFlodeHuvud } from "../flode/huvud.ts";
 import { esc } from "../sidor.ts";
 import { MATEMATIK } from "./data.generated.ts";
-import type { FlodeNiva, MatematikData, MatematikLank, MatematikMetod } from "./typer.ts";
+import type {
+  AvvikelseKategori,
+  FlodeNiva,
+  MatematikAvvikelse,
+  MatematikData,
+  MatematikLank,
+  MatematikMetod,
+} from "./typer.ts";
 
 const NIVA_KLASS: Record<FlodeNiva, string> = {
   flode: "svarar",
-  karta: "delvis",
   api: "delvis",
   cli: "delvis",
   fristaende: "saknas",
+};
+
+const AVVIKELSE_KLASS: Record<AvvikelseKategori, string> = {
+  metodtolkning: "saknas",
+  korare_format: "delvis",
+  numerik: "delvis",
+  fysikavgransning: "delvis",
 };
 
 function lank(l: MatematikLank): string {
@@ -54,6 +67,24 @@ export function metodHtml(m: MatematikMetod): string {
     </article>`;
 }
 
+export function avvikelseHtml(a: MatematikAvvikelse): string {
+  return `
+    <article class="mat-metod" id="${esc(a.id)}">
+      <div class="flode-rubrikrad">
+        <h3 class="mat-h3">${esc(a.titel)}</h3>
+        <span class="mat-etiketter">
+          <span class="flode-etikett delvis">${esc(a.domanNamn)}</span>
+          <span class="flode-etikett ${AVVIKELSE_KLASS[a.kategori]}" data-kategori="${esc(a.kategori)}">${esc(a.kategoriText)}</span>
+        </span>
+      </div>
+      <p class="mat-text"><strong>Omfattning:</strong> ${esc(a.omfattning)}</p>
+      <p class="mat-text"><strong>Varför det avviker:</strong> ${esc(a.varfor)}</p>
+      <p class="mat-text"><strong>Vad som krävs:</strong> ${esc(a.kravs)}</p>
+      <p class="flode-liten flode-dampad">Underlag</p>
+      ${lista(a.underlag)}
+    </article>`;
+}
+
 export function sidaMatematik(data: MatematikData = MATEMATIK): string {
   const domaner = data.doman
     .map(
@@ -64,6 +95,7 @@ export function sidaMatematik(data: MatematikData = MATEMATIK): string {
       </section>`,
     )
     .join("");
+  const avvikelser = data.avvikelser.map(avvikelseHtml).join("");
   const fragor = data.fragor
     .map(
       (q) => `
@@ -75,15 +107,24 @@ export function sidaMatematik(data: MatematikData = MATEMATIK): string {
       </article>`,
     )
     .join("");
-  const nav = [...data.doman.map((d) => ({ id: `mat-${d.id}`, namn: d.namn })), { id: "mat-fragor", namn: "Öppna frågor" }]
+  const nav = [
+    ...data.doman.map((d) => ({ id: `mat-${d.id}`, namn: d.namn })),
+    { id: "mat-avvikelser", namn: "Kända avvikelser" },
+    { id: "mat-fragor", namn: "Öppna frågor" },
+  ]
     .map((n) => `<a href="#/matematik" data-hopp="${esc(n.id)}">${esc(n.namn)}</a>`)
     .join("");
   return `
     <div class="mat-sida">
       <h1 class="flode-h">Matematik och forskning</h1>
-      <p class="mat-text flode-dampad">Hur beräkningarna hänger ihop med koden, och vilka forskningsfrågor som är öppna. Alla metoder är skisser tills en människa har klassat dem som rapportmetoder. Formlerna visas som text; fullständig LaTeX, facittest och mätvärden med datum finns i <a href="${esc(data.kodbas)}" target="_blank" rel="noopener noreferrer"><code>docs/MATEMATIK.md</code></a>.</p>
+      <p class="mat-text flode-dampad">Hur beräkningarna hänger ihop med koden, vilka kända avvikelser som finns och vilka forskningsfrågor som är öppna. Alla metoder är skisser tills en människa har klassat dem som rapportmetoder. Formlerna visas som text; fullständig LaTeX, facittest och mätvärden med datum finns i <a href="${esc(data.kodbas)}" target="_blank" rel="noopener noreferrer"><code>docs/MATEMATIK.md</code></a>.</p>
       <nav class="mat-nav" aria-label="Avsnitt">${nav}</nav>
       ${domaner}
+      <section class="mat-doman" aria-labelledby="mat-avvikelser">
+        <h2 class="mat-h2" id="mat-avvikelser">Kända avvikelser och begränsningar</h2>
+        <p class="mat-text flode-dampad">Fysiken och metodtexterna är facit: Floden anpassar aldrig konstanter mot testfall och gissar inte när indata eller metodtext är tvetydig. Här redovisas varför alla testfall ännu inte klaras och vad som krävs för att stänga varje avvikelse.</p>
+        ${avvikelser}
+      </section>
       <section class="mat-doman" aria-labelledby="mat-fragor">
         <h2 class="mat-h2" id="mat-fragor">Öppna frågor</h2>
         ${fragor}

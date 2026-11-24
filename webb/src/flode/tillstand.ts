@@ -46,6 +46,8 @@ export interface FlodeTillstand {
   namn: string;
   valda: Set<string> | null;
   bestallning: Bestallning;
+  /** Avtappning till ledningsnätet i mm/h; null = lösarens standard 0 mm/h (ledningsnätet antas fullt). */
+  avtappning: number | null;
   korning: KorningLage | null;
   /** Vyer ur körningen av det ritade förslaget. */
   ritVyer: ProjektVy[];
@@ -59,6 +61,7 @@ interface Sparat {
   namn: string;
   valda: string[] | null;
   bestallning: Bestallning;
+  avtappning?: number | null;
 }
 
 export const FORVAL_BESTALLNING: Bestallning = {
@@ -79,6 +82,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
     namn: "",
     valda: null,
     bestallning: { ...FORVAL_BESTALLNING },
+    avtappning: null,
     korning: null,
     ritVyer: [],
   };
@@ -89,6 +93,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
       t.namn = s.namn;
       t.valda = s.valda ? new Set(s.valda) : null;
       t.bestallning = { ...FORVAL_BESTALLNING, ...s.bestallning };
+      t.avtappning = typeof s.avtappning === "number" && Number.isFinite(s.avtappning) && s.avtappning >= 0 ? s.avtappning : null;
     }
   } catch {
     /* Går det inte att läsa börjar man om; inget går förlorat på servern. */
@@ -104,6 +109,7 @@ export function sparaTillstand(t: FlodeTillstand): void {
       namn: t.namn,
       valda: t.valda ? [...t.valda] : null,
       bestallning: t.bestallning,
+      avtappning: t.avtappning,
     };
     sessionStorage.setItem(NYCKEL + t.projekt, JSON.stringify(s));
   } catch {
@@ -137,4 +143,12 @@ export function skapaDokFor(t: FlodeTillstand, info: ProjektInfo): void {
   const dok = new PlanDok((id) => bas.get(id));
   if (!gammal.tom()) dok.fran(gammal.tillAndringar());
   t.dok = dok;
+}
+
+/** Avtappningen (mm/h) som ett tal ≥ 0; komma eller punkt accepteras och tom text betyder standard (null). */
+export function lasAvtappning(text: string): { varde: number | null; ok: boolean } {
+  const rent = text.trim().replace(",", ".");
+  if (rent === "") return { varde: null, ok: true };
+  const n = Number(rent);
+  return Number.isFinite(n) && n >= 0 ? { varde: n, ok: true } : { varde: null, ok: false };
 }

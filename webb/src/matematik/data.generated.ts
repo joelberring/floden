@@ -191,8 +191,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "Δz = max(0, z₂ − z₁), σ = √(σ₁² + σ₂²); instabil om Δz/σ ≤ k (k = 2)"
           ],
-          "flode": "karta",
-          "flodeText": "I kartsidan (#/karta), inte i flödet",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -206,6 +206,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "webb/src/karta/overfall.ts",
               "href": "https://github.com/joelberring/floden/blob/main/webb/src/karta/overfall.ts"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -227,7 +231,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/tvad/test_felindikator.py"
             }
           ],
-          "anmarkning": "Nås som lager i kartsidan (#/karta), inte i flödet. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
+          "anmarkning": "Nås i Resultat (steg 4, fliken Skyfall, knappen \"Visa osäkerhet\") som nyckeltal och lagret \"Känsliga överfall\" på kartan; den gamla kartsidan (#/karta) är borttagen. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
         },
         {
           "id": "vatten.intervall",
@@ -236,8 +240,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "h_min(t) ≤ h_u(t) ≤ h_max(t); gränserna ur två extremkörningar (mer regn, lägre förlust, lägre avtappning ⇒ högre nivå)"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -247,6 +251,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "src/webb/api.py (POST /api/analys/intervall)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -263,7 +271,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_a.py"
             }
           ],
-          "anmarkning": "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Ingen panel i klienten (K40: läses av inget i webbklienten)."
+          "anmarkning": "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Visas i Resultat (steg 4, fliken Skyfall, knappen \"Visa osäkerhet\") som [min; max]; gäller projektets markmodell (läget före), inte ett ritat förslag."
         }
       ]
     },
@@ -368,8 +376,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "SVF(H − σ) ≥ SVF(H) ≥ SVF(H + σ)"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -379,6 +387,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "src/webb/api.py (POST /api/analys/svf-intervall)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -394,7 +406,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_a.py"
             }
           ],
-          "anmarkning": "Ingen panel i klienten."
+          "anmarkning": "Visas i Resultat (steg 4, fliken Sol, knappen \"Visa osäkerhet\") som [min; max] av medel-SVF; gäller projektets markmodell (läget före), inte ett ritat förslag."
         }
       ]
     },
@@ -515,7 +527,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_b.py"
             }
           ],
-          "anmarkning": "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Ingen panel i klienten."
+          "anmarkning": "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under \"Fler analyser\" med egna timvärden."
         }
       ]
     },
@@ -868,9 +880,164 @@ export const MATEMATIK: MatematikData = {
       ]
     }
   ],
+  "avvikelser": [
+    {
+      "id": "avv.buller.medvind_dal",
+      "doman": "buller",
+      "domanNamn": "Buller",
+      "kategori": "metodtolkning",
+      "kategoriText": "Metodtolkning",
+      "titel": "Nord2000: medvind över dal (3 underkända fall)",
+      "omfattning": "RL 18-18: N18R052, N18R062, N18R102 (avvikelse +2,8 till +6,0 dB i totalnivå, upp till +7,3 dB i 0,8–2,5 kHz)",
+      "varfor": "Med källhöjden 0,01 m (däckbuller) ger bokstavlig tillämpning av CalcEqSSP i AV 1106/07 ekv. (134)–(135) en mycket brant ekvivalent ljudhastighetsprofil i medvind. Vägbanans Fresnelzon krymper då från ca 52 m till ca 2 m och tar nästan hela vikten. Metodtexten anger ingen minimihöjd för segmentens Fresnelzon; vi anpassar aldrig konstanter mot testfall utan stöd i specifikationen.",
+      "kravs": "Extern granskning och klargörande från Kunskapscentrum om buller om vad referensprogrammet gör för låga källhöjder i delmodell 3.",
+      "underlag": [
+        {
+          "text": "docs/buller/logg/P-S2.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/buller/logg/P-S2.md"
+        },
+        {
+          "text": "docs/buller/tolkningar.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/buller/tolkningar.md"
+        },
+        {
+          "text": "src/buller/nord2000/delmodell3.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/buller/nord2000/delmodell3.py"
+        }
+      ]
+    },
+    {
+      "id": "avv.buller.motvind_terrang",
+      "doman": "buller",
+      "domanNamn": "Buller",
+      "kategori": "metodtolkning",
+      "kategoriText": "Metodtolkning",
+      "titel": "Nord2000: motvind över bruten terräng (5 ej körbara fall)",
+      "omfattning": "RL 18-18: N18R033, N18R043, N18R053, N18R063, N18R103",
+      "varfor": "I skuggzon ger FresnelZoneW (AV 1106/07 ekv. 347–348) strykvinkeln ψ_G = 0, vilket gör att även platta eller konkava terrängsegment klassas som konvexa i delmodell 3. Då krävs en ekvivalent kil som geometriskt inte går att bilda (parallella ytor eller kilvinkel β < π). Kärnan stoppar då med ett tydligt fel i stället för att gissa ett resultat.",
+      "kravs": "Klargörande i metodtexten (eller hos Kunskapscentrum om buller) om segmentklassningen i delmodell 3 när mottagaren ligger i motvindens skuggzon.",
+      "underlag": [
+        {
+          "text": "docs/buller/logg/P-S2.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/buller/logg/P-S2.md"
+        },
+        {
+          "text": "docs/buller/tolkningar.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/buller/tolkningar.md"
+        },
+        {
+          "text": "src/buller/nord2000/delmodell3.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/buller/nord2000/delmodell3.py"
+        }
+      ]
+    },
+    {
+      "id": "avv.buller.kulle_och_bank",
+      "doman": "buller",
+      "domanNamn": "Buller",
+      "kategori": "metodtolkning",
+      "kategoriText": "Metodtolkning",
+      "titel": "Nord2000: mjuk kulle och upphöjd väg i enskilda tersband",
+      "omfattning": "RL 18-18: kulle N18R111–114 (total ≤ 0,70 dB, tersband 3,8–5,1 dB i 200–315 Hz) samt upphöjd väg N18R031–32, N18R041–42 (total ≤ 0,26 dB, tersband 1,8–3,1 dB över 2,5 kHz)",
+      "varfor": "Totalnivån ligger redan nära gränsen 0,5 dB, men enskilda tersband avviker över 1 dB. På hård tjock skärm (N18R081) stämmer delmodell 5 väl, men på mjuk, flack kulle (σ = 200 kNs/m⁴, β ≈ 185°) hamnar 200–315 Hz-dippen för högt. På upphöjd väg ger den vägda kilytereflektionen i TC-101327 bilaga G.2 stark spegling i vägbanan för däckkällan (0,01 m) vid höga frekvenser.",
+      "kravs": "Fortsatt granskning av TC-101327 bilaga G.2–G.3 och delmodell 5 mot metodtext och extern metodgranskning.",
+      "underlag": [
+        {
+          "text": "docs/buller/logg/P-S2.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/buller/logg/P-S2.md"
+        },
+        {
+          "text": "src/buller/nord2000/delmodell4_kilben.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/buller/nord2000/delmodell4_kilben.py"
+        },
+        {
+          "text": "src/buller/nord2000/delmodell5.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/buller/nord2000/delmodell5.py"
+        }
+      ]
+    },
+    {
+      "id": "avv.buller.ej_korbara_typer",
+      "doman": "buller",
+      "domanNamn": "Buller",
+      "kategori": "korare_format",
+      "kategoriText": "Körare och format",
+      "titel": "Nord2000: kurvig väg, stadsgata, årsmedel och skog (22 ej körbara fall)",
+      "omfattning": "RL 18-18: kurvig väg (10 fall), stadsgata (4 fall), årsmedel Lden (4 fall) och skog (4 fall, N18R121–124)",
+      "varfor": "Dessa fall saknar inte grundfysik i utbredningskärnan, utan begränsas av indataformat, testkörare och beslutade avgränsningar. Testformatet N-fall/v1 beskriver bara raka tvärsnitt och saknar plangeometri för kurvig väg och stadsgata (delmodell 11 finns redan implementerad). Årsmedel saknar väderklassviktning (Lden) i köraren. Skog (delmodell 10) kräver ny kontraktsversion av Terrangprofil (KB1) och är medvetet avstängt i rapportläget.",
+      "kravs": "Nytt testformat N-fall/v2 med plangeometri och väderstatistik, körarstöd för Lden och reflexer, samt eventuell kontraktsversion KB1/v2 för skog.",
+      "underlag": [
+        {
+          "text": "docs/buller/logg/P-11.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/buller/logg/P-11.md"
+        },
+        {
+          "text": "docs/BESLUT.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/BESLUT.md"
+        },
+        {
+          "text": "src/buller/testfall/format.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/buller/testfall/format.py"
+        },
+        {
+          "text": "src/buller/testfall/korare.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/buller/testfall/korare.py"
+        }
+      ]
+    },
+    {
+      "id": "avv.dagsljus.webgpu_svf",
+      "doman": "dagsljus",
+      "domanNamn": "Dagsljus",
+      "kategori": "numerik",
+      "kategoriText": "Numerik / GPU",
+      "titel": "Dagsljus: WebGPU SVF i enkelprecision (f32)",
+      "omfattning": "macOS Apple Metal-3 benchmark 2026-11-23: största cellavvikelse 0,0126 (0,014 % av cellerna över 0,01)",
+      "varfor": "GPU-beräkningen använder 32-bitars flyttal (WGSL f32), där upprepade flyttalssteg längs exakt diagonala strålar tidigare kunde driva ett steg fel i enstaka celler. Med heltalsräknare och korsprodukt-DDA i dagsljus_horisont.wgsl har den diagonala ULP-driften eliminerats mot Python-referensen; kvarvarande skillnad ryms inom f32-avrundning.",
+      "kravs": "Uppdaterad macOS WebGPU-mätning som verifierar den nya maxavvikelsen efter ändringen i shadern.",
+      "underlag": [
+        {
+          "text": "webb/src/gpu/shaders/dagsljus_horisont.wgsl",
+          "href": "https://github.com/joelberring/floden/blob/main/webb/src/gpu/shaders/dagsljus_horisont.wgsl"
+        },
+        {
+          "text": "tests/test_wgsl_referens.py",
+          "href": "https://github.com/joelberring/floden/blob/main/tests/test_wgsl_referens.py"
+        },
+        {
+          "text": "docs/benchmark/2026-11-23-mac-webgpu.json",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/benchmark/2026-11-23-mac-webgpu.json"
+        }
+      ]
+    },
+    {
+      "id": "avv.vatten.overfall_och_hybrid",
+      "doman": "vatten",
+      "domanNamn": "Vatten",
+      "kategori": "fysikavgransning",
+      "kategoriText": "Fysikavgränsning",
+      "titel": "Vatten: omedelbart överfall i sänkgrafen och 2D-hybridens räckvidd",
+      "omfattning": "A2–A3: +1,1 % till +2,1 % tidsfördröjning med bredskronsöverfall; hybridens uppsnabbning 1,2–1,8× efter rättelser i vattenkärnan",
+      "varfor": "Den snabba händelsestyrda grafmodellen förutsätter omedelbart överfall (kinematisk gräns) och plan vattenyta i varje sänka. Vid breda, grunda överfall eller höga hastigheter (Fr ≥ 0,30) krävs 2D lokal tröghet, vilket felindikatorn flaggar automatiskt. Efter rättelserna i vattenkärnan 2026-11-23 är hybriden 1,2–1,8× snabbare än full 2D (inte de tidigare 12,9–20×).",
+      "kravs": "Fortsatt analys i de öppna forskningsfrågorna Q1 (olinjära överfall) och Q3 (hybridfel under pågående överfall).",
+      "underlag": [
+        {
+          "text": "src/tvad/felindikator.py",
+          "href": "https://github.com/joelberring/floden/blob/main/src/tvad/felindikator.py"
+        },
+        {
+          "text": "docs/VALIDERING.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/VALIDERING.md"
+        },
+        {
+          "text": "docs/BESLUT.md",
+          "href": "https://github.com/joelberring/floden/blob/main/docs/BESLUT.md"
+        }
+      ]
+    }
+  ],
   "flodeText": {
     "flode": "I användarflödet",
-    "karta": "I kartsidan (#/karta), inte i flödet",
     "api": "Bara i API:t",
     "cli": "Kommandorad, MCP och testsvit",
     "fristaende": "Fristående modul"

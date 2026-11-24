@@ -74,7 +74,7 @@ Enter avslutar, Esc avbryter, Backsteg tar bort senaste punkten, Delete tar bort
 | `#/` | Flödet, steg 1 Projekt: projektlistan (`GET /api/projekt`) och kartan för det valda projektet |
 | `#/p/<projekt>/forslag`, `/fragor`, `/resultat`, `/rapport` | Flödets steg 2 till 5 (kod i `webb/src/flode/`, stilen i `flode.css`; se *Flödet* nedan) |
 | `#/projekt` (alias `#/oversikt`) | Demokvarteret med siffror ur körningarna (`GET /api/projekt`) |
-| `#/karta/<projekt>?vy=<vy>` | Kartan: lagerpanel, rita planförslag, före, efter, skillnad, svep, sida vid sida, avläsning |
+| `#/karta[/<projekt>]` och `?vy=<vy>` | Gammal adress som bara omdirigeras: till `#/p/<projekt>/forslag`, med `?vy=` till `#/p/<projekt>/resultat?vy=` (`kartaOmdirigering` i `rutter.ts`). Den egna kartsidan är borttagen |
 | `#/fragor` och `#/fragor/<ref>` | Utredningsfrågor (se ovan) |
 | `#/om` | Om beräkningarna: modulerna och *Kontroll av beräkningarna* (A1–A9) |
 | `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om beräkningarna* |
@@ -95,7 +95,7 @@ npm run build
 ```
 
 API-testerna ligger i `tests/webb/` (`PYTHONPATH=src python -m pytest -q tests/webb`). Skärmbilderna i
-`docs/bilder/flode-*.png` (fem steg, 1440x900 och `-smal` 390x844) tas med `python tools/flode_skarmbild.py`; `docs/bilder/webb-*.png` tas med `python tools/webb_skarmbild.py` (playwright och Chrome).
+`docs/bilder/flode-*.png` (fem steg plus lager/underlag och osäkerhet, 1440x900 och `-smal` 390x844) tas med `python tools/flode_skarmbild.py`; `docs/bilder/webb-*.png` tas med `python tools/webb_skarmbild.py` (playwright och Chrome).
 
 ## Flödet (`#/` och `#/p/<projekt>/<steg>`)
 
@@ -105,5 +105,12 @@ nyckeltalen (`flode/nyckeltal.ts`, saknade tal blir "–") är ren kod med teste
 Ritlogik, scenario-API:erna, 3D-vyn och svepet är de befintliga. Små tillägg på servern:
 `GET /api/korningar/<id>/marksiffror?lager=` (samma mark-siffror som projektsidan) och
 `GET /api/projekt/<id>/rapporter/<rapport>` (rubriker, påståenden och kontrollpunkter till förhandsvisningen).
+**En kartsida, inte två.** Det som fanns bara på den gamla kartsidan bor nu i flödet:
+- Steg 2 (`flode/forslag.ts`): ritverktygen i en fast verktygsrad, zoom, lagerpanelen (grupperna Underlag, Geometri, Planförslag via `PanelKrokar.grupper`), WMS och kakelmall (`flode/underlag.ts`), sparade förslag, info om förslaget (`flode/forslagtext.ts`). Lagerlogiken delas med steg 4 genom `BasLager` (`flode/kartdel.ts`, `flode/rasterlager.ts`).
+- Steg 4 (`flode/resultat.ts`): 3D, värdeavläsning, tak-kryssruta, teckenförklaring och *Visa osäkerhet*: K40 `/api/analys/intervall` och K41 `/api/analys/svf-intervall` som `[min; max]` med liten text under talet, och K36 `/api/analys/bifurkationer` som lager med känsliga överfall (`flode/osakerhet.ts`, HTML i `flode/panelhtml.ts`). Intervallen tar bara `omrade_id` och gäller därför projektets markmodell (läget före), inte det ritade förslaget; panelen säger det.
+- Avtappning (mm/h) för skyfall ställs in i steg 3 (`flode/tillstand.ts`, `lasAvtappning`).
+- **Tal** skrivs alltid med decimalkomma och smalt hårt mellanrum (U+202F) som tusentalsavskiljare via `src/tal.ts` (`formatera`, `formateraHogst`, `talFormat`) och `flode/nyckeltal.ts`. Ett test (`tal.test.ts`) söker i flödets, kartans och 3D-vyns källkod efter `toFixed`, `toLocaleString` och `Intl.NumberFormat`, och `flode/osakerhet.test.ts` söker i de renderade panelerna efter `\d\.\d`. Arbetsbänkens äldre `main.ts` (`#/arbetsbank/<id>`) räknas inte in.
+- Kartstilen ligger i `src/karta/karta.css` (ersätter `kartverktyg.css`).
+
 Inte byggt än: att skapa projekt (knappen visar "kommer snart") och att skapa rapporter från webben.
 Om beräkningarna och Utredningsfrågor nås via kontomenyn.

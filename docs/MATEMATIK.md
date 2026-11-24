@@ -16,7 +16,7 @@ ett manifest med sha256 för indata, kod och parametrar, och **ingen metod är k
 tills en människa beslutar annat (`data/mcp/metodstatus.toml`, `docs/BESLUT.md`).
 
 **Var en metod nås** (kontrollerat mot koden 2026-11-23): *i användarflödet* (webbflödet `#/p/<projekt>/...` via
-K21-lösare), *i kartsidan* (`#/karta`), *bara i API:t* (endpoint utan knapp eller panel i klienten), *kommandorad,
+K21-lösare), *bara i API:t* (endpoint utan knapp eller panel i klienten), *kommandorad,
 MCP och testsvit* eller *fristående modul* (testad men inte inkopplad). Att något har ett API betyder alltså inte
 att en planerare når det.
 
@@ -34,11 +34,11 @@ om en sökväg inte finns eller om en metod pekar på en saknad metodstatus. For
 | Vatten | Sänkgraf som sammanslagningsträd | `src/sankgraf/hierarki.py`<br>`src/sankgraf/persistens.py`<br>`src/sankgraf/fyllning.py`<br>`src/sankgraf/takvatten.py`<br>`src/sankgraf/avtappning.py` | K1 (v2), K2 (v2) | skiss | I användarflödet |
 | Vatten | Händelsestyrd dynamik i grafen | `src/dynamik/handelsestyrd.py`<br>`src/dynamik/nodmodell.py`<br>`src/dynamik/enhetssvar.py`<br>`src/dynamik/tidsstegning.py` | K4, K6, K21 (lösaren vatten.dynamik) | skiss | I användarflödet |
 | Vatten | 2D lokal tröghet, subgrid och hybrid | `src/tvad/lokal_troghet.py`<br>`src/tvad/hybrid.py`<br>`src/tvad/subgrid.py`<br>`src/tvad/felindikator.py`<br>`src/vatten/losare_2d.py`<br>`rust/tvad_karna` | K1, K5, K6, K36 (felindikator i API-svaret) | skiss | Kommandorad, MCP och testsvit |
-| Vatten | Bifurkationsdetektor | `src/sankgraf/bifurkation.py`<br>`src/webb/api.py`<br>`webb/src/karta/overfall.ts` | K34, K35, K36 | skiss | I kartsidan (#/karta), inte i flödet |
-| Vatten | Monoton intervallanalys för vatten | `src/dynamik/intervall.py`<br>`src/webb/api.py` | K40, K34 | skiss | Bara i API:t |
+| Vatten | Bifurkationsdetektor | `src/sankgraf/bifurkation.py`<br>`src/webb/api.py`<br>`webb/src/karta/overfall.ts`<br>`webb/src/flode/osakerhet.ts` | K34, K35, K36 | skiss | I användarflödet |
+| Vatten | Monoton intervallanalys för vatten | `src/dynamik/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K40, K34 | skiss | I användarflödet |
 | Dagsljus | Horisont, soltimmar, SVF och VSC | `src/dagsljus/horisont.py`<br>`src/dagsljus/matt.py`<br>`src/dagsljus/solposition.py`<br>`src/dagsljus/floden_losare.py`<br>`src/dagsljus/ruta.py` | K1 (v2), K11, K21 (lösarna dagsljus.*) | skiss | I användarflödet |
 | Dagsljus | Dozier–Frew: horisont i linjär tid | `src/dagsljus/intervall.py`<br>`src/webb/api.py` | K41 | skiss | Bara i API:t |
-| Dagsljus | Monotona SVF-intervall | `src/dagsljus/intervall.py`<br>`src/webb/api.py` | K41 | skiss | Bara i API:t |
+| Dagsljus | Monotona SVF-intervall | `src/dagsljus/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K41 | skiss | I användarflödet |
 | Luft | Vindfält och spridning som M-matris | `src/luft/transport.py`<br>`src/luft/snabbvind.py`<br>`src/luft/lbm.py`<br>`src/luft/vindkomfort.py`<br>`src/karna/luft_losare.py` | K21 (lösarna luft.halt, luft.vindkomfort) | skiss | Kommandorad, MCP och testsvit |
 | Luft | Adjungerad känslighet och åtgärdsval | `src/luft/kanslighet.py` | – | skiss | Fristående modul |
 | Luft | Monotona MKN-intervall | `src/luft/kanslighet.py`<br>`src/webb/api.py` | K43 | skiss | Bara i API:t |
@@ -102,11 +102,11 @@ Flaggar överfallspunkter där höjdosäkerheten kan få vattnet att byta utlopp
 
 $$ \Delta z = \max(0,\, z_2 - z_1), \qquad \sigma = \sqrt{\sigma_1^2 + \sigma_2^2}, \qquad \text{instabil om } \frac{\Delta z}{\sigma} \le k $$
 
-- **Kod:** `src/sankgraf/bifurkation.py`, `src/webb/api.py (POST /api/analys/bifurkationer)`, `webb/src/karta/overfall.ts`
+- **Kod:** `src/sankgraf/bifurkation.py`, `src/webb/api.py (POST /api/analys/bifurkationer)`, `webb/src/karta/overfall.ts`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K34, K35, K36
 - **Facittest:** tests/sankgraf/test_bifurkation.py; tests/webb/test_bifurkation_projekt.py; tests/tvad/test_felindikator.py
-- **Status:** skiss (metodstatus); i kartsidan (#/karta), inte i flödet
-- **Observera:** Nås som lager i kartsidan (#/karta), inte i flödet. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Nås i Resultat (steg 4, fliken Skyfall, knappen "Visa osäkerhet") som nyckeltal och lagret "Känsliga överfall" på kartan; den gamla kartsidan (#/karta) är borttagen. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2.
 
 ### Monoton intervallanalys för vatten (`vatten.intervall`)
 
@@ -114,11 +114,11 @@ Under fast flödestopologi är maxdjupet monotont i regn, initial förlust och a
 
 $$ h_{\min}(t) \le h_u(t) \le h_{\max}(t), \qquad (h_{\min}, h_{\max}) \text{ ur två extremkörningar} $$
 
-- **Kod:** `src/dynamik/intervall.py`, `src/webb/api.py (POST /api/analys/intervall)`
+- **Kod:** `src/dynamik/intervall.py`, `src/webb/api.py (POST /api/analys/intervall)`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K40, K34
 - **Facittest:** tests/dynamik/test_intervall.py (50 slumpade scenarier på vart och ett av A1–A4, totalt 200, alla inneslutna); tests/webb/test_analys_steg_a.py
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Ingen panel i klienten (K40: läses av inget i webbklienten).
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Visas i Resultat (steg 4, fliken Skyfall, knappen "Visa osäkerhet") som [min; max]; gäller projektets markmodell (läget före), inte ett ritat förslag.
 
 ## 4. Dagsljus
 
@@ -156,11 +156,11 @@ SVF är antiton i byggnadshöjd: körningar med z − σ och z + σ ger garanter
 
 $$ \mathrm{SVF}(H - \sigma) \ge \mathrm{SVF}(H) \ge \mathrm{SVF}(H + \sigma) $$
 
-- **Kod:** `src/dagsljus/intervall.py (kor_monoton_svf_intervall)`, `src/webb/api.py (POST /api/analys/svf-intervall)`
+- **Kod:** `src/dagsljus/intervall.py (kor_monoton_svf_intervall)`, `src/webb/api.py (POST /api/analys/svf-intervall)`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K41
 - **Facittest:** tests/dagsljus/test_modern_matte.py (20 slumpade höjdscenarier inneslutna); tests/webb/test_analys_steg_a.py
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Ingen panel i klienten.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Visas i Resultat (steg 4, fliken Sol, knappen "Visa osäkerhet") som [min; max] av medel-SVF; gäller projektets markmodell (läget före), inte ett ritat förslag.
 
 ## 5. Luft
 
@@ -198,7 +198,7 @@ $$ c_{\text{lo}} = c_{\text{bg}} + \frac{e_{\text{lo}}}{d_{\text{hi}}}\,c_{\text
 - **Kontrakt:** K43
 - **Facittest:** tests/luft/test_kanslighet.py (50 MKN-scenarier inneslutna); tests/webb/test_analys_steg_b.py
 - **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Ingen panel i klienten.
+- **Observera:** Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under "Fler analyser" med egna timvärden.
 
 ## 6. Buller
 
@@ -267,6 +267,57 @@ $$ \mathrm{ECA}(R_{\max}, d_{\min}) \le \mathrm{ECA} \le \mathrm{ECA}(R_{\min}, 
 - **Facittest:** tests/ekologi/test_facit_g.py (G6: 50 slumpade scenarier, alla inneslutna); tests/ekologi/test_losare_k21.py (G7: intervallen innesluter nominellt värde)
 - **Status:** skiss (metodstatus); i användarflödet
 - **Observera:** Intervallens faktorer är egna val utan källa (STATUS 2026-11-23). Motståndet skalas med en gemensam faktor, inte cell för cell.
+
+
+## Kända avvikelser och begränsningar
+
+### Nord2000: medvind över dal (3 underkända fall) (`avv.buller.medvind_dal`)
+
+- **Domän och typ:** Buller (Metodtolkning)
+- **Omfattning:** RL 18-18: N18R052, N18R062, N18R102 (avvikelse +2,8 till +6,0 dB i totalnivå, upp till +7,3 dB i 0,8–2,5 kHz)
+- **Varför det avviker:** Med källhöjden 0,01 m (däckbuller) ger bokstavlig tillämpning av CalcEqSSP i AV 1106/07 ekv. (134)–(135) en mycket brant ekvivalent ljudhastighetsprofil i medvind. Vägbanans Fresnelzon krymper då från ca 52 m till ca 2 m och tar nästan hela vikten. Metodtexten anger ingen minimihöjd för segmentens Fresnelzon; vi anpassar aldrig konstanter mot testfall utan stöd i specifikationen.
+- **Vad som krävs:** Extern granskning och klargörande från Kunskapscentrum om buller om vad referensprogrammet gör för låga källhöjder i delmodell 3.
+- **Underlag:** `docs/buller/logg/P-S2.md`, `docs/buller/tolkningar.md`, `src/buller/nord2000/delmodell3.py`
+
+### Nord2000: motvind över bruten terräng (5 ej körbara fall) (`avv.buller.motvind_terrang`)
+
+- **Domän och typ:** Buller (Metodtolkning)
+- **Omfattning:** RL 18-18: N18R033, N18R043, N18R053, N18R063, N18R103
+- **Varför det avviker:** I skuggzon ger FresnelZoneW (AV 1106/07 ekv. 347–348) strykvinkeln ψ_G = 0, vilket gör att även platta eller konkava terrängsegment klassas som konvexa i delmodell 3. Då krävs en ekvivalent kil som geometriskt inte går att bilda (parallella ytor eller kilvinkel β < π). Kärnan stoppar då med ett tydligt fel i stället för att gissa ett resultat.
+- **Vad som krävs:** Klargörande i metodtexten (eller hos Kunskapscentrum om buller) om segmentklassningen i delmodell 3 när mottagaren ligger i motvindens skuggzon.
+- **Underlag:** `docs/buller/logg/P-S2.md`, `docs/buller/tolkningar.md`, `src/buller/nord2000/delmodell3.py`
+
+### Nord2000: mjuk kulle och upphöjd väg i enskilda tersband (`avv.buller.kulle_och_bank`)
+
+- **Domän och typ:** Buller (Metodtolkning)
+- **Omfattning:** RL 18-18: kulle N18R111–114 (total ≤ 0,70 dB, tersband 3,8–5,1 dB i 200–315 Hz) samt upphöjd väg N18R031–32, N18R041–42 (total ≤ 0,26 dB, tersband 1,8–3,1 dB över 2,5 kHz)
+- **Varför det avviker:** Totalnivån ligger redan nära gränsen 0,5 dB, men enskilda tersband avviker över 1 dB. På hård tjock skärm (N18R081) stämmer delmodell 5 väl, men på mjuk, flack kulle (σ = 200 kNs/m⁴, β ≈ 185°) hamnar 200–315 Hz-dippen för högt. På upphöjd väg ger den vägda kilytereflektionen i TC-101327 bilaga G.2 stark spegling i vägbanan för däckkällan (0,01 m) vid höga frekvenser.
+- **Vad som krävs:** Fortsatt granskning av TC-101327 bilaga G.2–G.3 och delmodell 5 mot metodtext och extern metodgranskning.
+- **Underlag:** `docs/buller/logg/P-S2.md`, `src/buller/nord2000/delmodell4_kilben.py`, `src/buller/nord2000/delmodell5.py`
+
+### Nord2000: kurvig väg, stadsgata, årsmedel och skog (22 ej körbara fall) (`avv.buller.ej_korbara_typer`)
+
+- **Domän och typ:** Buller (Körare och format)
+- **Omfattning:** RL 18-18: kurvig väg (10 fall), stadsgata (4 fall), årsmedel Lden (4 fall) och skog (4 fall, N18R121–124)
+- **Varför det avviker:** Dessa fall saknar inte grundfysik i utbredningskärnan, utan begränsas av indataformat, testkörare och beslutade avgränsningar. Testformatet N-fall/v1 beskriver bara raka tvärsnitt och saknar plangeometri för kurvig väg och stadsgata (delmodell 11 finns redan implementerad). Årsmedel saknar väderklassviktning (Lden) i köraren. Skog (delmodell 10) kräver ny kontraktsversion av Terrangprofil (KB1) och är medvetet avstängt i rapportläget.
+- **Vad som krävs:** Nytt testformat N-fall/v2 med plangeometri och väderstatistik, körarstöd för Lden och reflexer, samt eventuell kontraktsversion KB1/v2 för skog.
+- **Underlag:** `docs/buller/logg/P-11.md`, `docs/BESLUT.md`, `src/buller/testfall/format.py`, `src/buller/testfall/korare.py`
+
+### Dagsljus: WebGPU SVF i enkelprecision (f32) (`avv.dagsljus.webgpu_svf`)
+
+- **Domän och typ:** Dagsljus (Numerik / GPU)
+- **Omfattning:** macOS Apple Metal-3 benchmark 2026-11-23: största cellavvikelse 0,0126 (0,014 % av cellerna över 0,01)
+- **Varför det avviker:** GPU-beräkningen använder 32-bitars flyttal (WGSL f32), där upprepade flyttalssteg längs exakt diagonala strålar tidigare kunde driva ett steg fel i enstaka celler. Med heltalsräknare och korsprodukt-DDA i dagsljus_horisont.wgsl har den diagonala ULP-driften eliminerats mot Python-referensen; kvarvarande skillnad ryms inom f32-avrundning.
+- **Vad som krävs:** Uppdaterad macOS WebGPU-mätning som verifierar den nya maxavvikelsen efter ändringen i shadern.
+- **Underlag:** `webb/src/gpu/shaders/dagsljus_horisont.wgsl`, `tests/test_wgsl_referens.py`, `docs/benchmark/2026-11-23-mac-webgpu.json`
+
+### Vatten: omedelbart överfall i sänkgrafen och 2D-hybridens räckvidd (`avv.vatten.overfall_och_hybrid`)
+
+- **Domän och typ:** Vatten (Fysikavgränsning)
+- **Omfattning:** A2–A3: +1,1 % till +2,1 % tidsfördröjning med bredskronsöverfall; hybridens uppsnabbning 1,2–1,8× efter rättelser i vattenkärnan
+- **Varför det avviker:** Den snabba händelsestyrda grafmodellen förutsätter omedelbart överfall (kinematisk gräns) och plan vattenyta i varje sänka. Vid breda, grunda överfall eller höga hastigheter (Fr ≥ 0,30) krävs 2D lokal tröghet, vilket felindikatorn flaggar automatiskt. Efter rättelserna i vattenkärnan 2026-11-23 är hybriden 1,2–1,8× snabbare än full 2D (inte de tidigare 12,9–20×).
+- **Vad som krävs:** Fortsatt analys i de öppna forskningsfrågorna Q1 (olinjära överfall) och Q3 (hybridfel under pågående överfall).
+- **Underlag:** `src/tvad/felindikator.py`, `docs/VALIDERING.md`, `docs/BESLUT.md`
 
 
 <!-- METODTABELL:SLUT -->

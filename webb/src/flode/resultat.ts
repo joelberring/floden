@@ -4,33 +4,35 @@
  * stapeljämförelse och en rad om regn och antaganden. Talen kommer ur körningen: mätvärdestabellen
  * och markytorna (`/api/korningar/<id>/marksiffror`, samma funktion som projektsidans tal). Det
  * som saknas visas som "–". Svepet och 3D-vyn är de befintliga.
+ *
+ * Knappen "Visa osäkerhet" (Skyfall och Sol) hämtar intervallen för vatten (K40) och SVF (K41) och
+ * de känsliga överfallen (bifurkationer) och lägger dem som nyckeltal med [min; max] och som lagret
+ * "Känsliga överfall" på kartan. Värdet under markören läses ur rasterfilen på servern, och
+ * "Visa värden även på tak" och "Så läser du kartan" kommer från den gamla kartsidan.
  */
-import { hamtaProjekt, hamtaResultat, lasJson } from "../api.ts";
-import type { LagerPost, ResultatSvar } from "../fragor-typer.ts";
-import { hamtaProjektInfo, type ProjektInfo } from "../karta/kartapi.ts";
+import { hamtaAvlasning, hamtaProjekt, hamtaResultat, lasJson } from "../api.ts";
+import type { AvlasningSvar, LagerPost, ResultatSvar } from "../fragor-typer.ts";
+import { hamtaBifurkationer, hamtaProjektInfo, hamtaSvfIntervall, hamtaVattenIntervall, type BifurkationsPunktPost, type ProjektInfo } from "../karta/kartapi.ts";
 import { Kartmotor, type RasterLager, type VyByggnad } from "../karta/kartmotor.ts";
 import { LagerLista } from "../karta/lager.ts";
+import { OVERFALL_LAGER_ID, overfallLager, ritadeOverfall } from "../karta/overfall.ts";
 import { PlanDok } from "../karta/plandok.ts";
-import { skapa3dVy, VY3D_ID } from "../kartsida3d.ts";
+import { LAGEN, lasKartan, type Lage } from "../kartforklaring.ts";
+import { fasadForklaringHtml, skapa3dVy, VY3D_ID } from "../kartsida3d.ts";
 import { esc } from "../sidor.ts";
 import { swerefTillWgs84, wgs84TillSweref } from "../sweref.ts";
+import { formatera, formateraHogst } from "../tal.ts";
 import type { ProjektSvar, ProjektVy } from "../types.ts";
 import { meterPerPxFranZoom, zoomFranMeterPerPx } from "../vy3d/koord.ts";
 import { flodeAdress } from "./adress.ts";
+import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
 import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, regnText, resultatEtikett, slutsats, type Amne, type EkologiSvar, type Marksiffror, type Underlag } from "./nyckeltal.ts";
+import { osakerhetTal, overfallRader, type OsakerhetSvar } from "./osakerhet.ts";
+import { kroppHtml, type OsakerhetVisning } from "./panelhtml.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { tillstandFor } from "./tillstand.ts";
-
-type Lage = "fore" | "efter" | "skillnad" | "svep" | "3d";
-const LAGEN: Array<[Lage, string]> = [
-  ["fore", "Före"],
-  ["efter", "Efter"],
-  ["skillnad", "Skillnad"],
-  ["svep", "Svep"],
-  ["3d", "3D"],
-];
 
 interface MarkSvar {
   lager_id: string;
@@ -46,7 +48,7 @@ const lagerPost = (r: ResultatSvar | undefined, id: string | null): LagerPost | 
 /** Teckenförklaring som i skissen: rubrik, band och ändpunkter. */
 export function teckenHtml(l: LagerPost, rubrik: string): string {
   const tf = l.teckenforklaring;
-  const f = (v: number): string => new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 }).format(v);
+  const f = (v: number): string => formateraHogst(v, 2);
   const enhet = l.enhet ? ` ${esc(l.enhet)}` : "";
   let band = "";
   if (tf.typ === "divergerande") {
@@ -83,10 +85,20 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   let bas: BasLager | null = null;
   let vy3d: { avmontera(): void; uppdatera?(): void } | null = null;
   let seq = 0;
+  let visaTak = false;
+  let avlSeq = 0;
+  let avlTimer: number | null = null;
+  // Osäkerheten gäller projektets markmodell och hämtas per ämne när man trycker på knappen.
+  const osak: OsakerhetSvar = { vatten: null, svf: null, bifurkation: null, fel: [] };
+  const osakPa = new Set<Amne>();
+  let osakLaddar = false;
+  let onskadVy: string | null = null;
+  let overfall: BifurkationsPunktPost[] = [];
+  const kartLager = new LagerLista(projekt);
   const cache = new Map<string, ResultatSvar>();
 
   rot.innerHTML = `
-    <div class="flode-sida">
+    <div class="flode-sida flode-fast">
       <section class="flode-karta" aria-label="Karta">
         <div class="flode-karta-yta" id="rs-a"></div>
         <div class="flode-karta-yta flode-b" id="rs-b" hidden></div>
@@ -96,6 +108,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
           <span>Före</span><input id="rs-svep" type="range" min="0" max="100" value="50" aria-label="Svepgräns: till vänster före, till höger efter" /><span>Efter</span>
         </div>
         <div class="flode-kartkort flode-forklaring" id="rs-tecken" hidden></div>
+        <div class="flode-kartkort flode-kartkort-hoger flode-avlasning" id="rs-avl" role="status" hidden></div>
       </section>
       <aside class="flode-panel" aria-label="Resultat">
         <div role="tablist" aria-label="Ämne" class="flode-flikar" id="rs-flikar">
@@ -104,17 +117,19 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" role="tab" data-amne="ekologi" aria-selected="false">Ekologi</button>
         </div>
         <div id="rs-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar resultatet …</p></div>
+        ${extraAnalyserHtml()}
         <div class="flode-rad-slut"><a class="flode-knapp svart stor" href="${flodeAdress(projekt, "rapport")}">Skapa rapport</a></div>
       </aside>
     </div>`;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
+  kopplaExtraAnalyser(rot, ac.signal);
 
   const vyerFor = (k: "ritat" | "projekt"): ProjektVy[] => (k === "ritat" ? t.ritVyer : (projektSvar?.vyer ?? [])).filter((v) => v.avsnitt === amne);
 
   // ---------- Karta ----------
   const rasterAv = (id: string, lp: LagerPost | null, synlig: boolean): RasterLager[] =>
-    lp ? [{ id, opacitet: 0.85, synlig, kalla: { slag: "bild", url: lp.png, utbredning: lp.utbredning, skarpa: true } }] : [];
+    lp ? [{ id, opacitet: 0.85, synlig, kalla: { slag: "bild", url: visaTak && lp.png_med_tak ? lp.png_med_tak : lp.png, utbredning: lp.utbredning, skarpa: true } }] : [];
 
   const byggnader = (lp: LagerPost | null): VyByggnad[] => {
     if (r?.byggnader && lp) {
@@ -123,6 +138,26 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       if (p) return p.map((x) => ({ ring: x.ring, hal: x.hal, status: x.status }));
     }
     return (info?.byggnader ?? []).map((x) => ({ ring: x.ring, hal: x.hal, status: "oforandrad" as const }));
+  };
+
+  /** Teckenförklaringen (färgskala, "Visa värden även på tak") och, i 3D med fasadlagret tänt, fasadskalan. */
+  const ritaTecken = (): void => {
+    const fore = lagerPost(r, vy?.fore_lager ?? null);
+    const efter = lagerPost(r, vy?.efter_lager ?? null);
+    const skill = lagerPost(r, vy?.skillnad_lager ?? null);
+    const tl = lage === "fore" || lage === "svep" ? fore : lage === "efter" ? efter : skill;
+    const fasad = lagerLista.hamta("3d:fasad");
+    const fasadTand = lage === "3d" && Boolean(fasad?.synlig) && !fasad?.ejTillgangligt;
+    const tecken = el("rs-tecken");
+    tecken.hidden = (!tl || !vy) && !fasadTand;
+    let html = "";
+    if (tl && vy) {
+      const namn = lage === "skillnad" ? `Skillnad i ${tl.etikett.toLowerCase()}` : tl.etikett;
+      const takKryss = lage !== "3d" && tl.tak_maskat ? `<label class="flode-kryss"><input type="checkbox" id="rs-tak" ${visaTak ? "checked" : ""}/> Visa värden även på tak</label>` : "";
+      html = teckenHtml(tl, namn) + takKryss;
+    }
+    if (fasadTand) html += fasadForklaringHtml("skillnad", Boolean(skill));
+    tecken.innerHTML = html;
   };
 
   const synkaKarta = (): void => {
@@ -135,7 +170,15 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const ovan = lage === "3d" ? [] : rasterAv("res:visad", visad, true);
     bas.synka = () => a?.settLager([...baslager(), ...ovan]);
     bas.synka();
-    a.settByggnadStil({ synlig: true, opacitet: 1 });
+    const medVarden = lage !== "3d" && visaTak && Boolean(visad?.png_med_tak);
+    const byggStil = bas.byggnadStil();
+    // Med värden på tak tonas byggnadsfotavtrycken ned så att värdena syns.
+    const bStil = { synlig: byggStil.synlig, opacitet: medVarden ? byggStil.opacitet * 0.25 : byggStil.opacitet };
+    const notis = lage !== "3d" && !visaTak && visad?.tak_maskat ? "Ljusgrå yta: tak, inte mark" : null;
+    a.settByggnadStil(bStil);
+    a.settNotis(notis);
+    a.settOverfall(overfall);
+    a.settOverfallStil(overfallStil());
     a.settByggnader(byggnader(lage === "svep" ? fore : visad));
     el("rs-b").hidden = !delat;
     el("rs-svep-rad").hidden = !delat;
@@ -143,22 +186,21 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       if (!b) {
         b = new Kartmotor(el("rs-b"), a.hamtaVy());
         b.onVyAndrad = () => b && a?.settVy(b.hamtaVy());
+        b.onMarkor = planeraAvlasning;
       }
       b.settLager([...baslager(), ...rasterAv("res:efter", efter, true)]);
-      b.settByggnadStil({ synlig: true, opacitet: 1 });
+      b.settByggnadStil(bStil);
+      b.settOverfall(overfall);
+      b.settOverfallStil(overfallStil());
+      b.onMarkor = planeraAvlasning;
       b.settByggnader(byggnader(efter));
       el("rs-b").style.clipPath = `inset(0 0 0 ${Math.round(svep * 1000) / 10}%)`;
     } else if (b) {
       b.avsluta();
       b = null;
     }
-    const tl = lage === "fore" || lage === "svep" ? fore : lage === "efter" ? efter : skill;
-    const tecken = el("rs-tecken");
-    tecken.hidden = !tl || !vy;
-    if (tl && vy) {
-      const namn = lage === "skillnad" ? `Skillnad i ${tl.etikett.toLowerCase()}` : tl.etikett;
-      tecken.innerHTML = teckenHtml(tl, namn);
-    }
+    ritaTecken();
+    uppdateraAvlasning(null);
     vy3d?.uppdatera?.();
   };
   const baslager = (): RasterLager[] => basLagerListan;
@@ -170,6 +212,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     return { e, n, mpp: meterPerPxFranZoom(v.zoom, v.lat), hojdPx: el("rs-a").clientHeight || 600 };
   };
   const lagerLista = new LagerLista(projekt, null);
+  lagerLista.vidAndring(() => ritaTecken());
   lagerLista.registrera({ id: "geo:byggnader", grupp: "geometri", namn: "Byggnader", synlig: true, opacitet: 1, hjalp: "Byggnaderna: fotavtryck i kartan, volymer i 3D." });
   lagerLista.registrera({ id: "plan:aktuellt", grupp: "planforslag", namn: "Aktuellt förslag", synlig: true, opacitet: 1, hjalp: "Det du ritar just nu." });
 
@@ -231,6 +274,104 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     };
   };
 
+  const overfallStil = (): { synlig: boolean; opacitet: number } => {
+    const l = kartLager.hamta(OVERFALL_LAGER_ID);
+    return { synlig: amne === "vatten" && osakPa.has("vatten") && Boolean(l?.synlig), opacitet: l?.opacitet ?? 1 };
+  };
+
+  const osakerhetVisning = (): OsakerhetVisning => ({
+    pa: osakPa.has(amne),
+    laddar: osakLaddar,
+    tal: osakerhetTal(amne, osak),
+    rader: amne === "vatten" ? overfallRader(osak.bifurkation) : [],
+    fel: osak.fel,
+    overfallLager: amne === "vatten" && osak.bifurkation ? { synlig: Boolean(kartLager.hamta(OVERFALL_LAGER_ID)?.synlig), antal: overfall.length } : null,
+  });
+
+  /** Hämtar intervallen och överfallen för ämnet. Allt räknas på servern; här sätts bara svaren in. */
+  const laddaOsakerhet = async (ny: Amne): Promise<void> => {
+    if (ny === "ekologi") return;
+    osakPa.add(ny);
+    osak.fel = [];
+    const behovs = ny === "vatten" ? !osak.vatten || !osak.bifurkation : !osak.svf;
+    if (!behovs) {
+      ritaPanel();
+      synkaKarta();
+      return;
+    }
+    osakLaddar = true;
+    ritaPanel();
+    const meddelande = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+    if (ny === "vatten") {
+      const [v, b] = await Promise.allSettled([hamtaVattenIntervall(projekt), hamtaBifurkationer(projekt)]);
+      if (v.status === "fulfilled") osak.vatten = v.value;
+      else osak.fel.push(`Skyfallsintervallet gick inte att hämta: ${meddelande(v.reason)}`);
+      if (b.status === "fulfilled") {
+        osak.bifurkation = b.value;
+        overfall = ritadeOverfall(b.value.punkter);
+        kartLager.registrera(overfallLager(overfall.length));
+      } else osak.fel.push(`Överfallen gick inte att hämta: ${meddelande(b.reason)}`);
+    } else {
+      try {
+        osak.svf = await hamtaSvfIntervall(projekt);
+      } catch (e) {
+        osak.fel.push(`Soluppskattningen gick inte att hämta: ${meddelande(e)}`);
+      }
+    }
+    osakLaddar = false;
+    if (avslutad) return;
+    ritaPanel();
+    synkaKarta();
+  };
+
+  // ---------- Värden under markören ----------
+  const uppdateraAvlasning = (svar: AvlasningSvar | null): void => {
+    const ruta = el("rs-avl");
+    if (!svar || !vy || lage === "3d" || svar.varden.every((x) => !x.inom)) {
+      ruta.hidden = true;
+      ruta.innerHTML = "";
+      return;
+    }
+    const rader: Array<[string, string | null]> = [
+      ["Före", vy.fore_lager],
+      [`Efter: ${vy.efter_namn.toLowerCase()}`, vy.efter_lager],
+      ["Skillnad", vy.skillnad_lager],
+    ];
+    const delar = rader.flatMap(([namn, id]) => {
+      const x = svar.varden.find((v) => v.lager_id === id && v.inom);
+      if (!x) return [];
+      let text: string;
+      if (x.tak && !visaTak) text = "tak, inte mark";
+      else if (x.varde === null) text = "inget värde";
+      else text = `${x.typ === "skillnad" && x.varde > 0 ? "+" : ""}${formatera(x.varde, 2)}${x.enhet ? ` ${x.enhet}` : ""}${x.tak ? " (tak)" : ""}`;
+      return [`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`];
+    });
+    ruta.hidden = delar.length === 0;
+    ruta.innerHTML = delar.join("");
+  };
+
+  const planeraAvlasning = (e: number | null, n: number | null): void => {
+    if (avlTimer !== null) window.clearTimeout(avlTimer);
+    avlTimer = null;
+    const v = vy;
+    if (e === null || n === null || !v || !r || lage === "3d") {
+      avlSeq += 1;
+      uppdateraAvlasning(null);
+      return;
+    }
+    avlTimer = window.setTimeout(() => {
+      const nr = ++avlSeq;
+      hamtaAvlasning(v.korning_id, v.skillnad_lager, e, n).then(
+        (svar) => {
+          if (nr === avlSeq && !avslutad) uppdateraAvlasning(svar);
+        },
+        () => {
+          if (nr === avlSeq && !avslutad) uppdateraAvlasning(null);
+        },
+      );
+    }, 90);
+  };
+
   const ritaPanel = (): void => {
     if (avslutad) return;
     const inne = el("rs-innehall");
@@ -269,13 +410,15 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       : "";
     inne.innerHTML = `
       ${kallVal}${vyVal}${natverkVal}
-      <h1 class="flode-slutsats" id="rs-rubrik">${esc(slutsats(amne, u))}</h1>
-      <dl class="flode-tal">${tal.map((x) => `<div><dt>${esc(x.etikett)}</dt><dd>${esc(x.varde)}</dd>${x.under ? `<dd class="flode-tal-under">${esc(x.under)}</dd>` : ""}</div>`).join("")}</dl>
-      <div class="flode-staplar"><span class="flode-liten flode-dampad">${esc(jfr.rubrik)}</span>
-        ${jfr.staplar.map((s) => `<div class="flode-stapel"><span class="flode-dampad">${esc(s.etikett)}</span><span class="flode-stapel-fyll${s.etikett === "Före" || s.etikett === "Mindre sol" ? " ljus" : ""}" style="width:${s.andel === null ? 0 : Math.max(2, Math.round(s.andel * 100))}%"></span><span>${esc(s.varde)}</span></div>`).join("")}
-      </div>
-      ${ekoKalla.length > 0 ? `<ul class="flode-liten flode-dampad" id="rs-eko-kalla">${ekoKalla.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
-      <p class="flode-liten flode-dampad">${esc(raderRegn)}</p>`;
+      ${kroppHtml({
+        slutsats: slutsats(amne, u),
+        tal,
+        jamforelse: jfr,
+        kalla: ekoKalla,
+        anmarkning: raderRegn,
+        osakerhet: amne === "ekologi" ? null : osakerhetVisning(),
+        las: lasKartan(vy, lage),
+      })}`;
   };
 
   // ---------- Laddning ----------
@@ -337,13 +480,21 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   const valjAmne = async (ny: Amne): Promise<void> => {
     amne = ny;
     if (vyerFor(kalla).length === 0) kalla = kalla === "ritat" ? "projekt" : t.ritVyer.some((v) => v.avsnitt === ny) ? "ritat" : "projekt";
-    await valjVy(vyerFor(kalla)[0] ?? null);
+    const onskad = onskadVy ? vyerFor(kalla).find((v) => v.id === onskadVy) : undefined;
+    onskadVy = null;
+    await valjVy(onskad ?? vyerFor(kalla)[0] ?? null);
   };
 
   lyssna(rot, "click", (h) => {
-    const m = (h.target as Element).closest<HTMLElement>("[data-lage],[data-amne],[data-kalla],[data-vy]");
+    const m = (h.target as Element).closest<HTMLElement>("[data-lage],[data-amne],[data-kalla],[data-vy],#rs-osakerhet");
     if (!m) return;
-    if (m.dataset.lage) stallLage(m.dataset.lage as Lage);
+    if (m.id === "rs-osakerhet") {
+      if (osakPa.has(amne)) {
+        osakPa.delete(amne);
+        ritaPanel();
+        synkaKarta();
+      } else void laddaOsakerhet(amne);
+    } else if (m.dataset.lage) stallLage(m.dataset.lage as Lage);
     else if (m.dataset.amne) void valjAmne(m.dataset.amne as Amne);
     else if (m.dataset.kalla) {
       kalla = m.dataset.kalla as "ritat" | "projekt";
@@ -352,6 +503,16 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   });
   lyssna(rot, "change", (h) => {
     const s = h.target as HTMLSelectElement;
+    if (s.id === "rs-tak") {
+      visaTak = (s as unknown as HTMLInputElement).checked;
+      synkaKarta();
+      return;
+    }
+    if (s.id === "rs-overfall") {
+      kartLager.sattSynlig(OVERFALL_LAGER_ID, (s as unknown as HTMLInputElement).checked);
+      synkaKarta();
+      return;
+    }
     if (s.id !== "rs-natverk") return;
     valtNatverk = s.value;
     void valjVy(vy);
@@ -387,15 +548,25 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     if (avslutad) return;
     a = skapaKarta(el("rs-a"), info);
     a.onVyAndrad = () => b && a && b.settVy(a.hamtaVy());
-    bas = new BasLager(a, info);
+    a.onMarkor = planeraAvlasning;
+    bas = new BasLager(a, info, kartLager);
+    bas.registrera(projekt);
     // BasLager äger bakgrundsbilderna; resultatlagret läggs ovanpå i synkaKarta.
     const orig = bas;
     void orig.ladda(projekt).then(() => {
       basLagerListan = orig.lagerListan();
       synkaKarta();
     });
-    kalla = t.ritVyer.length > 0 ? "ritat" : "projekt";
-    if (vyerFor(kalla).length === 0) {
+    // Länkar från de äldre sidorna kan ange en vy: #/p/<projekt>/resultat?vy=<vy>.
+    const fraga = window.location.hash.split("?")[1] ?? "";
+    const vyUtanLank = new URLSearchParams(fraga).get("vy");
+    const vyAvLank = vyUtanLank ? projektSvar?.vyer.find((v) => v.id === vyUtanLank) : undefined;
+    kalla = t.ritVyer.length > 0 && !vyAvLank ? "ritat" : "projekt";
+    if (vyAvLank) {
+      amne = vyAvLank.avsnitt as Amne;
+      onskadVy = vyAvLank.id;
+    }
+    if (!vyAvLank && vyerFor(kalla).length === 0) {
       const forsta = kalla === "ritat" ? t.ritVyer[0]?.avsnitt : undefined;
       amne = forsta === "dagsljus" || forsta === "ekologi" ? forsta : "vatten";
     }
@@ -410,6 +581,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       ac.abort();
       avlyssna();
       vy3d?.avmontera();
+      if (avlTimer !== null) window.clearTimeout(avlTimer);
       b?.avsluta();
       a?.avsluta();
       bas?.avsluta();

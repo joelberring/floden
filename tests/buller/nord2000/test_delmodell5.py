@@ -664,8 +664,8 @@ class TestAllmanModell(unittest.TestCase):
             markfaktor_pg=r.markfaktor_pg,
         )
         self.assertTrue(bool(np.all(np.isfinite(med))))
-        # C_SR = p_G² där p_G > 1, annars 1 (ekv. 272).
-        vantat = np.where(r.markfaktor_pg > 1.0, 20.0 * np.log10(r.markfaktor_pg), 0.0)
+        # C_SR = p_G där p_G > 1, annars 1 (AV 1849/00 s. 89; AV 1106/07 s. 116 och 119).
+        vantat = np.where(r.markfaktor_pg > 1.0, 10.0 * np.log10(r.markfaktor_pg), 0.0)
         np.testing.assert_allclose(med - utan, vantat, rtol=0, atol=1e-9)
 
     def test_svag_refraktion_gar_mot_rata_stralar(self) -> None:

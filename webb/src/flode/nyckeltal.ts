@@ -13,6 +13,33 @@ export interface Marksiffror {
   max_okning: number;
 }
 
+export interface MknIntervallSvar {
+  min_dygn_over_grans?: number | null;
+  max_dygn_over_grans?: number | null;
+  min_arsmedel_ug_m3?: number | null;
+  max_arsmedel_ug_m3?: number | null;
+  min_percentil_90_4_ug_m3?: number | null;
+  max_percentil_90_4_ug_m3?: number | null;
+  klarar_mkn_garanterat?: boolean;
+  bryter_mkn_garanterat?: boolean;
+  osaker_mkn_grans?: boolean;
+}
+
+export interface BullerSkarmPost {
+  skarm_id: string;
+  marginal_vinst: number;
+  kumulativ_vinst: number;
+  vinst_ensam: number;
+  nya_godkanda: number;
+}
+
+export interface BullerSkarmarSvar {
+  riktvarde_db?: number | null;
+  mal?: string;
+  valda_skarmar?: BullerSkarmPost[];
+  akustiska_bifurkationer?: Array<{ skuggzon_bifurkation?: boolean }>;
+}
+
 export interface Underlag {
   /** Tröskeln som ytorna räknas över (m för vatten, timmar för sol). */
   troskel: number | null;
@@ -185,6 +212,93 @@ export function nyckeltal(amne: Amne, u: Underlag): Tal[] {
     { etikett: "Mark som får mer sol", varde: tal(s?.yta_okning_m2, 0, "m²") },
     { etikett: "Största ökning", varde: tal(s?.max_okning, 1, "timmar") },
   ];
+}
+
+/** Formaterar svaret från `POST /api/analys/luft-mkn` (inga värden räknas fram i klienten). */
+export function formateraMknIntervall(svar: MknIntervallSvar | null | undefined): { status: string; tal: Tal[] } {
+  if (!svar) return { status: "Inget MKN-intervall beräknat.", tal: [] };
+  const status = svar.klarar_mkn_garanterat
+    ? "Klarar MKN garanterat inom intervallet."
+    : svar.bryter_mkn_garanterat
+      ? "Överskrider MKN garanterat inom intervallet."
+      : "Osäker MKN-gräns: intervallet korsar 35 dygn/år.";
+  const dygn =
+    nummer(svar.min_dygn_over_grans) !== null && nummer(svar.max_dygn_over_grans) !== null
+      ? `${formatera(svar.min_dygn_over_grans as number, 0)} till ${formatera(svar.max_dygn_over_grans as number, 0)} dygn`
+      : "–";
+  const arsmedel =
+    nummer(svar.min_arsmedel_ug_m3) !== null && nummer(svar.max_arsmedel_ug_m3) !== null
+      ? intervallText([svar.min_arsmedel_ug_m3 as number, svar.max_arsmedel_ug_m3 as number], (x) => tal(x, 1, "µg/m³"))
+      : "–";
+  const p90 =
+    nummer(svar.min_percentil_90_4_ug_m3) !== null && nummer(svar.max_percentil_90_4_ug_m3) !== null
+      ? intervallText([svar.min_percentil_90_4_ug_m3 as number, svar.max_percentil_90_4_ug_m3 as number], (x) => tal(x, 1, "µg/m³"))
+      : "–";
+  return {
+    status,
+    tal: [
+      { etikett: "Dygn över 50 µg/m³", varde: dygn },
+      { etikett: "Årsmedel PM10", varde: arsmedel || "–" },
+      { etikett: "90,4-percentil", varde: p90 || "–" },
+    ],
+  };
+}
+
+/** Formaterar svaret från `POST /api/analys/buller-skarmar`. */
+export function formateraBullerSkarmar(svar: BullerSkarmarSvar | null | undefined): {
+  sammanfattning: string;
+  rader: Array<{ skarm_id: string; marginal_vinst: string; kumulativ_vinst: string; nya_godkanda: string }>;
+  antalBifurkationer: number;
+} {
+  const valda = svar?.valda_skarmar ?? [];
+  const antalBifurkationer = (svar?.akustiska_bifurkationer ?? []).filter((b) => Boolean(b.skuggzon_bifurkation)).length;
+  const riktv = nummer(svar?.riktvarde_db);
+  const sammanfattning =
+    valda.length === 0
+      ? "Inga bullerskärmar valda."
+      : `${valda.length} skärm${valda.length === 1 ? "" : "ar"} valda mot riktvärde ${riktv === null ? "–" : tal(riktv, 0, "dB")}${antalBifurkationer > 0 ? ` (${antalBifurkationer} skuggzonsbifurkationer)` : ""}.`;
+  return {
+    sammanfattning,
+    rader: valda.map((v) => ({
+      skarm_id: v.skarm_id,
+      marginal_vinst: tal(v.marginal_vinst, 1, "dB"),
+      kumulativ_vinst: tal(v.kumulativ_vinst, 1, "dB"),
+      nya_godkanda: formatera(v.nya_godkanda, 0),
+    })),
+    antalBifurkationer,
+  };
+}
+
+/** Tolkar en kommaseparerad eller radbruten talserie (stöder svensk decimalkomma). Returnerar null om ogiltig. */
+export function tolkaTallista(text: string): number[] | null {
+  const delar = text
+    .split(/(?:[\s;]+|,(?!\d))/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (delar.length === 0) return null;
+  const resultat: number[] = [];
+  for (const d of delar) {
+    const v = Number(d.replace(",", "."));
+    if (!Number.isFinite(v)) return null;
+    resultat.push(v);
+  }
+  return resultat;
+}
+
+/** Tolkar skärmrader på formen `namn: 4, 2, 0` (en skärm per rad). */
+export function tolkaSkarmkandidater(text: string): Record<string, number[]> | null {
+  const ut: Record<string, number[]> = {};
+  for (const rad of text.split(/\r?\n/)) {
+    const ren = rad.trim();
+    if (!ren) continue;
+    const kolon = ren.indexOf(":");
+    if (kolon <= 0) return null;
+    const namn = ren.slice(0, kolon).trim();
+    const varden = tolkaTallista(ren.slice(kolon + 1));
+    if (!namn || !varden) return null;
+    ut[namn] = varden;
+  }
+  return Object.keys(ut).length > 0 ? ut : null;
 }
 
 const ecaHaTal = (v: number | null | undefined): number | null => {

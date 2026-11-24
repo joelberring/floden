@@ -2,10 +2,11 @@
  * Känsliga överfall som kartlager: punkterna ur `POST /api/analys/bifurkationer` (SWEREF 99 18 00,
  * EPSG:3011) görs om till GeoJSON för kartmotorn. Omräkningen sker med den exakta `sweref.ts`
  * (Gauss-Krüger, kontrollerad mot pyproj); ingen egen projektion finns här. Texten för en punkt är
- * densamma i panelen "Känsliga överfall & 2D-kontroll" och i kartans ruta vid klick eller hovring.
+ * densamma i resultatpanelen (steg 4) och i kartans ruta vid klick eller hovring.
  * Modulen är ren (inga beroenden på kartbiblioteket eller sidan) och testas i overfall.test.ts.
  */
 import { swerefTillWgs84 } from "../sweref.ts";
+import { formatera } from "../tal.ts";
 import type { LagerDef } from "./lager.ts";
 
 /** De fält ur en bifurkationspunkt som visas. */
@@ -23,7 +24,7 @@ export const MAT_I_FALT = "mät in i fält";
 
 /** Samma rad som panelen listar: nod, läge i SWEREF, marginal och berörd volym. */
 export function overfallBeskrivning(p: OverfallPunkt): string {
-  return `Nod ${p.nod_id} (E ${Math.round(p.overfall_x)}, N ${Math.round(p.overfall_y)}): marginal ${p.marginal_m.toFixed(3)} m, berör ${Math.round(p.paverkad_volym_m3)} m³`;
+  return `Nod ${p.nod_id} (E ${formatera(Math.round(p.overfall_x), 0)}, N ${formatera(Math.round(p.overfall_y), 0)}): marginal ${formatera(p.marginal_m, 3)} m, berör ${formatera(Math.round(p.paverkad_volym_m3), 0)} m³`;
 }
 
 /** Punkterna som ritas: de instabila med ändliga koordinater. */

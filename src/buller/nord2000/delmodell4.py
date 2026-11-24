@@ -63,6 +63,7 @@ from buller.nord2000.refraktion_mark import (
 )
 from buller.nord2000.stralar_krokta import (
     SKUGGZONSMARGINAL,
+    StralarKroktPlanMark,
     Uppatmetod,
     direkt_strale,
     reflekterad_strale,
@@ -794,6 +795,7 @@ def marksidor_refraktion(
     separation = transversell_separation_m(h_s, h_r)
 
     sidor: list[Marksida | None] = []
+    stralar_cache: dict[tuple[float, float], StralarKroktPlanMark] = {}
     for i, f_np in enumerate(frekvenser_hz):
         f = float(f_np)
         vikt = hojdfaktor * fresnelzonsvikt_refraktion(
@@ -811,12 +813,20 @@ def marksidor_refraktion(
             sidor.append(None)
             continue
         p = profiler.per_frekvens[i]
-        stralar = stralar_krokt_plan_mark(d, h_s, h_r, p.xi_per_m, p.c0_m_s, c_mark, uppat)
+        nyckel = (p.xi_per_m, p.c0_m_s)
+        stralar = stralar_cache.get(nyckel)
+        if stralar is None:
+            stralar = stralar_krokt_plan_mark(d, h_s, h_r, p.xi_per_m, p.c0_m_s, c_mark, uppat)
+            stralar_cache[nyckel] = stralar
         reflekterad = None if skugga_alla else stralar.reflekterad
         dtau = 0.0 if reflekterad is None else max(stralar.gangtidsskillnad_s, 0.0)
         if fluktuerar:
             po = profiler_ovre.per_frekvens[i]
-            ovre = stralar_krokt_plan_mark(d, h_s, h_r, po.xi_per_m, po.c0_m_s, c_mark, uppat)
+            nyckel_o = (po.xi_per_m, po.c0_m_s)
+            ovre = stralar_cache.get(nyckel_o)
+            if ovre is None:
+                ovre = stralar_krokt_plan_mark(d, h_s, h_r, po.xi_per_m, po.c0_m_s, c_mark, uppat)
+                stralar_cache[nyckel_o] = ovre
             dtau_ovre = (
                 0.0
                 if skugga_alla_ovre or ovre.reflekterad is None
@@ -1064,6 +1074,8 @@ def skarm_en_kant(
         f_s = 1.0 if f_s_lista is None else f_s_lista[nr]
         qs, qr = complex(q_s[nr]), complex(q_r[nr])
 
+        tryck_cache: dict[tuple[float, float, float, float, float, float], complex] = {}
+
         def tryck(
             theta_s: float,
             theta_r: float,
@@ -1074,11 +1086,16 @@ def skarm_en_kant(
             f: float = f,
             qs: complex = qs,
             qr: complex = qr,
+            cache: dict[tuple[float, float, float, float, float, float], complex] = tryck_cache,
         ) -> complex:
             """p̂ = pwedge(…), ekv. (160), för ett av trycken p̂₁–p̂₄.
 
             Räta strålar: τ = R/c. Krökta: gångtiderna ur ekv. (167) och (171).
             """
+            nyckel = (theta_s, theta_r, vag_s, vag_r, tid_s, tid_r)
+            sparat = cache.get(nyckel)
+            if sparat is not None:
+                return sparat
             if rata:
                 kil = kil_rata_stralar(vinklar.beta_rad, theta_s, theta_r, vag_s, vag_r, c)
             else:
@@ -1093,7 +1110,9 @@ def skarm_en_kant(
                     vag_kalla_m=vag_s,
                     vag_mottagare_m=vag_r,
                 )
-            return kiltryck_reflektionskoefficienter(f, kil, qs, qr)
+            ut = kiltryck_reflektionskoefficienter(f, kil, qs, qr)
+            cache[nyckel] = ut
+            return ut
 
         p_ff = kiltryck_reflektionskoefficienter(f, stralar.kil, qs, qr)  # ekv. (160)
         p_scr = abs(p_ff) * geo.r_sr_m  # ekv. (163)
