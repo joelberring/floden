@@ -139,6 +139,7 @@ export const hamtaBifurkationer = (
 export interface VattenIntervallSvar {
   format: string;
   omrade_id: string;
+  klimatfaktor_intervall?: [number, number];
   antal_korningar: number;
   antal_bifurkationsgrenar: number;
   max_volymfel_rel: number;

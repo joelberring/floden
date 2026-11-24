@@ -97,44 +97,6 @@ test("ekologi: signalart, källa och antaganden kommer ur svaret och visas som t
 });
 
 
-test("vatten: osäkerhetsintervall och bifurkationsnoder visas när intervallsvar finns", () => {
-  const t = nyckeltal("vatten", {
-    troskel: 0.1,
-    siffror: null,
-    foreDjup_m: 0.35,
-    vattenIntervall: {
-      sammanfattning: {
-        antal_noder: 40,
-        antal_monoton_garanterad: 38,
-        antal_bifurkationspaverkade: 2,
-        storsta_min_djup_m: 0.28,
-        storsta_max_djup_m: 0.44,
-      },
-    },
-  });
-  assert.equal(t.length, 6);
-  assert.match(t[0]?.under ?? "", /0,28\s?m till 0,44\s?m/);
-  assert.equal(t[4]?.varde, "38 av 40");
-  assert.equal(t[5]?.varde, "2");
-});
-
-test("dagsljus: monotont SVF-intervall visas när svfIntervall finns", () => {
-  const t = nyckeltal("dagsljus", {
-    troskel: 1,
-    siffror: null,
-    svfIntervall: {
-      svf_min_medel: 0.61,
-      svf_max_medel: 0.72,
-      bredd_max: 0.15,
-      antal_osakra_celler: 14,
-    },
-  });
-  assert.equal(t.length, 6);
-  assert.equal(t[4]?.varde, "0,61 till 0,72");
-  assert.match(t[4]?.under ?? "", /0,15/);
-  assert.equal(t[5]?.varde, "14");
-});
-
 test("MKN-intervall och bullerskärmar formateras utan egna beräkningar", () => {
   const mkn = formateraMknIntervall({
     min_dygn_over_grans: 12,
@@ -159,6 +121,8 @@ test("MKN-intervall och bullerskärmar formateras utan egna beräkningar", () =>
   assert.equal(skarm.rader.length, 1);
   assert.equal(skarm.rader[0]?.skarm_id, "Skärm A");
 
+  const synlig = JSON.stringify([mkn, skarm]);
+  assert.doesNotMatch(synlig, /\d\.\d/, "decimalkomma i MKN- och skärmpanelerna");
   assert.deepEqual(tolkaTallista("10, 20.5; 30,2"), [10, 20.5, 30.2]);
   assert.equal(tolkaTallista("abc"), null);
   assert.deepEqual(tolkaSkarmkandidater("A: 1, 2\nB: 3, 4"), { A: [1, 2], B: [3, 4] });

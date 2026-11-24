@@ -6,6 +6,7 @@
  * platshållare, inga knappar utan funktion och inga tal som inte kommer ur en körning
  * (AGENTS.md: tal kommer bara ur beräkningar). Det som saknas döljs eller förklaras.
  */
+import { formatera } from "./tal.ts";
 import { forvaltningSynlig, halsningsnamn, kontoHjalteHtml, kontoHuvudHtml, kontoLage } from "./konto.ts";
 import type { ModulInfo, OmradeSammanfattning, ProjektAvsnitt, ProjektListaPost, ProjektSvar, RapportRad } from "./types.ts";
 
@@ -18,20 +19,11 @@ export function esc(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export type SidId = "start" | "projekt" | "karta" | "fragor" | "om" | "matematik" | "forvaltning" | "nycklar" | "administration";
+export type SidId = "start" | "projekt" | "fragor" | "om" | "matematik" | "forvaltning" | "nycklar" | "administration";
 
 export const PROJEKT_ID = "demokvarteret";
 
-const FORMAT: Record<number, Intl.NumberFormat> = {};
-
-/** Tal med svensk decimalkomma och tusentalsmellanrum. */
-export function formatera(v: number, decimaler: number): string {
-  const f = (FORMAT[decimaler] ??= new Intl.NumberFormat("sv-SE", {
-    minimumFractionDigits: decimaler,
-    maximumFractionDigits: decimaler,
-  }));
-  return f.format(v);
-}
+export { formatera };
 
 function etikett(text: string, tagg = "h2"): string {
   return `<${tagg} class="etikett">${esc(text)}</${tagg}>`;
@@ -81,7 +73,6 @@ export function sidhuvud(aktiv: SidId): string {
       <nav class="huvud-nav" id="huvud-nav" aria-label="Huvudmeny">
         ${lank("start", "Start", "#/")}
         ${lank("projekt", "Projekt", `#/projekt/${PROJEKT_ID}`)}
-        ${lank("karta", "Karta", `#/karta/${PROJEKT_ID}`)}
         ${lank("fragor", "Utredningsfrågor", "#/fragor")}
         ${lank("om", "Om beräkningarna", "#/om")}
         ${forvaltningSynlig() ? lank("forvaltning", "Förvaltning", "#/forvaltning") : ""}
@@ -138,7 +129,7 @@ export function sidaStart(moduler: ModulInfo[], harProjekt: boolean, projekt: Pr
   const forsta = projekt[0];
   const cta = harDemo
     ? `<a class="knapp knapp-svart knapp-stor" href="#/projekt/${PROJEKT_ID}">Öppna demokvarteret</a>
-       <a class="knapp knapp-stor" href="#/karta/${PROJEKT_ID}">Gå direkt till kartan</a>`
+       <a class="knapp knapp-stor" href="#/p/${PROJEKT_ID}/forslag">Gå direkt till kartan</a>`
     : forsta
       ? `<a class="knapp knapp-svart knapp-stor" href="#/projekt/${encodeURIComponent(forsta.id)}">Öppna ${esc(forsta.namn)}</a>
          <a class="knapp knapp-stor" href="#/fragor">Öppna utredningsfrågorna</a>`
@@ -318,7 +309,7 @@ export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): 
       <section class="projekt-avsnitt" id="avsnitt-${esc(a.id)}">
         <div class="sektionsrad linje-under-stark">
           ${etikett(a.rubrik)}
-          ${vy ? `<a class="textlank" href="#/karta/${PROJEKT_ID}?vy=${encodeURIComponent(vy)}">Se på kartan →</a>` : ""}
+          ${vy ? `<a class="textlank" href="#/p/${PROJEKT_ID}/resultat?vy=${encodeURIComponent(vy)}">Se på kartan →</a>` : ""}
         </div>
         <p class="avsnitt-ingress">${esc(a.ingress)}</p>
         ${matttabell(a)}
@@ -344,7 +335,7 @@ export function sidaProjekt(projekt: ProjektSvar | null, moduler: ModulInfo[]): 
           <p class="dampad projekt-ingress">${esc(projekt.beskrivning)}</p>
         </div>
         <div class="knapp-par">
-          <a class="knapp knapp-svart" href="#/karta/${PROJEKT_ID}">Öppna kartan</a>
+          <a class="knapp knapp-svart" href="#/p/${PROJEKT_ID}/forslag">Öppna kartan</a>
         </div>
       </div>
       <p class="paahittat-ruta" role="note">${esc(projekt.paahittat_text)}</p>

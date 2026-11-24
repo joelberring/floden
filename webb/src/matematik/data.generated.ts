@@ -191,8 +191,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "Δz = max(0, z₂ − z₁), σ = √(σ₁² + σ₂²); instabil om Δz/σ ≤ k (k = 2)"
           ],
-          "flode": "karta",
-          "flodeText": "I kartsidan (#/karta), inte i flödet",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -206,6 +206,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "webb/src/karta/overfall.ts",
               "href": "https://github.com/joelberring/floden/blob/main/webb/src/karta/overfall.ts"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -227,7 +231,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/tvad/test_felindikator.py"
             }
           ],
-          "anmarkning": "Nås som lager i kartsidan (#/karta), inte i flödet. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
+          "anmarkning": "Nås i Resultat (steg 4, fliken Skyfall, knappen \"Visa osäkerhet\") som nyckeltal och lagret \"Känsliga överfall\" på kartan; den gamla kartsidan (#/karta) är borttagen. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
         },
         {
           "id": "vatten.intervall",
@@ -236,8 +240,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "h_min(t) ≤ h_u(t) ≤ h_max(t); gränserna ur två extremkörningar (mer regn, lägre förlust, lägre avtappning ⇒ högre nivå)"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -247,6 +251,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "src/webb/api.py (POST /api/analys/intervall)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -263,7 +271,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_a.py"
             }
           ],
-          "anmarkning": "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Ingen panel i klienten (K40: läses av inget i webbklienten)."
+          "anmarkning": "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Visas i Resultat (steg 4, fliken Skyfall, knappen \"Visa osäkerhet\") som [min; max]; gäller projektets markmodell (läget före), inte ett ritat förslag."
         }
       ]
     },
@@ -368,8 +376,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "SVF(H − σ) ≥ SVF(H) ≥ SVF(H + σ)"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -379,6 +387,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "src/webb/api.py (POST /api/analys/svf-intervall)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -394,7 +406,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_a.py"
             }
           ],
-          "anmarkning": "Ingen panel i klienten."
+          "anmarkning": "Visas i Resultat (steg 4, fliken Sol, knappen \"Visa osäkerhet\") som [min; max] av medel-SVF; gäller projektets markmodell (läget före), inte ett ritat förslag."
         }
       ]
     },
@@ -515,7 +527,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_b.py"
             }
           ],
-          "anmarkning": "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Ingen panel i klienten."
+          "anmarkning": "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under \"Fler analyser\" med egna timvärden."
         }
       ]
     },
@@ -1026,7 +1038,6 @@ export const MATEMATIK: MatematikData = {
   ],
   "flodeText": {
     "flode": "I användarflödet",
-    "karta": "I kartsidan (#/karta), inte i flödet",
     "api": "Bara i API:t",
     "cli": "Kommandorad, MCP och testsvit",
     "fristaende": "Fristående modul"

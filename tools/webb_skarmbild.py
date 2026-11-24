@@ -9,17 +9,14 @@ Förutsätter att API:t och klienten körs och att demokvarteret är byggt:
 
 Argument: --url (klientens adress), --chrome (sökväg till Chrome/Chromium).
 
-Med `--kartverktyg` tas docs/bilder/kartverktyg-*.png (lagerpanel, ritning med fästmarkör,
-höjdpanel, före och efter) mot `floden webb`; scenariot som ritas sparas lokalt.
-
-Med `--3d` tas docs/bilder/3d-*.png (soltimmar före och efter på marken, VSC på fasaderna,
-vattenyta och ett ritat hus i 3D) mot `floden webb` efter `floden demo`.
+Med `--3d` tas docs/bilder/3d-*.png (soltimmar före och efter på marken, VSC på fasaderna och
+vattenyta, i 3D-läget i Resultat) mot `floden webb` efter `floden demo`.
 
 Med `--3d-farg` läses pixlar av för punkter med kända färger (kräver `--3d`-vyn, inget sparas).
 
-Med `--demo` tas i stället docs/bilder/demo-*.png (projekt, karta bred och smal,
-frågesidan) mot `floden webb` (som serverar klienten själv, standard
-http://127.0.0.1:8765) efter `floden demo`. Inget körs om: resultaten läses ur cachen.
+Med `--demo` tas i stället docs/bilder/demo-*.png (projektsidan och frågesidan) mot
+`floden webb` (som serverar klienten själv, standard http://127.0.0.1:8765) efter `floden demo`.
+Inget körs om: resultaten läses ur cachen.
 """
 
 from __future__ import annotations
@@ -59,11 +56,6 @@ def _resultat_med_varningar(sida: Page, fil: Path) -> None:
     )
 
 
-def _valj_lager(sida: Page, lager_id: str) -> None:
-    sida.click(f'input[name="lager"][value="{lager_id}"]', force=True)
-    sida.wait_for_timeout(500)
-
-
 def _hovra(sida: Page, rel_x: float, rel_y: float) -> None:
     """Flyttar markören till en relativ punkt i kartytan och väntar in avläsningen."""
     sida.locator("#vy-yta").scroll_into_view_if_needed()
@@ -85,22 +77,11 @@ def _sida(
 
 
 def _demo(webblasare: Browser, url: str) -> None:
-    """demo-*.png: projekt, karta (1440 och 800 px) samt frågesidans resultat."""
+    """demo-*.png: projektsidan (1440 och 800 px) samt frågesidans resultat. Kartan har egna bilder
+    i tools/flode_skarmbild.py (steg 2 och 4)."""
     for bredd, suffix in ((1440, ""), (800, "-smal")):
         sida = webblasare.new_page(viewport={"width": bredd, "height": 1000})
         _sida(sida, url, "#/projekt/demokvarteret", ".jamfor-tabell", f"demo-projekt{suffix}.png")
-        sida.goto(f"{url}/#/karta/demokvarteret?vy=dagsljus-hojd")
-        sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
-        sida.wait_for_timeout(2000)
-        _hovra(sida, 0.60, 0.38)
-        sida.screenshot(path=str(UT / f"demo-karta{suffix}.png"), full_page=True)
-        if bredd == 1440:
-            sida.click('[data-vy="vatten-nytt-hus"]')
-            sida.wait_for_timeout(1500)
-            sida.click('[data-lage="skillnad"]')
-            sida.wait_for_timeout(1000)
-            _hovra(sida, 0.33, 0.74)
-            sida.screenshot(path=str(UT / "demo-karta-vatten.png"), full_page=True)
         sida.close()
 
     sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
@@ -121,7 +102,7 @@ def _demo(webblasare: Browser, url: str) -> None:
 
 
 def _vy3d(webblasare: Browser, url: str) -> None:
-    """3d-*.png: soltimmar före/efter på marken, VSC på fasaderna, vattenyta, ritat hus.
+    """3d-*.png: soltimmar före/efter på marken, VSC på fasaderna och vattenyta.
 
     Chrome körs med programvaru-WebGL (SwiftShader) här; bilderna är därför långsamma att
     rita men visar samma sak som en grafikdator.
@@ -129,19 +110,19 @@ def _vy3d(webblasare: Browser, url: str) -> None:
 
     def oppna(vy: str) -> Page:
         sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
-        sida.goto(f"{url}/#/karta/demokvarteret?vy={vy}")
-        sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
+        sida.goto(f"{url}/#/p/demokvarteret/resultat?vy={vy}")
+        sida.wait_for_selector("#rs-a canvas", timeout=60_000)
         sida.wait_for_timeout(2000)
-        sida.click('[data-visa="3d"]')
-        sida.wait_for_selector("#vy3d-yta canvas", timeout=60_000)
+        sida.click('#rs-vaxel [data-lage="3d"]')
+        sida.wait_for_selector("#rs-3d canvas", timeout=60_000)
         sida.wait_for_timeout(5000)
         return sida
 
     def ta(sida: Page, namn: str) -> None:
-        sida.locator("#vy3d-yta").screenshot(path=str(UT / f"3d-{namn}.png"))
+        sida.locator("#rs-3d").screenshot(path=str(UT / f"3d-{namn}.png"))
 
     def lage(sida: Page, namn: str, vanta: int = 3500) -> None:
-        sida.click(f'button:text-is("{namn}")')
+        sida.click(f'#rs-3d button:text-is("{namn}")')
         sida.wait_for_timeout(vanta)
 
     sida = oppna("dagsljus-hojd")
@@ -164,35 +145,6 @@ def _vy3d(webblasare: Browser, url: str) -> None:
     lage(sida, "Efter")
     lage(sida, "Snett", 2500)
     ta(sida, "vatten")
-    sida.close()
-
-    # Ett hus som ritas i kartan syns direkt i 3D (samma ritgång som --kartverktyg).
-    sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
-    sida.goto(f"{url}/#/karta/demokvarteret")
-    sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
-    sida.wait_for_timeout(2500)
-    sida.click('[data-lage="fore"]')
-    sida.wait_for_timeout(800)
-    sida.evaluate("document.querySelector('#verktygsrad').scrollIntoView()")
-    kyta = sida.locator("#vy-yta").bounding_box()
-    assert kyta is not None
-    sida.keyboard.press("w")
-    for fx, fy in ((0.30, 0.15), (0.38, 0.15), (0.38, 0.22), (0.30, 0.22)):
-        x, y = kyta["x"] + kyta["width"] * fx, kyta["y"] + kyta["height"] * fy
-        sida.mouse.move(x, y)
-        sida.mouse.click(x, y)
-    sida.keyboard.press("Enter")
-    sida.wait_for_selector("#hojd-falt")
-    sida.fill("#hojd-falt", "18")
-    sida.press("#hojd-falt", "Tab")
-    sida.wait_for_timeout(1000)
-    sida.evaluate("window.scrollTo(0, 0)")
-    sida.click('[data-visa="3d"]')
-    sida.wait_for_selector("#vy3d-yta canvas", timeout=60_000)
-    sida.wait_for_timeout(4000)
-    lage(sida, "Snett", 2500)
-    lage(sida, "Före", 2500)
-    ta(sida, "ritat-hus")
     sida.close()
 
 
@@ -220,10 +172,10 @@ _FARGPROV_JS = """() => {
 def _vy3d_farg(webblasare: Browser, url: str) -> None:
     """Rendera punkter med kända färger och läs av pixlarna: en färg i 3D är exakt skalans RGB."""
     sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
-    sida.goto(f"{url}/#/karta/demokvarteret?vy=dagsljus-hojd")
-    sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
+    sida.goto(f"{url}/#/p/demokvarteret/resultat?vy=dagsljus-hojd")
+    sida.wait_for_selector("#rs-a canvas", timeout=60_000)
     sida.wait_for_timeout(1500)
-    sida.click('[data-visa="3d"]')
+    sida.click('#rs-vaxel [data-lage="3d"]')
     sida.wait_for_function("window.__floden3d !== undefined", timeout=60_000)
     sida.wait_for_timeout(5000)
     ut = sida.evaluate(_FARGPROV_JS)
@@ -235,72 +187,9 @@ def _vy3d_farg(webblasare: Browser, url: str) -> None:
     sida.close()
 
 
-def _kartverktyg(webblasare: Browser, url: str) -> None:
-    """kartverktyg-*.png: lagerpanel, ritning med fästmarkör, höjdpanel, före och efter."""
-    sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
-    sida.goto(f"{url}/#/karta/demokvarteret")
-    sida.wait_for_selector("#vy-yta canvas", timeout=60_000)
-    sida.wait_for_timeout(2500)
-    sida.click('[data-lage="fore"]')
-    sida.wait_for_timeout(800)
-    sida.evaluate("document.querySelector('#verktygsrad').scrollIntoView()")
-    sida.wait_for_timeout(300)
-    ruta = sida.locator("#vy-yta").bounding_box()
-    assert ruta is not None
-
-    def pa(fx: float, fy: float) -> tuple[float, float]:
-        return ruta["x"] + ruta["width"] * fx, ruta["y"] + ruta["height"] * fy
-
-    sida.locator(".lager-kolumn .panel").first.screenshot(path=str(UT / "kartverktyg-lager.png"))
-    sida.keyboard.press("w")
-    for fx, fy in ((0.30, 0.15), (0.38, 0.15), (0.38, 0.22)):
-        x, y = pa(fx, fy)
-        sida.mouse.move(x, y)
-        sida.mouse.click(x, y)
-    x, y = pa(0.247, 0.118)  # nära ett hörn på kvarterets innervägg: fästmarkören syns
-    sida.mouse.move(x, y, steps=5)
-    sida.wait_for_timeout(500)
-    sida.screenshot(
-        path=str(UT / "kartverktyg-rita.png"),
-        clip={
-            "x": max(0, ruta["x"] - 10),
-            "y": max(0, ruta["y"] - 150),
-            "width": ruta["width"] + 20,
-            "height": ruta["height"] + 180,
-        },
-    )
-    x, y = pa(0.30, 0.22)
-    sida.mouse.click(x, y)
-    sida.keyboard.press("Enter")
-    sida.wait_for_selector("#hojd-falt")
-    sida.fill("#hojd-falt", "18")
-    sida.press("#hojd-falt", "Tab")
-    sida.wait_for_timeout(1200)
-    sida.locator("#hojdpanel").screenshot(path=str(UT / "kartverktyg-hojd.png"))
-    sida.click("#rakna-plan")
-    sida.wait_for_selector("#rakna-starta", timeout=60_000)
-    sida.click("#rakna-starta")
-    sida.wait_for_function(
-        "document.querySelector('#rakna')?.textContent.includes('Klart')", timeout=900_000
-    )
-    sida.wait_for_timeout(2000)
-    sida.click('[data-lage="sidavid"]')
-    sida.wait_for_timeout(3000)
-    sida.evaluate("document.querySelector('#verktygsrad').scrollIntoView()")
-    sida.wait_for_timeout(500)
-    sida.screenshot(
-        path=str(UT / "kartverktyg-resultat.png"),
-        clip={"x": 0, "y": 0, "width": 1440, "height": 1000},
-    )
-    sida.close()
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--demo", action="store_true", help="ta demo-*.png mot floden webb")
-    ap.add_argument(
-        "--kartverktyg", action="store_true", help="ta kartverktyg-*.png mot floden webb"
-    )
     ap.add_argument("--3d", dest="vy3d", action="store_true", help="ta 3d-*.png mot floden webb")
     ap.add_argument(
         "--3d-farg", dest="vy3d_farg", action="store_true", help="prova att 3D-färger är exakta"
@@ -308,7 +197,7 @@ def main() -> None:
     ap.add_argument("--url", default=None)
     ap.add_argument("--chrome", default="/usr/bin/google-chrome")
     args = ap.parse_args()
-    lokal = args.demo or args.kartverktyg or args.vy3d or args.vy3d_farg
+    lokal = args.demo or args.vy3d or args.vy3d_farg
     url = args.url or ("http://127.0.0.1:8765" if lokal else "http://127.0.0.1:5173")
     UT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
@@ -322,8 +211,6 @@ def main() -> None:
                 "--enable-unsafe-swiftshader",
             ],
         )
-        if args.kartverktyg:
-            _kartverktyg(webblasare, url)
         if args.vy3d_farg:
             _vy3d_farg(webblasare, url)
             webblasare.close()

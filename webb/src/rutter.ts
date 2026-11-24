@@ -1,8 +1,7 @@
 /*
- * Adresserna i hash-routern, utan DOM så att de går att testa: #/ · #/projekt/<id> · #/karta/<id> ·
- * #/fragor · #/om · #/matematik · #/forvaltning · #/nycklar · #/administration · #/arbetsbank/<omrade>.
+ * Adresserna i hash-routern, utan DOM så att de går att testa: #/ · #/projekt/<id> · #/fragor · #/om · #/matematik · #/forvaltning · #/nycklar · #/administration · #/arbetsbank/<omrade>.
  */
-import type { SidId } from "./sidor";
+import { PROJEKT_ID, type SidId } from "./sidor.ts";
 
 export type RuttSida = SidId | "arbetsbank" | "prov";
 
@@ -20,7 +19,6 @@ export function tolkaHash(hash: string): Rutt {
   const sidor: Record<string, RuttSida> = {
     projekt: "projekt",
     oversikt: "projekt", // den gamla översikten är sammanslagen med projektet
-    karta: "karta",
     fragor: "fragor",
     om: "om",
     matematik: "matematik", // Matematik och forskning (kontomenyn)
@@ -40,7 +38,6 @@ export function tolkaHash(hash: string): Rutt {
 export const SIDTITLAR: Record<RuttSida, string> = {
   start: "Floden – se hur ett nytt hus påverkar sol och skyfall",
   projekt: "Projekt – Floden",
-  karta: "Karta – Floden",
   fragor: "Utredningsfrågor – Floden",
   om: "Om beräkningarna – Floden",
   matematik: "Matematik och forskning – Floden",
@@ -51,3 +48,26 @@ export const SIDTITLAR: Record<RuttSida, string> = {
   prov: "Prov – Floden",
 };
 
+
+/**
+ * Den gamla kartsidan (`#/karta[/<projekt>][?vy=<vy>]`) finns inte kvar; adressen leder till
+ * motsvarande steg i flödet: med `vy` till Resultat (samma vy), annars till Förslag där man ritar.
+ * Ger null för alla andra adresser.
+ */
+export function kartaOmdirigering(hash: string): string | null {
+  const utan = hash.replace(/^#/, "");
+  const [sokvag = "", fraga = ""] = utan.split("?", 2);
+  const delar = sokvag.split("/").filter((d) => d.length > 0);
+  if (delar[0] !== "karta") return null;
+  let projekt = PROJEKT_ID;
+  if (delar[1]) {
+    try {
+      projekt = decodeURIComponent(delar[1]);
+    } catch {
+      return "#/";
+    }
+  }
+  const vy = new URLSearchParams(fraga).get("vy");
+  const bas = `#/p/${encodeURIComponent(projekt)}`;
+  return vy ? `${bas}/resultat?vy=${encodeURIComponent(vy)}` : `${bas}/forslag`;
+}

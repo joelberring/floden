@@ -5,7 +5,7 @@ export interface MatematikLank {
   href: string | null;
 }
 
-export type FlodeNiva = "flode" | "karta" | "api" | "cli" | "fristaende";
+export type FlodeNiva = "flode" | "api" | "cli" | "fristaende";
 
 export interface MatematikMetod {
   id: string;

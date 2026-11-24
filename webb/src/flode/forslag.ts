@@ -11,19 +11,27 @@ import {
   hamtaProjektInfo,
   hamtaScenario,
   kontrolleraAndringar,
+  listaScenarier,
   sparaScenario,
+  taBortScenario,
   type Kontroll,
+  type ScenarioPost,
 } from "../karta/kartapi.ts";
+import { LagerLista } from "../karta/lager.ts";
+import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { TOM_RITVY, type RitVy } from "../karta/kartmotor.ts";
 import { FORVALD_HOJD_M, Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "../karta/ritverktyg.ts";
 import { esc } from "../sidor.ts";
+import { formatera, talFormat } from "../tal.ts";
 import { flodeAdress } from "./adress.ts";
 import { tolkaFil } from "./filimport.ts";
+import { monteraUnderlagForm, taBortUnderlag } from "./underlag.ts";
+import { forslagInfoHtml, type HusUppgift } from "./forslagtext.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { andringarMedTak, FORVALD_TAKFORM, skapaDokFor, sparaTillstand, takformFran, TAKFORMER, tillstandFor } from "./tillstand.ts";
 
-const TAL0 = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 });
+const TAL0 = talFormat(0);
 
 function hjalpText(v: Ritverktyg): string {
   if (v.verktyg === "hus") {
@@ -47,17 +55,32 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
   let kontrollTimer: number | null = null;
   let ritaBegard = 0;
   const avbryt: Array<() => void> = [];
+  const ac = new AbortController();
 
   rot.innerHTML = `
-    <div class="flode-sida">
+    <div class="flode-sida flode-fast">
       <section class="flode-karta" aria-label="Karta">
         <div class="flode-karta-yta" id="fs-karta"></div>
         <div class="flode-verktyg" role="toolbar" aria-label="Ritverktyg" aria-orientation="vertical">
+          <button type="button" data-v="valj" aria-pressed="false" title="Markera ett hus: ändra höjd och tak, dra huset eller ett hörn (${TANGENTER.valj})">Markera</button>
           <button type="button" data-v="hus" aria-pressed="false" title="Rita nytt hus (${TANGENTER.hus})">Rita hus</button>
-          <button type="button" data-v="hojd" aria-pressed="false" title="Markera ett hus och ändra höjden">Ändra höjd</button>
+          <button type="button" data-v="laggtill" aria-pressed="false" title="Lägg till hörn (${TANGENTER.laggtill})">Lägg till hörn</button>
+          <button type="button" data-v="tabort" aria-pressed="false" title="Ta bort hörn (${TANGENTER.tabort})">Ta bort hörn</button>
+          <button type="button" data-v="bort" title="Tar bort det markerade huset (en befintlig byggnad rivs)" disabled>Ta bort hus</button>
+          <span class="flode-verktyg-skil" aria-hidden="true"></span>
+          <button type="button" data-v="fast" aria-pressed="true" title="Fäst mot hörn och kanter (${TANGENTER.fast})">Fäst</button>
+          <button type="button" data-v="rat" aria-pressed="false" title="Rät vinkel (${TANGENTER.ratVinkel}, eller håll Ctrl)">Rät vinkel</button>
+          <span class="flode-verktyg-skil" aria-hidden="true"></span>
+          <button type="button" data-v="angra" title="Ångra (${TANGENTER.angra})" disabled>Ångra</button>
+          <button type="button" data-v="goraom" title="Gör om (Skift+${TANGENTER.angra})" disabled>Gör om</button>
+          <span class="flode-verktyg-skil" aria-hidden="true"></span>
           <button type="button" data-v="fil" title="Läs in hus ur en GeoJSON-fil eller ett sparat förslag">Läs in fil</button>
-          <button type="button" data-v="bort" title="Tar bort det markerade huset (en befintlig byggnad rivs)" disabled>Ta bort</button>
           <input type="file" id="fs-fil" accept=".geojson,.json,application/geo+json,application/json" hidden />
+        </div>
+        <div class="flode-zoom" role="group" aria-label="Zoom">
+          <button type="button" id="fs-in" aria-label="Zooma in">+</button>
+          <button type="button" id="fs-ut" aria-label="Zooma ut">−</button>
+          <button type="button" id="fs-anpassa">Anpassa</button>
         </div>
         <div class="flode-kartkort flode-hjalp" id="fs-hjalp" role="status"></div>
         <div class="flode-kartkort flode-kartkort-hoger" id="fs-laddar">Hämtar kartan …</div>
@@ -77,6 +100,15 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         </div>
         <p class="flode-liten flode-dampad" id="fs-hojd-hjalp"></p>
         <div class="flode-ruta" id="fs-info" role="status"></div>
+        <details class="flode-detalj" id="fs-lager-ruta">
+          <summary>Lager och underlag</summary>
+          <div class="lagerpanel" id="fs-lagerpanel"></div>
+          <details class="flode-detalj inre" id="fs-underlag-ruta"><summary>Lägg till underlag från en tjänst</summary><div id="fs-underlag"></div></details>
+        </details>
+        <details class="flode-detalj" id="fs-sparade-ruta">
+          <summary>Sparade förslag</summary>
+          <div id="fs-sparade"></div>
+        </details>
         <div class="flode-rad-slut">
           <a class="flode-knapp svart stor" id="fs-vidare" href="${flodeAdress(projekt, "fragor")}">Välj frågor</a>
         </div>
@@ -97,8 +129,21 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     skapaDokFor(t, info);
     const dok = t.dok;
     const motor = skapaKarta(el("fs-karta"), info);
-    const bas = new BasLager(motor, info);
-    void bas.ladda(projekt);
+    const lagerLista = new LagerLista(projekt);
+    const bas = new BasLager(motor, info, lagerLista);
+    bas.registrera(projekt);
+    const synkaLager = (): void => {
+      bas.synka();
+      motor.settByggnadStil(bas.byggnadStil());
+      motor.settPlanStil(bas.planStil());
+    };
+    monteraLagerpanel(el("fs-lagerpanel"), lagerLista, {
+      andrad: synkaLager,
+      taBort: (id) => taBortUnderlag(projekt, bas, id),
+      grupper: ["underlag", "geometri", "planforslag"],
+    });
+    monteraUnderlagForm(el("fs-underlag"), projekt, bas, ac.signal);
+    void bas.ladda(projekt).then(synkaLager);
     const verktyg = new Ritverktyg(
       dok,
       info.byggnader.map((b) => ({ id: b.id, ring: b.ring.map(([x, y]) => ({ x, y })), hal: b.hal.map((h) => h.map(([x, y]) => ({ x, y }))), hojd_m: b.hojd_m })),
@@ -126,8 +171,8 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       upp: () => verktyg.upp(),
       lamnar: () => verktyg.ror({ x: Number.NaN, y: Number.NaN }, { pekare: "mouse", ctrl: false, shift: false, alt: false }),
     });
-    motor.settByggnadStil({ synlig: true, opacitet: 1 });
-    motor.settPlanStil({ synlig: true, opacitet: 1 });
+    motor.settByggnadStil(bas.byggnadStil());
+    motor.settPlanStil(bas.planStil());
     motor.onVyAndrad = () => planeraRitning();
     const tangent = (h: KeyboardEvent): void => {
       const m = h.target as HTMLElement | null;
@@ -200,12 +245,18 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     };
 
     // --- Verktyg ---
+    const knapp = (id: string): HTMLButtonElement | null => rot.querySelector<HTMLButtonElement>(`[data-v="${id}"]`);
+    const tryckt = (id: string, pa: boolean): void => knapp(id)?.setAttribute("aria-pressed", String(pa));
     const uppdateraVerktyg = (): void => {
-      const pa = (id: string, tryckt: boolean): void => el(`fs-karta`).parentElement?.querySelector(`[data-v="${id}"]`)?.setAttribute("aria-pressed", String(tryckt));
-      pa("hus", verktyg.verktyg === "hus");
-      pa("hojd", verktyg.verktyg === "valj" && Boolean(verktyg.val));
-      const bort = rot.querySelector<HTMLButtonElement>('[data-v="bort"]');
+      for (const v of ["valj", "hus", "laggtill", "tabort"] as const) tryckt(v, verktyg.verktyg === v);
+      tryckt("fast", verktyg.fastPa);
+      tryckt("rat", verktyg.ratVinkel);
+      const bort = knapp("bort");
       if (bort) bort.disabled = !verktyg.val;
+      const angra = knapp("angra");
+      if (angra) angra.disabled = !dok.kanAngra();
+      const goraOm = knapp("goraom");
+      if (goraOm) goraOm.disabled = !dok.kanGoraOm();
       visaHjalp();
     };
     const visaHjalp = (): void => {
@@ -214,25 +265,32 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       h.textContent = text;
       h.classList.toggle("fel", meddelande?.typ === "fel");
     };
-    rot.querySelector('[data-v="hus"]')?.addEventListener("click", () => {
-      meddelande = null;
-      verktyg.sattVerktyg("hus" as Verktyg);
-    });
-    rot.querySelector('[data-v="hojd"]')?.addEventListener("click", () => {
-      meddelande = null;
-      verktyg.sattVerktyg("valj" as Verktyg);
-      const f = el<HTMLInputElement>("fs-hojd");
-      if (!f.disabled) {
-        f.focus();
-        f.select();
-      } else {
-        meddelande = { typ: "info", text: "Klicka på ett hus i kartan och ange sedan höjden i panelen." };
-        visaHjalp();
-      }
-    });
-    rot.querySelector('[data-v="bort"]')?.addEventListener("click", () => verktyg.taBortVal());
+    for (const v of ["valj", "hus", "laggtill", "tabort"] as const) {
+      knapp(v)?.addEventListener("click", () => {
+        meddelande = null;
+        verktyg.sattVerktyg(v as Verktyg);
+        if (v === "valj") {
+          const f = el<HTMLInputElement>("fs-hojd");
+          if (!f.disabled) {
+            f.focus();
+            f.select();
+          } else {
+            meddelande = { typ: "info", text: "Klicka på ett hus i kartan och ange sedan höjden i panelen." };
+            visaHjalp();
+          }
+        }
+      });
+    }
+    knapp("bort")?.addEventListener("click", () => verktyg.taBortVal());
+    knapp("fast")?.addEventListener("click", () => verktyg.vaxlaFast());
+    knapp("rat")?.addEventListener("click", () => verktyg.vaxlaRatVinkel());
+    knapp("angra")?.addEventListener("click", () => verktyg.angra());
+    knapp("goraom")?.addEventListener("click", () => verktyg.goraOm());
+    el("fs-in").addEventListener("click", () => motor.zooma(0.7));
+    el("fs-ut").addEventListener("click", () => motor.zooma(1 / 0.7));
+    el("fs-anpassa").addEventListener("click", () => motor.anpassa(info.utbredning));
     const filFalt = el<HTMLInputElement>("fs-fil");
-    rot.querySelector('[data-v="fil"]')?.addEventListener("click", () => filFalt.click());
+    knapp("fil")?.addEventListener("click", () => filFalt.click());
     filFalt.addEventListener("change", () => {
       const fil = filFalt.files?.[0];
       filFalt.value = "";
@@ -304,25 +362,29 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     });
 
     const infoHtml = (): string => {
-      const antal = dok.tillAndringar().length;
-      if (kontrollFel) return `<p class="flode-fel" role="alert">${esc(kontrollFel)}</p>`;
-      const delar: string[] = [];
       const val = verktyg.val;
+      let hus: HusUppgift | null = null;
       if (val?.ny) {
         const ring = verktyg.ringAv(val);
         const h = verktyg.hojdAv(val);
         const k = kontroll?.hus.find((x) => x.andring_id === val.id);
-        const area = k?.yta_m2 ?? (ring ? yta(ring) : 0);
-        const bta = k?.bta_m2 ?? (h !== null && ring ? btaUppskattning(yta(ring), h, info.vaningshojd_m) : 0);
-        delar.push(`<p>Yta ${TAL0.format(area)} m², ${TAL0.format(k?.vaningar ?? Math.max(1, Math.round((h ?? 0) / info.vaningshojd_m)))} våningar, bruttoarea ungefär ${TAL0.format(bta)} m² (uppskattning, ingen beräkning).</p>`);
+        hus = {
+          yta_m2: k?.yta_m2 ?? (ring ? yta(ring) : 0),
+          vaningar: k?.vaningar ?? Math.max(1, Math.round((h ?? 0) / info.vaningshojd_m)),
+          bta_m2: k?.bta_m2 ?? (h !== null && ring ? btaUppskattning(yta(ring), h, info.vaningshojd_m) : 0),
+        };
       }
-      delar.push(antal === 0 ? `<p>Inget ritat än. Rita ett hus eller markera en byggnad för att ändra den.</p>` : `<p>${antal} ändring${antal === 1 ? "" : "ar"} i förslaget.</p>`);
-      for (const f of kontroll?.fel ?? []) delar.push(`<p class="flode-fel" role="alert">${esc(f)}</p>`);
-      for (const f of kontroll?.varningar ?? []) delar.push(`<p class="flode-varning">${esc(f)}</p>`);
-      for (const f of kontroll?.information ?? []) delar.push(`<p class="flode-dampad">${esc(f)}</p>`);
-      if (sparFel) delar.push(`<p class="flode-fel" role="alert">${esc(sparFel)}</p>`);
-      else if (t.scenario && antal > 0 && kontroll?.giltig) delar.push(`<p class="flode-dampad">Sparat som ${esc(t.scenario.namn)} på den här datorn.</p>`);
-      return delar.join("");
+      const antal = dok.tillAndringar().length;
+      return forslagInfoHtml({
+        antal,
+        hus,
+        kontrollFel,
+        fel: kontroll?.fel ?? [],
+        varningar: kontroll?.varningar ?? [],
+        information: kontroll?.information ?? [],
+        sparFel,
+        sparatSom: t.scenario && antal > 0 && kontroll?.giltig ? t.scenario.namn : null,
+      });
     };
 
     // --- Kontroll och sparande hos servern ---
@@ -368,10 +430,106 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         sparat = nyckel;
         sparFel = null;
         sparaTillstand(t);
+        void lasSparade();
       } catch (e) {
         sparFel = e instanceof Error ? e.message : String(e);
       }
     };
+    // --- Sparade förslag: öppna, byt namn, ta bort, nytt tomt (filer på den här datorn) ---
+    let scenarier: ScenarioPost[] = [];
+    let listFel: string | null = null;
+    const ritaSparade = (): void => {
+      const rad = scenarier
+        .map(
+          (x) => `<li class="flode-scen${t.scenario?.slug === x.slug ? " aktivt" : ""}">
+            <span>${esc(x.namn)} <span class="flode-dampad flode-liten">${formatera(x.antal_andringar, 0)} ändring${x.antal_andringar === 1 ? "" : "ar"}</span></span>
+            <span class="flode-scen-knappar">
+              <button type="button" data-oppna="${esc(x.slug)}">Öppna</button>
+              <button type="button" data-bytnamn="${esc(x.slug)}">Byt namn</button>
+              <button type="button" data-tabort="${esc(x.slug)}" aria-label="Ta bort ${esc(x.namn)}">Ta bort</button>
+            </span></li>`,
+        )
+        .join("");
+      el("fs-sparade").innerHTML = `
+        <div class="flode-rad"><button type="button" class="flode-knapp" id="fs-nytt">Nytt tomt förslag</button></div>
+        ${listFel ? `<p class="flode-fel flode-liten" role="alert">${esc(listFel)}</p>` : ""}
+        ${rad ? `<ul class="flode-scenlista">${rad}</ul>` : `<p class="flode-liten flode-dampad">Inga sparade förslag. De sparas som filer på din dator, inte i projektets filer.</p>`}`;
+    };
+    const lasSparade = async (): Promise<void> => {
+      try {
+        scenarier = (await listaScenarier(projekt)).scenarier;
+      } catch {
+        /* Listan finns kvar som den var. */
+      }
+      if (!avslutad) ritaSparade();
+    };
+    const oppnaScenario = async (slug: string): Promise<void> => {
+      const d = await hamtaScenario(projekt, slug);
+      if (avslutad) return;
+      t.takform = takformFran(d.andringar);
+      verktyg.markera(null);
+      dok.fran(d.andringar);
+      t.scenario = { slug: d.slug, namn: d.namn };
+      t.namn = d.namn;
+      namnFalt.value = d.namn;
+      sparat = JSON.stringify(andringarMedTak(dok, t.takform)) + d.namn;
+      sparaTillstand(t);
+      ritaSparade();
+    };
+    el("fs-sparade").addEventListener("click", (h) => {
+      const k = (h.target as Element).closest<HTMLButtonElement>("button");
+      if (!k) return;
+      const fel = (e: unknown): void => {
+        listFel = e instanceof Error ? e.message : String(e);
+        ritaSparade();
+      };
+      if (k.id === "fs-nytt") {
+        dok.rensa();
+        verktyg.markera(null);
+        t.scenario = null;
+        t.namn = "";
+        t.takform.clear();
+        namnFalt.value = "";
+        sparat = "";
+        kontroll = null;
+        sparaTillstand(t);
+        planeraKontroll();
+        ritaSparade();
+      } else if (k.dataset.oppna) {
+        listFel = null;
+        void oppnaScenario(k.dataset.oppna).catch(fel);
+      } else if (k.dataset.bytnamn) {
+        const slug = k.dataset.bytnamn;
+        const gammalt = scenarier.find((x) => x.slug === slug)?.namn ?? "";
+        const nytt = window.prompt("Nytt namn på förslaget", gammalt);
+        if (!nytt || nytt.trim() === gammalt) return;
+        void bytScenarioNamn(projekt, slug, nytt.trim()).then((d) => {
+          if (t.scenario?.slug === slug) {
+            t.scenario = { slug: d.slug ?? slug, namn: d.namn };
+            t.namn = d.namn;
+            namnFalt.value = d.namn;
+            sparat = JSON.stringify(andringarMedTak(dok, t.takform)) + d.namn;
+            sparaTillstand(t);
+          }
+          return lasSparade();
+        }, fel);
+      } else if (k.dataset.tabort) {
+        const slug = k.dataset.tabort;
+        const namn = scenarier.find((x) => x.slug === slug)?.namn ?? slug;
+        if (!window.confirm(`Ta bort förslaget ${namn}? Filen på din dator raderas.`)) return;
+        void taBortScenario(projekt, slug).then(() => {
+          if (t.scenario?.slug === slug) {
+            t.scenario = null;
+            sparat = "";
+            sparaTillstand(t);
+          }
+          return lasSparade();
+        }, fel);
+      }
+    });
+    ritaSparade();
+    void lasSparade();
+
     dok.vidAndring(() => {
       kontroll = null;
       planeraKontroll();
@@ -389,6 +547,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       avslutad = true;
       if (kontrollTimer !== null) window.clearTimeout(kontrollTimer);
       if (ritaBegard) window.cancelAnimationFrame(ritaBegard);
+      ac.abort();
       for (const f of avbryt) f();
     },
   };

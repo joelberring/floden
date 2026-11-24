@@ -2,14 +2,14 @@
 import type { LagerPost } from "./fragor-typer.ts";
 import type { ProjektVy } from "./types.ts";
 
-export type Lage = "fore" | "efter" | "skillnad" | "svep" | "sidavid";
+export type Lage = "fore" | "efter" | "skillnad" | "svep" | "3d";
 
 export const LAGEN: Array<[Lage, string]> = [
   ["fore", "Före"],
   ["efter", "Efter"],
   ["skillnad", "Skillnad"],
   ["svep", "Svep"],
-  ["sidavid", "Sida vid sida"],
+  ["3d", "3D"],
 ];
 
 /** Kort förklaring av vad man tittar på: 2–3 meningar, anpassad efter vy och läge. */
@@ -26,7 +26,7 @@ export function lasKartan(vy: ProjektVy, lage: Lage): string {
       ? "Skillnad visar bara det som ändrats: blått är färre soltimmar, rött är fler."
       : "Skillnad visar bara det som ändrats: rött är djupare vatten efter förändringen, blått är grundare.",
     svep: "Dra reglaget under kartan: till vänster syns före, till höger efter.",
-    sidavid: "Före till vänster och efter till höger; kartorna följs åt när du flyttar eller zoomar.",
+    "3d": "I 3D visas skillnaden: kameran följer kartan, och fasaderna kan färgas med värdet.",
   };
   return `${farger} ${grått} ${lagestext[lage]} Kvarteret är påhittat.`;
 }

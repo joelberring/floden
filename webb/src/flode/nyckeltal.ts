@@ -13,25 +13,6 @@ export interface Marksiffror {
   max_okning: number;
 }
 
-export interface VattenIntervallSvar {
-  sammanfattning?: {
-    antal_noder?: number | null;
-    antal_monoton_garanterad?: number | null;
-    antal_bifurkationspaverkade?: number | null;
-    storsta_min_djup_m?: number | null;
-    storsta_max_djup_m?: number | null;
-  };
-  klimatfaktor_intervall?: [number, number] | null;
-}
-
-export interface SvfIntervallSvar {
-  osakerhet_byggnad_m?: number | null;
-  svf_min_medel?: number | null;
-  svf_max_medel?: number | null;
-  bredd_max?: number | null;
-  antal_osakra_celler?: number | null;
-}
-
 export interface MknIntervallSvar {
   min_dygn_over_grans?: number | null;
   max_dygn_over_grans?: number | null;
@@ -69,10 +50,6 @@ export interface Underlag {
   efterLagrat_m3?: number | null;
   /** Svaret från `POST /api/analys/ekologi` (K45); null när det saknas. */
   ekologi?: EkologiSvar | null;
-  /** Svaret från `POST /api/analys/intervall`; null när det saknas. */
-  vattenIntervall?: VattenIntervallSvar | null;
-  /** Svaret från `POST /api/analys/svf-intervall`; null när det saknas. */
-  svfIntervall?: SvfIntervallSvar | null;
 }
 
 export interface EkologiLage {
@@ -222,44 +199,19 @@ export function nyckeltal(amne: Amne, u: Underlag): Tal[] {
     ];
   }
   if (amne === "vatten") {
-    const iv = u.vattenIntervall?.sammanfattning;
-    const djupIv =
-      iv && nummer(iv.storsta_min_djup_m) !== null && nummer(iv.storsta_max_djup_m) !== null
-        ? intervallText([iv.storsta_min_djup_m as number, iv.storsta_max_djup_m as number], (x) => tal(x, 2, "m"))
-        : "";
-    const bas: Tal[] = [
-      { etikett: "Största djup före", varde: tal(nummer(u.foreDjup_m), 2, "m"), ...(djupIv ? { under: `Osäkerhetsintervall: ${djupIv}` } : {}) },
+    return [
+      { etikett: "Största djup före", varde: tal(nummer(u.foreDjup_m), 2, "m") },
       { etikett: "Största djup efter", varde: tal(nummer(u.efterDjup_m), 2, "m") },
       { etikett: "Största ökning i en ruta", varde: tal(s?.max_okning, 2, "m") },
       { etikett: "Yta där djupet minskar", varde: tal(s?.yta_minskning_m2, 0, "m²") },
     ];
-    if (iv && nummer(iv.antal_noder) !== null) {
-      const nTot = formatera(iv.antal_noder as number, 0);
-      const nMono = nummer(iv.antal_monoton_garanterad) === null ? "–" : formatera(iv.antal_monoton_garanterad as number, 0);
-      const nBif = nummer(iv.antal_bifurkationspaverkade) === null ? "–" : formatera(iv.antal_bifurkationspaverkade as number, 0);
-      bas.push(
-        { etikett: "Monotont garanterade noder", varde: `${nMono} av ${nTot}` },
-        { etikett: "Bifurkationspåverkade noder", varde: nBif },
-      );
-    }
-    return bas;
   }
-  const sol: Tal[] = [
+  return [
     { etikett: "Mark som förlorar sol", varde: tal(s?.yta_minskning_m2, 0, "m²") },
     { etikett: "Största minskning", varde: tal(s?.max_minskning, 1, "timmar") },
     { etikett: "Mark som får mer sol", varde: tal(s?.yta_okning_m2, 0, "m²") },
     { etikett: "Största ökning", varde: tal(s?.max_okning, 1, "timmar") },
   ];
-  const svf = u.svfIntervall;
-  if (svf && nummer(svf.svf_min_medel) !== null && nummer(svf.svf_max_medel) !== null) {
-    const svfIv = intervallText([svf.svf_min_medel as number, svf.svf_max_medel as number], (x) => formatera(x, 2));
-    const bredd = nummer(svf.bredd_max);
-    sol.push(
-      { etikett: "Medel-SVF (intervall)", varde: svfIv || "–", ...(bredd !== null ? { under: `Största cellbredd ${formatera(bredd, 2)}` } : {}) },
-      { etikett: "Osäkra SVF-celler", varde: nummer(svf.antal_osakra_celler) === null ? "–" : formatera(svf.antal_osakra_celler as number, 0) },
-    );
-  }
-  return sol;
 }
 
 /** Formaterar svaret från `POST /api/analys/luft-mkn` (inga värden räknas fram i klienten). */

@@ -5,6 +5,7 @@
  */
 import type { Origo, Vec3 } from "./koord.ts";
 import { franScen } from "./koord.ts";
+import { talFormat } from "../tal.ts";
 
 export interface Traff {
   e: number;
@@ -43,7 +44,7 @@ export function straleMotHojdfalt(ursprung: Vec3, riktning: Vec3, hojd: (e: numb
   return null;
 }
 
-const TAL = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
+const TAL = talFormat(1);
 
 export interface FasadVarden {
   vsc: number | null;

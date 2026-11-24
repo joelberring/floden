@@ -1,0 +1,207 @@
+/* Kartan, 3D-vyn och lagerpanelen: delas av stegen i flödet (webb/src/flode/). Stilen använder temats variabler. */
+
+.liten-text {
+  font-size: 12px;
+}
+
+.kartmotor .maplibregl-canvas {
+  outline: none;
+}
+.kartnotis,
+.kartetikett {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--f-text);
+  font: 11px var(--f-font-mono);
+  padding: 4px 8px;
+  border: 1px solid var(--f-linje-stark);
+}
+.kartnotis {
+  right: 8px;
+  bottom: 36px;
+}
+.kartetikett {
+  white-space: nowrap;
+}
+.kartmotor .maplibregl-ctrl-scale {
+  font-family: var(--f-font-mono);
+  border-color: var(--f-text);
+  color: var(--f-text);
+}
+
+
+.lagerpanel {
+  display: grid;
+  gap: 8px;
+}
+.lager-grupp {
+  border-top: 1px solid var(--f-linje);
+  padding-top: 6px;
+}
+.lager-grupp:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.lager-grupp-rubrik {
+  margin: 0;
+  font-size: 13px;
+}
+.lager-fall {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  color: var(--f-text);
+}
+.lager-pil {
+  display: inline-block;
+  width: 14px;
+  font-family: var(--f-font-mono);
+}
+.kl-lista,
+.scen-lista {
+  display: grid;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.kl-rad {
+  display: block;
+  min-height: 0;
+  grid-template-columns: none;
+  border: 1px solid var(--f-linje-svag);
+  padding: 6px 8px;
+  background: #fff;
+}
+.kl-rad input[type="range"] {
+  accent-color: var(--f-text);
+}
+.kl-rad[draggable="true"] {
+  cursor: grab;
+}
+.kl-rad.otillganglig {
+  color: var(--f-text-inaktiv);
+}
+.kl-topp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.kl-namn {
+  flex: 1;
+  font-size: 13px;
+}
+.kl-knappar {
+  display: inline-flex;
+  gap: 4px;
+}
+.ikonknapp {
+  min-width: 28px;
+  min-height: 28px;
+  border: 1px solid var(--f-linje);
+  background: #fff;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--f-text);
+}
+.ikonknapp:disabled {
+  color: var(--f-text-inaktiv);
+  cursor: default;
+}
+.ikonknapp[aria-pressed="true"] {
+  background: var(--f-text);
+  color: #fff;
+}
+.kl-opacitet {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: center;
+  padding-top: 2px;
+}
+.kl-opacitet input {
+  width: 100%;
+  min-height: 24px;
+}
+.kl-hjalp {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--f-text-dampad);
+}
+
+
+.ikonknapp:focus-visible {
+  outline: 2px solid var(--f-text);
+  outline-offset: 2px;
+}
+
+/* 3D-vyn (kartsida3d.ts, vy3d/): en egen yta i stället för kartan, samma storlek */
+.vy3d-duk {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  outline: none;
+}
+.vy3d-laddar {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+}
+.vy3d-knappar {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  z-index: 3;
+}
+.vy3d-hjalp {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  margin: 0;
+  font: 11px var(--f-font-mono);
+  background: rgba(255, 255, 255, 0.9);
+  padding: 2px 6px;
+  z-index: 3;
+  pointer-events: none;
+}
+.vy3d-delare {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--f-linje-stark);
+  pointer-events: none;
+  z-index: 2;
+}
+.vy3d-delare[hidden] {
+  display: none;
+}
+
+/* Varningsrad i felvisning.ts (frågesidan och körningar). */
+.varnings-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--f-text-sekundar);
+  border-left: 3px solid var(--f-linje-stark);
+  padding-left: 8px;
+}
