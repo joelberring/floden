@@ -184,6 +184,15 @@ _EKO_FORBJUDET: Final[tuple[str, ...]] = (
 )
 
 
+_EKO_BORTTAGNING: Final[re.Pattern[str]] = re.compile(
+    r"\b(tas bort|tas ned|tagits bort|avverkas|fälls|försvinner|går förlorad\w*|förloras|kopplas bort|"
+    r"kapas|bryts|isoleras|kopplar ihop|kopplas ihop|förbinder)\b|\bdungen\b",
+    re.I,
+)
+_EKO_KONTAKTMATT: Final[re.Pattern[str]] = re.compile(r"\.(eca_m2|pc|delta_eca_m2|delta_eca_procent|delta_pc)$")
+_EKO_ALTERNATIV: Final[re.Pattern[str]] = re.compile(r"\balternativ\w* (väg|vägar|passage\w*|förbindelse\w*)\b|\bomväg\w*", re.I)
+
+
 def ekologifel(p: Pastaende, text: str) -> list[str]:
     """Ekologi (skiss): NMD ger potentiell livsmiljö med okänd kvalitet; inget om verklig förekomst."""
     if not any(b.losare == "ekologi.konnektivitet" for b in p.belagg):
@@ -201,6 +210,36 @@ def ekologifel(p: Pastaende, text: str) -> list[str]:
                 f"{_pid(p)}: '{fras}' är en slutsats om verklig förekomst eller kvalitet. "
                 "Beräkningen visar potentiell livsmiljö och en modell för spridning, inte arternas förekomst."
             )
+    fel += _borttagningsfel(p, text)
+    return fel
+
+
+def _borttagningsfel(p: Pastaende, text: str) -> list[str]:
+    """Kontrollfallet i `docs/utredningar-stockholm/ekologi.md`: en dunge tas bort och underlaget är en habitatkarta.
+
+    Ett påstående om vad som händer när ett habitat tas bort eller en förbindelse bryts kräver
+    kontakten (ECA eller PC) före och efter, eller en jämförelse av dem, och att en alternativ väg
+    redovisas (finns den inte i underlaget ska texten säga det). Med bara habitatkartan
+    (fläckar och area) får påståendet säga att planen berör ett modellerat samband."""
+    m = _EKO_BORTTAGNING.search(text_utan_platshallare(text))
+    if m is None:
+        return []
+    kontakt = [b for b in p.belagg if _EKO_KONTAKTMATT.search(b.adress)]
+    fore_efter = any(b.adress.startswith("ekojamforelse.") for b in kontakt) or (
+        len({s for b in kontakt for s in b.scenarier}) >= 2
+    )
+    fel: list[str] = []
+    if not fore_efter:
+        fel.append(
+            f"{_pid(p)}: texten säger '{m.group(0)}', men beläggen visar inte kontakten (ECA eller PC) "
+            "före och efter. Med bara habitatkartan kan rapporten säga att planen berör ett modellerat "
+            "samband; frågan om förändrad konnektivitet får status underlag saknas."
+        )
+    if not _EKO_ALTERNATIV.search(text):
+        fel.append(
+            f"{_pid(p)}: texten säger '{m.group(0)}' utan att redovisa en alternativ väg. Redovisa "
+            "alternativa vägar för arten, eller skriv att de inte är undersökta."
+        )
     return fel
 
 

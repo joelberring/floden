@@ -29,7 +29,7 @@ from tests.demovarld.test_demo import Demo
 from tests.rapport.test_skissrapport import Miljo, _norm, _text_docx, _text_pdf
 
 REPO = Path(__file__).resolve().parents[2]
-EK = tuple(f"EK-{i:02d}" for i in range(1, 13))
+EK = tuple(f"EK-{i:02d}" for i in range(1, 16))
 SYFTE = "Skissa hur ett nytt hus påverkar ett skogsspridningssamband för barrskogsmesar"
 
 
@@ -57,12 +57,13 @@ def r(m: Miljo) -> Rapport:
 # ------------------------------------------------------------------ frågor
 
 
-def test_ek_ar_ett_eget_omrade_och_den_granskade_katalogen_ar_oforandrad() -> None:
-    granskad = Fragekatalog.las()
-    assert len(granskad.fragor) == 75 and not any(f.id.startswith("EK") for f in granskad.fragor)
+def test_ek_ar_ett_omrade_i_huvudkatalogen_och_ingen_separat_fil() -> None:
+    katalog = Fragekatalog.las()
+    assert len(katalog.fragor) == 90
+    assert not (REPO / "docs" / "utredningar-stockholm" / "fragor_ekologi.json").exists()
     alla = Fragekatalog.las_alla()
+    assert alla.fragor == katalog.fragor
     assert [f.id for f in alla.for_amne("ekologi")] == list(EK)
-    assert alla.fragor[:75] == granskad.fragor
     for f in alla.for_amne("ekologi"):
         assert f.omrade == "ekologi" and f.kallor and all(k in alla.kallor for k in f.kallor), f.id
         assert all(alla.kallor[k]["titel"] for k in f.kallor)
@@ -71,8 +72,8 @@ def test_ek_ar_ett_eget_omrade_och_den_granskade_katalogen_ar_oforandrad() -> No
 def test_formagetabellen_stammer_med_koden_och_dokumentet() -> None:
     assert set(EK) <= set(FLODEN_FORMAGA)
     assert formagetabell_markdown("ekologi") in (REPO / "docs" / "RAPPORTER.md").read_text(encoding="utf-8")
-    assert {f for f in EK if FLODEN_FORMAGA[f].forval_status == "visat"} == {"EK-02", "EK-04", "EK-05"}
-    assert fraga_med_formaga(Fragekatalog.las_alla().hamta("EK-05"))["floden"]["adresser"]
+    assert {f for f in EK if FLODEN_FORMAGA[f].forval_status == "visat"} == {"EK-03", "EK-08"}
+    assert fraga_med_formaga(Fragekatalog.las_alla().hamta("EK-08"))["floden"]["adresser"]
 
 
 def test_bestallning_for_ekologi() -> None:
@@ -159,7 +160,7 @@ def test_varje_tal_i_rapporten_har_belagg(r: Rapport) -> None:
 
 
 def test_texten_har_signalart_kalla_etikett_och_antagande(r: Rapport, m: Miljo) -> None:
-    ek02 = next(p for p in r.pastaenden if p.fraga_id == "EK-02").fylld_text()
+    ek02 = next(p for p in r.pastaenden if p.fraga_id == "EK-03").fylld_text()
     assert "Signalart: tofsmes och talltita" in ek02 and "Källa: Bovin" in ek02
     alla = " ".join(p.fylld_text() for p in r.pastaenden).lower()
     assert "potentiell livsmiljö, okänd kvalitet" in alla
@@ -214,18 +215,49 @@ def test_inplanterat_fel_stoppar_exporten(m: Miljo) -> None:
     ],
 )
 def test_ekologifel_vagras(m: Miljo, text: str, fel: str) -> None:
-    best = m.rt.bestallning_skapa(syfte=SYFTE, amnen=["ekologi"], projekt="demokvarteret", fragor=["EK-05"])
+    best = m.rt.bestallning_skapa(syfte=SYFTE, amnen=["ekologi"], projekt="demokvarteret", fragor=["EK-08"])
     rr = m.rt.skapa(projekt="demokvarteret", korningar=["demo-ekologi"], bestallning=best)
-    kw = next(k for k in pastaenden(kontekst_fran_rapport(m.rt, rr), rr.fragor) if k["fraga_id"] == "EK-05")
+    kw = next(k for k in pastaenden(kontekst_fran_rapport(m.rt, rr), rr.fragor) if k["fraga_id"] == "EK-08")
     kw = {**kw, "text": f"{text} {{{{matt:{kw['belagg'][0]}}}}}"}
     with pytest.raises(PastaendeFel, match=fel):
         m.rt.lagg_till_pastaende(rr.rapport_id, forfattare="ai", **kw)
 
 
-def test_tal_utan_platshallare_vagras(m: Miljo) -> None:
-    best = m.rt.bestallning_skapa(syfte=SYFTE, amnen=["ekologi"], projekt="demokvarteret", fragor=["EK-05"])
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ("Dungen tas bort och sambandet bryts. Alternativa vägar har inte undersökts.", "före och efter"),
+    ],
+)
+def test_borttagning_med_bara_habitatkartan_vagras(m: Miljo, text: str, match: str) -> None:
+    """Kontrollfallet i ekologi.md: bara habitatkartan (fläckar, area) räcker inte för att säga vad som händer."""
+    best = m.rt.bestallning_skapa(syfte=SYFTE, amnen=["ekologi"], projekt="demokvarteret", fragor=["EK-10"])
     rr = m.rt.skapa(projekt="demokvarteret", korningar=["demo-ekologi"], bestallning=best)
-    kw = next(k for k in pastaenden(kontekst_fran_rapport(m.rt, rr), rr.fragor) if k["fraga_id"] == "EK-05")
+    kw = next(k for k in pastaenden(kontekst_fran_rapport(m.rt, rr), rr.fragor) if k["fraga_id"] == "EK-10")
+    habitat = next(b for b in kw["belagg"] if b.endswith(".antal_flackar"))
+    nytt = {**kw, "belagg": [habitat], "text": f"{text} Antal fläckar {{{{matt:{habitat}}}}}."}
+    with pytest.raises(PastaendeFel, match=match):
+        m.rt.lagg_till_pastaende(rr.rapport_id, forfattare="ai", **nytt)
+
+
+def test_borttagning_kraver_kontakt_fore_efter_och_alternativ_vag(m: Miljo) -> None:
+    best = m.rt.bestallning_skapa(syfte=SYFTE, amnen=["ekologi"], projekt="demokvarteret", fragor=["EK-08"])
+    rr = m.rt.skapa(projekt="demokvarteret", korningar=["demo-ekologi"], bestallning=best)
+    kw = next(k for k in pastaenden(kontekst_fran_rapport(m.rt, rr), rr.fragor) if k["fraga_id"] == "EK-08")
+    delta = next(b for b in kw["belagg"] if "delta_eca_m2" in b)
+    # kontakten före och efter finns men ingen alternativ väg redovisas
+    utan_alt = {**kw, "text": f"Dungen tas bort och ECA skiljer {{{{matt:{delta}}}}}."}
+    with pytest.raises(PastaendeFel, match="alternativ väg"):
+        m.rt.lagg_till_pastaende(rr.rapport_id, forfattare="ai", **utan_alt)
+    # kontakt före och efter samt en alternativ väg (här: ej undersökt) godtas
+    med_alt = {**kw, "text": f"Dungen tas bort och ECA skiljer {{{{matt:{delta}}}}}. Alternativa vägar för arten är inte undersökta."}
+    m.rt.lagg_till_pastaende(rr.rapport_id, forfattare="ai", **med_alt)
+
+
+def test_tal_utan_platshallare_vagras(m: Miljo) -> None:
+    best = m.rt.bestallning_skapa(syfte=SYFTE, amnen=["ekologi"], projekt="demokvarteret", fragor=["EK-08"])
+    rr = m.rt.skapa(projekt="demokvarteret", korningar=["demo-ekologi"], bestallning=best)
+    kw = next(k for k in pastaenden(kontekst_fran_rapport(m.rt, rr), rr.fragor) if k["fraga_id"] == "EK-08")
     with pytest.raises(PastaendeFel, match="belägg"):
         m.rt.lagg_till_pastaende(rr.rapport_id, forfattare="ai", **{**kw, "text": kw["text"] + " ECA är 25000 m²."})
 
