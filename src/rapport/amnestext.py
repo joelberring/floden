@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Mallens ämnesspecifika text: skyfall (R1) samt dagsljus/sol och ekologi (R2).
+"""Mallens ämnesspecifika text: skyfall (R1) samt dagsljus/sol, ekologi och luft (R2).
 
 Allt här är fast text (utan tal ur körningar) som skissmallen, kartorna och kontrollen delar.
 Skyfalls texter är oförändrade sedan R1. Beställningen (K30) styr ingressen: syfte, skede och
@@ -49,6 +49,7 @@ TITEL: Final[dict[str, str]] = {
     "skyfall": "Skissunderlag skyfall",
     "dagsljus": "Skissunderlag dagsljus och sol",
     "ekologi": "Skissunderlag ekologi: grön infrastruktur och spridningssamband",
+    "luft": "Skissunderlag luft: PM10 mot miljökvalitetsnormen som intervall",
 }
 
 
@@ -168,6 +169,8 @@ def fragenamn(r: Rapport) -> str:
         return "skyfallsfrågorna"
     if r.amne == "ekologi":
         return "ekologifrågorna"
+    if r.amne == "luft":
+        return "luftfrågorna"
     prefix = {f[:2] for f in r.fragor}
     if prefix == {"DL"}:
         return "dagsljusfrågorna"
@@ -177,7 +180,7 @@ def fragenamn(r: Rapport) -> str:
 
 
 def amnesnamn(r: Rapport) -> str:
-    return {"skyfall": "Skyfall", "dagsljus": "Dagsljus och sol", "ekologi": "Ekologi"}[r.amne]
+    return {"skyfall": "Skyfall", "dagsljus": "Dagsljus och sol", "ekologi": "Ekologi", "luft": "Luft"}[r.amne]
 
 
 def ingress(r: Rapport, sbk: bool, demo: bool) -> str:
@@ -205,6 +208,10 @@ def ingress(r: Rapport, sbk: bool, demo: bool) -> str:
         sak = "sol på marken och dagsljus vid fasad före och efter förslaget"
     elif r.amne == "ekologi":
         sak = "grön infrastruktur och spridningssamband för en signalart före och efter förslaget"
+    elif r.amne == "luft":
+        sak = (
+            "PM10 mot dygnsnormen för luft som intervall, ur en given timserie och en angiven bakgrund"
+        )
     else:
         sak = "skyfall före och efter förslaget"
     if b is None:
@@ -275,6 +282,19 @@ def _urvalstext(r: Rapport, roll: str) -> str:
 
 
 def resultatintro(r: Rapport, sbk: bool, bilref: str) -> str:
+    if r.amne == "luft":
+        if sbk:
+            return (
+                "Resultatet redovisas som intervall för PM10: antal dygn över gränsen per år, årsmedel och "
+                "90,4-percentil, ur en given timserie och en angiven bakgrund. Det finns ingen karta. Talen i "
+                "texten är framräknade av Floden ur serien. Varje tal har ett belägg i "
+                f"{bilref}. Intervallet är en känslighet för två faktorer, inte en statistisk konfidens."
+            )
+        return (
+            "Resultatet är intervall för PM10 (antal dygn över gränsen, årsmedel och 90,4-percentil) ur en given "
+            "timserie och en angiven bakgrund; ingen karta. Talen i texten är ifyllda av Floden ur körningen; "
+            f"varje tal har ett belägg i {bilref}. Intervallet är en känslighet, ingen statistisk konfidens."
+        )
     if r.amne == "ekologi":
         if sbk:
             return (
@@ -316,6 +336,33 @@ def resultatintro(r: Rapport, sbk: bool, bilref: str) -> str:
 
 def osakerhet(r: Rapport, sbk: bool, bilaga1: str) -> tuple[str, list[str]]:
     """Inledning och punkter under "Metod och osäkerhet" (utöver metodnotis och metodtabell)."""
+    if r.amne == "luft":
+        if sbk:
+            return "Resultatet ska läsas med följande begränsningar:", [
+                "Metoden är en skiss. Floden räknar inte fram halten: det lokala haltbidraget är en given "
+                "timserie från ett annat verktyg, och Floden har inte granskat serien eller hur den togs fram.",
+                "Bakgrunden är ett antagande: en konstant halt som läggs till hela serien. Dess källa ansvarar "
+                "den för som angav bakgrunden; Floden prövar den inte.",
+                "Intervallet är en känslighet för två faktorer (källstyrka och utspädning) på det lokala "
+                "bidraget. Det är inte en statistisk konfidens och täcker inte osäkerheten i serien, "
+                "bakgrunden eller vädret.",
+                "Antal dygn över gränsen gäller de hela dygn som serien har. En serie som inte är ett helt år "
+                "kan inte jämföras med normen för ett år.",
+                "Korsar intervallet gränsen kan underlaget varken säga att normen klaras eller att den "
+                "överskrids. Frågan behöver då utredas vidare.",
+                "Före och efter förslaget kräver två serier från samma externa modell, med samma bakgrund, "
+                "samma faktorintervall och samma gräns.",
+                f"{bilaga1} anger för varje tal vad det mäter och vilken körning och fil det kommer ur.",
+            ]
+        return "Begränsningar:", [
+            "Metoden är en skiss: haltbidraget är en given extern timserie, inte beräknat av Floden.",
+            "Bakgrunden är ett antagande (konstant halt); dess källa prövas inte av Floden.",
+            "Intervallet är en känslighet för två faktorer, ingen statistisk konfidens.",
+            "Antal dygn över gränsen gäller bara de hela dygn som serien har.",
+            "Korsar intervallet gränsen sägs varken att normen klaras eller att den överskrids.",
+            "Före och efter kräver två serier från samma externa modell med samma bakgrund, faktorer och gräns.",
+            f"Varje beläggs tidsdefinition och statistik står i {bilaga1}.",
+        ]
     if r.amne == "ekologi":
         if sbk:
             return "Resultatet ska läsas med följande begränsningar:", [

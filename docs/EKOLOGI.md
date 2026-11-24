@@ -26,8 +26,12 @@ Varje nätverk är en TOML-fil i `data/ekologi/natverk/`, en per nätverk och k�
 | `tofsmes-`, `kungsfagel-`, `brun-guldbagge-`, `storre-vattensalamander-sodertalje` | Södertälje 2020 | | Södertälje 2020 | endast d50 (inget motstånd i källan) |
 | `mindre-hackspett-goteborg-2023` | Göteborg 2023:11 | mindre hackspett | Göteborg 2023 | kvalitetskälla (ingen friktion i källan) |
 
-Förval per kommun står i `data/ekologi/kommuner.toml`: Stockholm kör Stockholms nätverk lokalt och Nackas NMD-nätverk på servern,
-Göteborg kör Nackas NMD-nätverk med Göteborg 2023:11 som lokal kvalitetskälla för mindre hackspett.
+Förval per kommun står i avsnittet `[ekologi]` i kommunens egen fil, `data/kommuner/<kommun>.toml` (kontrakt `floden-kommun/v1`;
+`src/kommuner/konfig.py` validerar det strikt, och `ekologi.kommunforval()` kontrollerar nätverks-id mot nätverksfilerna). Stockholm
+kör Stockholms nätverk lokalt och Nackas NMD-nätverk på servern, Göteborg kör Nackas NMD-nätverk med Göteborg 2023:11 som lokal
+kvalitetskälla för mindre hackspett. Avsnittet är valfritt: en kommun utan det har inget förval. En ny kommun får sitt förval genom att
+kommunfilen får ett `[ekologi]`-avsnitt (`forval_server`, `forval_lokalt`, `[ekologi.kvalitetskallor]`, `anmarkning`); den gamla filen
+`data/ekologi/kommuner.toml` är borttagen.
 
 Varje värde har `kalla`, `sida`, `typ` (uppmätt, litteratur, modell, expertbedömning eller **antagande**) och `sakerhet`. Det som
 saknas i källan står som `[[saknas]]` eller som ett uttryckligt antagande. Exempel som är antaganden i Floden och inte värden ur
@@ -42,8 +46,9 @@ källan:
   som jämförelsescenario ("snävt") vid huvudscenariots tröskel och redovisas bredvid kandidaterna.
 - **Resultatet kallas "potentiell livsmiljö, okänd kvalitet"** (webb, API och `ekologi.json`, fältet `resultat_etikett`) eftersom
   ålder, naturvärde och trädinventering saknas. Det visar hur marktyperna hänger ihop, inte gammal skog.
-- **Valfritt lager för inventerade gamla ädellövträd** (punkter som blir noder även på öppen mark) finns i datamodellen
-  (`[[valfritt_lager]]` i `adellov-nacka.toml`, status "inte byggt") och i PLAN; lösaren läser det inte än.
+- **Valfritt lager för inventerade gamla ädellövträd** (punkter som blir noder även på öppen mark): byggt, se avsnittet
+  "Valfritt trädlager" nedan. Buffert 20 m är Nackas värde (litteratur); trädklass 116, undantaget från minsta area och artlistan
+  är antaganden i Floden.
 - **d50 = tröskel/2** där källan bara anger en tröskel (se nedan).
 - **Motstånd för NMD 126–127** i ädellövsambandet (saknas i Nackas tabell 1; eget modellval, typ `antagande`, 2 som 124–125). Redovisas separat i resultatet (`natverk.antagna_motstand`).
 - **Minsta area** för groddjursnätverket (saknas i källan; varje sammanhängande habitatyta räknas).
@@ -65,6 +70,54 @@ De körs bara lokalt, med indata `biotopraster` och parametern `biotop_klasskode
    (`[d50_antagande]`) anger antagandet; kvoten 0,5 är samma som i Södertälje (d50 1 250/2 500, 750/1 500, 500/1 000). Södertäljes
    d50 är lagda in som egna nätverk men går inte att köra, eftersom huvudrapporten saknar motståndslistan.
 5. **Före och efter.** Samma körning för bas och för bas plus K9. ΔECA = ECA efter − ECA före.
+
+## Valfritt trädlager (inventerade ädellövträd)
+
+Ett valfritt lager för ädellövsambandet (`adellov-nacka`, `[[valfritt_lager]]` med `status = "byggt"`): inventerade gamla
+ädellövträd som punkter blir habitatnoder **även på öppen mark** (park, hage, gatuträd), där NMD inte ser dem som skog. Inga
+träddata följer med Floden; filen hämtar du själv. Utan lagret är körningen oförändrad.
+
+**Konfiguration** (allt i `data/ekologi/natverk/adellov-nacka.toml`, varje värde med källa, typ och säkerhet):
+
+| Avsnitt | Värde | Belägg |
+| --- | --- | --- |
+| `[valfritt_lager.buffert]` | `varde_m = 20`: radien i m runt trädpunkten | Nacka 2020: "punktträd buffrades 20 m" (litteratur, måttlig) |
+| `[valfritt_lager.nod]` | `klass = 116` (ädellövskog, en av nätverkets habitatklasser), `undantar_min_area = true`, `ej_pa_klasser = [51, 52, 53, 61, 62]` | **antagande** (låg): källan anger bara bufferten och att färdiga fläckar är minst 0,25 ha |
+| `[valfritt_lager.filter]` | `tradslag` (ek, bok, ask, alm, lönn, lind, avenbok med vanliga sammansättningar och latinska släktnamn); `min_stamomkrets_cm` och `min_diameter_cm` är valfria och **inte satta** | **antagande** (låg): ingen artlista och ingen gräns för stamomkrets i källan |
+| `[valfritt_lager.falt]` | kandidater för fältnamn (trädslag, stamomkrets, diameter) och enhet (cm, m eller mm) | teknisk inställning |
+
+**Så blir ett träd en nod.** En skiva med radien `buffert_m` läggs i klassrastret (NMD 10 m) som klass 116, utom på byggnad (51),
+annan exploaterad yta (52), väg (53) och vatten (61, 62); cellen med själva punkten tas alltid med om den får bli nod. Ritade hus
+(K9) ligger redan som 51 och tar därför bort trädets skiva där de står, så ett nytt hus kan minska nodens yta. Skivan bildar en
+fläck med angränsande habitat i rastret. Fläckar som innehåller en skiva undantas från minsta area (0,25 ha): en 20 m-skiva är
+cirka 1 250 m² och skulle annars aldrig bli en nod. Träd som inte ger några celler (bara hårdgjort runt) eller ligger utanför
+markunderlaget räknas och redovisas som varning. Snävt urval (jämförelsen 111–113/121–123) innehåller inte klass 116 och får därför
+inga trädnoder.
+
+**Inläsning och dataminimering.** GeoPackage, Shapefile eller GeoJSON (valfritt CRS, omprojiceras till EPSG:3011); `Point` krävs,
+andra geometrier avvisas och räknas. Filen läses med en kolumnlista (`columns=`), så **bara punkt, trädslag och stamomkrets/diameter
+(cm)** läses och sparas; adresser, fastighetsuppgifter och inventerarens namn läses aldrig. Saknas fältet för trädslag är det ett fel
+(med filens fältnamn i texten). Urvalet matchar trädslag mot helt namn eller ett ord i namnet (skiftlägesokänsligt). Är en måttgräns
+satt och trädet saknar måttet (omkrets och diameter ersätter varandra via pi) sorteras det bort och antalet redovisas, det
+antas aldrig. Källfilens sha256 ingår i cachenyckeln; filen läggs inte i git.
+
+**Två vägar in.**
+
+- Indata `tradpunkter` (en fil) tillsammans med parametern `anvand_trad = true`, till exempel
+  `parametrar = { natverk = "adellov-nacka", anvand_trad = true }` och `indata = { nmd = "...", tradpunkter = "...gpkg" }`. En
+  `tradpunkter.csv` (de fem kolumnerna nedan) läses också.
+- **Geografins manifest (K46):** `floden geografi mappa <geografi-id> ... --trad <fil>` (valfritt `--trad-natverk` för att välja vilket
+  nätverks fältnamn som gäller, förval `adellov-nacka`) klipper punkterna till kärnan plus kontextbufferten och sparar lagret
+  `lager.tradpunkter` (`tradpunkter.csv` med `e_m`, `n_m`, `tradslag`, `stamomkrets_cm`, `diameter_cm`, och `tradpunkter.json`).
+  Lösaren läser det med indata `geografi` och `anvand_trad = true`. **Öppet eller stängt:** lagret är stängt för MCP tills
+  `--villkor-kontrollerade` anges (som VMI), eftersom trädfilens licens inte är känd av Floden; NMD är CC0 och öppet. Filer ur
+  stadens egna inventeringar bör behandlas som stängda.
+
+**Redovisning.** `ekologi.json` får `natverk.tradlager` (id, ursprung med sha256, antal i filen, i utsnittet och efter urval,
+bortfiltrerade, antal utan nod, antal celler, buffert, klass, urval, belägg per värde och antaganden), `valfria_lager[].anvands`
+och antagandena i `natverk.antaganden`. Resultatet heter fortfarande "potentiell livsmiljö, okänd kvalitet": trädens ålder och
+hålighet ingår inte. **Begränsningar:** NMD-cellen är 10 m, så skivan är en grov bild av 20 m; trädslagslistan och trädklassen är
+Flodens val; ingen riktig trädinventering har körts (testad med påhittade punkter).
 
 ## Intervall: källbaserat
 
@@ -104,7 +157,7 @@ nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt.
 - Webben: steg 4 Resultat, fliken Ekologi: välj habitatnätverk ("Barrskogssamband (Nacka/NMD)"); panelen visar signalart och
   källa på en rad, antaganden och intervallets typ.
 - API: `POST /api/analys/ekologi` med `natverk`; `GET /api/ekologi/natverk` listar nätverk och kommunförval.
-- Lösare: `ekologi.konnektivitet` (K21) med parametern `natverk` och markunderlag på ett av två sätt (aldrig båda):
+- Lösare: `ekologi.konnektivitet` (K21) med parametern `natverk`, valfritt `anvand_trad` (trädlagret ovan) och markunderlag på ett av två sätt (aldrig båda):
   - indata `nmd` (en NMD-fil; `exempel/fragor/demo_ekologi.toml`), eller
   - indata `geografi = ".../<geo-rot>/<id>/<version>/manifest.json"` (K46): lösaren läser `lager.nmd` (och `lager.vmi` med
     `anvand_vmi`), verifierar lagrens sha256, klipper ut rutorna plus kontextbuffert (nätverkets längsta tröskel, 2-5 km, aldrig

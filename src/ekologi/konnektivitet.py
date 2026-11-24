@@ -197,6 +197,7 @@ def berakna_konnektivitet(
     spridning_faktor: float = 1.0,
     extra_barriar_mask: NDArray[np.bool_] | None = None,
     extra_motstand: NDArray[np.float64] | NDArray[np.float32] | None = None,
+    undantag_min_area: NDArray[np.bool_] | None = None,
     berakna_flaskhalsar: bool = False,
     grannskap_kostnad: int = 8,
     grannskap_krets: int = 4,
@@ -213,6 +214,7 @@ def berakna_konnektivitet(
         y_max_m=y_max_m,
         kronhojd_m=kronhojd_m,
         kvalitet=kvalitet,
+        undantag_min_area=undantag_min_area,
     )
     motstand = bygg_motstandsyta(
         markslag,

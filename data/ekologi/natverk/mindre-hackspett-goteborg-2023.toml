@@ -2,7 +2,7 @@
 # docs/ekologi/habitatnatverk-svensk-stadsmiljo.md, avsnittet "Mindre hackspett" (kolumnen Göteborg och andra fältstudier).
 # Göteborg har kartlagt biotoper och inventerat arten men anger ingen numerisk rörelsefriktion och ingen minsta polygon.
 # Nätverket är därför inte körbart (korbar = false). Det används som kvalitetskälla bredvid Nackas NMD-nätverk
-# (data/ekologi/kommuner.toml).
+# (data/kommuner/goteborg.toml, avsnittet [ekologi]).
 format = "floden-habitatnatverk/v1"
 natverk_id = "mindre-hackspett-goteborg-2023"
 namn = "Mindre hackspett, Göteborgs biotopkartering 2023"

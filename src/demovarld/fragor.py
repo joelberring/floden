@@ -10,11 +10,13 @@ import math
 import os
 from pathlib import Path
 
+from demovarld.luftserier import BAKGRUND_UG_M3
 from demovarld.varld import DemoVarld
 
 FRAGA_DAGSLJUS = "demo_dagsljus"
 FRAGA_VATTEN = "demo_vatten"
 FRAGA_EKOLOGI = "demo_ekologi"
+FRAGA_LUFT = "demo_luft"
 EKOLOGI_NATVERK = "barrskog-nacka"
 
 HOJD_MAX_M = 30.0
@@ -192,4 +194,45 @@ utdata = "stromtathet"
 fore = "fore"
 efter = "efter"
 troskel = 0.01
+"""  # noqa: E501
+
+
+def text_luft(v: DemoVarld, fragedir: Path, varld_dir: Path) -> str:
+    """Frågefilen: PM10 mot dygnsnormen (MKN) som intervall, före och efter (påhittade serier)."""
+    bas = _rel(fragedir, varld_dir / "vatten" / "bas")
+    fore = _rel(fragedir, varld_dir / "luft" / "timserie_fore.csv")
+    efter = _rel(fragedir, varld_dir / "luft" / "timserie_efter.csv")
+    bg = f"{BAKGRUND_UG_M3:g}"
+    return f"""# Demo: PM10 mot dygnsnormen (MKN) som intervall, före och efter ett förslag (luft.mkn, K21).
+# Bygg världen och kör frågan med
+#   floden demo
+#
+# SKISS. Lösaren `luft.mkn` räknar INTE fram något haltbidrag: den tar en given timserie av lokalt
+# PM10-bidrag (CSV tid,lokal_ug_m3) från ett annat verktyg, lägger till en bakgrund och skalar bidraget med ett
+# faktorintervall för källstyrka och deposition. Intervallet är en känslighet för de två faktorerna, inte en
+# statistisk konfidens. Här är båda serierna PÅHITTADE (demovarld/luftserier.py, 365 dygn, känt svar) och
+# bakgrunden är påhittad ({bg} µg/m³, konstant, ingen källa). I ett projekt anger frågans beskrivning bakgrundens
+# källa (till exempel SLB-analys) och serierna kommer ur spridningsmodellen som projektet använder.
+#
+# Före och efter är två analyser (en serie var) med samma bakgrund, samma faktorer och samma gräns:
+# jämförbarheten kontrolleras av rapportkontrollen. Scenariot `bas` behövs bara för att frågan ska ha en bas
+# (ingen geometri läses: lösaren är global och har ingen karta).
+kontrakt = "K20/v1"
+fraga_id = "demo-luft"
+beskrivning = "PM10 mot dygnsnormen (MKN) som intervall ur påhittade timserier, före och efter ett förslag. Bakgrunden är påhittad och står som parameter."
+
+[scenarier.bas]
+bas = "{bas}"
+
+[[analyser]]
+id = "mkn_fore"
+losare = "luft.mkn"
+parametrar = {{ bakgrund_ug_m3 = {BAKGRUND_UG_M3} }}
+indata = {{ timserie = "{fore}" }}
+
+[[analyser]]
+id = "mkn_efter"
+losare = "luft.mkn"
+parametrar = {{ bakgrund_ug_m3 = {BAKGRUND_UG_M3} }}
+indata = {{ timserie = "{efter}" }}
 """  # noqa: E501

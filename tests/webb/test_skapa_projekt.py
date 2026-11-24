@@ -180,11 +180,11 @@ def test_avgransning_inom_delvis_utanfor_och_utanfor(v: Varld) -> None:
     assert st == 400 and "utanför geografin" in d["fel"]
     assert len(v.reg.projekt_med_effektiv_roll(v.konton["anna"])) == antal
     assert not (v.rot / "projekt" / "ute").exists()
-    # GeoJSON-polygon blir sin omslutande rektangel, och det sägs.
+    # GeoJSON-polygon sparas som polygon; rektangeln runt den är beräkningsrutan (se test_polygon_avgransning.py).
     i = v.inre(marginal=20)
     poly = {"type": "Polygon", "coordinates": [[[i[0], i[1]], [i[2], i[1]], [i[2], i[3]], [i[0] + 30, i[3]], [i[0], i[1]]]]}
     st, d = skapa(v, "anna", "Poly", poly)
-    assert st == 201 and d["avgransning_3011"] == i and "omslutande rektangel" in d["varningar"][0]
+    assert st == 201 and d["avgransning_3011"] == i and d["avgransning_slag"] == "polygon" and "polygon" in d["info"][0]
 
 
 def test_ogiltig_indata_ger_400_eller_404(v: Varld) -> None:

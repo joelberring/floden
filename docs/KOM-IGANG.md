@@ -202,7 +202,7 @@ En kommun är en fil, `data/kommuner/<id>.toml` (kontrakt `floden-kommun/v1`; f�
 källor och licenser (Lantmäteriets produkter, kommunens WFS för byggnader med tillåtna värdnamn), koordinatsystemet kommunen
 publicerar i (`publicering_epsg`, t.ex. 3007 för Göteborg; Floden räknar alltid i EPSG:3011 och skriver skalfelet),
 testområden (`[omraden.<id>]` med bbox i kommunens system och en motivering), geografier (`[geografier.<id>]`: namn, område
-som kärna, `tillrinning_cell_m`, `max_buffert_m`), dagsljusparametrar och regnförval (`[skyfall] regn_id`). Okända nycklar,
+som kärna, `tillrinning_cell_m`, `max_buffert_m`), dagsljusparametrar, regnförval (`[skyfall] regn_id`) och, valfritt, kommunens förval av habitatnätverk för ekologi (`[ekologi]`, se `docs/EKOLOGI.md`). Okända nycklar,
 http-adresser och värdnamn utanför listan avvisas. Då räcker det att:
 
 1. kopiera `goteborg.toml` till `<id>.toml` och byta källor, område och koordinatsystem,
@@ -210,7 +210,7 @@ http-adresser och värdnamn utanför listan avvisas. Då räcker det att:
 3. `floden geografi mappa <geografi-id> --konto <superadmin>` (bara superadmin), därefter
    `floden projekt skapa --geografi <geografi-id>@v1 --avgransning ... --namn ... --konto <konto-id>`.
    Det går också i webben: **Nytt projekt** på startsidan (`#/nytt`) för superadmin, organisationsadmin och ägare. Välj geografi, rita en
-   rektangel eller polygon (giltig kärna är markerad; en polygon blir sin omslutande rektangel), ange namn och, om du vill,
+   rektangel eller polygon (giltig kärna är markerad; en polygon sparas och avgör vad som räknas till projektet; rutnätet är rektangeln runt den), ange namn och, om du vill,
    "Synligt för organisationen", och tryck **Skapa**. Varningar visas tydligt, och du hamnar i steg 2. En rapport skapas i steg 5
    (**Skapa rapport**, jobbet visar förlopp och ger PDF och Word); samma sak gör MCP-verktygen `projekt_skapa` och `rapport_skapa`.
 

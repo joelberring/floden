@@ -6,17 +6,17 @@ En rapport är en lista *påståenden* (K32) som var och en besvarar en fråga u
 fyller. Före export körs en deterministisk kontroll; ett enda fel stoppar exporten. Beslutat av
 Joel 2026-11-22 (se `BESLUT.md`). Kod: `src/rapport/` (`pastaende`, `belaggskalla`,
 `fragekatalog`, `bestallning`, `skissrapport`, `skisskontroll`, `skissmall`, `amnestext`,
-`skissexport`, `fasadbelagg`, `referensflode`, `referensflode_dagsljus`).
+`skissexport`, `fasadbelagg`, `referensflode`, `referensflode_dagsljus`, `referensflode_luft`, `luftbelagg`).
 Kontrakt: K30, K32 och K33 i `DATAKONTRAKT.md`.
 
 ## Två nivåer
 
 | Nivå | Vad | Status |
 | --- | --- | --- |
-| 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1), **dagsljus och sol** och **ekologi** (R2) |
+| 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1), **dagsljus och sol**, **ekologi** och **luft** (R2) |
 | 2 Publicerbart planunderlag | Bedömning mot bedömningsgrunder, metodnotis och ansvarig utredare, granskning och signering. | R3; fälten finns förberedda i K32/K33 (`bedomningsgrund`, `granskning`, `signering`, `skede`, `revision`) |
 
-Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall, dagsljus/sol och ekologi är klara på nivå 1; luft och buller återstår (avsnittet "Luft och buller: vad som finns och vad som saknas").
+Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall, dagsljus/sol, ekologi och luft är klara på nivå 1; buller är spärrat (avsnittet "Buller: spärrat").
 
 ## Påstående, belägg och platshållare
 
@@ -108,7 +108,7 @@ Fälten (kontraktet står i `DATAKONTRAKT.md`):
   väljer ingressens tonläge och filtrerar frågorna på typ (byggaktören ser föreskrifter, lagar,
   riktvärden, riktlinjer, vägledning och metod; granskaren metod, projektkontroll och föreskrift;
   planhandläggaren alla).
-- **ämnen och frågor**: `dagsljus` och `sol` (hör ihop i en rapport) eller `skyfall`. `fragor`
+- **ämnen och frågor**: `dagsljus` och `sol` (hör ihop i en rapport), `skyfall`, `ekologi` eller `luft` (luft utan scenario). `fragor`
   anger frågor uttryckligen och går före urvalet; `villkor` filtrerar på frågans villkor;
   `bara_med_underlag` tar bara frågor som Floden kan besvara helt eller delvis.
 - **projekt och scenario**: `scenario = {"fore": "bas", "efter": ["hojd", "nytt_hus"]}` väljer
@@ -273,39 +273,93 @@ Barrskogssamband (Nacka 2020, NMD), före och efter ett nytt hus, 15 frågor). E
 lägena; det källbaserade ECA-intervallet är 25 360 till 39 636 m² före och 25 289 till 39 494 m² efter. Det
 är ett påhittat NMD-lager: talen säger inget om verkliga arter.
 
-### Luft och buller: vad som finns och vad som saknas (R3, nivå 1)
+## Skissunderlaget för luft (R2)
 
-Luft och buller har **ingen skissrapport** (`rapport_skapa` ger ett tydligt fel med skäl). Det som gick att bygga är
-kopplingen till belägg för luft; rapportmallen för luft återstår.
+Ämnet `luft` följer ekologins mönster: beställning (K30, ämnet `luft`, **utan scenario**), frågor LU-01 till LU-15,
+körning, rapport, kontroll och export. Underlaget bygger på lösaren `luft.mkn` (K21, `src/karna/luft_losare.py`,
+`docs/LUFT.md` avsnitt 10.3): MKN-intervall för PM10 ur en *given* timserie av lokalt haltbidrag och en uttryckligt
+angiven bakgrund. Det är en sållning, inte en bedömning mot normen.
 
-**Byggt (2026-11-24).**
+**Vad underlaget säger.** Hur många dygn per år som PM10 ligger över dygnsgränsen, som ett intervall (lägsta och
+högsta antal), tillsammans med årsmedel och 90,4-percentil, och om intervallet ligger helt under, helt över eller
+korsar högsta tillåtna antal dygn. Är det två lägen (före och efter) visas båda som två separata analyser (`mkn_fore`,
+`mkn_efter`, samma parametrar, scenariot `bas`) och Floden kontrollerar att bakgrund, faktorintervall och gräns är
+lika. Varje tal är en platshållare `{{matt:matvarde.<analys>.<scenario>.<mått>}}` med belägg ur K0-manifestet
+(`lagst_antal_dygn`, `hogst_antal_dygn`, `arsmedel_*`, `p90_4_*`, `bakgrund_ug_m3` med flera; `belaggskalla.LUFT_MATT`
+och `luftbelagg.LUFT_ADRESSMATT`). Beteckningarna PM10 och PM2,5 är tillåtna i text.
 
-- Lösaren `luft.mkn` (K21, `src/karna/luft_losare.py`, `docs/LUFT.md` avsnitt 10.3): MKN-intervall för PM10 ur en
-  given timserie (CSV `tid,lokal_ug_m3`) och en uttryckligt angiven bakgrund. Ger en K20-körning med K0-manifest.
-- Mått i `MATTKATALOG` (`belaggskalla.LUFT_MATT`): `lagst_antal_dygn`, `hogst_antal_dygn`, `arsmedel_lagst_ug_m3`,
-  `arsmedel_hogst_ug_m3`, `p90_4_lagst_ug_m3`, `p90_4_hogst_ug_m3`, `bakgrund_ug_m3`, `grans_dygn_ug_m3`,
-  `max_dygn_ar_antal_dygn`, `antal_hela_dygn` och faktorgränserna. Adress: `matvarde.<analys>.<scenario>.<mått>`.
-  Enheterna `µg/m³` och `dygn` följer av namnens suffix (`belagg.enhet_for`, additivt).
-- `rapport.r2_domaner.bygg_mkn_tabell_fran_belagg`: MKN-tabell där varje tal är ett belägg (fel lösare eller saknat
-  belägg ger `PastaendeFel`). Tabellen säger bara om intervallet ligger helt under, helt över eller korsar högsta antalet
-  dygn; nivå 1 är sållning, så den skriver inte "klarar MKN". Övriga byggare i modulen tar beräkningsobjekt direkt och är
-  inte rapportväg.
-- Tester: `tests/karna/test_luft_mkn.py` (känt svar), `tests/rapport/test_luft_belagg.py` (belägg via `FlodenTjanst`).
+**Vad underlaget inte säger.**
 
-**Saknas för en luftrapport.**
+- Timserien för lokalt haltbidrag har *räknats fram utanför Floden*. Floden har inte räknat den och har inte granskat
+  hur den togs fram. Texten säger det.
+- Bakgrunden är ett *antagande*: en konstant halt som läggs till hela serien. Texten anger värdet och att den som
+  angav det ansvarar för dess källa; Floden prövar den inte.
+- Intervallet är en känslighet för två faktorer (källstyrka, utspädning eller deposition), inte en statistisk
+  konfidens, och täcker inte osäkerheten i serien, bakgrunden eller vädret.
+- Före och efter kräver två serier från samma externa modell. Med en serie redovisas bara ett läge, och texten säger att
+  en jämförelse kräver två serier. Att serierna är jämförbara i övrigt (modell, väder, trafikår, bakgrundsår) går inte
+  att kontrollera.
+- Det finns ingen karta, ingen geometri och ingen spridningsberäkning; kvävedioxid, PM2,5 och årsmedelsnormen räknas
+  inte. Floden räknar inte fram något haltbidrag.
+- Korsar intervallet gränsen kan underlaget *varken* säga att normen klaras *eller* att den överskrids; texten har en
+  fast mening för det (`referensflode_luft`).
 
-- Timserien för lokalt haltbidrag kommer inte ur Floden: `luft.halt` ger bara årsmedel. Serien måste komma ur ett annat
-  verktyg, och bakgrunden är en källbelagd siffra som frågan anger. Intervallet är en känslighet för två faktorer.
-- Ingen rapportmall: `AMNEN_NIVA1`/`_AMNESDOMAN`, ämnestext, LU-01 till LU-15 i `FLODEN_FORMAGA`, en luftkontroll i
-  `skisskontroll` (nivå 1 får inte säga att något klarar normen), ett referensflöde och en demokörning med en påhittad serie.
-  Rapportens kartor och jämförelser är rasterbaserade; luft-MKN har ingen karta.
-- Luft-MKN före och efter förutsätter två serier (en per läge) från samma externa modell.
-- Den tillståndslösa `POST /api/analys/luft-mkn` ger fortfarande inga belägg; rapportvägen är lösaren.
+**Kontrollen inför export** (`skisskontroll.luftfel`, `_lufttext`, mening för mening). Den stoppar:
 
-**Buller är spärrat.** Nord2000-kärnan har `nord2000_konform = False` (testsvit N ej godkänd; se STATUS.md) och är spärrad
-för rapport (`docs/MATEMATIK.md`). `rapport.r2_domaner.buller_spar()` läser kärnans flagga och ger skälet som
-`rapport_skapa` visar; spärren hävs inte här. Bullerskärmsvalet (CELF, `buller.optimering`) tar nivåer som indata och har
-ingen körning med belägg. Nord2000-koden är orörd.
+- påståenden om att normen klaras, uppfylls eller hålls, eller överskrids, när intervallet korsar gränsen, när
+  beläggen för lägsta, högsta och högsta tillåtna antal dygn saknas, när riktningen motsägs av beläggen, eller när
+  meningen inte nämner att det är ett intervall (negation och förbehåll som "varken ... eller" och "kan inte säga" är
+  tillåtna);
+- att årsmedlet jämförs med normen, att Floden "har beräknat" halten eller spridningen (utom när meningen säger att
+  serien räknats fram utanför Floden) och ordet konfidens utan negation;
+- en rapport som saknar de fasta antagandemeningarna (serien utanför Floden, bakgrunden som antagande, inte en
+  statistisk konfidens, metoden är en skiss, två separata serier eller att det kräver två serier), och en luftrapport
+  utan körning med `luft.mkn`.
+
+`rapport_skapa` med ämnet luft och ett scenario i beställningen ger ett fel (luft-analyserna är inte scenarier), och
+utan en analys med `luft.mkn` i körningen ett fel med skäl. Webbens "Skapa rapport" (`POST /api/projekt/<id>/rapporter`)
+kör inte luft: det ger 409 med förklaringen att en serie och en bakgrund behövs och att rapporten kan skapas via MCP,
+som för ekologi. Demon har två påhittade timserier (`demovarld.luftserier`, 365 dygn, bakgrund 12,0 µg/m³; fråga
+`exempel/fragor/demo_luft.toml`, körning `demo-luft`).
+
+**Frågorna LU-01 till LU-15** ligger i huvudkatalogen `docs/utredningar-stockholm/fragor.json` (område luft). Frågetexterna
+är oförändrade. Markeringen per fråga (visat, delvis, underlag saknas, ej tillämpligt) står i `FLODEN_FORMAGA`, och
+tabellen här är samma som koden (test).
+
+| Fråga | Floden i dag | Belägg Floden kan ge | Saknas och varför | Status i demon |
+| --- | --- | --- | --- | --- |
+| LU-01 Vilka miljökvalitetsnormer behöver prövas här? | ej tillämpligt | – | Vilka miljökvalitetsnormer som behöver prövas, normtyp, lagrum och beslutsdatum är en bedömning i ärendet. Underlaget visar bara PM10 mot dygnsnormen (högsta antal dygn över gränsen) ur en given serie; kvävedioxid, PM2,5, bensen och årsmedelnormen prövas inte. | ej tillämpligt |
+| LU-02 Vad visar närmaste representativa station och rätt kartlager? | delvis | Bakgrundshalten (PM10, konstant) som lagts till serien och antalet hela dygn i serien (parametrar med belägg). | Närmaste representativa station, observationsår, datatäckning, normalår och upplösning, och hur bakgrunden skiljer sig från projektets gaturum. Floden läser inga stationsdata eller SLB-lager; bakgrunden är en siffra som den som angav den ansvarar för. | underlag saknas |
+| LU-03 Vilken effekt har själva planen vid samma prognosår? | delvis | Intervallet för antal dygn över gränsen, årsmedel och 90,4-percentil före och efter, ur två serier med samma bakgrund, faktorintervall och gräns (jämförbarheten kontrolleras). | Nuläge, framtid utan plan och med plan med jämförbara trafik- och bakgrundsantaganden för samma prognosår: serierna kommer från ett annat verktyg och Floden kan inte se vilka antaganden de bygger på. Framtid utan plan är en tredje serie som bara finns om den lagts in. Före och efter kräver två serier. | underlag saknas |
+| LU-04 Vilka utsläpp driver dygnstoppar respektive årsmedel? | underlag saknas | – | Trafik per länk, fordonsmix, hastighet, emissionsfaktorer, avgaser, slitage och uppvirvling ingår inte: serien är given. Emissionsmodellen i luftpaketet (L-g) har ingen körning med belägg i rapporten och väntar på trafik- och mätdata. | underlag saknas |
+| LU-05 Hur har spridning och bakgrund beskrivits? | delvis | Bakgrunden (konstant, parameter), faktorintervallen för källstyrka och deposition och antalet hela dygn i serien. | Modell och version, meteorologisk period, vind, gaturummets bredd och höjd, emissionsår, regional eller urban bakgrund och hur dubbelräkning undviks: serien är räknad utanför Floden och bakgrunden är en enda konstant. | underlag saknas |
+| LU-06 Kan den valda modellen beskriva geometrin och vindfältet? | underlag saknas | – | Lösaren luft.mkn har ingen geometri och ingen spridningsberäkning, så sektion, beräkningsdomän och valet mellan gaturumsmodell, lokal 3D-studie och mätning redovisas inte. 3D-modellen (luft.halt, luft.vindkomfort) har ingen rapportväg än. | underlag saknas |
+| LU-07 Var ska respektive norm utvärderas? | underlag saknas | – | Receptorer, höjder och undantagna ytor ingår inte: serien gäller en punkt vars läge körningen inte anger, och luft-MKN har ingen karta. | underlag saknas |
+| LU-08 Finns rätt tidsstatistik för varje jämförelse? | visat | Antal dygn över dygnsgränsen (lägst och högst i intervallet), årsmedel och 90,4-percentil för PM10, med härledning: kalenderdygn som medel av 24 timmar, alla hela dygn i serien, gräns och högsta antal som parametrar. | Svensk NO₂ (båda timvillkoren), PM2,5 och andra ämnen räknas inte. För PM10 gäller dygnsstatistiken bara om serien är ett helt år (annars varnar lösaren och antalet gäller perioden). | visat |
+| LU-09 Hur förhåller sig exponeringen till miljö- och hälsomålen? | underlag saknas | – | Normbedömning och målbedömning (miljö- och hälsomål, WHO) görs inte: nivå 1 jämför inte mot normer, och inga mål eller alternativa placeringar av lek eller vistelse ingår. | underlag saknas |
+| LU-10 Kan osäkerheten ändra slutsatsen? | delvis | Intervallet för antal dygn och årsmedel ur faktorerna för källstyrka och för utspädning eller deposition, och om intervallet ligger helt under, helt över eller korsar högsta antalet dygn. | Variation av trafik, flottans utsläpp, dubbdäck och bakgrund, och jämförelse mot representativa observationer ingår inte. Intervallet är en känslighet för två faktorer, inte en statistisk konfidens. | underlag saknas |
+| LU-11 Vilken åtgärd förbättrar luften just där människor vistas? | delvis | Jämförelse av prövade alternativ (varje serie ställs mot nuläget) med samma mått: intervallet för antal dygn och årsmedel. | Floden föreslår ingen åtgärd; ändrad trafik, gatugeometri, placering av vistelseyta eller drift prövas bara om en serie per alternativ lagts in som analys. Effekt vid samma mottagare och förskjuten exponering redovisas inte. | underlag saknas |
+| LU-12 Kräver byggdamm eller arbetsmaskiner en egen bedömning? | underlag saknas | – | Byggdamm och arbetsmaskiner, arbetsmoment, transportvägar och skyddsåtgärder ingår inte; serien gäller driftläget. | underlag saknas |
+| LU-13 Kan planen träffa någon av länsstyrelsens fem situationer för fördjupad luftbedömning? | ej tillämpligt | – | Vilken av länsstyrelsens fem situationer planen träffar är en bedömning i ärendet; Floden läser inte planens trafikalstring, känsliga användning, vägplanering eller verksamheter. | ej tillämpligt |
+| LU-14 Hur visas normerna där barn kommer att vistas och vad kan ytterligare minska exponeringen? | underlag saknas | – | Gårdsgräns, vistelseytor och möjliga placeringar ingår inte: serien gäller en punkt, och källår för kartläggning och mål om låg halt redovisas inte. | underlag saknas |
+| LU-15 Kan läsaren följa vilken figur som belägger påståendet om den framtida platsen? | delvis | Varje tal har belägg med körning, fil och kontrollsumma, tidsdefinition och statistik; serie, bakgrund och faktorer står i antagandena och bilagorna. | Station eller beräknad mottagare, tidsmått och år knyts inte till en figur: luft-MKN har ingen karta, och serien anger varken plats eller år. | underlag saknas |
+
+
+Exempel: `docs/exempel/skissunderlag_luft_demo.pdf` och `.docx` (påhittat demokvarter, två påhittade serier, 15
+frågor). I läget före ligger antalet dygn över gränsen mellan 6 och 20 per år (helt under högsta 35), i läget efter
+mellan 21 och 46 (korsar 35); årsmedlet före 19,8 till 31,0 µg/m³ och efter 21,9 till 36,2 µg/m³; 90,4-percentilen
+före 21,6 till 35,4 µg/m³ och efter 37,6 till 74,5 µg/m³. Talen är påhittade och säger inget om en verklig plats.
+
+### Buller: spärrat (R3, nivå 1)
+
+Buller har **ingen skissrapport** (`rapport_skapa` ger ett tydligt fel med skäl). Nord2000-kärnan har
+`nord2000_konform = False` (testsvit N ej godkänd; se STATUS.md) och är spärrad för rapport (`docs/MATEMATIK.md`).
+`rapport.r2_domaner.buller_spar()` läser kärnans flagga och ger skälet som `rapport_skapa` visar; spärren hävs inte här.
+Bullerskärmsvalet (CELF, `buller.optimering`) tar nivåer som indata och har ingen körning med belägg. Nord2000-koden
+är orörd.
+
+Äldre byggare: `rapport.r2_domaner.bygg_mkn_tabell_fran_belagg` ger en MKN-tabell där varje tal är ett belägg; övriga
+byggare i modulen tar beräkningsobjekt direkt och är inte rapportväg.
 
 ## Inställningar: språkprofil och layout
 
@@ -458,7 +512,7 @@ Floden.
 
 ## Köra
 
-- **Referensflöde utan AI:** `PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus|ekologi]
+- **Referensflöde utan AI:** `PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus|ekologi|luft]
   [--roll planhandlaggare|byggaktor|granskare] [--alla-fragor] [--exempel docs/exempel]`
   (kräver `floden demo`). Skapar rapporten i `data/lokal/rapporter/<rapport_id>/`, lägger fasta
   påståenden (`rapport.referensflode`, `rapport.referensflode_dagsljus`), kontrollerar och
@@ -468,7 +522,7 @@ Floden.
   `bestallning_hamta`, `fragekatalog_sok`, `rapport_skapa` (med `bestallning_id`),
   `pastaende_lagg_till`, `rapport_kontrollera`, `rapport_exportera`, `rapport_hamta` och resursen
   `floden://rapport/{rapport_id}`; promptarna `skissunderlag_skyfall`,
-  `skissunderlag_dagsljus` och `skissunderlag_ekologi`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
+  `skissunderlag_dagsljus`, `skissunderlag_ekologi` och `skissunderlag_luft`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
 - **Webben:** projektsidan listar rapporterna med kontrollens utfall (grön/röd) och länkar till
   Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
   Rapportmappen kan ändras med `[webb] rapportmapp`. Frågekatalogen nås med
@@ -476,14 +530,14 @@ Floden.
   `fragekatalog_sok`, inklusive `floden.markning` per fråga).
 
 Exempel: `docs/exempel/skissunderlag_dagsljus_demo.pdf` och `.docx` (dagsljus och sol, 15 frågor)
-samt `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter, förvalen:
+`docs/exempel/skissunderlag_ekologi_demo.pdf` och `docs/exempel/skissunderlag_luft_demo.pdf` (`.docx` finns också) samt `docs/exempel/skissunderlag_skyfall_demo.pdf` och `.docx` (påhittat demokvarter, förvalen:
 språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Liberation Sans/Arial, svarta rubriker, smal spalt).
 
 ## Begränsningar
 
-- Bara skyfall, dagsljus/sol, ekologi och nivå 1 (luft och buller har ingen skissrapport än: inga körningar med belägg, Nord2000 inte konformt). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
+- Bara skyfall, dagsljus/sol, ekologi, luft och nivå 1 (buller har ingen skissrapport: Nord2000 inte konformt). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
 - Bara måtten i `MATTKATALOG` kan användas (vatten: statisk fyllning och dynamik; dagsljus:
-  soltimmar på mark, SVF, VSC på fasadpunkter; ekologi: ECA, PC, fläckar och nätverksparametrar).
+  soltimmar på mark, SVF, VSC på fasadpunkter; ekologi: ECA, PC, fläckar och nätverksparametrar; luft: MKN-intervall för PM10 ur en given serie).
 - `POST /api/projekt/<id>/rapporter` finns inte på main (rapporter skapas via MCP och `RapportTjanst`; webben listar och hämtar bara). Skapa-i-webben byggs separat (`skapa-i-webben`); `RapportTjanst.skapa` tar ämnet `ekologi` direkt, så en POST som anropar den får det utan ändring.
 - Dagsljus: demons körning har ett datum (20 mars) och ingen SVF. Sol på fasad, sol på tak,
   dagsljusfaktor i rum, utblick, årsstatistik och ekvinoktieskuggor (höst) finns inte i kärnan och

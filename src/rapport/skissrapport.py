@@ -59,10 +59,15 @@ from rapport.pastaende import (
 
 KONTRAKT_K33: Final[str] = "K33/v1"
 STANDARD_RAPPORTMAPP: Final[str] = "data/lokal/rapporter"
-AMNEN_NIVA1: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "ekologi")
-"""Ämnen med skissrapport: skyfall (R1), dagsljus/sol och ekologi (R2). Ordning enligt Joel 2026-11-22:
-skyfall, dagsljus/sol, luft, buller."""
-_AMNESDOMAN: Final[dict[str, str]] = {"skyfall": "vatten", "dagsljus": "dagsljus", "ekologi": "ekologi"}
+AMNEN_NIVA1: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "ekologi", "luft")
+"""Ämnen med skissrapport: skyfall (R1), dagsljus/sol, ekologi och luft (R2). Ordning enligt Joel 2026-11-22:
+skyfall, dagsljus/sol, luft, buller (buller är spärrat: Nord2000 är inte konformt)."""
+_AMNESDOMAN: Final[dict[str, str]] = {
+    "skyfall": "vatten",
+    "dagsljus": "dagsljus",
+    "ekologi": "ekologi",
+    "luft": "luft",
+}
 _ID_RE: Final[re.Pattern[str]] = re.compile(r"^r-[0-9a-f]{12}$")
 KART_PX: Final[int] = 560
 TOMVARDE_TEXT: Final[str] = tomvarde_lagrad("skyfall")
@@ -480,7 +485,23 @@ class RapportTjanst:
             )
         res = self.kalla._resultat(korning_id)  # noqa: SLF001
         doman = _AMNESDOMAN[amne]
-        analyser = [t for t in res["tabeller"] if str(t["losare"]).startswith(doman + ".")]
+        if amne == "luft":
+            from rapport.luftbelagg import LUFT_LOSARE
+
+            analyser = [t for t in res["tabeller"] if str(t["losare"]) == LUFT_LOSARE]
+            if not analyser:
+                raise RapportFel(
+                    f"Körningen '{korning_id}' har ingen analys med lösaren {LUFT_LOSARE}. Skissunderlaget "
+                    "för luft bygger på MKN-intervallet för PM10 ur en given timserie och en angiven bakgrund "
+                    "(en analys per serie, före och efter som två analyser)."
+                )
+            if scenario is not None:
+                raise RapportFel(
+                    "Luftunderlaget har före och efter som två analyser (en serie var), inte som scenarier; "
+                    "ange inget scenario i beställningen."
+                )
+        else:
+            analyser = [t for t in res["tabeller"] if str(t["losare"]).startswith(doman + ".")]
         if not analyser:
             raise RapportFel(
                 f"Körningen '{korning_id}' har ingen {doman}analys och kan inte ingå i en "
@@ -493,7 +514,7 @@ class RapportTjanst:
             for j in res["jamforelser"]
             if any(j["analys"] == t["analys"] for t in analyser)
         ]
-        if scenario is not None:
+        if scenario is not None and amne != "luft":
             jamforelser = [
                 j
                 for j in jamforelser
@@ -517,6 +538,14 @@ class RapportTjanst:
                     for t in analyser
                     if t["losare"] == "ekologi.konnektivitet"
                 },
+            )
+        if amne == "luft":
+            from rapport.luftbelagg import luftantaganden
+
+            antaganden = luftantaganden(
+                self.kalla,
+                korning_id,
+                {t["analys"]: sorted({r["scenario"] for r in t["rader"]}) for t in analyser},
             )
         return {
             "korning_id": korning_id,
@@ -692,19 +721,13 @@ class RapportTjanst:
             )
         if amne not in AMNEN_NIVA1:
             extra = ""
-            if amne == "luft":
-                extra = (
-                    " Luft har lösaren luft.mkn med belägg för MKN-intervallet (docs/RAPPORTER.md, avsnittet "
-                    "om luft och buller), men ingen rapportmall, inga LU-frågor med belägg och ingen "
-                    "demokörning än."
-                )
-            elif amne == "buller":
+            if amne == "buller":
                 from rapport.r2_domaner import buller_spar
 
                 extra = f" Spärrat: {buller_spar() or 'inget skäl kvar; rapportmall saknas'}"
             raise RapportFel(
                 f"Ämnet '{amne}' har ingen skissrapport än. Finns: {', '.join(AMNEN_NIVA1)} "
-                f"(ordning: skyfall, dagsljus/sol, ekologi, luft, buller).{extra}"
+                f"(ordning: skyfall, dagsljus/sol, luft, buller).{extra}"
             )
         if not korningar:
             raise RapportFel("Ange minst en körning (korningar).")
@@ -1099,6 +1122,8 @@ class RapportTjanst:
             return self._adresser_dagsljus(r)
         if r.amne == "ekologi":
             return self._adresser_ekologi(r)
+        if r.amne == "luft":
+            return self._adresser_luft(r)
         ut: list[str] = []
         for k in r.korningar:
             for j in k["jamforelser"]:
@@ -1114,6 +1139,19 @@ class RapportTjanst:
                             for st in ("max", "medel")
                         ]
                     ut += [f"omrade.{m.namn}.skillnad.{j['namn']}.{st}" for st in OMRADESSTATISTIK]
+        return list(dict.fromkeys(ut))
+
+    def _adresser_luft(self, r: Rapport) -> list[str]:
+        """Beläggsadresser för luft: `matvarde.<analys>.<scenario>.<mått>` ur `luft.mkn` (`rapport.luftbelagg`)."""
+        from rapport.luftbelagg import LUFT_ADRESSMATT, LUFT_LOSARE
+
+        ut: list[str] = []
+        for k in r.korningar:
+            for a in k["analyser"]:
+                if a["losare"] != LUFT_LOSARE:
+                    continue
+                for s in a["scenarier"]:
+                    ut += [f"matvarde.{a['analys']}.{s}.{m}" for m in LUFT_ADRESSMATT]
         return list(dict.fromkeys(ut))
 
     def _adresser_ekologi(self, r: Rapport) -> list[str]:

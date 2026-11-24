@@ -107,3 +107,13 @@ vaningshojd_m = 3.0
 # Stockholms 100-årsregn 6 h, klimatfaktor 1,4 (förval i gemensamt.regn; ersätts när Stockholmsregn 2024 används i frågan).
 regn_id = "stockholm_cds_6h_100ar_kf140"
 takvatten = true
+
+# --- Ekologi: förval av habitatnätverk (K47) ------------------------------------------------------
+# Nätverken ligger i data/ekologi/natverk/*.toml; sammanställningen docs/ekologi/habitatnatverk-svensk-stadsmiljo.md.
+# forval_server: nätverk som går att köra på servern med öppen data (NMD).
+# forval_lokalt: kommunspecifika nätverk som bygger på stadens egen biotopdatabas (inte öppen); körs bara lokalt.
+# kvalitetskallor: lokal källa för kvalitetsinformation bredvid ett servernätverk (visas, räknas inte).
+[ekologi]
+forval_server = ["barrskog-nacka", "adellov-nacka", "mindre-hackspett-nacka", "grongoling-nacka"]
+forval_lokalt = ["barrskog-stockholm-2022", "adellov-ek-stockholm-2022", "groddjur-stockholm-2022"]
+anmarkning = "Stockholms nätverk 2022 bygger på stadens biotopdatabas och körs lokalt. På servern används Nackas NMD-nätverk."

@@ -260,6 +260,8 @@ HELA_OMRADET_NAMN = "hela_omradet"
 _IGNORERA_PARAM: Final[frozenset[str]] = frozenset({"nyckel"})
 HELA_OMRADET_MARK = "mark i hela beräkningsområdet; byggnadernas tak undantagna"
 HELA_OMRADET = "hela beräkningsområdet (en siffra per körning)"
+LUFT_NAMNARE = "den givna timserien (en punkt eller receptor; platsen anges inte i körningen)"
+"""Nämnaren för `luft.mkn`: lösaren har ingen geometri, bara en given serie per analys."""
 
 
 class Mottagare(Protocol):
@@ -546,7 +548,7 @@ class FlodenBelaggKalla:
             losare=losare,
             scenarier=(scenario,),
             mottagare=f"scenario {scenario}" + (f", ruta {ruta}" if ruta else ""),
-            namnare=HELA_OMRADET,
+            namnare=LUFT_NAMNARE if losare == "luft.mkn" else HELA_OMRADET,
             matt=f"matvarden:{namn}",
             storhet=grund.storhet,
             enhet=enhet_for(namn),

@@ -30,7 +30,7 @@ AMNESPREFIX: Final[dict[str, tuple[str, ...]]] = {
     "buller": ("BU",),
 }
 """Rapportämne -> frågornas id-prefix. Rapportämnet `dagsljus` omfattar katalogens områden
-`dagsljus` (DL) och `solstudier` (SO). Skissrapport finns för skyfall (R1), dagsljus och ekologi (R2)."""
+`dagsljus` (DL) och `solstudier` (SO). Skissrapport finns för skyfall (R1), dagsljus, ekologi och luft (R2)."""
 AMNESOMRADEN: Final[dict[str, tuple[str, ...]]] = {
     "skyfall": ("skyfall",),
     "dagsljus": ("dagsljus", "solstudier"),
@@ -641,6 +641,142 @@ FLODEN_FORMAGA.update(
             "livsmiljö.",
             (),
             "ej_tillampligt",
+        ),
+    }
+)
+
+_LU_MV = "matvarde.<analys>.<scenario>.<mått>"
+FLODEN_FORMAGA.update(
+    {
+        "LU-01": Formaga(
+            "saknas",
+            "",
+            "Vilka miljökvalitetsnormer som behöver prövas, normtyp, lagrum och beslutsdatum är en bedömning i ärendet. "
+            "Underlaget visar bara PM10 mot dygnsnormen (högsta antal dygn över gränsen) ur en given serie; "
+            "kvävedioxid, PM2,5, bensen och årsmedelnormen prövas inte.",
+            (),
+            "ej_tillampligt",
+        ),
+        "LU-02": Formaga(
+            "delvis",
+            "Bakgrundshalten (PM10, konstant) som lagts till serien och antalet hela dygn i serien "
+            "(parametrar med belägg).",
+            "Närmaste representativa station, observationsår, datatäckning, normalår och upplösning, och hur bakgrunden "
+            "skiljer sig från projektets gaturum. Floden läser inga stationsdata eller SLB-lager; bakgrunden är en siffra "
+            "som den som angav den ansvarar för.",
+            (_LU_MV,),
+            "underlag_saknas",
+        ),
+        "LU-03": Formaga(
+            "delvis",
+            "Intervallet för antal dygn över gränsen, årsmedel och 90,4-percentil före och efter, ur två serier med samma "
+            "bakgrund, faktorintervall och gräns (jämförbarheten kontrolleras).",
+            "Nuläge, framtid utan plan och med plan med jämförbara trafik- och bakgrundsantaganden för samma prognosår: "
+            "serierna kommer från ett annat verktyg och Floden kan inte se vilka antaganden de bygger på. Framtid utan plan "
+            "är en tredje serie som bara finns om den lagts in. Före och efter kräver två serier.",
+            (_LU_MV,),
+            "underlag_saknas",
+        ),
+        "LU-04": Formaga(
+            "saknas",
+            "",
+            "Trafik per länk, fordonsmix, hastighet, emissionsfaktorer, avgaser, slitage och uppvirvling ingår inte: serien "
+            "är given. Emissionsmodellen i luftpaketet (L-g) har ingen körning med belägg i rapporten och väntar på trafik- "
+            "och mätdata.",
+            (),
+            "underlag_saknas",
+        ),
+        "LU-05": Formaga(
+            "delvis",
+            "Bakgrunden (konstant, parameter), faktorintervallen för källstyrka och deposition och antalet hela dygn i serien.",
+            "Modell och version, meteorologisk period, vind, gaturummets bredd och höjd, emissionsår, regional eller urban "
+            "bakgrund och hur dubbelräkning undviks: serien är räknad utanför Floden och bakgrunden är en enda konstant.",
+            (_LU_MV,),
+            "underlag_saknas",
+        ),
+        "LU-06": Formaga(
+            "saknas",
+            "",
+            "Lösaren luft.mkn har ingen geometri och ingen spridningsberäkning, så sektion, beräkningsdomän och valet mellan "
+            "gaturumsmodell, lokal 3D-studie och mätning redovisas inte. 3D-modellen (luft.halt, luft.vindkomfort) har ingen "
+            "rapportväg än.",
+            (),
+            "underlag_saknas",
+        ),
+        "LU-07": Formaga(
+            "saknas",
+            "",
+            "Receptorer, höjder och undantagna ytor ingår inte: serien gäller en punkt vars läge körningen inte anger, och "
+            "luft-MKN har ingen karta.",
+            (),
+            "underlag_saknas",
+        ),
+        "LU-08": Formaga(
+            "kan",
+            "Antal dygn över dygnsgränsen (lägst och högst i intervallet), årsmedel och 90,4-percentil för PM10, med härledning: "
+            "kalenderdygn som medel av 24 timmar, alla hela dygn i serien, gräns och högsta antal som parametrar.",
+            "Svensk NO₂ (båda timvillkoren), PM2,5 och andra ämnen räknas inte. För PM10 gäller dygnsstatistiken bara om "
+            "serien är ett helt år (annars varnar lösaren och antalet gäller perioden).",
+            (_LU_MV,),
+            "visat",
+        ),
+        "LU-09": Formaga(
+            "saknas",
+            "",
+            "Normbedömning och målbedömning (miljö- och hälsomål, WHO) görs inte: nivå 1 jämför inte mot normer, och inga mål "
+            "eller alternativa placeringar av lek eller vistelse ingår.",
+            (),
+            "underlag_saknas",
+        ),
+        "LU-10": Formaga(
+            "delvis",
+            "Intervallet för antal dygn och årsmedel ur faktorerna för källstyrka och för utspädning eller deposition, och om "
+            "intervallet ligger helt under, helt över eller korsar högsta antalet dygn.",
+            "Variation av trafik, flottans utsläpp, dubbdäck och bakgrund, och jämförelse mot representativa observationer "
+            "ingår inte. Intervallet är en känslighet för två faktorer, inte en statistisk konfidens.",
+            (_LU_MV,),
+            "underlag_saknas",
+        ),
+        "LU-11": Formaga(
+            "delvis",
+            "Jämförelse av prövade alternativ (varje serie ställs mot nuläget) med samma mått: intervallet för antal dygn och "
+            "årsmedel.",
+            "Floden föreslår ingen åtgärd; ändrad trafik, gatugeometri, placering av vistelseyta eller drift prövas bara om en "
+            "serie per alternativ lagts in som analys. Effekt vid samma mottagare och förskjuten exponering redovisas inte.",
+            (_LU_MV,),
+            "underlag_saknas",
+        ),
+        "LU-12": Formaga(
+            "saknas",
+            "",
+            "Byggdamm och arbetsmaskiner, arbetsmoment, transportvägar och skyddsåtgärder ingår inte; serien gäller driftläget.",
+            (),
+            "underlag_saknas",
+        ),
+        "LU-13": Formaga(
+            "saknas",
+            "",
+            "Vilken av länsstyrelsens fem situationer planen träffar är en bedömning i ärendet; Floden läser inte planens "
+            "trafikalstring, känsliga användning, vägplanering eller verksamheter.",
+            (),
+            "ej_tillampligt",
+        ),
+        "LU-14": Formaga(
+            "saknas",
+            "",
+            "Gårdsgräns, vistelseytor och möjliga placeringar ingår inte: serien gäller en punkt, och källår för kartläggning "
+            "och mål om låg halt redovisas inte.",
+            (),
+            "underlag_saknas",
+        ),
+        "LU-15": Formaga(
+            "delvis",
+            "Varje tal har belägg med körning, fil och kontrollsumma, tidsdefinition och statistik; serie, bakgrund och faktorer "
+            "står i antagandena och bilagorna.",
+            "Station eller beräknad mottagare, tidsmått och år knyts inte till en figur: luft-MKN har ingen karta, och serien "
+            "anger varken plats eller år.",
+            (_LU_MV,),
+            "underlag_saknas",
         ),
     }
 )

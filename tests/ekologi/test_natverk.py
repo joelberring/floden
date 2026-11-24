@@ -315,7 +315,7 @@ def test_adellov_126_127_har_eget_antaget_motstand_och_valfritt_tradlager() -> N
     assert a.som_dict()["antagna_motstand"] == antagna
     assert any("126, 127" in t or "126" in t for t in a.antaganden())
     (lager,) = a.valfria_lager
-    assert lager.lager_id == "inventerade_adellovtrad" and lager.status == "inte byggt"
+    assert lager.lager_id == "inventerade_adellovtrad" and lager.status == "byggt" and lager.trad is not None
     # Biotopnätverk (Stockholm) har kvalitetsdata och får ingen "okänd kvalitet"-etikett.
     assert hamta_natverk("barrskog-stockholm-2022").resultat_etikett == ""
 
