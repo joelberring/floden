@@ -668,6 +668,181 @@ class LappMarkslag:
         )
 
 
+BRYTLINJE_TYPER_K3: frozenset[str] = frozenset({"kantsten", "mur", "stodmur", "staket", "bankkant"})
+OPPNING_TYPER_K3: frozenset[str] = frozenset({"trumma", "port", "passage"})
+BORT_TOLERANS_FORVAL_M = 0.5
+BORT_TOLERANS_MAX_M = 5.0
+
+
+@dataclass(frozen=True)
+class LappBrytlinje:
+    """Ny brytlinje (mur, kantsten, bankkant ...) i projektlappen: K1 `brytlinjer.gpkg` (R3).
+
+    `hojd_m` är höjden över den högre av två grannceller; sänkgrafen läser den som kantbarriär.
+    """
+
+    brytlinje_id: str
+    koordinater: tuple[tuple[float, float], ...]
+    typ: str
+    hojd_m: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.brytlinje_id, str) or not self.brytlinje_id.strip():
+            raise LappFel("LappBrytlinje.brytlinje_id måste vara en icke-tom sträng.")
+        rensad = _validera_punkter(
+            self.koordinater, 2, f"LappBrytlinje '{self.brytlinje_id}'.koordinater"
+        )
+        if self.typ not in BRYTLINJE_TYPER_K3:
+            raise LappFel(
+                f"Okänd brytlinjetyp '{self.typ}'. "
+                f"Tillåtna: {', '.join(sorted(BRYTLINJE_TYPER_K3))}."
+            )
+        hojd = _validera_andlig(self.hojd_m, "hojd_m")
+        if hojd <= 0.0:
+            raise LappFel(f"LappBrytlinje '{self.brytlinje_id}': hojd_m måste vara större än 0.")
+        object.__setattr__(self, "koordinater", rensad)
+        object.__setattr__(self, "hojd_m", hojd)
+
+    def till_dict(self) -> dict[str, Any]:
+        return {
+            "brytlinje_id": self.brytlinje_id,
+            "koordinater": [[p[0], p[1]] for p in self.koordinater],
+            "typ": self.typ,
+            "hojd_m": self.hojd_m,
+        }
+
+    @classmethod
+    def fran_dict(cls, data: Any) -> LappBrytlinje:
+        if not isinstance(data, Mapping):
+            raise LappFel("LappBrytlinje måste vara ett JSON-objekt.")
+        for falt in ("brytlinje_id", "koordinater", "typ", "hojd_m"):
+            if falt not in data:
+                raise LappFel(f"LappBrytlinje saknar obligatoriskt fält '{falt}'.")
+        return cls(
+            brytlinje_id=str(data["brytlinje_id"]),
+            koordinater=_validera_punkter(data["koordinater"], 2, "LappBrytlinje.koordinater"),
+            typ=str(data["typ"]),
+            hojd_m=float(data["hojd_m"]),
+        )
+
+
+@dataclass(frozen=True)
+class LappBrytlinjeBort:
+    """Tar bort befintliga brytlinjer längs en given linje (R3, `brytlinje_bort`).
+
+    Delen av en brytlinje i basen som ligger närmare än `tolerans_m` från `koordinater` tas bort
+    (resten av linjen finns kvar); `typ` begränsar till en typ. Nya brytlinjer i samma lapp
+    berörs inte.
+    """
+
+    bort_id: str
+    koordinater: tuple[tuple[float, float], ...]
+    tolerans_m: float = BORT_TOLERANS_FORVAL_M
+    typ: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.bort_id, str) or not self.bort_id.strip():
+            raise LappFel("LappBrytlinjeBort.bort_id måste vara en icke-tom sträng.")
+        rensad = _validera_punkter(
+            self.koordinater, 2, f"LappBrytlinjeBort '{self.bort_id}'.koordinater"
+        )
+        tol = _validera_andlig(self.tolerans_m, "tolerans_m")
+        if not 0.0 < tol <= BORT_TOLERANS_MAX_M:
+            raise LappFel(
+                f"LappBrytlinjeBort '{self.bort_id}': tolerans_m måste vara större än 0 och högst "
+                f"{BORT_TOLERANS_MAX_M:g} m."
+            )
+        if self.typ is not None and self.typ not in BRYTLINJE_TYPER_K3:
+            raise LappFel(
+                f"Okänd brytlinjetyp '{self.typ}'. "
+                f"Tillåtna: {', '.join(sorted(BRYTLINJE_TYPER_K3))}."
+            )
+        object.__setattr__(self, "koordinater", rensad)
+        object.__setattr__(self, "tolerans_m", tol)
+
+    def till_dict(self) -> dict[str, Any]:
+        ut: dict[str, Any] = {
+            "bort_id": self.bort_id,
+            "koordinater": [[p[0], p[1]] for p in self.koordinater],
+            "tolerans_m": self.tolerans_m,
+        }
+        if self.typ is not None:
+            ut["typ"] = self.typ
+        return ut
+
+    @classmethod
+    def fran_dict(cls, data: Any) -> LappBrytlinjeBort:
+        if not isinstance(data, Mapping):
+            raise LappFel("LappBrytlinjeBort måste vara ett JSON-objekt.")
+        for falt in ("bort_id", "koordinater"):
+            if falt not in data:
+                raise LappFel(f"LappBrytlinjeBort saknar obligatoriskt fält '{falt}'.")
+        typ = data.get("typ")
+        return cls(
+            bort_id=str(data["bort_id"]),
+            koordinater=_validera_punkter(data["koordinater"], 2, "LappBrytlinjeBort.koordinater"),
+            tolerans_m=float(data.get("tolerans_m", BORT_TOLERANS_FORVAL_M)),
+            typ=None if typ is None else str(typ),
+        )
+
+
+@dataclass(frozen=True)
+class LappOppning:
+    """Ny öppning (trumma, port, passage) i projektlappen: K1 `oppningar.gpkg` (R3).
+
+    Marken längs linjen sänks till `botten_rh2000` (som K1-öppningar) och brytlinjer som korsar
+    öppningen klipps bort inom dess bredd, så att vattnet kommer igenom.
+    """
+
+    oppning_id: str
+    koordinater: tuple[tuple[float, float], ...]
+    typ: str
+    bredd_m: float
+    botten_rh2000: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.oppning_id, str) or not self.oppning_id.strip():
+            raise LappFel("LappOppning.oppning_id måste vara en icke-tom sträng.")
+        rensad = _validera_punkter(
+            self.koordinater, 2, f"LappOppning '{self.oppning_id}'.koordinater"
+        )
+        if self.typ not in OPPNING_TYPER_K3:
+            raise LappFel(
+                f"Okänd öppningstyp '{self.typ}'. Tillåtna: {', '.join(sorted(OPPNING_TYPER_K3))}."
+            )
+        bredd = _validera_andlig(self.bredd_m, "bredd_m")
+        if bredd <= 0.0:
+            raise LappFel(f"LappOppning '{self.oppning_id}': bredd_m måste vara större än 0.")
+        botten = _validera_andlig(self.botten_rh2000, "botten_rh2000")
+        object.__setattr__(self, "koordinater", rensad)
+        object.__setattr__(self, "bredd_m", bredd)
+        object.__setattr__(self, "botten_rh2000", botten)
+
+    def till_dict(self) -> dict[str, Any]:
+        return {
+            "oppning_id": self.oppning_id,
+            "koordinater": [[p[0], p[1]] for p in self.koordinater],
+            "typ": self.typ,
+            "bredd_m": self.bredd_m,
+            "botten_rh2000": self.botten_rh2000,
+        }
+
+    @classmethod
+    def fran_dict(cls, data: Any) -> LappOppning:
+        if not isinstance(data, Mapping):
+            raise LappFel("LappOppning måste vara ett JSON-objekt.")
+        for falt in ("oppning_id", "koordinater", "typ", "bredd_m", "botten_rh2000"):
+            if falt not in data:
+                raise LappFel(f"LappOppning saknar obligatoriskt fält '{falt}'.")
+        return cls(
+            oppning_id=str(data["oppning_id"]),
+            koordinater=_validera_punkter(data["koordinater"], 2, "LappOppning.koordinater"),
+            typ=str(data["typ"]),
+            bredd_m=float(data["bredd_m"]),
+            botten_rh2000=float(data["botten_rh2000"]),
+        )
+
+
 def _harled_operationer(
     hojdytor: Sequence[HojdYta],
     byggnader: Sequence[LappByggnad],
@@ -704,6 +879,17 @@ class ProjektLapp:
     markslag_andringar: tuple[LappMarkslag, ...] = field(default_factory=tuple)
     kontrakt: str = KONTRAKT_K3
     beskrivning: str = ""
+    brytlinjer_nya: tuple[LappBrytlinje, ...] = field(default_factory=tuple)
+    """Additivt (R3): nya brytlinjer (K9 `brytlinje_ny`)."""
+    brytlinjer_bort: tuple[LappBrytlinjeBort, ...] = field(default_factory=tuple)
+    """Additivt (R3): befintliga brytlinjer som tas bort längs en linje (K9 `brytlinje_bort`)."""
+    oppningar_nya: tuple[LappOppning, ...] = field(default_factory=tuple)
+    """Additivt (R3): nya öppningar (K9 `oppning_ny`)."""
+
+    @property
+    def har_vektorandringar(self) -> bool:
+        """Ändrar lappen brytlinjer eller öppningar (K1-vektorerna)?"""
+        return bool(self.brytlinjer_nya or self.brytlinjer_bort or self.oppningar_nya)
 
     def __post_init__(self) -> None:
         if self.kontrakt != KONTRAKT_K3:
@@ -733,6 +919,9 @@ class ProjektLapp:
         object.__setattr__(self, "gator", tuple(self.gator))
         object.__setattr__(self, "magasin", tuple(self.magasin))
         object.__setattr__(self, "markslag_andringar", tuple(self.markslag_andringar))
+        object.__setattr__(self, "brytlinjer_nya", tuple(self.brytlinjer_nya))
+        object.__setattr__(self, "brytlinjer_bort", tuple(self.brytlinjer_bort))
+        object.__setattr__(self, "oppningar_nya", tuple(self.oppningar_nya))
 
     def till_dict(self) -> dict[str, Any]:
         """Serialiserar projektlappen till ett K3/v1-lexikon."""
@@ -754,6 +943,13 @@ class ProjektLapp:
             ut["magasin"] = [m.till_dict() for m in self.magasin]
         if self.markslag_andringar:
             ut["markslag"] = [ms.till_dict() for ms in self.markslag_andringar]
+        # Additivt (R3): utelämnas när de är tomma, så att äldre lappar behåller sin kontrollsumma.
+        if self.brytlinjer_nya:
+            ut["brytlinjer_nya"] = [b.till_dict() for b in self.brytlinjer_nya]
+        if self.brytlinjer_bort:
+            ut["brytlinjer_bort"] = [b.till_dict() for b in self.brytlinjer_bort]
+        if self.oppningar_nya:
+            ut["oppningar_nya"] = [o.till_dict() for o in self.oppningar_nya]
         return ut
 
     def kanonisk_json(self) -> str:
@@ -809,6 +1005,13 @@ class ProjektLapp:
             magasin=magasin,
             markslag_andringar=markslag_andringar,
             beskrivning=str(data.get("beskrivning", "")),
+            brytlinjer_nya=tuple(
+                LappBrytlinje.fran_dict(i) for i in data.get("brytlinjer_nya", ())
+            ),
+            brytlinjer_bort=tuple(
+                LappBrytlinjeBort.fran_dict(i) for i in data.get("brytlinjer_bort", ())
+            ),
+            oppningar_nya=tuple(LappOppning.fran_dict(i) for i in data.get("oppningar_nya", ())),
         )
 
 

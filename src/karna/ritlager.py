@@ -9,16 +9,15 @@ sparas och körs, så att webben, MCP och en handskriven fil ger samma K9 (och s
 | Roll | Geometri | Blir i beräkningen |
 | --- | --- | --- |
 | `byggnad` | polygon | K9 `byggnad_ny` (`hojd_m` eller `tak_rh2000`; valfria `takform`, `andamal`, `vaningar`) |
-| `mark` | polygon | K9 `markhojd` (`niva_rh2000`; valfria `osakerhet_m`, `markslag`) -> K3 `HojdYta` |
+| `mark` | polygon | K9 `markhojd`: exakt en av `niva_rh2000`, `lutning`, `delta_m`; valfria `slant`, `osakerhet_m`, `markslag` (R4) -> K3 `HojdYta` |
 | `hardgjort` | polygon | K9 `markslag` kod 1 (hårdgjort); med `niva_rh2000` i stället `markhojd` med `markslag` 1 |
 | `vegetation` | polygon | K9 `vegetation` (`hojd_m`) och/eller `markslag` (4 gräs, 5 skog) |
 | `vatten` | polygon | K9 `markslag` kod 8 (vatten); med `volym_m3` i stället `magasin` |
-| `brytlinje` | linje | K1 brytlinje (`typ`, `hojd_m`) |
-| `oppning` | linje | K1 öppning (`typ` trumma/port/passage, `bredd_m`, `botten_rh2000`) |
+| `brytlinje` | linje | K9 `brytlinje_ny` (`typ`, `hojd_m` > 0), eller med `bort` K9 `brytlinje_bort` (R3) |
+| `oppning` | linje | K9 `oppning_ny` (`typ` trumma/port/passage, `bredd_m`, `botten_rh2000`) (R3) |
 
-Brytlinjer och öppningar har ingen K9-ändringstyp än (kommer i R3): de översätts, kontrolleras och
-sparas som K1-ändringar men **tillämpas inte**; `Oversattning.ej_tillampade` ger en text som servern
-visar som varning (inga tysta fel: den som ritar en mur ska veta att den inte räknas ännu).
+Brytlinjer och öppningar har K9-ändringstyper sedan R3 (`karna.k9_till_k1` -> K3 -> K1 `brytlinjer.gpkg`
+och `oppningar.gpkg`) och räknas i skyfallsberäkningen: en mur leder om vatten, en öppning släpper igenom.
 
 **Dataklass.** Ett lager från en stängd källa (Stockholms baskarta, ledningar, lokala data) är stängt
 (`effektiv_dataklass`) och lämnas inte ut via MCP (`for_mcp`); servern skriver ett förslag med ett
@@ -80,8 +79,8 @@ ROLLINFO: dict[str, dict[str, str]] = {
     "hardgjort": {"namn": "Hårdgjort", "blir": "Hårdgjord yta (markslag 1), med nivå som markhojd."},
     "vegetation": {"namn": "Vegetation", "blir": "Växtlighetens höjd (K9 vegetation) och/eller gräs eller skog (markslag 4, 5)."},
     "vatten": {"namn": "Vatten", "blir": "Vattenyta (markslag 8), eller magasin när volym anges."},
-    "brytlinje": {"namn": "Mur och kant", "blir": "Brytlinje i markmodellen (mur, kantsten, bankkant). Räknas inte än (R3)."},
-    "oppning": {"namn": "Passage och trumma", "blir": "Öppning genom hinder (trumma, port, passage). Räknas inte än (R3)."},
+    "brytlinje": {"namn": "Mur och kant", "blir": "Brytlinje i markmodellen (mur, kantsten, bankkant) med höjd: vattnet leds om. Med Ta bort: befintliga brytlinjer längs linjen tas bort."},
+    "oppning": {"namn": "Passage och trumma", "blir": "Öppning genom hinder (trumma, port, passage): marken sänks till botten och murar klipps så att vattnet kommer igenom."},
 }
 
 BRYTLINJE_TYPER: dict[str, str] = {
@@ -99,11 +98,11 @@ MARKSLAG_VATTEN = 8
 
 TILLATNA_EGENSKAPER: dict[str, frozenset[str]] = {
     "byggnad": frozenset({"hojd_m", "tak_rh2000", "takform", "andamal", "vaningar"}),
-    "mark": frozenset({"niva_rh2000", "osakerhet_m", "markslag"}),
+    "mark": frozenset({"niva_rh2000", "lutning", "delta_m", "slant", "osakerhet_m", "markslag"}),
     "hardgjort": frozenset({"niva_rh2000", "osakerhet_m"}),
     "vegetation": frozenset({"hojd_m", "markslag"}),
     "vatten": frozenset({"volym_m3", "botten_rh2000", "markslag"}),
-    "brytlinje": frozenset({"typ", "hojd_m"}),
+    "brytlinje": frozenset({"typ", "hojd_m", "bort", "tolerans_m"}),
     "oppning": frozenset({"typ", "bredd_m", "botten_rh2000"}),
 }
 """Egenskaper per roll. Andra nycklar ger fel (inga tysta fel); en ny egenskap läggs till här."""
@@ -398,12 +397,10 @@ def _normaliserad_geometri(g: Mapping[str, Any], typ: str, oid: str, lagernamn: 
 
 
 class Oversattning:
-    """Resultatet av `oversatt`: K9-ändringar, K1-ändringar som inte kan tillämpas än, och texter."""
+    """Resultatet av `oversatt`: K9-ändringarna och vilka som kom ur vilket objekt."""
 
     def __init__(self) -> None:
         self.k9: list[dict[str, Any]] = []
-        self.k1: list[dict[str, Any]] = []
-        self.ej_tillampade: list[str] = []
         self.objekt_till_andringar: dict[str, list[str]] = {}
 
 
@@ -454,8 +451,37 @@ def _andring(typ: str, aid: str, geometri: Mapping[str, Any] | None, e: dict[str
     return {"typ": typ, "andring_id": aid, "geometri": dict(geometri) if geometri is not None else None, "egenskaper": e}
 
 
-def oversatt_objekt(o: Mapping[str, Any], lg: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Ett objekt -> (K9-ändringar, K1-ändringar som inte tillämpas än). Rollen avgör vilka."""
+def _lutning(v: Any, plats: str) -> dict[str, Any]:
+    """Lutande yta enligt K3 `normalisera_lutning` (fyra former); fel skrivs för en planarkitekt."""
+    from lapp.kontrakt import LappFel, normalisera_lutning
+
+    try:
+        return normalisera_lutning(v, "lutning")
+    except LappFel as exc:
+        raise RitlagerFel(f"{plats}: {exc}") from exc
+
+
+def _slant(v: Any, plats: str) -> dict[str, Any]:
+    """Slänt: `{"forhallande": n}` (1:n) eller `{"bredd_m": b}`, valfritt `markslag`."""
+    if not isinstance(v, Mapping) or not set(v) <= {"forhallande", "bredd_m", "markslag"}:
+        raise RitlagerFel(f"{plats}: slänt ska vara {{forhallande | bredd_m, markslag?}}.")
+    if ("forhallande" in v) == ("bredd_m" in v):
+        raise RitlagerFel(f"{plats}: ange exakt en av forhallande (1:n) och bredd_m för slänten.")
+    ut: dict[str, Any] = {}
+    for k in ("forhallande", "bredd_m"):
+        if k in v:
+            if not _tal(v[k]) or float(v[k]) <= 0:
+                raise RitlagerFel(f"{plats}: släntens {k} måste vara ett tal över 0.")
+            ut[k] = float(v[k])
+    if "markslag" in v:
+        if isinstance(v["markslag"], bool) or not _tal(v["markslag"]) or int(v["markslag"]) != v["markslag"] or not 0 <= int(v["markslag"]) <= 9:
+            raise RitlagerFel(f"{plats}: släntens markslag ska vara 0 till 9 (K1).")
+        ut["markslag"] = int(v["markslag"])
+    return ut
+
+
+def oversatt_objekt(o: Mapping[str, Any], lg: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Ett objekt -> K9-ändringar. Rollen avgör vilka."""
     roll = lg["roll"]
     oid = o["objekt_id"]
     g = o["geometri"]
@@ -481,28 +507,44 @@ def oversatt_objekt(o: Mapping[str, Any], lg: Mapping[str, Any]) -> tuple[list[d
             if isinstance(van, bool) or not _tal(van) or int(van) != van or van < 1:
                 raise RitlagerFel(f"{plats}: våningar ska vara ett heltal från 1.")
             e["vaningar"] = int(van)
-        return [_andring("byggnad_ny", oid, g, e)], []
+        return [_andring("byggnad_ny", oid, g, e)]
     if roll == "mark":
-        niva = _num(o, lg, "niva_rh2000", "nivån (niva_rh2000, m RH 2000)", krav=True)
-        e = {"niva_rh2000": niva}
+        niva = _num(o, lg, "niva_rh2000", "nivån (niva_rh2000, m RH 2000)")
+        lutning = _egen(o, lg, "lutning")
+        delta = _num(o, lg, "delta_m", "ändringen (delta_m, m)")
+        givna = [n for n, v in (("niva_rh2000", niva), ("lutning", lutning), ("delta_m", delta)) if v is not None]
+        if not givna:
+            raise RitlagerFel(f"{plats} saknar nivån: ange niva_rh2000 (m RH 2000), lutning eller delta_m (höj eller sänk mot befintlig mark).")
+        if len(givna) > 1:
+            raise RitlagerFel(f"{plats}: ange exakt en av niva_rh2000, lutning och delta_m (fick {', '.join(givna)}).")
+        e = {}
+        if niva is not None:
+            e["niva_rh2000"] = niva
+        if delta is not None:
+            e["delta_m"] = delta
+        if lutning is not None:
+            e["lutning"] = _lutning(lutning, plats)
+        slant = _egen(o, lg, "slant")
+        if slant is not None:
+            e["slant"] = _slant(slant, plats)
         osak = _num(o, lg, "osakerhet_m", "osäkerheten (osakerhet_m)", minst=0.0)
         if osak is not None:
             e["osakerhet_m"] = osak
         slag = _kod(o, lg, "markslag", frozenset(range(10)))
         if slag is not None:
             e["markslag"] = slag
-        return [_andring("markhojd", oid, g, e)], []
+        return [_andring("markhojd", oid, g, e)]
     if roll == "hardgjort":
         niva = _num(o, lg, "niva_rh2000", "nivån (niva_rh2000)")
         osak = _num(o, lg, "osakerhet_m", "osäkerheten (osakerhet_m)", minst=0.0)
         if niva is None:
             if osak is not None:
                 raise RitlagerFel(f"{plats}: osäkerhet gäller en höjdsatt yta; ange också nivån.")
-            return [_andring("markslag", oid, g, {"kod": MARKSLAG_HARDGJORT})], []
+            return [_andring("markslag", oid, g, {"kod": MARKSLAG_HARDGJORT})]
         e = {"niva_rh2000": niva, "markslag": MARKSLAG_HARDGJORT}
         if osak is not None:
             e["osakerhet_m"] = osak
-        return [_andring("markhojd", oid, g, e)], []
+        return [_andring("markhojd", oid, g, e)]
     if roll == "vegetation":
         hojd = _num(o, lg, "hojd_m", "vegetationens höjd (hojd_m)", minst=0.0)
         slag = _kod(o, lg, "markslag", MARKSLAG_VEGETATION)
@@ -514,7 +556,7 @@ def oversatt_objekt(o: Mapping[str, Any], lg: Mapping[str, Any]) -> tuple[list[d
         if slag is not None:
             aid = oid if hojd is None else oid + SEKUNDAR_SUFFIX
             ut.append(_andring("markslag", aid, g, {"kod": slag}))
-        return ut, []
+        return ut
     if roll == "vatten":
         volym = _num(o, lg, "volym_m3", "volymen (volym_m3)", storre_an=0.0)
         slag = _kod(o, lg, "markslag", frozenset(range(10)))
@@ -522,23 +564,37 @@ def oversatt_objekt(o: Mapping[str, Any], lg: Mapping[str, Any]) -> tuple[list[d
         if volym is None:
             if botten is not None:
                 raise RitlagerFel(f"{plats}: bottennivå gäller ett magasin; ange också volymen (volym_m3).")
-            return [_andring("markslag", oid, g, {"kod": MARKSLAG_VATTEN if slag is None else slag})], []
+            return [_andring("markslag", oid, g, {"kod": MARKSLAG_VATTEN if slag is None else slag})]
         e = {"volym_m3": volym}
         if botten is not None:
             e["botten_rh2000"] = botten
         if slag is not None:
             e["markslag"] = slag
-        return [_andring("magasin", oid, g, e)], []
+        return [_andring("magasin", oid, g, e)]
     if roll == "brytlinje":
+        bort = _egen(o, lg, "bort")
+        if bort is not None and not isinstance(bort, bool):
+            raise RitlagerFel(f"{plats}: bort ska vara sant eller falskt.")
+        if bort:
+            e = {}
+            typ_in = _egen(o, lg, "typ")
+            if typ_in is not None:
+                kanonisk_bort = BRYTLINJE_TYPER.get(str(typ_in).strip().lower())
+                if kanonisk_bort is None:
+                    raise RitlagerFel(f"{plats}: okänd brytlinjetyp '{typ_in}'. Tillåtna: kantsten, mur, stodmur, staket, bankkant.")
+                e["typ"] = kanonisk_bort
+            tol = _num(o, lg, "tolerans_m", "toleransen (tolerans_m)", storre_an=0.0)
+            if tol is not None:
+                if tol > 5.0:
+                    raise RitlagerFel(f"{plats}: toleransen får vara högst 5 m.")
+                e["tolerans_m"] = tol
+            return [_andring("brytlinje_bort", oid, g, e)]
         typ = _egen(o, lg, "typ", krav=True, vad="typ (kantsten, mur, stodmur, staket, bankkant)")
         kanonisk = BRYTLINJE_TYPER.get(str(typ).strip().lower())
         if kanonisk is None:
             raise RitlagerFel(f"{plats}: okänd brytlinjetyp '{typ}'. Tillåtna: kantsten, mur, stodmur, staket, bankkant.")
-        e = {"typ": kanonisk}
-        hojd = _num(o, lg, "hojd_m", "höjden (hojd_m)", minst=0.0)
-        if hojd is not None:
-            e["hojd_m"] = hojd
-        return [], [_andring("brytlinje", oid, g, e)]
+        hojd = _num(o, lg, "hojd_m", "höjden över marken (hojd_m, m)", storre_an=0.0, krav=True)
+        return [_andring("brytlinje_ny", oid, g, {"typ": kanonisk, "hojd_m": hojd})]
     if roll == "oppning":
         typ = _egen(o, lg, "typ", krav=True, vad="typ (trumma, port, passage)")
         if str(typ).strip().lower() not in OPPNING_TYPER:
@@ -546,7 +602,7 @@ def oversatt_objekt(o: Mapping[str, Any], lg: Mapping[str, Any]) -> tuple[list[d
         bredd = _num(o, lg, "bredd_m", "bredden (bredd_m)", storre_an=0.0, krav=True)
         botten = _num(o, lg, "botten_rh2000", "bottennivån (botten_rh2000, m RH 2000)", krav=True)
         e = {"typ": str(typ).strip().lower(), "bredd_m": bredd, "botten_rh2000": botten}
-        return [], [_andring("oppning", oid, g, e)]
+        return [_andring("oppning_ny", oid, g, e)]
     raise RitlagerFel(f"Rollen '{roll}' stöds inte.")  # pragma: no cover - ROLLER är uttömmande
 
 
@@ -555,20 +611,12 @@ def oversatt(doc: Mapping[str, Any]) -> Oversattning:
     d = kontrollera_dokument(doc)
     per_id = {x["lager_id"]: x for x in d["lager"]}
     res = Oversattning()
-    antal_ej: dict[str, int] = {}
     for o in d["objekt"]:
         lg = per_id[o["lager_id"]]
-        k9, k1 = oversatt_objekt(o, lg)
+        k9 = oversatt_objekt(o, lg)
         res.k9.extend(k9)
-        res.k1.extend(k1)
         res.objekt_till_andringar[o["objekt_id"]] = [a["andring_id"] for a in k9]
-        if k1:
-            antal_ej[lg["namn"]] = antal_ej.get(lg["namn"], 0) + len(k1)
     res.k9.sort(key=lambda a: a["andring_id"])
-    for namn, n in sorted(antal_ej.items()):
-        res.ej_tillampade.append(
-            f"{n} objekt i lagret {namn} sparas men räknas inte än: brytlinjer och öppningar får en K9-ändringstyp i nästa steg (R3)."
-        )
     return res
 
 

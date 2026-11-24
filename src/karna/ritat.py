@@ -23,19 +23,30 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from shapely.geometry import Polygon, box
+from shapely.geometry import LineString, Polygon, box
 from shapely.ops import unary_union
 from shapely.validation import explain_validity
 
 HOJD_MAX_M = 200.0
 """Största höjd (m) som accepteras för ett ritat hus (över mark)."""
 MIN_YTA_M2 = 1.0
+MIN_LINJE_M = 0.1
+"""Kortaste ritade linje (mur, öppning) i meter."""
 VANINGSHOJD_M = 3.0
 """Våningshöjd för BTA-uppskattningen."""
 RITAD_TYPER: frozenset[str] = frozenset(
-    {"byggnad_ny", "byggnad_hojd", "byggnad_bort", "markhojd"}
+    {
+        "byggnad_ny",
+        "byggnad_hojd",
+        "byggnad_bort",
+        "markhojd",
+        "brytlinje_ny",
+        "brytlinje_bort",
+        "oppning_ny",
+    }
 )
-"""`markhojd` (ny markyta med `niva_rh2000`) tillkom med skarvkontrollen (R3); ritas först i R3."""
+"""`markhojd` (ny markyta) tillkom med skarvkontrollen (R1); linjetyperna (mur, öppning) med R3."""
+LINJETYPER: frozenset[str] = frozenset({"brytlinje_ny", "brytlinje_bort", "oppning_ny"})
 
 Rektangel = tuple[float, float, float, float]
 """(x_min, y_min, x_max, y_max) i EPSG:3011."""
@@ -64,6 +75,18 @@ def normalisera_ring(punkter: Sequence[Sequence[float]]) -> list[list[float]]:
     if len(ren) >= 3 and _signerad_yta(ren) < 0:
         ren = [ren[0], *reversed(ren[1:])]
     return [*ren, ren[0]] if ren else []
+
+
+def normalisera_linje(punkter: Sequence[Sequence[float]]) -> list[list[float]]:
+    """Linjen med punkterna avrundade till 1 cm och efterföljande dubbletter borttagna.
+
+    Samma ritade linje ger då samma K9 varje gång."""
+    ren: list[list[float]] = []
+    for p in punkter:
+        q = [round(float(p[0]), 2), round(float(p[1]), 2)]
+        if not ren or q != ren[-1]:
+            ren.append(q)
+    return ren
 
 
 def _signerad_yta(ring: Sequence[Sequence[float]]) -> float:
@@ -139,6 +162,50 @@ def kontrollera_ring(ring: Sequence[Sequence[float]], vad: str) -> Polygon:
     return poly
 
 
+_LINJEVAD = {
+    "brytlinje_ny": "Ny mur eller kant",
+    "brytlinje_bort": "Borttagning av mur eller kant",
+    "oppning_ny": "Ny öppning",
+}
+
+
+def kontrollera_linje(
+    typ: str, aid: str, a: Mapping[str, Any], e: Mapping[str, Any], yta_union: Any
+) -> LineString:
+    """Giltig linje (R3): minst två olika punkter, ändliga, rimlig längd, rör projektets område.
+
+    Egenskaperna (typ, höjd, bredd, botten) kontrolleras av kärnans egen översättning, så att samma
+    regler gäller här som när scenariot körs.
+    """
+    namn = f"{_LINJEVAD[typ]} '{aid}'"
+    g = a.get("geometri")
+    if not isinstance(g, Mapping) or g.get("type") != "LineString" or not g.get("coordinates"):
+        raise RitatFel(f"{namn}: saknar linje.")
+    try:
+        pts = [(float(p[0]), float(p[1])) for p in g["coordinates"]]
+    except (TypeError, ValueError, IndexError) as exc:
+        raise RitatFel(f"{namn}: linjen har fel form.") from exc
+    if any(not (math.isfinite(x) and math.isfinite(y)) for x, y in pts):
+        raise RitatFel(f"{namn}: en punkt har ogiltiga koordinater.")
+    if len(set(pts)) < 2:
+        raise RitatFel(f"{namn}: linjen behöver minst två olika punkter.")
+    linje = LineString(pts)
+    if linje.length < MIN_LINJE_M:
+        raise RitatFel(
+            f"{namn}: linjen är för kort ({linje.length:.2f} m). Minsta längd är {MIN_LINJE_M:g} m."
+        )
+    if not yta_union.intersects(linje):
+        raise RitatFel(f"{namn} ligger utanför projektets område.")
+    try:
+        from karna.k9_till_k1 import k9_till_lapp
+        from karna.scenario import Andring, Planscenario
+
+        k9_till_lapp([Andring(typ, aid, g, dict(e))], Planscenario("kontroll", ("kontroll",)))
+    except (TypeError, ValueError) as exc:  # ScenarioFel är en ValueError
+        raise RitatFel(f"{namn}: {exc}") from exc
+    return linje
+
+
 def kontrollera_andringar(
     andringar: Sequence[Mapping[str, Any]],
     projektets_rutor: Sequence[Rektangel],
@@ -206,6 +273,8 @@ def kontrollera_andringar(
                 raise RitatFel(f"{namn}: {exc}") from exc
             if not yta_union.intersects(poly):
                 raise RitatFel(f"{namn} ligger utanför projektets område.")
+        elif typ in LINJETYPER:
+            kontrollera_linje(typ, aid, a, e, yta_union)
         elif typ == "byggnad_bort" and not e.get("byggnads_id"):
             raise RitatFel(f"Borttagning '{aid}': saknar byggnads_id.")
     if not andringar:

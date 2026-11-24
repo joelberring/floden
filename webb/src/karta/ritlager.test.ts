@@ -109,7 +109,7 @@ test("lagerpanelens rader: roll, vad den blir, antal, stängt lager och vad som 
   const hus = rader.find((r) => r.id === "hus")!;
   assert.deepEqual([hus.rollNamn, hus.blir, hus.antal, hus.aktiv, hus.kanRitas, hus.stangt], ["Byggnad", "Nytt hus.", "1", true, true, false]);
   const mur = rader.find((r) => r.id === "mur")!;
-  assert.deepEqual([mur.kanRitas, mur.kanTasBort], [false, true]);
+  assert.deepEqual([mur.kanRitas, mur.kanTasBort], [true, true]);
   assert.equal(rader.find((r) => r.id === "baskarta")!.stangt, true);
 });
 

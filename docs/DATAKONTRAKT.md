@@ -315,7 +315,7 @@ Bas + diff, gemensamt för alla moduler (vatten, luft, buller, dagsljus). Kod: `
 ```
 
 Ändringstyper: `byggnad_ny`, `byggnad_bort` (`byggnads_id`), `byggnad_hojd` (`byggnads_id`, `hojd_m`),
-`markhojd` (polygon + exakt en av `niva_rh2000`, `lutning`, `delta_m` eller `landxml`, och valfritt `slant`, se nedan), `markslag` (`kod` enligt K1), `gata`, `magasin` (`volym_m3`), `vegetation` (`hojd_m`).
+`markhojd` (polygon + exakt en av `niva_rh2000`, `lutning`, `delta_m` eller `landxml`, och valfritt `slant`, se nedan), `markslag` (`kod` enligt K1), `gata`, `magasin` (`volym_m3`), `vegetation` (`hojd_m`), `brytlinje_ny`, `brytlinje_bort` och `oppning_ny` (R3, nedan).
 
 Tillämpning på K1 v2 (`karna.geometri.tillampa`): `byggnads_id` är `byggnad_id` i `byggnader.gpkg` (ett id som
 finns i ingen ruta i basen ger fel; ett id som bara finns i vissa rutor hoppas över i de andra). `byggnad_ny` kräver
@@ -326,6 +326,12 @@ vegetationshöjden över mark (0 tar bort) i polygonen. Alla tre ändringstypern
 Geometri som GeoJSON i EPSG:3011. En ändring med samma `andring_id` som i föräldern ersätter den.
 En fil vars `nyckel` inte stämmer med innehållet avvisas. K3 (projektlapp) är vattnets tillämpning
 av ett scenario.
+
+**`brytlinje_ny`, `brytlinje_bort`, `oppning_ny` (tillägg R3, 2026-11-24, additivt; K9 förblir v1).** `geometri` är en GeoJSON `LineString` i EPSG:3011 (minst två olika punkter, längd minst 0,1 m, inom eller i beröring med projektets område).
+- `brytlinje_ny`: `egenskaper.typ` (`kantsten`, `mur`, `stodmur`, `staket`, `bankkant`) och `hojd_m` (> 0, m över marken). Blir en K1-brytlinje; sänkgrafen räknar den som kantbarriär (`max(z_u, z_v) + hojd_m`), så en mur leder om vattnet.
+- `brytlinje_bort`: en väljarlinje; `egenskaper.tolerans_m` (förval 0,5, högst 5) och valfri `typ`. Den del av basens brytlinjer som ligger inom toleransen från linjen klipps bort (delarna utanför behålls).
+- `oppning_ny`: `typ` (`trumma`, `port`, `passage`), `bredd_m` (> 0) och `botten_rh2000` (krävs). Marken sänks till botten längs linjen (aldrig högre än förut) och **brytlinjer inom öppningens bredd klipps bort**, så att en mur släpper igenom vattnet. Ordning i tillämpningen: `brytlinje_bort`, nya brytlinjer, sedan öppningar.
+Översättningen K9 -> K3 görs i `karna.k9_till_k1.k9_till_lapp`; `ProjektLapp` (K3) får de additiva fälten `brytlinjer_nya`, `brytlinjer_bort`, `oppningar_nya`, som utelämnas ur `lapp.json` när de är tomma (äldre lappars kontrollsumma är oförändrad). `tillampa_lapp` skriver in dem i `bas_brytlinjer`/`kantstens_brytlinjer`/`oppningar` (öppningens `kalla` är `plan`), utökar `andrad_mask` med cellerna längs ändrade linjer (lokal omräkning) och materialiseringen skriver nya `brytlinjer.gpkg` och `oppningar.gpkg`. Testat i `tests/karna/test_brytlinje_oppning.py`: en sluten mur (2 m) runt en sänka på 100 m² ger 10,0 m³ lagrat mot cirka 22 m³ utan mur, och med en öppning i muren släpps vattnet igenom.
 
 **`markhojd` (tillägg R4, 2026-11-24, additivt; K9 förblir v1).** `egenskaper` får, utöver `niva_rh2000`, `landxml`, `markslag` och `osakerhet_m`:
 `lutning` (formerna i K3 ovan), `delta_m` (höj/sänk relativt befintlig mark) och `slant`: `{"forhallande": 3.0}` (1:3) eller `{"bredd_m": 4.0}`, valfritt `"markslag": 4`.
@@ -1314,15 +1320,17 @@ Ett **ritlager** är en samling objekt av samma geometrityp och **roll i beräkn
 | Roll | Egenskaper | Blir |
 | --- | --- | --- |
 | `byggnad` | `hojd_m` eller `tak_rh2000`; `takform`, `andamal`, `vaningar` | K9 `byggnad_ny` |
-| `mark` | `niva_rh2000` (krävs); `osakerhet_m`, `markslag` | K9 `markhojd` (-> K3 `HojdYta`) |
+| `mark` | exakt en av `niva_rh2000`, `lutning` (fyra former, K9 `markhojd`) eller `delta_m`; valfria `slant` (`forhallande` eller `bredd_m`, ev. `markslag`), `osakerhet_m`, `markslag` | K9 `markhojd` (-> K3 `HojdYta`) |
 | `hardgjort` | `niva_rh2000`, `osakerhet_m` (valfria) | K9 `markslag` kod 1; med nivå `markhojd` med `markslag` 1 |
 | `vegetation` | `hojd_m` (>= 0) och/eller `markslag` (4 gräs, 5 skog) | K9 `vegetation` och/eller `markslag`; andra ändringen får id `<objekt_id>~markslag` |
 | `vatten` | `volym_m3`, `botten_rh2000`, `markslag` | K9 `markslag` kod 8; med `volym_m3` `magasin` |
-| `brytlinje` | `typ` (kantsten, mur, stodmur, staket, bankkant), `hojd_m` | K1 brytlinje |
-| `oppning` | `typ` (trumma, port, passage), `bredd_m`, `botten_rh2000` (krävs) | K1 öppning |
+| `brytlinje` | `typ` (kantsten, mur, stodmur, staket, bankkant), `hojd_m` (> 0); eller `bort: true` med valfri `tolerans_m` och `typ` | K9 `brytlinje_ny`, med `bort` `brytlinje_bort` (R3) |
+| `oppning` | `typ` (trumma, port, passage), `bredd_m`, `botten_rh2000` (krävs) | K9 `oppning_ny` (R3) |
 
-  Brytlinjer och öppningar har ingen K9-ändringstyp än (kommer med R3): de översätts och kontrolleras men **tillämpas inte**, och förslaget får en varning om det. Vid dubbla `andring_id` (fri ändring och ritat objekt) ges fel, inget skrivs över.
+  Brytlinjer och öppningar har K9-ändringstyper sedan R3 och räknas i skyfallsberäkningen (ingen "tillämpas inte"-varning längre). Vid dubbla `andring_id` (fri ändring och ritat objekt) ges fel, inget skrivs över.
 - **Dataklass** (`oppen`, `intern`, `skyddad`; `personuppgifter` nekas, AGENTS.md). Effektiv klass (`effektiv_dataklass`): en stängd källa (`baskarta:`, `ledning`, `lokal:`) är minst `intern` (ledningar `skyddad`) vad lagret än deklarerar; en `fil:`-källa utan deklarerad klass är `intern`; ett lager `ritat` i ett stängt projekt är minst `intern`. Ett stängt lager **lämnas inte ut via MCP**: `for_mcp` ger bara id, namn, roll och klass, utan objekt. Ett förslag med objekt i ett stängt lager skriver sin K9-fil till `<kartverktygsmapp>/<projekt>/k9_stangda/` med en `oppenhet.toml` (K38) med `oppen = false`, så att körningen av det inte heller lämnas ut. MCP:s klasser `oppet`, `internt`, `skyddat` motsvarar dem (`till_mcp_klass`).
 - **Förval.** Ett dokument utan `lager`, och ett förslag utan ritlager, får lagren i `data/ritlager/standard.toml`: Hus (byggnad), Mark (ny nivå) (mark), Gata och hårdgjort (hardgjort), Grönyta (vegetation, markslag 4), Vatten (vatten), Mur och kant (brytlinje), Passage och trumma (oppning).
 
 **API (additivt).** `GET /api/kartverktyg/<projekt>` får `ritlager: {kontrakt, lager, roller}` (förvalda lager och vad varje roll blir). `POST .../validera` och `POST .../scenarier[/<slug>]` tar `ritlager` (objekten översätts och läggs till `andringar`, som är de fria ändringarna) och svarar med `andringar` (hela K9) och `ritlager` (normaliserat). Förslagsfilen (`floden-kartverktyg/v1`, oförändrad version) får fältet `ritlager`; `andringar` i filen är hela K9, så äldre läsare och körvägen fungerar som förut. `GET .../scenarier/<slug>` ger `ritlager` (förvalda lager om filen saknar det) och `fria_andringar` (K9 som inte kommer ur objekt). Samma objekt ger samma K9 och samma nyckel som en handskriven ändring. MCP `projekt_info` får `ritlager` (stängda lager utan innehåll) och `roller`.
+
+**R3 (byggt, 2026-11-24, additivt).** Klienten ritar linjer och ytor i alla roller (se `docs/design/RITVERKTYG.md`). `GET /api/kartverktyg/<projekt>/info` (projektinfo) får `brytlinjer` (basens brytlinjer som `{typ, hojd_m, koordinater}`, högst 20 000) och `brytlinjer_trunkerade`; klienten fäster mot dem och visar dem. K50-objekt av rollerna mark, hårdgjort, vegetation, vatten (`Polygon`) och brytlinje, öppning (`LineString`) sparas som förut; z på enskilda punkter sparas inte i geometrin: en lutande yta anges i egenskapen `lutning` (K9 `markhojd`), som klienten kan bygga ur hörnens höjder (`lutning.punkter`).

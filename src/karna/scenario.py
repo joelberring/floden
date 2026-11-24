@@ -31,6 +31,9 @@ ANDRINGSTYPER: frozenset[str] = frozenset(
         "gata",  # linje + sektion
         "magasin",  # polygon + volym_m3
         "vegetation",  # polygon + hojd_m (för luft/buller/dagsljus)
+        "brytlinje_ny",  # linje + typ + hojd_m: mur, kantsten ... (K1 brytlinje, R3)
+        "brytlinje_bort",  # linje (väljare), valfria tolerans_m, typ: tar bort brytlinjer
+        "oppning_ny",  # linje + typ + bredd_m + botten_rh2000: trumma, port, passage (R3)
     }
 )
 

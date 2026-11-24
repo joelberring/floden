@@ -22,6 +22,9 @@ import { monteraRitlagerpanel } from "../karta/ritlagerpanel.ts";
 import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { TOM_RITVY, type RitVy } from "../karta/kartmotor.ts";
 import { FORVALD_HOJD_M, Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "../karta/ritverktyg.ts";
+import { andraFalt, etikettFor, faltFor, lutningFranHornhojder, tolkaTal, type Falt } from "../karta/egenskaper.ts";
+import { KOMMANDON, LAGRINGSNYCKEL, lasTangenter, medBindning, sparaTangenter, tangentEtikett, bindningAv, type Kommando } from "../karta/tangenter.ts";
+import { langd } from "../karta/linje.ts";
 import { esc } from "../sidor.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
 import { kontoLage } from "../konto.ts";
@@ -36,16 +39,48 @@ import type { Avslutbar } from "./projektlista.ts";
 import { forslagKropp, FORVALD_TAKFORM, skapaDokFor, sparaTillstand, takformFran, TAKFORMER, tillstandFor } from "./tillstand.ts";
 
 const TAL0 = talFormat(0);
+const TAL1 = talFormat(1);
+const TAL2 = talFormat(2);
+
+const VERKTYGSKNAPPAR = ["valj", "hus", "laggtill", "tabort", "linje", "yta", "klipp", "ihop"] as const;
+
+/** Färg per roll när lagret inte har någon egen stil. */
+const FIGURFARG: Record<string, string> = {
+  mark: "#8b5e3c",
+  hardgjort: "#555555",
+  vegetation: "#2e7d32",
+  vatten: "#1565c0",
+  brytlinje: "#111111",
+  oppning: "#c2410c",
+};
 
 function hjalpText(v: Ritverktyg): string {
-  if (v.verktyg === "hus") {
-    if (v.utkast.length === 0) return "Klicka husets första hörn i kartan.";
-    if (v.utkast.length < 3) return "Klicka nästa hörn. Backsteg tar bort senaste, Esc avbryter.";
-    return "Klicka hörnen, dubbelklicka för att avsluta";
+  const u = v.linje.utkast.length;
+  switch (v.verktyg) {
+    case "hus":
+      if (v.utkast.length === 0) return "Klicka husets första hörn i kartan.";
+      if (v.utkast.length < 3) return "Klicka nästa hörn. Backsteg tar bort senaste, Esc avbryter.";
+      return "Klicka hörnen, dubbelklicka för att avsluta";
+    case "linje":
+      if (u === 0) return "Klicka linjens första punkt. Den fäster mot hörn och kanter; håll Alt för att inte fästa.";
+      return "Klicka nästa punkt, dubbelklicka eller tryck Enter för att avsluta. Håll Skift eller tryck F för att följa en kant, Ctrl för rät vinkel.";
+    case "yta":
+      if (u === 0) return "Klicka ytans första hörn. Den fäster mot hörn och kanter; håll Alt för att inte fästa.";
+      return "Klicka hörnen. Klicka första hörnet, dubbelklicka eller tryck Enter för att sluta ytan. Håll Skift eller tryck F för att följa en kant.";
+    case "klipp":
+      return "Klicka på en linje där den ska klippas i två.";
+    case "ihop":
+      return v.linje.ihopForsta ? "Klicka på linjen att slå ihop den med (samma lager)." : "Klicka på den första av två linjer att slå ihop.";
+    case "vand":
+    case "forenkla":
+      return "Markera en linje eller yta och använd knappen.";
+    case "valj":
+      return "Klicka på ett hus, en linje eller en yta för att markera. Dra för att flytta eller dra ett hörn; dra en mittpunkt för att lägga till ett hörn.";
+    case "laggtill":
+      return "Klicka på en kant i en markerad linje, yta eller ett nytt hus för att lägga till ett hörn.";
+    default:
+      return "Klicka på ett hörn i en markerad linje, yta eller ett nytt hus för att ta bort det.";
   }
-  if (v.verktyg === "valj") return "Klicka på ett hus för att markera det. Dra för att flytta huset eller ett hörn.";
-  if (v.verktyg === "laggtill") return "Klicka på en kant i ett markerat nytt hus för att lägga till ett hörn.";
-  return "Klicka på ett hörn i ett markerat nytt hus för att ta bort det.";
 }
 
 export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
@@ -70,9 +105,18 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" data-v="hus" aria-pressed="false" title="Rita nytt hus (${TANGENTER.hus})">Rita hus</button>
           <button type="button" data-v="laggtill" aria-pressed="false" title="Lägg till hörn (${TANGENTER.laggtill})">Lägg till hörn</button>
           <button type="button" data-v="tabort" aria-pressed="false" title="Ta bort hörn (${TANGENTER.tabort})">Ta bort hörn</button>
-          <button type="button" data-v="bort" title="Tar bort det markerade huset (en befintlig byggnad rivs)" disabled>Ta bort hus</button>
+          <span class="flode-verktyg-skil" aria-hidden="true"></span>
+          <button type="button" data-v="linje" aria-pressed="false" title="Rita linje: mur, kant, passage (${TANGENTER.linje})">Rita linje</button>
+          <button type="button" data-v="yta" aria-pressed="false" title="Rita yta: mark, hårdgjort, vegetation, vatten (${TANGENTER.yta})">Rita yta</button>
+          <button type="button" data-v="klipp" aria-pressed="false" title="Klipp en linje i två (${TANGENTER.klipp})">Klipp</button>
+          <button type="button" data-v="ihop" aria-pressed="false" title="Slå ihop två linjer i samma lager (${TANGENTER.ihop})">Slå ihop</button>
+          <button type="button" data-v="vand" title="Vänd den markerade linjens riktning (${TANGENTER.vand})" disabled>Vänd</button>
+          <button type="button" data-v="forenkla" title="Förenkla den markerade linjen eller ytan: tar bort punkter inom 0,25 m (${TANGENTER.forenkla})" disabled>Förenkla</button>
+          <span class="flode-verktyg-skil" aria-hidden="true"></span>
+          <button type="button" data-v="bort" title="Tar bort det markerade: ett hus (en befintlig byggnad rivs), en linje eller en yta (Delete)" disabled>Ta bort</button>
           <span class="flode-verktyg-skil" aria-hidden="true"></span>
           <button type="button" data-v="fast" aria-pressed="true" title="Fäst mot hörn och kanter (${TANGENTER.fast})">Fäst</button>
+          <button type="button" data-v="foljkant" aria-pressed="false" title="Följ kant: nya punkter följer kanten de startar på (${TANGENTER.foljkant}, eller håll Skift)">Följ kant</button>
           <button type="button" data-v="rat" aria-pressed="false" title="Rät vinkel (${TANGENTER.ratVinkel}, eller håll Ctrl)">Rät vinkel</button>
           <span class="flode-verktyg-skil" aria-hidden="true"></span>
           <button type="button" data-v="angra" title="Ångra (${TANGENTER.angra})" disabled>Ångra</button>
@@ -105,6 +149,11 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         <p class="flode-liten flode-dampad" id="fs-hojd-hjalp"></p>
         <p class="flode-liten flode-dampad" id="fs-projektkalla" hidden></p>
         <div class="flode-ruta" id="fs-info" role="status"></div>
+        <section class="flode-ruta" id="fs-figur" aria-labelledby="fs-figur-rubrik" hidden>
+          <h2 class="flode-h2" id="fs-figur-rubrik">Egenskaper</h2>
+          <div id="fs-figur-falt"></div>
+          <p class="flode-liten flode-dampad" id="fs-figur-info"></p>
+        </section>
         <details class="flode-detalj" id="fs-ritlager-ruta" open>
           <summary>Ritlager</summary>
           <div class="ritlagerpanel" id="fs-ritlager"></div>
@@ -113,6 +162,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           <summary>Lager och underlag</summary>
           <div class="lagerpanel" id="fs-lagerpanel"></div>
           <details class="flode-detalj inre" id="fs-underlag-ruta"><summary>Lägg till underlag från en tjänst</summary><div id="fs-underlag"></div></details>
+        </details>
+        <details class="flode-detalj" id="fs-tangenter-ruta">
+          <summary>Tangenter</summary>
+          <div id="fs-tangenter"></div>
         </details>
         <details class="flode-detalj" id="fs-sparade-ruta">
           <summary>Sparade förslag</summary>
@@ -170,6 +223,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           meddelande = m;
           visaHjalp();
         },
+        figurSkapad: () => window.requestAnimationFrame(() => el("fs-figur-falt").querySelector<HTMLElement>("input,select")?.focus()),
         husSkapat: () =>
           window.requestAnimationFrame(() => {
             const f = el<HTMLInputElement>("fs-hojd");
@@ -179,7 +233,18 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
             }
           }),
       },
+      [
+        ...(info.avgransning_polygon_3011
+          ? [{ id: "avgr", punkter: (info.avgransning_polygon_3011.coordinates[0] ?? []).slice(0, -1).map(([x, y]) => ({ x: x as number, y: y as number })), sluten: true }]
+          : []),
+        ...(info.brytlinjer ?? []).map((b, i) => ({ id: `bl:${i}`, punkter: b.koordinater.map(([x, y]) => ({ x: x as number, y: y as number })), sluten: false })),
+      ],
     );
+    try {
+      verktyg.tangentkarta = lasTangenter(window.localStorage.getItem(LAGRINGSNYCKEL));
+    } catch {
+      /* Förvalet gäller när webbläsaren inte låter oss läsa. */
+    }
     motor.settPekare({
       ror: (pt, e) => verktyg.ror(pt, e),
       klick: (pt, e) => verktyg.klick(pt, e),
@@ -244,16 +309,45 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           if (v.verktyg === "laggtill" || v.verktyg === "valj") mitt = infogaPunkter(ring).map((m) => m.at);
         }
       }
+      const figurer: NonNullable<RitVy["figurer"]> = v.linje.synliga().map((g) => {
+        const l = dok.lagerForFigur(g);
+        return {
+          id: g.id,
+          typ: g.typ,
+          punkter: v.linje.punkterAv(g),
+          vald: v.linje.val === g.id || v.linje.ihopForsta === g.id,
+          roll: l?.roll ?? "mark",
+          farg: l?.stil.linje ?? l?.stil.fyllning ?? FIGURFARG[l?.roll ?? "mark"] ?? "#111111",
+        };
+      });
+      const valdFigur = v.linje.figur(v.linje.val);
+      if (valdFigur && dok.arFigurRedigerbar(valdFigur) && v.verktyg !== "linje" && v.verktyg !== "yta") {
+        const pk = v.linje.punkterAv(valdFigur);
+        horn = pk;
+        if (v.verktyg === "laggtill" || v.verktyg === "valj") {
+          const n = valdFigur.typ === "yta" ? pk.length : pk.length - 1;
+          mitt = Array.from({ length: n }, (_, i) => {
+            const a = pk[i] as Punkt;
+            const b = pk[(i + 1) % pk.length] as Punkt;
+            return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+          });
+        }
+      }
+      const ritar = v.verktyg === "hus" || v.verktyg === "linje" || v.verktyg === "yta";
       motor.settRit({
         ...TOM_RITVY,
         hus,
-        utkast: v.utkast,
-        mark: v.verktyg === "hus" ? v.mark : null,
+        figurer,
+        foljForhand: v.linje.foljForhand ?? [],
+        brytlinjer: (info.brytlinjer ?? []).map((b) => b.koordinater.map(([x, y]) => ({ x: x as number, y: y as number }))),
+        utkast: v.verktyg === "hus" ? v.utkast : v.linje.utkast,
+        mark: ritar ? v.mark : null,
         fast: v.fast ? { at: v.fast.at, slag: ({ hornpunkt: "hörn", skarning: "skärning", kant: "kant" } as Record<string, string>)[v.fast.typ] ?? "fäst" } : null,
         lasLinje: v.lasLinje,
         horn,
         mitt,
         etikett: v.ritText(),
+        valdPunkt: v.linje.valdPunkt,
       });
       motor.settMarkorstil(v.verktyg === "valj" ? (v.drar ? "grabbing" : "") : "crosshair");
       motor.settByggnader(byggnaderMedForslag(info, dok));
@@ -265,11 +359,16 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     const knapp = (id: string): HTMLButtonElement | null => rot.querySelector<HTMLButtonElement>(`[data-v="${id}"]`);
     const tryckt = (id: string, pa: boolean): void => knapp(id)?.setAttribute("aria-pressed", String(pa));
     const uppdateraVerktyg = (): void => {
-      for (const v of ["valj", "hus", "laggtill", "tabort"] as const) tryckt(v, verktyg.verktyg === v);
+      for (const v of VERKTYGSKNAPPAR) tryckt(v, verktyg.verktyg === v);
       tryckt("fast", verktyg.fastPa);
       tryckt("rat", verktyg.ratVinkel);
+      tryckt("foljkant", verktyg.foljKant);
       const bort = knapp("bort");
-      if (bort) bort.disabled = !verktyg.val;
+      if (bort) bort.disabled = !verktyg.val && !verktyg.linje.val;
+      for (const k of ["vand", "forenkla"]) {
+        const b = knapp(k);
+        if (b) b.disabled = !verktyg.linje.val;
+      }
       const angra = knapp("angra");
       if (angra) angra.disabled = !dok.kanAngra();
       const goraOm = knapp("goraom");
@@ -282,7 +381,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       h.textContent = text;
       h.classList.toggle("fel", meddelande?.typ === "fel");
     };
-    for (const v of ["valj", "hus", "laggtill", "tabort"] as const) {
+    knapp("vand")?.addEventListener("click", () => verktyg.kommando("vand"));
+    knapp("forenkla")?.addEventListener("click", () => verktyg.kommando("forenkla"));
+    knapp("foljkant")?.addEventListener("click", () => verktyg.vaxlaFoljKant());
+    for (const v of VERKTYGSKNAPPAR) {
       knapp(v)?.addEventListener("click", () => {
         meddelande = null;
         verktyg.sattVerktyg(v as Verktyg);
@@ -354,7 +456,129 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           : `Befintlig byggnad${riven ? ", riven" : ""}. Taktyp kan bara anges för nya hus.`;
       }
       el("fs-info").innerHTML = infoHtml();
+      uppdateraFigurPanel();
     };
+
+    // --- Egenskaper för en markerad linje eller yta (roll-specifika fält med enheter) ---
+    const figurRot = el("fs-figur");
+    const figurFalt = el("fs-figur-falt");
+    let figurNyckel = "";
+    const faltHtml = (f: Falt, fel: string | undefined): string => {
+      const id = `fs-f-${f.nyckel}`;
+      const hjalp = f.hjalp ? `<span class="flode-liten flode-dampad" id="${id}-h">${esc(f.hjalp)}</span>` : "";
+      const beskr = ` aria-describedby="${id}-h${fel ? ` ${id}-fel` : ""}"`;
+      let kontroll: string;
+      if (f.slag === "val") {
+        kontroll = `<select id="${id}" data-nyckel="${f.nyckel}"${beskr}>${(f.alternativ ?? []).map((a) => `<option value="${esc(a.varde)}"${a.varde === f.varde ? " selected" : ""}>${esc(a.etikett)}</option>`).join("")}</select>`;
+      } else if (f.slag === "ja_nej") {
+        kontroll = `<input type="checkbox" id="${id}" data-nyckel="${f.nyckel}"${f.varde === "ja" ? " checked" : ""}${beskr} />`;
+      } else {
+        kontroll = `<input type="text" inputmode="decimal" id="${id}" data-nyckel="${f.nyckel}" value="${esc(f.varde)}"${beskr} autocomplete="off" />${f.enhet ? ` <span class="flode-dampad">${esc(f.enhet)}</span>` : ""}`;
+      }
+      return `<div class="flode-falt"><label for="${id}">${esc(f.etikett)}</label>${kontroll}${hjalp}${fel ? `<span class="flode-fel flode-liten" id="${id}-fel" role="alert">${esc(fel)}</span>` : ""}</div>`;
+    };
+    let faltFel: { nyckel: string; text: string } | null = null;
+    const uppdateraFigurPanel = (): void => {
+      const f = verktyg.linje.figur(verktyg.linje.val);
+      if (!f) {
+        figurRot.hidden = true;
+        figurNyckel = "";
+        return;
+      }
+      const lager = dok.lagerForFigur(f);
+      const roll = lager?.roll ?? "mark";
+      const falt = faltFor(roll, f.egenskaper);
+      const pk = verktyg.linje.punkterAv(f);
+      const vald = verktyg.linje.valdPunkt;
+      const z = vald !== null ? pk[vald]?.z : undefined;
+      const nyckel = JSON.stringify([f.id, f.egenskaper, faltFel, vald, z, pk.length]);
+      figurRot.hidden = false;
+      el("fs-figur-rubrik").textContent = `${etikettFor(roll, f.egenskaper, f.typ)} (${lager?.namn ?? f.lager})`;
+      const langdText = f.typ === "linje" ? `Längd ${TAL1.format(langd(pk))} m. ` : `Yta ${TAL0.format(yta(pk))} m². `;
+      const hornInfo =
+        roll === "mark" && vald !== null
+          ? `<div class="flode-falt"><label for="fs-f-hornhojd">Höjd på hörn ${TAL0.format(vald + 1)}</label><input type="text" inputmode="decimal" id="fs-f-hornhojd" data-nyckel="hornhojd" value="${z === undefined ? "" : esc(TAL2.format(z))}" /> <span class="flode-dampad">m RH 2000</span><span class="flode-liten flode-dampad">Tomt tar bort höjden. Ytans lutning sätts under Höjd: Lutning ur hörnens höjder.</span></div>`
+          : "";
+      if (document.activeElement && figurFalt.contains(document.activeElement) && nyckel === figurNyckel) return;
+      figurNyckel = nyckel;
+      const aktivId = document.activeElement instanceof HTMLElement && figurFalt.contains(document.activeElement) ? document.activeElement.id : "";
+      figurFalt.innerHTML = falt.map((x) => faltHtml(x, faltFel?.nyckel === x.nyckel ? faltFel.text : undefined)).join("") + hornInfo;
+      if (aktivId) figurFalt.querySelector<HTMLElement>(`#${aktivId}`)?.focus();
+      el("fs-figur-info").textContent = `${langdText}Servern kontrollerar värdena när förslaget kontrolleras.`;
+    };
+    figurFalt.addEventListener("change", (h) => {
+      const m = h.target as HTMLInputElement | HTMLSelectElement;
+      const nyckel = m.dataset["nyckel"];
+      const f = verktyg.linje.figur(verktyg.linje.val);
+      if (!nyckel || !f) return;
+      faltFel = null;
+      if (nyckel === "hornhojd") {
+        const text = (m as HTMLInputElement).value;
+        const v = tolkaTal(text);
+        if (text.trim() !== "" && v === undefined) faltFel = { nyckel, text: "Skriv höjden som ett tal, till exempel 12,5." };
+        else verktyg.linje.sattPunktHojd(v);
+        if (faltFel) uppdateraFigurPanel();
+        return;
+      }
+      const roll = dok.lagerForFigur(f)?.roll ?? "mark";
+      const text = m instanceof HTMLInputElement && m.type === "checkbox" ? (m.checked ? "ja" : "nej") : m.value;
+      let r = andraFalt(roll, f.egenskaper, nyckel, text, { punkter: f.punkter });
+      if (nyckel === "hojdlage" && text === "hornhojder") {
+        const l = lutningFranHornhojder(f.punkter);
+        if ("fel" in l) {
+          faltFel = { nyckel, text: l.fel };
+          r = { patch: { niva_rh2000: null, delta_m: null, lutning: null } };
+        } else r = { patch: { niva_rh2000: null, delta_m: null, lutning: l.lutning } };
+      }
+      if ("fel" in r) faltFel = { nyckel, text: r.fel };
+      else dok.sattFigurEgenskaper(f.id, r.patch);
+      uppdateraFigurPanel();
+      planeraKontroll();
+    });
+
+    // --- Tangenter: egna tangenter per kommando, sparas i webbläsaren ---
+    const KOMMANDONAMN: Record<Kommando, string> = {
+      valj: "Markera", hus: "Rita hus", linje: "Rita linje", yta: "Rita yta", laggtill: "Lägg till punkt", tabort: "Ta bort punkt", klipp: "Klipp",
+      ihop: "Slå ihop", vand: "Vänd", forenkla: "Förenkla", foljkant: "Följ kant", fast: "Fäst på/av", ratVinkel: "Rät vinkel på/av", angra: "Ångra", goraOm: "Gör om",
+    };
+    const ritaTangenter = (): void => {
+      const k = verktyg.tangentkarta;
+      el("fs-tangenter").innerHTML = `<p class="flode-liten flode-dampad">Klicka i fältet och tryck den tangent du vill ha. Ctrl/Cmd+Z och Ctrl/Cmd+Y går alltid.</p>
+        <table class="flode-tabell"><tbody>${KOMMANDON.map((c) => `<tr><th scope="row">${esc(KOMMANDONAMN[c])}</th><td><input type="text" readonly data-kommando="${c}" value="${esc(tangentEtikett(k[c]))}" aria-label="Tangent för ${esc(KOMMANDONAMN[c])}" size="6" /></td></tr>`).join("")}</tbody></table>
+        <button type="button" class="flode-knapp" id="fs-tangenter-forval">Återställ förval</button>`;
+    };
+    el("fs-tangenter").addEventListener("keydown", (h) => {
+      const m = h.target as HTMLInputElement;
+      const c = m.dataset["kommando"] as Kommando | undefined;
+      if (!c || h.key === "Tab") return;
+      h.preventDefault();
+      const b = bindningAv(h);
+      if (!b) return;
+      const r = medBindning(verktyg.tangentkarta, c, b);
+      verktyg.tangentkarta = r.karta;
+      try {
+        window.localStorage.setItem(LAGRINGSNYCKEL, sparaTangenter(r.karta));
+      } catch {
+        /* Gäller tills sidan laddas om. */
+      }
+      ritaTangenter();
+      el("fs-tangenter").querySelector<HTMLElement>(`[data-kommando="${c}"]`)?.focus();
+      if (r.bortbytt) {
+        meddelande = { typ: "info", text: `Tangenten ${tangentEtikett(b)} användes av ${KOMMANDONAMN[r.bortbytt]}, som nu saknar tangent.` };
+        visaHjalp();
+      }
+    });
+    el("fs-tangenter").addEventListener("click", (h) => {
+      if ((h.target as Element).id !== "fs-tangenter-forval") return;
+      verktyg.tangentkarta = lasTangenter(null);
+      try {
+        window.localStorage.removeItem(LAGRINGSNYCKEL);
+      } catch {
+        /* Gäller tills sidan laddas om. */
+      }
+      ritaTangenter();
+    });
+    ritaTangenter();
     hojdFalt.addEventListener("change", () => {
       const n = Number(hojdFalt.value.replace(",", "."));
       if (hojdFalt.value.trim() === "" || !Number.isFinite(n)) {
@@ -391,7 +615,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           bta_m2: k?.bta_m2 ?? (h !== null && ring ? btaUppskattning(yta(ring), h, info.vaningshojd_m) : 0),
         };
       }
-      const antal = dok.tillAndringar().length;
+      const antal = dok.tillAndringar().length + dok.figurer.size;
       return forslagInfoHtml({
         antal,
         hus,

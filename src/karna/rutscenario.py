@@ -284,7 +284,8 @@ def _tillampa_lapp_pa_ruta(ruta: Ruta, forberedd: ForberedLapp, ut: Path) -> boo
     oforandrad = (
         not bool(np.any(res.andrad_mask))
         and not res.kantstens_brytlinjer
-        and len(res.oppningar) == len(bas_opp)
+        and list(res.bas_brytlinjer) == list(bas_bryt)
+        and list(res.oppningar) == list(bas_opp)
     )
     if oforandrad:
         return False

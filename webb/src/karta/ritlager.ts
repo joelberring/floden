@@ -50,8 +50,8 @@ export interface RollInfo {
   egenskaper: string[];
 }
 
-/** Roller som klientens ritverktyg kan rita än (hus). Övriga kommer med linje- och ytverktyget (R3). */
-export const RITBARA_ROLLER: ReadonlySet<Roll> = new Set<Roll>(["byggnad"]);
+/** Roller som klientens ritverktyg kan rita: hus med husverktyget, övriga med linje- och ytverktyget (R3). */
+export const RITBARA_ROLLER: ReadonlySet<Roll> = new Set<Roll>(["byggnad", "mark", "hardgjort", "vegetation", "vatten", "brytlinje", "oppning"]);
 
 export const kopiaLager = (l: RitLager): RitLager => ({
   ...l,

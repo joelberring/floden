@@ -49,6 +49,14 @@ export interface RitVy {
   mitt: Punkt[];
   /** Text intill pekaren (t.ex. ytan). */
   etikett: string | null;
+  /** Ritade linjer och ytor (R3). `slag` ger färgen efter lagrets roll. */
+  figurer?: Array<{ id: string; typ: "linje" | "yta"; punkter: Punkt[]; vald: boolean; roll: string; farg?: string }>;
+  /** Följ kant: kantens punkter från senaste punkten till pekaren. */
+  foljForhand?: Punkt[];
+  /** Det markerade hörnets index på den markerade figuren (visas fyllt), eller null. */
+  valdPunkt?: number | null;
+  /** Befintliga brytlinjer (visning). */
+  brytlinjer?: Punkt[][];
 }
 
 export const TOM_RITVY: RitVy = { hus: [], utkast: [], mark: null, fast: null, lasLinje: null, horn: [], mitt: [], etikett: null };
@@ -100,6 +108,10 @@ const OVERLAGER = [
   "rit-hus-fyll",
   "rit-hus-kant",
   "rit-bort-kant",
+  "rit-brytlinjer",
+  "rit-fig-fyll",
+  "rit-fig-linje",
+  "rit-foljkant",
   "rit-las",
   "rit-utkast-fyll",
   "rit-utkast-linje",
@@ -289,7 +301,7 @@ export class Kartmotor {
 
   private byggOverlager(): void {
     const k = this.karta;
-    for (const s of [BYGGNADER, RUTOR, OVERFALL, `${RIT}-hus`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
+    for (const s of [BYGGNADER, RUTOR, OVERFALL, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -343,6 +355,21 @@ export class Kartmotor {
       paint: { "line-color": "#111111", "line-width": 2, "line-dasharray": [2, 2] },
       filter: ["==", ["get", "slag"], "bort"],
     });
+    k.addLayer({ id: "rit-brytlinjer", type: "line", source: `${RIT}-bryt`, paint: { "line-color": "#6b6b6b", "line-width": 1.5, "line-opacity": 0.7 } });
+    k.addLayer({
+      id: "rit-fig-fyll",
+      type: "fill",
+      source: `${RIT}-fig`,
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": ["get", "farg"], "fill-opacity": ["case", ["get", "vald"], 0.4, 0.25] },
+    });
+    k.addLayer({
+      id: "rit-fig-linje",
+      type: "line",
+      source: `${RIT}-fig`,
+      paint: { "line-color": ["get", "farg"], "line-width": ["case", ["get", "vald"], 4, 3] },
+    });
+    k.addLayer({ id: "rit-foljkant", type: "line", source: `${RIT}-folj`, paint: { "line-color": "#c2410c", "line-width": 4, "line-opacity": 0.8 } });
     k.addLayer({ id: "rit-las", type: "line", source: `${RIT}-las`, paint: { "line-color": "#6b6b6b", "line-width": 1, "line-dasharray": [3, 3] } });
     k.addLayer({ id: "rit-utkast-fyll", type: "fill", source: `${RIT}-utkast`, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": "#111111", "fill-opacity": 0.12 } });
     k.addLayer({ id: "rit-utkast-linje", type: "line", source: `${RIT}-utkast`, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#111111", "line-width": 2, "line-dasharray": [2, 1] } });
@@ -465,6 +492,22 @@ export class Kartmotor {
         properties: { id: h.id, vald: h.vald, slag: h.slag },
         geometry: { type: "Polygon", coordinates: [llRing(h.ring)] },
       })),
+    });
+    this.satt(`${RIT}-fig`, {
+      type: "FeatureCollection",
+      features: (r.figurer ?? []).map((g) => ({
+        type: "Feature",
+        properties: { id: g.id, vald: g.vald, roll: g.roll, farg: g.farg ?? "#111111" },
+        geometry: g.typ === "yta" ? { type: "Polygon", coordinates: [llRing(g.punkter)] } : { type: "LineString", coordinates: g.punkter.map(ll) },
+      })),
+    });
+    this.satt(`${RIT}-bryt`, {
+      type: "FeatureCollection",
+      features: (r.brytlinjer ?? []).map((l) => ({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: l.map(ll) } })),
+    });
+    this.satt(`${RIT}-folj`, {
+      type: "FeatureCollection",
+      features: r.foljForhand && r.foljForhand.length >= 2 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: r.foljForhand.map(ll) } }] : [],
     });
     const utkast = r.mark ? [...r.utkast, r.mark] : r.utkast;
     const f: Fc["features"] = [];

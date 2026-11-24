@@ -3,7 +3,8 @@
  * (som val) till rät vinkel mot förra sträckan eller kanten man startade på.
  *
  * Logik porterad från O-Tid (MIT, joelberring/otid @ 4a446af, apps/web/src/lib/map-project-snap.ts
- * och map-project-draw-assist.ts). Samma tre nivåer: 1) hörn, 2) skärning mellan två kanter,
+ * och map-project-draw-assist.ts). R3: även öppna linjer (`oppna`: murar, kantlinjer, projektets
+ * avgränsning) som fästmål, som O-Tids index över linjer och ytkanter. Samma tre nivåer: 1) hörn, 2) skärning mellan två kanter,
  * 3) närmaste punkt på en kant, och samma vinkellås (45 graders steg mot förra sträckan, 90
  * mot kanten man startat på). Skillnader: O-Tid räknar i kartans mm med ett rutnätsindex i
  * Worker; här räknas i SWEREF-meter med ett enkelt rutnät (Map) eftersom antalet byggnader är
@@ -49,7 +50,7 @@ export interface FastIndex {
 const nyckel = (cx: number, cy: number): string => `${cx}:${cy}`;
 
 /** Fästindex över objektens ringar (öppna ringar, id per objekt). */
-export function byggFastIndex(objekt: ReadonlyArray<{ id: string; ringar: ReadonlyArray<readonly Punkt[]> }>, cell = 50): FastIndex {
+export function byggFastIndex(objekt: ReadonlyArray<{ id: string; ringar: ReadonlyArray<readonly Punkt[]>; oppna?: boolean }>, cell = 50): FastIndex {
   const strackor: Strack[] = [];
   const punkter: Array<{ p: Punkt; id: string; index: number }> = [];
   const rutor = new Map<string, { s: number[]; p: number[] }>();
@@ -71,6 +72,7 @@ export function byggFastIndex(objekt: ReadonlyArray<{ id: string; ringar: Readon
         const pi = punkter.length;
         punkter.push({ p: a, id: o.id, index: i });
         ruta(Math.floor(a.x / cell), Math.floor(a.y / cell)).p.push(pi);
+        if (o.oppna && i === ring.length - 1) continue; // en öppen linje har ingen sträcka från sista till första punkten
         const si = strackor.length;
         strackor.push({ a, b, id: o.id, index: n++ });
         const c0 = Math.floor(Math.min(a.x, b.x) / cell);
