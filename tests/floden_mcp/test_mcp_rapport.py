@@ -211,3 +211,20 @@ def test_bestallning_till_export_via_mcp_for_dagsljus(mcp: Mcp) -> None:
     assert mcp.ok("rapport_kontrollera", {"rapport_id": rid})["godkand"]
     e = mcp.ok("rapport_exportera", {"rapport_id": rid, "format": "pdf"})
     assert Path(e["fil"]).is_file()
+
+
+def test_rapport_skapa_utan_korningar_valjer_projektets_underlag_och_sager_det(mcp: Mcp) -> None:
+    """U2: utan `korningar` väljs förvalet (här demokörningen, inget eget förslag finns) och det står i svaret och rapporten."""
+    r = mcp.ok("rapport_skapa", {"amne": "skyfall"})
+    assert r["korningar"] == ["demo-vatten"]
+    assert r["underlag"] == [{"korning_id": "demo-vatten", "slag": "demo", "scenario": None}]
+    # Ett förslag som inte finns ger ett tydligt fel, inte en tyst reserv.
+    nej = mcp.anropa("rapport_skapa", {"amne": "skyfall", "forslag": "finns-inte"})
+    assert nej.is_error and "finns inte" in nej.content[0].text
+
+
+def test_beställningens_frågor_styr_rapporten_utan_korningar(mcp: Mcp) -> None:
+    best = mcp.ok("bestallning_skapa", {"syfte": "Några skyfallsfrågor", "amnen": ["skyfall"], "fragor": ["SK-01", "SK-06"]})
+    r = mcp.ok("rapport_skapa", {"bestallning_id": best["bestallning_id"]})
+    assert [f["id"] for f in r["fragor"]] == ["SK-01", "SK-06"]
+    assert r["korningar"] == ["demo-vatten"]

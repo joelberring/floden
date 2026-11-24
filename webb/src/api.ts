@@ -20,6 +20,7 @@ import type {
   GeografierSvar,
   RapportAmne,
   RapportBestallningBegaran,
+  RapportVal,
   RapportJobb,
   SkapaProjektBegaran,
   SkapaProjektSvar,
@@ -159,12 +160,18 @@ export function startaRapportJobb(
   projekt: string,
   amne: string,
   bestallning: RapportBestallningBegaran,
-  korningId?: string,
+  val: RapportVal = {},
 ): Promise<RapportJobb> {
   return lasJson<RapportJobb>(`${API_BAS}/projekt/${encodeURIComponent(projekt)}/rapporter`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ amne, bestallning, ...(korningId ? { korning_id: korningId } : {}) }),
+    body: JSON.stringify({
+      amne,
+      bestallning,
+      ...(val.korning_id ? { korning_id: val.korning_id } : {}),
+      ...(val.scenario ? { scenario: val.scenario } : {}),
+      ...(val.fragor && val.fragor.length > 0 ? { fragor: val.fragor } : {}),
+    }),
   });
 }
 

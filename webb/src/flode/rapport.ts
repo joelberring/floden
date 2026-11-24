@@ -9,7 +9,9 @@ import { hamtaRapportJobb, lasJson, startaRapportJobb } from "../api.ts";
 import { esc } from "../sidor.ts";
 import type { RapportAmne, RapportJobb, RapportRad } from "../types.ts";
 import type { Avslutbar } from "./projektlista.ts";
-import { arPagaende, skapaPanelHtml } from "./rapportskapa.ts";
+import { hamtaFragelista } from "./fragor.ts";
+import { arPagaende, skapaPanelHtml, valjUnderlag } from "./rapportskapa.ts";
+import type { FlodeFraga } from "./status.ts";
 import { sparaTillstand, tillstandFor } from "./tillstand.ts";
 
 export interface RapportDel {
@@ -86,11 +88,15 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   let valtAmne = "skyfall";
   let jobb: RapportJobb | null = null;
   let jobbFel: string | null = null;
+  let katalog: FlodeFraga[] | null = null;
   let timer: number | null = null;
+
+  const underlagNu = (): ReturnType<typeof valjUnderlag> =>
+    valjUnderlag(amnen.find((a) => a.id === valtAmne), t.scenario, t.valda, katalog);
 
   const ritaSkapa = (): void => {
     const m = rot.querySelector<HTMLElement>("#rp-skapa");
-    if (m) m.innerHTML = skapaPanelHtml({ amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
+    if (m) m.innerHTML = skapaPanelHtml({ projekt, underlag: underlagNu(), amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
   };
 
   const ritaTom = (text: string, fel = false): void => {
@@ -215,11 +221,12 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   const startaJobb = async (): Promise<void> => {
     jobbFel = null;
     try {
-      jobb = await startaRapportJobb(projekt, valtAmne, {
-        syfte: t.bestallning.syfte,
-        skede: t.bestallning.skede,
-        mottagare_roll: t.bestallning.mottagare,
-      }, amnen.find((a) => a.id === valtAmne)?.forval_korning ?? undefined);
+      jobb = await startaRapportJobb(
+        projekt,
+        valtAmne,
+        { syfte: t.bestallning.syfte, skede: t.bestallning.skede, mottagare_roll: t.bestallning.mottagare },
+        underlagNu().val,
+      );
     } catch (e) {
       jobbFel = e instanceof Error ? e.message : String(e);
       jobb = null;
@@ -271,6 +278,13 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   );
 
   const klar = (async () => {
+    // Frågorna från steg 3 (id ur huvudkatalogen); utan katalog skickas inga och rapporten tar alla frågor för ämnet.
+    void hamtaFragelista()
+      .then((l) => {
+        katalog = l.kalla === "katalog" ? l.fragor : null;
+        if (!avslutad) ritaSkapa();
+      })
+      .catch(() => undefined);
     let lista: RapportRad[];
     try {
       const svar = await lasJson<{ rapporter: RapportRad[]; amnen?: RapportAmne[] }>(bas);

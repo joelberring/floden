@@ -209,3 +209,87 @@ def test_webbflodet_laser_scenarierna_ur_korningen_och_gissar_inga_mottagare() -
     assert saknad_mall("ekologi") and "R2" in (saknad_mall("ekologi") or "")
     assert saknad_mall("skyfall") is None and saknad_mall("dagsljus") is None
     assert callable(pastaenden_for)
+
+
+def _rapport_json(v: Varld, rapport_id: str) -> dict[str, Any]:
+    return json.loads((v.rot / "rapporter" / rapport_id / "rapport.json").read_text(encoding="utf-8"))
+
+
+def _spara_forslag(v: Varld, slug: str, namn: str, korningar: dict[str, str]) -> None:
+    mapp = v.rot / "kartverktyg" / DEMO / "scenarier"
+    mapp.mkdir(parents=True, exist_ok=True)
+    (mapp / f"{slug}.json").write_text(
+        json.dumps({"format": "floden-kartverktyg/v1", "namn": namn, "slug": slug, "andringar": [], "korningar": {k: {"korning_id": i} for k, i in korningar.items()}}),
+        encoding="utf-8",
+    )
+
+
+def test_valda_fragor_foljer_med_och_demokorningen_sags_i_rapporten(v: Varld) -> None:
+    url = f"/api/projekt/{DEMO}/rapporter"
+    s, d = v.json(v.anna, "POST", url, {"amne": "skyfall", "fragor": ["SK-01", "SK-06"]})
+    assert s == 202, d
+    assert d["underlag"] == {"slag": "demo", "scenario": None, "fragor": ["SK-01", "SK-06"], "demo": True}
+    slut = v.vanta(v.anna, d)
+    assert slut["status"] == "klar", slut
+    rap = _rapport_json(v, slut["rapport_id"])
+    assert rap["fragor"] == ["SK-01", "SK-06"]
+    assert rap["korningar"][0]["underlag"]["slag"] == "demo"
+    best = json.loads(next((v.rot / "rapporter" / "bestallningar").glob("b-*.json")).read_text(encoding="utf-8"))
+    assert best["fragor"] == ["SK-01", "SK-06"] and best["urval"] == ["SK-01", "SK-06"]
+    # Handlingsrutan säger vad rapporten bygger på.
+    from rapport.skissmall import bygg_dokument
+
+    text = json.dumps(bygg_dokument(v.app.rapportjobb.rt.arkiv.las(slut["rapport_id"]), v.app.rapportjobb.rt).block, default=str, ensure_ascii=False)
+    assert "demokörningen" in text
+
+
+def test_fragor_valideras_mot_huvudkatalogen_och_amnet(v: Varld) -> None:
+    url = f"/api/projekt/{DEMO}/rapporter"
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "fragor": ["XX-99"]})[0] == 400
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "fragor": ["DL-01"]})[0] == 400  # fel ämne
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "fragor": "SK-01"})[0] == 400
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "fragor": [1]})[0] == 400
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "fragor": ["SK-01"], "bestallning": {"fragor": ["SK-02"]}})[0] == 400
+    assert not (v.rot / "rapporter" / "jobb").exists()
+
+
+def test_forslaget_styr_vilken_korning_rapporten_bygger_pa(v: Varld) -> None:
+    url = f"/api/projekt/{DEMO}/rapporter"
+    # Ett förslag som inte finns: 404. Ett som saknar körning: 409 med vad som ska göras.
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "hus-a"})[0] == 404
+    _spara_forslag(v, "hus-a", "Hus A", {})
+    s, e = v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "hus-a"})
+    assert s == 409 and "steg 3" in e["fel"]
+    # Förslaget har en körning: den väljs (användarens förslag går före demokörningen) och förvalet i listan ändras.
+    _spara_forslag(v, "hus-a", "Hus A", {"vatten": "demo-vatten"})
+    per = {a["id"]: a for a in v.json(v.anna, "GET", url)[1]["amnen"]}
+    assert per["skyfall"]["forval_slag"] == "forslag"
+    assert per["skyfall"]["korningar"][0]["scenario"] == {"slug": "hus-a", "namn": "Hus A"}
+    s, d = v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "hus-a", "fragor": ["SK-01"]})
+    assert s == 202, d
+    assert d["korning_id"] == "demo-vatten" and d["underlag"]["slag"] == "forslag" and d["underlag"]["scenario"]["namn"] == "Hus A"
+    slut = v.vanta(v.anna, d)
+    assert slut["status"] == "klar", slut
+    assert _rapport_json(v, slut["rapport_id"])["korningar"][0]["underlag"]["scenario"]["slug"] == "hus-a"
+    # En körning som inte hör till förslaget: 400 (dagsljuskörningen duger inte för skyfall: 404).
+    _spara_forslag(v, "hus-b", "Hus B", {})
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "hus-b", "korning_id": "demo-vatten"})[0] == 400
+    assert v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "../x"})[0] == 404
+
+
+def test_utan_rapportroll_ingen_rapport_pa_valen(v: Varld) -> None:
+    v.miljo.adapter.konfig = replace(v.miljo.adapter.konfig, demoprojekt_roll="lasare")
+    assert v.json(v.bo, "POST", f"/api/projekt/{DEMO}/rapporter", {"amne": "skyfall", "fragor": ["SK-01"]})[0] == 403
+    assert not (v.rot / "rapporter" / "jobb").exists()
+
+
+def test_belagg_sager_projektets_avgransning_nar_polygon_finns(v: Varld, monkeypatch: pytest.MonkeyPatch) -> None:
+    kalla = v.app.rapportjobb.rt.kalla
+    adress = "jamforelse.skyfall_max_djup_efter_minus_fore.yta_okning_m2"
+    fore = kalla.hamta(adress, "demo-vatten", {})
+    assert fore.mottagare == "hela beräkningsområdet" and "hela beräkningsområdet" in fore.namnare
+    monkeypatch.setattr(type(kalla), "har_avgransning", lambda self, korning_id: True)
+    efter = kalla.hamta(adress, "demo-vatten", {})
+    assert efter.mottagare == "inom projektets avgränsning (polygon)"
+    assert efter.namnare == "mark inom projektets avgränsning (polygon); byggnadernas tak undantagna"
+    assert efter.varde == fore.varde  # texten ändras, inte talet (demon har ingen polygon att räkna på)

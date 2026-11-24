@@ -856,13 +856,39 @@ export interface RapportAmne {
   forklaring: string | null;
   mall: boolean;
   forval_korning: string | null;
-  korningar: Array<{ korning_id: string; fraga_id: string; skapad: string | null }>;
+  /** Slag på förvalskörningen: förslag, egen eller demo (K48). */
+  forval_slag?: KorningSlag | null;
+  korningar: RapportKorning[];
+}
+
+export type KorningSlag = "forslag" | "egen" | "demo" | "okand";
+
+export interface RapportKorning {
+  korning_id: string;
+  fraga_id: string;
+  skapad: string | null;
+  slag?: KorningSlag;
+  scenario?: { slug: string; namn: string } | null;
+}
+
+export interface RapportUnderlag {
+  slag: KorningSlag;
+  scenario: { slug: string; namn: string } | null;
+  fragor: string[];
+  demo: boolean;
 }
 
 export interface RapportBestallningBegaran {
   syfte?: string;
   skede?: string;
   mottagare_roll?: string;
+}
+
+/** Valen som följer med när rapporten skapas (K48): körningen, förslaget och frågorna ur steg 3. */
+export interface RapportVal {
+  korning_id?: string;
+  scenario?: string;
+  fragor?: string[];
 }
 
 export interface RapportJobb {
@@ -872,6 +898,7 @@ export interface RapportJobb {
   amne: string;
   korning_id: string;
   bestallning_id: string;
+  underlag?: RapportUnderlag | null;
   status: "ko" | "kor" | "klar" | "fel";
   steg: string | null;
   steg_nr: number;

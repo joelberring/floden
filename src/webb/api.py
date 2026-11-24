@@ -2690,6 +2690,25 @@ class FlodenApiApp:
                     return PROJEKT_ID_DEMO
         return None
 
+    def korningsunderlag(self, korning_id: str) -> dict[str, Any]:
+        """Vad en körning är för slags underlag (K48, additivt).
+
+        `slag` är `forslag` (körd för ett ritat förslag; `scenario` har då `slug` och `namn` när
+        kopplingen finns kvar), `egen` (annan körning i projektet, till exempel via MCP), `demo`
+        (demokörningen som följer med projektet, inget eget förslag) eller `okand`."""
+        k = self.fragor.korning_eller_none(korning_id)
+        projekt = self.projekt_for_korning(korning_id)
+        if k is None or projekt is None:
+            return {"slag": "okand", "scenario": None}
+        sc = self.kartverktyg.scenarier_per_korning(projekt).get(korning_id)
+        if sc is not None:
+            return {"slag": "forslag", "scenario": sc}
+        if str(k.fraga_id).startswith("rita-"):
+            return {"slag": "forslag", "scenario": None}
+        if not k.projekt_id:
+            return {"slag": "demo", "scenario": None}
+        return {"slag": "egen", "scenario": None}
+
     def konto_far_se_korning(self, konto_id: str | None, korning_id: str) -> bool:
         """Får kontot läsa körningen? Inloggning av: alltid. På: minst `lasare` i körningens
         projekt (demokvarteret följer `demoprojekt_roll`); körning utan projekt bara för

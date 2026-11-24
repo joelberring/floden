@@ -260,6 +260,9 @@ HELA_OMRADET_NAMN = "hela_omradet"
 _IGNORERA_PARAM: Final[frozenset[str]] = frozenset({"nyckel"})
 HELA_OMRADET_MARK = "mark i hela beräkningsområdet; byggnadernas tak undantagna"
 HELA_OMRADET = "hela beräkningsområdet (en siffra per körning)"
+INOM_AVGRANSNINGEN = "inom projektets avgränsning (polygon)"
+"""Ersätter "hela beräkningsområdet" när projektet har `avgransning_polygon_3011` (K48): talen räknas då på celler
+vars mittpunkt är inne i polygonen."""
 LUFT_NAMNARE = "den givna timserien (en punkt eller receptor; platsen anges inte i körningen)"
 """Nämnaren för `luft.mkn`: lösaren har ingen geometri, bara en given serie per analys."""
 
@@ -286,6 +289,15 @@ class BelaggKalla(Protocol):
     def hamta(self, adress: str, korning_id: str, mottagare: Mapping[str, Mottagare]) -> Belagg: ...
 
 
+def hela_omradet_text(text: str, avgransad: bool) -> str:
+    """`text` oförändrad, eller med "hela beräkningsområdet" ersatt av "inom projektets avgränsning (polygon)"."""
+    if not avgransad:
+        return text
+    return text.replace("mark i hela beräkningsområdet", f"mark {INOM_AVGRANSNINGEN}").replace(
+        "hela beräkningsområdet", INOM_AVGRANSNINGEN
+    )
+
+
 def _sv(v: float) -> str:
     return f"{v:g}".replace(".", ",")
 
@@ -306,6 +318,13 @@ class FlodenBelaggKalla:
         if k.status != "klar":
             raise BelaggFel(f"Körningen '{korning_id}' är inte klar (status {k.status}).")
         return Path(k.utmapp)
+
+    def har_avgransning(self, korning_id: str) -> bool:
+        """Har körningens projekt en avgränsningspolygon (`avgransning_polygon_3011`)? Då räknas mark inom den."""
+        try:
+            return bool(self.tjanst.fragor.projekt_avgransning(korning_id) is not None)
+        except Exception:  # noqa: BLE001 - utan uppgift gäller texten som förut
+            return False
 
     def _manifest(self, korning_id: str, rel: str) -> tuple[dict[str, Any], str]:
         fil = self.utmapp(korning_id) / rel
@@ -445,6 +464,7 @@ class FlodenBelaggKalla:
         losare = self._losare(korning_id, post["analys"])
         grund = self._matt(losare, post["utdata"], adress)
         res = self._resultat(korning_id)
+        avgransad = self.har_avgransning(korning_id)
         lager = next(la for la in res["lager"] if la["id"] == f"skillnad.{namn}")
         px = float(lager["pixelstorlek_m"])
         upplosning = px * px if matt.startswith("yta") else float(grund.upplosning or 0.001)
@@ -486,8 +506,8 @@ class FlodenBelaggKalla:
             analys=str(post["analys"]),
             losare=losare,
             scenarier=(str(post["fore"]), str(post["efter"])),
-            mottagare="hela beräkningsområdet",
-            namnare=HELA_OMRADET_MARK,
+            mottagare=hela_omradet_text("hela beräkningsområdet", avgransad),
+            namnare=hela_omradet_text(HELA_OMRADET_MARK, avgransad),
             matt=f"{post['utdata']}:{matt}",
             storhet=f"skillnad i {grund.storhet}",
             enhet=enhet,
@@ -589,6 +609,7 @@ class FlodenBelaggKalla:
                 "polygon) när rapporten skapas."
             )
         res = self._resultat(korning_id)
+        avgransad = hela and self.har_avgransning(korning_id)
         la = next((x for x in res["lager"] if x["id"] == lager_id), None)
         if la is None:
             raise BelaggFel(
@@ -643,8 +664,10 @@ class FlodenBelaggKalla:
             analys=str(la["analys"]),
             losare=losare,
             scenarier=tuple(str(s) for s in scen),
-            mottagare="hela beräkningsområdet" if hela else f"mottagare {mottagarnamn}",
-            namnare=HELA_OMRADET_MARK
+            mottagare=hela_omradet_text("hela beräkningsområdet", avgransad)
+            if hela
+            else f"mottagare {mottagarnamn}",
+            namnare=hela_omradet_text(HELA_OMRADET_MARK, avgransad)
             if hela
             else f"markceller i mottagaren {mottagarnamn} ({m.beskrivning}); tak undantagna",
             matt=f"{la['roll']}:{stat}",
@@ -664,6 +687,8 @@ __all__ = [
     "EKOLOGI_MATT",
     "LUFT_MATT",
     "HELA_OMRADET",
+    "INOM_AVGRANSNINGEN",
+    "hela_omradet_text",
     "HELA_OMRADET_NAMN",
     "HELA_OMRADET_MARK",
     "JAMFORELSEMATT",
