@@ -28,8 +28,8 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from shapely.geometry import box
-
+from gemensamt.avgransning import MIN_YTA_M2 as _MIN_YTA
+from gemensamt.avgransning import AvgransningFel, kontrollera_yta, till_geojson
 from geografi.modell import (
     LAGERMAPP,
     GeografiFel,
@@ -38,7 +38,7 @@ from geografi.modell import (
     versionsmapp,
 )
 from kommuner.konfig import KommunKonfig, KommunKonfigFel, hitta_kommun_for_geografi
-from kommuner.projekt import skapa_projekt, slug, tolka_avgransning_objekt
+from kommuner.projekt import skapa_projekt, slug, tolka_avgransning_objekt_form
 from kommuner.skapa import SkapaFel
 from konto.register import BehorighetFel, RegisterFel
 from webb.fel import FlodenWebbFel
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 _logg = logging.getLogger(__name__)
 
-MIN_YTA_M2 = 100.0
+MIN_YTA_M2 = _MIN_YTA
 """Minsta avgränsning (10 x 10 m): mindre område ger inga meningsfulla frågor."""
 NAMN_MAX = 120
 _EPOST = re.compile(r"[^@\s]+@[^@\s]+")
@@ -209,10 +209,15 @@ class ProjektSkapaTjanst:
         if not (versionsmapp(self.geomapp, gid, version) / "manifest.json").is_file():
             raise FlodenWebbFel(f"Geografin {ref} finns inte.", status_kod=404)
         try:
-            avgr = tolka_avgransning_objekt(payload.get("avgransning"))
+            avgr, avgr_polygon = tolka_avgransning_objekt_form(payload.get("avgransning"))
         except SkapaFel as exc:
             raise FlodenWebbFel(str(exc), status_kod=400) from exc
-        if (avgr[2] - avgr[0]) * (avgr[3] - avgr[1]) < MIN_YTA_M2:
+        if avgr_polygon is not None:
+            try:
+                kontrollera_yta(avgr_polygon, MIN_YTA_M2)
+            except AvgransningFel as exc:
+                raise FlodenWebbFel(str(exc), status_kod=400) from exc
+        elif (avgr[2] - avgr[0]) * (avgr[3] - avgr[1]) < MIN_YTA_M2:
             raise FlodenWebbFel(
                 f"Avgränsningen är för liten: minst {MIN_YTA_M2:.0f} m² (till exempel 10 x 10 m).", status_kod=400
             )
@@ -247,6 +252,7 @@ class ProjektSkapaTjanst:
                     organisation_id=org,
                     skriv=lambda _t: None,
                     register=_RegisterIWebben(reg, synlig),
+                    polygon=avgr_polygon,
                 )
             except BaseException as exc:
                 shutil.rmtree(mapp, ignore_errors=True)
@@ -258,11 +264,12 @@ class ProjektSkapaTjanst:
         projekt = las_projekt(res.mapp)
         rid = str(projekt.get("register_id", ""))
         varningar = list(res.varningar)
-        if _inte_rektangel(payload.get("avgransning")):
-            varningar.insert(
-                0,
-                "Avgränsningen är en polygon: projektet räknas på dess omslutande rektangel "
-                f"({', '.join(f'{v:.0f}' for v in avgr)}, EPSG:3011).",
+        info: list[str] = []
+        if avgr_polygon is not None:
+            info.append(
+                "Avgränsningen är en polygon: byggnader och celler inne i den räknas till projektet i resultat, "
+                "nyckeltal och rapporter. Beräkningsrutnätet och bufferten följer rektangeln runt polygonen "
+                f"({', '.join(f'{v:.0f}' for v in avgr)}, EPSG:3011)."
             )
         _logg.info("projekt skapat konto=%s projekt=%s geografi=%s", konto_id, rid, ref)
         return {
@@ -273,8 +280,13 @@ class ProjektSkapaTjanst:
             "organisation_synlig": synlig,
             "geografi": ref,
             "avgransning_3011": list(avgr),
+            "avgransning_slag": "polygon" if avgr_polygon is not None else "rektangel",
+            "avgransning_polygon_3011": till_geojson(avgr_polygon)
+            if avgr_polygon is not None
+            else _polygon(list(avgr)),
             "roll": "utredare",
             "varningar": varningar,
+            "info": info,
         }
 
     def _angra(self, reg: Any, konto_id: str, org: str, namn: str) -> None:
@@ -301,23 +313,3 @@ class ProjektSkapaTjanst:
             raise FlodenWebbFel(f"Geografin {ref} går inte att använda: {exc}", status_kod=409) from exc
         # Allt annat (inklusive KeyboardInterrupt) går vidare orört; typen loggas utan värden.
         _logg.error("oväntat fel när ett projekt skulle skapas: %s", type(exc).__name__)
-
-
-def _inte_rektangel(avgransning: Any) -> bool:
-    """Sant om avgränsningen är en polygon som inte är sin egen omslutande rektangel."""
-    if isinstance(avgransning, Mapping):
-        try:
-            ring = (avgransning.get("geometry") or avgransning)["coordinates"][0]
-            pts = [(float(p[0]), float(p[1])) for p in ring]
-        except (KeyError, TypeError, ValueError, IndexError):
-            return False
-        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-        omslutande = box(min(xs), min(ys), max(xs), max(ys))
-        from shapely.geometry import Polygon
-
-        try:
-            poly = Polygon(pts)
-        except ValueError:
-            return False
-        return bool(abs(poly.area - omslutande.area) > 1e-6 * max(omslutande.area, 1.0))
-    return False

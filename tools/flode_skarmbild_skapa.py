@@ -4,9 +4,10 @@
 Förutsätter `floden demo` och `floden webb` (http://127.0.0.1:8765, inloggning av) och byggd webb. Steg 1 kräver inloggning
 och en mappad geografi, som en lokal demo inte har: `/api/geografier` och `POST /api/projekt` **svaras därför av
 webbläsarens rutt med påhittade värden** (påhittad geografi, inget projekt skapas). Steg 5 går mot den riktiga demon:
-rapporten skapas på riktigt (jobb, kontroll, PDF och Word).
+rapporten skapas på riktigt (jobb, kontroll, PDF och Word). Steg 1 tas två gånger: en rektangel och en polygon
+(L-form) som är projektets riktiga avgränsning (`flode-1-nytt-projekt-polygon*.png`).
 
-    python tools/flode_skarmbild_skapa.py [--url ...] [--chrome ...] [--ut docs/bilder]
+    python tools/flode_skarmbild_skapa.py [--url ...] [--chrome ...] [--ut docs/bilder] [--bara-steg1]
 """
 
 from __future__ import annotations
@@ -50,6 +51,7 @@ def _svara(route: Route) -> None:
         ut = {
             "kontrakt": "K48/v1", "projekt_id": "p-skarmbild", "namn": "Skärmbild", "organisation": "o-1",
             "organisation_synlig": True, "geografi": "pahittad-geografi@v1", "avgransning_3011": KARNA, "roll": "utredare",
+            "avgransning_slag": "rektangel", "avgransning_polygon_3011": _pol(KARNA), "info": [],
             "varningar": ["Delar av avgränsningen ligger utanför geografins giltiga kärna."],
         }  # fmt: skip
         route.fulfill(status=201, content_type="application/json", body=json.dumps(ut))
@@ -68,11 +70,24 @@ def _rita(sida: Page) -> None:
     sida.mouse.up()
 
 
+def _rita_polygon(sida: Page) -> None:
+    """En L-formad polygon med fem klick och ett dubbelklick (hörnen som andelar av kartytan)."""
+    ruta = sida.locator("#np-karta").bounding_box()
+    assert ruta is not None
+    b, h = ruta["width"], ruta["height"]
+    sida.click("#np-slag [data-slag=polygon]")
+    for fx, fy in [(0.40, 0.35), (0.55, 0.35), (0.55, 0.45), (0.47, 0.45), (0.47, 0.58)]:
+        sida.mouse.click(ruta["x"] + b * fx, ruta["y"] + h * fy)
+        sida.wait_for_timeout(150)
+    sida.mouse.dblclick(ruta["x"] + b * 0.40, ruta["y"] + h * 0.58)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default="http://127.0.0.1:8765")
     ap.add_argument("--chrome", default="/usr/bin/google-chrome")
     ap.add_argument("--ut", default=str(UT))
+    ap.add_argument("--bara-steg1", action="store_true", help="hoppa över steg 5 (kräver inte floden demo)")
     a = ap.parse_args()
     ut = Path(a.ut)
     ut.mkdir(parents=True, exist_ok=True)
@@ -94,7 +109,19 @@ def main() -> None:
             sida.wait_for_timeout(1000)
             sida.screenshot(path=str(ut / f"flode-1-nytt-projekt{suffix}.png"), full_page=hel)
             print(f"flode-1-nytt-projekt{suffix}.png")
+            sida.reload()
+            sida.wait_for_selector("#np-karta", timeout=30_000)
+            sida.wait_for_timeout(5000)
+            _rita_polygon(sida)
+            sida.fill("#np-namn", "Exempelprojekt")
+            sida.wait_for_timeout(1000)
+            sida.screenshot(path=str(ut / f"flode-1-nytt-projekt-polygon{suffix}.png"), full_page=hel)
+            print(f"flode-1-nytt-projekt-polygon{suffix}.png")
             sida.close()
+            if a.bara_steg1:
+                if fel:
+                    raise SystemExit("Sidfel: " + "; ".join(fel))
+                continue
             sida = wl.new_page(viewport={"width": bredd, "height": hojd})
             sida.on("pageerror", lambda e, f=fel: f.append(str(e)))
             sida.goto(f"{a.url}/#/p/demokvarteret/rapport")

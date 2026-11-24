@@ -2,8 +2,10 @@
  * Steg 1 · Nytt projekt (`#/nytt`): välj geografi, rita avgränsningen på kartan (rektangel med två klick eller
  * polygon med flera klick och dubbelklick), ange namn och om projektet delas med organisationen, och skapa.
  * Geografins giltiga kärna (grönt) och yttre gräns (streckat) ritas så att man ser var data finns. Servern
- * kontrollerar allt (`POST /api/projekt`): en polygon räknas som sin omslutande rektangel, och det sägs.
- * Efter skapande visas varningarna och "Öppna projektet" leder till steg 2.
+ * kontrollerar allt (`POST /api/projekt`, K48). En polygon är projektets riktiga avgränsning: den ritas som den är,
+ * ytan räknas på den, och en polygon som korsar sig själv nekas med ett svenskt besked redan här. Det som räknas
+ * till projektet (byggnader, celler) är det som ligger inne i polygonen; beräkningsrutnätet och bufferten är
+ * rektangeln runt den, och det sägs. Efter skapande visas varningarna och "Öppna projektet" leder till steg 2.
  */
 import { hamtaGeografier, skapaProjekt } from "../api.ts";
 import { Kartmotor, type PekarLyssnare } from "../karta/kartmotor.ts";
@@ -17,6 +19,7 @@ import {
   omslutande,
   placering,
   placeringText,
+  polygonFel,
   punkterPolygon,
   rektangelPolygon,
   skapaBegaran,
@@ -71,11 +74,17 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     const lista = !klarForm && mus ? [...pkt, mus] : pkt;
     return { avgr: omslutande(lista.length >= 3 ? lista : []), polygon: punkterPolygon(lista), pkt: lista };
   };
-  const fast = (): { avgr: Rektangel3011 | null; polygon: GeoJSON.Polygon | GeoJSON.Polygon | null } => {
-    if (!klarForm) return { avgr: null, polygon: null };
+  const fast = (): { avgr: Rektangel3011 | null; polygon: GeoJSON.Polygon | null; horn: Pkt[] | null } => {
+    if (!klarForm) return { avgr: null, polygon: null, horn: null };
     const f = form();
-    return { avgr: f.avgr, polygon: slag === "rektangel" ? (f.avgr ? rektangelPolygon(f.avgr) : null) : f.polygon };
+    return {
+      avgr: f.avgr,
+      polygon: slag === "rektangel" ? (f.avgr ? rektangelPolygon(f.avgr) : null) : f.polygon,
+      horn: slag === "polygon" ? f.pkt : null,
+    };
   };
+  /** Polygonen bara när den ritats som polygon (en rektangel har ingen polygon utöver rektangeln). */
+  const riktigPolygon = (f: ReturnType<typeof fast>): GeoJSON.Polygon | null => (slag === "polygon" ? f.polygon : null);
 
   // ---- kartlager (egna källor ovanpå Kartmotorn)
   const satt = (id: string, data: Fc): void => {
@@ -169,13 +178,14 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
   // ---- panelen
   const kort = (): void => {
     const k = el("np-kort");
-    const { avgr } = fast();
+    const f = fast();
+    const { avgr } = f;
     if (!geo) {
       k.hidden = true;
       return;
     }
     k.hidden = false;
-    k.innerHTML = `<strong>${esc(geo.namn)} (${esc(geo.version)})</strong><span class="flode-dampad">Grönt: giltig kärna. Streckat: yttre gräns.${avgr ? ` Avgränsning ${esc(arealText(avgr))}.` : ""}</span>`;
+    k.innerHTML = `<strong>${esc(geo.namn)} (${esc(geo.version)})</strong><span class="flode-dampad">Grönt: giltig kärna. Streckat: yttre gräns.${avgr ? ` Avgränsning ${esc(arealText(avgr, riktigPolygon(f)))}.` : ""}</span>`;
   };
 
   const rit = (): void => {
@@ -191,6 +201,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
         <div class="flode-ruta ok" role="status"><p><strong>Projektet är skapat.</strong> Du är utredare i det.</p></div>
         <h2 class="flode-liten-rubrik">Varningar</h2>
         <ul class="flode-varningar">${ar.varningar.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>
+        ${(ar.info ?? []).length > 0 ? `<h2 class="flode-liten-rubrik">Så räknas projektet</h2><ul class="flode-liten" id="np-info">${(ar.info ?? []).map((v) => `<li>${esc(v)}</li>`).join("")}</ul>` : ""}
         <div class="flode-rad-slut"><a class="flode-knapp svart stor" id="np-oppna" href="${flodeAdress(ar.projekt_id, "forslag")}">Öppna projektet (steg 2)</a></div>`;
       inn.querySelector<HTMLElement>("#np-oppna")?.focus();
       return;
@@ -200,9 +211,14 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       return;
     }
     const flera = svar.organisationer.length > 1;
-    const { avgr } = fast();
-    const pl = geo && avgr ? placeringText(placering(avgr, geo), geo.gransen_3011) : null;
-    const hinder = formularFel({ geografi: geo, namn: namnVarde, avgransning: avgr, organisation: orgVarde || null, flera });
+    const f = fast();
+    const { avgr } = f;
+    const poly = riktigPolygon(f);
+    const pl = geo && avgr ? placeringText(placering(avgr, geo, poly), geo.gransen_3011) : null;
+    const hinder = formularFel({ geografi: geo, namn: namnVarde, avgransning: avgr, polygon: poly, horn: f.horn, organisation: orgVarde || null, flera });
+    // Självkorsning syns direkt under ritandet, och polygonens övriga fel när formen är klar.
+    const polFel = slag === "polygon" && (klarForm || pkt.length >= 4) ? polygonFel(pkt) : null;
+    const polygonRuta = polFel && (klarForm || polFel.startsWith("Polygonen korsar")) ? polFel : null;
     inn.innerHTML = `
       <div class="flode-falt"><label for="np-geo">Geografi</label>
         <select id="np-geo">${svar.geografier.map((g) => `<option value="${esc(g.ref)}"${g.ref === geo?.ref ? " selected" : ""}>${esc(g.namn)} (${esc(g.version)})</option>`).join("")}</select></div>
@@ -216,14 +232,15 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
         <p class="flode-liten flode-dampad" id="np-hjalp">${
           slag === "rektangel"
             ? "Klicka på två motstående hörn."
-            : "Klicka för varje hörn och dubbelklicka (eller tryck Klar) för att avsluta. Projektet räknas på polygonens omslutande rektangel."
+            : "Klicka för varje hörn och dubbelklicka (eller tryck Klar) för att avsluta. Byggnader och celler inne i polygonen räknas till projektet; beräkningsrutan är rektangeln runt den."
         }</p>
         <div class="flode-rad-slut">
           ${slag === "polygon" && !klarForm && pkt.length >= 3 ? `<button type="button" class="flode-knapp liten" id="np-klar">Klar</button>` : ""}
           <button type="button" class="flode-knapp liten" id="np-rensa"${pkt.length === 0 ? " disabled" : ""}>Rensa</button>
         </div>
       </fieldset>
-      ${avgr && klarForm ? `<p class="flode-liten" id="np-yta">Avgränsning: ${esc(arealText(avgr))}</p>` : ""}
+      ${avgr && klarForm ? `<p class="flode-liten" id="np-yta">Avgränsning: ${esc(arealText(avgr, poly))}</p>` : ""}
+      ${polygonRuta ? `<p class="flode-fel" role="alert" id="np-polygonfel">${esc(polygonRuta)}</p>` : ""}
       ${pl ? `<div class="flode-ruta ${pl.nivå === "ok" ? "ok" : pl.nivå === "varning" ? "varning" : ""}" id="np-placering" role="status"><p>${esc(pl.text)}</p></div>` : ""}
       <div class="flode-falt"><label for="np-namn">Namn</label>
         <input type="text" id="np-namn" maxlength="120" autocomplete="off" value="${esc(namnVarde)}" /></div>
@@ -267,12 +284,15 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
   lyssna("input", (h) => {
     if ((h.target as HTMLElement).id === "np-namn") {
       // Bara knappen och hindertexten uppdateras, så att markören stannar i fältet.
-      const { avgr } = fast();
+      const f = fast();
+      const { avgr } = f;
       const flera = (svar?.organisationer.length ?? 0) > 1;
       const hinder = formularFel({
         geografi: geo,
         namn: (h.target as HTMLInputElement).value,
         avgransning: avgr,
+        polygon: riktigPolygon(f),
+        horn: f.horn,
         organisation: el<HTMLSelectElement>("np-innehall").querySelector<HTMLSelectElement>("#np-org")?.value || null,
         flera,
       });

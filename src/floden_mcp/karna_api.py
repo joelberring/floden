@@ -522,7 +522,8 @@ class FlodenTjanst:
                 if la and any(g["ruta"] is None for g in la["geotiff"])
                 else (f"jamforelser/{j['namn']}/")
             )
-            mott = f"{j['efter']} − {j['fore']} (hela området)"
+            avgransad = self.fragor.projekt_avgransning(korning_id) is not None
+            mott = f"{j['efter']} − {j['fore']} ({'inom projektets polygon' if avgransad else 'hela området'})"
 
             # Byggnadernas tak är inte mark: samma funktion och samma takmask som webbens
             # projektsida (`FragaTjanst.marksiffror`). Kärnans egen jämförelse räknar alla celler.
@@ -541,6 +542,7 @@ class FlodenTjanst:
                 _m: str = mott,
                 _mark: Mapping[str, float] | None = mark,
                 _fil: str = fil,
+                _avgr: bool = avgransad,
             ) -> Any:
                 if _mark is not None:
                     return varde_med_belagg(
@@ -551,7 +553,11 @@ class FlodenTjanst:
                             f"{_j['utdata']}:{namn}:mark",
                             e,
                             mottagare=f"jamforelser/{_j['namn']}: {_j['efter']} − {_j['fore']} "
-                            "(mark; byggnadernas tak undantagna)",
+                            + (
+                                "(mark inom projektets polygon; byggnadernas tak undantagna)"
+                                if _avgr
+                                else "(mark; byggnadernas tak undantagna)"
+                            ),
                         ),
                     )
                 return varde_med_belagg(
@@ -586,6 +592,7 @@ class FlodenTjanst:
                 "betydelse": f"skillnad = {j['efter']} minus {j['fore']}",
                 "yta_mark_enbart": mark is not None,
                 "tak_maskat": tak_maskat,
+                "avgransad_till_projektets_polygon": avgransad and mark is not None,
                 "troskel": j["troskel"],
                 "max_okning": v("max_okning", enhet),
                 "max_minskning": v("max_minskning", enhet),
@@ -598,6 +605,12 @@ class FlodenTjanst:
                 post["anmarkning"] = (
                     "Talen gäller mark: byggnadernas tak är undantagna (ett nytt hus är inte "
                     "ändrad mark). Kärnans omaskade tal, med tak, står i karnans_omaskade."
+                    + (
+                        " Projektet har en polygon: bara celler vars mittpunkt är inne i den räknas "
+                        "(kärnans omaskade tal gäller hela beräkningsrutan)."
+                        if avgransad
+                        else ""
+                    )
                 )
                 post["karnans_omaskade"] = {
                     n: karnans(n, "m²" if n.startswith("yta") else enhet)

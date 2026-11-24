@@ -211,7 +211,7 @@ http-adresser och värdnamn utanför listan avvisas. Då räcker det att:
 3. `floden geografi mappa <geografi-id> --konto <superadmin>` (bara superadmin), därefter
    `floden projekt skapa --geografi <geografi-id>@v1 --avgransning ... --namn ... --konto <konto-id>`.
    Det går också i webben: **Nytt projekt** på startsidan (`#/nytt`) för superadmin, organisationsadmin och ägare. Välj geografi, rita en
-   rektangel eller polygon (giltig kärna är markerad; en polygon blir sin omslutande rektangel), ange namn och, om du vill,
+   rektangel eller polygon (giltig kärna är markerad; en polygon sparas och avgör vad som räknas till projektet; rutnätet är rektangeln runt den), ange namn och, om du vill,
    "Synligt för organisationen", och tryck **Skapa**. Varningar visas tydligt, och du hamnar i steg 2. En rapport skapas i steg 5
    (**Skapa rapport**, jobbet visar förlopp och ger PDF och Word); samma sak gör MCP-verktygen `projekt_skapa` och `rapport_skapa`.
 

@@ -1151,8 +1151,14 @@ utan att lagren kontrollsummeras): `ref` (`id@version`), `id`, `version`, `namn`
 
 **`POST /api/projekt`**. Kropp: `geografi` (`id@version`), `namn` (1–120 tecken, inga styrtecken, ingen e-postadress eller personnummer),
 `avgransning` (GeoJSON-`Polygon` eller `[xmin, ymin, xmax, ymax]`, EPSG:3011), `organisation_synlig` (förval falskt),
-`organisation` (id; krävs bara om kontot får skapa i flera). Okända fält ger 400. En polygon blir sin omslutande rektangel (samma
-tolkning som `--avgransning`), och svaret säger det i `varningar`. Minst 100 m². Behörighet: superadmin, eller organisationsadmin eller
+`organisation` (id; krävs bara om kontot får skapa i flera). Okända fält ger 400. En polygon är projektets riktiga avgränsning (additivt, 2026-11-24): den sparas i `projekt.json` som
+`avgransning_polygon_3011` (GeoJSON `Polygon`, EPSG:3011, yttre ring utan hål) bredvid `avgransning_3011` (rektangeln runt den: beräkningsrutnätet och
+bufferten utgår från den). Vad som räknas till projektet i resultat, nyckeltal och rapporter är det inne i polygonen: celler vars mittpunkt är inne
+(`FragaTjanst.marksiffror`/`markyta_over`, MCP `jamfor`, rapportens mått) och byggnader vars fotavtrycks inre punkt är inne (`i_projektet` och
+`antal_i_projektet` i resultatets `byggnader`; `projekt_avgransning` i resultatet). En polygon som är sin egen rektangel och en ren rektangel ger inget
+`avgransning_polygon_3011`; projekt utan fältet (äldre) beter sig som förut. Giltig polygon krävs: självkorsning, hål och färre än 3 hörn ger 400 med svensk text;
+minst 100 m² räknas på polygonens yta; yttre gräns och andelen utanför kärnan räknas på polygonen. Svaret har dessutom `avgransning_slag`
+(`polygon`|`rektangel`), `avgransning_polygon_3011` och `info` (hur polygonen räknas). Minst 100 m². Behörighet: superadmin, eller organisationsadmin eller
 ägare i organisationen (`Register.organisationer_for_skapa`); skaparen blir `utredare` och `skapad_av`, projektet är privat om inte
 `organisation_synlig`. Ett namn som redan finns i organisationen, eller som ger samma projektmapp, ger **409** (inget befintligt projekt
 återanvänds, så att ingen kan ge sig själv en roll i ett privat projekt). Svar **201**: `kontrakt` (`K48/v1`), `projekt_id` (registrets id;
