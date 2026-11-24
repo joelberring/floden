@@ -20,6 +20,7 @@ from rasterio.transform import from_origin
 
 from geografi.modell import las_manifest
 from kommuner.konfig import KommunKonfig, tolka_kommun
+from kommuner.skapa import SkapaFel
 from kommuner.wfs import KommunKallaFel
 from lantmateriet.nycklar import NyckelFel
 from tests.kommuner.test_skapa import REPO, bygg_varld, mappa
@@ -123,3 +124,13 @@ def test_hojdmodellen_fallerar_och_nyckel_finns_ger_reserv_med_varning(lm: Falsk
     d, _ = las_manifest(v["rot"] / "geo", "goteborg-test@v1")
     assert d["parametrar"]["hojdkalla"] == "lantmateriet"
     assert any("reserv" in x.lower() for x in d["varningar"])
+
+
+def test_baskartan_fallerar_ger_tydligt_fel_och_ingen_reserv(lm: FalskLm, tmp_path: Path) -> None:  # noqa: F811
+    """Ett fel i baskartan är inte ett höjdfel: ingen reserv till Lantmäteriets laser, och felet säger baskartan."""
+    v = varld(lm, tmp_path)
+    v["fh"].fel = KommunKallaFel("opengeodata.goteborg.se svarade med HTTP 404")
+    v["fh"].fel_for = BASK_URL
+    with pytest.raises(SkapaFel, match="baskarta"):
+        mappa(v, filhamtare=v["fh"])
+    assert lm.antal("GET", "/stac") == 0
