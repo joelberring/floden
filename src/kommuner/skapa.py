@@ -222,6 +222,8 @@ def skriv_oppenhet_toml(
 def _strangaste_licens(licenser: list[str]) -> str:
     """En gemensam licens för härledd data: gäller bara om alla källor har samma; annars den första
     i en fast ordning av hur strikta de är (CC-BY-SA, CC-BY, ODbL, sedan CC0)."""
+    if "intern" in licenser:
+        return "intern"  # data som inte är öppna: aldrig en öppen licens för det härledda
     ordning = ["CC-BY-SA-4.0", "ODbL-1.0", "CC-BY-4.0", "ODC-By-1.0", "CC0-1.0", "PDDL-1.0"]
     for lic in ordning:
         if lic in licenser:

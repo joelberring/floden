@@ -49,6 +49,7 @@ from gemensamt.regn import (
     lista_regnforval,
     skapa_regn_fran_spec,
 )
+from geografi.modell import STANDARD_GEOROT
 from konto import Forfragan, KontoAdapter, KontoKonfig, las_konto_konfig
 from lapp.experiment import (
     ExperimentAtgarder,
@@ -124,8 +125,10 @@ from webb.kartverktyg import KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
 from webb.projekt import ProjektTjanst
+from webb.projektskapa import ProjektSkapaTjanst
 from webb.prov import PREFIX as PROV_PREFIX
 from webb.prov import prov_svar
+from webb.rapportjobb import RapportJobbTjanst
 from webb.rendering import (
     DEFAULT_KALLOR,
     RenderingFel,
@@ -558,6 +561,7 @@ def _skapa_fragetjanst(
     fragemappar: Sequence[str | Path] | None,
     cachemapp: str | Path | None,
     korningsmapp: str | Path | None,
+    projektmapp: str | Path | None = None,
 ) -> FragaTjanst:
     """Sökvägar: argument > miljövariabeln `FLODEN_FRAGEMAPPAR` > `[webb]` i konfigurationen.
 
@@ -585,7 +589,7 @@ def _skapa_fragetjanst(
         cachemapp=abs_(cachemapp or webb.get("cachemapp", STANDARD_CACHEMAPP)),
         korningsmapp=abs_(korningsmapp or webb.get("korningsmapp", STANDARD_KORNINGSMAPP)),
         demomapp=abs_(webb.get("demomapp", STANDARD_DEMOMAPP)),
-        projektrot=abs_(STANDARD_PROJEKTMAPP),
+        projektrot=abs_(projektmapp or STANDARD_PROJEKTMAPP),
     )
 
 
@@ -654,8 +658,19 @@ class FlodenApiApp:
         datamappar: Sequence[str | Path] | None = None,
         tillat_loopback_underlag: bool = False,
         rapportmapp: str | Path | None = None,
+        geomapp: str | Path | None = None,
+        projektmapp: str | Path | None = None,
     ) -> None:
         self.rapportmapp = _rapportmapp(Path(konfig_fil), rapportmapp)
+        _rot = Path(konfig_fil).resolve().parent
+
+        def _abs(p: str | Path) -> Path:
+            return Path(p) if Path(p).is_absolute() else _rot / p
+
+        self.geomapp = _abs(geomapp or STANDARD_GEOROT)
+        self.projektmapp = _abs(projektmapp or STANDARD_PROJEKTMAPP)
+        self._projektskapa: ProjektSkapaTjanst | None = None
+        self._rapportjobb: RapportJobbTjanst | None = None
         self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
         self._kartverktyg: KartverktygTjanst | None = None
         self._vy3d: Vy3dTjanst | None = None
@@ -675,7 +690,9 @@ class FlodenApiApp:
         """Tjänsten för K20-frågor. Skapas vid första användning (inga kataloger vid start)."""
         with self._lock:
             if self._fragor is None:
-                self._fragor = _skapa_fragetjanst(self.konfig_fil, *self._fragekonfig)
+                self._fragor = _skapa_fragetjanst(
+                    self.konfig_fil, *self._fragekonfig, projektmapp=self.projektmapp
+                )
             return self._fragor
 
     @property
@@ -698,6 +715,24 @@ class FlodenApiApp:
             if self._vy3d is None:
                 self._vy3d = Vy3dTjanst(fragor, kv)
             return self._vy3d
+
+    @property
+    def projekt_skapa(self) -> ProjektSkapaTjanst:
+        """Geografier och nya projekt (`/api/geografier`, `POST /api/projekt`, MCP)."""
+        with self._lock:
+            if self._projektskapa is None:
+                self._projektskapa = ProjektSkapaTjanst(
+                    self, geomapp=self.geomapp, projektmapp=self.projektmapp
+                )
+            return self._projektskapa
+
+    @property
+    def rapportjobb(self) -> RapportJobbTjanst:
+        """Rapporter som skapas i webben, som jobb med status (K48)."""
+        with self._lock:
+            if self._rapportjobb is None:
+                self._rapportjobb = RapportJobbTjanst(self)
+            return self._rapportjobb
 
     def rapporter_for(self, projekt_id: str) -> list[dict[str, Any]]:
         """Projektets rapporter (R1) med kontrollens utfall och nedladdningsbara filer."""
@@ -2765,6 +2800,9 @@ class FlodenApiApp:
                 return _json_svar(200, lista_moduler(self._demo_moduler()))
 
             if ren_sokvag == "/api/projekt" or ren_sokvag.startswith("/api/projekt/"):
+                delar_p = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
+                if verb == "POST" and len(delar_p) == 2 and delar_p[1] == "rapporter":
+                    return _json_svar(202, self.rapportjobb.starta(delar_p[0], kropp))
                 if verb != "GET":
                     return _json_svar(405, {"fel": "Metoden är inte tillåten.", "status": 405})
                 delar = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
@@ -2775,7 +2813,15 @@ class FlodenApiApp:
                     svar["rapporter"] = self.rapporter_for(delar[0])
                     return _json_svar(200, svar)
                 if len(delar) == 2 and delar[1] == "rapporter":
-                    return _json_svar(200, {"rapporter": self.rapporter_for(delar[0])})
+                    return _json_svar(
+                        200,
+                        {
+                            "rapporter": self.rapporter_for(delar[0]),
+                            **self.rapportjobb.mojligheter(delar[0]),
+                        },
+                    )
+                if len(delar) == 4 and delar[1] == "rapporter" and delar[2] == "jobb":
+                    return _json_svar(200, self.rapportjobb.status(delar[0], delar[3]))
                 if len(delar) == 3 and delar[1] == "rapporter":
                     return _json_svar(200, self.rapport_innehall(delar[0], delar[2]))
                 if len(delar) == 5 and delar[1] == "rapporter" and delar[3] == "fil":
@@ -2920,6 +2966,9 @@ class FlodenApiApp:
                 403, {"fel": "Provsidorna är bara för superadmin.", "status": 403}
             )
             return status, list(headers.items()), kropp
+        nytt = self._hantera_skapa_projekt(verb, req.sokvag, kontroll, las_kropp)
+        if nytt is not None:
+            return nytt
         if verb == "GET" and self.konto.aktiv and kontroll.inloggad is not None:
             eget = self._projekt_svar_for_konto(req.sokvag, kontroll.inloggad.konto_id)
             if eget is not None:
@@ -2996,6 +3045,41 @@ class FlodenApiApp:
             ut = [(k, v) for k, v in ut if not k.lower().startswith("access-control-")]
         return status, ut, kropp
 
+    def _hantera_skapa_projekt(
+        self, verb: str, sokvag: str, kontroll: Any, las_kropp: Callable[[], bytes]
+    ) -> tuple[int, list[tuple[str, str]], bytes] | None:
+        """`GET /api/geografier` och `POST /api/projekt` (rollerna avgör vem som får)."""
+        ren = sokvag.rstrip("/") or "/"
+        traff = (verb == "GET" and ren == "/api/geografier") or (
+            verb == "POST" and ren == "/api/projekt"
+        )
+        if not traff:
+            return None
+        try:
+            if not self.konto.aktiv or kontroll.inloggad is None:
+                return _utan_cors(
+                    _json_svar(
+                        403,
+                        {
+                            "fel": "Att skapa projekt kräver inloggning (lokalt: floden projekt skapa).",  # noqa: E501
+                            "status": 403,
+                        },
+                    )
+                )
+            konto_id = kontroll.inloggad.konto_id
+            if verb == "GET":
+                return _utan_cors(_json_svar(200, self.projekt_skapa.geografier(konto_id)))
+            try:
+                payload = json.loads(las_kropp().decode("utf-8") or "null")
+            except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+                raise FlodenWebbFel("Kroppen ska vara JSON.", status_kod=400) from exc
+            if not isinstance(payload, Mapping):
+                raise FlodenWebbFel("Kroppen ska vara ett JSON-objekt.", status_kod=400)
+            return _utan_cors(_json_svar(201, self.projekt_skapa.skapa(konto_id, payload)))
+        except FlodenWebbFel as exc:
+            svar = {"fel": str(exc), "status": exc.status_kod}
+            return _utan_cors(_json_svar(exc.status_kod, svar))
+
     def _projekt_for_analys(self, verb: str, sokvag: str, kropp: bytes) -> str | None:
         """Projektet en analys (`POST /api/analys/...`) gäller, om `omrade_id` är ett projekt.
 
@@ -3070,7 +3154,10 @@ def _projekt_krav(verb: str, sokvag: str) -> tuple[str, str] | None:
     if len(delar) < 3 or delar[0] != "api":
         return None
     grupp, projekt_id = delar[1], delar[2]
-    if grupp in ("projekt", "3d"):
+    if grupp == "projekt":
+        # Skapa rapport (POST) kräver utredare; läsa räcker med läsare.
+        return projekt_id, "lasare" if verb in ("GET", "HEAD", "OPTIONS") else "utredare"
+    if grupp == "3d":
         return projekt_id, "lasare"
     if grupp == "kartverktyg" and projekt_id != "wms":
         minst = "lasare" if verb in ("GET", "HEAD", "OPTIONS") else "utredare"

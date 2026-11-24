@@ -2,12 +2,15 @@
  * Steg 5 · Rapport: innehållsförteckning med en statusprick per fråga, förhandsvisning (serif i
  * brödtexten) och kontroll med export (PDF och Word). Innehållet kommer ur rapportarkivet
  * (`GET /api/projekt/<id>/rapporter/<rapport>`); talen är Flodens värden ur påståendenas belägg och
- * markeras. Det finns inget API för att skapa en rapport härifrån: finns ingen, sägs hur den skapas.
+ * markeras. Panelen "Skapa rapport" (rapportskapa.ts) startar ett jobb på servern (K48), visar förloppet och
+ * läser sedan in den nya rapporten med export.
  */
-import { lasJson } from "../api.ts";
+import { hamtaRapportJobb, lasJson, startaRapportJobb } from "../api.ts";
 import { esc } from "../sidor.ts";
-import type { RapportRad } from "../types.ts";
+import type { RapportAmne, RapportJobb, RapportRad } from "../types.ts";
 import type { Avslutbar } from "./projektlista.ts";
+import { arPagaende, skapaPanelHtml } from "./rapportskapa.ts";
+import { sparaTillstand, tillstandFor } from "./tillstand.ts";
 
 export interface RapportDel {
   text: string;
@@ -77,13 +80,27 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   let avslutad = false;
   rot.innerHTML = `<div class="flode-sida"><p class="flode-dampad flode-pad">Hämtar rapporten …</p></div>`;
   const bas = `/api/projekt/${encodeURIComponent(projekt)}/rapporter`;
+  const t = tillstandFor(projekt);
+  const ac = new AbortController();
+  let amnen: RapportAmne[] = [];
+  let valtAmne = "skyfall";
+  let jobb: RapportJobb | null = null;
+  let jobbFel: string | null = null;
+  let timer: number | null = null;
+
+  const ritaSkapa = (): void => {
+    const m = rot.querySelector<HTMLElement>("#rp-skapa");
+    if (m) m.innerHTML = skapaPanelHtml({ amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
+  };
 
   const ritaTom = (text: string, fel = false): void => {
     rot.innerHTML = `
       <div class="flode-sida"><section class="flode-bred" aria-labelledby="rp-rubrik">
         <h1 id="rp-rubrik" class="flode-h">Rapport</h1>
         <p class="${fel ? "flode-fel" : "flode-dampad"}"${fel ? ' role="alert"' : ""}>${text}</p>
+        <div id="rp-skapa"></div>
       </section></div>`;
+    ritaSkapa();
   };
 
   const rita = (r: RapportInnehall, lista: RapportRad[]): void => {
@@ -134,15 +151,17 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
           </article>
         </section>
         <aside class="flode-panel" aria-labelledby="kontroll-rubrik">
+          <div id="rp-skapa"></div>
           <h2 id="kontroll-rubrik" class="flode-h">Kontroll</h2>
           ${kontrollRuta}
           <ul class="flode-kontrollista">${punkter}</ul>
           <div class="flode-rad-slut">
-            ${harFil ? "" : `<p class="flode-liten flode-dampad">Ingen fil är exporterad ännu. Exporten görs efter en godkänd kontroll (<code>floden mcp</code> eller <code>python tools/rapport_demo.py</code>).</p>`}
+            ${harFil ? "" : `<p class="flode-liten flode-dampad">Ingen fil är exporterad ännu. Exporten görs efter en godkänd kontroll.</p>`}
             <div class="flode-export">${knapp("pdf", "PDF", true)}${knapp("word", "Word", false)}</div>
           </div>
         </aside>
       </div>`;
+    ritaSkapa();
     rot.querySelector<HTMLSelectElement>("#rp-val")?.addEventListener("change", (h) => void ladda((h.target as HTMLSelectElement).value, lista));
     for (const b of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-mal]"))) {
       b.addEventListener("click", () => rot.querySelector<HTMLElement>(`#${CSS.escape(b.dataset.mal ?? "")}`)?.scrollIntoView({ block: "start", behavior: "smooth" }));
@@ -158,10 +177,106 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
     }
   };
 
+  const stoppaTimer = (): void => {
+    if (timer !== null) window.clearInterval(timer);
+    timer = null;
+  };
+  const efterJobb = async (): Promise<void> => {
+    // Läs in listan på nytt och visa den nya rapporten (med export om kontrollen godkände den).
+    try {
+      const svar = await lasJson<{ rapporter: RapportRad[]; amnen?: RapportAmne[] }>(bas);
+      amnen = svar.amnen ?? amnen;
+      const nyId = jobb?.rapport_id ?? svar.rapporter[0]?.rapport_id;
+      if (nyId && !avslutad) await ladda(nyId, svar.rapporter);
+    } catch (e) {
+      jobbFel = e instanceof Error ? e.message : String(e);
+      if (!avslutad) ritaSkapa();
+    }
+  };
+  const folj = async (): Promise<void> => {
+    if (!jobb || avslutad) return;
+    try {
+      jobb = await hamtaRapportJobb(jobb.status_url);
+    } catch (e) {
+      stoppaTimer();
+      jobbFel = e instanceof Error ? e.message : String(e);
+      jobb = null;
+      ritaSkapa();
+      return;
+    }
+    if (!arPagaende(jobb)) {
+      stoppaTimer();
+      if (jobb.rapport_id) await efterJobb();
+      else ritaSkapa();
+      return;
+    }
+    ritaSkapa();
+  };
+  const startaJobb = async (): Promise<void> => {
+    jobbFel = null;
+    try {
+      jobb = await startaRapportJobb(projekt, valtAmne, {
+        syfte: t.bestallning.syfte,
+        skede: t.bestallning.skede,
+        mottagare_roll: t.bestallning.mottagare,
+      }, amnen.find((a) => a.id === valtAmne)?.forval_korning ?? undefined);
+    } catch (e) {
+      jobbFel = e instanceof Error ? e.message : String(e);
+      jobb = null;
+      ritaSkapa();
+      return;
+    }
+    ritaSkapa();
+    stoppaTimer();
+    timer = window.setInterval(() => void folj(), 1500);
+  };
+  rot.addEventListener(
+    "click",
+    (h) => {
+      const m = (h.target as Element).closest<HTMLElement>("[data-rp-amne],[data-rp-skede],#rp-skapa-knapp");
+      if (!m) return;
+      if (m.dataset.rpAmne) valtAmne = m.dataset.rpAmne;
+      else if (m.dataset.rpSkede) {
+        t.bestallning.skede = m.dataset.rpSkede as "skiss" | "planunderlag";
+        sparaTillstand(t);
+      } else if (m.id === "rp-skapa-knapp") {
+        void startaJobb();
+        return;
+      }
+      ritaSkapa();
+    },
+    { signal: ac.signal },
+  );
+  rot.addEventListener(
+    "change",
+    (h) => {
+      const m = h.target as HTMLSelectElement;
+      if (m.id === "rp-mottagare") {
+        t.bestallning.mottagare = m.value;
+        sparaTillstand(t);
+      }
+    },
+    { signal: ac.signal },
+  );
+  rot.addEventListener(
+    "input",
+    (h) => {
+      const m = h.target as HTMLTextAreaElement;
+      if (m.id === "rp-syfte") {
+        t.bestallning.syfte = m.value;
+        sparaTillstand(t);
+      }
+    },
+    { signal: ac.signal },
+  );
+
   const klar = (async () => {
     let lista: RapportRad[];
     try {
-      lista = (await lasJson<{ rapporter: RapportRad[] }>(bas)).rapporter;
+      const svar = await lasJson<{ rapporter: RapportRad[]; amnen?: RapportAmne[] }>(bas);
+      lista = svar.rapporter;
+      amnen = svar.amnen ?? [];
+      valtAmne = amnen.find((a) => a.kan_skapas)?.id ?? amnen[0]?.id ?? "skyfall";
     } catch (e) {
       if (!avslutad) ritaTom(`Rapporterna gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}`, true);
       return;
@@ -169,11 +284,18 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
     if (avslutad) return;
     const forsta = lista[0];
     if (!forsta) {
-      ritaTom(`Det finns ingen rapport för projektet än. En rapport skapas med AI via <code>floden mcp</code> eller utan AI med <code>python tools/rapport_demo.py</code>; den visas här när den finns.`);
+      ritaTom("Det finns ingen rapport för projektet än. Skapa en här, eller med AI via <code>floden mcp</code>.");
       return;
     }
     await ladda(forsta.rapport_id, lista);
   })();
 
-  return { klar, avsluta: () => { avslutad = true; } };
+  return {
+    klar,
+    avsluta: () => {
+      avslutad = true;
+      stoppaTimer();
+      ac.abort();
+    },
+  };
 }

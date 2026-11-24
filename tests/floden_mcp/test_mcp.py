@@ -39,7 +39,7 @@ VERKTYG = {
     "projekt_lista", "projekt_info", "geometri_sammanfattning", "byggnader_lista", "fragor_lista",
     "korningar_lista", "korning_status", "resultat_sammanfattning", "resultat_varde", "karta_bild",
     "metoder_lista", "scenario_skapa", "fraga_skapa", "korplan", "kor", "vanta", "jamfor",
-    "korlogg_hamta", "session_deklarera",
+    "korlogg_hamta", "session_deklarera", "projekt_skapa",
 }  # fmt: skip
 
 
@@ -634,6 +634,16 @@ def test_floden_mcp_over_stdio_i_delprocess(demo: Demo, tmp_path: Path) -> None:
     assert not r.is_error and r.structured_content["dataklass"] == "oppet"
     rader = Korlogg(tmp_path / "data" / "lokal" / "mcp" / "korlogg.jsonl").las()
     assert rader[-1]["klient"]["namn"] == "stdio-klient" and rader[-1]["modell"] == "miljo-modell"
+
+
+def test_projekt_skapa_kraver_inloggat_konto(mcp: Mcp) -> None:
+    """Utan konto (inloggning av) finns inga roller: verktyget nekas med klartext, inget projekt skapas."""
+    r = mcp.anropa(
+        "projekt_skapa",
+        {"geografi": "x@v1", "namn": "Test", "avgransning": [0, 0, 200, 200]},
+    )
+    assert r.is_error
+    assert "projekt_skapa" in r.content[0].text or "inlogg" in r.content[0].text.lower()
 
 
 def test_felklass_ar_ett_riktigt_undantag() -> None:
