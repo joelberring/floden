@@ -402,7 +402,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const jfr = jamforelse(amne, u);
     const regn = amne === "vatten" ? regnText(r.antaganden.regn[0]) : null;
     const vattenAnt = amne === "vatten" ? [...new Set((r.antaganden.vatten ?? []).flatMap((x) => [x.takvatten_text, x.avtappning_text]).filter((x): x is string => Boolean(x)))] : [];
-    const ingress = amne === "dagsljus" || amne === "ekologi" ? projektSvar?.avsnitt.find((x) => x.id === amne)?.ingress : null;
+    const ingress = amne === "dagsljus" || amne === "ekologi" ? projektSvar?.avsnitt?.find((x) => x.id === amne)?.ingress : null;
     const natverkVal = amne === "ekologi" && natverkLista.length > 0
       ? `<label class="flode-liten">Habitatnätverk <select id="rs-natverk" aria-label="Habitatnätverk">${natverkLista.map((n) => `<option value="${esc(n.natverk_id)}"${n.natverk_id === (valtNatverk ?? ekologi?.artprofil_id) ? " selected" : ""}>${esc(n.visningsnamn)}</option>`).join("")}</select></label>`
       : "";
@@ -412,7 +412,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const kallKnappar = [
       harRitat ? `<button type="button" data-kalla="ritat" aria-pressed="${kalla === "ritat"}">Ditt förslag</button>` : "",
       harLage ? `<button type="button" data-kalla="lage" aria-pressed="${kalla === "lage"}">Läget idag</button>` : "",
-      (projektSvar?.vyer.length ?? 0) > 0 ? `<button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button>` : "",
+      (projektSvar?.vyer?.length ?? 0) > 0 ? `<button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button>` : "",
     ].filter(Boolean);
     const kallVal = kallKnappar.length > 1 ? `<div class="flode-segment liten" role="group" aria-label="Vilket resultat">${kallKnappar.join("")}</div>` : "";
     if (kalla === "lage") {
@@ -437,7 +437,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         kalla: ekoKalla,
         anmarkning: raderRegn,
         osakerhet: amne === "ekologi" ? null : osakerhetVisning(),
-        las: lasKartan(vy, lage),
+        las: lasKartan(vy, lage, info?.paahittat !== false),
       })}`;
   };
 

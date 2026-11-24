@@ -34,7 +34,7 @@ from mcp_types import CallToolResult, ImageContent, TextContent
 from pydantic import Field
 
 from floden_mcp import MCP_VERSION
-from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad
+from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad, hogsta
 from floden_mcp.karna_api import PROJEKT_ID, FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, KorloggFel, hash_av, nu, rensa_text
 from floden_mcp.oppenhet import Oppenhet, OppenhetNekad
@@ -63,7 +63,13 @@ Roll = Annotated[
         "Loggas i körloggen; påverkar inget resultat."
     ),
 ]
-Projekt = Annotated[str, Field(description="Projekt-id. Just nu finns bara 'demokvarteret'.")]
+Projekt = Annotated[
+    str,
+    Field(
+        description="Projekt-id: 'demokvarteret' eller id:t för ett projekt du har en roll i (projekt_lista). "
+        "Projekt vars underlag inte är öppna data lämnas inte ut."
+    ),
+]
 KorningId = Annotated[str, Field(description="Körnings-id från kor, korningar_lista eller vanta.")]
 Polygon = Annotated[
     list[list[float]],
@@ -322,6 +328,16 @@ def bygg_server(
         return None
 
 
+    def klass_for_projekt(klass: DataKlass, projekt: str | None) -> DataKlass:
+        """Anropets dataklass. Ett projekt som policyn klassat (`[mcp.projektklasser]`) följer den. Annars: ett projekt i
+        en geografi är `oppet` om dess underlag är öppna data och `internt` om inte (K38); övriga okända projekt är
+        `internt` som förut."""
+        if projekt is not None and projekt not in policy.projektklasser:
+            oppet = tjanst.projekt_oppen(projekt)
+            if oppet is not None:
+                return hogsta(klass, DataKlass.OPPET if oppet else DataKlass.INTERNT)
+        return policy.klass_for(klass, projekt)
+
     def verktyg(
         namn: str, beskrivning: str, *, klass: DataKlass = DataKlass.OPPET
     ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
@@ -341,7 +357,7 @@ def bygg_server(
                     raise ToolError(f"{exc} {_FEL_PREFIX}export_stoppad") from exc
                 if isinstance(svar, dict):
                     projekt = None if namn in utan_projekt else kwargs.get("projekt", PROJEKT_ID)
-                    return {"dataklass": policy.klass_for(klass, projekt).value, **svar}
+                    return {"dataklass": klass_for_projekt(klass, projekt).value, **svar}
                 return svar
 
             server.tool(name=namn, description=beskrivning)(inre)
@@ -405,7 +421,7 @@ def bygg_server(
             effektiv = (
                 klass
                 if vilket in utan_projekt or ctx.method != "tools/call"
-                else policy.klass_for(klass, str(projekt))
+                else klass_for_projekt(klass, str(projekt))
             )
             post: dict[str, Any] = {
                 "tid": nu(),
@@ -459,6 +475,19 @@ def bygg_server(
                         text = f"Okänd körning '{kid}'."
                         _skriv(logg, post, "nekad_policy", korningar, text, None, t0)
                         return _result_fel(text)
+            if ctx.method == "tools/call" and vilket not in utan_projekt and "projekt" in argument:
+                # Projekt i en geografi vars underlag inte är öppna data (K38, till exempel Stockholms baskarta) lämnas
+                # aldrig ut, vilken dataklass klienten än får: samma spärr som för körningarnas källor.
+                pmapp = tjanst.projektmapp(str(projekt))
+                if pmapp is not None:
+                    try:
+                        oppenhet.kontrollera_sokvag(pmapp)
+                    except OppenhetNekad:
+                        _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
+                        return _result_fel(
+                            "Nekad: projektets underlag är inte öppna data. Innehåll härlett ur icke-öppna data "
+                            "lämnas inte ut via MCP. Inget har lämnats ut."
+                        )
             try:
                 policy.kontrollera(str(klient["namn"]), effektiv)
             except PolicyNekad as exc:

@@ -127,7 +127,7 @@ class FlodenTjanst:
         self.rot = rot
         self.mcp_mapp = mcp_mapp or rot / "data" / "lokal" / "mcp"
         self.metodstatus_fil = metodstatus_fil or STANDARD_METODSTATUS
-        self._byggnader: list[dict[str, Any]] | None = None
+        self._byggnader: dict[str, tuple[int, list[dict[str, Any]]]] = {}
         self._kodversion: str | None = None
         self.oppenhet: Any = None
         """Spärren för icke-öppna data (`floden_mcp.oppenhet.Oppenhet`); sätts av `bygg_server`."""
@@ -151,6 +151,22 @@ class FlodenTjanst:
     def _kravs_projekt(self, projekt: str) -> None:
         with _oversatt():
             self.kv._kravs_projekt(projekt)  # noqa: SLF001 - samma regel som webben (404, ej byggd)
+
+    def projektmapp(self, projekt: str) -> Path | None:
+        """Mappen för ett projekt i en geografi, eller None (demokvarteret, okänt id)."""
+        return self.kv.projektmapp(projekt)  # type: ignore[no-any-return]
+
+    def projekt_oppen(self, projekt: str) -> bool | None:
+        """Är projektets underlag öppna data? None för demokvarteret och okända id (de följer policyn som förut).
+        Samma regel som spärren (`Oppenhet.bedom` på projektmappen: K38 och `[oppenhet.lager]`)."""
+        mapp = self.projektmapp(projekt)
+        if mapp is None:
+            return None
+        if self.oppenhet is None:
+            from webb.projektkalla import projekt_oppenhet
+
+            return projekt_oppenhet(mapp)[0]
+        return bool(self.oppenhet.bedom(mapp).oppen)
 
     def kravs_rapportprojekt(self, projekt: str) -> None:
         """Projektet en rapport eller beställning får gälla: demokvarteret (byggt), eller ett projekt i
@@ -220,6 +236,10 @@ class FlodenTjanst:
             "hojd_max_m": info["hojd_max_m"],
             "sparade_scenarier": info["scenarier"],
             "ortofoto": info["ortofoto"],
+            "slag": info["slag"],
+            "geografi": info["geografi"],
+            "avgransning_3011": info["avgransning_3011"],
+            "oppen": info["oppen"],
             "demo": {
                 "lage": demo.get("lage"),
                 "varld_nyckel": demo.get("varld", {}).get("nyckel"),
@@ -228,14 +248,19 @@ class FlodenTjanst:
                     for ref, d in demo.get("delar", {}).items()
                     if isinstance(d, dict) and d.get("korning_id")
                 },
-            },
+            }
+            if info["slag"] == "demo"
+            else None,
             "kodversion": self.kodversion,
         }
 
-    def _byggnadsposter(self) -> list[dict[str, Any]]:
-        if self._byggnader is not None:
-            return self._byggnader
-        mallar = self.kv._kravs_projekt(PROJEKT_ID)  # noqa: SLF001
+    def _byggnadsposter(self, projekt: str = PROJEKT_ID) -> list[dict[str, Any]]:
+        kalla = self.kv.kalla(projekt)
+        nyckel = hash(kalla.stampel)
+        cachad = self._byggnader.get(projekt)
+        if cachad is not None and cachad[0] == nyckel:
+            return cachad[1]
+        mallar = kalla.mallar
         sedda: dict[str, dict[str, Any]] = {}
         for kort, m in mallar.items():
             for r in m.rutor:
@@ -260,14 +285,14 @@ class FlodenTjanst:
         lista = sorted(sedda.values(), key=lambda p: str(p["id"]))
         for p in lista:
             p["baser"] = sorted(set(p["baser"]))
-        self._byggnader = lista
+        self._byggnader[projekt] = (nyckel, lista)
         return lista
 
     def geometri_sammanfattning(self, projekt: str) -> dict[str, Any]:
         self._kravs_projekt(projekt)
         with _oversatt():
-            mallar = self.kv.mallar()
-            byggn = self._byggnadsposter()
+            mallar = self.kv.kalla(projekt).mallar
+            byggn = self._byggnadsposter(projekt)
             rutor_per_bas: dict[str, Any] = {}
             lagsta: float | None = None
             hogsta: float | None = None
@@ -329,7 +354,7 @@ class FlodenTjanst:
     ) -> dict[str, Any]:
         self._kravs_projekt(projekt)
         with _oversatt():
-            alla = self._byggnadsposter()
+            alla = self._byggnadsposter(projekt)
         urval = alla
         if omrade is not None:
             filter_ = box(*_rektangel(omrade, "omrade"))

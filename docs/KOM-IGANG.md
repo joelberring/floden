@@ -171,6 +171,12 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
    sparas som en fil på din dator (`data/lokal/kartverktyg/`, inte i git). Ett hus utanför kvarteret, ett
    som korsar sig självt eller en höjd över 200 m nekas med ett tydligt besked. Under steg 3 körs
    beräkningen.
+   **Samma steg för ett projekt i en geografi** (skapat i Nytt projekt, med `floden projekt skapa --geografi` eller via MCP, till
+   exempel Göteborg Haga): kartan visar projektets byggnader och terräng ur geografin, klippta till de rutor som skär avgränsningen
+   (polygonen om du ritat en; ett hus utanför den varnas för men räknas med i omgivningen). Förslag, plan och körning är desamma
+   som för demokvarteret; körningarna hör till projektet och dess roller. En rad under panelen säger geografi, avgränsning och om
+   underlaget är öppna data. Ett projekt vars underlag inte är öppna (till exempel Stockholm) kan ritas och räknas i webben av dess
+   medlemmar men lämnas inte ut via MCP. Ekologi i kartverktyget finns än bara för demokvarteret.
    **Steg 4, Resultat:** flikarna Skyfall, Sol och Ekologi, med lägena *Före*, *Efter*, *Skillnad*, *Svep*
    och *3D*. Rutan *Så läser du kartan* förklarar färgerna; hovra för värden och slå av och på värden på
    tak. **Visa osäkerhet** (flikarna Skyfall och Sol) lägger intervall från K40 och K41 under siffrorna
