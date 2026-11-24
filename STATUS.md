@@ -664,3 +664,8 @@ Gjort: **R5** fynden (K49) i kartan i steg 2 (yta ur nytt `omrade`, punkt, över
 Mätt: `npm test` 338 godkända (nya: skarv 10, tak 12, planyta 12, fordrojning 3), `tsc --noEmit` och `npm run build` rena; ruff och mypy rena; pytest tests/webb 285, tests/karna 156, tests/sankgraf 65 (1 hoppad) godkända (FLODEN_TIDSFAKTOR=4); nya Python-tester 8 (sankgraf) + 7 (webb). Åtgärden stämmer med ny `validera` efter tillämpning (testat). Damm tvärs dalgång: slänt räcker inte, utlopp löser.
 Öppet: ej prövat i webbläsare eller på pekskärm; inga skärmbilder tagna (kräver körande demo och ritsekvens); slänt tar inte bort en dammvall; utloppet är en passage, inte dimensionerad ledning; takvinklar och pulpetens riktning är visningsval; takvatten läser pulpet utan azimut som brutet; markens höjd i 3D är basens.
 Nästa: R7 (pekskärm, tillgänglighet); provkör R5/R6 i webbläsare och ta skärmbilder i `docs/bilder/ritverktyg/`.
+
+## 2026-11-24 kväll – hål vid rutans kant i kommunens höjdmodell (samordnaren)
+
+- Andra försöket med `goteborg-test` på servern stannade igen på "markhojd_rh2000 ... nan" (ruta mm_-211000_6412500). PR #91 fyllde bara hål som var helt inneslutna i rutans raster; hål under hus som når rutans kant förblev NaN.
+- Nu fylls alla celler utan värde som ligger inom någon plattas yttergräns (inte bara inneslutna), högst 150 m från närmaste värde. Celler utanför plattorna förblir NaN. Markhöjden under ett hus faller tillbaka på marken runt omkring även från tyngdpunkten, och ett hus helt utan markhöjd utelämnas med varning i stället för att stoppa kartläggningen.

@@ -283,3 +283,21 @@ def test_hal_under_byggnader_fylls_men_inte_utanfor_plattan(tmp_path: Path) -> N
     ce, cn = ruta.cell_till_koordinat(100, 100)
     e7, n7 = transformera(ce, cn, 3011, 3007)
     assert float(z[100, 100]) == pytest.approx(5.0 + 0.01 * (n7 - N0), abs=0.1)
+
+
+def test_hal_som_nar_rutans_kant_fylls_inom_plattan(tmp_path: Path) -> None:
+    """Hål i plattan som når rutans kant (hus på kanten) fylls också; bara celler utanför plattan blir NaN."""
+    t = tmp_path / "platta.tif"
+    _tif(t)
+    with rasterio.open(t, "r+") as d:
+        z = d.read(1)
+        z[400:600, 300:600] = -9999.0  # stort hål som täcker rutans kant
+        d.write(z, 1)
+    zp = tmp_path / "kant.zip"
+    with zipfile.ZipFile(zp, "w") as f:
+        f.write(t, "hojd/1_1.tif")
+    hm = Hojdmodell([zp], epsg_antagen=3007)
+    e, n = transformera(E0 + 600.0, N0 + 500.0, 3007, 3011)  # hålet når rutans västra kant
+    ruta = Ruta(float(round(e)) - 50.0, float(round(n)) - 50.0, 100.0, 0.0, 1.0)
+    z, varn = hm.grund_z(ruta)
+    assert not np.isnan(z).any() and any("interpolerad" in v for v in varn)
