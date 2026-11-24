@@ -825,3 +825,58 @@ def test_skarvkontroll_i_demokvarteret(kv: Kv) -> None:
     assert sk["tillkommande_volym_m3"] > 0
     assert any("sänka vid skarven" in t for t in v["varningar"])
     assert len([t for t in v["varningar"] if "sänka vid skarven" in t]) <= 3
+
+
+# ---------------------------------------------------------------- mark i nivåer (R4)
+
+
+def snedyta(
+    cx: float, cy: float, s: float, ang: float, egenskaper: dict[str, Any], aid: str = "mark1"
+) -> dict[str, Any]:
+    import math
+
+    a = math.radians(ang)
+    c, sn = math.cos(a), math.sin(a)
+    pts = [(-s / 2, -s / 2), (s / 2, -s / 2), (s / 2, s / 2), (-s / 2, s / 2)]
+    ring = [[round(cx + c * x - sn * y, 3), round(cy + sn * x + c * y, 3)] for x, y in pts]
+    ring.append(ring[0])
+    return {
+        "typ": "markhojd",
+        "andring_id": aid,
+        "geometri": {"type": "Polygon", "coordinates": [ring]},
+        "egenskaper": egenskaper,
+    }
+
+
+@pytest.mark.parametrize(("ang", "s"), [(55, 20), (70, 50)])
+def test_slant_ger_farre_fynd_an_hard_kant_i_demokvarteret(kv: Kv, ang: int, s: int) -> None:
+    """Snedställd yta i demokvarterets vattenruta (marknivå ca 13,6 m): med slänt 1:3 (exakt kant)
+    ger skarvkontrollen färre fynd och mindre tillkommande volym än med hård cellkant."""
+    cx, cy = 151350.0, 6580350.0
+    _, hard = kv.json("POST", f"{P}/validera", {"andringar": [snedyta(cx, cy, s, ang, {"niva_rh2000": 13.65})]})
+    _, slant = kv.json(
+        "POST", f"{P}/validera",
+        {"andringar": [snedyta(cx, cy, s, ang, {"niva_rh2000": 13.65, "slant": {"forhallande": 3.0}})]},
+    )
+    assert hard["giltig"] and slant["giltig"], (hard["fel"], slant["fel"])
+    assert slant["skarvar"]["antal"] < hard["skarvar"]["antal"]
+    assert slant["skarvar"]["tillkommande_volym_m3"] < hard["skarvar"]["tillkommande_volym_m3"]
+
+
+def test_markyta_med_lutning_delta_och_slant_godkanns_och_felaktig_nekas(kv: Kv) -> None:
+    cx, cy = 151350.0, 6580350.0
+    ok = [
+        {"delta_m": -0.2, "slant": {"forhallande": 3.0}},
+        {"lutning": {"punkt": [cx, cy, 13.6], "fall": 0.004, "riktning_grader": 180}, "slant": {"bredd_m": 4.0}},
+    ]
+    for e in ok:
+        _, v = kv.json("POST", f"{P}/validera", {"andringar": [snedyta(cx, cy, 20, 0, e)]})
+        assert v["giltig"], (e, v["fel"])
+        assert "skarvar" in v
+    for e in (
+        {"delta_m": 0.1, "niva_rh2000": 13.0},
+        {"delta_m": 0.1, "slant": {"forhallande": -1}},
+        {"lutning": {"a": [cx, cy, 1.0]}},
+    ):
+        _, v = kv.json("POST", f"{P}/validera", {"andringar": [snedyta(cx, cy, 20, 0, e)]})
+        assert not v["giltig"] and v["fel"], e

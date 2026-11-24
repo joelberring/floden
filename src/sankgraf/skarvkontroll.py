@@ -424,6 +424,10 @@ def kontrollera_skarvar_k1(
         mask |= np.asarray(_polygon_mask(tuple(p), geo), dtype=np.bool_)
     if not np.any(mask):
         return None
+    # Lappens yta är polygonerna plus celler vars höjd ändrats (R4: slänten ligger utanför
+    # polygonen). Utan slänt ändras inga celler utanför polygonen, så masken är oförändrad.
+    andrad = (mf != me) & ~(np.isnan(mf) & np.isnan(me))
+    mask |= np.asarray(andrad, dtype=np.bool_)
     marg = band_m + marginal_m
     rs, ks = _fonster(
         geo,

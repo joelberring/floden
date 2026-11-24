@@ -26,7 +26,7 @@ ANDRINGSTYPER: frozenset[str] = frozenset(
         "byggnad_ny",  # polygon + hojd_m (takhöjd över mark) eller tak_rh2000
         "byggnad_bort",  # byggnads_id i basen
         "byggnad_hojd",  # byggnads_id + ny hojd_m
-        "markhojd",  # polygon + niva_rh2000 eller delta_m
+        "markhojd",  # polygon + niva_rh2000, lutning eller delta_m (+ valfri slant, R4)
         "markslag",  # polygon + kod (K1-markslag)
         "gata",  # linje + sektion
         "magasin",  # polygon + volym_m3

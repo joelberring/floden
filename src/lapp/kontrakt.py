@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from gemensamt.hash import sha256_bytes
 from gemensamt.konfig import KonfigFel, las_konfig
 
@@ -171,9 +173,95 @@ class LappOperation:
         )
 
 
+def _punkt3(p: Any, sammanhang: str) -> list[float]:
+    if isinstance(p, str | bytes) or not isinstance(p, Sequence) or len(p) != 3:
+        raise LappFel(f"{sammanhang} måste vara [E, N, z] (tre tal).")
+    return [_validera_andlig(float(v), f"{sammanhang}[{i}]") for i, v in enumerate(p)]
+
+
+def _linje3(rader: Any, sammanhang: str) -> list[list[float]]:
+    if isinstance(rader, str | bytes) or not isinstance(rader, Sequence) or len(rader) < 2:
+        raise LappFel(f"{sammanhang} måste vara en lista med minst två punkter [E, N, z].")
+    return [_punkt3(p, f"{sammanhang}[{i}]") for i, p in enumerate(rader)]
+
+
+LUTNING_FORMER: tuple[str, ...] = ("punkter", "a+b", "punkt+fall", "hojdlinje_a+hojdlinje_b")
+
+
+def normalisera_lutning(raw: Any, sammanhang: str = "lutning") -> dict[str, Any]:
+    """Validerar och normaliserar en lutande yta (K3 `HojdYta.lutning`, K9 `markhojd.lutning`).
+
+    Fyra former (exakt en får anges), alla i EPSG:3011 och m RH 2000:
+
+    - `{"punkter": [[E, N, z], ...]}` (minst tre, inte på en rak linje): plan i minsta kvadrat.
+    - `{"a": [E, N, z], "b": [E, N, z]}`: plan som faller (stiger) från a till b, utan tvärfall.
+    - `{"punkt": [E, N, z], "fall": 0.02, "riktning_grader": 190}`: plan genom punkten; `fall`
+      är lutningen (m/m, kan vara negativ) nedåt i riktningen `riktning_grader` (azimut medurs
+      från norr, 0 = norrut; förval 0).
+    - `{"hojdlinje_a": [[E, N, z], ...], "hojdlinje_b": [[E, N, z], ...]}`: två höjdlinjer
+      (polylinjer med z per punkt); ytan interpoleras linjärt mellan dem efter avståndet till
+      respektive linje.
+    """
+    if not isinstance(raw, Mapping):
+        raise LappFel(f"{sammanhang} måste vara ett JSON-objekt.")
+    nycklar = set(raw)
+    former = {
+        "punkter": {"punkter"},
+        "a+b": {"a", "b"},
+        "punkt+fall": {"punkt", "fall", "riktning_grader"},
+        "hojdlinje_a+hojdlinje_b": {"hojdlinje_a", "hojdlinje_b"},
+    }
+    obligatoriska = {
+        "punkter": {"punkter"},
+        "a+b": {"a", "b"},
+        "punkt+fall": {"punkt", "fall"},
+        "hojdlinje_a+hojdlinje_b": {"hojdlinje_a", "hojdlinje_b"},
+    }
+    traffar = [f for f, ob in obligatoriska.items() if ob <= nycklar]
+    if len(traffar) != 1 or not nycklar <= former[traffar[0]]:
+        raise LappFel(
+            f"{sammanhang} måste vara exakt en av formerna {', '.join(LUTNING_FORMER)} "
+            f"(fick nycklarna {sorted(nycklar)})."
+        )
+    form = traffar[0]
+    if form == "punkter":
+        pk = raw["punkter"]
+        if isinstance(pk, str | bytes) or not isinstance(pk, Sequence) or len(pk) < 3:
+            raise LappFel(f"{sammanhang}.punkter måste vara minst tre punkter [E, N, z].")
+        punkter = [_punkt3(p, f"{sammanhang}.punkter[{i}]") for i, p in enumerate(pk)]
+        xy = np.array([[p[0], p[1]] for p in punkter], dtype=np.float64)
+        if np.linalg.matrix_rank(xy - xy.mean(axis=0), tol=1e-6) < 2:
+            raise LappFel(f"{sammanhang}.punkter ligger på en rak linje; ytan är inte bestämd.")
+        return {"punkter": punkter}
+    if form == "a+b":
+        a = _punkt3(raw["a"], f"{sammanhang}.a")
+        b = _punkt3(raw["b"], f"{sammanhang}.b")
+        if math.hypot(b[0] - a[0], b[1] - a[1]) <= 1e-9:
+            raise LappFel(f"{sammanhang}: a och b har samma läge (E, N); riktningen är obestämd.")
+        return {"a": a, "b": b}
+    if form == "punkt+fall":
+        punkt = _punkt3(raw["punkt"], f"{sammanhang}.punkt")
+        fall = _validera_andlig(raw["fall"], f"{sammanhang}.fall")
+        rikt = _validera_andlig(raw.get("riktning_grader", 0.0), f"{sammanhang}.riktning_grader")
+        return {"punkt": punkt, "fall": fall, "riktning_grader": rikt}
+    la = _linje3(raw["hojdlinje_a"], f"{sammanhang}.hojdlinje_a")
+    lb = _linje3(raw["hojdlinje_b"], f"{sammanhang}.hojdlinje_b")
+    return {"hojdlinje_a": la, "hojdlinje_b": lb}
+
+
 @dataclass(frozen=True)
 class HojdYta:
-    """En ny markyta i projektlappen: antingen plan polygon eller LandXML-TIN."""
+    """En ny markyta i projektlappen: plan, lutande yta, delta mot basen eller LandXML-TIN.
+
+    Höjden anges med exakt ett av `hojd_rh2000` (plan), `lutning` (lutande yta, se
+    `normalisera_lutning`), `delta_m` (basens höjd plus delta) eller `landxml` (TIN). De tre
+    senare nya fälten är additiva (R4): en yta utan `lutning`, `delta_m` och slänt läses och
+    räknas exakt som tidigare (hård kant, cellcentrum i polygonen).
+
+    Släntfälten ger en övergångszon utanför polygonen ned (eller upp) till befintlig mark:
+    `slant_forhallande` n (1:n; zonens bredd W = |Δ| · n där Δ är nivåskillnaden mot basen vid
+    kanten) eller `slant_bredd_m` (fast bredd), och valfritt `slant_markslag` (förval 4, gräs).
+    """
 
     yta_id: str
     polygon: tuple[tuple[float, float], ...] = ()
@@ -182,6 +270,11 @@ class HojdYta:
     koordinat_ordning: str = "NEZ"
     osakerhet_m: float = 0.05
     markslag: int | None = None
+    lutning: Mapping[str, Any] | None = field(default=None, hash=False)
+    delta_m: float | None = None
+    slant_forhallande: float | None = None
+    slant_bredd_m: float | None = None
+    slant_markslag: int | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.yta_id, str) or not self.yta_id.strip():
@@ -207,18 +300,86 @@ class HojdYta:
         if har_polygon:
             rensad = _validera_punkter(self.polygon, 3, f"HojdYta '{self.yta_id}'.polygon")
             object.__setattr__(self, "polygon", rensad)
-        if not har_landxml and self.hojd_rh2000 is None:
+        har_slant = (
+            self.slant_forhallande is not None
+            or self.slant_bredd_m is not None
+            or self.slant_markslag is not None
+        )
+        nya = [
+            n
+            for n, v in (("lutning", self.lutning), ("delta_m", self.delta_m))
+            if v is not None
+        ]
+        if har_landxml and (nya or har_slant):
             raise LappFel(
-                f"HojdYta '{self.yta_id}' med polygon utan landxml måste ange hojd_rh2000."
+                f"HojdYta '{self.yta_id}': lutning, delta_m och slänt kan inte kombineras med "
+                "landxml."
+            )
+        givna = [
+            n
+            for n, v in (
+                ("hojd_rh2000", self.hojd_rh2000),
+                ("lutning", self.lutning),
+                ("delta_m", self.delta_m),
+            )
+            if v is not None
+        ]
+        if not har_landxml and not givna:
+            raise LappFel(
+                f"HojdYta '{self.yta_id}' med polygon utan landxml måste ange hojd_rh2000, "
+                "lutning eller delta_m."
+            )
+        if not har_landxml and len(givna) > 1:
+            raise LappFel(
+                f"HojdYta '{self.yta_id}': ange exakt en av hojd_rh2000, lutning och delta_m "
+                f"(fick {', '.join(givna)})."
             )
         if self.hojd_rh2000 is not None:
             object.__setattr__(
                 self, "hojd_rh2000", _validera_andlig(self.hojd_rh2000, "hojd_rh2000")
             )
+        if self.lutning is not None:
+            object.__setattr__(
+                self,
+                "lutning",
+                normalisera_lutning(self.lutning, f"HojdYta '{self.yta_id}'.lutning"),
+            )
+        if self.delta_m is not None:
+            object.__setattr__(self, "delta_m", _validera_andlig(self.delta_m, "delta_m"))
+        if self.slant_forhallande is not None and self.slant_bredd_m is not None:
+            raise LappFel(
+                f"HojdYta '{self.yta_id}': ange slant_forhallande eller slant_bredd_m, inte båda."
+            )
+        if self.slant_forhallande is not None:
+            fh = _validera_andlig(self.slant_forhallande, "slant_forhallande")
+            if fh <= 0.0:
+                raise LappFel(f"slant_forhallande måste vara > 0 (1:n, n > 0), fick {fh}.")
+            object.__setattr__(self, "slant_forhallande", fh)
+        if self.slant_bredd_m is not None:
+            bm = _validera_andlig(self.slant_bredd_m, "slant_bredd_m")
+            if bm <= 0.0:
+                raise LappFel(f"slant_bredd_m måste vara > 0, fick {bm}.")
+            object.__setattr__(self, "slant_bredd_m", bm)
+        if self.slant_markslag is not None:
+            if self.slant_forhallande is None and self.slant_bredd_m is None:
+                raise LappFel("slant_markslag kräver slant_forhallande eller slant_bredd_m.")
+            if int(self.slant_markslag) not in GILTIGA_MARKSLAG:
+                raise LappFel(f"Ogiltigt slant_markslag: {self.slant_markslag} (måste vara 0..9).")
+            object.__setattr__(self, "slant_markslag", int(self.slant_markslag))
+
+    @property
+    def har_nya_falt(self) -> bool:
+        """True om ytan använder något av R4-fälten (lutning, delta_m eller slänt)."""
+        return (
+            self.lutning is not None
+            or self.delta_m is not None
+            or self.slant_forhallande is not None
+            or self.slant_bredd_m is not None
+        )
 
     def till_dict(self) -> dict[str, Any]:
         """Serialiserar höjdytan till JSON-kompatibelt lexikon."""
-        return {
+        ut: dict[str, Any] = {
             "yta_id": self.yta_id,
             "polygon": [[p[0], p[1]] for p in self.polygon],
             "hojd_rh2000": self.hojd_rh2000,
@@ -227,6 +388,12 @@ class HojdYta:
             "osakerhet_m": self.osakerhet_m,
             "markslag": self.markslag,
         }
+        # R4: nya fält skrivs bara när de används, så att äldre lappar får oförändrad hash.
+        for namn in ("lutning", "delta_m", "slant_forhallande", "slant_bredd_m", "slant_markslag"):
+            varde = getattr(self, namn)
+            if varde is not None:
+                ut[namn] = varde
+        return ut
 
     @classmethod
     def fran_dict(cls, data: Any) -> HojdYta:
@@ -239,6 +406,14 @@ class HojdYta:
         poly = tuple(_validera_punkt(p, "HojdYta.polygon") for p in raw_poly)
         hojd = data.get("hojd_rh2000")
         slag = data.get("markslag")
+        nya: dict[str, Any] = {}
+        if data.get("lutning") is not None:
+            nya["lutning"] = data["lutning"]
+        for namn in ("delta_m", "slant_forhallande", "slant_bredd_m"):
+            if data.get(namn) is not None:
+                nya[namn] = float(data[namn])
+        if data.get("slant_markslag") is not None:
+            nya["slant_markslag"] = int(data["slant_markslag"])
         return cls(
             yta_id=str(data.get("yta_id", "")),
             polygon=poly,
@@ -247,6 +422,7 @@ class HojdYta:
             koordinat_ordning=str(data.get("koordinat_ordning", "NEZ")),
             osakerhet_m=float(data.get("osakerhet_m", 0.05)),
             markslag=int(slag) if slag is not None else None,
+            **nya,
         )
 
 

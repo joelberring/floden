@@ -436,6 +436,19 @@ def tillampa_lapp(
                 if yta.markslag is not None:
                     ny_markslag[eff_mask] = np.uint8(yta.markslag)
                 projekt_mask |= eff_mask
+        elif yta.har_nya_falt:
+            # R4: lutande yta, delta_m och/eller slänt, med exakt kantavstånd (lapp.markniva).
+            from lapp.markniva import tillampa_markniva
+
+            ny_mask = tillampa_markniva(
+                yta,
+                ny_mark_z,
+                ny_osakerhet_z,
+                ny_markslag,
+                bas_geo,
+                _polygon_mask(yta.polygon, bas_geo),
+            )
+            projekt_mask |= ny_mask
         else:
             poly_mask = _polygon_mask(yta.polygon, bas_geo)
             if np.any(poly_mask) and yta.hojd_rh2000 is not None:

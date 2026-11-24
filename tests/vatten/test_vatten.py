@@ -142,7 +142,7 @@ class TestScenarioLapp(unittest.TestCase):
         self.assertEqual((lapp.magasin[0].volym_m3, lapp.gator[0].sektion), (12.0, "standard-12m"))
         for andring in (
             Andring("byggnad_bort", "x", None, {"byggnads_id": "b1"}),
-            Andring("markhojd", "d", kvadrat(0, 0, 1, 1), {"delta_m": 0.2}),
+            Andring("markhojd", "d", kvadrat(0, 0, 1, 1), {"delta_m": 0.2, "niva_rh2000": 5.0}),
             Andring("byggnad_ny", "h", kvadrat(0, 0, 1, 1), {"hojd_m": 3.0}),
         ):
             with self.assertRaises(ScenarioLappFel):
