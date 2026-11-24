@@ -334,3 +334,26 @@ def test_ogiltiga_varden_nekas(miljo: Miljo) -> None:
     oauth = {**lm, "metod": "oauth2"}
     assert _skriv(webb, "PUT", "/konto/nycklar/lantmateriet", oauth)[0] == 200
     assert forrad.las(konto_id.id, "lantmateriet") == oauth
+
+
+def test_gamla_lantmaterierader_visar_inte_slutet_av_losenordet(miljo: Miljo) -> None:
+    """Före 2026-11-24 sparades de sista tecknen av lösenordet (Geotorget) i klartext. Vid start
+    räknas de om ur den krypterade raden till användarnamnets sista tecken."""
+    hemlighet = _slå_på(miljo)
+    webb, konto_id = _inloggad(miljo)
+    lm = {"klient_id": LM_ID, "klient_hemlighet": LM_HEMLIGHET, "metod": "basic"}
+    assert _skriv(webb, "PUT", "/konto/nycklar/lantmateriet", lm)[0] == 200
+    with miljo.register.db.transaktion() as c:
+        c.execute(
+            "UPDATE konto_nyckel SET slutar_pa = ? WHERE konto_id = ? AND typ = 'lantmateriet'",
+            (LM_HEMLIGHET[-4:], konto_id),
+        )
+    NyckelForrad(miljo.register, hemlighet)
+    with miljo.register.db.lasning() as c:
+        rad = c.execute("SELECT slutar_pa FROM konto_nyckel WHERE typ = 'lantmateriet'").fetchone()
+    assert rad["slutar_pa"] == LM_ID[-4:] != LM_HEMLIGHET[-4:]
+    # Går raden inte att läsa (fel hemlighet) töms fältet i stället.
+    NyckelForrad(miljo.register, Fernet.generate_key().decode())
+    with miljo.register.db.lasning() as c:
+        rad = c.execute("SELECT slutar_pa FROM konto_nyckel WHERE typ = 'lantmateriet'").fetchone()
+    assert rad["slutar_pa"] == ""

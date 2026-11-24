@@ -154,6 +154,34 @@ class NyckelForrad:
         self._fernet, self._orsak = _bygg_fernet(hemlighet)
         if self._orsak == "ogiltig":
             logg.error("%s är ogiltig: nycklar kan inte sparas", HEMLIGHET_MILJOVARIABEL)
+        self._ratta_slutar_pa()
+
+    def _ratta_slutar_pa(self) -> None:
+        """Lantmäteriets `identifierande` fält bytte 2026-11-24 från lösenordet till namnet.
+        Äldre rader bär de sista tecknen av hemligheten i klartext: de räknas om ur den krypterade
+        raden, och går den inte att läsa töms fältet (tom text). Görs vid varje start (billigt)."""
+        try:
+            with self._register.db.transaktion() as c:
+                rader = c.execute(
+                    "SELECT konto_id, typ, krypterad, slutar_pa FROM konto_nyckel"
+                    " WHERE typ = 'lantmateriet'"
+                ).fetchall()
+                for rad in rader:
+                    nytt = ""
+                    if self._fernet is not None:
+                        try:
+                            ra = self._fernet.decrypt(str(rad["krypterad"]).encode("ascii"))
+                            falt = NYCKELTYPER["lantmateriet"].identifierande
+                            nytt = str(json.loads(ra)["varden"][falt])[-SLUTAR_PA_TECKEN:]
+                        except (InvalidToken, ValueError, KeyError, TypeError):
+                            nytt = ""
+                    if rad["slutar_pa"] != nytt:
+                        c.execute(
+                            "UPDATE konto_nyckel SET slutar_pa = ? WHERE konto_id = ? AND typ = ?",
+                            (nytt, rad["konto_id"], rad["typ"]),
+                        )
+        except Exception:  # noqa: BLE001 - tabellen kan saknas i äldre/tomma databaser
+            logg.debug("slutar_pa kunde inte rättas", exc_info=True)
 
     @property
     def paslagen(self) -> bool:
@@ -203,7 +231,7 @@ class NyckelForrad:
             ],
             "sparad": sparad,
             "sparad_datum": datum_text(sparad),
-            "slutar_pa": str(rad["slutar_pa"]) if rad else None,
+            "slutar_pa": (str(rad["slutar_pa"]) or None) if rad else None,
         }
         if t.id == "lantmateriet":
             from lantmateriet.produkter import BESTALLNING_TID_TEXT, GEOTORGET_URL, tabell_for_api
