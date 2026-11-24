@@ -13,7 +13,7 @@ export const LAGEN: Array<[Lage, string]> = [
 ];
 
 /** Kort förklaring av vad man tittar på: 2–3 meningar, anpassad efter vy och läge. */
-export function lasKartan(vy: ProjektVy, lage: Lage): string {
+export function lasKartan(vy: ProjektVy, lage: Lage, paahittat = true): string {
   const dagsljus = vy.avsnitt === "dagsljus";
   const farger = dagsljus
     ? "Färgerna visar hur många timmar solen når marken en dag: mörkblått är få timmar och gult är många."
@@ -28,7 +28,7 @@ export function lasKartan(vy: ProjektVy, lage: Lage): string {
     svep: "Dra reglaget under kartan: till vänster syns före, till höger efter.",
     "3d": "I 3D visas skillnaden: kameran följer kartan, och fasaderna kan färgas med värdet.",
   };
-  return `${farger} ${grått} ${lagestext[lage]} Kvarteret är påhittat.`;
+  return `${farger} ${grått} ${lagestext[lage]}${paahittat ? " Kvarteret är påhittat." : ""}`;
 }
 
 

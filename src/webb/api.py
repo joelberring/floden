@@ -599,6 +599,8 @@ def _skapa_kartverktyg(
     mapp: str | Path | None,
     datamappar: Sequence[str | Path] | None,
     tillat_loopback: bool,
+    geomapp: Path | None = None,
+    kraver_registerid: bool = False,
 ) -> KartverktygTjanst:
     """Kartverktyget: lokal mapp för scenarier och ritade frågor (inte i git) och datamappar."""
     rot = konfig_fil.resolve().parent
@@ -623,6 +625,8 @@ def _skapa_kartverktyg(
         abs_(mapp or webb.get("kartverktygsmapp", STANDARD_KARTVERKTYGSMAPP)),
         datamappar=[abs_(m) for m in datamappar],
         tillat_loopback=tillat_loopback,
+        geomapp=geomapp,
+        kraver_registerid=kraver_registerid,
     )
 
 
@@ -702,7 +706,11 @@ class FlodenApiApp:
         with self._lock:
             if self._kartverktyg is None:
                 self._kartverktyg = _skapa_kartverktyg(
-                    self.konfig_fil, fragor, *self._kartkonfig
+                    self.konfig_fil,
+                    fragor,
+                    *self._kartkonfig,
+                    geomapp=self.geomapp,
+                    kraver_registerid=self.konto.aktiv,
                 )
             return self._kartverktyg
 

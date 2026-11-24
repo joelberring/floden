@@ -29,13 +29,14 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET  # noqa: S405 - svaret begränsas i storlek, inga externa entiteter hämtas
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from shapely.geometry import Polygon
 
+from gemensamt import avgransning as avgr_mod
 from gemensamt.hash import sha256_fil
 from karna.geometri import las_byggnader
 from karna.geometri.tillampa import valj_k1_version, verifiera_byggnadsreferenser
@@ -49,11 +50,18 @@ from karna.ritat import (
 )
 from karna.rutscenario import Ruta, las_bas
 from karna.scenario import Andring, Planscenario, ScenarioFel, skriv_scenario
-from karna.utredning import KorbarFraga, las_fraga
+from karna.utredning import las_fraga
 from webb.fel import FlodenWebbFel
 from webb.felforklaring import SLUTET_INFO
 from webb.fragor import FragaTjanst
 from webb.moduler import visningsnamn
+from webb.projektkalla import (
+    Mall,
+    Projektkalla,
+    bygg_geografikalla,
+    hitta_projektmapp,
+    stampel_for,
+)
 
 FORMAT = "floden-kartverktyg/v1"
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,59}$")
@@ -69,6 +77,12 @@ _PROJEKT_ID = "demokvarteret"
 LAGE_IDAG_PREFIX = "lage-idag-"
 """Frågeid-prefix för körningar av läget idag (U5a): bara `fore`, inget ritat förslag."""
 
+
+_STANDARDJAMFORELSE = {
+    "vatten.statisk_fyllning": ("max_djup", 0.01),
+    "dagsljus.soltimmar_mark": ("soltimmar", 0.1),
+}
+"""Lösare -> (utdata, tröskel) för jämförelsen före/efter när mallen saknar jämförelser (som `skriv_fragor`)."""
 
 _LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
 
@@ -97,19 +111,6 @@ def _fel(text: str, status: int = 422) -> FlodenWebbFel:
     return FlodenWebbFel(text, status_kod=status)
 
 
-@dataclass(frozen=True)
-class Mall:
-    """En demofråga som mall för ritade frågor: en bas, ett scenario utan ändring, analyser."""
-
-    ref: str
-    kort: str
-    """Kort namn i frågornas id: `dagsljus`, `vatten`."""
-    fraga: KorbarFraga
-    bas: Path
-    rutor: tuple[Ruta, ...]
-    fore_id: str
-
-
 def _rektangel(r: Ruta) -> tuple[float, float, float, float]:
     return (r.x_min, r.y_min, r.x_max, r.y_max)
 
@@ -124,8 +125,15 @@ class KartverktygTjanst:
         *,
         datamappar: Sequence[Path] = (),
         tillat_loopback: bool = False,
+        geomapp: Path | None = None,
+        projektrot: Path | None = None,
+        kraver_registerid: bool = False,
     ) -> None:
         self.fragor = fragor
+        self.geomapp = geomapp
+        self.projektrot = projektrot if projektrot is not None else fragor.projektrot
+        self.kraver_registerid = kraver_registerid
+        """Med inloggning på nås projekt i en geografi bara med registrets id (rollerna hänger på det)."""
         self.mapp = mapp
         self.datamappar = list(datamappar)
         self.tillat_loopback = tillat_loopback
@@ -133,7 +141,8 @@ class KartverktygTjanst:
         if self.fragedir not in fragor.fragemappar:
             fragor.fragemappar.append(self.fragedir)
         self._mallar: dict[str, Mall] | None = None
-        self._byggnader: list[dict[str, Any]] | None = None
+        self._byggnader: dict[str, list[dict[str, Any]]] = {}
+        self._kallor: dict[str, Projektkalla] = {}
         self._caps: dict[str, dict[str, Any]] = {}
 
     # ------------------------------------------------------------------ mallar och bas
@@ -177,15 +186,38 @@ class KartverktygTjanst:
             self._mallar = ut
         return ut
 
-    def _kravs_projekt(self, projekt: str) -> dict[str, Mall]:
-        if projekt != _PROJEKT_ID:
-            raise _fel(f"Okänt projekt '{projekt}'.", 404)
-        m = self.mallar()
-        if not m:
-            raise _fel(
-                "Demokvarteret är inte byggt. Kör `floden demo` och ladda om sidan.", 404
+    def projektmapp(self, projekt: str) -> Path | None:
+        """Mappen för ett projekt i en geografi (`None` för demokvarteret och okända id)."""
+        if projekt == _PROJEKT_ID:
+            return None
+        return hitta_projektmapp(
+            self.projektrot, projekt, tillat_projektid=not self.kraver_registerid
+        )
+
+    def kalla(self, projekt: str) -> Projektkalla:
+        """Projektkällan: demokvarteret (ur demokörningarna) eller ett projekt i en geografi (ur dess egna
+        frågor, klippt till projektets rutor). Okänt projekt ger 404."""
+        if projekt == _PROJEKT_ID:
+            m = self.mallar()
+            if not m:
+                raise _fel("Demokvarteret är inte byggt. Kör `floden demo` och ladda om sidan.", 404)
+            return Projektkalla(
+                id=projekt, slag="demo", namn="Demokvarteret", paahittat=True, oppen=True,
+                licens=None, mallar=m,
             )
-        return m
+        mapp = self.projektmapp(projekt)
+        if mapp is None:
+            raise _fel(f"Okänt projekt '{projekt}'.", 404)
+        stampel = stampel_for(mapp)
+        k = self._kallor.get(projekt)
+        if k is None or k.stampel != stampel or k.mapp != mapp:
+            k = bygg_geografikalla(projekt, mapp, geomapp=self.geomapp, fragor=self.fragor)
+            self._kallor[projekt] = k
+            self._byggnader.pop(projekt, None)
+        return k
+
+    def _kravs_projekt(self, projekt: str) -> dict[str, Mall]:
+        return dict(self.kalla(projekt).mallar)
 
     @staticmethod
     def _bas_recept(mall: Mall) -> tuple[str, ...]:
@@ -207,9 +239,11 @@ class KartverktygTjanst:
 
     # ------------------------------------------------------------------ projektinfo
 
-    def _alla_byggnader(self, mallar: Mapping[str, Mall]) -> list[dict[str, Any]]:
-        if self._byggnader is not None:
-            return self._byggnader
+    def _alla_byggnader(self, kalla: Projektkalla) -> list[dict[str, Any]]:
+        if kalla.id in self._byggnader:
+            return self._byggnader[kalla.id]
+        mallar = kalla.mallar
+        form = kalla.projektform()
         sedda: dict[str, dict[str, Any]] = {}
         for kort, m in mallar.items():
             for r in m.rutor:
@@ -227,7 +261,13 @@ class KartverktygTjanst:
         for post in sedda.values():
             post["baser"] = sorted(set(post["baser"]))
         lista = sorted(sedda.values(), key=lambda p: str(p["id"]))
-        self._byggnader = lista
+        if form is not None:
+            # Byggnader i rutorna men utanför avgränsningen är sammanhang: de ritas, men räknas inte till projektet.
+            for post in lista:
+                post["i_projektet"] = bool(
+                    Polygon(post["ring"], post["hal"]).intersects(form)
+                )
+        self._byggnader[kalla.id] = lista
         return lista
 
     def _analyser(self, mallar: Mapping[str, Mall]) -> list[dict[str, Any]]:
@@ -246,13 +286,25 @@ class KartverktygTjanst:
         return ut
 
     def projektinfo(self, projekt: str) -> dict[str, Any]:
-        mallar = self._kravs_projekt(projekt)
+        kalla = self.kalla(projekt)
+        mallar = dict(kalla.mallar)
         rutor = self._rutor_alla(mallar)
-        byggn = self._alla_byggnader(mallar)
+        byggn = self._alla_byggnader(kalla)
         trunkerad = len(byggn) > MAX_BYGGNADER
         return {
             "id": projekt,
-            "paahittat": True,
+            "paahittat": kalla.paahittat,
+            # Additivt: vad för slags projekt, dess avgränsning och dataklass (K38; stängt = inte öppna data).
+            "slag": kalla.slag,
+            "namn": kalla.namn,
+            "geografi": kalla.geografi,
+            "avgransning_3011": list(kalla.avgransning) if kalla.avgransning else None,
+            "avgransning_polygon_3011": (
+                avgr_mod.till_geojson(kalla.polygon) if kalla.polygon is not None else None
+            ),
+            "oppen": kalla.oppen,
+            "licens": kalla.licens,
+            "varningar": list(kalla.varningar),
             "epsg": 3011,
             "hojd_max_m": HOJD_MAX_M,
             "vaningshojd_m": VANINGSHOJD_M,
@@ -332,6 +384,7 @@ class KartverktygTjanst:
             # Kärnans egen kontroll av ändringarna (typ, id, dubbletter, byggnadsreferenser).
             k9_per_bas = self._k9_per_bas(mallar, andringar, "kontroll")
             varningar.extend(self._paverkar_inte(mallar, k9_per_bas))
+            varningar.extend(self._utanfor_avgransning(self.kalla(projekt), andringar))
             information.extend(self._instangt_vatten(mallar, k9_per_bas))
         except (RitatFel, ScenarioFel) as exc:
             fel.append(str(exc))
@@ -424,6 +477,29 @@ class KartverktygTjanst:
                 if instangda_omraden_i_k1_mapp(ut) and not instangda_omraden_i_k1_mapp(r.mapp):
                     return [SLUTET_INFO]
         return []
+
+    @staticmethod
+    def _utanfor_avgransning(kalla: Projektkalla, andringar: Sequence[Mapping[str, Any]]) -> list[str]:
+        """Varning för ett nytt hus helt utanför projektets avgränsning (polygon eller rektangel): det räknas inte till
+        projektet i resultat och mått, men påverkar omgivningen. Demokvarteret har ingen avgränsning."""
+        form = kalla.projektform()
+        if form is None:
+            return []
+        ut: list[str] = []
+        for a in andringar:
+            g = a.get("geometri")
+            if a.get("typ") != "byggnad_ny" or not isinstance(g, Mapping) or not g.get("coordinates"):
+                continue
+            try:
+                hus = Polygon(g["coordinates"][0])
+            except (TypeError, ValueError):
+                continue
+            if hus.is_valid and not hus.intersects(form):
+                ut.append(
+                    f"Huset '{a['andring_id']}' ligger utanför projektets avgränsning: det räknas inte "
+                    "till projektet i resultat och nyckeltal, men påverkar omgivningen."
+                )
+        return ut
 
     def _paverkar_inte(
         self, mallar: Mapping[str, Mall], k9: Mapping[str, tuple[Planscenario, list[str]]]
@@ -617,7 +693,11 @@ class KartverktygTjanst:
         """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster.
 
         `parametrar_over` (analys-id -> parametrar) ersätter mallens parametrar för analysen."""
-        mallar = self._kravs_projekt(projekt)
+        kalla = self.kalla(projekt)
+        mallar = dict(kalla.mallar)
+        fragedir = kalla.fragedir or self.fragedir
+        if kalla.fraga_infix:
+            prefix = f"{prefix}-{kalla.fraga_infix}"  # projekt med samma scenarionamn ska inte dela frågefil
         d = self._las(projekt, namn_slug)
         urval: dict[str, list[str]] = {}
         for v in valda:
@@ -641,10 +721,10 @@ class KartverktygTjanst:
                 )
             k9_fil = self.mapp / projekt / "k9" / f"{namn_slug}__{kort}.json"
             skriv_scenario(sc, k9_fil)
-            self.fragedir.mkdir(parents=True, exist_ok=True)
+            fragedir.mkdir(parents=True, exist_ok=True)
             max_slug = 60 - len(prefix) - 2 - len(kort)
             fraga_id = f"{prefix}-{namn_slug[:max_slug]}-{kort}"
-            fil = self.fragedir / f"{fraga_id}.json"
+            fil = fragedir / f"{fraga_id}.json"
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
                 avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over,
@@ -712,6 +792,15 @@ class KartverktygTjanst:
                 {"analys": j.analys, "utdata": j.utdata, "fore": "fore", "efter": "ritat",
                  "troskel": j.troskel}
             )
+        if not m.fraga.jamforelser:
+            # Ett projekt i en geografi utan scenarier i sina frågor (nuläget): samma jämförelser som
+            # `kommuner.projekt.skriv_fragor` skriver för ett scenario.
+            for a in valda:
+                if a.losare in _STANDARDJAMFORELSE:
+                    utdata, troskel = _STANDARDJAMFORELSE[a.losare]
+                    jamf.append(
+                        {"analys": a.id, "utdata": utdata, "fore": "fore", "efter": "ritat", "troskel": troskel}
+                    )
         return {
             "kontrakt": "K20/v1",
             "fraga_id": fraga_id,
@@ -866,7 +955,9 @@ class KartverktygTjanst:
         self, projekt: str, valda: Sequence[str], avtappning_mm_h: float | None = None
     ) -> list[dict[str, Any]]:
         """Skriver en K20 per mall (bara `fore`) för de valda analyserna. Returnerar poster som `_skriv_fragor`."""
-        mallar = self._kravs_projekt(projekt)
+        kalla = self.kalla(projekt)
+        mallar = dict(kalla.mallar)
+        fragedir = kalla.fragedir or self.fragedir
         urval: dict[str, list[str]] = {}
         for v in valda:
             kort, _, aid = v.partition(".")
@@ -876,11 +967,11 @@ class KartverktygTjanst:
         if not urval:
             raise _fel("Välj minst en analys att räkna.", 400)
         poster: list[dict[str, Any]] = []
-        self.fragedir.mkdir(parents=True, exist_ok=True)
+        fragedir.mkdir(parents=True, exist_ok=True)
         proj = re.sub(r"[^a-z0-9_\-]+", "-", projekt.lower()).strip("-")[:38] or "projekt"
         for kort, analyser in urval.items():
             fraga_id = f"{LAGE_IDAG_PREFIX}{proj}-{kort}"
-            fil = self.fragedir / f"{fraga_id}.json"
+            fil = fragedir / f"{fraga_id}.json"
             innehall = self._lage_k20(mallar[kort], fil, fraga_id, analyser, avtappning_mm_h)
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             poster.append(
@@ -1006,7 +1097,12 @@ class KartverktygTjanst:
         mallar = self._kravs_projekt(projekt)
         m = mallar.get("ekologi")
         if m is None:
-            raise _fel("Projektet har ingen ekologianalys (kör `floden demo`).", 404)
+            raise _fel(
+                "Projektet har ingen ekologianalys (kör `floden demo`)."
+                if projekt == _PROJEKT_ID
+                else "Ekologi körs inte i kartverktyget för projekt i en geografi än.",
+                404,
+            )
         analys = next((a.id for a in m.fraga.analyser if a.losare == "ekologi.konnektivitet"), None)
         if analys is None:
             raise _fel("Ekologimallen saknar lösaren ekologi.konnektivitet.", 500)
@@ -1386,6 +1482,8 @@ class KartverktygTjanst:
         return sorted(set(ut))
 
     def ortofoto_info(self, projekt: str) -> dict[str, Any]:
+        if projekt != _PROJEKT_ID:
+            return {"finns": False}  # geografin lagrar inget ortofoto; de lokala filerna hör till demon
         filer = self._orto_filer()
         if not filer:
             return {"finns": False}
@@ -1405,7 +1503,7 @@ class KartverktygTjanst:
         from rasterio.warp import Resampling, reproject, transform_bounds
 
         mallar = self._kravs_projekt(projekt)
-        filer = self._orto_filer()
+        filer = self._orto_filer() if projekt == _PROJEKT_ID else []
         if not filer:
             raise _fel("Det finns inget lokalt ortofoto.", 404)
         rutor = self._rutor_alla(mallar)

@@ -196,6 +196,16 @@ class Oppenhet:
                 break
         return ut
 
+    def _pagar(self, korning_id: str) -> bool:
+        """Står körningen som köad eller pågående i sin `korning.json`? (Oläsbar fil: nej, då gäller stängt.)"""
+        if self.korningsmapp is None:
+            return False
+        try:
+            d = json.loads((self.korningsmapp / korning_id / "korning.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return isinstance(d, dict) and d.get("status") in ("ko", "kor")
+
     def _kallor_i_manifest(self, fil: Path) -> list[Path] | None:
         """Sökvägarna ett manifest pekar på: frågefilens scenarier och analysers indata (rollen
         `fraga`), och indata som är riktiga sökvägar. Jobbens rutindata anges bara med rutans namn
@@ -237,6 +247,11 @@ class Oppenhet:
         if not filer:
             utmapp = self.korningsmapp / korning_id / "resultat"
             if utmapp.is_dir() and any(utmapp.iterdir()):
+                if self._pagar(korning_id):
+                    # Körningen skriver just nu sina första jobb: inget är färdigt att lämna ut, och resultat
+                    # läses först när den är klar (då kontrolleras manifesten). Utan detta nekas `vanta` om
+                    # anropet kommer mellan jobbets filer och dess `run.json`.
+                    return Bedomning(True, "körningen pågår: inga färdiga resultat än")
                 return Bedomning(False, "körningens manifest saknas")
             return Bedomning(True, "körningen har inga resultat än")
         stampel = max(f.stat().st_mtime for f in filer) + len(filer)

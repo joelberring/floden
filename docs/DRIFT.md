@@ -197,6 +197,11 @@ Inget nytt kommando och ingen ny inställning: webbens "Nytt projekt" och "Skapa
 
 Rapportjobb sparas som `<rapportmapp>/jobb/j-<12 hex>.json` bredvid rapporterna (en liten fil per jobb, utan personuppgifter) och körs ett i taget i serverprocessen. Startas servern om medan ett jobb pågår blir jobbet `fel` ("avbröts när servern stoppades"); starta det igen i webben. Ingen backup behövs för jobbfilerna, men de ligger med rapporterna i den vanliga lagringen.
 
+Steg 2 och 3 i webben (rita förslag, spara, planera, köra) gäller även projekt i en geografi: `/api/kartverktyg/<projekt-id>/...` läser projektets
+`fragor/skyfall.toml` och `dagsljus.toml` och geografins lager (som projektet är låst till via manifestets sha256; ändras geografin svarar steg 2 och 3
+409 tills projektet skapas på nytt). Ingen ny inställning. Ritade förslag och K9 ligger under `kartverktygsmapp` (`<mapp>/<projekt-id>/scenarier` och
+`k9`), de ritade frågorna i projektets `fragor/`. MCP lämnar inte ut ett projekt med `oppen = false` i `oppenhet.toml` (Stockholm), se `docs/MCP.md`.
+
 ## Göteborg: geografin `goteborg-test` och ett provprojekt (etapp 3, S5)
 
 Geografi först (`docs/ARKITEKTUR-DRIFT.md` 0b): området mappas en gång som en **geografi** (kärna Haga 500 x 500 m + buffert,

@@ -200,3 +200,17 @@ def _fraga_dict(bas: Path, fraga_id: str = "oppen-1") -> dict[str, Any]:
             }
         ],
     }
+
+
+def test_pagaende_korning_utan_manifest_nekas_inte_men_klar_utan_manifest_nekas(tmp_path: Path) -> None:
+    """`vanta` kontrollerar körningen medan den skriver sina första jobb (filer men ännu ingen run.json)."""
+    import json
+
+    km = tmp_path / "korningar"
+    for kid, status in (("pagar", "kor"), ("klar", "klar")):
+        (km / kid / "resultat" / "sol" / "fore").mkdir(parents=True)
+        (km / kid / "resultat" / "sol" / "fore" / "soltimmar.tif").write_bytes(b"x")
+        (km / kid / "korning.json").write_text(json.dumps({"status": status}), encoding="utf-8")
+    o = Oppenhet(tmp_path, korningsmapp=km)
+    assert o.bedom_korning("pagar").oppen
+    assert not o.bedom_korning("klar").oppen
