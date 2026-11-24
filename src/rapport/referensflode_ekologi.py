@@ -1,7 +1,7 @@
 # ruff: noqa: E501
 """AI-fritt referensflöde: skissunderlag ekologi (grön infrastruktur, spridningssamband) för demokvarterets körning (R2).
 
-Fasta påståenden (inga modeller) för frågorna EK-01 till EK-12 (`docs/utredningar-stockholm/fragor_ekologi.json`)
+Fasta påståenden (inga modeller) för frågorna EK-01 till EK-15 (huvudkatalogen `docs/utredningar-stockholm/fragor.json`)
 med belägg ur körningen `demo-ekologi` (habitatnätverket och NMD-underlaget, före och efter ett nytt hus).
 Används av `tools/rapport_demo.py --amne ekologi` och testerna. Statusen per fråga är den som
 `rapport.fragekatalog.FLODEN_FORMAGA` anger som `forval_status` (testet kontrollerar att de stämmer).
@@ -125,11 +125,24 @@ def pastaenden(k: EkologiKontekst, fragor: Sequence[str] | None = None) -> list[
         belagg=[nv("analys_area_m2")], mottagare="hela_omradet",
         saknat_underlag=["Andra kända nätverk, värdekärnor och regionala samband i och kring området. Floden läser inga länsstyrelse- eller kommunlager."])  # fmt: skip
     # EK-02
-    add("EK-02", "visat", "ja",
+    add("EK-02", "underlag_saknas", "ja",
+        f"Sambandet är analyserat i en yta på {_m(nv('analys_area_m2'))} med cellstorleken {_m(nv('cellstorlek_m'))}. Källans längsta spridningströskel är "
+        f"{_m(nv('troskel_hog_m'))}. Habitatfläckar utanför ytan ingår inte.",
+        belagg=[nv("analys_area_m2"), nv("cellstorlek_m"), nv("troskel_hog_m")], mottagare="hela_omradet",
+        saknat_underlag=["Motivering av kontextens storlek för platsen och fläckar utanför markunderlaget."])  # fmt: skip
+    # EK-03
+    add("EK-03", "visat", "ja",
         f"Signalart: {arter}. Källa: {k.kalla_kort}; årtal och sidor står i antagandena. Habitatdefinitionen i NMD-klasser är ett antagande i Floden "
         f"och den minsta habitatfläckens area är {_m(nv('min_area_m2'))}.",
         belagg=[nv("min_area_m2")])  # fmt: skip
-    # EK-03
+    # EK-04
+    add("EK-04", "underlag_saknas", "ja",
+        "Beräkningen visar potentiell livsmiljö, okänd kvalitet. Signalartens förekomst, habitatets kvalitet och barriärer som markunderlaget saknar är inte undersökta.",
+        saknat_underlag=["Fältinventering av signalarten, habitatets ålder, struktur och naturvärde samt barriärer (vägklass, stängsel, ljus, buller) som NMD saknar."])  # fmt: skip
+    # EK-05
+    add("EK-05", "ej_tillampligt", "nej", "Underlaget prövar inte förbud, föreskrifter eller tillståndsfrågor för arter eller områdesskydd.",
+        motivering="Vilka bestämmelser som gäller och om tillstånd krävs är en bedömning i ärendet. Floden läser inga artskydds- eller områdesskyddsuppgifter; beräkningen visar ett skissat samband.")  # fmt: skip
+    # EK-06
     bel = [mv(f, "antal_flackar"), mv(f, "total_habitat_area_m2"), nv("min_area_m2")]
     text = (
         f"Habitatet är potentiell livsmiljö, okänd kvalitet: NMD visar markslag men inte skogens ålder, struktur eller naturvärde. "
@@ -138,20 +151,21 @@ def pastaenden(k: EkologiKontekst, fragor: Sequence[str] | None = None) -> list[
     for e, _n in k.efter:
         bel += [mv(e, "antal_flackar"), mv(e, "total_habitat_area_m2")]
         text += f" {_lage(e).capitalize()} finns {_m(bel[-2])} fläckar med en sammanlagd area på {_m(bel[-1])}."
-    add("EK-03", "underlag_saknas", "ja", text, belagg=bel, mottagare="hela_omradet",
+    add("EK-06", "underlag_saknas", "ja", text, belagg=bel, mottagare="hela_omradet",
         saknat_underlag=["Skogens ålder, struktur och naturvärde samt om signalarten finns i fläckarna."])  # fmt: skip
-    # EK-04
+    # EK-07
     bel = [nv("troskel_m"), nv("d50_m"), nv("troskel_hog_m"), nv("d50_hog_m")]
     p_text = (
         "Sannolikheten p saknas i källan, så d50 antas vara hälften av tröskeln (ett antagande i Floden)."
         if k.d50_antagen
         else "Källan anger d50."
     )
-    add("EK-04", "visat", "ja",
+    add("EK-07", "underlag_saknas", "ja",
         f"Spridningströskeln är {_m(bel[0])} (effektiva meter: avstånd viktat med motståndet i marken) och d50 är {_m(bel[1])}. {p_text} "
         f"Källans längsta tröskel är {_m(bel[2])} med d50 {_m(bel[3])}. Motståndet per markslag står i nätverkets fil (bilagan).",
-        belagg=bel)  # fmt: skip
-    # EK-05
+        belagg=bel,
+        saknat_underlag=["Hur murar, öppningar och absoluta barriärer hanteras som egna objekt; markunderlaget har bara markslag, och mätt spridning för platsens arter saknas om källan inte anger den."])  # fmt: skip
+    # EK-08
     bel = []
     text = (
         f"ECA, den ekvivalenta sammanhängande habitatarean för potentiell livsmiljö, okänd kvalitet, är {_m(mv(f, 'eca_m2'))} {_lage(f)}"
@@ -167,27 +181,27 @@ def pastaenden(k: EkologiKontekst, fragor: Sequence[str] | None = None) -> list[
             f"Mellan källans tröskelscenarier ligger ECA mellan {_m(mv(f, 'eca_min_m2'))} och {_m(mv(f, 'eca_max_m2'))} före, "
             f"och mellan {_m(mv(e, 'eca_min_m2'))} och {_m(mv(e, 'eca_max_m2'))} efter."
         )
-    add("EK-05", "visat", "ja", text, belagg=list(dict.fromkeys(bel)), mottagare="hela_omradet")
-    # EK-06
-    add("EK-06", "underlag_saknas", "ja",
+    add("EK-08", "visat", "ja", text, belagg=list(dict.fromkeys(bel)), mottagare="hela_omradet")
+    # EK-09
+    add("EK-09", "underlag_saknas", "ja",
+        "Förslaget är beräknat ensamt mot nuläget. Hur nätverket förändras tillsammans med andra utbyggnader ingår inte, och Floden läser inga andra planer.",
+        saknat_underlag=["Vilka planer och program som påverkar samma samband, deras beslutsstatus och tidshorisont, och ett gemensamt scenario med samma signalart."])  # fmt: skip
+    # EK-10
+    bel = [mv(f, "cellstorlek_m"), mv(f, "antal_flackar")]
+    text = (
         f"Kartorna visar strömtäthet (flaskhalsar) före, efter och som skillnad, med samma färgskala. Strömtätheten är normaliserad och visar var rörelsen "
-        f"mellan habitatfläckarna är koncentrerad i modellen. Rastrets cellstorlek är {_m(mv(f, 'cellstorlek_m'))}. I skillnadskartan syns bara "
-        "förändringar över tröskelvärdet.",
-        belagg=[mv(f, "cellstorlek_m")], mottagare="hela_omradet",
-        saknat_underlag=["Flaskhalsarnas barriärverkan i fält (vägklass, stängsel, ljus, buller) och tal per flaskhals."])  # fmt: skip
-    # EK-07
-    bel = [mv(f, "antal_flackar")]
-    text = "Förslaget ändrar antalet habitatfläckar och habitatarean:"
+        f"mellan habitatfläckarna är koncentrerad i modellen. Rastrets cellstorlek är {_m(bel[0])}. I skillnadskartan syns bara förändringar över tröskelvärdet."
+    )
     for e, _n in k.efter:
         bel += [mv(e, "antal_flackar"), jf(e, "delta_antal_flackar"), jf(e, "delta_total_habitat_area_m2")]
         text += (
-            f" {_lage(e)} är antalet fläckar {_m(mv(e, 'antal_flackar'))} mot {_m(mv(f, 'antal_flackar'))} före (skillnad {_m(jf(e, 'delta_antal_flackar'))}) "
+            f" {_lage(e).capitalize()} är antalet habitatfläckar {_m(mv(e, 'antal_flackar'))} mot {_m(mv(f, 'antal_flackar'))} före (skillnad {_m(jf(e, 'delta_antal_flackar'))}) "
             f"och habitatarean skiljer {_m(jf(e, 'delta_total_habitat_area_m2'))}."
         )
     text += " Fläckarnas betydelse för sambandet (dPC) finns i körningens resultatfil men redovisas inte som tal här."
-    add("EK-07", "underlag_saknas", "ja", text, belagg=list(dict.fromkeys(bel)), mottagare="hela_omradet",
-        saknat_underlag=["Fläckvis betydelse (dPC) som tabell och en bedömning av om någon fläck isoleras av förslaget."])  # fmt: skip
-    # EK-08
+    add("EK-10", "underlag_saknas", "ja", text, belagg=list(dict.fromkeys(bel)), mottagare="hela_omradet",
+        saknat_underlag=["Vilken enskild livsmiljö eller passage som bär förändringen och en möjlig alternativ väg, flaskhalsarnas barriärverkan i fält och fläckvis betydelse (dPC) som tabell."])  # fmt: skip
+    # EK-11
     bel = [nv("troskel_m"), nv("troskel_hog_m")]
     text = f"Det källbaserade intervallet följer källans två spridningströsklar, {_m(bel[0])} och {_m(bel[1])}."
     for e, _n in k.efter:
@@ -197,26 +211,27 @@ def pastaenden(k: EkologiKontekst, fragor: Sequence[str] | None = None) -> list[
             f" PC ligger mellan {_m(mv(f, 'pc_min'))} och {_m(mv(f, 'pc_max'))} före och mellan {_m(mv(e, 'pc_min'))} och {_m(mv(e, 'pc_max'))} efter."
         )
     text += " Intervallet visar inte osäkerheten i habitatval, motstånd per markslag eller signalartens verkliga spridning."
-    add("EK-08", "underlag_saknas", "ja", text, belagg=list(dict.fromkeys(bel)),
+    add("EK-11", "underlag_saknas", "ja", text, belagg=list(dict.fromkeys(bel)),
         saknat_underlag=["Känslighet för habitatval och motstånd per markslag, och fältdata som visar signalartens verkliga spridning."])  # fmt: skip
-    # EK-09
-    add("EK-09", "ej_tillampligt", "nej", "Underlaget prövar inte förslaget mot kommunens och länets planer.",
-        motivering="Hur förslaget förhåller sig till planer för grön infrastruktur är en bedömning i ärendet. Floden läser inga planer; beräkningen visar ett skissat samband.")  # fmt: skip
-    # EK-10
-    add("EK-10", "underlag_saknas", "ja",
-        "Beräkningen visar potentiell livsmiljö, okänd kvalitet. Signalartens förekomst, habitatets kvalitet och barriärer som markunderlaget saknar är inte undersökta.",
-        saknat_underlag=["Fältinventering av signalarten, habitatets ålder, struktur och naturvärde samt barriärer (vägklass, stängsel, ljus, buller) som NMD saknar."])  # fmt: skip
-    # EK-11
-    add("EK-11", "underlag_saknas", "ja",
-        f"Sambandet är analyserat i en yta på {_m(nv('analys_area_m2'))} med cellstorleken {_m(nv('cellstorlek_m'))}. Källans längsta spridningströskel är "
-        f"{_m(nv('troskel_hog_m'))}. Habitatfläckar utanför ytan ingår inte.",
-        belagg=[nv("analys_area_m2"), nv("cellstorlek_m"), nv("troskel_hog_m")], mottagare="hela_omradet",
-        saknat_underlag=["Motivering av kontextens storlek för platsen och fläckar utanför markunderlaget."])  # fmt: skip
     # EK-12
-    add("EK-12", "underlag_saknas", "ja",
+    bel = []
+    text = "Jämförelsen gäller de alternativ som lagts in som scenario, var och ett mot nuläget med samma signalart och samma mått."
+    for e, _n in k.efter:
+        bel += [jf(e, "delta_eca_m2"), jf(e, "delta_pc")]
+        text += f" {_lage(e).capitalize()} skiljer ECA {_m(bel[-2])} och PC {_m(bel[-1])}."
+    add("EK-12", "underlag_saknas", "ja", text, belagg=bel, mottagare="hela_omradet",
+        saknat_underlag=["Flyttad eller minskad byggrätt, bevarade värdträd och fungerande passager prövas bara om de lagts in som scenario. Återstående förlust redovisas inte."])  # fmt: skip
+    # EK-13
+    add("EK-13", "ej_tillampligt", "nej", "Underlaget prövar ingen skydds- eller kompensationsåtgärd.",
+        motivering="Läge, markåtkomst, tidsförskjutning, drift och uppföljning av en åtgärd avgörs i genomförandet. Floden beräknar bara det skissade sambandet före och efter förslaget.")  # fmt: skip
+    # EK-14
+    add("EK-14", "underlag_saknas", "ja",
         f"Beräkningen kan återskapas ur körningens uppgifter (bilagan): nätverkets och markunderlagets kontrollsummor, cellstorleken {_m(nv('cellstorlek_m'))} och kodversionen står i körningens manifest.",
         belagg=[nv("cellstorlek_m")],
         saknat_underlag=["Markunderlagets källa, version och licens i det verkliga projektet. I demon är lagret påhittat."])  # fmt: skip
+    # EK-15
+    add("EK-15", "ej_tillampligt", "nej", "Underlaget skiljer inte observation, beräknat samband och sakkunnig bedömning.",
+        motivering="Beräkningen är en modell för potentiell livsmiljö, okänd kvalitet. Vilka slutsatser som stöds av observation eller sakkunnig bedömning avgörs i ärendet.")  # fmt: skip
     valda = None if fragor is None else set(fragor)
     return [p for p in ut if valda is None or p["fraga_id"] in valda]
 

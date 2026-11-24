@@ -87,7 +87,7 @@ Mitt konto i O-Tid kan de inte läsas ut därifrån. Hämta dem på nytt hos Lan
 Produkterna måste vara **beställda på Geotorget** för kontot. Floden använder de gratis: STAC Höjd med **Laserdata
 Nedladdning, skog**, Ortofoto Nedladdning och Byggnad Nedladdning, vektor (alla avgiftsfria, `docs/BESLUT.md` 2026-11-24).
 Vilka produkter Floden använder, till vad och om de behövs eller är valfria står i `data/lantmateriet/produkter.toml`
-och visas som tabell på sidan Nycklar (`docs/KONTO.md`, avsnitt 10). Ortofoto är av som förval för Göteborg, och
+och visas som tabell på sidan Nycklar (`docs/KONTO.md`, avsnitt 10); alla produkter och avgifter står i `docs/GEOTORGET.md`. Ortofoto är av som förval för Göteborg, och
 Göteborgs och Stockholms förval för byggnader är oförändrade (baskarta respektive lokal fil); Lantmäteriets byggnader
 väljs med `floden geografi mappa ... --byggnader-kalla lantmateriet` (se nedan). Geotorgets användarnamn och lösenord
 kräver **Metod = basic** (`LANTMATERIET_METOD=basic`; på sidan Nycklar är det förvalet) medan `oauth2` gäller

@@ -2,7 +2,7 @@
 
 **En användbar slutsats anger vad planen medger, på vilken plats, under vilka förutsättningar och vad som återstår att säkra.** Använd frågans ID från [katalogen](fragor.json) för att länka ett sådant svar till källan, beräkningen och den ritning eller åtgärd som slutsatsen förutsätter.
 
-Se [hur tio Stockholmshandlingar är disponerade](rapportdisposition.md) för exempel på vad som hör hemma i sammanfattning, resultatkapitel, bedömning och bilagor i varje ämne.
+Se [hur tolv Stockholmshandlingar är disponerade](rapportdisposition.md) för exempel på vad som hör hemma i sammanfattning, resultatkapitel, bedömning och bilagor i varje ämne.
 
 ## Från beställning till rapport
 
@@ -32,6 +32,7 @@ Se [hur tio Stockholmshandlingar är disponerade](rapportdisposition.md) för ex
 | Placera förskolans lek och samling | Den tysta ytan kan vara solutsatt vid sommarsolståndet eller ligga i en lågpunkt. | Överlagra gårdens användningszoner med luft, ljud, skugga och skyfall. Beräkna vid behov hur stor *sammanhängande användbar* yta som uppfyller det valda villkoret. |
 | Höj en entré eller lägg en vall | Tröskeln kan skydda byggnaden men ändra den tillgängliga vägen eller leda vatten mot grannen. | Gemensam marksektion, entré-ID och prövning av närmaste fungerande väg i samma regnscenario. |
 | Glasad balkong, skärm eller ny trädrad | Ändrad avskärmning kan påverka ljud, ljustransmission, sol eller vind. Trädens storlek förändras över tid. | Ange transparenta och täta delar, materialegenskaper för respektive beräkning och scenarioår för vegetation. |
+| Omforma en träddunge till översvämningsyta | Vattnets väg och groddjurens väg mellan lekvatten och övervintring kan påverkas på olika sätt. | Använd samma markförslag och etapp. Pröva både hydraulisk funktion och ekologisk åtkomst under relevant årstid. Se [ekologiguiden](ekologi.md). |
 
 Tabellen anger frågor att pröva. Effektens riktning och storlek för det egna projektet bestäms av dess underlag.
 

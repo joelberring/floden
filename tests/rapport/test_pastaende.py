@@ -207,16 +207,16 @@ def test_matt_och_scenarioregler() -> None:
 
 def test_fragekatalogen_och_filter() -> None:
     k = Fragekatalog.las()
-    assert len(k.fragor) == 75
+    assert len(k.fragor) == 90
     sk = k.sok(omrade="skyfall")
     assert [f.id for f in sk] == [f"SK-{i:02d}" for i in range(1, 16)]
     plan = k.sok(omrade="skyfall", villkor=["planförslag"])
     assert {"SK-03", "SK-06"} <= {f.id for f in plan}  # 'Alla områden' gäller alltid
     assert "SK-08" not in {f.id for f in plan}
-    # kartlagda frågor: SK (R1), DL och SO (R2) ur den granskade katalogen, EK (R2) ur ekologifilen
+    # kartlagda frågor: SK (R1), DL och SO (R2) och EK (R2), alla ur huvudkatalogen
     kartlagda = {f.id for f in k.fragor if f.id[:2] in ("SK", "DL", "SO")}
-    ekologi = {f.id for f in Fragekatalog.las_alla().fragor if f.id.startswith("EK-")}
-    assert len(kartlagda) == 45 and len(ekologi) == 12
+    ekologi = {f.id for f in k.fragor if f.id.startswith("EK-")}
+    assert len(kartlagda) == 45 and len(ekologi) == 15
     assert set(FLODEN_FORMAGA) == kartlagda | ekologi
 
 
