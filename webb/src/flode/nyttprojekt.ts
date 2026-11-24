@@ -7,12 +7,14 @@
  * till projektet (byggnader, celler) är det som ligger inne i polygonen; beräkningsrutnätet och bufferten är
  * rektangeln runt den, och det sägs. Efter skapande visas varningarna och "Öppna projektet" leder till steg 2.
  */
-import { hamtaGeografier, skapaProjekt } from "../api.ts";
+import { ApiFel, hamtaGeografier, skapaProjekt } from "../api.ts";
+import { kontoLage, laddaKonto } from "../konto.ts";
 import { Kartmotor, type PekarLyssnare } from "../karta/kartmotor.ts";
 import { esc } from "../sidor.ts";
 import { swerefTillWgs84 } from "../sweref.ts";
 import type { GeografiPost, GeografierSvar, Rektangel3011, SkapaProjektSvar } from "../types.ts";
 import { flodeAdress } from "./adress.ts";
+import { felBeskedHtml, ingenGeografi, kopplaLaddaOm, nyttProjektFel, type FelBesked } from "./felhandling.ts";
 import {
   arealText,
   formularFel,
@@ -188,6 +190,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     k.innerHTML = `<strong>${esc(geo.namn)} (${esc(geo.version)})</strong><span class="flode-dampad">Grönt: giltig kärna. Streckat: yttre gräns.${avgr ? ` Avgränsning ${esc(arealText(avgr, riktigPolygon(f)))}.` : ""}</span>`;
   };
 
+  const visaFel = (b: FelBesked): string => felBeskedHtml(b, esc, "np-felbesked");
   const rit = (): void => {
     const inn = el("np-innehall");
     if (!svar) return;
@@ -207,7 +210,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       return;
     }
     if (!svar.far_skapa_projekt) {
-      inn.innerHTML = `<div class="flode-ruta varning" role="status"><p>Du får inte skapa projekt. Det kräver superadmin, eller organisationsadmin eller ägare i en organisation. Be en administratör, eller använd ett projekt du redan har roll i.</p></div><ul class="flode-liten flode-dampad" id="np-geolista" aria-label="Mappade geografier">${svar.geografier.map((g) => `<li>${esc(g.namn)} (${esc(g.ref)})</li>`).join("")}</ul>`;
+      inn.innerHTML = `${visaFel(nyttProjektFel(new ApiFel("Saknar rätt", 403), kontoLage()))}<ul class="flode-liten flode-dampad" id="np-geolista" aria-label="Mappade geografier">${svar.geografier.map((g) => `<li>${esc(g.namn)} (${esc(g.ref)})</li>`).join("")}</ul>`;
       return;
     }
     const flera = svar.organisationer.length > 1;
@@ -255,6 +258,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     kort();
   };
 
+  kopplaLaddaOm(rot, ac.signal);
   const lyssna = (typ: string, f: (h: Event) => void): void => el("np-innehall").addEventListener(typ, f, { signal: ac.signal });
   lyssna("click", (h) => {
     const m = (h.target as Element).closest<HTMLElement>("[data-slag],#np-rensa,#np-klar,#np-skapa");
@@ -328,12 +332,18 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     try {
       svar = await hamtaGeografier();
     } catch (e) {
-      if (!avslutad) el("np-innehall").innerHTML = `<p class="flode-fel" role="alert">Geografierna gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}</p>`;
+      // Kontoläget avgör vilken förklaring som är rätt (lokalt eller inloggad): vänta in det om det inte hunnit hämtas.
+      if (kontoLage().lage === "okand") await laddaKonto().catch(() => undefined);
+      if (!avslutad) {
+        el("np-innehall").innerHTML = visaFel(nyttProjektFel(e, kontoLage()));
+        el("np-innehall").querySelector<HTMLElement>("#np-felbesked")?.focus();
+      }
       return;
     }
     if (avslutad) return;
     if (svar.geografier.length === 0) {
-      el("np-innehall").innerHTML = `<div class="flode-ruta varning"><p>Det finns ingen mappad geografi på servern än. En superadmin mappar en med <code>floden geografi mappa</code> (docs/DRIFT.md).</p></div>`;
+      const k = kontoLage();
+      el("np-innehall").innerHTML = visaFel(ingenGeografi(k.lage === "in" && k.superadmin === true));
       return;
     }
     geo = svar.geografier[svar.geografier.length - 1] ?? null;

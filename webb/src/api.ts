@@ -32,6 +32,9 @@ import type {
   RuttSvar,
 } from "./types";
 import { csrfHuvud, settKontoLage } from "./konto";
+import { ApiFel, OinloggadFel } from "./apifel";
+
+export { ApiFel, OinloggadFel };
 import type {
   AvlasningSvar,
   DemoSvar,
@@ -46,13 +49,6 @@ import type {
 
 const API_BAS = "/api";
 
-export class OinloggadFel extends Error {
-  constructor() {
-    super("Inloggning krävs.");
-    this.name = "OinloggadFel";
-  }
-}
-
 export async function lasJson<T>(url: string, init?: RequestInit): Promise<T> {
   // Alla POST bär CSRF-huvudet (docs/KONTO.md avsnitt 8). Utan inloggning finns ingen kaka
   // och då skickas inget huvud.
@@ -61,7 +57,12 @@ export async function lasJson<T>(url: string, init?: RequestInit): Promise<T> {
     ...((init?.headers as Record<string, string> | undefined) ?? {}),
     ...(metod === "GET" || metod === "HEAD" ? {} : csrfHuvud(document.cookie)),
   };
-  const svar = await fetch(url, { ...init, headers: huvuden });
+  let svar: Response;
+  try {
+    svar = await fetch(url, { ...init, headers: huvuden });
+  } catch (e) {
+    throw new ApiFel(e instanceof Error ? e.message : String(e), 0);
+  }
   if (svar.status === 401) {
     settKontoLage({ lage: "ut" });
     throw new OinloggadFel();
@@ -76,7 +77,7 @@ export async function lasJson<T>(url: string, init?: RequestInit): Promise<T> {
 
   if (!svar.ok) {
     const felObj = data as { fel?: string };
-    throw new Error(felObj.fel ?? `API-fel HTTP ${svar.status}`);
+    throw new ApiFel(felObj.fel ?? `API-fel HTTP ${svar.status}`, svar.status);
   }
   return data as T;
 }

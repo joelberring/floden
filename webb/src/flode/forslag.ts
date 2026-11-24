@@ -22,6 +22,8 @@ import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { TOM_RITVY, type RitVy } from "../karta/kartmotor.ts";
 import { FORVALD_HOJD_M, Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "../karta/ritverktyg.ts";
 import { esc } from "../sidor.ts";
+import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
+import { kontoLage } from "../konto.ts";
 import { formatera, talFormat } from "../tal.ts";
 import { flodeAdress } from "./adress.ts";
 import { tolkaFil } from "./filimport.ts";
@@ -75,7 +77,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" data-v="goraom" title="Gör om (Skift+${TANGENTER.angra})" disabled>Gör om</button>
           <span class="flode-verktyg-skil" aria-hidden="true"></span>
           <button type="button" data-v="fil" title="Läs in hus ur en GeoJSON-fil eller ett sparat förslag">Läs in fil</button>
-          <input type="file" id="fs-fil" accept=".geojson,.json,application/geo+json,application/json" hidden />
+          <input type="file" id="fs-fil" aria-label="Välj en GeoJSON-fil som planunderlag" accept=".geojson,.json,application/geo+json,application/json" hidden />
         </div>
         <div class="flode-zoom" role="group" aria-label="Zoom">
           <button type="button" id="fs-in" aria-label="Zooma in">+</button>
@@ -121,7 +123,8 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     try {
       info = await hamtaProjektInfo(projekt);
     } catch (e) {
-      el("fs-laddar").innerHTML = `<span class="flode-fel" role="alert">Kartan gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}</span>`;
+      el("fs-laddar").innerHTML = felBeskedHtml(sidFel(e, "Kartan", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/forslag`), esc);
+      kopplaLaddaOm(el("fs-laddar"));
       return;
     }
     if (avslutad) return;
