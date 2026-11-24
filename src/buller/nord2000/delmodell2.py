@@ -222,6 +222,7 @@ def markeffekt_blandad_mark_db(
     fresnelzon: Fresnelzonsval = "klippt",
     skuggzonsvikter: Skuggzonsvikter = "ovre_band",
     skuggzon: Skuggzonslasning | None = None,
+    koherens_spridningszon: Flyttal | None = None,
 ) -> Flyttal:
     """Markeffekten ΔL_2 per tersband, AV 1106/07 avsnitt 5.11, ekv. (124).
 
@@ -275,7 +276,17 @@ def markeffekt_blandad_mark_db(
     typer = marktyper(segment)
     effekter = [
         markeffekt_plan_mark_db(
-            frekvenser_hz, avstand_m, h_s, h_r, sigma, rahet, atm, uppat, ct2_form, lasning
+            frekvenser_hz,
+            avstand_m,
+            h_s,
+            h_r,
+            sigma,
+            rahet,
+            atm,
+            uppat,
+            ct2_form,
+            lasning,
+            koherens_spridningszon=koherens_spridningszon,
         )
         for sigma, rahet in typer
     ]

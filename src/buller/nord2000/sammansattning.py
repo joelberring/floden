@@ -149,6 +149,7 @@ def markeffekt_plan_modell_db(
     segment: list[Marksegment],
     atmosfar: HomogenAtmosfar | Atmosfar,
     val: Sammansattningsval | None = None,
+    koherens_spridningszon: Flyttal | None = None,
 ) -> tuple[Flyttal, str]:
     """ΔL_flat: delmodell 1 vid en marktyp, annars delmodell 2 (AV 1106/07 ekv. 332)."""
     val = Sammansattningsval() if val is None else val
@@ -167,6 +168,7 @@ def markeffekt_plan_modell_db(
                 val.uppat,
                 val.ct2_form,
                 val.skuggzon,
+                koherens_spridningszon=koherens_spridningszon,
             ),
             "1",
         )
@@ -183,6 +185,7 @@ def markeffekt_plan_modell_db(
             val.fresnelzon,
             val.skuggzonsvikter,
             val.skuggzon,
+            koherens_spridningszon=koherens_spridningszon,
         ),
         "2",
     )
@@ -313,6 +316,7 @@ def terrangeffekt(
     val: Sammansattningsval | None = None,
     *,
     profilgeometri: Profilgeometri | None = None,
+    koherens_spridningszon: Flyttal | None = None,
 ) -> Terrangeffekt:
     """ΔL_t utan ΔL₈ för en profil, AV 1106/07 avsnitt 5.21–5.22, ekv. (306)–(319) och (332).
 
@@ -357,7 +361,12 @@ def terrangeffekt(
         segment = pg.segment
         try:
             plan_db, namn = markeffekt_plan_modell_db(
-                frekvenser_hz, over_plan, segment, atmosfar, val
+                frekvenser_hz,
+                over_plan,
+                segment,
+                atmosfar,
+                val,
+                koherens_spridningszon=koherens_spridningszon,
             )
         except BullerFel as fel:
             raise _med_namn("Plan mark (delmodell 1–2)", fel) from fel

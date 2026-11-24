@@ -26,15 +26,16 @@ from typing import Literal
 
 import numpy as np
 
-from buller.nord2000 import delmodell8
+from buller.nord2000 import delmodell8, delmodell10
 from buller.nord2000.delmodell1 import Ct2Form
 from buller.nord2000.delmodell2 import Fresnelzonsval, Skuggzonsvikter
 from buller.nord2000.delmodell3 import Fresnelzonsregel, Overgangshojd
 from buller.nord2000.delmodell4 import Viktregel
 from buller.nord2000.delmodell6 import Vinkelregel
+from buller.nord2000.delmodell10 import CirkelStrale, RatStrale, Spridningszon, Stralbana
 from buller.nord2000.frekvenser import mittfrekvenser_hz
 from buller.nord2000.luftabsorption import luftabsorption_db, rentonsdampning_db_per_m
-from buller.nord2000.refraktion import atmosfar_ur_vader
+from buller.nord2000.refraktion import atmosfar_ur_vader, calc_eq_ssp
 from buller.nord2000.refraktion_mark import Skuggzonslasning
 from buller.nord2000.sammansattning import (
     Profilgeometri,
@@ -84,13 +85,16 @@ class Nord2000Delresultat:
     delmodell: str
     antal_stralar: float = 0.0  # N i ekv. (279); delmodell 8 bidrar när N > 4
     flera_markreflexer_db: Flyttal | None = field(default=None)  # ΔL₈; None när N ≤ 4
+    spridningszon_db: Flyttal | None = field(default=None)  # ΔL_s (delmodell 10); None utan skog
     # Alla led i ekv. (332) före ⊕ ΔL₈: r_scr1, r_scr2, r_scr12, r_flat och delmodellernas ΔL.
     terrangeffekt: Terrangeffekt | None = field(default=None, repr=False, compare=False)
 
     @property
     def overforing_db(self) -> Flyttal:
-        """L_R − L_W = ΔL_d + ΔL_a + ΔL_t (ΔL_s = ΔL_r = 0 i detta skede)."""
+        """L_R − L_W = ΔL_d + ΔL_a + ΔL_t + ΔL_s (AV 1106/07 ekv. 329)."""
         summa: Flyttal = self.spridning_db + self.luftabsorption_db + self.terrang_db
+        if self.spridningszon_db is not None:
+            summa = summa + self.spridningszon_db
         return summa
 
 
@@ -103,9 +107,7 @@ def _rentonsdampning_vektor(
 ) -> Flyttal:
     return np.array(
         [
-            rentonsdampning_db_per_m(
-                f, lufttemperatur_c, relativ_fuktighet_procent, lufttryck_kpa
-            )
+            rentonsdampning_db_per_m(f, lufttemperatur_c, relativ_fuktighet_procent, lufttryck_kpa)
             for f in frekvenser
         ],
         dtype=np.float64,
@@ -299,7 +301,13 @@ class Nord2000Karna:
             vinkelregel=self.vinkelregel,
         )
 
-    def berakna(self, profil: Terrangprofil, vader: Vader) -> Nord2000Delresultat:
+    def berakna(
+        self,
+        profil: Terrangprofil,
+        vader: Vader,
+        *,
+        spridningszon: Spridningszon | None = None,
+    ) -> Nord2000Delresultat:
         """Räknar alla utbredningseffekter i ekv. (329) för en profil och ett väder.
 
         Vädret översätts med `refraktion.atmosfar_ur_vader` (A, B, s_A, s_B). ΔL_t sätts
@@ -308,15 +316,38 @@ class Nord2000Karna:
         och delmodell 3, och skärmdelmodellerna 4–6 med turbulensspridningen (delmodell 7).
         ΔL_d och ΔL_a räknas med R_SR (ekv. 8), även med refraktion och för skärmade banor
         (delmodell 4–6 är normerade mot fritt fält på avståndet R_SR, ekv. 163). ΔL₈
-        (delmodell 8) läggs till ΔL_t med ⊕ när N > 4 (ekv. 332).
+        (delmodell 8) läggs till ΔL_t med ⊕ när N > 4 (ekv. 332). Om `spridningszon` ges
+        räknas delmodell 10 (AV 1106/07 avsnitt 5.19): F_s går in i terrängens koherens och
+        ΔL_s läggs till ekv. (329).
         """
         atmosfar = atmosfar_ur_vader(vader)
         frekvenser = mittfrekvenser_hz()
         pg = self._profilgeometri(profil)
         geo = pg.geo
-        effekt = terrangeffekt(frekvenser, profil, atmosfar, self.val(), profilgeometri=pg)
+        koherens_s: Flyttal | None = None
+        spridningszon_db: Flyttal | None = None
+        if spridningszon is not None:
+            strale: Stralbana
+            if atmosfar.har_refraktion:
+                eq_ssp = calc_eq_ssp(geo.h_s_m, geo.h_r_m, atmosfar)
+                strale = CirkelStrale(geo.x_s_m, geo.z_s_m, geo.x_r_m, geo.z_r_m, eq_ssp.xi_per_m)
+            else:
+                strale = RatStrale(geo.x_s_m, geo.z_s_m, geo.x_r_m, geo.z_r_m)
+            sz_res = delmodell10.spridningszon(frekvenser, strale, spridningszon, atmosfar.c_m_s)
+            koherens_s = sz_res.koherens
+            spridningszon_db = sz_res.dampning_db
+        effekt = terrangeffekt(
+            frekvenser,
+            profil,
+            atmosfar,
+            self.val(),
+            profilgeometri=pg,
+            koherens_spridningszon=koherens_s,
+        )
         terrang = effekt.delta_l_db
         delmodell = effekt.beteckning
+        if spridningszon is not None:
+            delmodell = f"{delmodell}+10"
         # Delmodell 8, ekv. (332): ΔL_t = (…) ⊕ ΔL₈, ytterst och per band. A och B är
         # medelvärdena (inte A₊, B₊). För N ≤ 4 är ΔL₈ = −∞ dB och ändrar ingenting.
         antal_stralar = 0.0
@@ -343,9 +374,16 @@ class Nord2000Karna:
             delmodell=delmodell,
             antal_stralar=antal_stralar,
             flera_markreflexer_db=flera_markreflexer_db,
+            spridningszon_db=spridningszon_db,
             terrangeffekt=effekt,
         )
 
-    def overforing_db(self, profil: Terrangprofil, vader: Vader) -> Flyttal:
+    def overforing_db(
+        self,
+        profil: Terrangprofil,
+        vader: Vader,
+        *,
+        spridningszon: Spridningszon | None = None,
+    ) -> Flyttal:
         """L_p − L_W per tersband, form (ANTAL_BAND,), AV 1106/07 ekv. (329)."""
-        return self.berakna(profil, vader).overforing_db
+        return self.berakna(profil, vader, spridningszon=spridningszon).overforing_db
