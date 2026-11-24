@@ -196,7 +196,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       return;
     }
     if (!svar.far_skapa_projekt) {
-      inn.innerHTML = `<div class="flode-ruta varning" role="status"><p>Du får inte skapa projekt. Det kräver superadmin, eller organisationsadmin eller ägare i en organisation. Be en administratör, eller använd ett projekt du redan har roll i.</p></div>`;
+      inn.innerHTML = `<div class="flode-ruta varning" role="status"><p>Du får inte skapa projekt. Det kräver superadmin, eller organisationsadmin eller ägare i en organisation. Be en administratör, eller använd ett projekt du redan har roll i.</p></div><ul class="flode-liten flode-dampad" id="np-geolista" aria-label="Mappade geografier">${svar.geografier.map((g) => `<li>${esc(g.namn)} (${esc(g.ref)})</li>`).join("")}</ul>`;
       return;
     }
     const flera = svar.organisationer.length > 1;
@@ -206,6 +206,7 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
     inn.innerHTML = `
       <div class="flode-falt"><label for="np-geo">Geografi</label>
         <select id="np-geo">${svar.geografier.map((g) => `<option value="${esc(g.ref)}"${g.ref === geo?.ref ? " selected" : ""}>${esc(g.namn)} (${esc(g.version)})</option>`).join("")}</select></div>
+      <ul class="flode-liten flode-dampad" id="np-geolista" aria-label="Mappade geografier">${svar.geografier.map((g) => `<li>${esc(g.namn)} (${esc(g.ref)})${g.kommun ? `, ${esc(g.kommun)}` : ""}: kärna ${Math.round(g.karna_3011[2] - g.karna_3011[0])} x ${Math.round(g.karna_3011[3] - g.karna_3011[1])} m${g.buffert_m != null ? `, buffert ${Math.round(g.buffert_m)} m` : ""}</li>`).join("")}</ul>
       ${geo && geo.varningar.length > 0 ? `<p class="flode-liten flode-dampad">${esc(geo.varningar.join(" "))}</p>` : ""}
       <fieldset class="flode-fieldset"><legend>Rita avgränsningen</legend>
         <div class="flode-segment" id="np-slag">
