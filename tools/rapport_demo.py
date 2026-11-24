@@ -1,11 +1,11 @@
 # ruff: noqa: E501
-"""Referensflöde utan AI: skissunderlag skyfall, dagsljus eller ekologi för demokvarteret, Word och PDF.
+"""Referensflöde utan AI: skissunderlag skyfall, dagsljus, ekologi eller luft för demokvarteret, Word och PDF.
 
 Skapar en rapport (K33) över körningen `demo-vatten`, lägger fasta påståenden (K32) för SK-01 till
 SK-15 (`rapport.referensflode`), kontrollerar och exporterar. Deterministiskt: inga modeller.
 Kräver demon (`floden demo`).
 
-    PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus|ekologi] [--rot .] [--ut data/lokal/rapporter]
+    PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus|ekologi|luft] [--rot .] [--ut data/lokal/rapporter]
         [--exempel docs/exempel] [--inplantera-fel]
         [--sprakprofil sbk|neutral] [--numrerade-rubriker] [--numrerade-figurer]
         [--avsandare TEXT] [--diarienummer TEXT] [--handlaggare TEXT] [--accentfarg HEX]
@@ -31,10 +31,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--rot", default=str(Path(__file__).resolve().parents[1]))
     p.add_argument("--ut", default=None, help="Rapportmapp (standard data/lokal/rapporter).")
     p.add_argument("--exempel", default=None, help="Kopiera Word och PDF hit (t.ex. docs/exempel).")
-    p.add_argument("--amne", choices=("skyfall", "dagsljus", "ekologi"), default="skyfall")
-    p.add_argument("--korning", default=None, help="Standard demo-vatten (skyfall), demo-dagsljus, demo-ekologi.")
+    p.add_argument("--amne", choices=("skyfall", "dagsljus", "ekologi", "luft"), default="skyfall")
+    p.add_argument("--korning", default=None, help="Standard demo-vatten (skyfall), demo-dagsljus, demo-ekologi, demo-luft.")
     p.add_argument("--roll", choices=("planhandlaggare", "byggaktor", "granskare"), default="planhandlaggare",
-                   help="Dagsljus: beställningens mottagare.")
+                   help="Dagsljus, ekologi och luft: beställningens mottagare.")
     p.add_argument("--alla-fragor", action="store_true",
                    help="Dagsljus: ta med alla DL- och SO-frågor (förval: bara de där Floden kan ge underlag).")
     p.add_argument("--inplantera-fel", action="store_true")
@@ -65,6 +65,8 @@ def main(argv: list[str] | None = None) -> int:
     from rapport.referensflode_dagsljus import pastaenden as pastaenden_dagsljus
     from rapport.referensflode_ekologi import kontekst_fran_rapport as kontekst_ekologi
     from rapport.referensflode_ekologi import pastaenden as pastaenden_ekologi
+    from rapport.referensflode_luft import kontekst_fran_rapport as kontekst_luft
+    from rapport.referensflode_luft import pastaenden as pastaenden_luft
     from rapport.skissexport import ExportStoppad
     from rapport.skisskontroll import kontroll_text
     from rapport.skissrapport import RapportTjanst
@@ -73,8 +75,28 @@ def main(argv: list[str] | None = None) -> int:
     app = FlodenApiApp(testsvit_rot=rot / "testsvit", konfig_fil=rot / "config.toml")
     tjanst = FlodenTjanst(app, rot=rot)
     rt = RapportTjanst(tjanst, rapportmapp=a.ut)
-    korning = a.korning or {"dagsljus": "demo-dagsljus", "ekologi": "demo-ekologi"}.get(a.amne, "demo-vatten")
-    if a.amne == "ekologi":
+    korning = a.korning or {"dagsljus": "demo-dagsljus", "ekologi": "demo-ekologi", "luft": "demo-luft"}.get(
+        a.amne, "demo-vatten"
+    )
+    if a.amne == "luft":
+        best = rt.bestallning_skapa(
+            syfte="Skissa hur PM10 förhåller sig till dygnsnormen före och efter ett förslag i demokvarteret, som intervall ur två påhittade timserier",
+            amnen=["luft"],
+            projekt="demokvarteret",
+            mottagare_roll=a.roll,
+        )
+        print(f"Beställning {best.bestallning_id}: {len(best.urval)} frågor ({best.utelamnade} utelämnade)")
+        r = rt.skapa(
+            projekt="demokvarteret",
+            korningar=[korning],
+            mottagare=[],
+            ai_stod=False,
+            av="referensflode",
+            installningar=installningar,
+            bestallning=best,
+        )
+        kw_lista = pastaenden_luft(kontekst_luft(rt, r), r.fragor)
+    elif a.amne == "ekologi":
         best = rt.bestallning_skapa(
             syfte="Skissa hur ett nytt hus i demokvarteret påverkar ett skogsspridningssamband (grön infrastruktur) för barrskogsmesar",
             amnen=["ekologi"],

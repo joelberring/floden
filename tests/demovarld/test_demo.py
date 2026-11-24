@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from demovarld.demo import LITEN, NORMAL, kor_demo
-from demovarld.fragor import text_dagsljus, text_ekologi, text_vatten
+from demovarld.fragor import text_dagsljus, text_ekologi, text_luft, text_vatten
 from demovarld.varld import DemoVarld, bygg_ruta
 from gemensamt.hash import sha256_fil
 from gemensamt.manifest import KONTRAKT_K0, las_manifest
@@ -112,6 +112,7 @@ def test_incheckade_demofragor_ar_malletens_utdata() -> None:
     assert (fragor / "demo_ekologi.toml").read_text(encoding="utf-8") == text_ekologi(
         v, fragor, varld
     )
+    assert (fragor / "demo_luft.toml").read_text(encoding="utf-8") == text_luft(v, fragor, varld)
 
 
 def test_api_demo_ger_oversikt(demo: Demo) -> None:

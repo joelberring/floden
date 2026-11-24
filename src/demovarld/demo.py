@@ -18,11 +18,14 @@ from demovarld import varld as w
 from demovarld.fragor import (
     FRAGA_DAGSLJUS,
     FRAGA_EKOLOGI,
+    FRAGA_LUFT,
     FRAGA_VATTEN,
     text_dagsljus,
     text_ekologi,
+    text_luft,
     text_vatten,
 )
+from demovarld.luftserier import skriv_luftserier
 from gemensamt.hash import sha256_bytes, sha256_fil
 from gemensamt.manifest import FilPost, hamta_kodversion, skapa_manifest, skriv_manifest
 from karna.scenario import Planscenario, skriv_scenario
@@ -30,6 +33,7 @@ from markmodell.k1_skrivare import K1SkrivFel  # noqa: F401  (säkerställer att
 from webb.fragor import FragaTjanst
 
 VARLD_JSON = "varld.json"
+DEMOFRAGOR = (FRAGA_DAGSLJUS, FRAGA_VATTEN, FRAGA_EKOLOGI, FRAGA_LUFT)
 
 
 class DemoFel(Exception):
@@ -146,6 +150,7 @@ def skriv_fragor(fragedir: Path, varld_dir: Path, lage: DemoLage) -> dict[str, P
         (FRAGA_DAGSLJUS, text_dagsljus(v, fragedir, varld_dir, riktningar=lage.riktningar)),
         (FRAGA_VATTEN, text_vatten(v, fragedir, varld_dir)),
         (FRAGA_EKOLOGI, text_ekologi(v, fragedir, varld_dir)),
+        (FRAGA_LUFT, text_luft(v, fragedir, varld_dir)),
     ):
         fil = fragedir / f"{namn}.toml"
         if not fil.is_file() or fil.read_text(encoding="utf-8") != text:
@@ -170,13 +175,14 @@ def kor_demo(
     byggd = bygg_varld(varld_dir, lage, tvinga=tvinga, logg=logg)
     t_varld = time.perf_counter() - t0
     logg(f"Världen: {'byggd' if byggd else 'oförändrad'} ({t_varld:.1f} s)")
+    skriv_luftserier(varld_dir)  # påhittade timserier för luftdemon (billigt)
     fragor = (
         skriv_fragor(fragedir, varld_dir, lage)
         if skriv_fragefiler
-        else {n: fragedir / f"{n}.toml" for n in (FRAGA_DAGSLJUS, FRAGA_VATTEN, FRAGA_EKOLOGI)}
+        else {n: fragedir / f"{n}.toml" for n in DEMOFRAGOR}
     )
     delar: dict[str, Any] = {}
-    for namn in (FRAGA_DAGSLJUS, FRAGA_VATTEN, FRAGA_EKOLOGI):
+    for namn in DEMOFRAGOR:
         t1 = time.perf_counter()
         status, oforandrad = tjanst.kor_synkront(namn, namn.replace("_", "-"))
         delar[namn] = {

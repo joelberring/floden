@@ -9,8 +9,8 @@ godkänd och felmeddelanden. **Ett enda fel stoppar exporten** (`rapport.skissex
 | `sparbarhet` | Varje belägg hämtas på nytt ur Floden: samma värde (före avrundning), samma sha256 för resultatfil och K0-manifest. Inga siffror utanför platshållare. Kartorna ritas om och ska ge samma PNG (sha256). |
 | `scenario` | Jämförelser och påståenden bygger på scenarier med samma analysparametrar (regn, avtappning, takvatten); ingen bedömning mot regel i nivå 1. |
 | `mottagare` | Ett påstående gäller en nämnare (hela området på mark, en namngiven mottagare, en körning); områdesbelägg pekar på rapportens mottagare. |
-| `matt` | Storhet, tidsdefinition, statistik och enhet finns; platshållarens enhet och avrundning följer belägget; ett maxdjup kallas inte vattennivå, ett största värde inte medelvärde. |
-| `osakerhet` | Antagandena (regn, takvatten, avtappning) finns med; skissmetoder beskrivs inte som verifierade; villkorade påståenden har förutsättning och ansvarig. |
+| `matt` | Storhet, tidsdefinition, statistik och enhet finns; platshållarens enhet och avrundning följer belägget; ett maxdjup kallas inte vattennivå, ett största värde inte medelvärde. Luft: ett påstående om att normen klaras eller överskrids kräver att intervallet ligger helt under respektive över högsta antalet dygn; korsar det gränsen stoppas påståendet. |
+| `osakerhet` | Antagandena (regn, takvatten, avtappning) finns med; skissmetoder beskrivs inte som verifierade; villkorade påståenden har förutsättning och ansvarig. Luft: serien är extern, bakgrunden ett antagande, intervallet en känslighet och före/efter två serier. |
 | `karta` | Teckenförklaring, enhet, tomvärde, norr, skalstock och scenario i bildtexten; före och efter har samma färgskala; filen är oförändrad. |
 | `status` | Statusreglerna; varje fråga i rapporten har minst ett påstående; nivå 1 är sållning (inga lämplighets- eller kravformuleringar). |
 | `dataskydd` | Rapportens dataklass är `oppet`; inga e-postadresser eller personnummer i texterna. |
@@ -115,6 +115,7 @@ def mattfel(p: Pastaende) -> list[str]:
         fel.append(f"{_pid(p)}: texten talar om största värde, men belägget är ett medelvärde.")
     fel += dagsljusfel(p, text)
     fel += ekologifel(p, text)
+    fel += luftfel(p, text)
     try:
         p.fylld_text()
     except PastaendeFel as exc:
@@ -211,6 +212,108 @@ def ekologifel(p: Pastaende, text: str) -> list[str]:
                 "Beräkningen visar potentiell livsmiljö och en modell för spridning, inte arternas förekomst."
             )
     fel += _borttagningsfel(p, text)
+    return fel
+
+
+_NORMORD: Final[str] = r"(?:mkn|miljökvalitetsnorm\w*|normen|normerna|dygnsnormen|årsnormen|gränsvärde\w*|mkn-gräns\w*)"
+_KLARAR_VERB: Final[str] = r"(?:klarar|klaras|klarade|uppfyller|uppfylls|innehålls|underskrider|underskrids|understiger)"
+_OVERSKRIDER_VERB: Final[str] = r"(?:överskrider|överskrids|överskred|överstiger|överträder|överträds|bryter mot)"
+_LUFT_PAASTAENDE: Final[re.Pattern[str]] = re.compile(
+    rf"\b({_KLARAR_VERB}|{_OVERSKRIDER_VERB})\b", re.I
+)
+_LUFT_NEGATION: Final[re.Pattern[str]] = re.compile(r"\b(inte|ej|icke|aldrig|knappast)\b", re.I)
+_LUFT_FORBEHALL: Final[re.Pattern[str]] = re.compile(
+    r"\b(om|huruvida|ifall|vare sig|varken|oklart|oavgjort|avgör\w*|prövas|prövar|bör prövas|ska prövas|kan ingen säga|går inte att säga|"
+    r"kan inte (?:säga|avgöra|bedöma)|går inte att (?:säga|avgöra|bedöma))\b",
+    re.I,
+)
+_LUFT_BERAKNAT: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:beräknad\w*|framräknad\w*|modellerad\w*)\s+(?:lokal\w*\s+)?(?:halt\w*|spridning\w*)\b|"
+    r"\b(?:halt\w*|spridning\w*|haltbidrag\w*)\s+(?:är\s+|har\s+)?(?:beräknad\w*|beräknats|framräknad\w*|modellerad\w*|modellerats)\b|"
+    r"\bfloden\s+(?:har\s+|kan\s+)?(?:beräknat|beräknar|räknat|räknar|modellerat|modellerar)\s+(?:ut\s+)?(?:halt\w*|spridning\w*|haltbidrag\w*)\b",
+    re.I,
+)
+_LUFT_EXTERN: Final[re.Pattern[str]] = re.compile(
+    r"\b(inte|ej|ingen|extern\w*|given\w*|utanför floden|annat verktyg|annan modell)\b", re.I
+)
+
+
+def _meningar(text: str) -> list[str]:
+    return [m.strip() for m in re.split(r"(?<=[.!?])\s+|\n+", text) if m.strip()]
+
+
+def luftfel(p: Pastaende, text: str) -> list[str]:
+    """Luft (skiss): MKN-intervallet är en känslighet för två faktorer ur en given serie och en antagen bakgrund.
+
+    Ett påstående om att normen klaras eller överskrids kräver att intervallet (lägst, högst och högsta tillåtna
+    antal dygn, alla tre som belägg i påståendet) ligger helt under respektive helt över gränsen och att texten
+    säger att det gäller i intervallet. Korsar intervallet gränsen stoppas påståendet. Haltbidraget är en given
+    serie: texten får inte säga att Floden har beräknat halten eller spridningen, och intervallet är ingen konfidens."""
+    if not any(b.losare == "luft.mkn" for b in p.belagg):
+        return []
+    from rapport.luftbelagg import intervallrelation
+
+    fel: list[str] = []
+    ren = text_utan_platshallare(text)
+    for mening in _meningar(ren):
+        if (m := _LUFT_BERAKNAT.search(mening)) and not _LUFT_EXTERN.search(mening):
+            fel.append(
+                f"{_pid(p)}: texten säger '{m.group(0)}', men det lokala haltbidraget är en given timserie som "
+                "har räknats fram utanför Floden. Floden har inte beräknat halten eller spridningen."
+            )
+    low = ren.lower()
+    if "konfidens" in low and not re.search(r"\b(inte|ingen|ej)\b[^.]{0,60}konfidens", low):
+        fel.append(
+            f"{_pid(p)}: intervallet är en känslighet för två faktorer, inte en statistisk konfidens. "
+            "Skriv att det inte är en konfidens, eller använd ordet känslighet."
+        )
+    relation = intervallrelation(p.belagg)
+    for mening in _meningar(ren):
+        if not re.search(_NORMORD, mening, re.I):
+            continue
+        verb = _LUFT_PAASTAENDE.search(mening)
+        if verb is None or _LUFT_FORBEHALL.search(mening):
+            continue
+        negerad = bool(_LUFT_NEGATION.search(mening))
+        klarar_verb = re.fullmatch(_KLARAR_VERB, verb.group(1), re.I) is not None
+        pastar = "klarar" if klarar_verb != negerad else "overskrids"
+        pastar_text = "att normen klaras" if pastar == "klarar" else "att normen överskrids"
+        if re.search(r"årsmedel|årsnorm", mening, re.I):
+            fel.append(
+                f"{_pid(p)}: '{mening}' jämför årsmedel mot en norm, men körningen har ingen gräns för årsmedel "
+                "(luft.mkn prövar dygnsgränsen och högsta antal dygn). Skriv årsmedlet som ett intervall utan jämförelse."
+            )
+            continue
+        luft = relation
+        if not luft or any(v is None for v in luft.values()):
+            fel.append(
+                f"{_pid(p)}: texten säger {pastar_text}, men påståendets belägg visar inte intervallet mot högsta "
+                "antalet dygn (lägst och högst antal dygn samt högsta tillåtna antal behövs som belägg)."
+            )
+            continue
+        korsar = sorted(f"{a}/{s}" for (a, s), v in luft.items() if v == "korsar")
+        if korsar:
+            fel.append(
+                f"{_pid(p)}: texten säger {pastar_text}, men intervallet korsar gränsen för {', '.join(korsar)}: "
+                "antal dygn över gränsen ligger både under och över högsta antalet i intervallet. Skriv att "
+                "underlaget varken kan säga att normen klaras eller att den överskrids, och att frågan behöver utredas vidare."
+            )
+            continue
+        motsatt = sorted(
+            f"{a}/{s}" for (a, s), v in luft.items() if v == ("over" if pastar == "klarar" else "under")
+        )
+        if motsatt:
+            fel.append(
+                f"{_pid(p)}: texten säger {pastar_text}, men beläggen för {', '.join(motsatt)} visar motsatsen "
+                "(intervallet ligger helt på andra sidan om högsta antalet dygn)."
+            )
+            continue
+        if not re.search(r"intervall", ren, re.I):
+            fel.append(
+                f"{_pid(p)}: texten säger {pastar_text} utan att säga att det gäller i hela intervallet (givet "
+                "bakgrunden och den givna serien). Skriv det, eller skriv bara hur intervallet förhåller sig "
+                "till högsta antalet dygn."
+            )
     return fel
 
 
@@ -544,10 +647,36 @@ def _ekologitext(r: Rapport, text: str) -> list[str]:
     return fel
 
 
+def _lufttext(r: Rapport, text: str) -> list[str]:
+    """Luftrapportens fasta villkor: serien är extern, bakgrunden ett antagande, intervallet en känslighet, före/efter."""
+    fel: list[str] = []
+    low = " ".join(text.lower().split())
+    for fras, vad in (
+        ("räknats fram utanför floden", "att haltbidraget är en given serie som räknats fram utanför Floden"),
+        ("bakgrunden är ett antagande", "att bakgrunden är ett antagande"),
+        ("inte en statistisk konfidens", "att intervallet inte är en statistisk konfidens"),
+        ("metoden är en skiss", "att metoden är en skiss"),
+    ):
+        if fras not in low:
+            fel.append(f"Dokumentet säger inte {vad}.")
+    analyser = [a for k in r.korningar for a in k["analyser"] if a["losare"] == "luft.mkn"]
+    if len(analyser) >= 2 and "två separata serier" not in low:
+        fel.append("Dokumentet säger inte att före och efter bygger på två separata serier.")
+    if len(analyser) == 1 and "kräver två serier" not in low:
+        fel.append("Dokumentet säger inte att före och efter kräver två serier (underlaget har bara en).")
+    if not analyser:
+        fel.append("Rapporten har ingen analys med lösaren luft.mkn.")
+    if any("bakgrund" in a.lower() and "olika" in a.lower() and "varning" in a.lower() for k in r.korningar for a in k.get("antaganden", [])):
+        fel.append("Analyserna för före och efter har olika bakgrund, faktorintervall eller gräns: de kan inte jämföras.")
+    return fel
+
+
 def _osakerhet(r: Rapport, dokumenttext: Callable[[], str] | None = None) -> tuple[list[str], int]:
     fel: list[str] = []
     if r.amne == "ekologi" and dokumenttext is not None:
         fel += _ekologitext(r, dokumenttext())
+    if r.amne == "luft" and dokumenttext is not None:
+        fel += _lufttext(r, dokumenttext())
     for k in r.korningar:
         if not k.get("antaganden"):
             fel.append(
@@ -652,6 +781,7 @@ __all__ = [
     "kontrollera_skissrapport",
     "mattfel",
     "ekologifel",
+    "luftfel",
     "mottagarfel",
     "pastaendefel",
     "scenariofel",

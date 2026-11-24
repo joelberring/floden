@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any
 from rapport import amnestext
 from rapport.bestallning import MOTTAGARTEXT
 from rapport.installningar import RapportInstallningar
+from rapport.luftbelagg import luftlage
 from rapport.pastaende import (
     FORDJUPNING_TEXT,
     STATUS_TEXT,
@@ -430,7 +431,7 @@ def bygg_dokument(
             dok.stycke(mening)
         dok.stycke(
             "Tabellen visar för varje fråga om den behöver utredas vidare. Frågorna kommer ur "
-            f"frågekatalogen för {({'skyfall': 'skyfall', 'ekologi': 'ekologi'}).get(r.amne, 'dagsljus och sol')}."
+            f"frågekatalogen för {({'skyfall': 'skyfall', 'ekologi': 'ekologi', 'luft': 'luft'}).get(r.amne, 'dagsljus och sol')}."
         )
     else:
         dok.stycke(
@@ -457,7 +458,14 @@ def bygg_dokument(
     rubrik(1, "2", "Uppdrag och beräkningsfall")
     for k in r.korningar:
         if sbk:
-            if r.amne in ("dagsljus", "ekologi"):
+            if r.amne == "luft":
+                lagen = [luftlage(a["analys"]) for a in k["analyser"]]
+                jfr = (
+                    f"Underlaget gäller lägena {' och '.join(lagen)}, var och ett med en given timserie."
+                    if len(lagen) > 1
+                    else f"Underlaget gäller läget {lagen[0]} med en given timserie." if lagen else ""
+                )
+            elif r.amne in ("dagsljus", "ekologi"):
                 jfr = " ".join(
                     f"Läget {amnestext.lage(r.amne, j['efter'])} jämförs med läget "
                     f"{amnestext.lage(r.amne, j['fore'])}."
@@ -652,7 +660,7 @@ def bygg_dokument(
             "alternativ men inte är granskad för en formell rapport. Bara en människa kan klassa "
             "en metod som 'rapport'."
         )
-    if r.amne in ("dagsljus", "ekologi"):
+    if r.amne in ("dagsljus", "ekologi", "luft"):
         inledning, osak = amnestext.osakerhet(r, sbk, bilaga(1) if sbk else bilref(1))
         if sbk:
             dok.stycke(inledning)

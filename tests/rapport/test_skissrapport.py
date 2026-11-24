@@ -377,7 +377,9 @@ def test_skapa_valideras(m: Miljo) -> None:
     with pytest.raises(RapportFel, match="Bara nivå 1"):
         m.ny_rapport(niva=2)
     with pytest.raises(RapportFel, match="ingen skissrapport"):
-        m.ny_rapport(amne="luft")
+        m.ny_rapport(amne="buller")
+    with pytest.raises(RapportFel, match="luft.mkn"):
+        m.ny_rapport(amne="luft")  # demo-vatten har ingen luft.mkn-analys
     with pytest.raises(RapportFel, match="ingen vattenanalys"):
         m.ny_rapport(korningar=["demo-dagsljus"])
     with pytest.raises(RapportFel, match="hör inte till ämnet"):
