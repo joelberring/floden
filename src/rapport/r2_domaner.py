@@ -6,9 +6,12 @@ Tabellbyggarna gör Flodens beräkningsresultat (`sankgraf.bifurkation`, `luft.k
 Talen skrivs med `rapport.pastaende.formatera_tal` (decimalkomma, smalt hårt mellanslag mellan
 tusental), alltså samma svenska sifferform som rapportkedjan.
 
-**Status: fristående underlag för R3 (luft och buller).** Modulen är testad
-(`tests/rapport/test_r2_domaner.py`) men inte inkopplad i något användarflöde (CLI, webb, MCP,
-K20-lösare eller rapportkedja).
+**Status: underlag för R3 (luft och buller), delvis kopplat till belägg.** Modulen är testad
+(`tests/rapport/test_r2_domaner.py`) men inte inkopplad i något användarflöde (CLI, webb, MCP
+eller rapportkedja). `bygg_mkn_tabell_fran_belagg` är den enda byggaren som får användas för ett
+rapporttal: den tar `Belagg` ur `FlodenBelaggKalla` (lösaren `luft.mkn`, K21) och formaterar med
+beläggets egen enhet och upplösning. De övriga byggarna tar beräkningsobjekt direkt och är inte
+rapportväg. Bullerskärmstabellen har ingen beläggsväg: Nord2000 är inte konformt (`buller_spar`).
 
 **Tal får nå en rapport bara via belägg.** Rapporttal kommer ur `FlodenTjanst` och
 `rapport.belaggskalla` (mått med enhet, avrundning och belägg per körning). Luft och buller har
@@ -22,12 +25,12 @@ Modulen har ingen egen måttkatalog och ingen egen talformatering (båda var dub
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from buller.optimering import BullerSkarmVal
 from luft.kanslighet import MknIntervallResultat
-from rapport.pastaende import formatera_tal
+from rapport.pastaende import Belagg, PastaendeFel, formatera_tal
 from sankgraf.bifurkation import BifurkationsPunkt
 
 
@@ -111,6 +114,98 @@ def bygg_mkn_intervallrad(
         "osaker_mkn_grans": iv.osaker_mkn_grans,
         "status_text": status_text,
     }
+
+
+MKN_BELAGGSMATT: tuple[str, ...] = (
+    "lagst_antal_dygn",
+    "hogst_antal_dygn",
+    "arsmedel_lagst_ug_m3",
+    "arsmedel_hogst_ug_m3",
+    "max_dygn_ar_antal_dygn",
+)
+"""Måtten (`matvarde.<analys>.<scenario>.<mått>`, lösaren `luft.mkn`) som tabellen kräver per rad."""
+
+
+def _belagg_tal(b: Belagg) -> str:
+    """Beläggets värde i rapportkedjans sifferform (egen upplösning; enheten står i kolumnrubriken)."""
+    return formatera_tal(b.varde, b.enhet, b.upplosning, visa_enhet=False)
+
+
+def bygg_mkn_tabell_fran_belagg(
+    rader: Sequence[tuple[str, Mapping[str, Belagg]]],
+) -> dict[str, Any]:
+    """MKN-intervall per beräkningsfall (PM10), där **varje tal är ett belägg** (`Belagg`).
+
+    `rader` är (beräkningsfall, {mått: belägg}) med måtten i `MKN_BELAGGSMATT`. Beläggen ska komma
+    ur lösaren `luft.mkn`; annars `PastaendeFel`. Intervallet är en känslighet för källans och
+    depositionens faktorer, inte en statistisk konfidens. Tabellen säger bara hur intervallet
+    förhåller sig till det högsta antalet dygn per år (nivå 1 är sållning, ingen bedömning mot
+    krav): "helt under", "helt över" eller "korsar" det talet.
+    """
+    md = [
+        "| Beräkningsfall | Dygn över gränsen per år (lägst–högst) | PM10-årsmedel, µg/m³ (lägst–högst) "
+        "| Intervallet mot högsta antal dygn | Belägg |",
+        "| --- | ---: | ---: | --- | --- |",
+    ]
+    ut: list[dict[str, Any]] = []
+    for fall, matt in rader:
+        saknas = [m for m in MKN_BELAGGSMATT if m not in matt]
+        if saknas:
+            raise PastaendeFel(f"Beräkningsfallet '{fall}' saknar belägg för {', '.join(saknas)}.")
+        for m in MKN_BELAGGSMATT:
+            if matt[m].losare != "luft.mkn":
+                raise PastaendeFel(
+                    f"Belägget för {m} i '{fall}' kommer ur {matt[m].losare}, inte luft.mkn."
+                )
+        lag, hog, gr = matt["lagst_antal_dygn"], matt["hogst_antal_dygn"], matt["max_dygn_ar_antal_dygn"]
+        if hog.varde < gr.varde:
+            relation = "helt under"
+        elif lag.varde > gr.varde:
+            relation = "helt över"
+        else:
+            relation = "korsar"
+        dygn = f"{_belagg_tal(lag)}–{_belagg_tal(hog)}"
+        ars = (
+            f"{_belagg_tal(matt['arsmedel_lagst_ug_m3'])}–"
+            f"{_belagg_tal(matt['arsmedel_hogst_ug_m3'])}"
+        )
+        adresser = [matt[m].adress for m in MKN_BELAGGSMATT]
+        ut.append(
+            {
+                "fall": fall,
+                "dygn_over": dygn,
+                "arsmedel": ars,
+                "relation_till_hogsta_antal_dygn": relation,
+                "belagg": adresser,
+            }
+        )
+        md.append(
+            f"| {fall} | {dygn} | {ars} | {relation} högsta antalet ({_belagg_tal(gr)}) "
+            f"| {', '.join(adresser)} |"
+        )
+    return {
+        "rubrik": "MKN-intervall för PM10 per beräkningsfall (känslighet, inte konfidens)",
+        "rader": ut,
+        "markdown": "\n".join(md),
+    }
+
+
+def buller_spar() -> str | None:
+    """Skälet till att bullerunderlag inte får nå en rapport, eller `None` när spärren är hävd.
+
+    Spärren följer Nord2000-kärnans eget flagga `nord2000_konform`; den sätts bara av en kärna som
+    passerat testsvit N (80 fall) och ändras inte här. Bullerskärmstabellen (`bygg_bullerskarm_tabell`)
+    tar dessutom nivåer ur indata som Floden inte har någon körning med belägg för.
+    """
+    from buller.nord2000.karna import Nord2000Karna
+
+    if Nord2000Karna.nord2000_konform is True:  # pragma: no cover  (hävd först när sviten passerar)
+        return None
+    return (
+        "Nord2000-kärnan är inte konform (`nord2000_konform = False`, testsvit N ej godkänd; se STATUS.md och docs/buller/logg), "
+        "så bullernivåer får inte nå en rapport. Bullerskärmsvalet (CELF) har dessutom ingen körning med "
+        "belägg: nivåerna är indata, inte en beräkning i Floden."
+    )
 
 
 def bygg_bullerskarm_tabell(

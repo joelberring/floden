@@ -177,6 +177,64 @@ EKOLOGI_MATT: Final[dict[tuple[str, str], Matt]] = {
 }
 MATTKATALOG.update(EKOLOGI_MATT)
 
+_MKN_INT = "{} i faktorintervallet för källa och deposition (känslighet, inte statistisk konfidens)"
+_MKN_DYGN = "kalenderdygn (medel av 24 timmar), alla hela dygn i den givna timserien"
+_MKN_ARS = "medel över alla timmar i den givna timserien (ett år om serien är ett helt år)"
+LUFT_MATT: Final[dict[tuple[str, str], Matt]] = {
+    ("luft.mkn", "matvarde:lagst_antal_dygn"): Matt(
+        "antal dygn med PM10-halt över dygnsgränsen (halt = bakgrund + lokalt bidrag)",
+        _MKN_DYGN, _MKN_INT.format("lägsta värde"), 1.0,
+    ),
+    ("luft.mkn", "matvarde:hogst_antal_dygn"): Matt(
+        "antal dygn med PM10-halt över dygnsgränsen (halt = bakgrund + lokalt bidrag)",
+        _MKN_DYGN, _MKN_INT.format("högsta värde"), 1.0,
+    ),
+    ("luft.mkn", "matvarde:arsmedel_lagst_ug_m3"): Matt(
+        "PM10-årsmedelhalt (bakgrund + lokalt bidrag)", _MKN_ARS, _MKN_INT.format("lägsta värde"), 0.1
+    ),
+    ("luft.mkn", "matvarde:arsmedel_hogst_ug_m3"): Matt(
+        "PM10-årsmedelhalt (bakgrund + lokalt bidrag)", _MKN_ARS, _MKN_INT.format("högsta värde"), 0.1
+    ),
+    ("luft.mkn", "matvarde:p90_4_lagst_ug_m3"): Matt(
+        "90,4-percentilen av PM10-dygnsvärdena (motsvarar 35:e högsta dygnet i ett helt år)",
+        _MKN_DYGN, _MKN_INT.format("lägsta värde"), 0.1,
+    ),
+    ("luft.mkn", "matvarde:p90_4_hogst_ug_m3"): Matt(
+        "90,4-percentilen av PM10-dygnsvärdena (motsvarar 35:e högsta dygnet i ett helt år)",
+        _MKN_DYGN, _MKN_INT.format("högsta värde"), 0.1,
+    ),
+    ("luft.mkn", "matvarde:bakgrund_ug_m3"): Matt(
+        "PM10-bakgrundshalt som lagts till det lokala bidraget", "konstant över hela serien",
+        "parameter (indata)", 0.1,
+    ),
+    ("luft.mkn", "matvarde:grans_dygn_ug_m3"): Matt(
+        "dygnsgräns för PM10", _MKN_DYGN, "parameter (indata)", 1.0
+    ),
+    ("luft.mkn", "matvarde:max_dygn_ar_antal_dygn"): Matt(
+        "högsta tillåtna antal dygn över dygnsgränsen per år", "ett kalenderår", "parameter (indata)", 1.0
+    ),
+    ("luft.mkn", "matvarde:antal_hela_dygn"): Matt(
+        "antal hela dygn i timserien", "givna timserien", "antal", 1.0
+    ),
+    ("luft.mkn", "matvarde:emissionsfaktor_lagst"): Matt(
+        "faktor på källstyrkan (lokalt bidrag), lägsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+    ("luft.mkn", "matvarde:emissionsfaktor_hogst"): Matt(
+        "faktor på källstyrkan (lokalt bidrag), högsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+    ("luft.mkn", "matvarde:depositionsfaktor_lagst"): Matt(
+        "faktor på deposition och utspädning, lägsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+    ("luft.mkn", "matvarde:depositionsfaktor_hogst"): Matt(
+        "faktor på deposition och utspädning, högsta värde", "ingen tidsdimension",
+        "parameter (indata)", 0.01,
+    ),
+}
+MATTKATALOG.update(LUFT_MATT)
+
 JAMFORELSEMATT: Final[dict[str, str]] = {
     "max_okning": "största ökning i en cell på mark (efter minus före)",
     "max_minskning": "största minskning i en cell på mark (före minus efter)",
@@ -602,6 +660,7 @@ class FlodenBelaggKalla:
 __all__ = [
     "DAGSLJUS_MATT",
     "EKOLOGI_MATT",
+    "LUFT_MATT",
     "HELA_OMRADET",
     "HELA_OMRADET_NAMN",
     "HELA_OMRADET_MARK",
