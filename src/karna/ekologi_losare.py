@@ -41,6 +41,7 @@ _PARAMETRAR = {
     "natverk",
     "natverk_sha256",
     "anvand_vmi",
+    "anvand_trad",
     "biotop_klasskoder",
     "cellstorlek_m",
     "max_flackar",
@@ -159,7 +160,7 @@ class Konnektivitet(Analyslosare):
         "max_flackar och max_celler."
     )
     valfria_indataroller: ClassVar[tuple[str, ...]] = (
-        "artprofil", "nmd", "kand_vatmark", "biotopraster", "geografi"
+        "artprofil", "nmd", "kand_vatmark", "biotopraster", "geografi", "tradpunkter"
     )
     utdataroller: ClassVar[tuple[str, ...]] = ("stromtathet", "kansighet", "ekologi")
 
@@ -182,8 +183,10 @@ class Konnektivitet(Analyslosare):
                 f"{', '.join(sorted(STANDARD_ARTPROFILER))} (eller indata 'artprofil', K44)."
             )
         natverk_hash: str | None = None
+        from ekologi import hamta_natverk
+
         if natverk is not None:
-            from ekologi import EkologiFel, hamta_natverk, natverk_sha256
+            from ekologi import EkologiFel, natverk_sha256
 
             try:
                 n = hamta_natverk(str(natverk))
@@ -197,6 +200,16 @@ class Konnektivitet(Analyslosare):
                     raise LosarFel(
                         f"{self.namn}: '{fel}' gäller bara artprofil; nätverk har källbaserat intervall."
                     )
+        anvand_trad = parametrar.get("anvand_trad", False)
+        if not isinstance(anvand_trad, bool):
+            raise LosarFel(f"{self.namn}: 'anvand_trad' ska vara true eller false.")
+        if anvand_trad and (
+            natverk is None or not any(v.trad is not None for v in hamta_natverk(str(natverk)).valfria_lager)
+        ):
+            raise LosarFel(
+                f"{self.namn}: anvand_trad kräver ett nätverk med ett byggt trädlager "
+                "([[valfritt_lager]] med status byggt), till exempel adellov-nacka."
+            )
         spr = _intervall(parametrar, "spridning_faktor_intervall")
         cell_ra = parametrar.get("cellstorlek_m")
         biotop = parametrar.get("biotop_klasskoder")
@@ -210,6 +223,7 @@ class Konnektivitet(Analyslosare):
             "natverk": natverk,
             "natverk_sha256": natverk_hash,
             "anvand_vmi": bool(parametrar.get("anvand_vmi", False)),
+            "anvand_trad": anvand_trad,
             "biotop_klasskoder": dict(biotop) if biotop is not None else None,
             "cellstorlek_m": (
                 None if (natverk is not None and cell_ra is None)
@@ -506,6 +520,7 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
                     ),
                     troskel,
                     med_vmi=bool(p.get("anvand_vmi")) and k.indata.get("kand_vatmark") is None,
+                    med_trad=bool(p.get("anvand_trad")) and k.indata.get("tradpunkter") is None,
                 )
             except GeografiFel as exc:
                 raise LosarFel(f"{namn}: {exc}") from exc
@@ -568,6 +583,16 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         varningar.append(
             "Känd våtmark ur VMI (äldre inventering, 1981-2005) används som habitat; lagret kan vara inaktuellt."
         )
+    trad_dok: dict[str, Any] | None = None
+    undantag: NDArray[np.bool_] | None = None
+    tfil = k.indata.get("tradpunkter")
+    if tfil is not None and not p.get("anvand_trad"):
+        raise LosarFel(f"{namn}: indata 'tradpunkter' kräver parametern anvand_trad = true.")
+    if p.get("anvand_trad"):
+        klasser, undantag, trad_dok, trad_varn = _tradlager_i_raster(
+            namn, nv, klasser, x0, y1, cell, geo_mark, tfil, int(hus_kod)
+        )
+        varningar += trad_varn
     ok = set(profil.motstand_per_markslag)
     saknade = int(np.count_nonzero(~np.isin(klasser, sorted(ok))))
     if saknade:
@@ -576,7 +601,9 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
             f"({profil.standard_motstand:g}) gäller där (flaggat antagande)."
         )
     try:
-        habitat = extrahera_habitatflackar(klasser, profil, cell_m=cell, x_min_m=x0, y_max_m=y1)
+        habitat = extrahera_habitatflackar(
+            klasser, profil, cell_m=cell, x_min_m=x0, y_max_m=y1, undantag_min_area=undantag
+        )
         if len(habitat.flackar) > int(p["max_flackar"]):
             raise LosarFel(
                 f"{namn}: {len(habitat.flackar)} habitatfläckar, över max_flackar={p['max_flackar']}. "
@@ -586,7 +613,7 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         for sid, pr in profiler.items():
             res[sid] = berakna_konnektivitet(
                 klasser, pr, cell_m=cell, x_min_m=x0, y_max_m=y1,
-                berakna_flaskhalsar=(sid == huvud.scenario_id),
+                berakna_flaskhalsar=(sid == huvud.scenario_id), undantag_min_area=undantag,
             )
         iv = kallbaserat_intervall(nv.natverk_id, res)
     except EkologiFel as exc:
@@ -633,6 +660,7 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
             vpr = till_artprofil(nv, huvud.scenario_id, klasskoder=klasskoder, habitatvariant=hv.variant_id)
             vres = berakna_konnektivitet(
                 klasser, vpr, cell_m=cell, x_min_m=x0, y_max_m=y1, berakna_flaskhalsar=False,
+                undantag_min_area=undantag,
             )
             variant_rader.append(
                 {"id": hv.variant_id, "namn": hv.namn, "klasser": list(hv.klasser), "typ": hv.belagd.typ,
@@ -654,6 +682,11 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         **({"markunderlag": geo_mark.som_dict()} if geo_mark is not None else {}),
     }
     antaganden = list(natverk_dok["antaganden"])
+    if trad_dok is not None:
+        natverk_dok["tradlager"] = trad_dok
+        for v in natverk_dok["valfria_lager"]:
+            v["anvands"] = v["id"] == trad_dok["id"]
+        antaganden.extend(trad_dok["antaganden"])
     if iv.ett_scenario:
         antaganden.append("Ett enda scenario i källan: inget källbaserat intervall (intervallet är en punkt).")
     dok = {
@@ -699,6 +732,97 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         },
         varningar=tuple(varningar),
     )
+
+
+def _tradlager_i_raster(
+    namn: str, nv: Any, klasser: NDArray[np.uint8], x0: float, y1: float, cell: float,
+    geo_mark: Any, tfil: Path | None, hus_kod: int,
+) -> tuple[NDArray[np.uint8], NDArray[np.bool_], dict[str, Any], list[str]]:
+    """Valfritt trädlager (K47 `[[valfritt_lager]]`): träd som noder även på öppen mark. Returnerar
+    (klassraster med skivor, undantag från minsta area, redovisning för ekologi.json, varningar)."""
+    from ekologi import EkologiFel
+    from ekologi.tradlager import (
+        TradFel,
+        filtrera_trad,
+        klipp_punkter,
+        lagg_tradnoder,
+        las_tradlager,
+        las_tradpunkter,
+    )
+
+    lager = next((v for v in nv.valfria_lager if v.trad is not None), None)
+    if lager is None or lager.trad is None:
+        raise LosarFel(f"{namn}: nätverket {nv.natverk_id} har inget byggt trädlager.")
+    kf = lager.trad
+    if tfil is None and (geo_mark is None or geo_mark.tradpunkter is None):
+        raise LosarFel(
+            f"{namn}: anvand_trad kräver indata 'tradpunkter' (GeoPackage, Shapefile, GeoJSON eller "
+            "tradpunkter.csv) eller ett trädlager i geografin (lager.tradpunkter, K46)."
+        )
+    varn: list[str] = []
+    try:
+        if tfil is not None:
+            las = (
+                las_tradlager(tfil) if Path(tfil).suffix.lower() == ".csv" else las_tradpunkter(tfil, kf.falt)
+            )
+            ursprung = {"roll": "tradpunkter", "fil_sha256": las.fil_sha256}
+            punkter = las.punkter
+            varn += list(las.varningar)
+            antal_filen = las.antal_i_filen
+        else:
+            punkter = geo_mark.tradpunkter
+            ursprung = {"roll": "geografi", "lager_sha256": geo_mark.trad_sha256}
+            antal_filen = len(punkter)
+        ytter = (x0, y1 - klasser.shape[0] * cell, x0 + klasser.shape[1] * cell, y1)
+        i_utsnitt = klipp_punkter(tuple(punkter), ytter)
+        urval = filtrera_trad(i_utsnitt, kf.filter)
+        varn += urval.varningar
+        nod = lagg_tradnoder(
+            klasser, urval.punkter, x_min_m=x0, y_max_m=y1, cell_m=cell, nod=kf.nod, forbjudna_extra=(hus_kod,)
+        )  # ritade hus (K9) ligger redan som byggnad i klasserna: ett nytt hus tar bort noden där det står
+    except (TradFel, EkologiFel) as exc:
+        raise LosarFel(f"{namn}: {exc}") from exc
+    if nod.antal_utan_nod:
+        varn.append(
+            f"{nod.antal_utan_nod} av {nod.antal_trad} träd gav ingen nod (skivan täcker bara byggnad, väg, "
+            "vatten eller annan exploaterad yta, eller punkten ligger utanför markunderlaget)."
+        )
+    if not urval.punkter:
+        varn.append("Trädlagret gav inga träd efter urvalet: inga trädnoder lades till.")
+    antaganden = [
+        f"Inventerade träd är noder även på öppen mark: skiva med radien {kf.nod.buffert_m:g} m "
+        f"(Nacka buffrade punktträd 20 m, {kf.nod.buffert_belagd.sida}), lagd som NMD {kf.nod.klass}. "
+        "Klassen och undantaget från minsta fläckarea är Flodens tolkning (antagande).",
+        "Trädens ålder och hålighet ingår inte: resultatet är potentiell livsmiljö, okänd kvalitet.",
+    ]
+    if kf.filter.tradslag:
+        antaganden.append("Urvalet av ädla lövträd (trädslag) är Flodens avgränsning (antagande), inte ur källan.")
+    dok = {
+        "id": lager.lager_id,
+        "status": "använt",
+        "ursprung": ursprung,
+        "antal_i_filen": antal_filen,
+        "antal_i_utsnittet": len(i_utsnitt),
+        "antal_efter_urval": len(urval.punkter),
+        "bortfiltrerade_tradslag": urval.bortfiltrerade_tradslag,
+        "bortfiltrerade_matt": urval.bortfiltrerade_matt,
+        "saknar_matt_och_sorterades_bort": urval.saknar_matt,
+        "antal_utan_nod": nod.antal_utan_nod,
+        "antal_celler_nod": nod.antal_celler_nod,
+        "antal_celler_andrade": nod.antal_celler_andrade,
+        "buffert_m": kf.nod.buffert_m,
+        "klass": kf.nod.klass,
+        "undantar_min_area": kf.nod.undantar_min_area,
+        "urval": {
+            "tradslag": list(kf.filter.tradslag),
+            "min_stamomkrets_cm": kf.filter.min_stamomkrets_cm,
+            "min_diameter_cm": kf.filter.min_diameter_cm,
+        },
+        "kalla": {"buffert": kf.nod.buffert_belagd.som_dict(), "nod": kf.nod.belagd.som_dict(), "urval": kf.filter.belagd.som_dict()},
+        "sparade_uppgifter": ["punkt", "tradslag", "stamomkrets/diameter"],
+        "antaganden": antaganden,
+    }
+    return nod.klasser, nod.undantag_min_area, dok, varn
 
 
 def _las_klassraster(fil: Path) -> Any:

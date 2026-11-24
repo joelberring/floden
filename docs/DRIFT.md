@@ -152,6 +152,12 @@ docker compose -f docker-compose.prod.yml exec floden floden geografi mappa <geo
 Båda är valfria; `--nmd-troskel-m` (förval 3000, begränsas till 2-5 km) är den längsta spridningströskel som geografin ska
 prövas mot. **Ekologilösaren läser lagren ur geografin** (indataroll `geografi`, tillagd 2026-11-23): ange manifestet i frågefilen,
 
+**Inventerade träd (valfritt lager för ädellövsambandet).** Lägg trädfilen (GeoPackage, Shapefile eller GeoJSON; bara punkt, trädslag
+och stamomkrets/diameter läses) under `data/lokal/ekologi/` och lägg till `--trad data/lokal/ekologi/<tradfil>.gpkg` i kommandot ovan
+(valfritt `--trad-natverk`; förval `adellov-nacka`, vars `[valfritt_lager.falt]` anger fältnamnen). Lagret `lager.tradpunkter` är
+stängt för MCP tills `--villkor-kontrollerade` anges. Lösaren använder det med `anvand_trad = true` (`docs/EKOLOGI.md`). Inte
+provat mot en riktig trädinventering.
+
 ```toml
 [[analyser]]
 id = "konnektivitet"

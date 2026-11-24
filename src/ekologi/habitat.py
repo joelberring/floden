@@ -21,9 +21,14 @@ def extrahera_habitatflackar(
     y_max_m: float = 0.0,
     kronhojd_m: NDArray[np.float64] | NDArray[np.float32] | None = None,
     kvalitet: NDArray[np.float64] | NDArray[np.float32] | None = None,
+    undantag_min_area: NDArray[np.bool_] | None = None,
     grannskap: int = 8,
 ) -> HabitatKarta:
     """Identifierar sammanhängande habitatfläckar med area >= `profil.min_area_m2`.
+
+    `undantag_min_area` (bool, samma form som `markslag`) pekar ut celler som är noder i sig
+    (inventerade träd): en fläck som innehåller en sådan habitatcell behåller sin plats även om
+    den är mindre än minsta area.
 
     Returnerar ett `HabitatKarta`-objekt där varje godkänd fläck har ett unikt positivt
     `flack_id` (1..m) i deterministisk ordning.
@@ -56,6 +61,12 @@ def extrahera_habitatflackar(
     else:
         kval = np.ones(ms.shape, dtype=np.float64)
 
+    undantag: NDArray[np.bool_] | None = None
+    if undantag_min_area is not None:
+        undantag = np.asarray(undantag_min_area, dtype=bool)
+        if undantag.shape != ms.shape:
+            raise EkologiFel(f"undantag_min_area har form {undantag.shape}, förväntade {ms.shape}.")
+
     struktur = np.ones((3, 3), dtype=np.int32) if grannskap == 8 else np.array(
         [[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=np.int32
     )
@@ -69,7 +80,9 @@ def extrahera_habitatflackar(
         antal_celler = int(rader.size)
         area_m2 = antal_celler * cell_area_m2
         eff_area_m2 = float(np.sum(kval[rader, kols])) * cell_area_m2
-        if eff_area_m2 + 1e-9 < profil.min_area_m2:
+        if eff_area_m2 + 1e-9 < profil.min_area_m2 and not (
+            undantag is not None and bool(undantag[rader, kols].any())
+        ):
             continue
         flack_raster[rader, kols] = nasta_id
         c_rad = float(np.mean(rader))
