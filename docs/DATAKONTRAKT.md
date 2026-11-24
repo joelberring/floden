@@ -1213,3 +1213,15 @@ rapportens belägg säger "inom projektets avgränsning (polygon)" i stället f�
 med `kontroll.godkand` falskt betyder att rapporten är skapad men kontrollen underkände den: ingen export. Ett jobb som var igång när
 servern stoppades blir `fel`. Ett jobb körs i taget. Påståendena skrivs av referensflödet (`forfattare` `referensflode`, ingen AI) ur
 körningens egna scenarier; talen är platshållare som Floden fyller (K32).
+
+**Kartverktyget för projekt i en geografi, additivt (2026-11-24).** `/api/kartverktyg/<projekt>/...` (steg 2 och 3; samma adresser, kroppar och
+scenariofiler `floden-kartverktyg/v1` som för demokvarteret) tar även `<projekt>` = `projekt_id` ur K48, alltså registrets id (inloggning av: också
+projektets mappnamn). Roller som övriga projekt: läsare för GET, utredare för POST; okänt projekt 404. Mallarna är projektets egna frågor
+(`fragor/skyfall.toml` och `dagsljus.toml`, `floden-projekt/v1`); rutorna klipps till de K1-rutor som skär avgränsningen (polygonen om projektet har
+en). `GET /api/kartverktyg/<projekt>` får additiva fält: `slag` (`demo`|`geografi`), `namn`, `geografi`, `avgransning_3011`,
+`avgransning_polygon_3011` (GeoJSON eller null), `oppen` och `licens` (projektets `oppenhet.toml`, K38), `varningar`; `paahittat` är falskt;
+`byggnader[].i_projektet` (sant om fotavtrycket skär avgränsningen). `ortofoto` är `{finns: false}` för projekt i en geografi. `validera` varnar för
+ett nytt hus helt utanför avgränsningen. Ritade frågor skrivs i projektets `fragor/` som `rita-<projektmapp>-<förslag>-<mall>`; körningen bär
+registrets id. Dataklass: webben lämnar ut projektet till konton med roll; MCP lämnar inte ut ett projekt med `oppen = false` (`nekad_oppenhet`) och
+klassar ett öppet projekt `oppet` (annars `internt`) om `[mcp.projektklasser]` inte säger något annat. Ekologi i kartverktyget gäller än bara
+demokvarteret. Inga befintliga fält ändras; demokvarteret svarar som förut (utom de additiva fälten).

@@ -18,11 +18,21 @@ export interface ProjektInfo {
   utbredning: Utbredning;
   baser: Record<string, { rutor: Utbredning[]; analyser: string[] }>;
   fokus: number[] | null;
-  byggnader: Array<{ id: string; ring: Array<[number, number]>; hal: Array<Array<[number, number]>>; hojd_m: number; baser: string[] }>;
+  byggnader: Array<{ id: string; ring: Array<[number, number]>; hal: Array<Array<[number, number]>>; hojd_m: number; baser: string[]; i_projektet?: boolean }>;
   byggnader_trunkerade: boolean;
   analyser: Array<{ id: string; namn: string; mall: string; analys: string; forval: boolean }>;
   scenarier: ScenarioPost[];
   ortofoto: { finns: false } | { finns: true; antal_filer: number; png: string; kalla: string };
+  /** Additivt (projekt i en geografi): vad för slags projekt, och dess avgränsning och dataklass (K38). */
+  paahittat?: boolean;
+  slag?: "demo" | "geografi";
+  namn?: string;
+  geografi?: string | null;
+  avgransning_3011?: number[] | null;
+  avgransning_polygon_3011?: { type: "Polygon"; coordinates: number[][][] } | null;
+  oppen?: boolean;
+  licens?: string | null;
+  varningar?: string[];
 }
 
 export interface ScenarioPost {

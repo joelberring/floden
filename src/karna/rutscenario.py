@@ -135,6 +135,30 @@ def las_bas(bas: Path) -> tuple[Ruta, ...]:
     return tuple(rutor)
 
 
+def las_bas_klippt(bas: Path, form: Any) -> tuple[Ruta, ...]:
+    """Som `las_bas`, men bara K1-rutor vars utsträckning skär `form` (shapely, samma koordinater).
+
+    För en bas som är ett helt rutnät (en geografi) när bara rutorna runt ett projekt behövs:
+    utsträckningen läses ur varje `mark.tif`, men innehållshashen räknas bara för valda rutor.
+    `ScenarioFel` om ingen ruta skär formen."""
+    from shapely.geometry import box
+
+    if not bas.is_dir():
+        raise ScenarioFel(f"Basen finns inte eller är inte en katalog: {bas}")
+    if (bas / "mark.tif").is_file():
+        return las_bas(bas)
+    valda: list[Ruta] = []
+    for p in sorted(bas.iterdir()):
+        if not (p.is_dir() and (p / "mark.tif").is_file()):
+            continue
+        x0, y0, x1, y1 = _las_tiff_utstrackning(p / "mark.tif")
+        if box(x0, y0, x1, y1).intersects(form):
+            valda.append(_las_ruta(p))
+    if not valda:
+        raise ScenarioFel(f"Ingen K1-ruta i {bas.name} ligger i området.")
+    return tuple(valda)
+
+
 def _ruta_id_fran_recept(mapp: Path) -> str | None:
     recept = mapp / "recept.json"
     if not recept.is_file():

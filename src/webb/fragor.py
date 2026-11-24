@@ -1113,7 +1113,9 @@ class FragaTjanst:
                 d = json.loads(fil.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            if isinstance(d, dict) and d.get("register_id") == k.projekt_id:
+            # Registrets id; lokalt utan inloggning har projektet bara projektid.
+            pid = (d.get("register_id") or d.get("projekt_id")) if isinstance(d, dict) else None
+            if pid == k.projekt_id and isinstance(d, dict):
                 return avgr.fran_projekt(d)
         return None
 

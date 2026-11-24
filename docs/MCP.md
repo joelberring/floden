@@ -201,7 +201,9 @@ vad kontot redan har tillgång till (`projekt_lista`); körloggen har konto-id m
 Varje svar och varje projekt har en klass: `oppet` < `internt` < `skyddat` < `personuppgifter`. Ett
 svars klass är den högsta av verktygets och projektets. **Förval: en klient får bara `oppet`.** Ett
 nekat anrop körs inte alls, ger ett felsvar och loggas med `utfall: nekad_policy`. Okända projekt
-räknas som `internt`; demokvarteret är `oppet`. Konfiguration i `config.local.toml`:
+räknas som `internt`; demokvarteret är `oppet`. Ett projekt i en geografi klassas efter sitt underlag (`oppenhet.toml`, K38): `oppet` om det är öppna data,
+annars `internt`, om inte `[mcp.projektklasser]` anger något. Ett projekt som inte är öppna data nekas dessutom alltid (`nekad_oppenhet`), vilken klass
+klienten än får; verktygen med `projekt` (projekt_info, byggnader_lista, scenario_skapa, korplan, kor ...) gäller projekt du har en roll i. Konfiguration i `config.local.toml`:
 
 ```toml
 [mcp]

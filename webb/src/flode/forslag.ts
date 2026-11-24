@@ -27,6 +27,7 @@ import { kontoLage } from "../konto.ts";
 import { formatera, talFormat } from "../tal.ts";
 import { flodeAdress } from "./adress.ts";
 import { tolkaFil } from "./filimport.ts";
+import { projektKallaText } from "./projektkalla.ts";
 import { monteraUnderlagForm, taBortUnderlag } from "./underlag.ts";
 import { forslagInfoHtml, type HusUppgift } from "./forslagtext.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
@@ -101,6 +102,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
             <select id="fs-tak" disabled>${TAKFORMER.map((f) => `<option value="${f.id}">${esc(f.namn)}</option>`).join("")}</select></div>
         </div>
         <p class="flode-liten flode-dampad" id="fs-hojd-hjalp"></p>
+        <p class="flode-liten flode-dampad" id="fs-projektkalla" hidden></p>
         <div class="flode-ruta" id="fs-info" role="status"></div>
         <details class="flode-detalj" id="fs-lager-ruta">
           <summary>Lager och underlag</summary>
@@ -129,6 +131,11 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     }
     if (avslutad) return;
     el("fs-laddar").hidden = true;
+    const kallText = projektKallaText(info);
+    if (kallText) {
+      el("fs-projektkalla").textContent = kallText;
+      el("fs-projektkalla").hidden = false;
+    }
     skapaDokFor(t, info);
     const dok = t.dok;
     const motor = skapaKarta(el("fs-karta"), info);
