@@ -5,7 +5,7 @@
  * efter att den sparats: sidan har bara "sparad <datum>, slutar på …abcd" och fälten för en ny
  * nyckel (lösenordsfält, aldrig ifyllda av klienten).
  */
-import { kontoLage } from "./konto.ts";
+import { kontoLage, rollNamn } from "./konto.ts";
 import { esc } from "./sidor.ts";
 import type {
   AdminInbjudan,
@@ -217,7 +217,7 @@ export function sidaNycklar(
 
 function rollVal(roller: string[], vald: string, attribut: string): string {
   return `<select class="kontroll" ${attribut}>${roller
-    .map((r) => `<option value="${esc(r)}"${r === vald ? " selected" : ""}>${esc(r)}</option>`)
+    .map((r) => `<option value="${esc(r)}"${r === vald ? " selected" : ""}>${esc(rollNamn(r))}</option>`)
     .join("")}</select>`;
 }
 
@@ -239,7 +239,7 @@ const INBJUDAN_TEXT: Record<AdminInbjudan["status"], string> = {
 };
 
 function inbjudanRad(i: AdminInbjudan): string {
-  return `<tr><td>${esc(i.epost)}</td><td>${esc(i.roll)}</td><td>${esc(INBJUDAN_TEXT[i.status])}</td><td>${esc(datumTid(i.giltig_till))}</td></tr>`;
+  return `<tr><td>${esc(i.epost)}</td><td>${esc(rollNamn(i.roll))}</td><td>${esc(INBJUDAN_TEXT[i.status])}</td><td>${esc(datumTid(i.giltig_till))}</td></tr>`;
 }
 
 /** Kryssrutan "Synligt för organisationen <namn>". Bara projektets utredare och skaparen kan ändra. */
@@ -288,7 +288,7 @@ function orgMedlemsRad(oid: string, d: AdminOrganisationDetalj, m: AdminMedlem):
   const namn = `${esc(m.namn)}${m.sparrad ? ` <span class="chip">Spärrad</span>` : ""}`;
   const roll = redigerbar
     ? rollVal(tillatna, m.roll, `data-org-roll="${esc(oid)}" data-org-konto="${esc(m.konto_id)}" aria-label="Roll för ${esc(m.namn)}"`)
-    : esc(m.roll);
+    : esc(rollNamn(m.roll));
   const atgard = redigerbar
     ? `<button type="button" class="knapp knapp-liten" data-org-ta-bort="${esc(oid)}|${esc(m.konto_id)}">Ta bort från organisationen</button>`
     : "–";
@@ -323,7 +323,7 @@ export function adminOrganisationHtml(d: AdminOrganisationDetalj): string {
   return `
     <section class="admin-organisation" data-admin-organisation="${esc(o.id)}">
       <div class="sektionsrad linje-under-stark">${etikett(`Organisation: ${o.namn}`)}</div>
-      <p class="avsnitt-ingress">Din roll: <strong>${esc(o.din_roll)}</strong>. Organisationsadmin och ägare utreder i alla organisationens projekt; ledare läser dem.</p>
+      <p class="avsnitt-ingress">Din roll: <strong>${esc(rollNamn(o.din_roll))}</strong>. Organisationsadmin och ägare utreder i alla organisationens projekt; ledare läser dem.</p>
       ${namnForm}
       ${bjud}
       ${etikett("Medlemmar och roller", "h3")}
@@ -348,7 +348,7 @@ export function sidaAdministration(
   return `
     <div class="sidbredd innehall">
       <h1 class="sidrubrik stor">Administration</h1>
-      <p class="ingress">Bjud in personer till organisationen eller till ett projekt, ändra roller och spärra konton. En inbjudan tas emot när personen loggar in med den adressen; <strong>lasare</strong> får läsa, <strong>utredare</strong> får även köra.</p>
+      <p class="ingress">Bjud in personer till organisationen eller till ett projekt, ändra roller och spärra konton. En inbjudan tas emot när personen loggar in med den adressen; <strong>läsare</strong> får läsa, <strong>utredare</strong> får även köra.</p>
       ${meddelande ? `<p class="hjalp-ruta" role="status">${esc(meddelande)}</p>` : ""}
       ${organisation}
       ${innehall}
