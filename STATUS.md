@@ -511,3 +511,9 @@ Nästa: Joel hittar höjdpaketens adresser på goteborg.se/psidata och kör mapp
 - Göteborgs baskarta är DWG (baskarta_dwg_v2.zip) och kräver LibreDWG:s `dwgread`, som saknades i serveravbildningen; `floden geografi mappa goteborg-test` kunde därför inte läsa byggnaderna på servern.
 - Dockerfile: nytt byggsteg som bygger LibreDWG 0.13.3 (GPL v3, sha256-kontrollerad tarboll) statiskt, `dwgread` kopieras till `/usr/local/bin` och `FLODEN_DWGREAD` sätts. Körlagret kör `dwgread --version` vid bygget.
 - docs/DRIFT.md uppdaterad.
+
+## 2026-11-24 – avbildningens main-tagg och baskartefel (samordnaren)
+
+- Avbildning: taggen `main` flyttades bara om commiten fortfarande var mains senaste när bygget var klart. Vid täta sammanslagningar flyttades den aldrig (servern stod kvar på 43f8185 trots fem nyare byggen). Nu flyttas den när commiten finns i mains historik; körningarna går en i taget, så taggen går bara framåt.
+- `floden geografi mappa`: när kommunens baskarta inte gick att hämta (HTTP 404 för Göteborgs baskarta_dwg_v2.zip) sades att höjdmodellen fallerat och Lantmäteriets laser användes som reserv. Nu ger ett baskartefel ett eget, tydligt fel och ingen reserv. Test i tests/kommuner/test_filpaket_mappa.py.
+- Göteborgs höjdmodell 2022: index_url-gissningen stämde (paketen hittades och hämtades på servern).
