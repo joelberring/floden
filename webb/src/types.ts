@@ -837,9 +837,16 @@ export interface SkapaProjektSvar {
   organisation: string;
   organisation_synlig: boolean;
   geografi: string;
+  /** Rektangeln runt avgränsningen: beräkningsrutnätet och bufferten utgår från den. */
   avgransning_3011: Rektangel3011;
+  /** `polygon` om avgränsningen är en riktig polygon (den avgör vad som räknas till projektet), annars `rektangel`. */
+  avgransning_slag?: "polygon" | "rektangel";
+  /** Avgränsningen som GeoJSON (polygonen, eller rektangeln som polygon). */
+  avgransning_polygon_3011?: GeoJSON.Polygon;
   roll: string;
   varningar: string[];
+  /** Upplysningar som inte är varningar, till exempel hur polygonen räknas. */
+  info?: string[];
 }
 
 export interface RapportAmne {

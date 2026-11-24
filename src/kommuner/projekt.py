@@ -3,7 +3,9 @@
 
 Ett projekt är en mapp `data/lokal/projekt/<id>/` med
 - `projekt.json` (kontrakt `floden-projekt/v1`): geografin som `id@version` och manifestets sha256 (projektet
-  låser versionen), avgränsningen (EPSG:3011), varningar och skapare,
+  låser versionen), avgränsningen (EPSG:3011: `avgransning_3011` är rektangeln som rutnätet och bufferten
+  utgår från, och `avgransning_polygon_3011` (valfritt, additivt) är den riktiga polygonen som avgör vad som
+  räknas till projektet i resultat, nyckeltal och rapporter), varningar och skapare,
 - `k1_vatten/`: en K1-ruta beskuren ur geografins rådata (vattenlösaren tar en ruta),
 - `scenarier.json`: scenarier med `status` (`forslag` eller `planerat`; planerat läge förbereds i datamodellen,
   men räknas inte som bas än), K9-filer per bas i `k9/`,
@@ -25,8 +27,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from shapely.geometry import box
+from shapely.geometry import Polygon, box
 
+from gemensamt import avgransning as avgr_mod
 from gemensamt.hash import sha256_fil
 from geografi.modell import GeografiFel, lager_mapp, las_manifest
 from kommuner.konfig import KommunKonfig
@@ -63,34 +66,32 @@ def slug(namn: str) -> str:
 
 
 def tolka_avgransning(text: str, epsg: int = 3011) -> Rektangel:
-    """`xmin,ymin,xmax,ymax` eller en GeoJSON-/WKT-polygon som text; returnerar rektangeln i EPSG:3011."""
+    """`xmin,ymin,xmax,ymax` eller en GeoJSON-/WKT-polygon som text; returnerar den omslutande rektangeln i EPSG:3011.
+    Polygonen själv ger `tolka_avgransning_form`. En polygon som korsar sig själv eller har hål ger `SkapaFel`."""
     from gemensamt.koordinater import transformera
 
     t = text.strip()
     pts: list[tuple[float, float]]
-    if t.startswith("{"):
+    if t.startswith("{") or t.upper().startswith("POLYGON"):
         try:
-            g = json.loads(t)
-            ring = (g.get("geometry") or g)["coordinates"][0]
-            pts = [(float(p[0]), float(p[1])) for p in ring]
-        except (ValueError, KeyError, TypeError, IndexError) as exc:
-            raise SkapaFel("--avgransning: GeoJSON-polygonen går inte att läsa.") from exc
-    elif t.upper().startswith("POLYGON"):
-        tal = re.findall(r"-?\d+(?:\.\d+)?", t)
-        if len(tal) < 8 or len(tal) % 2:
-            raise SkapaFel("--avgransning: WKT-polygonen går inte att läsa.")
-        pts = [(float(tal[i]), float(tal[i + 1])) for i in range(0, len(tal), 2)]
-    else:
-        delar = [p for p in re.split(r"[,\s;]+", t) if p]
-        if len(delar) != 4:
-            raise SkapaFel(
-                "--avgransning: ange 'xmin,ymin,xmax,ymax' (meter, EPSG:3011), eller en GeoJSON- eller WKT-polygon."
-            )
-        try:
-            x0, y0, x1, y1 = (float(p) for p in delar)
-        except ValueError as exc:
-            raise SkapaFel("--avgransning: koordinaterna ska vara tal.") from exc
-        pts = [(x0, y0), (x1, y1)]
+            poly = avgr_mod.tolka_polygon(t, epsg)
+        except avgr_mod.AvgransningFel as exc:
+            raise SkapaFel(f"--avgransning: {exc}") from exc
+        assert poly is not None
+        r = avgr_mod.omslutande(poly)
+        if not (r[2] > r[0] and r[3] > r[1]):
+            raise SkapaFel("--avgransning: området har ingen yta.")
+        return r
+    delar = [p for p in re.split(r"[,\s;]+", t) if p]
+    if len(delar) != 4:
+        raise SkapaFel(
+            "--avgransning: ange 'xmin,ymin,xmax,ymax' (meter, EPSG:3011), eller en GeoJSON- eller WKT-polygon."
+        )
+    try:
+        x0, y0, x1, y1 = (float(p) for p in delar)
+    except ValueError as exc:
+        raise SkapaFel("--avgransning: koordinaterna ska vara tal.") from exc
+    pts = [(x0, y0), (x1, y1)]
     if epsg != 3011:
         pts = [transformera(x, y, epsg, 3011) for x, y in pts]
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
@@ -100,11 +101,12 @@ def tolka_avgransning(text: str, epsg: int = 3011) -> Rektangel:
     return r
 
 
-def tolka_avgransning_objekt(avgransning: Any, epsg: int = 3011) -> Rektangel:
+def tolka_avgransning_objekt_form(avgransning: Any, epsg: int = 3011) -> tuple[Rektangel, Polygon | None]:
     """Avgränsningen som ett API-anrop ger den: en GeoJSON-polygon (objekt, `Feature` eller geometri), en
-    lista `[xmin, ymin, xmax, ymax]` eller samma text som `--avgransning`. Samma tolkning som kommandot
-    (`tolka_avgransning`): en polygon blir sin omslutande rektangel i EPSG:3011. Ogiltiga tal (NaN,
-    oändligt) och en yta utan utsträckning ger `SkapaFel`."""
+    lista `[xmin, ymin, xmax, ymax]` eller samma text som `--avgransning`. Returnerar rektangeln (beräkningsrutnätet
+    och bufferten) och polygonen (vad som räknas till projektet), båda i EPSG:3011. Polygonen är `None` när indata är
+    en rektangel eller en polygon som är sin egen rektangel; då gäller rektangeln och allt beter sig som förut.
+    Ogiltiga tal (NaN, oändligt), en yta utan utsträckning, hål och självkorsning ger `SkapaFel` med svensk text."""
     import math
 
     if isinstance(avgransning, str):
@@ -121,12 +123,27 @@ def tolka_avgransning_objekt(avgransning: Any, epsg: int = 3011) -> Rektangel:
             "avgransning: ange en GeoJSON-polygon eller en lista [xmin, ymin, xmax, ymax] (meter, EPSG:3011)."
         )
     try:
-        r = tolka_avgransning(text, epsg)
+        poly = avgr_mod.tolka_polygon(text, epsg)
+        r = tolka_avgransning(text, epsg) if poly is None else avgr_mod.omslutande(poly)
+    except avgr_mod.AvgransningFel as exc:
+        raise SkapaFel(f"avgransning: {exc}") from exc
     except (OverflowError, ValueError) as exc:
         raise SkapaFel("avgransning: koordinaterna ska vara ändliga tal.") from exc
     if not all(math.isfinite(v) for v in r):
         raise SkapaFel("avgransning: koordinaterna ska vara ändliga tal.")
-    return r
+    if poly is not None and avgr_mod.ar_rektangel(poly):
+        poly = None
+    return r, poly
+
+
+def tolka_avgransning_objekt(avgransning: Any, epsg: int = 3011) -> Rektangel:
+    """Som `tolka_avgransning_objekt_form` men bara den omslutande rektangeln (äldre anrop)."""
+    return tolka_avgransning_objekt_form(avgransning, epsg)[0]
+
+
+def projekt_polygon(projekt: Mapping[str, Any]) -> Polygon | None:
+    """Projektets avgränsningspolygon ur `projekt.json`, eller `None` (då gäller `avgransning_3011`)."""
+    return avgr_mod.fran_projekt(projekt)
 
 
 def _skriv_json(fil: Path, d: Mapping[str, Any]) -> None:
@@ -155,9 +172,11 @@ def _rutor(k1: Path) -> list[tuple[str, Rektangel]]:
     return ut
 
 
-def _fokus(rutor: Sequence[tuple[str, Rektangel]], avgr: Rektangel) -> list[float]:
-    """Fokus som tar de rutor vars mittpunkt ligger inom rutorna som skär avgränsningen."""
-    valda = [r for _, r in rutor if box(*r).intersects(box(*avgr))]
+def _fokus(rutor: Sequence[tuple[str, Rektangel]], avgr: Rektangel, polygon: Polygon | None = None) -> list[float]:
+    """Fokus som tar de rutor vars mittpunkt ligger inom rutorna som skär avgränsningen (polygonen om projektet har
+    en, annars rektangeln)."""
+    form = polygon if polygon is not None else box(*avgr)
+    valda = [r for _, r in rutor if box(*r).intersects(form)]
     if not valda:
         raise SkapaFel("Avgränsningen ligger inte i någon K1-ruta i geografin.")
     mx = [(r[0] + r[2]) / 2 for r in valda]
@@ -191,6 +210,7 @@ def skapa_projekt(
     organisation_id: str | None = None,
     skriv: Skriv = print,
     register: Any = None,
+    polygon: Polygon | None = None,
 ) -> ProjektResultat:
     from lantmateriet.bygg import bygg_omrade
     from lantmateriet.nycklar import inloggning_pa
@@ -205,14 +225,22 @@ def skapa_projekt(
     karna = tuple(manifest["karna_3011"])
     gransen = tuple(manifest["gransen_3011"])
     varningar: list[str] = []
-    if not box(*gransen).covers(box(*avgransning)):
+    if polygon is not None:
+        # Avgränsningen är polygonen; rektangeln är dess omslutande (beräkningsrutnätet och bufferten).
+        try:
+            avgr_mod.kontrollera_yta(polygon)
+        except avgr_mod.AvgransningFel as exc:
+            raise SkapaFel(str(exc)) from exc
+        if any(abs(a - b) > 1e-6 for a, b in zip(avgr_mod.omslutande(polygon), avgransning, strict=True)):
+            raise SkapaFel("Avgränsningens rektangel är inte polygonens omslutande rektangel.")
+    form = polygon if polygon is not None else box(*avgransning)
+    if not box(*gransen).covers(form):
         raise SkapaFel(
             f"Avgränsningen ligger utanför geografin {ref}, som saknar data där. Geografins yttre gräns "
             f"(EPSG:3011): {', '.join(f'{v:.0f}' for v in gransen)}."
         )
-    ab = box(*avgransning)
-    if not box(*karna).covers(ab):
-        andel = 100.0 * ab.difference(box(*karna)).area / ab.area
+    if not box(*karna).covers(form):
+        andel = 100.0 * form.difference(box(*karna)).area / form.area
         varningar.append(
             f"{andel:.0f} % av avgränsningen ligger utanför geografins giltiga kärna ({', '.join(f'{v:.0f}' for v in karna)}): "
             "där räknas med data, men buffertens villkor (full tillrinning och skuggor utifrån) är inte garanterade."
@@ -292,6 +320,7 @@ def skapa_projekt(
         "geografi": ref,
         "geografi_manifest_sha256": manifest_sha,
         "avgransning_3011": list(avgransning),
+        **({"avgransning_polygon_3011": avgr_mod.till_geojson(polygon)} if polygon is not None else {}),
         "vatten_ruta_3011": list(v),
         "skapad": datetime.now(UTC).isoformat(timespec="seconds"),
         "skapad_av_konto": konto_id,
@@ -338,7 +367,7 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
     fdir = mapp / "fragor"
     fdir.mkdir(parents=True, exist_ok=True)
     geo = _geo_k1(geo_rot, manifest)
-    fokus = _fokus(_rutor(geo), avgr)
+    fokus = _fokus(_rutor(geo), avgr, projekt_polygon(projekt))
     regn_mm, regn_text, _ = regn_for_kommun(kommun)
     d = kommun.dagsljus
     pid = str(projekt["projekt_id"])

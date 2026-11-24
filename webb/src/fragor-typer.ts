@@ -215,11 +215,23 @@ export interface ByggnadPost {
   takhojd_rh2000: number;
   hojdkalla: string;
   status: ByggnadStatus;
+  /** Bara när projektet har en polygon: räknas byggnaden till projektet (fotavtryckets inre punkt inne i polygonen)? */
+  i_projektet?: boolean;
 }
 
 export interface ByggnaderSvar {
   bas: string;
   scenarier: Record<string, ByggnadPost[]>;
+  /** Sant när projektet har en polygon: byggnader utanför den visas men räknas inte. */
+  avgransad_till_projektet?: boolean;
+  antal_i_projektet?: Record<string, number>;
+}
+
+/** Projektets polygon i ett resultat (`projekt_avgransning`): den avgör vilka celler och byggnader som räknas. */
+export interface ProjektAvgransning {
+  polygon_3011: GeoJSON.Polygon;
+  yta_m2: number;
+  epsg: number;
 }
 
 export interface RegnAntagande {
@@ -314,6 +326,8 @@ export interface ResultatSvar {
   varningar: VarningPost[];
   lager: LagerPost[];
   byggnader: ByggnaderSvar | null;
+  /** Projektets polygon när projektet har en (mark och byggnader räknas bara inne i den), annars null. */
+  projekt_avgransning?: ProjektAvgransning | null;
   antaganden: Antaganden;
   datatabeller: DataTabellRef[];
 }

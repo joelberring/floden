@@ -575,7 +575,8 @@ def bygg_server(
         "Skapar ett projekt i en mappad geografi (K46), som webbens 'Nytt projekt' och `floden projekt skapa`. "
         "Kräver inloggning och superadmin, eller organisationsadmin eller ägare i en organisation; du blir "
         "utredare och skapare. avgransning: GeoJSON-polygon eller [xmin, ymin, xmax, ymax] i EPSG:3011 (en "
-        "polygon räknas som sin omslutande rektangel). Svaret har projekt_id och varningar (till exempel "
+        "polygon sparas och avgör vilka byggnader och celler som räknas till projektet; beräkningsrutnätet och "
+        "bufferten är rektangeln runt den; en polygon som korsar sig själv nekas). Svaret har projekt_id och varningar (till exempel "
         "'utanför geografins giltiga kärna'); en avgränsning utanför geografins yttre gräns nekas. "
         "Skriv inga personuppgifter i namnet.",
     )

@@ -36,6 +36,7 @@ import rasterio
 from shapely import contains_xy
 from shapely.geometry import Polygon
 
+from gemensamt import avgransning as avgr
 from gemensamt.hash import sha256_fil
 from karna.analyslosare import LosarFel, hamta_losare
 from karna.geometri import GeometriFel, las_byggnader
@@ -559,6 +560,8 @@ class FragaTjanst:
         byggnader, byggnadsvarning = self._byggnader(k, s, lager)
         if byggnadsvarning:
             lagervarningar = [*lagervarningar, byggnadsvarning]
+        projekt_poly = self._projektpolygon(k)
+        byggnader = self._markera_projektbyggnader(byggnader, projekt_poly)
         return {
             "korning": self._status(k),
             "fraga_id": s["fraga_id"],
@@ -576,9 +579,34 @@ class FragaTjanst:
             "varningar": [*_varningar(s), *(_webbvarning(t) for t in lagervarningar)],
             "lager": lager,
             "byggnader": byggnader,
+            "projekt_avgransning": (
+                self.projekt_avgransning(korning_id) if projekt_poly is not None else None
+            ),
             "antaganden": self._antaganden(k, s),
             "datatabeller": self._datatabeller(k, s),
         }
+
+    @staticmethod
+    def _markera_projektbyggnader(
+        byggnader: dict[str, Any] | None, poly: Polygon | None
+    ) -> dict[str, Any] | None:
+        """Lägger `i_projektet` (sant/falskt) på varje byggnad och `antal_i_projektet` per scenario
+        när projektet har en polygon. En byggnad räknas till projektet om fotavtryckets inre punkt
+        är inne i polygonen. Byggnader utanför visas fortfarande (de ger skuggor och hinder) men
+        räknas inte. Utan polygon returneras byggnaderna orörda."""
+        if poly is None or byggnader is None:
+            return byggnader
+        ut: dict[str, Any] = {**byggnader, "avgransad_till_projektet": True, "scenarier": {}}
+        antal: dict[str, int] = {}
+        for sid, lista in byggnader["scenarier"].items():
+            ny = [
+                {**b, "i_projektet": avgr.byggnad_inne(poly, b["ring"], b.get("hal", ()))}
+                for b in lista
+            ]
+            ut["scenarier"][sid] = ny
+            antal[sid] = sum(1 for b in ny if b["i_projektet"])
+        ut["antal_i_projektet"] = antal
+        return ut
 
     # Lager -------------------------------------------------------------------------------
 
@@ -1073,12 +1101,55 @@ class FragaTjanst:
             "tak": np.load(takfil) if takfil.is_file() else None,
         }
 
+    def _projektpolygon(self, k: Korning) -> Polygon | None:
+        """Projektets avgränsningspolygon (`avgransning_polygon_3011` i `projekt.json`) för
+        körningens projekt, eller `None`: körning utan projekt (demokvarteret, testsviten),
+        projekt utan polygon (ritat som rektangel eller skapat före polygonstödet) och polygon
+        som inte går att läsa. Då räknas hela rutan som förut."""
+        if not k.projekt_id or self.projektrot is None or not self.projektrot.is_dir():
+            return None
+        for fil in sorted(self.projektrot.glob("*/projekt.json")):
+            try:
+                d = json.loads(fil.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(d, dict) and d.get("register_id") == k.projekt_id:
+                return avgr.fran_projekt(d)
+        return None
+
+    def projekt_avgransning(self, korning_id: str) -> dict[str, Any] | None:
+        """Polygonen som avgör vad som räknas till körningens projekt, som GeoJSON (EPSG:3011) med
+        yta, eller `None` (hela rutan räknas)."""
+        poly = self._projektpolygon(self._hamta(korning_id))
+        if poly is None:
+            return None
+        return {"polygon_3011": avgr.till_geojson(poly), "yta_m2": float(poly.area), "epsg": 3011}
+
+    def _inne_i_projektet(
+        self, k: Korning, lager: dict[str, Any], rader: int, kolumner: int
+    ) -> np.ndarray[Any, Any] | None:
+        """Cellmask (sant = cellens mittpunkt är inne i projektets polygon) för ett lager, eller
+        `None` utan polygon."""
+        poly = self._projektpolygon(k)
+        if poly is None:
+            return None
+        u = lager["utbredning"]
+        return avgr.celler_inne(
+            poly,
+            x_min=float(u["x_min"]),
+            y_max=float(u["y_max"]),
+            pixel_m=float(lager["pixelstorlek_m"]),
+            rader=rader,
+            kolumner=kolumner,
+        )
+
     def _markvarden(
         self, korning_id: str, lager: dict[str, Any]
     ) -> tuple[np.ndarray[Any, Any], float] | None:
         """Lagrets värden på **mark** (ändliga celler utanför takmasken) och cellens yta (m²).
 
-        Samma takmask som `marksiffror` och kartan (`<lager>.tak.npy`). `None` om lagret saknar
+        Samma takmask som `marksiffror` och kartan (`<lager>.tak.npy`). Har projektet en polygon
+        räknas bara celler vars mittpunkt är inne i den; annars hela rutan. `None` om lagret saknar
         markvärden."""
         k = self._hamta(korning_id)
         lager_id = str(lager["id"])
@@ -1090,6 +1161,9 @@ class FragaTjanst:
         takfil = k.mapp / "webb" / f"{lager_id}.tak.npy"
         if takfil.is_file():
             giltig &= ~np.load(takfil)
+        inne = self._inne_i_projektet(k, lager, d.shape[0], d.shape[1])
+        if inne is not None:
+            giltig &= inne
         if not giltig.any():
             return None
         px = float(lager["pixelstorlek_m"])
@@ -1102,7 +1176,8 @@ class FragaTjanst:
 
         Den enda funktionen för dessa mått: projektsidan och MCP-servern använder den. Takmasken är
         den som kartan ritar bilderna med (`<lager>.tak.npy`); kärnans egen jämförelse räknar alla
-        celler, tak inräknade. `None` om lagret inte har något markvärde."""
+        celler, tak inräknade. Har projektet en polygon räknas bara celler inne i den. `None` om
+        lagret inte har något markvärde."""
         k = self._hamta(korning_id)
         fil = k.mapp / "webb" / f"{lager['id']}.npy"
         if not fil.is_file():
@@ -1112,6 +1187,9 @@ class FragaTjanst:
         takfil = k.mapp / "webb" / f"{lager['id']}.tak.npy"
         if takfil.is_file():
             giltig &= ~np.load(takfil)
+        inne = self._inne_i_projektet(k, lager, d.shape[0], d.shape[1])
+        if inne is not None:
+            giltig &= inne
         if not giltig.any():
             return None
         cell = float(lager["pixelstorlek_m"]) ** 2

@@ -102,7 +102,7 @@ def registrera(subparsers: Any) -> None:
         ),
     )
     s.add_argument("--geografi", required=True, help="id@version, t.ex. goteborg-test@v1")
-    s.add_argument("--avgransning", required=True, help="xmin,ymin,xmax,ymax (EPSG:3011, m), GeoJSON- eller WKT-polygon. E är negativt i Göteborg: skriv --avgransning=-210000,...")
+    s.add_argument("--avgransning", required=True, help="xmin,ymin,xmax,ymax (EPSG:3011, m), GeoJSON- eller WKT-polygon (polygonen sparas och avgör vad som räknas till projektet; rutnätet är rektangeln runt den). E är negativt i Göteborg: skriv --avgransning=-210000,...")
     s.add_argument("--avgransning-epsg", type=int, default=3011, help="Koordinatsystem för --avgransning.")
     s.add_argument("--namn", required=True)
     s.add_argument("--konto", default=None, help="Konto-id (blir utredare i projektet).")
@@ -164,12 +164,13 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
         )  # fmt: skip
         return 0
     if kommando == "projekt skapa":
-        from kommuner.projekt import skapa_projekt, tolka_avgransning
+        from kommuner.projekt import skapa_projekt, tolka_avgransning_objekt_form
 
         gid, _ = tolka_ref(args.geografi)
         kommun = hitta_kommun_for_geografi(gid, kommunfil_sokvag=_kommunfil(args))
+        avgr, avgr_polygon = tolka_avgransning_objekt_form(args.avgransning, args.avgransning_epsg)
         skapa_projekt(
-            kommun, ref=args.geografi, avgransning=tolka_avgransning(args.avgransning, args.avgransning_epsg),
+            kommun, ref=args.geografi, avgransning=avgr, polygon=avgr_polygon,
             namn=args.namn, konto_id=args.konto, geo_rot=_abs(rot, args.georot),
             projektrot=_abs(rot, args.projektmapp), konfig=konfig, konfig_fil=rot / "config.toml",
             organisation_id=args.organisation,
