@@ -103,7 +103,7 @@ export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[
 
       <section>
         <div class="sektionsrad linje-under-stark">${etikett("Vad som finns")}</div>
-        ${kort || '<p class="dampad tom">Modullistan gick inte att hämta. Är servern igång?</p>'}
+        ${kort || '<p class="dampad tom">Modullistan gick inte att hämta. Ladda om sidan; kvarstår felet, kontakta den som driftar Floden.</p>'}
       </section>
 
       <section class="kontroll-sektion">

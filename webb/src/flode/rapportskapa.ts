@@ -204,8 +204,10 @@ export function skapaPanelHtml(i: SkapaPanelIn): string {
       <div class="flode-falt"><label for="rp-syfte">Syfte</label>
         <textarea id="rp-syfte" rows="3"${pagar ? " disabled" : ""}>${esc(i.best.syfte)}</textarea></div>
       ${i.fel ? `<p class="flode-fel" role="alert">${esc(i.fel)}</p>` : ""}
-      <p class="flode-liten flode-dampad" id="rp-knapp-not">${esc(lage.text)}</p>
-      <button type="button" class="flode-knapp svart stor" id="rp-skapa-knapp" aria-describedby="rp-knapp-not"${lage.aktiv ? "" : " disabled"}>${pagar ? "Skapar …" : "Skapa rapport"}</button>
+      <div class="flode-skapa-rad">
+        <p class="flode-liten flode-dampad" id="rp-knapp-not" role="status">${esc(lage.text)}</p>
+        <button type="button" class="flode-knapp svart stor" id="rp-skapa-knapp" aria-describedby="rp-knapp-not"${lage.aktiv ? "" : " disabled"}>${pagar ? "Skapar …" : "Skapa rapport"}</button>
+      </div>
       ${forlopp}
     </section>`;
 }

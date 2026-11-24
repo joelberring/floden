@@ -20,6 +20,8 @@ import { PlanDok } from "../karta/plandok.ts";
 import { LAGEN, lasKartan, type Lage } from "../kartforklaring.ts";
 import { fasadForklaringHtml, skapa3dVy, VY3D_ID } from "../kartsida3d.ts";
 import { esc } from "../sidor.ts";
+import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
+import { kontoLage } from "../konto.ts";
 import { swerefTillWgs84, wgs84TillSweref } from "../sweref.ts";
 import { formatera, formateraHogst } from "../tal.ts";
 import type { ProjektSvar, ProjektVy } from "../types.ts";
@@ -545,7 +547,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     try {
       [projektSvar, info] = await Promise.all([hamtaProjekt(projekt), hamtaProjektInfo(projekt)]);
     } catch (e) {
-      el("rs-innehall").innerHTML = `<h1 class="flode-h" id="rs-rubrik">Resultatet gick inte att hämta</h1><p class="flode-fel" role="alert">${esc(e instanceof Error ? e.message : String(e))}</p>`;
+      el("rs-innehall").innerHTML = `<h1 class="flode-h" id="rs-rubrik">Resultatet</h1>${felBeskedHtml(sidFel(e, "Resultatet", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/resultat`), esc)}`;
+      kopplaLaddaOm(el("rs-innehall"));
       return;
     }
     if (avslutad) return;

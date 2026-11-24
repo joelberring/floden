@@ -112,5 +112,5 @@ Ritlogik, scenario-API:erna, 3D-vyn och svepet är de befintliga. Små tillägg 
 - **Tal** skrivs alltid med decimalkomma och smalt hårt mellanrum (U+202F) som tusentalsavskiljare via `src/tal.ts` (`formatera`, `formateraHogst`, `talFormat`) och `flode/nyckeltal.ts`. Ett test (`tal.test.ts`) söker i flödets, kartans och 3D-vyns källkod efter `toFixed`, `toLocaleString` och `Intl.NumberFormat`, och `flode/osakerhet.test.ts` söker i de renderade panelerna efter `\d\.\d`. Arbetsbänkens äldre `main.ts` (`#/arbetsbank/<id>`) räknas inte in.
 - Kartstilen ligger i `src/karta/karta.css` (ersätter `kartverktyg.css`).
 
-Inte byggt än: att skapa projekt (knappen visar "kommer snart") och att skapa rapporter från webben.
+Fel visas med en handling (`flode/felhandling.ts`: inloggning, behörighet, nätverk, server; ren logik med tester). Steg 3 har en fast handlingsrad (`flode/korlage.ts`); utan ritat förslag pekar den till steg 2 och till projektets befintliga resultat.
 Om beräkningarna, Matematik och forskning och Frågekatalogen nås via kontomenyn.

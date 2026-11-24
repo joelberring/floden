@@ -1,0 +1,56 @@
+/*
+ * Steg 3 · handlingsraden längst ned (sticky): ren logik och HTML utan DOM. Raden säger vad som händer eller
+ * varför man inte kan köra, och erbjuder alltid en handling. Utan ritat förslag finns inget att köra: beräkningarna
+ * görs på ett förslag och jämförs med läget idag (`POST /api/kartverktyg/<projekt>/scenarier/<slug>/kor` kräver ett
+ * scenario med minst en ändring som berör området), så raden pekar i stället till steg 2 och till projektets
+ * befintliga resultat. Se STATUS.md (U4) för valet.
+ */
+import { flodeAdress } from "./adress.ts";
+
+export type KorHinder = "forslag" | "fragor" | "avtappning" | null;
+
+export interface KorIn {
+  harForslag: boolean;
+  /** Antal beräkningar som de valda frågorna ger. */
+  antalBerakningar: number;
+  avtappningFel: boolean;
+  pagar: boolean;
+  /** Text under körning (framsteg). */
+  forloppText?: string;
+  /** Fel från senaste körningen. */
+  korFel?: string | null;
+}
+
+export function korHinder(i: Pick<KorIn, "harForslag" | "antalBerakningar" | "avtappningFel">): KorHinder {
+  if (!i.harForslag) return "forslag";
+  if (i.avtappningFel) return "avtappning";
+  if (i.antalBerakningar === 0) return "fragor";
+  return null;
+}
+
+export const HINDER_TEXT: Record<Exclude<KorHinder, null>, string> = {
+  forslag: "Beräkningarna körs på ett förslag, och du har inte ritat något än.",
+  fragor: "Välj minst en fråga som Floden kan räkna på (skyfall eller dagsljus och sol).",
+  avtappning: "Rätta avtappningen först.",
+};
+
+/** Förklaringen överst på sidan när inget förslag finns. */
+export function utanForslagRuta(projekt: string, esc: (s: string) => string): string {
+  return `<div class="flode-ruta" id="fr-utanforslag"><p><strong>Inget förslag är ritat.</strong> Beräkningarna körs på ett förslag och jämförs med läget idag. Projektets befintliga läge är redan beräknat och visas i Resultat. Du kan välja frågor redan nu; de följer med när du har ritat ett förslag.</p>
+    <p class="flode-handlingar"><a class="flode-knapp svart" href="${esc(flodeAdress(projekt, "forslag"))}">Rita ett förslag</a><a class="flode-knapp" href="${esc(flodeAdress(projekt, "resultat"))}">Visa projektets befintliga resultat</a></p></div>`;
+}
+
+/** Innehållet i handlingsraden: statustext och knapp(ar). */
+export function korradHtml(i: KorIn, projekt: string, esc: (s: string) => string): string {
+  const hinder = i.pagar ? null : korHinder(i);
+  let text = "";
+  if (i.pagar) text = esc(i.forloppText ?? "Beräknar …");
+  else if (i.korFel) text = `<span class="flode-fel" role="alert">${esc(i.korFel)}</span>`;
+  else if (hinder) text = esc(HINDER_TEXT[hinder]);
+  else text = "Klar att köra. Beräkningarna körs på servern och Resultat öppnas när de är klara.";
+  const knappar =
+    hinder === "forslag"
+      ? `<a class="flode-knapp svart stor" id="fr-rita" href="${esc(flodeAdress(projekt, "forslag"))}">Rita ett förslag</a><a class="flode-knapp stor" id="fr-befintligt" href="${esc(flodeAdress(projekt, "resultat"))}">Visa projektets befintliga resultat</a>`
+      : `<button type="button" class="flode-knapp svart stor" id="fr-kor" aria-describedby="fr-kor-not"${i.pagar || hinder ? " disabled" : ""}>${i.pagar ? "Beräknar …" : "Kör beräkningarna"}</button>`;
+  return `<p class="flode-liten flode-dampad" id="fr-kor-not" role="status" aria-live="polite">${text}</p><div class="flode-handlingar">${knappar}</div>`;
+}

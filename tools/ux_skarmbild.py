@@ -20,8 +20,11 @@ STORLEKAR = [("", 1440, 900, False), ("-smal", 390, 844, True)]
 VYER = [
     ("01-projektlista", "/", 6000, False),
     ("02-nytt-projekt", "/nytt", 3000, False),
+    ("02c-nytt-saknar-roll", "/nytt", 3000, True),  # påhittat: inloggad utan rätt att skapa projekt (U4)
+    ("02d-nytt-natverksfel", "/nytt", 3000, True),  # påhittat: servern nås inte (U4)
     ("03-forslag", "/p/demokvarteret/forslag", 6000, False),
     ("04-fragor", "/p/demokvarteret/fragor", 4000, True),
+    ("04b-fragor-vy", "/p/demokvarteret/fragor", 4000, False),  # bara fönstret: visar den fasta handlingsraden (U4)
     ("05-resultat", "/p/demokvarteret/resultat", 6000, False),
     ("06-rapport", "/p/demokvarteret/rapport", 3000, False),
     ("07-nycklar", "/nycklar", 2500, True),
@@ -165,6 +168,26 @@ SVAR: dict[str, object] = {
 }
 
 
+# Påhittade svar för tillstånden i Nytt projekt (webbläsarens rutt; ingenting skickas till servern).
+EXTRA: dict[str, dict[str, tuple[int, object]]] = {
+    "02c-nytt-saknar-roll": {
+        "/api/geografier": (403, {"fel": "Du får inte skapa projekt.", "status": 403}),
+    },
+    "02d-nytt-natverksfel": {"/api/geografier": (0, {})},
+}
+
+
+def _extra(namn: str, route: Route) -> None:
+    sokvag = "/" + route.request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
+    status, kropp = EXTRA[namn].get(sokvag, (-1, None))
+    if status == 0:
+        route.abort()
+    elif status > 0:
+        route.fulfill(status=status, content_type="application/json", body=json.dumps(kropp))
+    else:
+        _svara(route) if sokvag.startswith("/konto/") else route.continue_()
+
+
 def _svara(route: Route) -> None:
     sokvag = route.request.url.split("://", 1)[1].split("/", 1)[1].split("?")[0]
     nyckel = "/" + sokvag
@@ -200,11 +223,14 @@ def main() -> None:
                 sida = wl.new_page(viewport={"width": bredd, "height": hojd})
                 fel: list[str] = []
                 sida.on("pageerror", lambda e, f=fel: f.append(str(e)))
-                if inloggad:
+                if namn in EXTRA:
+                    sida.route("**/konto/**", lambda r, _q, n=namn: _extra(n, r))
+                    sida.route("**/api/geografier", lambda r, _q, n=namn: _extra(n, r))
+                elif inloggad:
                     sida.route("**/konto/**", _svara)
                 sida.goto(f"{a.url}/#{adress}")
                 sida.wait_for_timeout(vanta)
-                sida.screenshot(path=str(ut / f"{namn}{suffix}.png"), full_page=hel)
+                sida.screenshot(path=str(ut / f"{namn}{suffix}.png"), full_page=hel and not namn.endswith("-vy"))
                 print(f"{namn}{suffix}.png", "sidfel:" + "; ".join(fel) if fel else "")
                 sida.close()
         wl.close()

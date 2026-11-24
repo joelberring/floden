@@ -395,3 +395,31 @@ a.flode-knapp { display: inline-flex; align-items: center; justify-content: cent
 /* ---------- Frågekatalog (skrivskyddad lista) ---------- */
 .flode-fraga.las { cursor: default; }
 .flode-lankar { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Felbesked med handling (felhandling.ts) och sticky handlingsrad (U4) */
+.flode-felbesked p { margin: 0 0 8px; }
+.flode-felbesked:focus { outline: none; }
+.flode-handlingar { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.flode-handlingsrad {
+  position: sticky; bottom: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+  padding: 10px 24px calc(10px + env(safe-area-inset-bottom)); background: var(--fl-yta); border-top: 1px solid var(--fl-line);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+}
+.flode-handlingsrad > p { margin: 0; flex: 1 1 280px; font-size: 13px; }
+.flode-handlingsrad .flode-handlingar { margin-top: 0; }
+@media (max-width: 600px) {
+  .flode-handlingsrad { padding: 8px 16px calc(8px + env(safe-area-inset-bottom)); }
+  .flode-handlingsrad > p { flex-basis: 100%; font-size: 12px; }
+  .flode-handlingsrad .flode-handlingar { width: 100%; flex-wrap: nowrap; }
+  .flode-handlingsrad .flode-knapp { flex: 1 1 0; min-width: 0; height: 44px; padding: 0 8px; font-size: 13px; text-align: center; box-sizing: border-box; }
+}
+/* Fokuserade fält ska inte döljas bakom den fasta handlingsraden (tangentbord, Tab) */
+body[data-sida="flode"] { scroll-padding-bottom: 120px; }
+#fr-utanforslag { margin-bottom: 4px; }
+/* Steg 5: knappen och dess förklaring följer med när panelen är högre än fönstret */
+.flode-skapa-rad { position: sticky; bottom: 0; z-index: 5; display: flex; flex-direction: column; gap: 8px; padding: 10px 0; background: var(--fl-yta); border-top: 1px solid var(--fl-line); }
+.flode-skapa-rad p { margin: 0; }
+/* Pekytor på smal skärm: minst 40 px höga (WCAG 2.5.8 kräver 24 px, 44 px rekommenderas) */
+@media (max-width: 600px) {
+  .flode-verktyg button, .flode-zoom button, .flode-segment button, .flode-chips button, .flode-flikar button, .flode-scen-knappar button { min-height: 40px; }
+}

@@ -7,6 +7,8 @@
  */
 import { hamtaRapportJobb, lasJson, startaRapportJobb } from "../api.ts";
 import { esc } from "../sidor.ts";
+import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
+import { kontoLage } from "../konto.ts";
 import type { RapportAmne, RapportJobb, RapportRad } from "../types.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { hamtaFragelista } from "./fragor.ts";
@@ -84,6 +86,7 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   const bas = `/api/projekt/${encodeURIComponent(projekt)}/rapporter`;
   const t = tillstandFor(projekt);
   const ac = new AbortController();
+  kopplaLaddaOm(rot, ac.signal);
   let amnen: RapportAmne[] = [];
   let valtAmne = "skyfall";
   let jobb: RapportJobb | null = null;
@@ -99,11 +102,11 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
     if (m) m.innerHTML = skapaPanelHtml({ projekt, underlag: underlagNu(), amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
   };
 
-  const ritaTom = (text: string, fel = false): void => {
+  const ritaTom = (text: string, fel = false, ferdig = false): void => {
     rot.innerHTML = `
       <div class="flode-sida"><section class="flode-bred" aria-labelledby="rp-rubrik">
         <h1 id="rp-rubrik" class="flode-h">Rapport</h1>
-        <p class="${fel ? "flode-fel" : "flode-dampad"}"${fel ? ' role="alert"' : ""}>${text}</p>
+        ${ferdig ? text : `<p class="${fel ? "flode-fel" : "flode-dampad"}"${fel ? ' role="alert"' : ""}>${text}</p>`}
         <div id="rp-skapa"></div>
       </section></div>`;
     ritaSkapa();
@@ -179,7 +182,7 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
       const r = await lasJson<RapportInnehall>(`${bas}/${encodeURIComponent(id)}`);
       if (!avslutad) rita(r, lista);
     } catch (e) {
-      if (!avslutad) ritaTom(`Rapporten gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}`, true);
+      if (!avslutad) ritaTom(felBeskedHtml(sidFel(e, "Rapporten", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/rapport`), esc), true, true);
     }
   };
 
@@ -292,7 +295,7 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
       amnen = svar.amnen ?? [];
       valtAmne = amnen.find((a) => a.kan_skapas)?.id ?? amnen[0]?.id ?? "skyfall";
     } catch (e) {
-      if (!avslutad) ritaTom(`Rapporterna gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}`, true);
+      if (!avslutad) ritaTom(felBeskedHtml(sidFel(e, "Rapporterna", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/rapport`), esc), true, true);
       return;
     }
     if (avslutad) return;
