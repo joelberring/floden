@@ -1,9 +1,11 @@
 /*
- * Sidhuvudet i flödet: 56 px, "Floden / <projekt>", stegraden och kontoknappen. Kontomenyn har
- * Nycklar (inloggade) och Administration (admin) och diskreta länkar till Om
- * beräkningarna, Matematik och forskning och utredningsfrågorna utan projekt.
+ * Det enda sidhuvudet i webbappen: 56 px, "Floden / <projekt eller sida>", stegraden (bara i ett
+ * projekt) och kontoknappen. Alla vyer använder det: flödets steg, projektlistan och sidorna
+ * utanför flödet (Frågekatalog, Om beräkningarna, Matematik, Nycklar, Administration, Förvaltning,
+ * WebGPU-provet). Kontomenyn har Nycklar (inloggade), Administration (admin), Förvaltning (med
+ * kontodata) och länkar till Frågekatalog, Om beräkningarna och Matematik och forskning.
  */
-import { adminTillaten, kontoLage } from "../konto.ts";
+import { adminTillaten, forvaltningSynlig, kontoLage } from "../konto.ts";
 import { esc } from "../sidor.ts";
 import { stegradHtml, type Steg } from "./adress.ts";
 
@@ -19,7 +21,23 @@ function kontoInitial(): string {
   return (l.namn || l.epost).trim().charAt(0).toUpperCase();
 }
 
-export function kontoMenyHtml(): string {
+/** Sidor utanför flödet som visas som "Floden / <namn>" i huvudet och markeras i kontomenyn. */
+export type SkalSida = "fragor" | "om" | "matematik" | "nycklar" | "administration" | "forvaltning" | "prov" | "arbetsbank";
+
+export const SKALSIDOR: Record<SkalSida, string> = {
+  fragor: "Frågekatalog",
+  om: "Om beräkningarna",
+  matematik: "Matematik och forskning",
+  nycklar: "Nycklar",
+  administration: "Administration",
+  forvaltning: "Förvaltning",
+  prov: "WebGPU-prov",
+  arbetsbank: "Arbetsbänk",
+};
+
+export function kontoMenyHtml(sida: SkalSida | null = null): string {
+  const rad = (id: SkalSida, href: string): string =>
+    `<li><a class="flode-meny-rad" href="${href}"${sida === id ? ' aria-current="page"' : ""}>${SKALSIDOR[id]}</a></li>`;
   const l = kontoLage();
   const ut =
     l.lage === "in"
@@ -36,29 +54,34 @@ export function kontoMenyHtml(): string {
       }</button>
       <ul class="flode-meny" id="flode-konto-meny" hidden>
         ${vem}
-        ${l.lage === "in" ? `<li><a class="flode-meny-rad" href="#/nycklar">Nycklar</a></li>` : ""}
-        ${adminTillaten(l) ? `<li><a class="flode-meny-rad" href="#/administration">Administration</a></li>` : ""}
-        <li><a class="flode-meny-rad" href="#/om">Om beräkningarna</a></li>
-        <li><a class="flode-meny-rad" href="#/matematik">Matematik och forskning</a></li>
-        <li><a class="flode-meny-rad" href="#/fragor">Utredningsfrågor</a></li>
+        ${l.lage === "in" ? rad("nycklar", "#/nycklar") : ""}
+        ${adminTillaten(l) ? rad("administration", "#/administration") : ""}
+        ${forvaltningSynlig(l) ? rad("forvaltning", "#/forvaltning") : ""}
+        ${rad("fragor", "#/fragor")}
+        ${rad("om", "#/om")}
+        ${rad("matematik", "#/matematik")}
         ${ut}
       </ul>
     </div>`;
 }
 
-export function flodeHuvudHtml(projekt: string | null, aktivt: Steg | null): string {
-  const namn = projekt ? (namnCache.get(projekt) ?? projekt) : null;
+/**
+ * Huvudet. Stegraden finns bara i ett projekt (`projekt` satt). På en sida utanför flödet anges
+ * `sida`, som står efter ordmärket och markeras i kontomenyn.
+ */
+export function flodeHuvudHtml(projekt: string | null, aktivt: Steg | null, sida: SkalSida | null = null): string {
+  const namn = projekt ? (namnCache.get(projekt) ?? projekt) : sida ? SKALSIDOR[sida] : null;
   return `
     <div class="flode-huvud">
       <a class="flode-ordmarke" href="#/">Floden${namn ? ` <span class="flode-ordmarke-projekt">/ ${esc(namn)}</span>` : ""}</a>
-      ${stegradHtml(projekt, aktivt)}
-      ${kontoMenyHtml()}
+      ${projekt ? stegradHtml(projekt, aktivt) : ""}
+      ${kontoMenyHtml(sida)}
     </div>`;
 }
 
 /** Ritar huvudet och kopplar kontomenyn (öppna, stäng med Esc eller klick utanför). */
-export function ritaFlodeHuvud(el: HTMLElement, projekt: string | null, aktivt: Steg | null): void {
-  el.innerHTML = flodeHuvudHtml(projekt, aktivt);
+export function ritaFlodeHuvud(el: HTMLElement, projekt: string | null, aktivt: Steg | null, sida: SkalSida | null = null): void {
+  el.innerHTML = flodeHuvudHtml(projekt, aktivt, sida);
   const knapp = el.querySelector<HTMLButtonElement>(".flode-konto-knapp");
   const meny = el.querySelector<HTMLElement>(".flode-meny");
   if (!knapp || !meny) return;

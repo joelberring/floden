@@ -11,13 +11,14 @@ import { kontoLage, vidKontoandring } from "../konto.ts";
 import { flodeAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import { sattProjektNamn } from "./huvud.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
-import { nyttProjektHtml, radHandling } from "./projektlogik.ts";
+import { nyttProjektHtml, radHandling, rollRad } from "./projektlogik.ts";
 
 interface Rad {
   id: string;
   namn: string;
   undertitel: string;
   paahittat: boolean;
+  roll: string;
   detalj: ProjektSvar | null;
   miniatyr: string | null;
 }
@@ -114,7 +115,7 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
           } catch {
             miniatyr = null;
           }
-          return { id: p.id, namn: p.namn, undertitel: p.undertitel, paahittat: p.paahittat, detalj, miniatyr };
+          return { id: p.id, namn: p.namn, undertitel: p.undertitel, paahittat: p.paahittat, roll: rollRad(p), detalj, miniatyr };
         }),
       );
     } catch (e) {
@@ -138,6 +139,7 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
               <span class="flode-projekt-namn">${esc(r.namn)}</span>
               <span class="flode-dampad">${esc(r.paahittat ? "Påhittat" : "Verkligt")} · ${esc(r.undertitel)}</span>
               <span class="flode-dampad">${esc(statusRad(r.detalj))}</span>
+              ${r.roll ? `<span class="flode-dampad">${esc(r.roll)}</span>` : ""}
               <span class="flode-projekt-handling">${esc(radHandling(pa))}</span>
             </span>
           </a>`;

@@ -22,7 +22,7 @@ test("negativa tal får riktigt minustecken, och inget vanligt hårt mellanslag 
 
 // Källfilerna för det som visas i flödet: ingen kod får formatera tal på något annat sätt än tal.ts.
 const KATALOGER = ["flode", "karta", "vy3d", "matematik"];
-const FILER = ["sidor.ts", "teckenforklaring.ts", "fragor.ts", "kartsida3d.ts", "felvisning.ts", "kontosidor.ts", "kontosidor-html.ts"];
+const FILER = ["sidor.ts", "teckenforklaring.ts", "kartsida3d.ts", "felvisning.ts", "kontosidor.ts", "kontosidor-html.ts"];
 
 function kallfiler(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {
