@@ -229,7 +229,7 @@ Design: `docs/design/RITVERKTYG.md` (Joels önskan 2026-11-24: generellt kartver
 | R4 Mark i nivåer | Lutande yta, slänt i dagsljus, exakt kantavstånd utan halvcellstrappa, `delta_m`; `markhojd` `lutning`/`slant`, K3 `HojdYta` additivt | L | R1 | klar (kärnan och API:t, `lapp.markniva`; klientens ritverktyg är R3/R5) |
 | R5 Skarv i klienten | Fynden i kartan och i steg 2, "Jämna ut skarven" (slänt eller utlopp) och ny kontroll | M | R1, R3, R4 | klar 2026-11-24 |
 | R6 3D | Takformer i `extrudera`, ny mark och slänter, murar som brytlinjer, live | M–L | R3, R4 | klar 2026-11-24 |
-| R7 Pekskärm | Håll för att flytta, fingerräckvidd, stora handtag, egna tangentbindningar | S–M | R3 | väntar |
+| R7 Pekskärm | Håll för att flytta, fingerräckvidd, stora handtag, egna tangentbindningar | S–M | R3 | klar 2026-11-24 (prövad i Chromium med beröringsemulering, `tools/ritverktyg_prov.py`; ej prövad på en riktig telefon) |
 
 ## Sist – OAuth för Claude-appen (parkerat 2026-11-23, Joels beslut)
 
