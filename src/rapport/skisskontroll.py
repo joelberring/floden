@@ -114,6 +114,7 @@ def mattfel(p: Pastaende) -> list[str]:
     if "medelvärde" in stat and "största" not in stat and _MAXORD.search(text):
         fel.append(f"{_pid(p)}: texten talar om största värde, men belägget är ett medelvärde.")
     fel += dagsljusfel(p, text)
+    fel += ekologifel(p, text)
     try:
         p.fylld_text()
     except PastaendeFel as exc:
@@ -160,6 +161,46 @@ def dagsljusfel(p: Pastaende, text: str) -> list[str]:
         fel.append(
             f"{_pid(p)}: soltimmarna är en summa per dygn, inte sammanhängande tid."
         )
+    return fel
+
+
+_LIVSMILJO: Final[re.Pattern[str]] = re.compile(r"(?<!potentiell )(?<!Potentiell )\blivsmilj\w*", re.I)
+_EKO_FORBJUDET: Final[tuple[str, ...]] = (
+    "arten förekommer",
+    "arterna förekommer",
+    "arten finns",
+    "arterna finns",
+    "häckar i",
+    "livskraftig",
+    "livskraftiga",
+    "hög kvalitet",
+    "god kvalitet",
+    "högt naturvärde",
+    "värdefull livsmiljö",
+    "säkrar spridningen",
+    "säkrat samband",
+    "sambandet är säkrat",
+    "sambandet bevaras",
+)
+
+
+def ekologifel(p: Pastaende, text: str) -> list[str]:
+    """Ekologi (skiss): NMD ger potentiell livsmiljö med okänd kvalitet; inget om verklig förekomst."""
+    if not any(b.losare == "ekologi.konnektivitet" for b in p.belagg):
+        return []
+    fel: list[str] = []
+    if m := _LIVSMILJO.search(text):
+        fel.append(
+            f"{_pid(p)}: texten säger '{m.group(0)}' om ett habitat ur NMD. Skriv 'potentiell "
+            "livsmiljö, okänd kvalitet': NMD säger inget om ålder, struktur eller naturvärde."
+        )
+    low = text.lower()
+    for fras in _EKO_FORBJUDET:
+        if fras in low:
+            fel.append(
+                f"{_pid(p)}: '{fras}' är en slutsats om verklig förekomst eller kvalitet. "
+                "Beräkningen visar potentiell livsmiljö och en modell för spridning, inte arternas förekomst."
+            )
     return fel
 
 
@@ -445,8 +486,29 @@ def _dataskydd(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
     return fel, 1 + len(r.pastaenden)
 
 
-def _osakerhet(r: Rapport) -> tuple[list[str], int]:
+def _ekologitext(r: Rapport, text: str) -> list[str]:
+    """Ekologirapportens fasta villkor: signalart och källa, etikett för NMD-habitat och d50-antagandet."""
     fel: list[str] = []
+    low = text.lower()
+    if "potentiell livsmiljö, okänd kvalitet" not in low:
+        fel.append("Dokumentet säger inte 'potentiell livsmiljö, okänd kvalitet' (resultatets etikett).")
+    if "signalart" not in low:
+        fel.append("Dokumentet anger ingen signalart.")
+    if "källa:" not in low:
+        fel.append("Dokumentet anger ingen källa för nätverket (signalart och källa ska stå).")
+    antagen = any("d50 = tröskel/2" in a for k in r.korningar for a in k.get("antaganden", []))
+    if antagen and "p saknas i källan; d50 = tröskel/2" not in low:
+        fel.append("Antagandet 'p saknas i källan; d50 = tröskel/2' syns inte i dokumentet.")
+    kartor = {k.typ for k in r.kartor}
+    if not {"bas", "scenario", "skillnad"} <= kartor:
+        fel.append("Flaskhalskartan (strömtäthet) saknas före, efter eller som skillnad.")
+    return fel
+
+
+def _osakerhet(r: Rapport, dokumenttext: Callable[[], str] | None = None) -> tuple[list[str], int]:
+    fel: list[str] = []
+    if r.amne == "ekologi" and dokumenttext is not None:
+        fel += _ekologitext(r, dokumenttext())
     for k in r.korningar:
         if not k.get("antaganden"):
             fel.append(
@@ -516,7 +578,7 @@ def kontrollera_skissrapport(r: Rapport, tj: RapportTjanst) -> dict[str, Any]:
             len(r.pastaenden),
         ),
         "matt": ([f for p in r.pastaenden for f in mattfel(p)], len(r.pastaenden)),
-        "osakerhet": _osakerhet(r),
+        "osakerhet": _osakerhet(r, dokumenttext),
         "karta": _karta(r, tj),
         "status": _status(r),
         "dataskydd": _dataskydd(r, tj),
@@ -550,6 +612,7 @@ __all__ = [
     "kontroll_text",
     "kontrollera_skissrapport",
     "mattfel",
+    "ekologifel",
     "mottagarfel",
     "pastaendefel",
     "scenariofel",

@@ -130,10 +130,10 @@ def test_amnen_visar_vad_som_kan_skapas_och_varfor_ekologi_inte(v: Varld) -> Non
     assert per["skyfall"]["kan_skapas"] and per["skyfall"]["forval_korning"] == "demo-vatten"
     assert per["dagsljus"]["kan_skapas"] and per["dagsljus"]["forval_korning"] == "demo-dagsljus"
     eko = per["ekologi"]
-    assert not eko["kan_skapas"] and not eko["mall"] and "Rapportmall (R2)" in eko["forklaring"]
+    assert not eko["kan_skapas"] and not eko["mall"] and "via MCP" in eko["forklaring"]
     # Att försöka ändå ger 409 med samma förklaring, och inget jobb skapas.
     s2, e = v.json(v.anna, "POST", f"/api/projekt/{DEMO}/rapporter", {"amne": "ekologi"})
-    assert s2 == 409 and "Rapportmall (R2)" in e["fel"]
+    assert s2 == 409 and "via MCP" in e["fel"]
     assert not (v.rot / "rapporter" / "jobb").exists()
 
 

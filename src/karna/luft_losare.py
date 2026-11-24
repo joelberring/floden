@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Luftlösare för kärnan (K21) som räknar på K1 v2-rutor: `luft.vindkomfort` och `luft.halt`.
 
 Licensgräns: den här filen ligger i kärnan (GPL v3) och importerar luftdelen (MIT, `src/luft/`),
@@ -357,4 +358,146 @@ def _las_vagar(sokvag: Path) -> tuple[list[Any], list[float]]:
     return linjer, emission
 
 
-LOSARE: list[Analyslosare] = [LuftVindkomfort(), LuftHalt()]
+class LuftMkn(Analyslosare):
+    """Monotont MKN-intervall (PM10, dygnsvärde) ur en given timserie av lokalt haltbidrag.
+
+    Lösaren räknar inte fram haltbidraget: den tar en timserie (`timserie`, CSV) som någon annan modell har
+    räknat fram (till exempel spridningsberäkning i ett annat verktyg) och bakgrunden som parameter, och
+    skalar bidraget med källans och depositionens faktorintervall (`luft.kanslighet.kor_monoton_mkn_intervall`).
+    Intervallet är alltså en känslighet för två faktorer, inte en statistisk konfidens och inte en
+    spridningsberäkning. Allt som lösaren skriver kommer ur indata och parametrar, så körningen kan
+    ge belägg för rapporttal (K0-manifest med indatas sha256).
+    """
+
+    namn: ClassVar[str] = "luft.mkn"
+    doman: ClassVar[str] = "luft"
+    version: ClassVar[str] = "1"
+    beskrivning: ClassVar[str] = (
+        "Monotont MKN-intervall för PM10 (dygn över gräns, årsmedel, 90,4-percentil) ur en given "
+        "timserie av lokalt haltbidrag (CSV: tid,lokal_ug_m3) och en bakgrund; ingen spridningsberäkning."
+    )
+    indataroller: ClassVar[tuple[str, ...]] = ("timserie",)
+    utdataroller: ClassVar[tuple[str, ...]] = ("mkn",)
+
+    def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
+        _kontrollera_okanda(
+            parametrar,
+            {
+                "bakgrund_ug_m3",
+                "emissionsfaktor_intervall",
+                "depositionsfaktor_intervall",
+                "grans_dygn_ug_m3",
+                "max_dygn_ar",
+            },
+            self.namn,
+        )
+        if "bakgrund_ug_m3" not in parametrar:
+            raise LosarFel(
+                "luft.mkn: parametern 'bakgrund_ug_m3' måste anges (urbana bakgrunden i µg/m³ med "
+                "källa i frågans beskrivning); ett förval vore ett gissat tal."
+            )
+        ut: dict[str, Any] = {
+            "bakgrund_ug_m3": _tal(parametrar, "bakgrund_ug_m3", 0.0, minst=0.0),
+            "grans_dygn_ug_m3": _tal(parametrar, "grans_dygn_ug_m3", 50.0, over=0.0),
+            "max_dygn_ar": int(_tal(parametrar, "max_dygn_ar", 35.0, minst=0.0)),
+        }
+        for namn, standard in (
+            ("emissionsfaktor_intervall", (0.8, 1.25)),
+            ("depositionsfaktor_intervall", (0.8, 1.25)),
+        ):
+            v = parametrar.get(namn, list(standard))
+            if (
+                not isinstance(v, list | tuple)
+                or len(v) != 2
+                or any(isinstance(x, bool) or not isinstance(x, int | float) for x in v)
+            ):
+                raise LosarFel(f"{namn} måste vara två tal [lägst, högst], fick {v!r}.")
+            ut[namn] = [float(v[0]), float(v[1])]
+        return ut
+
+    def paverkansradie_m(self, parametrar: Mapping[str, Any]) -> float | None:
+        return None  # ingen geometri: en tidsserie per analys
+
+    def kor(self, kontext: LosarKontext) -> LosarUtdata:
+        import csv
+        import json
+
+        from luft.kanslighet import kor_monoton_mkn_intervall
+        from luft.typer import LuftFel
+
+        p = kontext.parametrar
+        sokvag = kontext.indata["timserie"]
+        try:
+            with sokvag.open(encoding="utf-8", newline="") as fh:
+                lasare = csv.DictReader(fh)
+                if "lokal_ug_m3" not in (lasare.fieldnames or []):
+                    raise LosarFel("timserie: kolumnen 'lokal_ug_m3' saknas (CSV: tid,lokal_ug_m3).")
+                varden: list[float] = []
+                for n, rad in enumerate(lasare, start=2):
+                    text = (rad.get("lokal_ug_m3") or "").strip()
+                    try:
+                        v = float(text)
+                    except ValueError as exc:
+                        raise LosarFel(f"timserie rad {n}: '{text}' är inget tal.") from exc
+                    if not math.isfinite(v):
+                        raise LosarFel(f"timserie rad {n}: värdet måste vara ändligt.")
+                    varden.append(v)
+        except OSError as exc:
+            raise LosarFel(f"Kunde inte läsa timserien: {exc}") from exc
+        serie = np.asarray(varden, dtype=np.float64)
+        try:
+            res = kor_monoton_mkn_intervall(
+                serie,
+                float(p["bakgrund_ug_m3"]),
+                emissionsfaktor_intervall=(
+                    float(p["emissionsfaktor_intervall"][0]),
+                    float(p["emissionsfaktor_intervall"][1]),
+                ),
+                depositionsfaktor_intervall=(
+                    float(p["depositionsfaktor_intervall"][0]),
+                    float(p["depositionsfaktor_intervall"][1]),
+                ),
+                grans_dygn_ug_m3=float(p["grans_dygn_ug_m3"]),
+                max_dygn_ar=int(p["max_dygn_ar"]),
+            )
+        except LuftFel as exc:
+            raise LosarFel(str(exc)) from exc
+        n_dygn = serie.size // 24
+        varningar: list[str] = []
+        if serie.size % 24:
+            varningar.append(
+                f"Timserien har {serie.size} timmar; de {serie.size - n_dygn * 24} sista som inte "
+                "fyller ett dygn ingår inte i dygnsstatistiken."
+            )
+        if n_dygn not in (365, 366):
+            varningar.append(
+                f"Timserien täcker {n_dygn} hela dygn, inte ett helt år: antal dygn över gränsen och "
+                "årsmedel gäller bara den period serien täcker och är inte jämförbara med MKN för ett år."
+            )
+        matv: dict[str, Any] = {
+            "lagst_antal_dygn": res.min_dygn_over_grans,
+            "hogst_antal_dygn": res.max_dygn_over_grans,
+            "arsmedel_lagst_ug_m3": res.min_arsmedel_ug_m3,
+            "arsmedel_hogst_ug_m3": res.max_arsmedel_ug_m3,
+            "p90_4_lagst_ug_m3": res.min_percentil_90_4_ug_m3,
+            "p90_4_hogst_ug_m3": res.max_percentil_90_4_ug_m3,
+            "klarar_garanterat": int(res.klarar_mkn_garanterat),
+            "bryter_garanterat": int(res.bryter_mkn_garanterat),
+            "antal_timmar": int(serie.size),
+            "antal_hela_dygn": int(n_dygn),
+            "grans_dygn_ug_m3": float(p["grans_dygn_ug_m3"]),
+            "max_dygn_ar_antal_dygn": int(p["max_dygn_ar"]),
+            "bakgrund_ug_m3": float(p["bakgrund_ug_m3"]),
+            "emissionsfaktor_lagst": res.emissionsfaktor_intervall[0],
+            "emissionsfaktor_hogst": res.emissionsfaktor_intervall[1],
+            "depositionsfaktor_lagst": res.depositionsfaktor_intervall[0],
+            "depositionsfaktor_hogst": res.depositionsfaktor_intervall[1],
+        }
+        (kontext.utmapp / "mkn.json").write_text(
+            json.dumps({"format": "floden-luft-mkn/v1", "amne": "PM10", "matvarden": matv}, indent=1),
+            encoding="utf-8",
+        )
+        return LosarUtdata(filer={"mkn": "mkn.json"}, matvarden=matv, varningar=tuple(varningar))
+
+
+LOSARE: list[Analyslosare] = [LuftVindkomfort(), LuftHalt(), LuftMkn()]

@@ -21,6 +21,8 @@ from typing import Any
 # Enheter ur variabelnamnens suffix (AGENTS.md: enheten står i namnet). Längst suffix först.
 _SUFFIX: tuple[tuple[str, str], ...] = (
     ("_mm_h", "mm/h"),
+    ("_ug_m3", "µg/m³"),
+    ("_dygn", "dygn"),
     ("_m3", "m³"),
     ("_m2", "m²"),
     ("_grader", "grader"),
