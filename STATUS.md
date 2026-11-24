@@ -560,3 +560,8 @@ Nästa: kör provmappningen på servern, kontrollera varningarna (antal hus utan
 - Göteborgs `baskarta_dwg_v2.zip` svarade 404 från servern (produktbladet anger fortfarande adressen); `baskarta_shp_v2.zip` svarar 200. Kommunfilen pekar nu på Shapefile-paketet: lagret `byggnad_l` (PolylineZ, 3D), objekten väljs med fältet `typ` (`objekt_falt`/`objekt_monster` i `[filpaket.baskarta]`, nytt och valfritt).
 - Okontrollerat: att takkonturerna har `typ` som börjar med "Tak". Träffar uttrycket inget listar felet de `typ`-värden som finns, så att det kan justeras efter en körning.
 - Tester: fixturen i tests/kommuner/test_filpaket_mappa.py är nu en Shapefile med två objekt (en takkontur väljs, en fasad väljs bort), och ett nytt test för felet utan träff.
+
+## 2026-11-24 – hål i kommunens höjdmodell (samordnaren)
+
+- `floden geografi mappa goteborg-test` på servern: 2014 takkonturer ur baskartan, men "markhojd_rh2000 måste vara ett ändligt tal, fick nan". Göteborgs höjdmodell 2022 är "bara mark" och saknar värde under byggnaderna.
+- `Hojdmodell.grund_z` fyller nu inneslutna hål (GDAL FillNodata, högst 150 m från närmaste värde) och varnar med andelen; hål som når rasterkanten (utanför plattorna) förblir NaN. `markhojd_under_byggnad` tar nanmedian och, om allt under huset saknas, marken runt omkring.

@@ -105,6 +105,37 @@ class Hojdmodell:
             tom = np.isnan(ut)
             ut[tom] = buf[tom]
         varn: list[str] = []
+        # Kommunala markmodeller (t.ex. Göteborgs 2022, "bara mark") saknar värde under byggnader och
+        # ibland i vatten. Hålen fylls med avståndsviktad interpolation från kanterna (GDAL
+        # FillNodata), högst FYLL_MAX_M från närmaste värde; det som ligger längre bort, och hål som når
+        # rasterkanten, förblir NaN.
+        hal = np.isnan(ut)
+        if hal.any() and not hal.all():
+            # Bara inneslutna hål fylls: hål som når rasterkanten (utanför plattorna) förblir NaN.
+            from scipy import ndimage
+
+            etiketter, _ = ndimage.label(hal)
+            kant = np.unique(
+                np.concatenate([etiketter[0, :], etiketter[-1, :], etiketter[:, 0], etiketter[:, -1]])
+            )
+            hal = hal & ~np.isin(etiketter, kant[kant > 0])
+        if hal.any():
+            from rasterio.fill import fillnodata
+
+            steg = max(abs(float(a[0])), 1e-9)
+            fylld = fillnodata(
+                np.where(np.isnan(ut), -9999.0, ut).astype(np.float32),
+                mask=(~np.isnan(ut)).astype(np.uint8),
+                max_search_distance=max(1.0, FYLL_MAX_M / steg),
+                smoothing_iterations=0,
+            )
+            ifylld = hal & np.isfinite(fylld) & (fylld > -9000.0)
+            ut = np.where(ifylld, fylld, ut).astype(np.float32)
+            if int(ifylld.sum()):
+                varn.append(
+                    f"{ruta.namn}: {100.0 * int(ifylld.sum()) / ut.size:.1f} % av cellerna saknade värde i "
+                    "höjdmodellen (under byggnader, i vatten) och fick interpolerad markhöjd från kanterna."
+                )
         saknas = int(np.isnan(ut).sum())
         if saknas:
             varn.append(
@@ -114,6 +145,10 @@ class Hojdmodell:
         if saknas == ut.size:
             raise KommunKallaFel(f"Höjdmodellen gav inga värden alls för {ruta.namn}.")
         return ut, varn
+
+
+FYLL_MAX_M = 150.0
+"""Längsta avstånd (m) som ett hål i höjdmodellen fylls från närmaste värde."""
 
 
 def hojdmodell_for(paket: list[Path], epsg: int) -> Hojdmodell:

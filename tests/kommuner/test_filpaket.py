@@ -255,3 +255,24 @@ def test_goteborgs_fil_ar_filpaket_forst_med_lantmateriet_som_reserv() -> None:
     assert k.filpaket is not None and k.filpaket.baskarta is not None
     assert k.filpaket.baskarta.urlar == ("https://opengeodata.goteborg.se/downloads/baskarta/baskarta_shp_v2.zip",)
     assert k.filpaket.baskarta.objekt_falt == "typ" and k.filpaket.baskarta.objekt_monster == "(?i)^tak"
+
+
+def test_hal_under_byggnader_fylls_men_inte_utanfor_plattan(tmp_path: Path) -> None:
+    """Göteborgs höjdmodell är "bara mark": nodata under husen. Inneslutna hål interpoleras."""
+    t = tmp_path / "platta.tif"
+    _tif(t)
+    with rasterio.open(t, "r+") as d:
+        z = d.read(1)
+        z[480:520, 430:470] = -9999.0  # ett "hus" mitt i plattan
+        d.write(z, 1)
+    zp = tmp_path / "hal.zip"
+    with zipfile.ZipFile(zp, "w") as f:
+        f.write(t, "hojd/1_1.tif")
+    hm = Hojdmodell([zp], epsg_antagen=3007)
+    e, n = transformera(E0 + 450.0, N0 + 500.0, 3007, 3011)
+    ruta = Ruta(float(round(e)) - 100.0, float(round(n)) - 100.0, 200.0, 0.0, 1.0)
+    z, varn = hm.grund_z(ruta)
+    assert not np.isnan(z).any() and any("interpolerad" in v for v in varn)
+    ce, cn = ruta.cell_till_koordinat(100, 100)
+    e7, n7 = transformera(ce, cn, 3011, 3007)
+    assert float(z[100, 100]) == pytest.approx(5.0 + 0.01 * (n7 - N0), abs=0.1)
