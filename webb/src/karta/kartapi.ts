@@ -92,6 +92,18 @@ export const korScenario = (p: string, slug: string, analyser: string[], avtappn
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/kor`, { analyser, avtappning_mm_h });
 export const scenarioStatus = (p: string, slug: string): Promise<{ slug: string; korningar: KorningPost[] }> =>
   lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/status`);
+/** Läget idag (U5a): projektets befintliga läge, bara före, utan förslag. Samma behörighet och körkö som `kor`. */
+export interface LagePlan {
+  lage: "idag";
+  fragor: PlanPost[];
+  uppskattad_tid_s: number | null;
+}
+export const planeraLageIdag = (p: string, analyser: string[], avtappning_mm_h: number | null = null): Promise<LagePlan> =>
+  post(`${BAS}/${encodeURIComponent(p)}/lage-idag/plan`, { analyser, avtappning_mm_h });
+export const korLageIdag = (p: string, analyser: string[], avtappning_mm_h: number | null = null): Promise<{ lage: "idag"; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
+  post(`${BAS}/${encodeURIComponent(p)}/lage-idag/kor`, { analyser, avtappning_mm_h });
+export const lageIdagStatus = (p: string): Promise<{ lage: "idag"; korningar: KorningPost[] }> =>
+  lasJson(`${BAS}/${encodeURIComponent(p)}/lage-idag/status`);
 export const lasWmsLager = (url: string): Promise<WmsSvar> => post(`${BAS}/wms/lager`, { url });
 
 export interface BifurkationsPunktPost {
