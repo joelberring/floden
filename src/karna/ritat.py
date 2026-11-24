@@ -195,13 +195,15 @@ def kontrollera_andringar(
             if not isinstance(g, Mapping) or g.get("type") != "Polygon" or not g.get("coordinates"):
                 raise RitatFel(f"{namn}: saknar polygon.")
             poly = kontrollera_ring(g["coordinates"][0], namn)
-            niva = e.get("niva_rh2000")
-            if (
-                isinstance(niva, bool)
-                or not isinstance(niva, int | float)
-                or not math.isfinite(niva)
-            ):
-                raise RitatFel(f"{namn}: saknar nivå (niva_rh2000, m RH 2000).")
+            if not any(k in e for k in ("niva_rh2000", "lutning", "delta_m")):
+                raise RitatFel(f"{namn}: saknar nivå (niva_rh2000, lutning eller delta_m).")
+            try:
+                from karna.k9_till_k1 import markhojd_till_hojdyta
+                from karna.scenario import Andring
+
+                markhojd_till_hojdyta(Andring("markhojd", aid, g, e))
+            except (TypeError, ValueError) as exc:
+                raise RitatFel(f"{namn}: {exc}") from exc
             if not yta_union.intersects(poly):
                 raise RitatFel(f"{namn} ligger utanför projektets område.")
         elif typ == "byggnad_bort" and not e.get("byggnads_id"):

@@ -5,9 +5,10 @@ Själva K9→K3-översättningen finns bara i kärnan (`karna.k9_till_k1.k9_till
 en vattenfråga får bortse från), anropar kärnan och ger lappen vattnets id och beskrivning. Typerna
 som stöds och deras egenskaper står i `karna.k9_till_k1`.
 
-`byggnad_bort`, `byggnad_hojd`, `vegetation` och `markhojd` med `delta_m` har ingen motsvarighet
-i K3 och ger fel. Typer som en vattenfråga uttryckligen kan bortse från (t.ex. `vegetation`, som
-bara rör luft, buller och dagsljus) anges i `ignorera_typer`; de listas i resultatet.
+`byggnad_bort`, `byggnad_hojd` och `vegetation` har ingen motsvarighet i K3 och ger fel
+(`markhojd` med `lutning`, `delta_m` och `slant` översätts, R4). Typer som en vattenfråga
+uttryckligen kan bortse från (t.ex. `vegetation`, som bara rör luft, buller och dagsljus)
+anges i `ignorera_typer`; de listas i resultatet.
 """
 
 from __future__ import annotations

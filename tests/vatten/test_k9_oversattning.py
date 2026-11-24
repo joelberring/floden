@@ -188,7 +188,7 @@ class TestK9TillK3EnDel(unittest.TestCase):
     def test_fel_ar_oforandrade(self) -> None:
         for andring in (
             Andring("byggnad_bort", "x", None, {"byggnads_id": "b1"}),
-            Andring("markhojd", "d", kv(0, 0, 1, 1), {"delta_m": 0.2}),
+            Andring("markhojd", "d", kv(0, 0, 1, 1), {"delta_m": 0.2, "niva_rh2000": 5.0}),
             Andring("byggnad_ny", "h", kv(0, 0, 1, 1), {"hojd_m": 3.0}),
         ):
             with self.assertRaises(ScenarioLappFel):

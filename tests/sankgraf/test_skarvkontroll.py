@@ -139,3 +139,78 @@ def test_deterministisk() -> None:
     z1 = z0.copy()
     z1[_lapp()] = float(z0[59, 80]) + 0.6
     assert _kor(z1).som_dict() == _kor(z1).som_dict()
+
+
+# ---------------------------------------------------------------- R4: slänt mot hård kant
+
+
+def _rot(cx: float, cy: float, w: float, h: float, ang: float):  # type: ignore[no-untyped-def]
+    import math
+
+    a = math.radians(ang)
+    c, s = math.cos(a), math.sin(a)
+    return tuple(
+        (cx + c * x - s * y, cy + s * x + c * y)
+        for x, y in ((-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2))
+    )
+
+
+def _lappkontroll(yta, *, gammal_cellmask: bool = False):  # type: ignore[no-untyped-def]
+    """Lägger ytan i dalgången via K3-tillämpningen och kör skarvkontrollen (lappens yta =
+    polygonen plus celler som ändrats, som i `kontrollera_skarvar_k1`)."""
+    from lapp.kontrakt import ProjektLapp
+    from lapp.tillampa import _polygon_mask, tillampa_lapp
+
+    z0, _, _ = _bas()
+    z0 = z0.astype(np.float32)
+    osak = np.full((H, B), 0.05, np.float32)
+    slag = np.full((H, B), 4, np.uint8)
+    lapp = ProjektLapp(lapp_id="t", bas_recept=("x",), hojdytor=(yta,))
+    res = tillampa_lapp(z0, osak, slag, _geo(), lapp, bas_recept_sha256="x", sektioner={})
+    mask = _polygon_mask(yta.polygon, _geo()) | (res.mark_z != z0)
+    return kontrollera_skarvar(z0, res.mark_z, slag, osak, _geo(), mask)
+
+
+def test_slant_ger_farre_fynd_an_hard_cellkant_pa_snedstalld_yta() -> None:
+    """Sänkt, snedställd yta (45°): den gamla hårda kanten (cellmask, halvcellstrappa) ger en
+    ny sänka vid kanten; samma yta med exakt kant och med slänt ger inga fynd."""
+    from lapp.kontrakt import HojdYta
+
+    z0, _, _ = _bas()
+    niva = float(z0[80, 80]) - 0.3
+    poly = _rot(40.0, 40.0, 40.0, 14.0, 45.0)
+    gammal = _lappkontroll(HojdYta(yta_id="a", polygon=poly, hojd_rh2000=niva))
+    plan = {"punkt": [40.0, 40.0, niva], "fall": 0.0}  # samma plana nivå, exakt kant utan slänt
+    exakt = _lappkontroll(HojdYta(yta_id="a", polygon=poly, lutning=plan))
+    slant = _lappkontroll(
+        HojdYta(yta_id="a", polygon=poly, lutning=plan, slant_forhallande=3.0)
+    )
+    assert len(gammal.fynd) == 1 and gammal.fynd[0].tillkommande_volym_m3 > 20.0
+    assert len(exakt.fynd) == 0 and len(slant.fynd) == 0
+    assert slant.varningar() == []
+
+
+def test_slant_tar_inte_bort_en_riktig_damm() -> None:
+    """Ärlig gräns: en yta som ligger 0,6 m över marken tvärs över dalgången dämmer även med
+    slänt. Slänten tar bort kanten och trappan, inte en dammvall; åtgärden är fall eller utlopp."""
+    from lapp.kontrakt import HojdYta
+
+    poly = ((4.0, 30.0), (76.0, 30.0), (76.0, 50.0), (4.0, 50.0))
+    hard = _lappkontroll(HojdYta(yta_id="a", polygon=poly, delta_m=0.6))
+    slant = _lappkontroll(HojdYta(yta_id="a", polygon=poly, delta_m=0.6, slant_forhallande=3.0))
+    assert len(hard.fynd) == 1 and len(slant.fynd) == 1
+    assert slant.fynd[0].storsta_djup_m == pytest.approx(hard.fynd[0].storsta_djup_m, abs=0.08)
+
+
+def test_lutande_yta_med_dalgangens_fall_ger_inga_fynd() -> None:
+    """Samma yta som dämmer som platå, men med dalgångens fall (2 %), bryter inte vattenvägen."""
+    from lapp.kontrakt import HojdYta
+
+    z0, _, _ = _bas()
+    poly = ((4.0, 30.0), (76.0, 30.0), (76.0, 50.0), (4.0, 50.0))
+    zc = float(z0[80, 80])
+    lut = {"punkt": [40.0, 40.0, zc], "fall": 0.02, "riktning_grader": 180.0}
+    res = _lappkontroll(HojdYta(yta_id="a", polygon=poly, lutning=lut, slant_forhallande=3.0))
+    # Ytan är plan tvärs dalen (dalgångens sidor ligger högre än den): den skär i sidorna men
+    # lutar åt rätt håll; det som kan finnas kvar är litet jämfört med platåns 0,6 m.
+    assert all(f.storsta_djup_m < 0.3 for f in res.fynd)

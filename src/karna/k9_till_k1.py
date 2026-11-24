@@ -9,7 +9,8 @@ K9-scenario ger samma K1-rutor oavsett väg:
 
 - `byggnad_ny` → `LappByggnad`: kräver `entre_rh2000`, `entre_punkt`; valfritt `hojd_m`,
   `tak_rh2000`, `gransdjup_m`.
-- `markhojd` → `HojdYta`: kräver `niva_rh2000` eller `landxml`; valfritt `markslag`, `osakerhet_m`.
+- `markhojd` → `HojdYta`: kräver exakt en av `niva_rh2000`, `lutning`, `delta_m` eller `landxml`;
+  valfritt `slant` (`forhallande` 1:n eller `bredd_m`, ev. `markslag`), `markslag`, `osakerhet_m`.
 - `markslag` → `LappMarkslag`: kräver `kod`.
 - `gata` → `LappGata`: kräver `sektion`; valfritt `profil_rh2000`, `markslag_korbana`,
   `markslag_gangbana`.
@@ -87,6 +88,60 @@ def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
     return float(v)
 
 
+def markhojd_till_hojdyta(a: Andring) -> Any:
+    """Översätter ett K9 `markhojd` (inkl. R4: `lutning`, `delta_m`, `slant`) till en `HojdYta`."""
+    from lapp.kontrakt import HojdYta, LappFel
+
+    e = a.egenskaper
+    ms = e.get("markslag")
+    hk: dict[str, Any] = {}
+    if "osakerhet_m" in e:
+        hk["osakerhet_m"] = _tal(e, "osakerhet_m", a)
+    nivaer = [k for k in ("niva_rh2000", "lutning", "delta_m") if k in e]
+    if "landxml" in e:
+        extra = [k for k in ("lutning", "delta_m", "slant") if k in e]
+        if extra:
+            raise ScenarioFel(
+                f"markhojd '{a.andring_id}': {', '.join(extra)} kan inte kombineras med landxml."
+            )
+        hk["landxml"] = str(e["landxml"])
+        if a.geometri is not None:
+            hk["polygon"] = _ring(a.geometri, a)
+    elif len(nivaer) == 1:
+        hk["polygon"] = _ring(a.geometri, a)
+        if nivaer[0] == "niva_rh2000":
+            hk["hojd_rh2000"] = _tal(e, "niva_rh2000", a)
+        elif nivaer[0] == "delta_m":
+            hk["delta_m"] = _tal(e, "delta_m", a)
+        else:
+            hk["lutning"] = e["lutning"]
+    elif not nivaer:
+        raise ScenarioFel(
+            f"markhojd '{a.andring_id}' saknar niva_rh2000, lutning, delta_m eller landxml."
+        )
+    else:
+        raise ScenarioFel(
+            f"markhojd '{a.andring_id}': ange exakt en av niva_rh2000, lutning och delta_m "
+            f"(fick {', '.join(nivaer)})."
+        )
+    if "slant" in e:
+        sl = e["slant"]
+        if not isinstance(sl, Mapping) or not set(sl) <= {"forhallande", "bredd_m", "markslag"}:
+            raise ScenarioFel(
+                f"markhojd '{a.andring_id}': slant måste vara {{forhallande | bredd_m, markslag?}}."
+            )
+        if "forhallande" in sl:
+            hk["slant_forhallande"] = float(sl["forhallande"])
+        if "bredd_m" in sl:
+            hk["slant_bredd_m"] = float(sl["bredd_m"])
+        if "markslag" in sl:
+            hk["slant_markslag"] = int(sl["markslag"])
+    try:
+        return HojdYta(yta_id=a.andring_id, markslag=None if ms is None else int(ms), **hk)
+    except LappFel as exc:
+        raise ScenarioFel(f"markhojd '{a.andring_id}': {exc}") from exc
+
+
 def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
     """Bygger en `ProjektLapp` (K3) av utplattade K9-ändringar (bara K3-typerna).
 
@@ -95,7 +150,6 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
     inte på listordningen. Överlappande ändringar med olika id tillämpas alltså i id-ordning.
     """
     from lapp.kontrakt import (
-        HojdYta,
         LappByggnad,
         LappGata,
         LappMagasin,
@@ -113,27 +167,7 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
     for a in sorted(andringar, key=lambda x: x.andring_id):
         e = a.egenskaper
         if a.typ == "markhojd":
-            if "delta_m" in e:
-                raise ScenarioFel(
-                    f"markhojd '{a.andring_id}': delta_m stöds inte än i K1-materialiseringen; "
-                    "ange niva_rh2000."
-                )
-            ms = e.get("markslag")
-            hk: dict[str, Any] = {}
-            if "osakerhet_m" in e:
-                hk["osakerhet_m"] = _tal(e, "osakerhet_m", a)
-            if "landxml" in e:
-                hk["landxml"] = str(e["landxml"])
-                if a.geometri is not None:
-                    hk["polygon"] = _ring(a.geometri, a)
-            elif "niva_rh2000" in e:
-                hk["polygon"] = _ring(a.geometri, a)
-                hk["hojd_rh2000"] = _tal(e, "niva_rh2000", a)
-            else:
-                raise ScenarioFel(f"markhojd '{a.andring_id}' saknar niva_rh2000/landxml.")
-            hojdytor.append(
-                HojdYta(yta_id=a.andring_id, markslag=None if ms is None else int(ms), **hk)
-            )
+            hojdytor.append(markhojd_till_hojdyta(a))
         elif a.typ == "markslag":
             markslag.append(
                 LappMarkslag(
