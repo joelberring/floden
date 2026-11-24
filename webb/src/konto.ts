@@ -34,6 +34,12 @@ export interface KontoProjekt {
   roll: string;
 }
 
+/** Rollens namn i klartext (kontoservern lagrar id utan å, ä, ö: `lasare`, `agare`). */
+export function rollNamn(roll: string): string {
+  const namn: Record<string, string> = { lasare: "läsare", utredare: "utredare", medlem: "medlem", ledare: "ledare", organisationsadmin: "organisationsadmin", agare: "ägare", superadmin: "superadmin" };
+  return namn[roll] ?? roll;
+}
+
 export const CSRF_HUVUD = "X-Floden-CSRF";
 const CSRF_KAKNAMN = ["__Host-floden-csrf", "floden_csrf"];
 

@@ -7,7 +7,7 @@
  * (AGENTS.md: tal kommer bara ur beräkningar). Det som saknas döljs eller förklaras.
  */
 import { formatera } from "./tal.ts";
-import { forvaltningSynlig, halsningsnamn, kontoHjalteHtml, kontoHuvudHtml, kontoLage } from "./konto.ts";
+import { forvaltningSynlig, halsningsnamn, kontoHjalteHtml, kontoHuvudHtml, kontoLage, rollNamn } from "./konto.ts";
 import type { ModulInfo, OmradeSammanfattning, ProjektAvsnitt, ProjektListaPost, ProjektSvar, RapportRad } from "./types.ts";
 
 export function esc(text: string): string {
@@ -91,7 +91,7 @@ export function dinaProjekt(projekt: ProjektListaPost[]): string {
       (p) => `
         <li>
           <a class="textlank" href="#/projekt/${encodeURIComponent(p.id)}">${esc(p.namn)}</a>
-          <span class="dampad">${esc([p.undertitel, p.roll, p.organisation_synlig ? "delat med organisationen" : ""].filter(Boolean).join(" · "))}</span>
+          <span class="dampad">${esc([p.undertitel, p.roll ? rollNamn(p.roll) : "", p.organisation_synlig ? "delat med organisationen" : ""].filter(Boolean).join(" · "))}</span>
         </li>`,
     )
     .join("");
@@ -262,7 +262,7 @@ function rapportKontroll(r: RapportRad): string {
 
 export function rapportLista(projektId: string, rapporter: RapportRad[] | undefined): string {
   if (!rapporter || rapporter.length === 0) {
-    return `<p class="dampad">Inga rapporter än. En rapport skapas med AI via <code>floden mcp</code> eller med <code>python tools/rapport_demo.py</code>.</p>`;
+    return `<p class="dampad">Inga rapporter än. <a class="textlank" href="#/p/${encodeURIComponent(projektId)}/rapport">Skapa en rapport i steg 5 i flödet</a>.</p>`;
   }
   const bas = `/api/projekt/${encodeURIComponent(projektId)}/rapporter`;
   const rader = rapporter
@@ -381,7 +381,7 @@ export function sidaProjektUtanData(p: ProjektListaPost | null): string {
   }
   return `
     <div class="sidbredd innehall">
-      <p class="projekt-etikett">${p.roll ? `<span class="chip">${esc(p.roll)}</span>` : ""}${p.organisation_synlig ? ` <span class="chip">Delat med organisationen</span>` : ""}</p>
+      <p class="projekt-etikett">${p.roll ? `<span class="chip">${esc(rollNamn(p.roll))}</span>` : ""}${p.organisation_synlig ? ` <span class="chip">Delat med organisationen</span>` : ""}</p>
       <h1 class="sidrubrik stor">${esc(p.namn)}</h1>
       <p class="hjalp-ruta" role="note">Projektet har inga beräkningar än. Det du ser här kommer från kontoregistret; beräkningar och karta kopplas till projektet när de finns.</p>
     </div>`;
@@ -451,13 +451,13 @@ export function sidaForvaltning(): string {
   const rader = l.medlemskap
     .map(
       (m) =>
-        `<tr><td>${esc(m.organisation)}</td><td>${esc(m.forvaltning ?? "–")}</td><td>${esc(m.roll)}</td></tr>`,
+        `<tr><td>${esc(m.organisation)}</td><td>${esc(m.forvaltning ?? "–")}</td><td>${esc(rollNamn(m.roll))}</td></tr>`,
     )
     .join("");
   const projekt = l.projekt.length
     ? `<section>
         <div class="sektionsrad linje-under-stark">${etikett("Dina projekt")}</div>
-        <ul class="enkel-lista rader">${l.projekt.map((p) => `<li>${esc(p.namn)}<span class="dampad">${esc(p.roll)}</span></li>`).join("")}</ul>
+        <ul class="enkel-lista rader">${l.projekt.map((p) => `<li>${esc(p.namn)}<span class="dampad">${esc(rollNamn(p.roll))}</span></li>`).join("")}</ul>
       </section>`
     : "";
   return `

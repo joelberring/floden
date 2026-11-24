@@ -411,16 +411,25 @@ def klassa_segment_refraktion(
     (ekv. 138) och h_R,Fz = MinConcaveHeight(h̆′_S, d̆_x, d̆′, λ) med
     d̆_x = d′ − d_i + d_refl − d̆_refl (ekv. 139, som tryckt med det omodifierade d′).
 
-    I skuggzon (ekv. 347) är ψ_G = 0, så h̆′_S = h̆′_R = 0 och båda relativa höjderna 0:
-    segmentet räknas då som konvext med vikten 0 enligt ekv. (153). Se loggen P-S2.
+    För ett segment som geometriskt redan är konkavt på en sida (h′_S ≥ h_S resp. h′_R ≥ h_R,
+    AV 1849/00 s. 35) hålls den sidans relativa höjd lika med 1 även i motvind (där h̆′ < h′);
+    annars klassas plan eller konkav dalbotten i motvind som övergångs-/konvext segment trots
+    att ingen konvex kil (β > π) finns. Se loggen P-S5.
     """
     if not vaglangd_m > 0.0:
         raise BullerFel("Våglängden ska vara större än 0.")
+    konkav_kalla = variabler.h_s_m >= geo.h_s_m * (1.0 - RELATIV_TOLERANS)
+    konkav_mottagare = variabler.h_r_m >= geo.h_r_m * (1.0 - RELATIV_TOLERANS)
     psi = geometri.strykvinkel_rad
     h_s_mod = geometri.kallhojd_modifierad_m
     h_r_mod = geometri.mottagarhojd_modifierad_m
     if not (h_s_mod > 0.0 and h_r_mod > 0.0):
-        return Segmentklass(h_s_rel=0.0, h_r_rel=0.0, h_s_fz_m=math.inf, h_r_fz_m=math.inf)
+        return Segmentklass(
+            h_s_rel=1.0 if konkav_kalla else 0.0,
+            h_r_rel=1.0 if konkav_mottagare else 0.0,
+            h_s_fz_m=math.inf,
+            h_r_fz_m=math.inf,
+        )
     d_mod = geometri.avstand_modifierat_m
     d_refl_mod = geometri.vag_kalla_m * math.cos(psi)
     f_lambda = F_LAMBDA_DELMODELL3 * vaglangd_m
@@ -429,8 +438,8 @@ def klassa_segment_refraktion(
     h_s_fz = minsta_konkava_hojd_m(max(h_r_mod, MINSTA_HOJD_M), d_x_kalla, d_mod, f_lambda)
     h_r_fz = minsta_konkava_hojd_m(max(h_s_mod, MINSTA_HOJD_M), d_x_mottagare, d_mod, f_lambda)
     return Segmentklass(
-        h_s_rel=relativ_hojd(h_s_mod, min(geo.h_s_m, h_s_fz)),
-        h_r_rel=relativ_hojd(h_r_mod, min(geo.h_r_m, h_r_fz)),
+        h_s_rel=1.0 if konkav_kalla else relativ_hojd(h_s_mod, min(geo.h_s_m, h_s_fz)),
+        h_r_rel=1.0 if konkav_mottagare else relativ_hojd(h_r_mod, min(geo.h_r_m, h_r_fz)),
         h_s_fz_m=h_s_fz,
         h_r_fz_m=h_r_fz,
     )

@@ -284,7 +284,7 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
     if (avslutad) return;
     const forsta = lista[0];
     if (!forsta) {
-      ritaTom("Det finns ingen rapport för projektet än. Skapa en här, eller med AI via <code>floden mcp</code>.");
+      ritaTom("Det finns ingen rapport för projektet än. Skapa en här: välj ämne nedan och tryck Skapa rapport. (Du kan också låta en AI-assistent skapa den via MCP, se Nycklar.)");
       return;
     }
     await ladda(forsta.rapport_id, lista);

@@ -7,9 +7,11 @@ import { hamtaBildMedUtbredning, hamtaProjektInfo, type ProjektInfo } from "../k
 import type { Kartmotor } from "../karta/kartmotor.ts";
 import { esc, formatera } from "../sidor.ts";
 import type { ProjektSvar } from "../types.ts";
+import { kontoLage, vidKontoandring } from "../konto.ts";
 import { flodeAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import { sattProjektNamn } from "./huvud.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
+import { nyttProjektHtml, radHandling } from "./projektlogik.ts";
 
 interface Rad {
   id: string;
@@ -46,7 +48,7 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
       <section class="flode-lista" aria-labelledby="projekt-rubrik">
         <div class="flode-listhuvud">
           <h1 id="projekt-rubrik" class="flode-h">Projekt</h1>
-          <a class="flode-knapp svart liten" id="nytt-projekt" href="${NYTT_PROJEKT_ADRESS}">Nytt projekt</a>
+          <div id="nytt-projekt-plats"></div>
         </div>
         <div id="projekt-rader" class="flode-rader" aria-live="polite"><p class="flode-dampad">Hämtar projekten …</p></div>
       </section>
@@ -55,6 +57,14 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
         <div class="flode-kartkort" id="projekt-kartkort" hidden></div>
       </section>
     </div>`;
+  // Kontoläget kan komma efter första ritningen (GET /konto/jag): knappen ritas om när det ändras.
+  const ritaNytt = (): void => {
+    if (avslutad) return;
+    const plats = rot.querySelector<HTMLElement>("#nytt-projekt-plats");
+    if (plats) plats.innerHTML = nyttProjektHtml(kontoLage().lage, NYTT_PROJEKT_ADRESS);
+  };
+  ritaNytt();
+  vidKontoandring(ritaNytt);
   const rader = rot.querySelector<HTMLElement>("#projekt-rader") as HTMLElement;
   const kort = rot.querySelector<HTMLElement>("#projekt-kartkort") as HTMLElement;
 
@@ -79,7 +89,8 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
     void bas.ladda(r.id);
     const u = info.utbredning;
     kort.hidden = false;
-    kort.innerHTML = `<strong>${esc(r.namn)}</strong><span class="flode-dampad">${esc(formatera(u.x_max - u.x_min, 0))} × ${esc(formatera(u.y_max - u.y_min, 0))} m · SWEREF 99 18 00</span>`;
+    kort.innerHTML = `<strong>${esc(r.namn)}</strong><span class="flode-dampad">${esc(formatera(u.x_max - u.x_min, 0))} × ${esc(formatera(u.y_max - u.y_min, 0))} m · SWEREF 99 18 00</span>
+      <a class="flode-knapp svart liten" id="projekt-oppna" href="${flodeAdress(r.id, "forslag")}">Öppna projektet</a>`;
   };
 
   const klar = (async () => {
@@ -127,13 +138,14 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
               <span class="flode-projekt-namn">${esc(r.namn)}</span>
               <span class="flode-dampad">${esc(r.paahittat ? "Påhittat" : "Verkligt")} · ${esc(r.undertitel)}</span>
               <span class="flode-dampad">${esc(statusRad(r.detalj))}</span>
+              <span class="flode-projekt-handling">${esc(radHandling(pa))}</span>
             </span>
           </a>`;
         })
         .join("");
     };
     ritaRader();
-    // Första klicket på ett annat projekt väljer det och visar det på kartan; på det valda öppnas Förslag.
+    // Första klicket på ett annat projekt väljer det och visar det på kartan; på det valda öppnas Förslag (raden säger vilket).
     rader.addEventListener("click", (h) => {
       const a = (h.target as Element).closest<HTMLAnchorElement>("a[data-projekt]");
       if (!a || a.dataset.projekt === val.id) return;

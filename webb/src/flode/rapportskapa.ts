@@ -83,7 +83,7 @@ export function skapaPanelHtml(i: SkapaPanelIn): string {
         <legend>Skede</legend>
         <div class="flode-segment" id="rp-skede">
           <button type="button" data-rp-skede="skiss" aria-pressed="${i.best.skede === "skiss"}">Skiss</button>
-          <button type="button" data-rp-skede="planunderlag" aria-pressed="${i.best.skede === "planunderlag"}">Planunderlag</button>
+          <button type="button" data-rp-skede="planunderlag" aria-pressed="${i.best.skede === "planunderlag"}">Planunderlag (inte än)</button>
         </div>
       </fieldset>
       <div class="flode-falt"><label for="rp-mottagare">Mottagare</label>
