@@ -134,7 +134,7 @@ export function sidaMatematik(data: MatematikData = MATEMATIK): string {
 
 /** Ritar sidhuvudet (inget steg aktivt) och sidan; kopplar avsnittslänkarna. */
 export function visaMatematik(huvud: HTMLElement, rot: HTMLElement): void {
-  ritaFlodeHuvud(huvud, null, null);
+  ritaFlodeHuvud(huvud, null, null, "matematik");
   rot.innerHTML = sidaMatematik();
   rot.querySelectorAll<HTMLAnchorElement>("a[data-hopp]").forEach((a) =>
     a.addEventListener("click", (h) => {

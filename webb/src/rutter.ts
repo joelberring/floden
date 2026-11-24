@@ -1,6 +1,9 @@
 /*
- * Adresserna i hash-routern, utan DOM så att de går att testa: #/ · #/projekt/<id> · #/fragor · #/om · #/matematik · #/forvaltning · #/nycklar · #/administration · #/arbetsbank/<omrade>.
+ * Adresserna i hash-routern, utan DOM så att de går att testa. Sidor utanför flödet: #/fragor (frågekatalogen) ·
+ * #/om · #/matematik · #/forvaltning · #/nycklar · #/administration · #/prov/webgpu · #/arbetsbank/<omrade>.
+ * Flödet (#/ och #/p/<projekt>/<steg>) tolkas av flode/adress.ts. Äldre adresser omdirigeras (`omdirigering`).
  */
+import { tolkaFlodeAdress } from "./flode/adress.ts";
 import { PROJEKT_ID, type SidId } from "./sidor.ts";
 
 export type RuttSida = SidId | "arbetsbank" | "prov";
@@ -17,8 +20,6 @@ export function tolkaHash(hash: string): Rutt {
   const delar = sokvag.split("/").filter((d) => d.length > 0);
   const parametrar = new URLSearchParams(fraga);
   const sidor: Record<string, RuttSida> = {
-    projekt: "projekt",
-    oversikt: "projekt", // den gamla översikten är sammanslagen med projektet
     fragor: "fragor",
     om: "om",
     matematik: "matematik", // Matematik och forskning (kontomenyn)
@@ -37,8 +38,7 @@ export function tolkaHash(hash: string): Rutt {
 
 export const SIDTITLAR: Record<RuttSida, string> = {
   start: "Floden – se hur ett nytt hus påverkar sol och skyfall",
-  projekt: "Projekt – Floden",
-  fragor: "Utredningsfrågor – Floden",
+  fragor: "Frågekatalog – Floden",
   om: "Om beräkningarna – Floden",
   matematik: "Matematik och forskning – Floden",
   forvaltning: "Förvaltning – Floden",
@@ -70,4 +70,32 @@ export function kartaOmdirigering(hash: string): string | null {
   const vy = new URLSearchParams(fraga).get("vy");
   const bas = `#/p/${encodeURIComponent(projekt)}`;
   return vy ? `${bas}/resultat?vy=${encodeURIComponent(vy)}` : `${bas}/forslag`;
+}
+
+/**
+ * Alla äldre adresser som inte längre är egna sidor, och adresser som inte finns, leder till flödet:
+ * - `#/karta...`: se `kartaOmdirigering`.
+ * - `#/projekt/<id>` (och `#/oversikt/<id>`): projektets första steg i flödet, `#/p/<id>/forslag`
+ *   (samma mål som "Öppna projektet" i projektlistan). Utan id: projektlistan `#/`.
+ * - `#/fragor/<ref>`: frågekatalogen `#/fragor` (den äldre körsidan för enskilda frågor finns inte kvar).
+ * - en okänd adress: projektlistan `#/`.
+ * Ger null för adresser som är sidor eller flödessteg.
+ */
+export function omdirigering(hash: string): string | null {
+  const karta = kartaOmdirigering(hash);
+  if (karta) return karta;
+  const [sokvag = ""] = hash.replace(/^#/, "").split("?", 1);
+  const delar = sokvag.split("/").filter((d) => d.length > 0);
+  const forsta = delar[0];
+  if (forsta === "projekt" || forsta === "oversikt") {
+    if (!delar[1]) return "#/";
+    try {
+      return `#/p/${encodeURIComponent(decodeURIComponent(delar[1]))}/forslag`;
+    } catch {
+      return "#/";
+    }
+  }
+  if (forsta === "fragor" && delar.length > 1) return "#/fragor";
+  if (delar.length === 0 || tolkaFlodeAdress(hash)) return null;
+  return tolkaHash(hash).sida === "start" ? "#/" : null;
 }

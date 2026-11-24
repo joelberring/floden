@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { lasKartan, lasKartanText, LAGEN } from "./kartforklaring.ts";
 import { settKontoLage } from "./konto.ts";
-import { sidaForvaltning, sidaOm, sidaProjekt, sidaStart, sidhuvud, type SidId } from "./sidor.ts";
-import type { ModulInfo, OmradeSammanfattning, ProjektSvar, ProjektVy } from "./types.ts";
+import { flodeHuvudHtml, SKALSIDOR, type SkalSida } from "./flode/huvud.ts";
+import { sidaForvaltning, sidaOm } from "./sidor.ts";
+import type { ModulInfo, OmradeSammanfattning, ProjektVy } from "./types.ts";
 
 const moduler: ModulInfo[] = [
   { modul_id: "vatten", nr: "01", namn: "Vatten", beskrivning: "Skyfall.", status: "finns_i_demon", status_text: "Finns i demon", finns_i_karnan: true, analystyper: [], kartfarg: "#2b5d8c",
@@ -13,18 +14,6 @@ const moduler: ModulInfo[] = [
 ];
 
 const vy: ProjektVy = { id: "dagsljus-hojd", avsnitt: "dagsljus", rubrik: "Dagsljus: höjt hus", mattnamn: "Soltimmar på marken", korning_id: "k", fore_lager: "a", efter_lager: "b", skillnad_lager: "c", efter_namn: "Höjt hus", andring: "Ett hus höjs." };
-
-const projekt: ProjektSvar = {
-  id: "demokvarteret", namn: "Demokvarteret", undertitel: "påhittat kvarter", paahittat: true,
-  paahittat_text: "Kvarteret är påhittat.", beskrivning: "Fyra kvarter.",
-  andringar: [{ id: "hojd", rubrik: "Höjt hus", text: "Ett hus höjs." }],
-  avsnitt: [
-    { id: "dagsljus", rubrik: "Dagsljus", ingress: "Soltimmar.", kolumner: [{ id: "hojd", rubrik: "Höjt hus" }],
-      matt: [{ namn: "Mark som förlorar mer än 1 timme sol", enhet: "m²", decimaler: 0, varden: { hojd: 1456 } }],
-      teknisk: { fraga_id: "f", korning_id: "k", fraga_fil: "x.toml", losare: [{ visningsnamn: "Soltimmar på mark", namn: "dagsljus.soltimmar_mark", version: "2", kodversion: "abc" }], jobb: 54, fran_cache: 0, korda: 54, total_tid_s: 3, koordinatsystem: "SWEREF 99 18 00 (EPSG:3011)", manifest: "run.json" } },
-  ],
-  vyer: [vy],
-};
 
 const kontrollfall = [{ omrade_id: "A1_x", kod: "A1", namn: "Enkel sänka", grupp: "A", beskrivning: "Provfall." }] as unknown as OmradeSammanfattning[];
 
@@ -36,17 +25,13 @@ const PLATSHALLARE = /\[[A-Za-zÅÄÖåäö][^\]]*\]/;
 
 function alla(): Record<string, string> {
   const ut: Record<string, string> = {
-    start: sidaStart(moduler, true),
-    startUtanDemo: sidaStart(moduler, false),
-    startUtanModuler: sidaStart([], false),
-    projekt: sidaProjekt(projekt, moduler),
-    projektSaknas: sidaProjekt(null, moduler),
     om: sidaOm(moduler, kontrollfall),
     omTom: sidaOm([], []),
     forvaltning: sidaForvaltning(),
     karta: [...LAGEN.map(([l]) => lasKartan(vy, l)), lasKartanText(null, true)].join(" "),
   };
-  for (const s of ["start", "projekt", "fragor", "om", "forvaltning"] as SidId[]) ut[`huvud-${s}`] = sidhuvud(s);
+  ut["huvud-flode"] = flodeHuvudHtml("demokvarteret", "forslag");
+  for (const s of Object.keys(SKALSIDOR) as SkalSida[]) ut[`huvud-${s}`] = flodeHuvudHtml(null, null, s);
   return ut;
 }
 
@@ -59,52 +44,47 @@ test("inga hakparenteser som platshållare i några renderade sidor", () => {
   }
 });
 
-test("hälsning, förvaltning och organisationsväljare finns inte utan inloggning och kontodata", () => {
+test("förvaltning finns i menyn bara med inloggning och kontodata", () => {
   for (const lage of [{ lage: "av" } as const, { lage: "ut" } as const]) {
     settKontoLage(lage);
-    const start = sidaStart(moduler, true);
-    assert.doesNotMatch(start, /God morgon|Hej /);
-    assert.doesNotMatch(sidhuvud("start"), /Förvaltning|org-vaxlare/);
+    assert.doesNotMatch(flodeHuvudHtml(null, null), /Förvaltning|org-vaxlare/);
     assert.equal(sidaForvaltning(), "");
   }
   settKontoLage({ lage: "in", namn: "Anna Svensson", epost: "a@x.se", medlemskap: [], projekt: [] });
-  assert.doesNotMatch(sidhuvud("start"), /Förvaltning/);
+  assert.doesNotMatch(flodeHuvudHtml(null, null), /Förvaltning/);
   settKontoLage({ lage: "in", namn: "Anna Svensson", epost: "a@x.se", medlemskap: [{ organisation: "Staden", forvaltning: "SBK", roll: "medlem" }], projekt: [] });
-  assert.match(sidhuvud("start"), /Förvaltning/);
-  assert.match(sidaStart(moduler, true), /Hej Anna\./);
+  assert.match(flodeHuvudHtml(null, null), /href="#\/forvaltning"[^>]*>Förvaltning</);
   assert.match(sidaForvaltning(), /Staden/);
   settKontoLage({ lage: "av" });
 });
 
-test("samma meny på alla sidor, med de fyra punkterna", () => {
+/** Länkarna i kontomenyn (text) ur ett sidhuvud. */
+function menyLankar(html: string): string[] {
+  const meny = html.match(/<ul class="flode-meny"[\s\S]*?<\/ul>/)?.[0] ?? "";
+  return Array.from(meny.matchAll(/<a [^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>/g)).map((m) => `${m[2]} ${m[1]}`);
+}
+
+test("ett skal: samma sidhuvud och meny på alla sidor, med samma punkter", () => {
   settKontoLage({ lage: "av" });
-  const menyer = (["start", "projekt", "fragor", "om"] as SidId[]).map((s) =>
-    Array.from((sidhuvud(s).match(/<nav[\s\S]*<\/nav>/)?.[0] ?? "").matchAll(/<a href="([^"]+)"[^>]*>([^<]+)<\/a>/g)).map((m) => m[2]),
-  );
-  for (const m of menyer) assert.deepEqual(m, ["Start", "Projekt", "Utredningsfrågor", "Om beräkningarna"]);
+  const forvantat = ["Frågekatalog #/fragor", "Om beräkningarna #/om", "Matematik och forskning #/matematik"];
+  const huvuden = [flodeHuvudHtml(null, null), flodeHuvudHtml("demokvarteret", "resultat"), ...(Object.keys(SKALSIDOR) as SkalSida[]).map((s) => flodeHuvudHtml(null, null, s))];
+  for (const h of huvuden) {
+    assert.deepEqual(menyLankar(h), forvantat);
+    assert.match(h, /class="flode-ordmarke" href="#\/"/);
+    // Inga rester av det äldre sidhuvudet.
+    assert.doesNotMatch(h, /Utredningsfrågor|huvud-nav|meny-knapp|Start<|href="#\/projekt/);
+  }
 });
 
-test("projektsidan visar talen ur svaret och inga knappar utan funktion", () => {
+test("stegraden finns bara i ett projekt; på övriga sidor markeras sidan i menyn och står efter ordmärket", () => {
   settKontoLage({ lage: "av" });
-  const html = sidaProjekt(projekt, moduler);
-  assert.match(text(html), /1\s456 m²/);
-  assert.doesNotMatch(html, /disabled/);
-  assert.doesNotMatch(html, /Nytt projekt|Ny körning|Bjud in|Skapa på kartan|Byt förvaltning|Stämmer/);
-  // Statusen för luft och buller kommer ur modullistan, inte ur sidan.
-  assert.match(text(html), /33 av 80 officiella testfall godkända/);
-});
-
-test("startsidan: tre steg och ärliga statusar, inga motsägelser", () => {
-  settKontoLage({ lage: "av" });
-  const t = text(sidaStart(moduler, true));
-  assert.match(t, /Välj ett exempel/);
-  assert.match(t, /Se före och efter/);
-  assert.match(t, /Läs av värden/);
-  assert.doesNotMatch(t, /I DRIFT|Geometri|KOMMANDE|K20/i);
-});
-
-test("jargong i huvudflödet", () => {
-  settKontoLage({ lage: "av" });
-  const synligt = [sidaStart(moduler, true), sidaProjekt(projekt, moduler)].map((h) => text(h.replace(/<details[\s\S]*?<\/details>/g, " "))).join(" ");
-  assert.doesNotMatch(synligt, /K20|manifest|EPSG|dagsljus\.soltimmar_mark|\bjobb\b/i);
+  assert.match(flodeHuvudHtml("demokvarteret", "fragor"), /class="flode-stegrad"/);
+  assert.match(flodeHuvudHtml("demokvarteret", "fragor"), /aria-current="page"><span class="flode-steg-nr">3<\/span> Frågor/);
+  assert.doesNotMatch(flodeHuvudHtml(null, null), /flode-stegrad/); // projektlistan
+  for (const s of Object.keys(SKALSIDOR) as SkalSida[]) {
+    const h = flodeHuvudHtml(null, null, s);
+    assert.doesNotMatch(h, /flode-stegrad/, s);
+    assert.match(h, new RegExp(`/ ${SKALSIDOR[s]}</span>`), s);
+  }
+  assert.match(flodeHuvudHtml(null, null, "om"), /href="#\/om" aria-current="page">Om beräkningarna</);
 });

@@ -48,7 +48,7 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-steg:hover { background: #f1f0ea; }
 .flode-steg.aktivt { background: var(--fl-ink); color: #fff !important; font-weight: 500; }
 .flode-steg-nr { opacity: 0.75; }
-.flode-konto { position: relative; }
+.flode-konto { position: relative; margin-left: auto; }
 .flode-konto-knapp {
   width: 32px; height: 32px; border: 0; border-radius: 999px; background: #e9e7df;
   display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; cursor: pointer; padding: 0;
@@ -391,3 +391,7 @@ a.flode-knapp { display: inline-flex; align-items: center; justify-content: cent
   border-radius: 4px;
   box-sizing: border-box;
 }
+
+/* ---------- Frågekatalog (skrivskyddad lista) ---------- */
+.flode-fraga.las { cursor: default; }
+.flode-lankar { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }

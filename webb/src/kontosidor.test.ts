@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { adminTillaten, arbetsbankTillaten, kontoHuvudHtml, settKontoLage, tolkaKontoSvar } from "./konto.ts";
+import { adminTillaten, arbetsbankTillaten, settKontoLage, tolkaKontoSvar } from "./konto.ts";
+import { flodeHuvudHtml, type SkalSida } from "./flode/huvud.ts";
+import { rollRad } from "./flode/projektlogik.ts";
 import { adminOrganisationHtml, adminProjektHtml, mcpKommando, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
 import type { McpAvsnitt } from "./kontosidor-html.ts";
-import { sidaOm, sidaProjektUtanData, sidaStart, sidhuvud, type SidId } from "./sidor.ts";
-import type { AdminOrganisationDetalj, AdminProjektDetalj, ModulInfo, NycklarSvar, OmradeSammanfattning, ProjektListaPost } from "./types.ts";
+import { sidaOm } from "./sidor.ts";
+import type { AdminOrganisationDetalj, AdminProjektDetalj, ModulInfo, NycklarSvar, OmradeSammanfattning } from "./types.ts";
 
 const text = (html: string): string => html.replace(/<[^>]*>/g, " ").replace(/&[a-z#0-9]+;/g, " ");
 const avkoda = (html: string): string =>
@@ -14,11 +16,6 @@ const kontrollfall = [{ omrade_id: "A1_x", kod: "A1", namn: "Enkel sänka", grup
 
 const anvandare = (extra: Record<string, unknown> = {}) =>
   tolkaKontoSvar(200, { inloggning: "pa", konto: { namn: "Anna Svensson", epost: "a@x.se", ...extra } });
-
-const projekt: ProjektListaPost[] = [
-  { id: "demokvarteret", namn: "Demokvarteret", undertitel: "påhittat kvarter", paahittat: true, beskrivning: "x", roll: "utredare", finns: true },
-  { id: "abc123", namn: "Provområdet", undertitel: "Projekt", paahittat: false, beskrivning: "", roll: "lasare", finns: false },
-];
 
 test("arbetsbänken visas bara för superadmin, eller alltid när inloggning är av", () => {
   assert.equal(arbetsbankTillaten({ lage: "av" }), true);
@@ -36,54 +33,27 @@ test("administration för superadmin och organisationsadmin, inte för andra", (
   assert.equal(adminTillaten(anvandare({ superadmin: true })), true); // superadmin är alltid admin
 });
 
-test("sidhuvudets kontodel: länk till Nycklar, och Administration bara för admin", () => {
+test("sidhuvudets kontomeny: länk till Nycklar, och Administration bara för admin", () => {
   settKontoLage({ lage: "av" });
-  assert.doesNotMatch(sidhuvud("start"), /Nycklar|Administration/);
+  assert.doesNotMatch(flodeHuvudHtml(null, null), /Nycklar|Administration/);
   settKontoLage(anvandare());
-  assert.match(sidhuvud("start"), /href="#\/nycklar"[^>]*>Nycklar</);
-  assert.doesNotMatch(sidhuvud("start"), /Administration/);
+  assert.match(flodeHuvudHtml(null, null), /href="#\/nycklar"[^>]*>Nycklar</);
+  assert.doesNotMatch(flodeHuvudHtml(null, null), /Administration/);
   settKontoLage(anvandare({ admin: true }));
-  assert.match(kontoHuvudHtml(), /href="#\/administration"[^>]*>Administration</);
+  assert.match(flodeHuvudHtml(null, null), /href="#\/administration"[^>]*>Administration</);
   settKontoLage({ lage: "av" });
 });
 
 test("arbetsbänken finns varken i menyn eller på sidan Om beräkningarna", () => {
   for (const lage of [{ lage: "av" } as const, anvandare({ superadmin: true, admin: true })]) {
     settKontoLage(lage);
-    for (const s of ["start", "projekt", "karta", "fragor", "om", "nycklar", "administration"] as SidId[]) {
-      assert.doesNotMatch(sidhuvud(s), /arbetsb/i, s);
+    for (const s of [null, "fragor", "om", "nycklar", "administration"] as Array<SkalSida | null>) {
+      assert.doesNotMatch(flodeHuvudHtml(null, null, s), /arbetsb/i, String(s));
     }
     assert.doesNotMatch(sidaOm(moduler, kontrollfall), /arbetsb/i);
     assert.match(text(sidaOm(moduler, kontrollfall)), /Enkel sänka/); // kontrollfallen står kvar som text
   }
   settKontoLage({ lage: "av" });
-});
-
-test("startsidan för en inloggad visar projekten med länkar och ingen demotext", () => {
-  settKontoLage(anvandare());
-  const html = sidaStart(moduler, true, projekt);
-  assert.match(html, /Dina projekt/);
-  assert.match(html, /href="#\/projekt\/demokvarteret"/);
-  assert.match(html, /href="#\/projekt\/abc123"/);
-  assert.match(text(html), /Provområdet\s+Projekt · läsare/);
-  assert.doesNotMatch(text(html), /floden demo/);
-  // Bara projekt ur registret, inget demokvarter: ingen demotext och knappen går till projektet.
-  const utanDemo = sidaStart(moduler, false, [projekt[1]!]);
-  assert.doesNotMatch(text(utanDemo), /floden demo|påhittat kvarter/);
-  assert.match(utanDemo, /Öppna Provområdet/);
-  // Utan inloggning och utan projekt: som förut.
-  settKontoLage({ lage: "av" });
-  assert.doesNotMatch(sidaStart(moduler, true, projekt), /Dina projekt/);
-  assert.match(sidaStart(moduler, false, []), /floden demo/);
-  settKontoLage({ lage: "av" });
-});
-
-test("projekt utan beräkningar visas utan påhittat innehåll", () => {
-  const html = sidaProjektUtanData(projekt[1]!);
-  assert.match(text(html), /Provområdet/);
-  assert.match(text(html), /inga beräkningar än/);
-  assert.doesNotMatch(text(html), /demokvarter|floden demo/i);
-  assert.match(text(sidaProjektUtanData(null)), /inte tillgång/);
 });
 
 const nycklar = (paslagen: boolean): NycklarSvar => ({
@@ -309,13 +279,10 @@ test("delning: kryssrutan finns på projektets administrationssida och kan bara 
   assert.match(text(delad), /ledare läser/);
 });
 
-test("projektlistan visar vilka projekt som är delade med organisationen", () => {
-  settKontoLage(anvandare());
-  const lista: ProjektListaPost[] = [{ ...projekt[1]!, organisation_synlig: true, roll: "utredare" }, { ...projekt[1]!, id: "x", namn: "Privat" }];
-  const html = sidaStart(moduler, false, lista);
-  assert.match(text(html), /Provområdet\s+Projekt · utredare · delat med organisationen/);
-  assert.doesNotMatch(text(html), /Privat\s+Projekt · lasare · delat/);
-  assert.match(sidaProjektUtanData(lista[0]!), /Delat med organisationen/);
-  assert.doesNotMatch(sidaProjektUtanData(lista[1]!), /Delat med organisationen/);
-  settKontoLage({ lage: "av" });
+test("projektraden visar roll och delning med organisationen", () => {
+  assert.equal(rollRad({ roll: "lasare" }), "Din roll: läsare");
+  assert.equal(rollRad({ roll: "utredare", organisation_synlig: true }), "Din roll: utredare · delat med organisationen");
+  assert.equal(rollRad({ organisation_synlig: true }), "delat med organisationen");
+  assert.equal(rollRad({}), "");
+  assert.equal(rollRad({ roll: null }), "");
 });

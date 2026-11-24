@@ -136,35 +136,6 @@ export async function loggaUt(): Promise<void> {
   window.location.assign("/");
 }
 
-function esc(t: string): string {
-  return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-/** Kontodelen i sidhuvudet. Tom när inloggning är av (inget att visa, inga platshållare). */
-export function kontoHuvudHtml(): string {
-  const l = aktuellt;
-  if (l.lage === "ut") {
-    return `<a class="knapp knapp-svart" href="${esc(inloggningsAdress("/"))}" data-konto="logga-in">Logga in med Google</a>`;
-  }
-  if (l.lage === "in") {
-    const vem = l.namn || l.epost;
-    return `<a href="#/nycklar" data-konto="nycklar">Nycklar</a>
-      ${l.admin ? `<a href="#/administration" data-konto="administration">Administration</a>` : ""}
-      <span class="konto-inloggad" data-konto="inloggad">Inloggad som <strong>${esc(vem)}</strong></span>
-      <button type="button" class="knapp" data-konto="logga-ut">Logga ut</button>`;
-  }
-  return "";
-}
-
-/** Inloggningsknappen på startsidans hjälte (tom när ingen inloggning behövs). */
-export function kontoHjalteHtml(): string {
-  const l = aktuellt;
-  if (l.lage === "ut") {
-    return `<a class="knapp knapp-stor" href="${esc(inloggningsAdress("/"))}" data-konto="logga-in">Logga in med Google</a>`;
-  }
-  return "";
-}
-
 /**
  * Förvaltningssidan och förvaltningsväljaren visas bara när inloggning är på och kontoservern
  * har uppgifter om användaren (minst ett medlemskap). Annars finns de inte alls.

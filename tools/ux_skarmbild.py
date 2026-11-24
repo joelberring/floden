@@ -28,8 +28,8 @@ VYER = [
     ("08-administration", "/administration", 2500, True),
     ("09-matematik", "/matematik", 3000, False),
     ("10-webgpu", "/prov/webgpu", 2500, False),
-    ("11-projektsida", "/projekt/demokvarteret", 3000, False),
-    ("12-utredningsfragor", "/fragor", 3000, False),
+    ("11-projektsida", "/projekt/demokvarteret", 6000, False),  # omdirigeras till /p/demokvarteret/forslag (U3)
+    ("12-utredningsfragor", "/fragor", 3000, False),  # frågekatalogen (U3)
     ("13-om", "/om", 3000, False),
 ]
 ORG = {"id": "o-1", "namn": "Påhittad förvaltning", "din_roll": "organisationsadmin", "far_byta_namn": True,
