@@ -16,7 +16,7 @@ Kontrakt: K30, K32 och K33 i `DATAKONTRAKT.md`.
 | 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1), **dagsljus och sol** och **ekologi** (R2) |
 | 2 Publicerbart planunderlag | Bedömning mot bedömningsgrunder, metodnotis och ansvarig utredare, granskning och signering. | R3; fälten finns förberedda i K32/K33 (`bedomningsgrund`, `granskning`, `signering`, `skede`, `revision`) |
 
-Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall, dagsljus/sol och ekologi är klara på nivå 1; luft och buller återstår (avsnittet "Luft och buller: vad som saknas").
+Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall, dagsljus/sol och ekologi är klara på nivå 1; luft och buller återstår (avsnittet "Luft och buller: vad som finns och vad som saknas").
 
 ## Påstående, belägg och platshållare
 
@@ -270,23 +270,39 @@ Barrskogssamband (Nacka 2020, NMD), före och efter ett nytt hus, 12 frågor). E
 lägena; det källbaserade ECA-intervallet är 25 360 till 39 636 m² före och 25 289 till 39 494 m² efter. Det
 är ett påhittat NMD-lager: talen säger inget om verkliga arter.
 
-### Luft och buller: vad som saknas (R3, nivå 1)
+### Luft och buller: vad som finns och vad som saknas (R3, nivå 1)
 
-Luft och buller har **ingen skissrapport** (`rapport_skapa` ger ett tydligt fel). Skälet är kontrollerat:
+Luft och buller har **ingen skissrapport** (`rapport_skapa` ger ett tydligt fel med skäl). Det som gick att bygga är
+kopplingen till belägg för luft; rapportmallen för luft återstår.
 
-- `POST /api/analys/luft-mkn` och `POST /api/analys/buller-skarmar` är tillståndslösa analyser: de skapar
-  inget K0-manifest, ingen körning i körningsregistret och inga belägg via `FlodenTjanst`. Tabellbyggarna i
-  `rapport.r2_domaner` formaterar tal själva och får därför inte nå en rapport direkt.
-- Luftlösarna `luft.halt` och `luft.vindkomfort` är K20-körningar med K0-manifest, men demon har ingen luftkörning
-  (vägar som GeoPackage och väder som CSV saknas), inga mått för luft i `MATTKATALOG` och ingen jämförelse
-  med kartlager i luftdomänen som rapportens karta och kontroll kräver.
-- **Buller:** Nord2000-kärnan har `nord2000_konform = False` (testfallen 33 av 80 godkända, grupp N 2026-11-21) och är
-  spärrad för rapport (`docs/MATEMATIK.md`). Ingen bullerrapport skapas, och Nord2000-koden är orörd.
+**Byggt (2026-11-24).**
 
-Vad som behövs för luft (inte gjort): en K21-lösare som tar timvis lokal halt som indata och ger MKN-intervallet som
-`matvarden` i ett K0-manifest, mått i `MATTKATALOG` (storhet, tidsdefinition, statistik, upplösning), en luftdomän i
-`_AMNESDOMAN`/`AMNEN_NIVA1`, en demokörning och frågorna LU-xx i `FLODEN_FORMAGA`. Buller kräver dessutom att
-Nord2000 blir konformt (separat arbete).
+- Lösaren `luft.mkn` (K21, `src/karna/luft_losare.py`, `docs/LUFT.md` avsnitt 10.3): MKN-intervall för PM10 ur en
+  given timserie (CSV `tid,lokal_ug_m3`) och en uttryckligt angiven bakgrund. Ger en K20-körning med K0-manifest.
+- Mått i `MATTKATALOG` (`belaggskalla.LUFT_MATT`): `lagst_antal_dygn`, `hogst_antal_dygn`, `arsmedel_lagst_ug_m3`,
+  `arsmedel_hogst_ug_m3`, `p90_4_lagst_ug_m3`, `p90_4_hogst_ug_m3`, `bakgrund_ug_m3`, `grans_dygn_ug_m3`,
+  `max_dygn_ar_antal_dygn`, `antal_hela_dygn` och faktorgränserna. Adress: `matvarde.<analys>.<scenario>.<mått>`.
+  Enheterna `µg/m³` och `dygn` följer av namnens suffix (`belagg.enhet_for`, additivt).
+- `rapport.r2_domaner.bygg_mkn_tabell_fran_belagg`: MKN-tabell där varje tal är ett belägg (fel lösare eller saknat
+  belägg ger `PastaendeFel`). Tabellen säger bara om intervallet ligger helt under, helt över eller korsar högsta antalet
+  dygn; nivå 1 är sållning, så den skriver inte "klarar MKN". Övriga byggare i modulen tar beräkningsobjekt direkt och är
+  inte rapportväg.
+- Tester: `tests/karna/test_luft_mkn.py` (känt svar), `tests/rapport/test_luft_belagg.py` (belägg via `FlodenTjanst`).
+
+**Saknas för en luftrapport.**
+
+- Timserien för lokalt haltbidrag kommer inte ur Floden: `luft.halt` ger bara årsmedel. Serien måste komma ur ett annat
+  verktyg, och bakgrunden är en källbelagd siffra som frågan anger. Intervallet är en känslighet för två faktorer.
+- Ingen rapportmall: `AMNEN_NIVA1`/`_AMNESDOMAN`, ämnestext, LU-01 till LU-15 i `FLODEN_FORMAGA`, en luftkontroll i
+  `skisskontroll` (nivå 1 får inte säga att något klarar normen), ett referensflöde och en demokörning med en påhittad serie.
+  Rapportens kartor och jämförelser är rasterbaserade; luft-MKN har ingen karta.
+- Luft-MKN före och efter förutsätter två serier (en per läge) från samma externa modell.
+- Den tillståndslösa `POST /api/analys/luft-mkn` ger fortfarande inga belägg; rapportvägen är lösaren.
+
+**Buller är spärrat.** Nord2000-kärnan har `nord2000_konform = False` (testsvit N ej godkänd; se STATUS.md) och är spärrad
+för rapport (`docs/MATEMATIK.md`). `rapport.r2_domaner.buller_spar()` läser kärnans flagga och ger skälet som
+`rapport_skapa` visar; spärren hävs inte här. Bullerskärmsvalet (CELF, `buller.optimering`) tar nivåer som indata och har
+ingen körning med belägg. Nord2000-koden är orörd.
 
 ## Inställningar: språkprofil och layout
 

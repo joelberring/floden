@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Rapporter R3-underlag: deterministiska tabeller för luft och buller (och skyfallets fältlista).
 
 Tabellbyggarna gör Flodens beräkningsresultat (`sankgraf.bifurkation`, `luft.kanslighet`,

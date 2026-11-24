@@ -954,7 +954,7 @@ def _registrera_rapportverktyg(
         "rapport_skapa",
         "Skapar ett skissunderlag (nivå 1: sållning, inte bedömning mot krav) för ett ämne ("
         "'skyfall', 'dagsljus' eller 'ekologi', se bestallning_skapa; luft och buller har ingen skissrapport än: "
-        "inga luft- eller bullerkörningar ger belägg, och Nord2000 är inte konformt) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
+        "luft har lösaren luft.mkn men ingen mall, och buller är spärrat eftersom Nord2000 inte är konformt) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
         "skillnad; samma takmask som webben), hämtar metodernas valideringsstatus och väljer frågor "
         "ur katalogen. Svaret listar beläggsadresser du kan använda i pastaende_lagg_till.",
     )

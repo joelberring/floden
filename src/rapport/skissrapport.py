@@ -692,12 +692,16 @@ class RapportTjanst:
             )
         if amne not in AMNEN_NIVA1:
             extra = ""
-            if amne in ("luft", "buller"):
+            if amne == "luft":
                 extra = (
-                    " Luft och buller har inga körningar med belägg via FlodenTjanst än "
-                    "(docs/RAPPORTER.md, avsnittet om luft och buller)"
-                    + ("; Nord2000 är inte konformt och spärrat för rapport." if amne == "buller" else ".")
+                    " Luft har lösaren luft.mkn med belägg för MKN-intervallet (docs/RAPPORTER.md, avsnittet "
+                    "om luft och buller), men ingen rapportmall, inga LU-frågor med belägg och ingen "
+                    "demokörning än."
                 )
+            elif amne == "buller":
+                from rapport.r2_domaner import buller_spar
+
+                extra = f" Spärrat: {buller_spar() or 'inget skäl kvar; rapportmall saknas'}"
             raise RapportFel(
                 f"Ämnet '{amne}' har ingen skissrapport än. Finns: {', '.join(AMNEN_NIVA1)} "
                 f"(ordning: skyfall, dagsljus/sol, ekologi, luft, buller).{extra}"

@@ -6,8 +6,8 @@
 - `vatten.dynamik`: global; händelsestyrd dynamik (T03) med takvatten och avtappning.
 - `luft.vindkomfort`, `luft.halt`: globala lösare på K1 v2 (`karna/luft_losare.py`; luftdelen är
   MIT).
-- `luft.mkn`: global; monotont MKN-intervall (PM10) ur en given timserie och en bakgrund (`karna/luft_losare.py`,
-  ingen spridningsberäkning; ger belägg för rapporttal).
+- `luft.mkn`: global; monotont MKN-intervall (PM10) ur en given timserie och en bakgrund
+  (`karna/luft_losare.py`; ingen spridningsberäkning; ger belägg för rapporttal).
 - `ekologi.konnektivitet`: global; ekologisk konnektivitet (`karna/ekologi_losare.py`, K44/K45).
 - `geometri.lutning`: rutvis med kort påverkansradie; lutning i grader ur markmodellen.
   Visar och testar den lokala omräkningen.

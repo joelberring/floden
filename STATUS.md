@@ -496,3 +496,8 @@ Exempel: `docs/exempel/skissunderlag_ekologi_demo.pdf` och `.docx` (12 sidor, gr
 Mätt: 6 nya tester i `tests/ekologi/test_geografi_losare.py` och 23 i `tests/rapport/test_ekologi.py`; se PR för hela sviten.
 Öppet: geografivägen är inte körd mot en riktig geografi (syntetiskt lager); ekologifrågorna ska granskas (AI-stöd); dPC per fläck och tal per flaskhals redovisas inte i rapporten; luft och buller enligt ovan; strömtäthetens enhet sätts bara i rapportkartan (webbens etikett oförändrad).
 Nästa: K21-lösare för luft-MKN med belägg och demokörning; Nord2000-konformitet innan bullerrapport; `POST` för rapporter i webben (`skapa-i-webben`).
+## 2026-11-24 – R2e – Fortsättning: luft.mkn med belägg, buller spärrat, typfix (agent)
+Gjort: Tog över förra agentens ocommittade ekologiarbete (granskat; behölls). Rättade mypy (`ekologibelagg`) och testet `test_fragekatalogen_och_filter` (EK-frågorna ingår i formågan). Nytt: lösaren `luft.mkn` (K21, MKN-intervall PM10 ur given timserie och uttryckligt angiven bakgrund), mått i `MATTKATALOG` (`LUFT_MATT`), enhetssuffixen `_ug_m3` och `_dygn` i `belagg.enhet_for`, `bygg_mkn_tabell_fran_belagg` och `buller_spar` i `rapport.r2_domaner`, felmeddelandena för `rapport_skapa` (luft, buller). Ekologiexemplet byggt om (samma tal, nytt datum). Nord2000-koden orörd.
+Mått i ekologiexemplet: ECA 25 360 m² före och 25 290 m² efter (−71 m², −0,28 %), PC 0,00268 och 0,00266, 16 fläckar. Luft: lagst/hogst antal dygn, årsmedel, 90,4-percentil och parametrar kommer med som belägg; ingen luftrapport.
+Öppet: luftrapportmall (se `docs/RAPPORTER.md`), luft före/efter kräver två externa serier, buller spärrat.
+Nästa: luftmall och LU-frågor; Nord2000-konformitet; `POST` för rapporter i webben (`skapa-i-webben`).

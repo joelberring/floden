@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Luftlösare för kärnan (K21) som räknar på K1 v2-rutor: `luft.vindkomfort` och `luft.halt`.
 
 Licensgräns: den här filen ligger i kärnan (GPL v3) och importerar luftdelen (MIT, `src/luft/`),

@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """`luft.mkn` (K21): monotont MKN-intervall ur en given timserie, med känt svar och belägg i K0-manifestet.
 
 Serien är konstruerad så att svaret går att räkna för hand: bakgrund 10 µg/m³ och lokalt bidrag L ger
