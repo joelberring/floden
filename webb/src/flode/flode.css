@@ -140,7 +140,7 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-flikar button[aria-selected="true"] { border-bottom-color: var(--fl-ink); color: var(--fl-ink); font-weight: 600; }
 
 /* ---------- 1 Projekt ---------- */
-.flode-listhuvud { display: flex; align-items: center; justify-content: space-between; }
+.flode-listhuvud { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .flode-knapp.liten { height: 36px; }
 .flode-rader { display: flex; flex-direction: column; gap: 16px; }
 .flode-projekt {
@@ -150,11 +150,14 @@ body[data-sida="flode"] a:hover { color: #000; }
 .flode-projekt img, .flode-miniatyr-tom { width: 64px; height: 64px; flex: 0 0 auto; object-fit: cover; border-radius: 4px; background: #eeece4; }
 .flode-projekt-text { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 0; }
 .flode-projekt-namn { font-weight: 600; font-size: 14px; }
+.flode-projekt-handling { font-weight: 500; text-decoration: underline; }
+.flode-projekt:hover { border-color: var(--fl-ink); }
+.flode-listhuvud code { font-size: 12px; }
 .flode-not { margin: auto 0 0; color: var(--fl-mute); font-size: 13px; line-height: 1.5; }
 .flode-not.framhav { color: var(--fl-ink); font-weight: 500; }
 .flode-kartkort {
   position: absolute; left: 24px; bottom: 24px; z-index: 2; padding: 10px 14px; background: #fff; border: 1px solid var(--fl-line);
-  border-radius: 8px; font-size: 13px; display: flex; gap: 16px; max-width: calc(100% - 48px);
+  border-radius: 8px; font-size: 13px; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; max-width: calc(100% - 48px);
 }
 .flode-kartkort-hoger { left: auto; right: 24px; }
 
