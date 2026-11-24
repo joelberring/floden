@@ -90,8 +90,10 @@ class Hojdmodell:
         a = ruta.affine_parametrar
         dst_transform = Affine(*a)
         ut = np.full(ruta.form_rc, np.nan, dtype=np.float32)
+        tackt = np.zeros(ruta.form_rc, dtype=bool)  # celler inom någon plattas yttergräns (oavsett nodata)
         for pl in sorted(plattor, key=lambda p: (p.bounds[1], p.bounds[0])):
             buf = np.full(ruta.form_rc, np.nan, dtype=np.float32)
+            ettor = np.zeros(ruta.form_rc, dtype=np.float32)
             with rasterio.open(pl.sokvag) as r:
                 reproject(
                     source=rasterio.band(r, 1),
@@ -102,24 +104,27 @@ class Hojdmodell:
                     dst_nodata=float("nan"),
                     resampling=Resampling.bilinear,
                 )
+                reproject(
+                    source=np.ones((r.height, r.width), dtype=np.float32),
+                    destination=ettor,
+                    src_transform=r.transform,
+                    src_crs=r.crs if r.crs is not None else f"EPSG:{pl.epsg}",
+                    dst_transform=dst_transform,
+                    dst_crs="EPSG:3011",
+                    src_nodata=0.0,
+                    dst_nodata=0.0,
+                    resampling=Resampling.nearest,
+                )
+            tackt |= ettor > 0.5
             tom = np.isnan(ut)
             ut[tom] = buf[tom]
         varn: list[str] = []
         # Kommunala markmodeller (t.ex. Göteborgs 2022, "bara mark") saknar värde under byggnader och
         # ibland i vatten. Hålen fylls med avståndsviktad interpolation från kanterna (GDAL
-        # FillNodata), högst FYLL_MAX_M från närmaste värde; det som ligger längre bort, och hål som når
-        # rasterkanten, förblir NaN.
-        hal = np.isnan(ut)
-        if hal.any() and not hal.all():
-            # Bara inneslutna hål fylls: hål som når rasterkanten (utanför plattorna) förblir NaN.
-            from scipy import ndimage
-
-            etiketter, _ = ndimage.label(hal)
-            kant = np.unique(
-                np.concatenate([etiketter[0, :], etiketter[-1, :], etiketter[:, 0], etiketter[:, -1]])
-            )
-            hal = hal & ~np.isin(etiketter, kant[kant > 0])
-        if hal.any():
+        # FillNodata), högst FYLL_MAX_M från närmaste värde. Bara celler inom plattornas yttergräns fylls
+        # (nodata i plattan, även vid rutans kant); utanför plattorna förblir NaN.
+        hal = np.isnan(ut) & tackt
+        if hal.any() and not np.isnan(ut).all():
             from rasterio.fill import fillnodata
 
             steg = max(abs(float(a[0])), 1e-9)

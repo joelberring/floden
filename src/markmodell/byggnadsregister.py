@@ -265,7 +265,14 @@ def markhojd_under_byggnad(
     rad, kol = ruta.koordinat_till_cell(cx, cy)
     rad = min(max(rad, 0), terrang_z.shape[0] - 1)
     kol = min(max(kol, 0), terrang_z.shape[1] - 1)
-    return float(terrang_z[rad, kol])
+    v0 = float(terrang_z[rad, kol])
+    if np.isfinite(v0):
+        return v0
+    for marg in (2, 5, 10, 25, 50):
+        ram = terrang_z[max(rad - marg, 0) : rad + marg + 1, max(kol - marg, 0) : kol + marg + 1]
+        if np.isfinite(ram).any():
+            return float(np.nanmedian(ram))
+    return v0
 
 
 def hojdsatt_byggnader(
@@ -326,6 +333,9 @@ def hojdsatt_byggnader(
                 "två identiska polygoner). Använd en källa per byggnad."
             )
         mark = markhojd_under_byggnad(terrang_z, ruta, kand.polygon, kand.hal)
+        if not np.isfinite(mark):
+            varningar.append(f"{bid}: ingen markhöjd under eller kring byggnaden; utelämnad")
+            continue
         if traff is None:
             varningar.append(f"{bid}: ingen cellcentrum i byggnaden; markhöjd från närmaste cell")
 
