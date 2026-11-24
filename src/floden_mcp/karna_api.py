@@ -103,6 +103,15 @@ def _kort_tid(t: str | None) -> str | None:
     return t
 
 
+def _ett_av(scenario: str | None, fraga: str | None, lage_idag: bool) -> None:
+    if (scenario is not None) + (fraga is not None) + bool(lage_idag) != 1:
+        raise FlodenFel(
+            "Ange antingen scenario (ett sparat scenario), fraga (ref) eller lage_idag=true "
+            "(projektets befintliga läge utan förslag).",
+            "fel_indata",
+        )
+
+
 class FlodenTjanst:
     """Alla Flodens MCP-funktioner som vanliga metoder (se modulens beskrivning)."""
 
@@ -1153,12 +1162,34 @@ class FlodenTjanst:
         analyser: Sequence[str] | None = None,
         avtappning_mm_h: float | None = None,
         detalj: bool = False,
+        lage_idag: bool = False,
     ) -> dict[str, Any]:
         """Vad en körning skulle räkna om och vad som redan finns i cachen (K22). Kör inget."""
-        if (scenario is None) == (fraga is None):
-            raise FlodenFel(
-                "Ange antingen scenario (ett sparat scenario) eller fraga (ref).", "fel_indata"
-            )
+        _ett_av(scenario, fraga, lage_idag)
+        if lage_idag:
+            self._kravs_projekt(projekt)
+            valda = self._valda_analyser(projekt, analyser)
+            with _oversatt():
+                p = self.kv.planera_lage_idag(projekt, valda, avtappning_mm_h)
+            return {
+                "projekt": projekt,
+                "lage": "idag",
+                "valda_analyser": valda,
+                "fragor": [
+                    {
+                        "mall": f["mall"],
+                        "ref": f["ref"],
+                        "fraga_id": f["fraga_id"],
+                        "analyser": f["analyser"],
+                        "plan": self._plan_sammanfattning(f["plan"], detalj),
+                        "uppskattad_tid_s": f["uppskattad_tid_s"],
+                        "tid_text": f["tid_text"],
+                    }
+                    for f in p["fragor"]
+                ],
+                "uppskattad_tid_s": p["uppskattad_tid_s"],
+                "regel": "Läget idag: bara scenariot fore, ingen jämförelse. Cache (K22): jobb med oförändrad nyckel räknas inte om.",
+            }
         if fraga is not None:
             with _oversatt():
                 plan = self.fragor.planera_fraga(fraga)
@@ -1219,12 +1250,23 @@ class FlodenTjanst:
         fraga: str | None = None,
         analyser: Sequence[str] | None = None,
         avtappning_mm_h: float | None = None,
+        lage_idag: bool = False,
     ) -> dict[str, Any]:
         """Startar körningen i bakgrunden (som webben) och returnerar körnings-id direkt."""
-        if (scenario is None) == (fraga is None):
-            raise FlodenFel(
-                "Ange antingen scenario (ett sparat scenario) eller fraga (ref).", "fel_indata"
-            )
+        _ett_av(scenario, fraga, lage_idag)
+        if lage_idag:
+            self._kravs_projekt(projekt)
+            valda = self._valda_analyser(projekt, analyser)
+            with _oversatt():
+                k = self.kv.kor_lage_idag(projekt, valda, avtappning_mm_h)
+            return {
+                "projekt": projekt,
+                "lage": "idag",
+                "korningar": [
+                    self._start_post(f["korning"], mall=f["mall"]) for f in k["fragor"]
+                ],
+                "nasta_steg": "Anropa vanta med körnings-id, sedan resultat_sammanfattning (bara före; ingen jämförelse).",
+            }
         if fraga is not None:
             with _oversatt():
                 svar = self.fragor.starta_korning(fraga, projekt)

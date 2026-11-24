@@ -293,3 +293,24 @@ def test_belagg_sager_projektets_avgransning_nar_polygon_finns(v: Varld, monkeyp
     assert efter.mottagare == "inom projektets avgränsning (polygon)"
     assert efter.namnare == "mark inom projektets avgränsning (polygon); byggnadernas tak undantagna"
     assert efter.varde == fore.varde  # texten ändras, inte talet (demon har ingen polygon att räkna på)
+
+
+def test_lage_idag_ar_projektets_egen_men_rapporten_kraver_jamforelse(v: Varld) -> None:
+    """U5a: en körning av läget idag märks så i underlaget, men väljs aldrig av sig själv och nekas tydligt som rapportunderlag."""
+    import time
+
+    kv = v.app.kartverktyg
+    k = kv.kor_lage_idag(DEMO, ["vatten.skyfall"])
+    kid = k["fragor"][0]["korning"]["korning_id"]
+    slut = time.monotonic() + 600
+    while v.app.fragor.korning_status(kid)["status"] not in ("klar", "fel"):
+        assert time.monotonic() < slut
+        time.sleep(0.3)
+    assert v.app.fragor.korning_status(kid)["status"] == "klar"
+    assert v.app.korningsunderlag(kid)["slag"] == "lage_idag"
+    url = f"/api/projekt/{DEMO}/rapporter"
+    per = {a["id"]: a for a in v.json(v.anna, "GET", url)[1]["amnen"]}
+    assert kid not in {x["korning_id"] for x in per["skyfall"]["korningar"]}
+    assert per["skyfall"]["forval_slag"] in ("demo", "forslag", "egen")
+    s, e = v.json(v.anna, "POST", url, {"amne": "skyfall", "korning_id": kid})
+    assert s == 409 and "läget idag" in e["fel"] and "steg 3" in e["fel"]
