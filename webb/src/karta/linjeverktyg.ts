@@ -11,7 +11,7 @@
  * historiken är PlanDok (K50), och en figur har en roll i beräkningen via sitt lager.
  */
 import { foljKant, type FoljLinje } from "./foljkant.ts";
-import { avstand, sjalvkorsande, yta, type Punkt } from "./geom.ts";
+import { avstand, begransadRackvidd, sjalvkorsande, yta, type Punkt } from "./geom.ts";
 import { flyttaPunkt, forenkla, infogaPunkt, klipp, kopiaP, langd, mittpunkter, narmastPunkt, narmastSida, slaIhop, taBortPunkt, vand, type P3 } from "./linje.ts";
 import { forvalEgenskaper } from "./egenskaper.ts";
 import type { Figur, PlanDok } from "./plandok.ts";
@@ -261,6 +261,16 @@ export class Linjeverktyg {
     this.signalera();
   }
 
+  /** Pekaren lämnar kartan: förhandsvisningen (punkt, fäst, följ kant, hjälplinje) tas bort; utkastet och pågående drag behålls. */
+  lamnar(): void {
+    if (this.drag) return;
+    this.mark = null;
+    this.fast = null;
+    this.lasLinje = null;
+    this.foljForhand = null;
+    this.signalera();
+  }
+
   dubbelklick(verktyg: string): void {
     if (verktyg === "linje" || verktyg === "yta") this.avsluta(verktyg);
   }
@@ -478,8 +488,8 @@ export class Linjeverktyg {
     const f = this.figur(this.val);
     if (!f || e.ctrl || !this.dok.arFigurRedigerbar(f)) return false;
     const mpp = this.miljo.meterPerPx();
-    const rad = fastRackvidd(e.pekare, mpp);
     const sluten = f.typ === "yta";
+    const rad = sluten && inuti(p, f.punkter) ? begransadRackvidd(fastRackvidd(e.pekare, mpp), f.punkter) : fastRackvidd(e.pekare, mpp);
     const i = narmastPunkt(f.punkter, p, rad);
     if (i !== undefined) {
       this.markera(f.id, i);

@@ -15,7 +15,7 @@
  * avstår klienten bara från att skapa en uppenbart självkorsande form och visar skissens yta.
  */
 import { andraHornVid, flyttaHorn, flyttaRing, infogaHorn, infogaPunkter, narmastHorn } from "./formedit.ts";
-import { avstand, btaUppskattning, sjalvkorsande, yta, type Punkt, type Ring } from "./geom.ts";
+import { avstand, begransadRackvidd, btaUppskattning, punktIRinger, sjalvkorsande, yta, type Punkt, type Ring } from "./geom.ts";
 import { traffAvstand, traffTest, type HusForm } from "./hit.ts";
 import type { PlanDok } from "./plandok.ts";
 import { formatera } from "../tal.ts";
@@ -92,6 +92,8 @@ export const TANGENTER = {
 
 const ATT_TRAFFA_PX = 6;
 const HORN_PX = 9;
+/** Handtagens träffyta i meter: 9 px med mus, fingerräckvidden (22 px) med finger och penna. */
+const hornRack = (pekare: string, mpp: number): number => (pekare === "touch" || pekare === "pen" ? fastRackvidd(pekare, mpp) : HORN_PX * mpp);
 
 type Drag = { slag: "horn"; id: string; index: number; fore: Ring } | { slag: "hus"; id: string; fore: Ring; start: Punkt; ankare: number };
 
@@ -289,6 +291,19 @@ export class Ritverktyg {
     this.signalera();
   }
 
+  /**
+   * Pekaren lämnar kartan (musen går till verktygsraden mitt i en ritning). Tidigare skickades NaN som position, vilket gav
+   * "Längd NaN m" och ett fel i kartan (webbläsarprovet); nu tas bara förhandsvisningen bort.
+   */
+  lamnar(): void {
+    if (this.drag || this.linje.drar) return;
+    this.linje.lamnar();
+    this.mark = null;
+    this.fast = null;
+    this.lasLinje = null;
+    this.signalera();
+  }
+
   klick(p: Punkt, e: Pekare): void {
     if (this.verktyg === "hus") {
       this.klickaHus(p, e);
@@ -318,7 +333,7 @@ export class Ritverktyg {
     if (this.verktyg === "laggtill" || this.verktyg === "tabort" || (this.verktyg === "valj" && e.ctrl)) {
       if (this.val?.ny && valdRing) {
         const lage = this.verktyg === "laggtill" ? "LAGG_TILL" : this.verktyg === "tabort" ? "TA_BORT" : "ENDERA";
-        const r = andraHornVid(valdRing, p, HORN_PX * mpp, lage);
+        const r = andraHornVid(valdRing, p, hornRack(e.pekare, mpp), lage);
         if (r) {
           if (sjalvkorsande(r.ring)) this.miljo.meddela({ typ: "fel", text: "Husets kanter skulle korsa varandra. Hörnet ändrades inte." });
           else {
@@ -327,7 +342,7 @@ export class Ritverktyg {
           }
           return;
         }
-        if (this.verktyg === "tabort" && narmastHorn(valdRing, p, HORN_PX * mpp)) {
+        if (this.verktyg === "tabort" && narmastHorn(valdRing, p, hornRack(e.pekare, mpp))) {
           this.miljo.meddela({ typ: "info", text: "Ett hus behöver minst tre hörn. Ta bort hela huset i stället." });
           return;
         }
@@ -452,12 +467,13 @@ export class Ritverktyg {
     const ring = this.ringAv(this.val);
     if (!ring) return false;
     const mpp = this.miljo.meterPerPx();
-    const horn = narmastHorn(ring, p, HORN_PX * mpp);
+    const rackH = punktIRinger(p, [ring]) ? begransadRackvidd(hornRack(e.pekare, mpp), ring) : hornRack(e.pekare, mpp);
+    const horn = narmastHorn(ring, p, rackH);
     if (horn) {
       this.drag = { slag: "horn", id: this.val.id, index: horn.index, fore: ring };
       return true;
     }
-    const mitt = infogaPunkter(ring).find((m) => avstand(m.at, p) <= HORN_PX * mpp);
+    const mitt = infogaPunkter(ring).find((m) => avstand(m.at, p) <= rackH);
     if (mitt) {
       const ny = infogaHorn(ring, mitt.index, mitt.at);
       if (ny) {

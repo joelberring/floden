@@ -26,7 +26,7 @@ import { wgs84TillSweref } from "../sweref.ts";
 import { fyndUtbredning, skarvFigurer, skarvPanelHtml, tillampaAtgard, utfallText, type AtgardSvar, type Skarvar } from "../karta/skarv.ts";
 import { monteraRitlagerpanel } from "../karta/ritlagerpanel.ts";
 import { monteraLagerpanel } from "../karta/lagerpanel.ts";
-import { TOM_RITVY, type RitVy } from "../karta/kartmotor.ts";
+import { TOM_RITVY, arGrovPekare, type RitVy } from "../karta/kartmotor.ts";
 import { FORVALD_HOJD_M, Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "../karta/ritverktyg.ts";
 import { andraFalt, etikettFor, faltFor, lutningFranHornhojder, tolkaTal, type Falt } from "../karta/egenskaper.ts";
 import { KOMMANDON, LAGRINGSNYCKEL, lasTangenter, medBindning, sparaTangenter, tangentEtikett, bindningAv, type Kommando } from "../karta/tangenter.ts";
@@ -69,6 +69,20 @@ const TAKHJALP: Record<string, string> = {
 
 function hjalpText(v: Ritverktyg): string {
   const u = v.linje.utkast.length;
+  if (arGrovPekare()) {
+    switch (v.verktyg) {
+      case "hus":
+        return v.utkast.length === 0 ? "Tryck husets första hörn i kartan." : v.utkast.length < 3 ? "Tryck nästa hörn. Backa en punkt tar bort senaste." : "Tryck första hörnet igen eller Klar för att avsluta.";
+      case "linje":
+        return u === 0 ? "Tryck linjens första punkt. Den fäster mot hörn och kanter." : "Tryck nästa punkt. Klar avslutar, Följ kant följer en kant.";
+      case "yta":
+        return u === 0 ? "Tryck ytans första hörn. Den fäster mot hörn och kanter." : "Tryck hörnen. Tryck första hörnet igen eller Klar för att sluta ytan.";
+      case "valj":
+        return "Tryck på ett hus, en linje eller en yta för att markera. Håll fingret stilla mot den markerade figuren (eller ett handtag) för att flytta den.";
+      default:
+        break;
+    }
+  }
   switch (v.verktyg) {
     case "hus":
       if (v.utkast.length === 0) return "Klicka husets första hörn i kartan.";
@@ -142,6 +156,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" data-v="fast" aria-pressed="true" title="Fäst mot hörn och kanter (${TANGENTER.fast})">Fäst</button>
           <button type="button" data-v="foljkant" aria-pressed="false" title="Följ kant: nya punkter följer kanten de startar på (${TANGENTER.foljkant}, eller håll Skift)">Följ kant</button>
           <button type="button" data-v="rat" aria-pressed="false" title="Rät vinkel (${TANGENTER.ratVinkel}, eller håll Ctrl)">Rät vinkel</button>
+          <span class="flode-verktyg-skil" aria-hidden="true"></span>
+          <button type="button" data-v="klar" title="Avsluta det du ritar (Enter): behövs på pekskärm, där dubbeltryck är opålitligt" disabled>Klar</button>
+          <button type="button" data-v="backa" title="Ta bort den senaste punkten (Backsteg)" disabled>Backa en punkt</button>
+          <button type="button" data-v="avbryt" title="Avbryt det du ritar (Esc)" disabled>Avbryt</button>
           <span class="flode-verktyg-skil" aria-hidden="true"></span>
           <button type="button" data-v="angra" title="Ångra (${TANGENTER.angra})" disabled>Ångra</button>
           <button type="button" data-v="goraom" title="Gör om (Skift+${TANGENTER.angra})" disabled>Gör om</button>
@@ -281,7 +299,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       dubbelklick: () => verktyg.dubbelklick(),
       ned: (pt, e) => verktyg.ned(pt, e),
       upp: () => verktyg.upp(),
-      lamnar: () => verktyg.ror({ x: Number.NaN, y: Number.NaN }, { pekare: "mouse", ctrl: false, shift: false, alt: false }),
+      lamnar: () => verktyg.lamnar(),
     });
     motor.settByggnadStil(bas.byggnadStil());
     motor.settPlanStil(bas.planStil());
@@ -400,6 +418,11 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         const b = knapp(k);
         if (b) b.disabled = !verktyg.linje.val;
       }
+      const ritar = verktyg.utkast.length > 0 || verktyg.linje.utkast.length > 0;
+      for (const k of ["klar", "backa", "avbryt"]) {
+        const b = knapp(k);
+        if (b) b.disabled = !ritar;
+      }
       const angra = knapp("angra");
       if (angra) angra.disabled = !dok.kanAngra();
       const goraOm = knapp("goraom");
@@ -432,6 +455,15 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       });
     }
     knapp("bort")?.addEventListener("click", () => verktyg.taBortVal());
+    // Klar, Backa en punkt och Avbryt är Enter, Backsteg och Esc som knappar (pekskärm utan tangentbord).
+    const tangentKnapp = (id: string, key: string): void =>
+      knapp(id)?.addEventListener("click", () => {
+        meddelande = null;
+        verktyg.tangent({ key, code: key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false });
+      });
+    tangentKnapp("klar", "Enter");
+    tangentKnapp("backa", "Backspace");
+    tangentKnapp("avbryt", "Escape");
     knapp("fast")?.addEventListener("click", () => verktyg.vaxlaFast());
     knapp("rat")?.addEventListener("click", () => verktyg.vaxlaRatVinkel());
     knapp("angra")?.addEventListener("click", () => verktyg.angra());

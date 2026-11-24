@@ -128,6 +128,16 @@ const OVERLAGER = [
   "rit-punkter",
 ];
 
+/** Pekskärm (grov pekare): större handtag och hållning för att flytta. */
+export function arGrovPekare(): boolean {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+}
+
+/** Hur länge fingret ska hållas stilla mot en figur innan den går att flytta (ms). */
+export const HALL_MS = 450;
+/** Hur långt fingret får röra sig under hållningen innan det räknas som panorering (px). */
+export const HALL_TOLERANS_PX = 10;
+
 export class Kartmotor {
   readonly karta: maplibregl.Map;
   private lager: RasterLager[] = [];
@@ -239,6 +249,51 @@ export class Kartmotor {
     };
     this.slappLyssnare = slapp;
     this.karta.on("mouseup", slapp);
+    // Håll för att flytta (R7): ett finger som hålls stilla mot en markerad figur tar tag i den (hörn, mittpunkt eller hela figuren);
+    // därefter flyttas den med fingret i stället för att kartan panoreras. Rör fingret sig före hållningen panorerar kartan som vanligt.
+    let hallTimer: number | null = null;
+    let hallStart: { x: number; y: number } | null = null;
+    let hallDrar = false;
+    const touchPekare = (): Pekare => ({ pekare: "touch", ctrl: false, shift: false, alt: false });
+    const rensaHall = (): void => {
+      if (hallTimer !== null) window.clearTimeout(hallTimer);
+      hallTimer = null;
+      hallStart = null;
+    };
+    this.karta.on("touchstart", (e) => {
+      rensaHall();
+      hallDrar = false;
+      if (e.points.length !== 1 || !this.lyssnare) return;
+      const p = sweref(e as unknown as maplibregl.MapMouseEvent);
+      hallStart = { x: e.point.x, y: e.point.y };
+      hallTimer = window.setTimeout(() => {
+        hallTimer = null;
+        if (this.lyssnare?.ned(p, touchPekare())) {
+          hallDrar = true;
+          this.karta.dragPan.disable();
+          this.dragPan = false;
+          navigator.vibrate?.(15);
+          this.lyssnare.ror(p, touchPekare());
+        }
+      }, HALL_MS);
+    });
+    this.karta.on("touchmove", (e) => {
+      if (hallDrar) {
+        e.preventDefault();
+        this.lyssnare?.ror(sweref(e as unknown as maplibregl.MapMouseEvent), touchPekare());
+        return;
+      }
+      if (hallTimer !== null && hallStart && Math.hypot(e.point.x - hallStart.x, e.point.y - hallStart.y) > HALL_TOLERANS_PX) rensaHall();
+    });
+    const touchSlut = (): void => {
+      rensaHall();
+      if (hallDrar) {
+        hallDrar = false;
+        slapp();
+      }
+    };
+    this.karta.on("touchend", touchSlut);
+    this.karta.on("touchcancel", touchSlut);
     window.addEventListener("mouseup", slapp);
     window.addEventListener("blur", slapp);
     this.karta.on("moveend", (e) => {
@@ -320,6 +375,7 @@ export class Kartmotor {
 
   private byggOverlager(): void {
     const k = this.karta;
+    const grov = arGrovPekare(); // pekskärm: större handtag
     for (const s of [BYGGNADER, RUTOR, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
@@ -402,15 +458,15 @@ export class Kartmotor {
     k.addLayer({ id: "rit-las", type: "line", source: `${RIT}-las`, paint: { "line-color": "#6b6b6b", "line-width": 1, "line-dasharray": [3, 3] } });
     k.addLayer({ id: "rit-utkast-fyll", type: "fill", source: `${RIT}-utkast`, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": "#111111", "fill-opacity": 0.12 } });
     k.addLayer({ id: "rit-utkast-linje", type: "line", source: `${RIT}-utkast`, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#111111", "line-width": 2, "line-dasharray": [2, 1] } });
-    k.addLayer({ id: "rit-mitt", type: "circle", source: `${RIT}-mitt`, paint: { "circle-radius": 4, "circle-color": "#ffffff", "circle-stroke-color": "#111111", "circle-stroke-width": 1, "circle-opacity": 0.8 } });
-    k.addLayer({ id: "rit-horn", type: "circle", source: `${RIT}-horn`, paint: { "circle-radius": 6, "circle-color": "#ffffff", "circle-stroke-color": "#111111", "circle-stroke-width": 2 } });
+    k.addLayer({ id: "rit-mitt", type: "circle", source: `${RIT}-mitt`, paint: { "circle-radius": grov ? 7 : 4, "circle-color": "#ffffff", "circle-stroke-color": "#111111", "circle-stroke-width": 1, "circle-opacity": 0.8 } });
+    k.addLayer({ id: "rit-horn", type: "circle", source: `${RIT}-horn`, paint: { "circle-radius": grov ? 10 : 6, "circle-color": "#ffffff", "circle-stroke-color": "#111111", "circle-stroke-width": 2 } });
     k.addLayer({
       id: "rit-fast",
       type: "circle",
       source: `${RIT}-fast`,
-      paint: { "circle-radius": 9, "circle-color": "rgba(255,255,255,0)", "circle-stroke-color": "#c2410c", "circle-stroke-width": 3 },
+      paint: { "circle-radius": grov ? 16 : 9, "circle-color": "rgba(255,255,255,0)", "circle-stroke-color": "#c2410c", "circle-stroke-width": 3 },
     });
-    k.addLayer({ id: "rit-punkter", type: "circle", source: `${RIT}-punkter`, paint: { "circle-radius": 4, "circle-color": "#111111", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
+    k.addLayer({ id: "rit-punkter", type: "circle", source: `${RIT}-punkter`, paint: { "circle-radius": grov ? 7 : 4, "circle-color": "#111111", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
   }
 
   private satt(id: string, data: Fc): void {
