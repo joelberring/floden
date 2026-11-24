@@ -42,6 +42,8 @@ interface MarkSvar {
   siffror: Marksiffror | null;
 }
 
+type Kalla = "ritat" | "projekt" | "lage";
+
 const AMNEN_ORDNING: Amne[] = ["vatten", "dagsljus", "ekologi"];
 const AMNESNAMN: Record<Amne, string> = { vatten: "Skyfall", dagsljus: "Sol", ekologi: "Ekologi" };
 
@@ -72,7 +74,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   let projektSvar: ProjektSvar | null = null;
   let info: ProjektInfo | null = null;
   let amne: Amne = "vatten";
-  let kalla: "ritat" | "projekt" = "projekt";
+  let kalla: Kalla = "projekt";
   let vy: ProjektVy | null = null;
   let r: ResultatSvar | undefined;
   let mark: MarkSvar | null = null;
@@ -127,7 +129,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
   kopplaExtraAnalyser(rot, ac.signal);
 
-  const vyerFor = (k: "ritat" | "projekt"): ProjektVy[] => (k === "ritat" ? t.ritVyer : (projektSvar?.vyer ?? [])).filter((v) => v.avsnitt === amne);
+  const vyerFor = (k: Kalla): ProjektVy[] => (k === "ritat" ? t.ritVyer : k === "lage" ? t.lageVyer : (projektSvar?.vyer ?? [])).filter((v) => v.avsnitt === amne);
 
   // ---------- Karta ----------
   const rasterAv = (id: string, lp: LagerPost | null, synlig: boolean): RasterLager[] =>
@@ -334,11 +336,13 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       ruta.innerHTML = "";
       return;
     }
-    const rader: Array<[string, string | null]> = [
-      ["Före", vy.fore_lager],
-      [`Efter: ${vy.efter_namn.toLowerCase()}`, vy.efter_lager],
-      ["Skillnad", vy.skillnad_lager],
-    ];
+    const rader: Array<[string, string | null]> = vy.lage_idag
+      ? [["Läget idag", vy.fore_lager]]
+      : [
+          ["Före", vy.fore_lager],
+          [`Efter: ${vy.efter_namn.toLowerCase()}`, vy.efter_lager],
+          ["Skillnad", vy.skillnad_lager],
+        ];
     const delar = rader.flatMap(([namn, id]) => {
       const x = svar.varden.find((v) => v.lager_id === id && v.inom);
       if (!x) return [];
@@ -378,7 +382,10 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     if (avslutad) return;
     const inne = el("rs-innehall");
     const harRitat = t.ritVyer.length > 0;
+    const harLage = t.lageVyer.length > 0;
     const vyer = vyerFor(kalla);
+    // Läget idag har bara Före: övriga lägen i växeln döljs (U5a).
+    for (const k of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-lage]"))) k.hidden = kalla === "lage" && k.dataset.lage !== "fore";
     const pagar = arPagaende(t);
     for (const k of Array.from(rot.querySelectorAll<HTMLButtonElement>("[data-amne]"))) {
       k.setAttribute("aria-selected", String(k.dataset.amne === amne));
@@ -387,7 +394,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     if (!vy || !r) {
       inne.innerHTML = pagar
         ? `<h1 class="flode-h" id="rs-rubrik">Beräknar …</h1><p class="flode-dampad" role="status">${esc(t.korning?.text ?? "")}</p>`
-        : `<h1 class="flode-h" id="rs-rubrik">Inget resultat än</h1><p class="flode-dampad">${AMNESNAMN[amne]} är inte beräknat för ${kalla === "ritat" ? "ditt förslag" : "projektet"}. Välj frågor och kör beräkningarna i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a>.</p>`;
+        : `<h1 class="flode-h" id="rs-rubrik">Inget resultat än</h1><p class="flode-dampad">${AMNESNAMN[amne]} är inte beräknat för ${kalla === "ritat" ? "ditt förslag" : kalla === "lage" ? "läget idag" : "projektet"}. Välj frågor och kör beräkningarna i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a>.</p>`;
       return;
     }
     const u = underlag();
@@ -402,11 +409,19 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const ekoKalla = amne === "ekologi" ? [resultatEtikett(ekologi), kallRad(ekologi), ...antagandeRader(ekologi), intervallForklaring(ekologi)].filter(Boolean) : [];
     const ekoVarning = amne === "ekologi" ? [...(ekologi?.varningar ?? []), ...(ekologiFel ? [`Ekologisvaret gick inte att hämta: ${ekologiFel}`] : [])] : [];
     const raderRegn = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ingress ?? "", ...ekoVarning, `Alla tal kommer ur körningen ${vy.korning_id}.`].filter(Boolean).join(" ");
-    const kallVal = harRitat && (projektSvar?.vyer?.length ?? 0) > 0
-      ? `<div class="flode-segment liten" role="group" aria-label="Vilket resultat">
-           <button type="button" data-kalla="ritat" aria-pressed="${kalla === "ritat"}">Ditt förslag</button>
-           <button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button></div>`
-      : "";
+    const kallKnappar = [
+      harRitat ? `<button type="button" data-kalla="ritat" aria-pressed="${kalla === "ritat"}">Ditt förslag</button>` : "",
+      harLage ? `<button type="button" data-kalla="lage" aria-pressed="${kalla === "lage"}">Läget idag</button>` : "",
+      (projektSvar?.vyer?.length ?? 0) > 0 ? `<button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button>` : "",
+    ].filter(Boolean);
+    const kallVal = kallKnappar.length > 1 ? `<div class="flode-segment liten" role="group" aria-label="Vilket resultat">${kallKnappar.join("")}</div>` : "";
+    if (kalla === "lage") {
+      inne.innerHTML = `${kallVal}${vyer.length > 1 ? `<div class="flode-chips liten" role="group" aria-label="Analys">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.mattnamn)}</button>`).join("")}</div>` : ""}
+        <h1 class="flode-h" id="rs-rubrik">Läget idag: ${esc(AMNESNAMN[amne].toLowerCase())}</h1>
+        <p class="flode-dampad" id="rs-lagenot">Projektets befintliga läge, beräknat utan ritat förslag. Det finns ingen jämförelse före och efter, så inga skillnader visas. Håll markören över kartan för värdet i en cell. Rita ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a> och kör det i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a> för att se vad det ändrar.</p>
+        <p class="flode-liten flode-dampad">Alla tal kommer ur körningen ${esc(vy.korning_id)}. Rapporten bygger på en jämförelse före och efter och kan inte skapas på enbart läget idag.</p>`;
+      return;
+    }
     const kallNot = !harRitat
       ? `<p class="flode-liten flode-dampad" id="rs-kallnot">Du ser projektets färdiga beräkningar, inte ett eget förslag. Rita ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a> och kör det i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a> för att se ditt eget.</p>`
       : "";
@@ -438,10 +453,10 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       try {
         const res = cache.get(ny.korning_id) ?? (await hamtaResultat(ny.korning_id));
         cache.set(ny.korning_id, res);
-        const m = amne === "ekologi" ? null : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
+        const m = amne === "ekologi" || kalla === "lage" ? null : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
         let eko: EkologiSvar | null = null;
         let ekoFel: string | null = null;
-        if (amne === "ekologi") {
+        if (amne === "ekologi" && kalla !== "lage") {
           // Talen räknas på servern (K45); webben formaterar bara. Det ritade förslaget går som scenario.
           const begaran: Record<string, unknown> = { omrade_id: projekt };
           if (valtNatverk) begaran.natverk = valtNatverk;
@@ -484,7 +499,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
 
   const valjAmne = async (ny: Amne): Promise<void> => {
     amne = ny;
-    if (vyerFor(kalla).length === 0) kalla = kalla === "ritat" ? "projekt" : t.ritVyer.some((v) => v.avsnitt === ny) ? "ritat" : "projekt";
+    if (vyerFor(kalla).length === 0) kalla = kalla === "projekt" ? (t.ritVyer.some((v) => v.avsnitt === ny) ? "ritat" : t.lageVyer.some((v) => v.avsnitt === ny) ? "lage" : "projekt") : t.ritVyer.some((v) => v.avsnitt === ny) && kalla !== "ritat" ? "ritat" : t.lageVyer.some((v) => v.avsnitt === ny) && kalla !== "lage" ? "lage" : "projekt";
     const onskad = onskadVy ? vyerFor(kalla).find((v) => v.id === onskadVy) : undefined;
     onskadVy = null;
     await valjVy(onskad ?? vyerFor(kalla)[0] ?? null);
@@ -502,7 +517,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     } else if (m.dataset.lage) stallLage(m.dataset.lage as Lage);
     else if (m.dataset.amne) void valjAmne(m.dataset.amne as Amne);
     else if (m.dataset.kalla) {
-      kalla = m.dataset.kalla as "ritat" | "projekt";
+      kalla = m.dataset.kalla as Kalla;
+      if (kalla === "lage" && lage !== "fore") stallLage("fore");
       void valjVy(vyerFor(kalla)[0] ?? null);
     } else if (m.dataset.vy) void valjVy(vyerFor(kalla).find((v) => v.id === m.dataset.vy) ?? null);
   });
@@ -537,7 +553,11 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   });
   const avlyssna = vidKorning(() => {
     if (avslutad) return;
-    if (t.korning?.klar && !t.korning.fel && t.ritVyer.length > 0) {
+    if (t.korning?.klar && !t.korning.fel && t.korning.lage && t.lageVyer.length > 0) {
+      kalla = "lage";
+      if (lage !== "fore") stallLage("fore");
+      void valjAmne(amne);
+    } else if (t.korning?.klar && !t.korning.fel && !t.korning.lage && t.ritVyer.length > 0) {
       kalla = "ritat";
       void valjAmne(amne);
     } else ritaPanel();
@@ -567,13 +587,14 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const fraga = window.location.hash.split("?")[1] ?? "";
     const vyUtanLank = new URLSearchParams(fraga).get("vy");
     const vyAvLank = vyUtanLank ? projektSvar?.vyer.find((v) => v.id === vyUtanLank) : undefined;
-    kalla = t.ritVyer.length > 0 && !vyAvLank ? "ritat" : "projekt";
+    kalla = vyAvLank ? "projekt" : t.korning?.lage && t.lageVyer.length > 0 ? "lage" : t.ritVyer.length > 0 ? "ritat" : t.lageVyer.length > 0 ? "lage" : "projekt";
+    if (kalla === "lage") lage = "fore";
     if (vyAvLank) {
       amne = vyAvLank.avsnitt as Amne;
       onskadVy = vyAvLank.id;
     }
     if (!vyAvLank && vyerFor(kalla).length === 0) {
-      const forsta = kalla === "ritat" ? t.ritVyer[0]?.avsnitt : undefined;
+      const forsta = kalla === "ritat" ? t.ritVyer[0]?.avsnitt : kalla === "lage" ? t.lageVyer[0]?.avsnitt : undefined;
       amne = forsta === "dagsljus" || forsta === "ekologi" ? forsta : "vatten";
     }
     await valjAmne(amne);

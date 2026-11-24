@@ -2,7 +2,8 @@
  * Körningen av det ritade förslaget med de befintliga scenario-API:erna (`kor`, `status`). Lever i
  * modulen, inte i sidan, så att den fortsätter om man byter steg; sidorna prenumererar på läget.
  */
-import { korScenario, scenarioStatus } from "../karta/kartapi.ts";
+import { korLageIdag, korScenario, lageIdagStatus, scenarioStatus } from "../karta/kartapi.ts";
+import { formatera } from "../tal.ts";
 import type { ProjektVy } from "../types.ts";
 import type { FlodeTillstand } from "./tillstand.ts";
 
@@ -49,6 +50,25 @@ export async function startaKorning(t: FlodeTillstand, analyser: string[]): Prom
   void kolla(t);
 }
 
+/** Startar körningen av läget idag (projektets befintliga läge, bara före) för de valda analyserna. */
+export async function startaLageIdag(t: FlodeTillstand, analyser: string[]): Promise<void> {
+  if (analyser.length === 0) return;
+  const startadMs = Date.now();
+  t.korning = { slug: "", text: `Beräknar läget idag … (${formatera(0, 0)} s)`, klar: false, fel: null, startadMs, lage: true };
+  t.lageVyer = [];
+  signalera();
+  try {
+    await korLageIdag(t.projekt, analyser, t.avtappning);
+  } catch (e) {
+    t.korning = { slug: "", text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs, lage: true };
+    signalera();
+    return;
+  }
+  stoppa(t.projekt);
+  timers.set(t.projekt, window.setInterval(() => void kolla(t), 1200));
+  void kolla(t);
+}
+
 async function kolla(t: FlodeTillstand): Promise<void> {
   const k = t.korning;
   if (!k || k.klar) {
@@ -56,7 +76,7 @@ async function kolla(t: FlodeTillstand): Promise<void> {
     return;
   }
   try {
-    const st = await scenarioStatus(t.projekt, k.slug);
+    const st = k.lage ? await lageIdagStatus(t.projekt) : await scenarioStatus(t.projekt, k.slug);
     const alla = st.korningar;
     const fel = alla.find((x) => x.status.status === "fel");
     const klara = alla.filter((x) => x.status.status === "klar");
@@ -67,13 +87,15 @@ async function kolla(t: FlodeTillstand): Promise<void> {
       t.korning = { ...k, klar: true, text: "", fel: `Beräkningen misslyckades: ${String(f ?? "okänt fel")}` };
     } else if (alla.length > 0 && klara.length === alla.length) {
       stoppa(t.projekt);
-      t.ritVyer = klara.flatMap((x) => x.vyer) as ProjektVy[];
-      t.korning = { ...k, klar: true, fel: null, text: `Klart på ${s} s.` };
+      const vyer = klara.flatMap((x) => x.vyer) as ProjektVy[];
+      if (k.lage) t.lageVyer = vyer;
+      else t.ritVyer = vyer;
+      t.korning = { ...k, klar: true, fel: null, text: `Klart på ${formatera(s, 0)} s.` };
     } else {
       const fr = alla.map((x) => x.status.framsteg as { klara: number; totalt: number } | undefined).filter((x): x is { klara: number; totalt: number } => Boolean(x));
       const klara_ = fr.reduce((a, b) => a + b.klara, 0);
       const tot = fr.reduce((a, b) => a + b.totalt, 0);
-      t.korning = { ...k, text: tot > 0 ? `Beräknar … ${klara_} av ${tot} delar klara (${s} s).` : `Beräknar … (${s} s)` };
+      t.korning = { ...k, text: tot > 0 ? `Beräknar … ${formatera(klara_, 0)} av ${formatera(tot, 0)} delar klara (${formatera(s, 0)} s).` : `Beräknar … (${formatera(s, 0)} s)` };
     }
   } catch (e) {
     stoppa(t.projekt);

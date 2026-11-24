@@ -412,6 +412,8 @@ def test_fraga_skapa_validerar_med_karnan_och_begransar_sokvagar(mcp: Mcp, demo:
 def test_kor_kraver_ett_av_scenario_eller_fraga(mcp: Mcp) -> None:
     assert mcp.anropa("kor", {}).is_error
     assert mcp.anropa("kor", {"scenario": "a", "fraga": "b"}).is_error
+    assert mcp.anropa("kor", {"scenario": "a", "lage_idag": True}).is_error
+    assert mcp.anropa("korplan", {"fraga": "b", "lage_idag": True}).is_error
     assert mcp.anropa("korplan", {"scenario": "finns-inte"}).is_error
     assert mcp.anropa("vanta", {"korning_ids": []}).is_error
 
@@ -650,3 +652,17 @@ def test_projekt_skapa_kraver_inloggat_konto(mcp: Mcp) -> None:
 
 def test_felklass_ar_ett_riktigt_undantag() -> None:
     assert issubclass(FlodenFel, Exception) and FlodenFel("x", "k").kod == "k"
+
+
+def test_kor_lage_idag_utan_forslag(mcp: Mcp) -> None:
+    """U5a: `kor(lage_idag=true)` räknar projektets befintliga läge (bara före) och sparar det som projektets egen körning."""
+    plan = mcp.ok("korplan", {"lage_idag": True, "analyser": ["dagsljus.sol"]})
+    assert plan["lage"] == "idag" and plan["uppskattad_tid_s"] is not None
+    (f,) = plan["fragor"]
+    assert f["fraga_id"].startswith("lage-idag-")
+    kor = mcp.ok("kor", {"lage_idag": True, "analyser": ["dagsljus.sol"]})
+    ids = [k["korning_id"] for k in kor["korningar"]]
+    assert len(ids) == 1
+    assert mcp.ok("vanta", {"korning_ids": ids, "tidsgrans_s": 600})["alla_klara"]
+    assert mcp.app.korningsunderlag(ids[0])["slag"] == "lage_idag"
+    assert mcp.app.projekt_for_korning(ids[0]) == "demokvarteret"

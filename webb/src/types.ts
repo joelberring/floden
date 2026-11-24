@@ -607,6 +607,8 @@ export interface ProjektVy {
   efter_namn: string;
   /** Vad som ändras i efter-läget (ur scenariofilen). */
   andring: string;
+  /** Sant för läget idag (U5a): bara före; `efter_lager` är null och `skillnad_lager` är samma lager som `fore_lager`. */
+  lage_idag?: boolean;
 }
 
 export interface ProjektSvar {

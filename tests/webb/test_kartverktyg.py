@@ -712,3 +712,78 @@ def test_ekologi_ritat_hus_ger_samma_eca_som_demons_och_api_kan_ta_scenariot(kv:
     assert svar["scenario"] == "demohuset"
     assert svar["efter"]["ECA_m2"] == eca(demo_res, "efter")
     assert svar["delta_eca_m2"] <= 0.0
+
+
+# ---------------------------------------------------------------- läget idag (U5a)
+
+
+def _vanta_lage(kv: Kv, antal: int, tidsgrans: float = 600.0) -> dict[str, Any]:
+    slut = time.monotonic() + tidsgrans
+    while time.monotonic() < slut:
+        _, st = kv.json("GET", f"{P}/lage-idag/status")
+        k = st["korningar"]
+        assert not any(x["status"]["status"] == "fel" for x in k), k
+        if len(k) == antal and all(x["status"]["status"] == "klar" for x in k):
+            return st
+        time.sleep(0.5)
+    raise AssertionError("läget idag blev inte klart")
+
+
+def test_lage_idag_plan_har_bara_fore_och_ingen_jamforelse(kv: Kv) -> None:
+    status, plan = kv.json("POST", f"{P}/lage-idag/plan", {"analyser": ["dagsljus.sol"]})
+    assert status == 200, plan
+    assert plan["lage"] == "idag"
+    (f,) = plan["fragor"]
+    assert f["fraga_id"].startswith("lage-idag-")
+    assert "uppskattad_tid_s" in plan and "uppskattad_tid_s" in f
+    fil = kv.rot / "kartverktyg" / "fragor" / f"{f['fraga_id']}.json"
+    k20 = json.loads(fil.read_text(encoding="utf-8"))
+    assert set(k20["scenarier"]) == {"fore"} and "k9" not in k20["scenarier"]["fore"]
+    assert k20["jamforelser"] == []
+    assert all(a["scenarier"] == ["fore"] for a in k20["analyser"])
+    assert {j["scenario"] for j in f["plan"]["jobb"]} == {"fore"}
+    # Demon har redan räknat befintligt läge: allt finns i cachen, så ingen tid att vänta.
+    assert all(j["i_cache"] for j in f["plan"]["jobb"])
+    assert plan["uppskattad_tid_s"] == 0
+
+
+def test_lage_idag_nekar_okand_analys_och_tomt_urval_och_avtappning(kv: Kv) -> None:
+    assert kv.json("POST", f"{P}/lage-idag/plan", {"analyser": []})[0] == 400
+    assert kv.json("POST", f"{P}/lage-idag/plan", {"analyser": ["x.y"]})[0] == 400
+    assert kv.json("POST", f"{P}/lage-idag/plan", {"analyser": ["vatten.skyfall"], "avtappning_mm_h": -1})[0] == 400
+    assert kv.json("POST", "/api/kartverktyg/finns-inte/lage-idag/kor", {"analyser": ["vatten.skyfall"]})[0] == 404
+    assert kv.json("GET", f"{P}/lage-idag/okand")[0] == 404
+
+
+def test_lage_idag_kor_sparas_som_projektets_egen_och_ger_fore_vyer(kv: Kv) -> None:
+    status, k = kv.json("POST", f"{P}/lage-idag/kor", {"analyser": ["dagsljus.sol", "vatten.skyfall"]})
+    assert status == 202, k
+    st = _vanta_lage(kv, 2)
+    vyer = [v for x in st["korningar"] for v in x["vyer"]]
+    assert {v["avsnitt"] for v in vyer} >= {"dagsljus", "vatten"}
+    for v in vyer:
+        assert v["fore_lager"] and v["efter_lager"] is None and v["lage_idag"] is True
+        assert v["fore_lager"] == v["skillnad_lager"]
+    # Körningen är projektets egen och märkt som läget idag (inte som förslag eller demo).
+    for x in st["korningar"]:
+        kid = x["status"]["korning_id"]
+        assert kv.app.projekt_for_korning(kid) == "demokvarteret"
+        assert kv.app.korningsunderlag(kid) == {"slag": "lage_idag", "scenario": None}
+        res = kv.app.fragor.resultat(kid)
+        assert {la["scenario"] for la in res["lager"]} == {"fore"}
+    assert set(kv.app.kartverktyg.lage_idag_korningar("demokvarteret")) == {
+        x["status"]["korning_id"] for x in st["korningar"]
+    }
+    assert (kv.rot / "kartverktyg" / "demokvarteret" / "lage-idag.json").is_file()
+
+
+def test_lage_idag_status_utan_korning_ar_tom(demo: Demo, tmp_path: Path) -> None:
+    ny = Kv(demo, tmp_path)
+    assert ny.json("GET", f"{P}/lage-idag/status")[1]["korningar"] == []
+
+
+def test_rapportens_underlagstext_och_ordning_for_lage_idag() -> None:
+    from rapport.korningsval import RANG, underlagstext
+
+    assert "läget idag" in underlagstext({"slag": "lage_idag", "scenario": None})
+    assert RANG["lage_idag"] == RANG["egen"] < RANG["demo"]

@@ -863,17 +863,20 @@ def bygg_server(
             float | None, Field(description="Ledningsnätets avtappning, mm/h (standard 0).")
         ] = None,
         detalj: Annotated[bool, Field(description="Lista varje jobb.")] = False,
+        lage_idag: Annotated[
+            bool, Field(description="Planen för projektets befintliga läge (bara före, utan förslag).")
+        ] = False,
         projekt: Projekt = PROJEKT_ID,
         modell: Modell = None,
         roll: Roll = None,
     ) -> dict[str, Any]:
-        return tjanst.korplan(projekt, scenario, fraga, analyser, avtappning_mm_h, detalj)
+        return tjanst.korplan(projekt, scenario, fraga, analyser, avtappning_mm_h, detalj, lage_idag)
 
     @verktyg(
         "kor",
         "Startar en körning i bakgrunden och returnerar körnings-id direkt. Ange scenario (sparat) "
-        "eller fraga (ref). Jobb med oförändrad nyckel hämtas ur cachen. Använd vanta för att "
-        "invänta resultatet.",
+        "eller fraga (ref), eller lage_idag=true för projektets befintliga läge utan förslag. Jobb med "
+        "oförändrad nyckel hämtas ur cachen. Använd vanta för att invänta resultatet.",
     )
     def kor(
         scenario: Annotated[str | None, Field(description="Sparat scenario (slug).")] = None,
@@ -882,11 +885,18 @@ def bygg_server(
         avtappning_mm_h: Annotated[
             float | None, Field(description="Ledningsnätets avtappning, mm/h (standard 0).")
         ] = None,
+        lage_idag: Annotated[
+            bool,
+            Field(
+                description="Räkna projektets befintliga läge (bara före, utan förslag). Sparas som projektets "
+                "egen körning (slag lage_idag)."
+            ),
+        ] = False,
         projekt: Projekt = PROJEKT_ID,
         modell: Modell = None,
         roll: Roll = None,
     ) -> dict[str, Any]:
-        return tjanst.kor(projekt, scenario, fraga, analyser, avtappning_mm_h)
+        return tjanst.kor(projekt, scenario, fraga, analyser, avtappning_mm_h, lage_idag)
 
     @verktyg(
         "vanta",

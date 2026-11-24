@@ -146,6 +146,11 @@ def test_kor_skyfall_ger_korning_i_projektet(v: Varld) -> None:
     assert v.http("di", "GET", f"/api/korningar/{kid}")[0] in (403, 404)
     # Förslaget syns som förslag i körningens underlag.
     assert v.app.korningsunderlag(kid)["slag"] == "forslag"
+    # Läget idag (U5a) skriver sin fråga i projektets mapp med registrets id.
+    plan = v.app.kartverktyg.planera_lage_idag(pid, ["vatten.skyfall"])
+    fid = plan["fragor"][0]["fraga_id"]
+    assert fid.startswith("lage-idag-") and fid.endswith("-vatten")
+    assert (v.rot / "projekt" / "haga-kor" / "fragor" / f"{fid}.json").is_file()
 
 
 def test_mcp_nekar_stangt_projekt_och_ger_oppet_projekt_klassen_oppet(v: Varld, tmp_path: Path) -> None:

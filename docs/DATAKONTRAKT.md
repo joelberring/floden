@@ -1206,6 +1206,21 @@ har `underlag`: `{slag, scenario, fragor (urvalet), demo}`. Rapportens K33 har `
 rapportens belägg säger "inom projektets avgränsning (polygon)" i stället för "hela beräkningsområdet" för projekt med
 `avgransning_polygon_3011`. MCP `rapport_skapa` får valfria `korningar` och `forslag` och svaret `underlag` (samma urval).
 
+**U5a, additivt (2026-11-24): läget idag utan förslag.** Tre anrop i kartverktygets API, bara för projekt som kartverktyget har mallar för (i dag
+demokvarteret; andra projekt ger 404 som övriga kartverktygsanrop). `POST /api/kartverktyg/<projekt>/lage-idag/plan` och
+`POST .../lage-idag/kor` (utredare; kor ger **202**) tar `analyser` (`<mall>.<analys>`, minst en; annars 400) och `avtappning_mm_h` (som för förslag).
+Planen ger `{lage: "idag", fragor: [{mall, ref, fraga_id, analyser, plan, paverkansradie_m, uppskattad_tid_s, tid_text}], uppskattad_tid_s}`
+(`uppskattad_tid_s` null om en lösare saknar tidigare körtid, 0 när allt finns i cachen). `GET .../lage-idag/status` (läsare) ger
+`{lage: "idag", korningar: [{mall, status, vyer, varningar}]}`. Frågan är en K20 per mall (`lage-idag-<projekt>-<mall>`, i kartverktygets
+lokala frågemapp) med **ett** scenario `fore` (projektets befintliga bas, ingen `k9`), analyser med `scenarier = ["fore"]` och inga `[[jamforelser]]`;
+K20 ändras inte (jämförelser och fler scenarier var redan valfria). Körningen startas med samma kö, cache och regler som övriga körningar
+(en i taget; en pågående körning av samma fråga i samma projekt återanvänds), får `projekt_id` (projektets egen: syns i `GET /api/korningar` och i steg 4) och
+pekas ut av `<kartverktygsmapp>/<projekt>/lage-idag.json` (`{lage, korningar: {<mall>: {korning_id, ref, fraga_id, analyser}}}`, senaste per mall). Vyerna har
+`lage_idag: true`, `efter_lager: null` och `skillnad_lager` lika med `fore_lager` (`ProjektVy.lage_idag` är additivt). `korningsunderlag` ger `slag: "lage_idag"`
+(vid sidan av `forslag`, `egen`, `demo`, `okand`); i förvalsordningen (`rapport.korningsval`) räknas den som `egen` men saknar jämförelse och väljs därför
+aldrig av sig själv; `POST .../rapporter` med dess `korning_id` ger **409** ("rita ett förslag och kör steg 3"), och rapportens underlagstext säger "läget idag"
+om en sådan körning ändå ingår via MCP. MCP: `kor(lage_idag=true)` och `korplan(lage_idag=true)` (exakt ett av `scenario`, `fraga`, `lage_idag`), rollen utredare som för `kor`.
+
 **`GET /api/projekt/<id>/rapporter/jobb/<jobb_id>`** (läsare). Jobb (`<rapportmapp>/jobb/j-<12 hex>.json`): `kontrakt`, `jobb_id`, `projekt`,
 `amne`, `korning_id`, `bestallning_id`, `status` (`ko`, `kor`, `klar`, `fel`), `steg` (`skapar`, `paastaenden`, `kontrollerar`,
 `exporterar`), `steg_nr`, `steg_totalt` (4), `text`, `rapport_id` (när rapporten är skapad), `kontroll` (`godkand`, `antal_fel`,

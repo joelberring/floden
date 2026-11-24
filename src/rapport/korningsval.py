@@ -5,6 +5,8 @@ Samma val för webben (`POST /api/projekt/<id>/rapporter`) och MCP (`rapport_ska
 är ett *underlag* av ett av tre slag (se `FlodenApiApp.korningsunderlag`):
 
 - `forslag`: körd för ett ritat förslag (scenario) i projektet;
+- `lage_idag`: projektets egen körning av befintligt läge (U5a, bara `fore`); räknas som `egen` i förvalsordningen men
+  saknar jämförelse och väljs därför aldrig av sig själv (se `valj_korning`);
 - `egen`: annan klar körning som hör till projektet (till exempel startad via MCP);
 - `demo`: demokörningen som följer med projektet, utan eget förslag.
 
@@ -20,7 +22,7 @@ from typing import TYPE_CHECKING, Any, Final
 if TYPE_CHECKING:
     from rapport.skissrapport import RapportTjanst
 
-RANG: Final[dict[str, int]] = {"forslag": 0, "egen": 1, "demo": 2, "okand": 3}
+RANG: Final[dict[str, int]] = {"forslag": 0, "egen": 1, "lage_idag": 1, "demo": 2, "okand": 3}
 """Förvalsordning: lägre rang väljs först."""
 
 
@@ -43,6 +45,8 @@ def underlagstext(underlag: dict[str, Any] | None, sbk: bool = True) -> str:
         return f"gäller förslaget ”{namn}”" if namn else "gäller ett ritat förslag"
     if slag == "demo":
         return "demokörningen som följer med projektet; inget eget förslag är beräknat"
+    if slag == "lage_idag":
+        return "läget idag: projektets befintliga läge, utan ritat förslag (ingen jämförelse före och efter)"
     if slag == "egen":
         return "gäller en egen körning i projektet (inget sparat förslag är kopplat till den)" if not sbk else "egen körning i projektet"
     return ""
@@ -102,6 +106,16 @@ def valj_korning(
     if korning_id is not None:
         post = next((k for k in kand if k["korning_id"] == korning_id), None)
         if post is None:
+            app = rt.tjanst.app
+            if (
+                app.projekt_for_korning(korning_id) == projekt
+                and app.korningsunderlag(korning_id)["slag"] == "lage_idag"
+            ):
+                raise UnderlagFel(
+                    f"Körningen '{korning_id}' är läget idag (projektets befintliga läge, utan förslag). Rapporten bygger på "
+                    "en jämförelse före och efter; rita ett förslag och kör beräkningarna i steg 3.",
+                    409,
+                )
             # Samma svar för en körning som saknas och en i ett annat projekt: ingen ledtråd om andras körningar.
             raise UnderlagFel(f"Körningen '{korning_id}' finns inte i projektet eller duger inte för {amne}.", 404)
         if scenario is not None and post not in kand_sc:

@@ -165,7 +165,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 | `scenario_skapa` | ritat hus (polygon eller rektangel + höjd) som K9-scenario; kontrolleras av kärnan (`bara_kontroll` sparar inte) |
 | `fraga_skapa` | ny K20-fråga, validerad av kärnan; sökvägar begränsade till demo-, kartverktygs- och cachemapparna |
 | `korplan` | vad som skulle räknas och vad som finns i cachen |
-| `kor` | startar körning asynkront, ger körnings-id |
+| `kor` | startar körning asynkront, ger körnings-id; `lage_idag=true` räknar projektets befintliga läge (bara före, utan förslag) och sparar det som projektets egen körning; `korplan(lage_idag=true)` ger planen och uppskattad tid |
 | `vanta` | väntar på körningar (tidsgräns) |
 | `korlogg_hamta` | läser körloggen och verifierar hashkedjan |
 | `session_deklarera` | deklarerar modell och roll för sessionen |
