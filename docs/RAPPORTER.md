@@ -216,14 +216,14 @@ SO-15 *visat*; de som markerats *delvis* får status *underlag saknas* för det 
 signalart eller artgrupp: det visar hur ett förslag ändrar konnektiviteten i ett habitatnätverk (K45),
 inte om arten finns eller hur väl sambandet fungerar i fält.
 
-**Frågorna EK-01 till EK-12** ligger i en egen fil, `docs/utredningar-stockholm/fragor_ekologi.json`,
-med egna källor (Naturvårdsverkets och Länsstyrelsens vägledning för grön infrastruktur, Stockholms,
-Nackas och Södertäljes nätverksrapporter, Saura och Pascual-Hortal 2007 för PC, McRae m.fl. 2008 för
-strömtäthet, NMD). Katalogen visade ingen fråga om grön infrastruktur eller spridningssamband, så
-området är tillagt separat; den granskade `fragor.json` (75 frågor) är oförändrad.
-`Fragekatalog.las_alla()` läser båda och används av rapporttjänsten, `fragekatalog_sok` och
-`GET /api/fragekatalog`; `Fragekatalog.las()` ger fortfarande bara de 75 granskade frågorna.
-Ekologifrågorna är redaktionellt underlag sammanställt med AI-stöd (källäge 23 november 2026) och ska granskas.
+**Frågorna EK-01 till EK-15** ligger i huvudkatalogen `docs/utredningar-stockholm/fragor.json` (90 frågor
+i sex områden) med de källor som katalogen anger (bland annat Miljöförvaltningens hjälpreda, Naturvårdsverkets
+metodstöd, Länsstyrelsens regionala vägledning och stadens habitatnätverk); guiden är
+`docs/utredningar-stockholm/ekologi.md`. Det finns ingen separat ekologifil: den tidigare
+`fragor_ekologi.json` (EK-01 till EK-12, egen numrering) är borttagen, och Flodens mappning
+(`FLODEN_FORMAGA`, referensflödet) följer huvudkatalogens id och betydelse. Frågorna är
+redaktionellt underlag sammanställt med AI-stöd (källäge 24 november 2026) och ska granskas.
+`Fragekatalog.las()` och `las_alla()` ger samma 90 frågor.
 
 **Mått och belägg.** Alla tal kommer ur körningens K0-manifest och `ekologi.json` via beläggskällan:
 
@@ -251,21 +251,24 @@ enheten "normaliserad strömtäthet (0-1)" i bildtexten. Resultatlagrets etikett
 
 | Fråga | Floden i dag | Belägg Floden kan ge | Saknas och varför | Status i demon |
 | --- | --- | --- | --- | --- |
-| EK-01 Vilka ekologiska samband och värdekärnor för grön infrastruktur finns i och kring planområdet? | delvis | Det habitatnätverk som beräkningen avser: namn, signalart, källa och år, tröskel och minsta fläckarea (parametrar med belägg). | Andra kända nätverk, värdekärnor och regionala samband i området ingår inte; Floden läser inga länsstyrelse- eller kommunlager. | underlag saknas |
-| EK-02 Vilka signalarter representerar sambandet, och på vad bygger valet? | visat | Signalart eller artgrupp, källa med sida och om habitatdefinitionen är ett antagande (ur nätverkets fil i körningen). | Valet av signalart för en annan plats är ett val i utredningen, inte en beräkning. | visat |
-| EK-03 Hur har habitatet avgränsats, och vad är känt om dess kvalitet? | delvis | Habitatklasser i markunderlaget (NMD), minsta fläckarea, antal fläckar och total habitatarea. Resultatet kallas potentiell livsmiljö, okänd kvalitet. | Ålder, struktur och naturvärde finns inte i NMD; verklig kvalitet är okänd. | underlag saknas |
-| EK-04 Vilken spridningsförmåga och vilka motståndsvärden har använts? | visat | Spridningströskel och d50 (med antagandet d50 = tröskel/2 när p saknas i källan) samt motstånd per markslag med källa och säkerhet. | Mätt spridningssannolikhet för platsens arter saknas när källan inte anger den. | visat |
-| EK-05 Hur ändras konnektiviteten för sambandet före och efter förslaget? | visat | ECA, PC och antal habitatfläckar före och efter, skillnaden (ΔECA) och intervallet mellan källans tröskelscenarier. | Resultatet gäller potentiell livsmiljö i det påhittade eller inlästa markunderlaget, inte verkliga arters förekomst. | visat |
-| EK-06 Var finns flaskhalsarna i sambandet, och hur förändras de av förslaget? | delvis | Karta över strömtäthet (flaskhalsar) före, efter och som skillnad, med samma skala. | Strömtätheten är normaliserad (0-1) och ger inga tal per flaskhals i rapporten; flaskhalsar ger inte barriärverkan i fält. | underlag saknas |
-| EK-07 Vilka habitatfläckar är viktigast för sambandet, och berörs de av förslaget? | delvis | Antal habitatfläckar och total habitatarea före och efter (betydelsen dPC per fläck finns i körningens resultatfil). | dPC per fläck redovisas inte som tal i rapporten i dag. | underlag saknas |
-| EK-08 Hur känsligt är resultatet för antaganden om spridning, motstånd och habitatval? | delvis | Källbaserat intervall för ECA och PC mellan nätverkets tröskelscenarier, före och efter. | Intervallet täcker källans tröskelscenarier, inte all osäkerhet i habitatval och motstånd. | underlag saknas |
-| EK-09 Hur förhåller sig förslaget till kommunens och länets mål och planer för grön infrastruktur? | ej tillämpligt | – | Hur förslaget förhåller sig till kommunens och länets planer är en bedömning i ärendet; Floden läser inga planer. | ej tillämpligt |
-| EK-10 Vad saknas för att bedöma sambandets funktion för verkliga arter? | underlag saknas | – | Fältinventering, habitatkvalitet, barriärer som markunderlaget saknar och förekomst av arterna ingår inte i Floden. | underlag saknas |
-| EK-11 Hur långt utanför planområdet har sambandet analyserats, och varför? | delvis | Cellstorlek och längsta spridningströskel (parametrar). Kontextbufferten är tröskeln, högst 5 km, när markunderlaget läses ur geografin. | Fläckar utanför markunderlaget ingår inte; bufferten är ett val i körningen. | underlag saknas |
-| EK-12 Kan beräkningen återskapas? | delvis | Cellstorlek och antal fläckar; nätverkets och markunderlagets kontrollsummor står i körningens manifest (bilagan). | Kontrollsummorna är fakta i bilagan, inte tal som rapporten refererar. | underlag saknas |
+| EK-01 Vilket samband kan planen påverka och hur ingående behöver det utredas? | delvis | Det habitatnätverk som beräkningen avser: namn, signalart, källa och år, tröskel och minsta fläckarea (parametrar med belägg). | Plangräns mot ESBO, andra kända nätverk, värdekärnor och regionala samband ingår inte; Floden läser inga länsstyrelse- eller kommunlager och bedömer inte hur ingående utredningen behöver vara. | underlag saknas |
+| EK-02 Vilka livsmiljöer förbinder platsen i stadsdelen och i det regionala landskapet? | delvis | Cellstorlek och längsta spridningströskel (parametrar). Kontextbufferten är tröskeln, högst 5 km, när markunderlaget läses ur geografin. | Fläckar utanför markunderlaget ingår inte; bufferten är ett val i körningen. Båda ändarna av sambandet, alternativa vägar och angränsande planer redovisas inte. | underlag saknas |
+| EK-03 Vems rörelse studeras, mellan vilka miljöer och under vilken del av livscykeln? | visat | Signalart eller artgrupp, källa med sida och om habitatdefinitionen är ett antagande (ur nätverkets fil i körningen). | Valet av signalart för en annan plats, och vilka andra arter eller funktioner som behöver egen bedömning, är ett val i utredningen, inte en beräkning. | visat |
+| EK-04 Vilka naturvärden, barriärer och möjliga passager har kontrollerats i fält? | underlag saknas | – | Fältinventering, habitatkvalitet, barriärer som markunderlaget saknar och förekomst av arterna ingår inte i Floden. | underlag saknas |
+| EK-05 Vilka förbud, föreskrifter eller tillståndsfrågor behöver prövas särskilt? | ej tillämpligt | – | Vilka förbud, föreskrifter och tillståndsfrågor som gäller är en bedömning i ärendet; Floden läser inga artskydds- eller områdesskyddsuppgifter. | ej tillämpligt |
+| EK-06 Vad krävs för att en yta eller ett enskilt träd ska fungera som livsmiljö eller klivsten? | delvis | Habitatklasser i markunderlaget (NMD), minsta fläckarea, antal fläckar och total habitatarea. Resultatet kallas potentiell livsmiljö, okänd kvalitet. | Ålder, struktur och naturvärde finns inte i NMD; verklig kvalitet är okänd. Enskilda träd och små objekt har ingen egen identifierare och kan försvinna vid rasterisering. | underlag saknas |
+| EK-07 Hur representeras avstånd, markens motstånd och svårpasserade eller absoluta barriärer? | delvis | Spridningströskel och d50 (med antagandet d50 = tröskel/2 när p saknas i källan) samt motstånd per markslag med källa och säkerhet. | Mätt spridningssannolikhet för platsens arter saknas när källan inte anger den. Murar, öppningar och absoluta barriärer behandlas bara som markslag i markunderlaget, inte som egna objekt. | underlag saknas |
+| EK-08 Vad förändras mellan nuläge, framtid utan projekt och den analyserade byggrätten? | visat | ECA, PC och antal habitatfläckar före och efter, skillnaden (ΔECA) och intervallet mellan källans tröskelscenarier. | Resultatet gäller potentiell livsmiljö i det påhittade eller inlästa markunderlaget, inte verkliga arters förekomst. Framtid utan projekt är ett eget scenario som bara finns om det lagts in. | visat |
+| EK-09 Hur förändras nätverket av projektet ensamt och tillsammans med andra utbyggnader? | underlag saknas | – | Andra planer och program läses inte; projektets påverkan tillsammans med andra utbyggnader räknas bara om de lagts in som scenario (K9). Hur förslaget förhåller sig till kommunens och länets planer är en bedömning i ärendet. | underlag saknas |
+| EK-10 Vilken livsmiljö, passage eller alternativ väg står för den beslutskritiska förändringen? | delvis | Karta över strömtäthet (flaskhalsar) före, efter och som skillnad, med samma skala, samt antal habitatfläckar och total habitatarea före och efter. | Strömtätheten är normaliserad (0-1) och ger inga tal per flaskhals; dPC per fläck redovisas inte som tal. Vilken enskild livsmiljö eller passage som bär förändringen, och en alternativ väg, pekas inte ut av Floden. | underlag saknas |
+| EK-11 Håller prioriteringen när osäkra antaganden ändras inom motiverade alternativ? | delvis | Källbaserat intervall för ECA och PC mellan nätverkets tröskelscenarier, före och efter. | Intervallet täcker källans tröskelscenarier, inte all osäkerhet i habitatval, motstånd och underlagets kant. | underlag saknas |
+| EK-12 Vilket alternativ behåller bäst den utpekade funktionen och vad går ändå förlorat? | delvis | Jämförelse av prövade alternativ (varje scenario ställs mot nuläget) med samma mått: ECA, PC och antal habitatfläckar. | Floden föreslår inget alternativ; flyttad eller minskad byggrätt och bevarade värdträd prövas bara om de lagts in som scenario. Återstående förlust och kompensation bedöms inte. | underlag saknas |
+| EK-13 När fungerar åtgärden för den valda artprofilen och vem kan säkerställa den? | ej tillämpligt | – | Hur en skydds- eller kompensationsåtgärd fungerar, markåtkomst, drift och uppföljning är genomförandefrågor som avgörs utanför beräkningen. | ej tillämpligt |
+| EK-14 Kan en annan granskare återskapa beräkningen och få ut en lämplig publik karta? | delvis | Cellstorlek och antal fläckar; nätverkets och markunderlagets kontrollsummor står i körningens manifest (bilagan). | Kontrollsummorna är fakta i bilagan, inte tal som rapporten refererar. Skyddsklassade fynduppgifter hanteras inte; rapporten är öppen (dataklass oppet). | underlag saknas |
+| EK-15 Vilka slutsatser stöds av observation, beräknat samband respektive sakkunnig bedömning? | ej tillämpligt | – | Vilka slutsatser som stöds av observation, beräknat samband respektive sakkunnig bedömning är en bedömning i ärendet; beräkningen är en modell för potentiell livsmiljö. | ej tillämpligt |
 
 Exempel: `docs/exempel/skissunderlag_ekologi_demo.pdf` och `.docx` (påhittat demokvarter, nätverket
-Barrskogssamband (Nacka 2020, NMD), före och efter ett nytt hus, 12 frågor). ECA är 25 360 m² före och
+Barrskogssamband (Nacka 2020, NMD), före och efter ett nytt hus, 15 frågor). ECA är 25 360 m² före och
 25 290 m² efter (skillnad −71 m², −0,28 %); PC 0,00268 före och 0,00266 efter; 16 habitatfläckar i båda
 lägena; det källbaserade ECA-intervallet är 25 360 till 39 636 m² före och 25 289 till 39 494 m² efter. Det
 är ett påhittat NMD-lager: talen säger inget om verkliga arter.
@@ -422,7 +425,7 @@ svarta och fetstilta, utan nummer som förval.
 
 ## Frågekatalogen: vad Floden kan belägga för skyfall
 
-Katalogen är `utredningar-stockholm/fragor.json` (75 frågor, källäge 21 november 2026,
+Katalogen är `utredningar-stockholm/fragor.json` (90 frågor; källäge 21 november 2026, ekologi 24 november 2026,
 sammanställd med AI-stöd och ska granskas). Tabellen skrivs ur `rapport.fragekatalog.FLODEN_FORMAGA`
 (testet kontrollerar att den stämmer). "Status i demon" är referensflödets status; ingen fråga får
 status *visat* utan belägg, det avgörs av påståendets egna belägg.

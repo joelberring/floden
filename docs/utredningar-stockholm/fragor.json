@@ -1,5 +1,5 @@
 {
-  "granskningsdatum": "2026-11-21",
+  "granskningsdatum": "2026-11-24",
   "syfte": "Redaktionellt frågeunderlag för Stockholms stad. Frågorna beskriver beställning och rapportering. Tillämpning avgörs per ärende.",
   "kallor": {
     "PBL": {
@@ -336,6 +336,106 @@
       "titel": "Lövholmen, sol- och skuggstudie",
       "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/sodermalms-stadsdelsnamnd/mote-2023-10-19/agenda/sol-och-skuggstudie-lovholmenpdf?downloadMode=open",
       "lasanvisning": "Dnr 2017-13571, daterad 2023-08-29. Jämför tidsbestämda skuggbilder med tidskartorna och tolkningen av gårdar och kaj på s. 9."
+    },
+    "HJALPNAT": {
+      "titel": "Naturmiljö i stadsplaneringen, miljöförvaltningens hjälpreda",
+      "url": "https://tillstand.stockholm/globalassets/foretag-och-organisationer/tillstand-och-regler/tillstand-regler-och-tillsyn/lokal-och-fastigheter/handbocker-och-riktlinjer-vid-byggnation-i-stockholm/hjalpredan-2020---naturmiljo.pdf",
+      "lasanvisning": "Stockholms stad, version 2020-12-03. S. 10–13 om kartunderlag, inventering och tre ambitionsnivåer för spridningsanalys."
+    },
+    "ESBO": {
+      "titel": "Ekologiskt särskilt betydelsefulla områden, karttjänstens metadata",
+      "url": "https://gis.miljo.stockholm.se/server/rest/services/MF/ESBO_MF/MapServer",
+      "lasanvisning": "Stockholms miljöförvaltning. Läs definitionen och begränsningen i vad skiktet täcker."
+    },
+    "LSGI": {
+      "titel": "Grön infrastruktur – regional handlingsplan för Stockholms län",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c374878a/1732515906688/Gr%C3%B6n%20infrastruktur%20-%20Regional%20handlingsplan%20f%C3%B6r%20Stockholms%20l%C3%A4n.pdf",
+      "lasanvisning": "Länsstyrelsen Stockholm, rapport 2019:12. Se kap. 6 om urval och mål för regionala insatsområden."
+    },
+    "LSKART": {
+      "titel": "Kartor och underlag för planeringsarbete med grön infrastruktur",
+      "url": "https://www.lansstyrelsen.se/stockholm/samhalle/planera-bygga-och-bo/gron-infrastruktur/kartor-och-underlag-for-planeringsarbete-med-gron-infrastruktur.html",
+      "lasanvisning": "Länsstyrelsen Stockholm. Läs om biotopdatabasen samt skillnader mellan värdekärna, stödhabitat och värdetrakt."
+    },
+    "REGGRON": {
+      "titel": "Utveckla grön och blå struktur i Stockholmsregionen",
+      "url": "https://www.regionstockholm.se/regional-utveckling/den-regionala-utvecklingsplanen/rumslig-inriktning-innehallsida/regional-gron--och-blastruktur/",
+      "lasanvisning": "Region Stockholm, regionala utvecklingsplanen 2026. Se förhållningssätt för svaga partier i kilar och svaga gröna samband."
+    },
+    "LSART": {
+      "titel": "Fridlysta arter i detalj- och översiktsplanering",
+      "url": "https://www.lansstyrelsen.se/stockholm/om-oss/vara-tjanster/publikationer/2024/fridlysta-arter-i-detalj--och-oversiktsplanering.html",
+      "lasanvisning": "Länsstyrelsen Stockholm, 2024. S. 7–8 om underlagets betydelse och planprövning. Kontrollera senare ändringar i förordningen."
+    },
+    "ARTS": {
+      "titel": "Artskyddsförordning (2007:845)",
+      "url": "https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/artskyddsforordning-2007845_sfs-2007-845/",
+      "lasanvisning": "Sveriges riksdag. Kontrollera art, aktuell paragraf, bilagor och övergångsbestämmelser, inklusive ändringarna från 1 november 2026."
+    },
+    "MBALK": {
+      "titel": "Miljöbalk (1998:808)",
+      "url": "https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/miljobalk-1998808_sfs-1998-808/",
+      "lasanvisning": "Sveriges riksdag. Särskilt 3 kap. 3 och 6 §§, 6 kap. om miljöbedömningar, 7 kap. om områdesskydd och 12 kap. 6 § om samråd."
+    },
+    "BOVART": {
+      "titel": "Artskyddet i detaljplanering",
+      "url": "https://www.boverket.se/sv/PBL-kunskapsbanken/detaljplan/lamplighetsbedomning/artskyddet/",
+      "lasanvisning": "Boverkets PBL-kunskapsbank. När artinventering, skyddsåtgärder och konsekvenser behöver tas upp i planprocessen."
+    },
+    "SISNVI": {
+      "titel": "Naturvärdesinventering enligt svensk standard",
+      "url": "https://www.sis.se/standarder/omrade/naturvardesinventering/",
+      "lasanvisning": "SIS öppna information om SS 199000:2023 och den tidigare utgåvan. Anger hur beställaren kan precisera utgåva."
+    },
+    "SLUSKY": {
+      "titel": "Nationellt skyddsklassade arter",
+      "url": "https://www.slu.se/artdatabanken/rapportering-och-fynd/fynduppgifter-och-skyddsklassade-arter/skyddsklassade-arter/",
+      "lasanvisning": "SLU Artdatabanken. Skyddsklassning och geografisk diffusering av känsliga fynduppgifter."
+    },
+    "NVBIO": {
+      "titel": "Biologisk mångfald inom strategisk miljöbedömning",
+      "url": "https://www.naturvardsverket.se/vagledning-och-stod/miljobalken/miljobedomningar/strategisk-miljobedomning/biologisk-mangfald-i-miljobedomning",
+      "lasanvisning": "Naturvårdsverket. Läs om landskapsperspektiv, alternativ och kumulativa effekter vid strategisk miljöbedömning."
+    },
+    "NVLAND": {
+      "titel": "Landskapsekologiska analyser",
+      "url": "https://www.lansstyrelsen.se/download/18.1b1d393819324610c374a9ae/1732520025767/Landskapsekologiska%2520analyser.pdf",
+      "lasanvisning": "Länsstyrelsernas metodstöd, meddelande 2023:30, utgivet av Länsstyrelsen i Jönköpings län. Avsnitt 5.16–5.18 om habitatnätverk, mått och tolkning. Innehåller ett Stockholmsexempel."
+    },
+    "EKARSTA": {
+      "titel": "Naturmiljöutredning norra Årsta",
+      "url": "https://insynsverige.se/documentHandler.ashx?did=2004860",
+      "lasanvisning": "Stockholmsunderlag, granskningsversion 2, 2020-07-06. Metod s. 15–20, resultat från s. 21, syntes s. 30 och förslag till reservatsgräns från s. 33."
+    },
+    "EKHAG": {
+      "titel": "Västra Hagsätra, planbeskrivning",
+      "url": "https://etjanster.stockholm.se/Byggochplantjansten/File/GetFileByFileRecNo?recNo=10579514&type=gplan",
+      "lasanvisning": "Stockholms stad, antagandehandling 2023-05-17, dnr 2018-06778. S. 65–70, särskilt delområdet vid Olshammarsgatan s. 69."
+    },
+    "EKSJO": {
+      "titel": "Sjöstadshöjden, underlag för reviderat inriktningsbeslut",
+      "url": "https://meetingspublic.stockholm.se/welcome-sv/namnder-styrelser/kommunfullmaktige/mote-2024-09-23/agenda/r1-utl-projekt-sjostadshojden-reviderat-inriktningsbeslutpdf?downloadMode=open",
+      "lasanvisning": "Stockholms stad, handling till kommunfullmäktige 2024-09-23. Stycket om ädellövssambandet och ändrad markanvisning vid Hammarbyvägen."
+    },
+    "EKSKON": {
+      "titel": "Naturvärdesbedömning för två detaljplaner i Hökarängen",
+      "url": "https://miljobarometern.stockholm.se/content/docs/tema/natur/Groddjur/Kompensations%C3%A5tg%C3%A4rder_Sk%C3%B6nstaholmsf%C3%A4ltet_2016.pdf",
+      "lasanvisning": "Projektunderlag för två detaljplaner, 2016. Se sammanfattning och förslag kring Skönstaholmsfältets dammar och groddjurens landmiljöer."
+    },
+    "STKOMP": {
+      "titel": "Kompensation för grönytor som används för stadsutveckling",
+      "url": "https://vaxer.stockholm/tema/offentliga-rum/gronytekompensation/",
+      "lasanvisning": "Stockholms stad. Arbetssätt, roll för miljöförvaltningens ekologer och exempel på ekologiska åtgärder."
+    },
+    "LS12": {
+      "titel": "Samråd vid ändring av naturmiljön",
+      "url": "https://www.lansstyrelsen.se/stockholm/natur-och-landsbygd/aktiviteter-och-atgarder-i-naturen/samrad-vid-andring-av-naturmiljon.html",
+      "lasanvisning": "Länsstyrelsen Stockholm. Särskild process enligt 12 kap. 6 § miljöbalken, med exempel på träd och fridlysta arter."
+    },
+    "EKDATA": {
+      "titel": "Habitatnätverk i Stockholms stad 2022 och inventeringsrapporter",
+      "url": "https://www.miljodatastockholm.se/dokument/",
+      "lasanvisning": "Miljödata Stockholms dokumentförteckning. Sök på rapporttiteln för habitatnätverken och på artgruppen för kommunala inventeringar."
     }
   },
   "fragor": [
@@ -1248,6 +1348,198 @@
       "kallor": [
         "LOVSOL",
         "FUTH"
+      ]
+    },
+    {
+      "id": "EK-01",
+      "omrade": "ekologi",
+      "typ": "Kommunal vägledning",
+      "villkor": "Tidig plansållning",
+      "fraga": "Vilket samband kan planen påverka och hur ingående behöver det utredas?",
+      "redovisning": "Karta med plangräns, ESBO, stadens habitatnätverk och anslutande livsmiljöer. Motivera översiktlig bedömning, nätverksanalys eller prövning av alternativa volymer.",
+      "kallor": [
+        "HJALPNAT",
+        "ESBO",
+        "EKDATA"
+      ]
+    },
+    {
+      "id": "EK-02",
+      "omrade": "ekologi",
+      "typ": "Regional vägledning",
+      "villkor": "Samband fortsätter utanför planområdet",
+      "fraga": "Vilka livsmiljöer förbinder platsen i stadsdelen och i det regionala landskapet?",
+      "redovisning": "Visa båda ändarna, alternativa vägar och angränsande planer. Ange källa, år och skala samt vad som gör analysområdets yttre gräns ekologiskt rimlig.",
+      "kallor": [
+        "LSGI",
+        "LSKART",
+        "REGGRON"
+      ]
+    },
+    {
+      "id": "EK-03",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Fokusart eller artgrupp väljs",
+      "fraga": "Vems rörelse studeras, mellan vilka miljöer och under vilken del av livscykeln?",
+      "redovisning": "Beskriv artprofil, habitatkrav och livsstadium. Motivera valet utifrån platsen och ange vilka andra arter eller funktioner som behöver egen bedömning.",
+      "kallor": [
+        "HJALPNAT",
+        "NVLAND",
+        "EKARSTA"
+      ]
+    },
+    {
+      "id": "EK-04",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Skrivbordsunderlag behöver kontrolleras",
+      "fraga": "Vilka naturvärden, barriärer och möjliga passager har kontrollerats i fält?",
+      "redovisning": "Ange inventeringsyta, datum, metod, årstid, täckning och luckor. Skilj observation från lämplig livsmiljö. Beställ riktad fältkontroll där osäkerheten kan ändra slutsatsen.",
+      "kallor": [
+        "HJALPNAT",
+        "SISNVI",
+        "BOVART"
+      ]
+    },
+    {
+      "id": "EK-05",
+      "omrade": "ekologi",
+      "typ": "Lag/prövning",
+      "villkor": "Fridlyst art eller skyddat område kan beröras",
+      "fraga": "Vilka förbud, föreskrifter eller tillståndsfrågor behöver prövas särskilt?",
+      "redovisning": "Specificera art eller områdesskydd, relevant bestämmelse och giltig lydelse. Beskriv berörd ekologisk funktion, projektets påverkan, möjliga skyddsåtgärder och kvarstående prövningsbehov.",
+      "kallor": [
+        "ARTS",
+        "MBALK",
+        "LSART",
+        "BOVART"
+      ]
+    },
+    {
+      "id": "EK-06",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Habitat avgränsas",
+      "fraga": "Vad krävs för att en yta eller ett enskilt träd ska fungera som livsmiljö eller klivsten?",
+      "redovisning": "Redovisa kartklass, kvalitet, ålder eller strukturer och källstöd för urvalet. Ge varje objekt en identifierare. Redovisa små objekt som kan försvinna vid rasterisering.",
+      "kallor": [
+        "EKARSTA",
+        "LSKART",
+        "NVLAND"
+      ]
+    },
+    {
+      "id": "EK-07",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Modell beräknar rörelsemöjligheter",
+      "fraga": "Hur representeras avstånd, markens motstånd och svårpasserade eller absoluta barriärer?",
+      "redovisning": "Ange metod, upplösning, enhet, klassning, avståndsbegrepp och källstöd per parameter. Visa hur murar, vägar, öppningar och okända celler hanteras för den valda profilen.",
+      "kallor": [
+        "NVLAND",
+        "EKARSTA"
+      ]
+    },
+    {
+      "id": "EK-08",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Ett planalternativ ska jämföras",
+      "fraga": "Vad förändras mellan nuläge, framtid utan projekt och den analyserade byggrätten?",
+      "redovisning": "Lista versioner av geometri, trädförlust, kvarstående träd, anläggningar och relevant etapp. Håll övriga modellval jämförbara. Vid volymfråga ska höjd eller placering faktiskt variera i analysen.",
+      "kallor": [
+        "HJALPNAT",
+        "EKHAG",
+        "EKSJO"
+      ]
+    },
+    {
+      "id": "EK-09",
+      "omrade": "ekologi",
+      "typ": "Vägledning",
+      "villkor": "Flera planer påverkar samma samband",
+      "fraga": "Hur förändras nätverket av projektet ensamt och tillsammans med andra utbyggnader?",
+      "redovisning": "Ange vilka planer eller program som ingår, deras beslutsstatus och tidshorisont. Redovisa den gemensamma påverkan i ett eget scenario med samma fokusart och jämförelsegrund.",
+      "kallor": [
+        "NVBIO",
+        "EKARSTA"
+      ]
+    },
+    {
+      "id": "EK-10",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Resultat ska styra utformningen",
+      "fraga": "Vilken livsmiljö, passage eller alternativ väg står för den beslutskritiska förändringen?",
+      "redovisning": "Visa objektet på karta per scenario och ange vilka områden som kopplas ihop. Redovisa lokal förändring tillsammans med valt nätverksmått och dess definition om ett sådant har beräknats.",
+      "kallor": [
+        "NVLAND",
+        "EKARSTA",
+        "EKHAG"
+      ]
+    },
+    {
+      "id": "EK-11",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Slutsatsen beror på avstånd, motstånd eller underlagets kant",
+      "fraga": "Håller prioriteringen när osäkra antaganden ändras inom motiverade alternativ?",
+      "redovisning": "Pröva biologiskt motiverade varianter för spridning eller barriärer och utvidga utsnittet vid misstänkt kanteffekt. Redovisa om passage, rangordning eller slutsats byter läge.",
+      "kallor": [
+        "NVLAND",
+        "EKARSTA"
+      ]
+    },
+    {
+      "id": "EK-12",
+      "omrade": "ekologi",
+      "typ": "Kommunal vägledning",
+      "villkor": "Intrång kan undvikas eller minskas",
+      "fraga": "Vilket alternativ behåller bäst den utpekade funktionen och vad går ändå förlorat?",
+      "redovisning": "Jämför flyttad eller minskad byggrätt, bevarade värdträd och fungerande passager. Redovisa återstående förlust innan förstärkning eller kompensation tillgodoräknas.",
+      "kallor": [
+        "HJALPNAT",
+        "STKOMP",
+        "EKSJO"
+      ]
+    },
+    {
+      "id": "EK-13",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Skydds- eller kompensationsåtgärd åberopas",
+      "fraga": "När fungerar åtgärden för den valda artprofilen och vem kan säkerställa den?",
+      "redovisning": "Visa läge, markåtkomst, tidsförskjutning, drift och uppföljning. Redovisa byggskede, öppningsskede och möjlig framtida funktion var för sig. Knyt åtgärden till ritning eller genomförandehandling.",
+      "kallor": [
+        "STKOMP",
+        "EKSKON",
+        "BOVART"
+      ]
+    },
+    {
+      "id": "EK-14",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "GIS och artunderlag förs till rapportappen",
+      "fraga": "Kan en annan granskare återskapa beräkningen och få ut en lämplig publik karta?",
+      "redovisning": "Länka kartor och tabeller till körnings-ID, profil, scenario, dataversioner och källor. Använd en generaliserad offentlig redovisning där fynduppgifter är skyddsklassade.",
+      "kallor": [
+        "NVLAND",
+        "SLUSKY"
+      ]
+    },
+    {
+      "id": "EK-15",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Rapporten ska ligga till grund för ett beslut",
+      "fraga": "Vilka slutsatser stöds av observation, beräknat samband respektive sakkunnig bedömning?",
+      "redovisning": "Ge källa och objekt per slutsats. Ange vad projektet behöver säkra, vilken uppgift som saknas och vilket fält- eller planunderlag som skulle kunna avgöra frågan.",
+      "kallor": [
+        "EKARSTA",
+        "EKHAG",
+        "LSART"
       ]
     }
   ]

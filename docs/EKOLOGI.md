@@ -112,7 +112,7 @@ nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt.
     bufferten, varnar lösaren. Markunderlagets ursprung (`ref`, manifestets och lagrens sha256, klippt utsnitt) skrivs i
     `ekologi.json` under `natverk.klassraster.markunderlag`. Samma NMD ger samma ECA som med rollen `nmd` (testat). Höj `max_celler`
     och `max_flackar` för en stor buffert.
-- Rapport: `ekologi` är ett skissunderlag (R2) med frågorna EK-01 till EK-12; se `docs/RAPPORTER.md`, avsnittet om ekologi.
+- Rapport: `ekologi` är ett skissunderlag (R2) med frågorna EK-01 till EK-15; se `docs/RAPPORTER.md`, avsnittet om ekologi.
   Exempel: `docs/exempel/skissunderlag_ekologi_demo.pdf`.
 
 ## Nästa steg

@@ -8,7 +8,7 @@ Läs filerna i den här ordningen:
 3. `docs/ARKITEKTUR.md` – hur delarna hänger ihop.
 4. `docs/DATAKONTRAKT.md` – exakta format mellan delarna. Den viktigaste filen för att flera agenter ska kunna arbeta parallellt.
 5. `docs/BESLUT.md` – beslut som redan är fattade och inte ska omprövas utan en människa.
-6. `docs/DATA.md` – datakällor, koordinatsystem och vad som är känsligt.
+6. `docs/DATA.md` – datakällor, koordinatsystem och vad som är känsligt (Lantmäteriets produkter och avgifter: `docs/GEOTORGET.md`).
 7. `docs/VALIDERING.md` – testsvit, mått och facit.
 8. `docs/VATTEN.md` – takvatten (regn på tak) och avtappning till ledningsnätet: regler och antaganden.
 9. `tasks/Txx-*.md` – en uppdragsbeskrivning per arbetsområde. En agent tar ett uppdrag i taget.

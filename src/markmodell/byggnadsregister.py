@@ -252,7 +252,14 @@ def markhojd_under_byggnad(
     traff = byggnad_maske(Byggnad(polygon=polygon, hal=tuple(hal)), ruta)
     if traff is not None:
         mask, (r0, r1, k0, k1) = traff
-        return float(np.median(terrang_z[r0:r1, k0:k1][mask]))
+        v = terrang_z[r0:r1, k0:k1][mask]
+        if np.isfinite(v).any():
+            return float(np.nanmedian(v))
+        # Inget värde under huset (höjdmodell utan mark under byggnader): ta marken runt omkring.
+        for marg in (2, 5, 10, 25, 50):
+            ram = terrang_z[max(r0 - marg, 0) : r1 + marg, max(k0 - marg, 0) : k1 + marg]
+            if np.isfinite(ram).any():
+                return float(np.nanmedian(ram))
     cx = sum(p[0] for p in polygon) / len(polygon)
     cy = sum(p[1] for p in polygon) / len(polygon)
     rad, kol = ruta.koordinat_till_cell(cx, cy)

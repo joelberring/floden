@@ -86,7 +86,9 @@ Mitt konto i O-Tid kan de inte läsas ut därifrån. Hämta dem på nytt hos Lan
 `apimanager.lantmateriet.se` för nyckel och hemlighet, eller använd Geotorgets inloggning med `basic`).
 Produkterna måste vara **beställda på Geotorget** för kontot. Floden använder de gratis: STAC Höjd med **Laserdata
 Nedladdning, skog** och Ortofoto Nedladdning (gratis, men av som förval för Göteborg). Lantmäteriets byggnadsprodukter
-kan kosta och är avstängda som förval (kommunens egna öppna data används: se `docs/DRIFT.md`, "Göteborg"). Geotorgets
+är avstängda som förval (kommunens egna öppna data används: se `docs/DRIFT.md`, "Göteborg"); att de skulle kosta
+stämmer inte för alla: **Byggnad Nedladdning, vektor** är märkt avgiftsfri på Geotorget (kontrollerat 2026-11-24).
+Se `docs/GEOTORGET.md` för alla produkter och avgifter; Joel har beslutat att de avgiftsfria får användas. Geotorgets
 användarnamn och lösenord kräver **Metod = basic** på sidan Nycklar; förvalet oauth2 gäller API-portalens nyckel och
 hemlighet. Lantmäteriet svarar 401/403 både vid fel nyckel eller metod och vid obeställd produkt; det går inte att skilja
 dem, och felet säger det och nämner metoden.

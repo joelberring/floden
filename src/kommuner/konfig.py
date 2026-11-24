@@ -104,6 +104,8 @@ class PaketKalla:
     lager_monster: str      # bara baskartan: lagernamn (uttryck), t.ex. "(?i)^tak$"
     licens: str
     licens_anmarkning: str
+    objekt_falt: str = ""   # bara baskartan (GeoPackage/Shapefile): attribut som väljer objekt, t.ex. "typ"
+    objekt_monster: str = ""  # uttryck mot objekt_falt, t.ex. "(?i)^tak"; tomt = alla objekt i lagret
 
 
 @dataclass(frozen=True)
@@ -313,7 +315,10 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
             var = f"[filpaket.{namn}]"
             if not isinstance(t, Mapping):
                 raise KommunKonfigFel(f"{var} ska vara en tabell.")
-            _stram(t, var, ("urlar", "index_url", "epsg", "lager_monster", "licens", "licens_anmarkning"))
+            _stram(
+                t, var,
+                ("urlar", "index_url", "epsg", "lager_monster", "licens", "licens_anmarkning", "objekt_falt", "objekt_monster"),
+            )  # fmt: skip
             urlar = _textlista(t, "urlar", var)
             index_url = _text(t, "index_url", var, tom_ok=True)
             if not urlar and not index_url:
@@ -324,10 +329,20 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
                     re.compile(monster_p)
                 except re.error as exc:
                     raise KommunKonfigFel(f"{var}: 'lager_monster' är inte ett giltigt uttryck: {exc}") from exc
+            objekt_falt = _text(t, "objekt_falt", var, tom_ok=True) if "objekt_falt" in t else ""
+            objekt_monster = _text(t, "objekt_monster", var, tom_ok=True) if "objekt_monster" in t else ""
+            if bool(objekt_falt) != bool(objekt_monster):
+                raise KommunKonfigFel(f"{var}: ange både 'objekt_falt' och 'objekt_monster', eller ingen av dem.")
+            if objekt_monster:
+                try:
+                    re.compile(objekt_monster)
+                except re.error as exc:
+                    raise KommunKonfigFel(f"{var}: 'objekt_monster' är inte ett giltigt uttryck: {exc}") from exc
             return PaketKalla(
                 urlar=urlar, index_url=index_url, epsg=int(_tal(t, "epsg", var, minst=1.0)),
                 lager_monster=monster_p, licens=_text(t, "licens", var),
                 licens_anmarkning=_text(t, "licens_anmarkning", var),
+                objekt_falt=objekt_falt, objekt_monster=objekt_monster,
             )  # fmt: skip
 
         filpaket = FilpaketKonfig(
