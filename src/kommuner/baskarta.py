@@ -63,8 +63,15 @@ def _polygoner(geom: Any) -> list[tuple[list[tuple[float, float]], float | None]
 
 
 def _ur_vektorfiler(
-    paket: Sequence[Path], monster: re.Pattern[str], bbox: tuple[float, float, float, float]
+    paket: Sequence[Path],
+    monster: re.Pattern[str],
+    bbox: tuple[float, float, float, float],
+    objekt: tuple[str, re.Pattern[str]] | None = None,
+    sedda: set[str] | None = None,
 ) -> tuple[list[tuple[list[tuple[float, float]], float | None]], list[str]]:
+    """Konturer ur GeoPackage/Shapefile. `objekt` = (fält, uttryck) väljer objekt i lagret (t.ex. Göteborgs
+    Shapefile-baskarta, där takkonturerna är objekt med typ "Tak..." i lagret byggnad_l). Värden i fältet som
+    inte träffar samlas i `sedda` (för felmeddelandet)."""
     import pyogrio
 
     ut: list[tuple[list[tuple[float, float]], float | None]] = []
@@ -80,8 +87,17 @@ def _ur_vektorfiler(
                 else:
                     lager = []
                 for lg in lager:
-                    gdf = pyogrio.read_dataframe(sokv, layer=lg, bbox=bbox, columns=[]) if lg else pyogrio.read_dataframe(sokv, bbox=bbox, columns=[])
+                    kol = [objekt[0]] if objekt else []
+                    gdf = pyogrio.read_dataframe(sokv, layer=lg, bbox=bbox, columns=kol) if lg else pyogrio.read_dataframe(sokv, bbox=bbox, columns=kol)
                     anv.append(f"{p.name}:{m}" + (f"[{lg}]" if lg else ""))
+                    if objekt:
+                        if objekt[0] not in gdf.columns:
+                            raise KommunKallaFel(f"Baskartans lager {m} saknar fältet '{objekt[0]}' ([filpaket.baskarta] objekt_falt).")
+                        varden = gdf[objekt[0]].astype(str)
+                        valda = varden.map(lambda x: bool(objekt[1].search(x)))
+                        if sedda is not None:
+                            sedda.update(varden[~valda].unique().tolist()[:50])
+                        gdf = gdf[valda.to_numpy()]
                     for g in gdf.geometry:
                         ut.extend(_polygoner(g))
         if anv:
@@ -199,6 +215,8 @@ def tak_till_gpkg(
     lager_monster: str,
     ut: Path,
     dwgread: str | None = None,
+    objekt_falt: str = "",
+    objekt_monster: str = "",
 ) -> tuple[Path, int, list[str]]:
     """Klipper baskartans takkonturer till `bbox_publicering` och skriver `ut` (GeoPackage, EPSG:3011).
 
@@ -206,7 +224,14 @@ def tak_till_gpkg(
     """
     monster = re.compile(lager_monster)
     varningar: list[str] = []
-    ringar, anv = _ur_vektorfiler(paket, monster, bbox_publicering)
+    objekt = (objekt_falt, re.compile(objekt_monster)) if objekt_falt else None
+    sedda: set[str] = set()
+    ringar, anv = _ur_vektorfiler(paket, monster, bbox_publicering, objekt, sedda)
+    if anv and objekt and not ringar and sedda:
+        raise KommunKallaFel(
+            f"Inga objekt i baskartan har {objekt_falt} som matchar '{objekt_monster}' i området. "
+            f"Värden som finns: {', '.join(sorted(sedda)[:30])}. Justera [filpaket.baskarta] objekt_monster."
+        )
     if not anv:
         ringar, anv, v = _ur_dwg(paket, monster, bbox_publicering, dwgread)
         varningar.extend(v)

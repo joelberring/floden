@@ -7,8 +7,8 @@
 #   floden projekt skapa --geografi goteborg-test@v1 --avgransning <xmin,ymin,xmax,ymax> --namn "..." --konto <konto-id>
 #
 # KÄLLOR (öppna filpaket, CC0, ingen inloggning, EPSG:3007, RH 2000; Göteborgs Stad, opengeodata.goteborg.se):
-#   - baskartan (DWG, 3D): https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip
-#     Lager TAK (takkonturer), FASAD, BYGGNADSLINJE. Ingen byggnadshöjd som attribut: höjden är takkonturens z.
+#   - baskartan (Shapefile, 3D): https://opengeodata.goteborg.se/downloads/baskarta/baskarta_shp_v2.zip
+#     Lagret byggnad_l, objekt med typ Tak... (DWG-paketet svarade 404 2026-11-24). Ingen byggnadshöjd som attribut: höjden är takkonturens z.
 #   - höjdmodellen 2022 (GeoTIFF, Float32, 0,5 m, plattor om 1 x 1 km i paket om 10 x 10 km, bara mark).
 #     Paketens adresser är INTE verifierade (produktbladet anger ingen). Se [filpaket.hojdmodell].
 # Göteborgs WFS är avstängd ("Service WFS is disabled") och används därför inte som förval; den finns kvar som
@@ -67,13 +67,19 @@ tillatna_varddomaner = ["opengeodata.goteborg.se"]
 max_gib = 8.0
 
 [filpaket.baskarta]
-urlar = ["https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip"]
+# Shapefile-paketet (svarar 200). DWG-paketet baskarta_dwg_v2.zip svarade 404 på servern 2026-11-24 fast
+# produktbladet (rev. nov 2025) anger det; DWG-vägen (dwgread) finns kvar om det kommer tillbaka.
+# I Shapefile-paketet ligger takkonturerna som objekt i lagret byggnad_l (PolylineZ, 3D) med fältet typ.
+# OKONTROLLERAT: att typ börjar med "Tak" för takkonturerna (DWG-lagret heter TAK, obkod "Takkonturer").
+# Träffar uttrycket inget säger felmeddelandet vilka typ-värden som finns.
+urlar = ["https://opengeodata.goteborg.se/downloads/baskarta/baskarta_shp_v2.zip"]
 index_url = ""
 epsg = 3007
-# Bara lager TAK. DWG kräver LibreDWG:s dwgread (FLODEN_DWGREAD); GeoPackage/Shapefile/dwgread-JSON i paketet går före.
-lager_monster = "(?i)(^|[^a-z])tak($|[^a-z])"
+lager_monster = "(?i)^byggnad_l$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^tak"
 licens = "CC0-1.0"
-licens_anmarkning = "Göteborgs Stads öppna baskarta (CC0), filpaket baskarta_dwg_v2.zip. Taklinjernas höjd (z, RH 2000) är byggnadens takhöjd; kontrollera mot data.goteborg.se."
+licens_anmarkning = "Göteborgs Stads öppna baskarta (CC0), filpaket baskarta_shp_v2.zip. Takkonturernas höjd (z, RH 2000) är byggnadens takhöjd; kontrollera mot data.goteborg.se."
 
 [filpaket.hojdmodell]
 urlar = []
