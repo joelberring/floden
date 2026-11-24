@@ -2570,7 +2570,7 @@ class FlodenApiApp:
         if verb == "POST" and rest == ["validera"]:
             return _json_svar(200, kv.validera(projekt, json_kropp()))
         if rest[:1] == ["lage-idag"]:
-            # Läget idag (U5a): bara `fore`, inget förslag. Samma roll som övriga körningar (utredare för POST).
+            # Läget idag (U5a): bara `fore`, inget förslag; utredare för POST.
             kropp_l = json_kropp() if verb == "POST" else {}
             valda_l = [str(x) for x in kropp_l.get("analyser", [])]
             avt_l = kropp_l.get("avtappning_mm_h")
@@ -2706,7 +2706,7 @@ class FlodenApiApp:
         """Vad en körning är för slags underlag (K48, additivt).
 
         `slag` är `forslag` (körd för ett ritat förslag; `scenario` har då `slug` och `namn` när
-        kopplingen finns kvar), `lage_idag` (projektets befintliga läge utan förslag, U5a; räknas som projektets egen
+        kopplingen finns kvar), `lage_idag` (befintligt läge utan förslag, U5a; projektets egen
         körning), `egen` (annan körning i projektet, till exempel via MCP), `demo`
         (demokörningen som följer med projektet, inget eget förslag) eller `okand`."""
         k = self.fragor.korning_eller_none(korning_id)

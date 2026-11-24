@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Kartverktyget: rita ett planförslag i kartan och räkna före och efter (webbens API).
 
 Klienten ritar bara geometri (hus och höjder). Allt annat görs här, med kärnans egna delar:
