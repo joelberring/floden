@@ -787,3 +787,41 @@ def test_rapportens_underlagstext_och_ordning_for_lage_idag() -> None:
 
     assert "läget idag" in underlagstext({"slag": "lage_idag", "scenario": None})
     assert RANG["lage_idag"] == RANG["egen"] < RANG["demo"]
+
+
+# ---------------------------------------------------------------- skarvkontroll (R3)
+
+
+def markyta(x: float, y: float, s: float, niva: float, aid: str = "mark1") -> dict[str, Any]:
+    ring = [[x, y], [x + s, y], [x + s, y + s], [x, y + s], [x, y]]
+    return {
+        "typ": "markhojd",
+        "andring_id": aid,
+        "geometri": {"type": "Polygon", "coordinates": [ring]},
+        "egenskaper": {"niva_rh2000": niva},
+    }
+
+
+def test_markyta_utan_niva_nekas(kv: Kv) -> None:
+    a = markyta(151100, 6580100, 20, 10.0)
+    a["egenskaper"] = {}
+    _, v = kv.json("POST", f"{P}/validera", {"andringar": [a]})
+    assert not v["giltig"] and "nivå" in " ".join(v["fel"])
+
+
+def test_skarvkontroll_utan_markyta_ger_ingen_skarvpost(kv: Kv) -> None:
+    _, v = kv.json("POST", f"{P}/validera", {"andringar": [demohus()]})
+    assert v["skarvar"] is None
+
+
+def test_skarvkontroll_i_demokvarteret(kv: Kv) -> None:
+    """En hög platå i demokvarterets sänka ger en varning (nytt fält `skarvar`, additivt)."""
+    u = kv.json("GET", P)[1]["utbredning"]
+    cx, cy = (u["x_min"] + u["x_max"]) / 2, (u["y_min"] + u["y_max"]) / 2
+    _, v = kv.json("POST", f"{P}/validera", {"andringar": [markyta(cx - 15, cy - 15, 30, 400.0)]})
+    assert v["giltig"], v
+    sk = v["skarvar"]
+    assert sk["kontrakt"] == "floden-skarvkontroll/v1" and sk["antal"] >= 1
+    assert sk["tillkommande_volym_m3"] > 0
+    assert any("sänka vid skarven" in t for t in v["varningar"])
+    assert len([t for t in v["varningar"] if "sänka vid skarven" in t]) <= 3

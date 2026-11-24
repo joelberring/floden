@@ -216,6 +216,20 @@ körande servern, utan serverkommandon. Backup (S4) ingår inte.
 | U5 Resterande UX | (a) **klar (PR öppen)**: beräkna "läget idag" utan förslag: en körväg som kör K20 med bara `fore` för projektets frågor (`POST /api/kartverktyg/<projekt>/lage-idag/{plan,kor}`, `GET .../lage-idag/status`, MCP `kor(lage_idag=true)`, knappen "Räkna läget idag" i steg 3, källan "Läget idag" i steg 4; rapporten kräver fortfarande före och efter, se STATUS); (b) kort i stället för tabeller på smal skärm i Administration; (c) kartvärden med tangentbord (steg 4); (d) ordlistan genom steg 4 och lagerpanelen; (e) statusprickarna i rapporten med text; (f) en beställning i stället för två (steg 3 och 5); (g) projektraden med roll och organisation, tomtext för inloggad | U4 | redo (medel) |
 
 
+## Ritverktyg för marken (R) – design 2026-11-24
+
+Design: `docs/design/RITVERKTYG.md` (Joels önskan 2026-11-24: generellt kartverktyg, 3D-hus, mark i nivåer, kontroll av skarvar). Alla kontraktsändringar är additiva.
+
+| Uppdrag | Beskrivning | Storlek | Beroenden | Status |
+| --- | --- | --- | --- | --- |
+| R1 Skarvkontroll | `sankgraf.skarvkontroll` (nya/djupare sänkor vid kanten på ny mark, före/efter), `markhojd` i `validera`, fältet `skarvar` (K49), tester med syntetiska markmodeller och demokvarteret | S–M | G1 | klar (PR öppen) |
+| R2 Lagermodell | Ritlager med roll (byggnad, mark, hårdgjort, vegetation, vatten, brytlinje, öppning), geometri, stil, synlighet, låsning, källa, dataklass; mallar; K50 | M | R1 | redo (förslag, Joel bekräftar) |
+| R3 Linjer och ytor | Rita linje/yta med z, fäst mot linjer, följ kant, klipp, slå ihop, vänd, förenkla, tangentbord, fingerräckvidd; K9 `brytlinje_ny`, `oppning_ny` (porterat ur O-Tid) | L | R2 | väntar |
+| R4 Mark i nivåer | Lutande yta, slänt i dagsljus, exakt kantavstånd utan halvcellstrappa, `delta_m`; `markhojd` `lutning`/`slant`, K3 `HojdYta` additivt | L | R1 | redo (förslag) |
+| R5 Skarv i klienten | Fynden i kartan och i steg 2, "Jämna ut skarven" (slänt eller utlopp) och ny kontroll | M | R1, R3, R4 | väntar |
+| R6 3D | Takformer i `extrudera`, ny mark och slänter, murar som brytlinjer, live | M–L | R3, R4 | väntar |
+| R7 Pekskärm | Håll för att flytta, fingerräckvidd, stora handtag, egna tangentbindningar | S–M | R3 | väntar |
+
 ## Sist – OAuth för Claude-appen (parkerat 2026-11-23, Joels beslut)
 
 Claude-appen ansluter i dag med en personlig MCP-token som begärandehuvud (`authorization: Bearer fl_mcp_…`,

@@ -298,7 +298,7 @@ class KartverktygTjanst:
                 d["egenskaper"]["hojd_m"] = float(h)  # 18 och 18.0 ska ge samma K9-nyckel
             g = d["geometri"]
             if (
-                d["typ"] == "byggnad_ny"
+                d["typ"] in ("byggnad_ny", "markhojd")
                 and isinstance(g, Mapping)
                 and g.get("type") == "Polygon"
                 and g.get("coordinates")
@@ -325,6 +325,7 @@ class KartverktygTjanst:
         varningar: list[str] = []
         information: list[str] = []
         hus: list[dict[str, Any]] = []
+        skarvar: dict[str, Any] | None = None
         try:
             res = kontrollera_andringar(andringar, self._rutor_alla(mallar))
             hus = res["hus"]
@@ -333,6 +334,8 @@ class KartverktygTjanst:
             k9_per_bas = self._k9_per_bas(mallar, andringar, "kontroll")
             varningar.extend(self._paverkar_inte(mallar, k9_per_bas))
             information.extend(self._instangt_vatten(mallar, k9_per_bas))
+            skarv_text, skarvar = self._skarvar(mallar, k9_per_bas)
+            varningar.extend(skarv_text)
         except (RitatFel, ScenarioFel) as exc:
             fel.append(str(exc))
         return {
@@ -342,7 +345,70 @@ class KartverktygTjanst:
             "information": information,
             "hus": hus,
             "andringar": andringar,
+            "skarvar": skarvar,
         }
+
+    def _skarvar(
+        self, mallar: Mapping[str, Mall], k9: Mapping[str, tuple[Planscenario, list[str]]]
+    ) -> tuple[list[str], dict[str, Any] | None]:
+        """Skarvkontrollen (R3): nya eller djupare sänkor vid kanten på ny mark (`markhojd`).
+
+        Tillämpar bara markytorna på vattnets rutor i en tillfällig mapp och jämför sänkorna före
+        och efter (`sankgraf.skarvkontroll`). Svar: varningstexter och ett `floden-skarvkontroll/v1`
+        (None när förslaget saknar ny mark).
+        """
+        import tempfile
+
+        from karna.geometri.tillampa import tillampa_pa_v2_ruta
+        from karna.k9_till_k1 import k9_till_lapp
+        from sankgraf.skarvkontroll import SkarvKontrollFel, kontrollera_skarvar_k1
+
+        mall = mallar.get("vatten")
+        if mall is None or "vatten" not in k9:
+            return [], None
+        sc, _ = k9["vatten"]
+        mark = tuple(a for a in sc.andringar if a.typ == "markhojd")
+        if not mark:
+            return [], None
+        mappar = [r.mapp for r in mall.rutor]
+        if valj_k1_version(mappar) < 2:
+            return [], None
+        lapp = k9_till_lapp(mark, Planscenario("skarv", sc.bas_recept, mark))
+        polygoner = [
+            tuple((float(x), float(y)) for x, y in (a.geometri or {})["coordinates"][0][:-1])
+            for a in mark
+        ]
+        fynd: list[Any] = []
+        ovriga = 0
+        try:
+            for r in mall.rutor:
+                recept = r.mapp / "recept.json"
+                with tempfile.TemporaryDirectory(prefix="floden-skarv-") as tmp:
+                    ut = Path(tmp) / "ruta"
+                    andrad = tillampa_pa_v2_ruta(
+                        r.mapp, ut, lapp=lapp, sektioner=None, geometri=(),
+                        bas_recept_sha256=sha256_fil(recept) if recept.is_file() else "",
+                    )
+                    if not andrad:
+                        continue
+                    res = kontrollera_skarvar_k1(r.mapp, ut, polygoner)
+                    if res is not None:
+                        fynd.append(res)
+                        ovriga += res.ovriga_nya_antal
+        except SkarvKontrollFel as exc:
+            return [f"Skarvkontrollen kunde inte köras: {exc}"], None
+        if not fynd:
+            return [], None
+        text = [t for res in fynd for t in res.varningar()]
+        sammanslagen = fynd[0].som_dict()
+        for extra in fynd[1:]:
+            d = extra.som_dict()
+            sammanslagen["fynd"] += d["fynd"]
+            sammanslagen["antal"] += d["antal"]
+            sammanslagen["tillkommande_volym_m3"] = round(
+                sammanslagen["tillkommande_volym_m3"] + d["tillkommande_volym_m3"], 2
+            )
+        return text, sammanslagen
 
     # ------------------------------------------------------------------ K9 per bas
 

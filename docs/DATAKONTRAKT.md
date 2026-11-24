@@ -1228,3 +1228,25 @@ om en sådan körning ändå ingår via MCP. MCP: `kor(lage_idag=true)` och `kor
 med `kontroll.godkand` falskt betyder att rapporten är skapad men kontrollen underkände den: ingen export. Ett jobb som var igång när
 servern stoppades blir `fel`. Ett jobb körs i taget. Påståendena skrivs av referensflödet (`forfattare` `referensflode`, ingen AI) ur
 körningens egna scenarier; talen är platshållare som Floden fyller (K32).
+
+## K49 – Skarvkontroll `floden-skarvkontroll/v1` (v1)
+
+Tillagt 2026-11-24 (R3 i `docs/design/RITVERKTYG.md`, additivt; ändrar inget äldre kontrakt). Kod: `sankgraf.skarvkontroll`.
+
+**Kartverktygets kontroll.** `POST /api/kartverktyg/<projekt>/validera` tar nu även K9 `markhojd` (polygon som GeoJSON Polygon, `egenskaper.niva_rh2000`
+i m RH 2000; utanför projektet eller utan nivå ger `fel`). Svaret får det additiva fältet `skarvar`: `null` när förslaget saknar ny mark, annars
+```json
+{"kontrakt": "floden-skarvkontroll/v1", "band_m": 10.0, "min_djup_m": 0.05, "min_okning_m": 0.03,
+ "antal": 1, "tillkommande_volym_m3": 25.1, "ovriga_nya_antal": 0, "ovriga_tillkommande_volym_m3": 0.0,
+ "fynd": [{"nr": 1, "typ": "ny | djupare", "x_m": 0.0, "y_m": 0.0, "botten_rh2000": 0.0, "overfall_rh2000": 0.0,
+           "overfall_x_m": 0.0, "overfall_y_m": 0.0, "storsta_djup_m": 0.0, "djup_fore_m": 0.0, "yta_m2": 0.0,
+           "volym_m3": 0.0, "tillkommande_volym_m3": 0.0, "avstand_till_kant_m": 0.0, "atgard": "text"}]}
+```
+Koordinater i EPSG:3011, höjder RH 2000, enheter m, m², m³. Högst tre fynd skrivs även som text i `varningar` (resten finns bara i `skarvar.fynd`); kontroll som inte kan köras
+(för stort fönster) ger en rad i `varningar`, inte fel. Övriga fält i svaret är oförändrade.
+
+**Regel.** Fyllnadsdjupet i en cell är lövsänkans överfall minus markhöjden (K2, `sankgraf.hierarki.bygg_sankgraf`), före och efter. En sänka är *ny* om största djup före är under `min_djup_m` och efter minst så stort,
+*djupare* om djupet ökat med minst `min_okning_m`; den redovisas om en cell med ökat djup ligger inom `band_m` från lappens kant (båda sidor). Samma indata ger samma lista (sorterad på tillkommande volym).
+
+**Planerade tillägg (R4, inte byggda):** K9 `markhojd` får valfria `lutning` och `slant`; K3 `HojdYta` får `lutning` och `slant_forhallande`. K50 `floden-ritlager/v1` (ritlager) är ett förslag i designen.
+
