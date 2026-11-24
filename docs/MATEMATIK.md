@@ -41,7 +41,7 @@ om en sökväg inte finns eller om en metod pekar på en saknad metodstatus. For
 | Dagsljus | Monotona SVF-intervall | `src/dagsljus/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K41 | skiss | I användarflödet |
 | Luft | Vindfält och spridning som M-matris | `src/luft/transport.py`<br>`src/luft/snabbvind.py`<br>`src/luft/lbm.py`<br>`src/luft/vindkomfort.py`<br>`src/karna/luft_losare.py` | K21 (lösarna luft.halt, luft.vindkomfort) | skiss | Kommandorad, MCP och testsvit |
 | Luft | Adjungerad känslighet och åtgärdsval | `src/luft/kanslighet.py` | – | skiss | Fristående modul |
-| Luft | Monotona MKN-intervall | `src/luft/kanslighet.py`<br>`src/webb/api.py` | K43 | skiss | I användarflödet |
+| Luft | Monotona MKN-intervall | `src/luft/kanslighet.py`<br>`src/webb/api.py` | K43 | skiss | Bara i API:t |
 | Buller | Nord2000 referenskärna | `src/buller/nord2000/`<br>`src/buller/operator/`<br>`src/buller/lagen/`<br>`src/buller/scen/`<br>`src/buller/banor/` | KB1, KB2, KB3, KB4 (docs/buller/KONTRAKT.md) | skiss | Kommandorad, MCP och testsvit |
 | Buller | CELF: submodulärt val av åtgärder | `src/buller/optimering.py`<br>`src/rutt/kritiska.py`<br>`src/luft/kanslighet.py`<br>`src/ekologi/intervall.py`<br>`src/webb/api.py` | K42, K8 | skiss | Bara i API:t |
 | Ekologi | Kretsteoretisk konnektivitet | `src/ekologi/krets.py`<br>`src/ekologi/motstand.py`<br>`src/ekologi/habitat.py`<br>`src/karna/ekologi_losare.py` | K44, K45 | skiss | I användarflödet |
@@ -197,7 +197,7 @@ $$ c_{\text{lo}} = c_{\text{bg}} + \frac{e_{\text{lo}}}{d_{\text{hi}}}\,c_{\text
 - **Kod:** `src/luft/kanslighet.py (kor_monoton_mkn_intervall)`, `src/webb/api.py (POST /api/analys/luft-mkn)`
 - **Kontrakt:** K43
 - **Facittest:** tests/luft/test_kanslighet.py (50 MKN-scenarier inneslutna); tests/webb/test_analys_steg_b.py
-- **Status:** skiss (metodstatus); i användarflödet
+- **Status:** skiss (metodstatus); bara i api:t
 - **Observera:** Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under "Fler analyser" med egna timvärden.
 
 ## 6. Buller

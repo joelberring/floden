@@ -501,8 +501,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "c_lo = c_bg + (e_lo/d_hi)·c_lokal,  c_hi = c_bg + (e_hi/d_lo)·c_lokal; dygn över 50 µg/m³ räknas i båda serierna"
           ],
-          "flode": "flode",
-          "flodeText": "I användarflödet",
+          "flode": "api",
+          "flodeText": "Bara i API:t",
           "status": "skiss",
           "kod": [
             {
