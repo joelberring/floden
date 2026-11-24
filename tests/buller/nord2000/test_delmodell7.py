@@ -320,12 +320,12 @@ class TestTurbulensspridning(unittest.TestCase):
         self.assertEqual(d7.markkorrektion_csr(0.0), 1.0)
         self.assertEqual(d7.markkorrektion_csr(0.3), 1.0)
         self.assertEqual(d7.markkorrektion_csr(1.0), 1.0)
-        self.assertEqual(d7.markkorrektion_csr(2.0), 4.0)
+        self.assertEqual(d7.markkorrektion_csr(2.0), 2.0)
         utan = d7.turbulensspridning_band_db(self.f, SNED, CV2, CT2, T_C)
         dampad = d7.turbulensspridning_band_db(self.f, SNED, CV2, CT2, T_C, np.full(27, 0.1))
         forstarkt = d7.turbulensspridning_band_db(self.f, SNED, CV2, CT2, T_C, np.full(27, 2.0))
         np.testing.assert_array_equal(dampad, utan)
-        np.testing.assert_allclose(forstarkt - utan, 20.0 * math.log10(2.0), rtol=0.0, atol=1e-10)
+        np.testing.assert_allclose(forstarkt - utan, 10.0 * math.log10(2.0), rtol=0.0, atol=1e-10)
 
     def test_storleksordning_med_testfallens_turbulens(self) -> None:
         """Bidraget är litet men ändligt: mellan −80 och −20 dB re frifält i alla band."""

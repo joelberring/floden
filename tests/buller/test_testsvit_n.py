@@ -6,13 +6,14 @@ om ett fall saknas i redovisningen. Fall som kärnan inte täcker ska redovisas 
 med skälet angivet, aldrig räknas med ett närmevärde. Kärnan är ännu inte Nord2000-konform
 som helhet.
 
-Läget efter P-S2 (2026-11-21, `docs/buller/logg/P-S2.md`), 84 fall:
+Läget efter P-S3 (2026-11-23, `docs/buller/logg/P-S3.md`), 84 fall:
 
-* 33 godkända: plan mark (blad 1–18, 21–24), dal utan vind (51, 54, 61, 64), tunn skärm
-  (71, 72, 74), tjock skärm (81, 82, 84) och två skärmar (94).
-* 16 ska utredas och 4 underkända, alla med orsak eller hypotes i loggen. Medvind över dal
-  (52, 62, 102) är underkända med upp till 7 dB i 1–2 kHz: med den ekvivalenta profilen för
-  källan 0,01 m över vägbanan flyttar de krökta strålarna Fresnelzonen till vägytan
+* 39 godkända: plan mark (blad 1–18, 21–24), dal utan vind (51, 54, 61, 64), tunn skärm
+  (71–74, 4/4), tjock skärm (81, 82, 84), två skärmar (91–94, 4/4) och upphöjd väg på
+  hr = 4 m (34, 44).
+* 11 ska utredas och 3 underkända, alla med orsak eller hypotes i loggen (`P-S2.md`, `P-S3.md`).
+  Medvind över dal (52, 62, 102) är underkända med upp till 7 dB i 1–2 kHz: med den ekvivalenta
+  profilen för källan 0,01 m över vägbanan flyttar de krökta strålarna Fresnelzonen till vägytan
   (ekv. 134 med 346–348). Inget av utfallen är "rättat" mot facit.
 * 27 ej körbara: motvind över icke-plan terräng där delmodell 3 kräver en kil som inte går
   att bilda (33, 43, 53, 63, 103), skog (4), kurvig väg (10), stadsgata (4), årsmedel (4).
@@ -42,8 +43,32 @@ def _blad(*nummer: int) -> set[str]:
     return {f"N18R{nr:03d}" for nr in nummer}
 
 
-# Blad i teststraightroad_20181101.xls som är godkända: plan mark med och utan väder.
-GODKANDA_FALL = _blad(*range(1, 19), 21, 22, 23, 24, 51, 54, 61, 64, 71, 72, 74, 81, 82, 84, 94)
+# Blad i teststraightroad_20181101.xls som är godkända: plan mark, dal utan vind, tunn skärm
+# (4/4), tjock skärm (3/4), två skärmar (4/4) och upphöjd väg på hr = 4 m (34, 44).
+GODKANDA_FALL = _blad(
+    *range(1, 19),
+    21,
+    22,
+    23,
+    24,
+    34,
+    44,
+    51,
+    54,
+    61,
+    64,
+    71,
+    72,
+    73,
+    74,
+    81,
+    82,
+    84,
+    91,
+    92,
+    93,
+    94,
+)
 
 # De tio blad som var godkända redan före refraktionen (homogen atmosfär); största avvikelse i
 # A-vägd totalnivå i dag, i dB (uppmätt värde avrundat uppåt till två decimaler).
@@ -91,26 +116,20 @@ FORE_P_S2_REST_DB: dict[str, tuple[float, float]] = {
 # Värdet är (utfall, största tillåtna avvikelse i A-vägd totalnivå i dB, i tersband i dB);
 # gränserna är uppmätt värde plus en liten marginal.
 KANDA_AVVIKELSER: dict[str, tuple[Utfall, float, float]] = {
-    # P-S2: orsak eller hypotes per fall i docs/buller/logg/P-S2.md, avsnitt 5.
+    # P-S2 / P-S3: orsak eller hypotes per fall i docs/buller/logg/P-S2.md och P-S3.md.
     "N18R031": (Utfall.SKA_UTREDAS, 0.27, 1.85),
     "N18R032": (Utfall.SKA_UTREDAS, 0.03, 3.16),
-    "N18R034": (Utfall.SKA_UTREDAS, 0.25, 1.32),
     "N18R041": (Utfall.SKA_UTREDAS, 0.24, 1.85),
     "N18R042": (Utfall.SKA_UTREDAS, 0.09, 3.16),
-    "N18R044": (Utfall.SKA_UTREDAS, 0.23, 1.32),
     "N18R052": (Utfall.UNDERKAND, 6.00, 7.29),
     "N18R062": (Utfall.UNDERKAND, 5.90, 6.98),
-    "N18R073": (Utfall.SKA_UTREDAS, 0.29, 1.06),
-    "N18R083": (Utfall.SKA_UTREDAS, 0.40, 1.23),
-    "N18R091": (Utfall.SKA_UTREDAS, 0.77, 2.05),
-    "N18R092": (Utfall.SKA_UTREDAS, 0.43, 1.29),
-    "N18R093": (Utfall.UNDERKAND, 1.13, 2.24),
+    "N18R083": (Utfall.SKA_UTREDAS, 0.52, 0.74),
     "N18R101": (Utfall.SKA_UTREDAS, 0.46, 1.26),
     "N18R102": (Utfall.UNDERKAND, 2.85, 4.40),
     "N18R104": (Utfall.SKA_UTREDAS, 0.59, 0.92),
     "N18R111": (Utfall.SKA_UTREDAS, 0.43, 3.76),
     "N18R112": (Utfall.SKA_UTREDAS, 0.72, 5.16),
-    "N18R113": (Utfall.SKA_UTREDAS, 0.37, 4.28),
+    "N18R113": (Utfall.SKA_UTREDAS, 0.32, 4.28),
     "N18R114": (Utfall.SKA_UTREDAS, 0.40, 4.02),
 }
 

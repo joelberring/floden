@@ -774,6 +774,18 @@ def tva_skarmar(
             complex(ytor.q_2_mottagare[nr]),
         )
 
+        tryck_cache: dict[
+            tuple[
+                float,
+                float,
+                float,
+                float,
+                tuple[float, float, float],
+                tuple[float, float, float],
+            ],
+            complex,
+        ] = {}
+
         def tryck(
             theta_1s: float,
             theta_1r: float,
@@ -783,8 +795,23 @@ def tva_skarmar(
             tid: tuple[float, float, float],
             f: float = f,
             q_ytor: tuple[complex, complex, complex, complex] = q_ytor,
+            cache: dict[
+                tuple[
+                    float,
+                    float,
+                    float,
+                    float,
+                    tuple[float, float, float],
+                    tuple[float, float, float],
+                ],
+                complex,
+            ] = tryck_cache,
         ) -> complex:
             """p̂ = p2wedge(…), ekv. (225), för ett av trycken p̂₁–p̂₈ (räta strålar: τ = R/c)."""
+            nyckel = (theta_1s, theta_1r, theta_2s, theta_2r, vag, tid)
+            sparat = cache.get(nyckel)
+            if sparat is not None:
+                return sparat
             if rata:
                 kanter = tva_kanter_rata_stralar(
                     k0.beta_1_rad, theta_1s, theta_1r, k0.beta_2_rad, theta_2s, theta_2r,
@@ -805,7 +832,9 @@ def tva_skarmar(
                     vag_mitten_m=vag[1],
                     vag_mottagare_m=vag[2],
                 )
-            return tva_kilar_tryck_reflektionskoefficienter(f, kanter, *q_ytor, viktigast)
+            ut = tva_kilar_tryck_reflektionskoefficienter(f, kanter, *q_ytor, viktigast)
+            cache[nyckel] = ut
+            return ut
 
         p_ff = tva_kilar_tryck_reflektionskoefficienter(f, k0, *q_ytor, viktigast)  # ekv. (225)
         p_scr = abs(p_ff) * geo.r_sr_m  # ekv. (229)

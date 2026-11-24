@@ -491,3 +491,9 @@ Gjort: Göteborgs WFS är avstängd och Lantmäteriets STAC höjd gav 401 på se
 Tester: syntetiska ZIP-filer (GeoTIFF-platta, DWG-JSON, Shapefile): `tests/kommuner/test_filpaket.py`, `test_filpaket_mappa.py` (hela mappningen utan nyckel, cache, reserv). Befintliga mappa-tester pekas till WFS/Lantmäteri-vägen. mypy rent för berörda moduler; pytest kommuner, konto och lantmateriet gröna.
 Öppet (inte verifierat, nätet når bara GitHub): höjdmodellens ZIP-adresser och filnamn (kommunfilens `index_url` är en gissning); om baskartan har en SHP/GPKG-variant (en SHP-produktbladets PDF finns men gick inte att läsa); om TAK är sluten och bär z vid takfot eller nock (medel av hörnen används); lagernamnet i DWG; `dwgread` är inte installerat i containern (Dockerfile orört); hur stor DWG-filen är och hur lång tolkningen tar. Paketen som täcker området kan vara flera; hämtningen slutar när området är täckt.
 Nästa: Joel hittar höjdpaketens adresser på goteborg.se/psidata och kör mappningen med `--hojdmodell-url`; installera dwgread eller hitta SHP-varianten.
+
+## 2026-11-24 – dwgread i avbildningen (samordnaren)
+
+- Göteborgs baskarta är DWG (baskarta_dwg_v2.zip) och kräver LibreDWG:s `dwgread`, som saknades i serveravbildningen; `floden geografi mappa goteborg-test` kunde därför inte läsa byggnaderna på servern.
+- Dockerfile: nytt byggsteg som bygger LibreDWG 0.13.3 (GPL v3, sha256-kontrollerad tarboll) statiskt, `dwgread` kopieras till `/usr/local/bin` och `FLODEN_DWGREAD` sätts. Körlagret kör `dwgread --version` vid bygget.
+- docs/DRIFT.md uppdaterad.

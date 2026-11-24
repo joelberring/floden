@@ -330,6 +330,13 @@ Ur `docs/buller/logg/P-S2.md` avsnitt 3. Sidor i AV 1106/07.
 | 2026-11-21 | P-S2 | 14. Plan profil i flera segment | Genvägen `PLAN_TOLERANS_M` (10⁻⁶ m) behålls: metodens egen övergång ger r_flat = 1 där (provat i homogen atmosfär), men delmodell 3:s klassning går inte alltid att räkna med starkt krökta strålar. Numeriskt skydd, inte metod. |
 | 2026-11-21 | P-S2 | 15. Delmodell 3 kan inte bilda en kil i ett band | Felet sparas och ges bara om bandet har vikt: r_flat < 1 och r_scr1 < 1. Ett band utan vikt läses inte (ekv. 319, 306). |
 
+### P-S3
+
+| Datum | Paket | Fråga | Val och skäl |
+| --- | --- | --- | --- |
+| 2026-11-23 | P-S3 | 1. C_SR i delmodell 7: AV 1106/07 ekv. (272) trycker C_SR = p_G² (för p_G > 1), medan löptexten i AV 1849/00 avsnitt 4.9 (s. 89: "CSCR is approximated by ... pG = p/p1") och AV 1106/07 s. 116 och 119 ("CSR ... is the ground effect part of Eq. (188) limited downwards to a value of 1") anger p_G utan kvadrat i 10·lg(C_SR). | C_SR = max(p_G, 1), **avgjord av testfall** mellan de två diskreta läsningarna i metodtexterna. Med p_G² överskattades alla skärmfall där ΔL₇ dominerar med +1,0 till +2,2 dB; med p_G blir tunn skärm 4/4 godkänd (N18R073: 1,05 → 0,68 dB, N18R071: 0,74 → 0,23 dB), tjock skärm förbättras (N18R081: 0,75 → 0,15 dB) och två skärmar blir 4/4 godkänd (N18R091: 0,76/2,03 → 0,01/0,15 dB, N18R092: 0,42/1,27 → 0,15/0,74 dB, N18R093: 1,11/2,23 → 0,20/0,66 dB). Bör granskas externt (Kunskapscentrum om buller). |
+| 2026-11-23 | P-S3 | 2. Primär skärmkant T₁ (AV 1106/07 avsnitt 5.21.1): får en icke-konvex punkt (t.ex. en platt impedansgräns mellan asfalt och gräs med β = π, Convex(i) = falskt) väljas som T₁? | Nej: endast konvexa inre punkter över baslinjen (Convex(i), ekv. 336) prövas som T₁. En platt punkt har ingen diffrakterande kil (avsnitt 5.7.1 förutsätter β > π) och avgränsar skärmformen (W₁/W₂ i 5.21.1). På upphöjd väg med hr = 4 m (N18R034, N18R044) valdes tidigare vägkantens impedansgräns (x = 5 m, z = 1,5 m) som T₁ i stället för släntkrönet (x = 6 m, z = 1,5 m); med konvexa punkter blir både N18R034 (1,31 → 0,84 dB) och N18R044 (1,31 → 0,85 dB) godkända. |
+
 ## Hur testfallen får användas när texten har flera läsningar (samordnarens regel, 2026-11-21, ska bekräftas av Joel)
 
 Regeln "ingen anpassning mot testfall" gäller oförändrad för tal: inga korrektionsfaktorer, inga justerade konstanter.

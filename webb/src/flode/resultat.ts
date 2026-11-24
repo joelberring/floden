@@ -17,9 +17,25 @@ import { swerefTillWgs84, wgs84TillSweref } from "../sweref.ts";
 import type { ProjektSvar, ProjektVy } from "../types.ts";
 import { meterPerPxFranZoom, zoomFranMeterPerPx } from "../vy3d/koord.ts";
 import { flodeAdress } from "./adress.ts";
+import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
-import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, regnText, resultatEtikett, slutsats, type Amne, type EkologiSvar, type Marksiffror, type Underlag } from "./nyckeltal.ts";
+import {
+  antagandeRader,
+  intervallForklaring,
+  jamforelse,
+  kallRad,
+  nyckeltal,
+  regnText,
+  resultatEtikett,
+  slutsats,
+  type Amne,
+  type EkologiSvar,
+  type Marksiffror,
+  type SvfIntervallSvar,
+  type Underlag,
+  type VattenIntervallSvar,
+} from "./nyckeltal.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { tillstandFor } from "./tillstand.ts";
 
@@ -74,6 +90,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   let mark: MarkSvar | null = null;
   let ekologi: EkologiSvar | null = null;
   let ekologiFel: string | null = null;
+  let vattenIntervall: VattenIntervallSvar | null = null;
+  let svfIntervall: SvfIntervallSvar | null = null;
   let natverkLista: Array<{ natverk_id: string; visningsnamn: string; korbar: boolean; lokalt: boolean }> = [];
   let valtNatverk: string | null = null;
   let lage: Lage = "skillnad";
@@ -104,11 +122,13 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" role="tab" data-amne="ekologi" aria-selected="false">Ekologi</button>
         </div>
         <div id="rs-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar resultatet …</p></div>
+        ${extraAnalyserHtml()}
         <div class="flode-rad-slut"><a class="flode-knapp svart stor" href="${flodeAdress(projekt, "rapport")}">Skapa rapport</a></div>
       </aside>
     </div>`;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
+  kopplaExtraAnalyser(rot, ac.signal);
 
   const vyerFor = (k: "ritat" | "projekt"): ProjektVy[] => (k === "ritat" ? t.ritVyer : (projektSvar?.vyer ?? [])).filter((v) => v.avsnitt === amne);
 
@@ -224,6 +244,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       troskel: mark?.troskel ?? null,
       siffror: mark?.siffror ?? null,
       ekologi,
+      vattenIntervall,
+      svfIntervall,
       foreDjup_m: num(rf, "max_djup_m"),
       efterDjup_m: num(re, "max_djup_m"),
       foreLagrat_m3: num(rf, "lagrat_m3"),
@@ -286,11 +308,28 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     mark = null;
     ekologi = null;
     ekologiFel = null;
+    vattenIntervall = null;
+    svfIntervall = null;
     if (ny) {
       try {
         const res = cache.get(ny.korning_id) ?? (await hamtaResultat(ny.korning_id));
         cache.set(ny.korning_id, res);
         const m = amne === "ekologi" ? null : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
+        let vatIv: VattenIntervallSvar | null = null;
+        let svfIv: SvfIntervallSvar | null = null;
+        if (amne === "vatten") {
+          vatIv = await lasJson<VattenIntervallSvar>("/api/analys/intervall", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ omrade_id: projekt }),
+          }).catch(() => null);
+        } else if (amne === "dagsljus") {
+          svfIv = await lasJson<SvfIntervallSvar>("/api/analys/svf-intervall", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ omrade_id: projekt }),
+          }).catch(() => null);
+        }
         let eko: EkologiSvar | null = null;
         let ekoFel: string | null = null;
         if (amne === "ekologi") {
@@ -318,6 +357,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         mark = m;
         ekologi = eko;
         ekologiFel = ekoFel;
+        vattenIntervall = vatIv;
+        svfIntervall = svfIv;
       } catch {
         if (nr !== seq) return;
         r = undefined;
