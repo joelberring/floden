@@ -1,12 +1,14 @@
 # ruff: noqa: E501
-"""Markunderlag för ekologi som lager i geografins manifest (K46): NMD och VMI.
+"""Markunderlag för ekologi som lager i geografins manifest (K46): NMD, VMI och inventerade träd.
 
 Lagren mappas en gång per geografi med en kontextbuffert runt kärnan (`buffert_for_troskel`, 2-5 km) och
 delas av alla projekt i geografin; de ligger i `_lager/<sha256>/` som övriga lager och ingår i manifestet
-under `lager.nmd` och `lager.vmi`. De är valfria: en geografi utan dem är fortfarande giltig.
+under `lager.nmd`, `lager.vmi` och `lager.tradpunkter`. De är valfria: en geografi utan dem är fortfarande giltig.
 
 Indata är filer som användaren själv hämtat (NMD-GeoTIFF i EPSG:3006 från Naturvårdsverket, CC0;
-VMI-polygoner). Floden hämtar dem inte själv.
+VMI-polygoner; trädpunkter som GeoPackage, Shapefile eller GeoJSON). Floden hämtar dem inte själv.
+Trädlagret sparas som `tradpunkter.csv` med bara punkt, trädslag och stamomfång/diameter (dataminimering) och
+är stängt för MCP tills villkoren kontrollerats (`--villkor-kontrollerade`), som VMI.
 """
 
 from __future__ import annotations
@@ -27,6 +29,16 @@ from data_inlasning.nmd import (
     las_nmd,
 )
 from data_inlasning.vmi import VMI_ALDER_TEXT, VMI_KALLA, las_vmi_mask, rastrera_vmi
+from ekologi.tradlager import (
+    TRADLAGER_FIL,
+    TRADLAGER_KALLA,
+    TradFel,
+    Tradpunkt,
+    klipp_punkter,
+    las_tradlager,
+    las_tradpunkter,
+    skriv_tradlager,
+)
 from geografi.modell import (
     KONTRAKT_GEOGRAFI,
     MANIFEST_NAMN,
@@ -38,6 +50,9 @@ from geografi.modell import (
 )
 from kommuner.skapa import skriv_oppenhet_toml
 
+STANDARD_TRAD_NATVERK = "adellov-nacka"
+"""Nätverket vars `[valfritt_lager.falt]` anger fältnamnen när en trädfil mappas (`--trad-natverk`)."""
+
 
 def bygg_markunderlag(
     geo_rot: Path,
@@ -48,20 +63,23 @@ def bygg_markunderlag(
     vmi_fil: Path | None,
     troskel_m: float,
     villkor_kontrollerade: bool = False,
+    trad_fil: Path | None = None,
+    trad_natverk: str = STANDARD_TRAD_NATVERK,
 ) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
-    """Bygger och lagrar NMD- och VMI-lagren. Returnerar (lager, kallor, varningar) att lägga i manifestet.
+    """Bygger och lagrar NMD-, VMI- och trädlagren. Returnerar (lager, kallor, varningar) att lägga i manifestet.
 
     `troskel_m` är den längsta spridningströskel (effektiva m) som geografins nätverk ska prövas mot;
     bufferten blir 2-5 km runt kärnan. VMI utan NMD är tillåtet men ger en varning (VMI har bara mening
-    ihop med NMD-rutnätet).
+    ihop med NMD-rutnätet). Trädpunkterna läses med fältnamnen ur `trad_natverk` (valfritt lager),
+    klipps till kärnan plus bufferten och sparas utan någon annan uppgift än punkt, trädslag och stamomfång.
     """
     lager: dict[str, Any] = {}
     kallor: dict[str, Any] = {}
     varningar: list[str] = []
-    if nmd_fil is None and vmi_fil is None:
+    if nmd_fil is None and vmi_fil is None and trad_fil is None:
         return lager, kallor, varningar
     buffert = buffert_for_troskel(troskel_m)
-    for fil, namn in ((nmd_fil, "NMD"), (vmi_fil, "VMI")):
+    for fil, namn in ((nmd_fil, "NMD"), (vmi_fil, "VMI"), (trad_fil, "Träd")):
         if fil is not None and not Path(fil).exists():
             raise GeografiFel(f"{namn}-filen {fil} finns inte.")
     if nmd_fil is not None:
@@ -104,7 +122,55 @@ def bygg_markunderlag(
             "filer": [{"fil": f, "sha256": s} for f, s in lg.filer],
         }  # fmt: skip
         kallor["vmi"] = {"kalla": VMI_KALLA, "alder": VMI_ALDER_TEXT}
+    if trad_fil is not None:
+        mapp = bygge / "tradpunkter"
+        if mapp.exists():
+            shutil.rmtree(mapp)
+        trad_lager, kalla_t, trad_varn = _bygg_tradlager(
+            geo_rot, mapp, trad_fil, karna_3011, buffert, trad_natverk, villkor_kontrollerade
+        )
+        lager["tradpunkter"] = trad_lager
+        kallor["tradpunkter"] = kalla_t
+        varningar.extend(trad_varn)
     return lager, kallor, varningar
+
+
+def _bygg_tradlager(
+    geo_rot: Path, mapp: Path, trad_fil: Path, karna: tuple[float, float, float, float], buffert: float,
+    trad_natverk: str, villkor_kontrollerade: bool,
+) -> tuple[dict[str, Any], dict[str, Any], list[str]]:
+    from ekologi import EkologiFel, hamta_natverk
+
+    try:
+        nv = hamta_natverk(trad_natverk)
+        konf = next((v.trad for v in nv.valfria_lager if v.trad is not None), None)
+        if konf is None:
+            raise GeografiFel(f"Nätverket {trad_natverk} har inget byggt trädlager ([[valfritt_lager]] med status byggt).")
+        las = las_tradpunkter(trad_fil, konf.falt)
+        e0, n0, e1, n1 = karna
+        utsnitt = (e0 - buffert, n0 - buffert, e1 + buffert, n1 + buffert)
+        kvar = klipp_punkter(las.punkter, utsnitt)
+    except (TradFel, EkologiFel) as exc:
+        raise GeografiFel(f"Träd: {exc}") from exc
+    varningar = [f"Träd: {v}" for v in las.varningar]
+    if not kvar:
+        varningar.append("Träd: inga trädpunkter inom kärnan plus bufferten; lagret är tomt.")
+    skriv_tradlager(kvar, mapp / TRADLAGER_FIL, antal_i_filen=las.antal_i_filen, kallfil_sha256=las.fil_sha256)
+    lg = lagra(geo_rot, mapp)
+    skriv_oppenhet_toml(
+        lg.mapp, oppen=villkor_kontrollerade, licens="se källan", kalla=TRADLAGER_KALLA,
+        anledning="Trädfilens villkor är inte kontrollerade av Floden: stängt tills --villkor-kontrollerade."
+        if not villkor_kontrollerade else "Villkoren är kontrollerade (--villkor-kontrollerade).",
+    )  # fmt: skip
+    return (
+        {
+            "sha256": lg.sha256, "buffert_m": buffert, "antal_punkter": len(kvar), "antal_i_filen": las.antal_i_filen,
+            "sparade_falt": ["e_m", "n_m", "tradslag", "stamomkrets_cm", "diameter_cm"],
+            "filer": [{"fil": f, "sha256": s} for f, s in lg.filer],
+        },
+        {"kalla": TRADLAGER_KALLA, "licens": "se källan", "faltkonfiguration": trad_natverk},
+        varningar,
+    )
 
 
 Rektangel = tuple[float, float, float, float]
@@ -130,6 +196,8 @@ class GeografiMarkunderlag:
     lager_buffert_m: float | None
     kalla: str
     varningar: list[str] = field(default_factory=list)
+    tradpunkter: tuple[Tradpunkt, ...] | None = None
+    trad_sha256: str | None = None
 
     def som_dict(self) -> dict[str, Any]:
         """Proveniens för `ekologi.json` (`natverk.klassraster`); inga sökvägar."""
@@ -138,6 +206,7 @@ class GeografiMarkunderlag:
             "manifest_sha256": self.manifest_sha256,
             "nmd_lager_sha256": self.nmd_sha256,
             "vmi_lager_sha256": self.vmi_sha256,
+            "tradpunkter_lager_sha256": self.trad_sha256,
             "utsnitt_3011": [float(v) for v in self.klippt_utsnitt],
             "kontextbuffert_m": self.klippt_buffert_m,
             "geografins_buffert_m": self.lager_buffert_m,
@@ -195,8 +264,9 @@ def las_markunderlag(
     troskel_m: float,
     *,
     med_vmi: bool = False,
+    med_trad: bool = False,
 ) -> GeografiMarkunderlag:
-    """NMD (och VMI om `med_vmi`) ur geografins manifest, klippt till `rutor` plus kontextbuffert.
+    """NMD (och VMI om `med_vmi`, trädpunkter om `med_trad`) ur geografins manifest, klippt till `rutor` plus kontextbuffert.
 
     `rutor` är scenariots rutor (union, EPSG:3011). Bufferten är nätverkets längsta tröskel,
     begränsad till 2-5 km (`buffert_for_troskel`); den klipps också mot geografins eget lager. Om
@@ -244,6 +314,25 @@ def las_markunderlag(
         vmi_full = las_vmi_mask(lager_mapp(geo_rot, str(lager["vmi"]["sha256"])) / "vmi.tif")
         vmi, _ = klipp_lager(vmi_full, utsnitt)
         vsha = str(lager["vmi"]["sha256"])
+    trad: tuple[Tradpunkt, ...] | None = None
+    tsha: str | None = None
+    if med_trad:
+        if "tradpunkter" not in lager:
+            raise GeografiFel(
+                f"Geografin {ref} har inget trädlager (lager.tradpunkter). Mappa om geografin med "
+                f"`floden geografi mappa {manifest['id']} ... --trad <fil>`."
+            )
+        tsha = str(lager["tradpunkter"]["sha256"])
+        try:
+            trad = klipp_punkter(las_tradlager(lager_mapp(geo_rot, tsha) / TRADLAGER_FIL).punkter, utsnitt)
+        except TradFel as exc:
+            raise GeografiFel(f"Träd: {exc}") from exc
+        tb = lager["tradpunkter"].get("buffert_m")
+        if tb is not None and float(tb) < buffert - 1e-9:
+            varningar.append(
+                f"Geografins trädlager är mappat med {float(tb):g} m buffert, kortare än nätverkets kontextbehov "
+                f"({buffert:g} m): träd längre bort saknas."
+            )
     kalla = str(manifest.get("kallor", {}).get("nmd", {}).get("kalla", NMD_KALLA))
     return GeografiMarkunderlag(
         ref=ref,
@@ -257,6 +346,8 @@ def las_markunderlag(
         lager_buffert_m=None if lager_buffert is None else float(lager_buffert),
         kalla=kalla,
         varningar=varningar,
+        tradpunkter=trad,
+        trad_sha256=tsha,
     )
 
 

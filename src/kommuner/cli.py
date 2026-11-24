@@ -66,6 +66,15 @@ def registrera(subparsers: Any) -> None:
     m.add_argument("--nmd", default=None, help="NMD-GeoTIFF (EPSG:3006, CC0, hämtad av dig): valfritt marktäckelager (ekologi).")
     m.add_argument("--vmi", default=None, help="VMI-polygoner (känd våtmark, äldre inventering): valfritt lager, kräver helst --nmd.")
     m.add_argument(
+        "--trad", default=None,
+        help="Inventerade träd som punkter (GeoPackage, Shapefile eller GeoJSON, hämtad av dig): valfritt lager för ädellövnätverket. "
+        "Bara punkt, trädslag och stamomfång/diameter sparas. Stängt för MCP tills --villkor-kontrollerade.",
+    )
+    m.add_argument(
+        "--trad-natverk", default="adellov-nacka",
+        help="Nätverket vars [valfritt_lager.falt] anger fältnamnen i trädfilen (förval adellov-nacka).",
+    )
+    m.add_argument(
         "--nmd-troskel-m", type=float, default=3000.0,
         help="Längsta spridningströskel (effektiva m) att pröva: NMD/VMI klipps med 2-5 km buffert runt kärnan.",
     )
@@ -151,6 +160,7 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
             hojdmodell_urlar=tuple(args.hojdmodell_url), hojdmodell_filer=tuple(args.hojdmodell_fil),
             nmd_fil=_abs(rot, args.nmd) if args.nmd else None,
             vmi_fil=_abs(rot, args.vmi) if args.vmi else None, nmd_troskel_m=args.nmd_troskel_m,
+            trad_fil=_abs(rot, args.trad) if args.trad else None, trad_natverk=args.trad_natverk,
         )  # fmt: skip
         return 0
     if kommando == "projekt skapa":

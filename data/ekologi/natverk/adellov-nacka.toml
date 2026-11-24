@@ -29,12 +29,57 @@ anmarkning = "Översättningen till NMD-rastret är ett antagande i Floden. Nack
 [[valfritt_lager]]
 id = "inventerade_adellovtrad"
 namn = "Inventerade gamla ädellövträd (punkter)"
-text = "Valfritt indatalager med inventerade gamla ädellövträd, till exempel ek i park eller hagmark. Punkterna blir habitatnoder även på öppen mark (utanför skogsrastret). Nacka buffrade punktträd 20 m (bil. 2). Inte byggt: datamodellen förutser det, lösaren läser det inte än, och inga träddata ingår."
-status = "inte byggt"
+text = "Valfritt indatalager med inventerade gamla ädellövträd, till exempel ek i park eller hagmark. Varje träd blir en habitatnod även på öppen mark (utanför skogsrastret): en skiva med radien nedan läggs i klassrastret som ädellövskog (NMD 116) och räknas som en nod även om den är mindre än minsta fläck. Nacka buffrade punktträd 20 m (huvudrapport s. 6-8, bil. 2). Inga träddata ingår i Floden: filen hämtar du själv (GeoPackage, Shapefile eller GeoJSON, eller geografins lager tradpunkter, K46). Av filen läses bara punkt, trädslag och stamomfång/diameter; adresser, fastighetsuppgifter och inventerarens namn läses aldrig. Resultatet kallas fortfarande potentiell livsmiljö: trädens ålder och hålighet ingår inte."
+status = "byggt"
+roll = "tradpunkter"
 kalla = "REG17"
 sida = "PDF-s. 6-8; Åkersberga (OST21) s. 26-27; Botkyrka (BOT24) tab. 2 s. 51"
 typ = "litteratur"
 sakerhet = "måttlig"
+
+# Attributnamn i trädfilen (kandidater, skiftlägesokänsliga; första träffen gäller). Fält som inte står här läses aldrig.
+[valfritt_lager.falt]
+tradslag = ["tradslag", "trädslag", "art", "svenskt_namn", "svensk_art", "species"]
+stamomkrets = ["stamomkrets", "stamomkrets_cm", "omkrets", "stamomfang", "stamomfång"]
+stamomkrets_enhet = "cm"
+diameter = ["diameter", "stamdiameter", "stamdiameter_cm", "dbh", "brosthojdsdiameter"]
+diameter_enhet = "cm"
+
+# Urval ur de inlästa träden. Trädslagen är ädla lövträd och är Flodens avgränsning (antagande): Nacka anger ingen artlista,
+# och sammanställningen anger ingen gräns för stamomkrets, så ingen sådan gräns är satt. Sätt min_stamomkrets_cm (eller
+# min_diameter_cm) här om du vill begränsa till grova träd; en gräns kräver att trädet har måttet (annars sorteras det bort och räknas).
+[valfritt_lager.filter]
+tradslag = [
+  "ek", "skogsek", "bergek", "stiek", "rödek", "vitek", "fänriksek", "ädelek", "bok", "bokträd", "rödbok", "blodbok", "avenbok",
+  "ask", "alm", "skogsalm", "fältalm", "lönn", "skogslönn", "spetslönn", "lind", "skogslind", "parklind",
+  "quercus", "fagus", "fraxinus", "ulmus", "acer", "tilia", "carpinus",
+]
+kalla = "N"
+sida = "bil. 2 s. 1-3 (ädellöv; ingen artlista)"
+typ = "antagande"
+sakerhet = "låg"
+anmarkning = "Artlistan är Flodens avgränsning av ädla lövträd, inte ur källan. Ingen gräns för stamomkrets ur källan."
+
+# Buffert: punktträd buffrades 20 m i Nackas modell.
+[valfritt_lager.buffert]
+varde_m = 20.0
+kalla = "N"
+sida = "huvudrapport s. 6-8, bil. 2 s. 1-3, 7, tab. 1 (punktträd buffrades 20 m)"
+typ = "litteratur"
+sakerhet = "måttlig"
+anmarkning = "Radie i m runt trädpunkten. Rastret är 10 m: skivan ger några celler, och en punkt som bara hamnar på hårdgjorda celler ger ingen nod (redovisas)."
+
+# Noden: skivans celler får klassen nedan (ädellövskog, fastmark), utom på byggnad, annan exploaterad yta, väg och vatten.
+# Noden undantas från minsta fläckarea: ett inventerat träd är en nod i sig (antagande; Nackas 0,25 ha gäller färdiga fläckar).
+[valfritt_lager.nod]
+klass = 116
+undantar_min_area = true
+ej_pa_klasser = [51, 52, 53, 61, 62]
+kalla = "N"
+sida = "huvudrapport s. 6-8, bil. 2 s. 1-3 (minsta färdiga fläck 0,25 ha)"
+typ = "antagande"
+sakerhet = "låg"
+anmarkning = "Klassen 116 och undantaget från minsta area är Flodens tolkning av hur ett träd blir en nod; källan anger bara bufferten och att färdiga fläckar är minst 0,25 ha."
 
 [min_area]
 varde_ha = 0.25
@@ -218,7 +263,7 @@ text = "Värden för 126-127 saknas i Nackas tabell 1; antagande 2 (som 124-125)
 
 [[saknas]]
 parameter = "ålder, naturvärde och trädinventering för habitat"
-text = "NMD saknar uppgifter om trädens ålder och naturvärde, och inventerade träd ingår inte. Resultatet kallas därför potentiell livsmiljö, okänd kvalitet."
+text = "NMD saknar uppgifter om trädens ålder och naturvärde. Inventerade träd ingår bara om det valfria trädlagret anges (och då utan ålder och hålighet). Resultatet kallas därför potentiell livsmiljö, okänd kvalitet."
 
 [[saknas]]
 parameter = "empiriskt stöd för total barriär"

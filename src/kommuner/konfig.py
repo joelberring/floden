@@ -132,6 +132,20 @@ class GeografiDef:
 
 
 @dataclass(frozen=True)
+class EkologiForval:
+    """`[ekologi]`: kommunens förval av habitatnätverk (K47, `data/ekologi/natverk/*.toml`).
+
+    Nätverks-id kontrolleras mot nätverksfilerna i `ekologi.natverk.kommunforval`, inte här
+    (kommunkonfigurationen känner inte till ekologimodulen).
+    """
+
+    forval_server: tuple[str, ...]      # NMD-nätverk som går att köra på servern med öppen data
+    forval_lokalt: tuple[str, ...]      # kommunspecifika nätverk (stadens egen biotopdatabas): bara lokalt
+    kvalitetskallor: Mapping[str, str]  # servernätverk -> lokal kvalitetskälla (visas, räknas inte)
+    anmarkning: str
+
+
+@dataclass(frozen=True)
 class KommunKonfig:
     id: str
     namn: str
@@ -147,6 +161,7 @@ class KommunKonfig:
     skyfall: Mapping[str, Any]
     geografier: Mapping[str, GeografiDef]
     fil: Path = field(default=Path("."), compare=False)
+    ekologi: EkologiForval | None = None
 
     def omrade(self, omrade_id: str | None) -> Testomrade:
         valt = omrade_id or self.standard_omrade
@@ -198,6 +213,45 @@ def _textlista(t: Mapping[str, Any], nyckel: str, var: str) -> tuple[str, ...]:
     return tuple(x.strip() for x in v)
 
 
+_NATVERK_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,59}$")
+
+
+def _natverkslista(t: Mapping[str, Any], nyckel: str, var: str) -> tuple[str, ...]:
+    v = t.get(nyckel, [])
+    if not isinstance(v, list) or not all(isinstance(x, str) and _NATVERK_ID_RE.match(x) for x in v):
+        raise KommunKonfigFel(f"{var}: '{nyckel}' ska vara en lista med nätverks-id (a-z, 0-9, bindestreck).")
+    if len(set(v)) != len(v):
+        raise KommunKonfigFel(f"{var}: '{nyckel}' nämner samma nätverk flera gånger.")
+    return tuple(v)
+
+
+def _tolka_ekologi(e: Any) -> EkologiForval | None:
+    """Valfritt avsnitt `[ekologi]`. Saknas det har kommunen inget förval (inte ett fel)."""
+    if e is None:
+        return None
+    var = "[ekologi]"
+    if not isinstance(e, Mapping):
+        raise KommunKonfigFel(f"{var} ska vara ett avsnitt.")
+    _stram(e, var, ("forval_server", "forval_lokalt", "kvalitetskallor", "anmarkning"))
+    server = _natverkslista(e, "forval_server", var)
+    lokalt = _natverkslista(e, "forval_lokalt", var)
+    if not server and not lokalt:
+        raise KommunKonfigFel(f"{var}: minst ett nätverk krävs i forval_server eller forval_lokalt.")
+    dubbla = sorted(set(server) & set(lokalt))
+    if dubbla:
+        raise KommunKonfigFel(f"{var}: {dubbla} står i både forval_server och forval_lokalt.")
+    kv = e.get("kvalitetskallor", {})
+    if not isinstance(kv, Mapping) or not all(
+        isinstance(a, str) and isinstance(b, str) and _NATVERK_ID_RE.match(a) and _NATVERK_ID_RE.match(b)
+        for a, b in kv.items()
+    ):
+        raise KommunKonfigFel(f"{var}.kvalitetskallor ska vara nätverks-id till nätverks-id.")
+    okanda = sorted(set(kv) - set(server))
+    if okanda:
+        raise KommunKonfigFel(f"{var}.kvalitetskallor: {okanda} finns inte i forval_server.")
+    return EkologiForval(server, lokalt, dict(kv), _text(e, "anmarkning", var, tom_ok=True) if "anmarkning" in e else "")
+
+
 def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig:
     """Validerar en inläst kommunfil. Se `data/kommuner/goteborg.toml` för formatet."""
     _stram(
@@ -206,6 +260,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         (
             "kontrakt", "id", "namn", "publicering_epsg", "intern_epsg", "standard_omrade",
             "omraden", "geografier", "lantmateriet", "hojd", "filpaket", "byggnader", "baskarta", "dagsljus", "skyfall",
+            "ekologi",
         ),
     )  # fmt: skip
     if data.get("kontrakt") != KONTRAKT:
@@ -466,6 +521,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         skyfall=dict(sky),
         geografier=geos,
         fil=fil,
+        ekologi=_tolka_ekologi(data.get("ekologi")),
     )
 
 

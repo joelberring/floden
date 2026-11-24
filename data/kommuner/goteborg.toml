@@ -150,3 +150,13 @@ vaningshojd_m = 3.0
 # (mm) räknas ur förvalet och skrivs som regn_mm; byt regn_id för en annan återkomsttid.
 regn_id = "sverige_cds_6h_100ar_kf140"
 takvatten = true
+
+# --- Ekologi: förval av habitatnätverk (K47) ------------------------------------------------------
+# Se data/kommuner/stockholm.toml för förklaring av fälten.
+[ekologi]
+forval_server = ["barrskog-nacka", "adellov-nacka", "mindre-hackspett-nacka", "grongoling-nacka"]
+forval_lokalt = []
+anmarkning = "Göteborg använder Nackas NMD-nätverk. För mindre hackspett är Göteborg 2023:11 lokal kvalitetskälla."
+
+[ekologi.kvalitetskallor]
+"mindre-hackspett-nacka" = "mindre-hackspett-goteborg-2023"

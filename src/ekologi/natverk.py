@@ -40,7 +40,6 @@ RESULTAT_ETIKETT_OKAND_KVALITET: Final[str] = "Potentiell livsmiljö, okänd kva
 DATA_MAPP: Final[Path] = Path(__file__).resolve().parents[2] / "data" / "ekologi"
 NATVERK_MAPP: Final[Path] = DATA_MAPP / "natverk"
 KALLOR_FIL: Final[Path] = DATA_MAPP / "kallor.toml"
-KOMMUNER_FIL: Final[Path] = DATA_MAPP / "kommuner.toml"
 SAMMANSTALLNING: Final[str] = "docs/ekologi/habitatnatverk-svensk-stadsmiljo.md"
 
 TYPER: Final[frozenset[str]] = frozenset(
@@ -112,15 +111,65 @@ class Habitatvariant:
     belagd: Belagd
 
 
+LAGERSTATUS: Final[frozenset[str]] = frozenset({"byggt", "inte byggt"})
+TRADLAGER_ROLL: Final[str] = "tradpunkter"
+"""Lösarens indataroll (och geografins lagernamn, K46) för inventerade träd som punkter."""
+ENHETER_LANGD: Final[dict[str, float]] = {"mm": 0.1, "cm": 1.0, "m": 100.0}
+"""Enhet till faktor för att få centimeter (stamomkrets och stamdiameter lagras i cm)."""
+
+
+@dataclass(frozen=True)
+class TradFalt:
+    """Attributnamn (skiftlägesokänsliga kandidater) att läsa ur en trädfil. Allt annat i filen läses aldrig."""
+
+    tradslag: tuple[str, ...]
+    stamomkrets: tuple[str, ...]
+    stamomkrets_enhet: str
+    diameter: tuple[str, ...]
+    diameter_enhet: str
+
+
+@dataclass(frozen=True)
+class TradFilter:
+    """Urval ur de inlästa träden. Tomt trädslagsurval = alla trädslag. Mått under gränsen sorteras bort."""
+
+    tradslag: tuple[str, ...]
+    min_stamomkrets_cm: float | None
+    min_diameter_cm: float | None
+    belagd: Belagd
+
+
+@dataclass(frozen=True)
+class TradNod:
+    """Hur ett träd blir habitat: skivans radie (buffert), klassen i klassrasterat och undantag."""
+
+    buffert_m: float
+    buffert_belagd: Belagd
+    klass: int
+    undantar_min_area: bool
+    ej_pa_klasser: tuple[int, ...]
+    belagd: Belagd
+
+
+@dataclass(frozen=True)
+class TradlagerKonfig:
+    """Konfigurationen för ett byggt trädlager (`status = "byggt"`, `roll = "tradpunkter"`)."""
+
+    falt: TradFalt
+    filter: TradFilter
+    nod: TradNod
+
+
 @dataclass(frozen=True)
 class ValfrittLager:
-    """Ett valfritt indatalager som datamodellen förutser men som inte är byggt (visas, används inte)."""
+    """Ett valfritt indatalager. `status` är `byggt` (lösaren läser det, `trad` har konfigurationen) eller `inte byggt`."""
 
     lager_id: str
     namn: str
     text: str
     status: str
     belagd: Belagd
+    trad: TradlagerKonfig | None = None
 
 
 @dataclass(frozen=True)
@@ -299,7 +348,10 @@ class Natverk:
             ],
             "antagna_motstand": self.antagna_motstand(),
             "valfria_lager": [
-                {"id": v.lager_id, "namn": v.namn, "text": v.text, "status": v.status, **v.belagd.som_dict()}
+                {
+                    "id": v.lager_id, "namn": v.namn, "text": v.text, "status": v.status,
+                    "roll": TRADLAGER_ROLL if v.trad is not None else None, **v.belagd.som_dict(),
+                }
                 for v in self.valfria_lager
             ],
             "min_area_m2": self.min_area_m2,
@@ -428,6 +480,108 @@ def _klasslista(
     if len(set(ut)) != len(ut):
         raise _fel(fil, f"{var}: klasser förekommer flera gånger.")
     return tuple(ut)
+
+
+def _namnlista(v: Any, fil: str, var: str, *, tom_ok: bool = False) -> tuple[str, ...]:
+    if (
+        not isinstance(v, list)
+        or (not v and not tom_ok)
+        or not all(isinstance(x, str) and x.strip() for x in v)
+    ):
+        raise _fel(fil, f"{var}: ska vara en lista med texter{'' if tom_ok else ' (inte tom)'}.")
+    return tuple(x.strip() for x in v)
+
+
+def _enhet(v: Any, fil: str, var: str) -> str:
+    if v not in ENHETER_LANGD:
+        raise _fel(fil, f"{var}: enhet ska vara en av {sorted(ENHETER_LANGD)}, fick {v!r}.")
+    return str(v)
+
+
+def _tradlager(
+    r: Mapping[str, Any], fil: str, habitat_klasser: tuple[int | str, ...], omf: str
+) -> TradlagerKonfig:
+    """Läser `[valfritt_lager.falt|filter|buffert|nod]` för ett byggt trädlager (strikt)."""
+    var = f"valfritt_lager {r.get('id')}"
+    if omf != "nmd":
+        raise _fel(fil, f"{var}: trädlager går bara att bygga för NMD-nätverk.")
+    for avsnitt in ("falt", "filter", "buffert", "nod"):
+        if not isinstance(r.get(avsnitt), dict):
+            raise _fel(fil, f"{var}: avsnittet [valfritt_lager.{avsnitt}] saknas.")
+    tillatna = {
+        "falt": {"tradslag", "stamomkrets", "stamomkrets_enhet", "diameter", "diameter_enhet"},
+        "filter": {"tradslag", "min_stamomkrets_cm", "min_diameter_cm", "kalla", "sida", "typ", "sakerhet", "anmarkning"},
+        "buffert": {"varde_m", "kalla", "sida", "typ", "sakerhet", "anmarkning"},
+        "nod": {"klass", "undantar_min_area", "ej_pa_klasser", "kalla", "sida", "typ", "sakerhet", "anmarkning"},
+    }
+    for avsnitt, ok in tillatna.items():
+        okanda = sorted(set(r[avsnitt]) - ok)
+        if okanda:
+            raise _fel(fil, f"{var}.{avsnitt}: okända nycklar {okanda}.")
+    f = r["falt"]
+    falt = TradFalt(
+        tradslag=_namnlista(f.get("tradslag"), fil, f"{var}.falt.tradslag"),
+        stamomkrets=_namnlista(f.get("stamomkrets", []), fil, f"{var}.falt.stamomkrets", tom_ok=True),
+        stamomkrets_enhet=_enhet(f.get("stamomkrets_enhet", "cm"), fil, f"{var}.falt.stamomkrets_enhet"),
+        diameter=_namnlista(f.get("diameter", []), fil, f"{var}.falt.diameter", tom_ok=True),
+        diameter_enhet=_enhet(f.get("diameter_enhet", "cm"), fil, f"{var}.falt.diameter_enhet"),
+    )
+    fi = r["filter"]
+    minst: dict[str, float | None] = {}
+    for nyckel in ("min_stamomkrets_cm", "min_diameter_cm"):
+        minst[nyckel] = _positivt(fi, nyckel, fil, f"{var}.filter") if nyckel in fi else None
+    if minst["min_stamomkrets_cm"] is not None and not (falt.stamomkrets or falt.diameter):
+        raise _fel(fil, f"{var}: filtret kräver stamomkrets men falt anger varken stamomkrets eller diameter.")
+    if minst["min_diameter_cm"] is not None and not (falt.diameter or falt.stamomkrets):
+        raise _fel(fil, f"{var}: filtret kräver diameter men falt anger varken diameter eller stamomkrets.")
+    filt = TradFilter(
+        tradslag=_namnlista(fi.get("tradslag", []), fil, f"{var}.filter.tradslag", tom_ok=True),
+        min_stamomkrets_cm=minst["min_stamomkrets_cm"],
+        min_diameter_cm=minst["min_diameter_cm"],
+        belagd=_belagd(fi, fil, f"{var}.filter"),
+    )
+    bu = r["buffert"]
+    nd = r["nod"]
+    klass = nd.get("klass")
+    if isinstance(klass, bool) or not isinstance(klass, int) or klass not in habitat_klasser:
+        raise _fel(fil, f"{var}.nod: 'klass' ska vara en av nätverkets habitatklasser {list(habitat_klasser)}, fick {klass!r}.")
+    ej = nd.get("ej_pa_klasser", [])
+    if not isinstance(ej, list) or not all(isinstance(k, int) and not isinstance(k, bool) and 1 <= k <= 255 for k in ej):
+        raise _fel(fil, f"{var}.nod: 'ej_pa_klasser' ska vara en lista med NMD-klasser.")
+    if klass in ej or set(ej) & set(habitat_klasser):
+        raise _fel(fil, f"{var}.nod: 'ej_pa_klasser' får inte innehålla habitatklasser.")
+    undantag = nd.get("undantar_min_area", False)
+    if not isinstance(undantag, bool):
+        raise _fel(fil, f"{var}.nod: 'undantar_min_area' ska vara true eller false.")
+    return TradlagerKonfig(
+        falt=falt,
+        filter=filt,
+        nod=TradNod(
+            buffert_m=_positivt(bu, "varde_m", fil, f"{var}.buffert"),
+            buffert_belagd=_belagd(bu, fil, f"{var}.buffert"),
+            klass=int(klass),
+            undantar_min_area=undantag,
+            ej_pa_klasser=tuple(int(k) for k in ej),
+            belagd=_belagd(nd, fil, f"{var}.nod"),
+        ),
+    )
+
+
+def _valfritt_lager(
+    r: Mapping[str, Any], fil: str, habitat_klasser: tuple[int | str, ...], omf: str
+) -> ValfrittLager:
+    status = _text(r, "status", fil)
+    if status not in LAGERSTATUS:
+        raise _fel(fil, f"valfritt_lager {r.get('id')}: 'status' ska vara en av {sorted(LAGERSTATUS)}, fick {status!r}.")
+    trad: TradlagerKonfig | None = None
+    if status == "byggt":
+        if r.get("roll") != TRADLAGER_ROLL:
+            raise _fel(fil, f"valfritt_lager {r.get('id')}: ett byggt lager ska ha roll = {TRADLAGER_ROLL!r}.")
+        trad = _tradlager(r, fil, habitat_klasser, omf)
+    return ValfrittLager(
+        _text(r, "id", fil), _text(r, "namn", fil), _text(r, "text", fil), status,
+        _belagd(r, fil, f"valfritt_lager {r.get('id')}"), trad,
+    )
 
 
 def las_natverk(sokvag: str | Path) -> Natverk:
@@ -625,13 +779,9 @@ def las_natverk(sokvag: str | Path) -> Natverk:
         )
         for r in d.get("kompletterande", [])
     )
-    valfria = tuple(
-        ValfrittLager(
-            _text(r, "id", namn), _text(r, "namn", namn), _text(r, "text", namn),
-            _text(r, "status", namn), _belagd(r, namn, f"valfritt_lager {r.get('id')}"),
-        )
-        for r in d.get("valfritt_lager", [])
-    )
+    valfria = tuple(_valfritt_lager(r, namn, habitat_klasser, omf) for r in d.get("valfritt_lager", []))
+    if len({v.lager_id for v in valfria}) != len(valfria):
+        raise _fel(namn, "valfritt_lager: id förekommer flera gånger.")
     vmi = d.get("vmi_klass")
     if vmi is not None and (not isinstance(vmi, str) or vmi not in sedda):
         raise _fel(namn, "vmi_klass ska vara en klass med motstånd.")
@@ -725,30 +875,35 @@ class Kommunforval:
     anmarkning: str
 
 
-def kommunforval(sokvag: Path = KOMMUNER_FIL) -> dict[str, Kommunforval]:
-    """Förval av nätverk per kommun (`data/ekologi/kommuner.toml`); alla id kontrolleras."""
-    try:
-        d = tomllib.loads(sokvag.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise EkologiFel(f"Kommunfilen {sokvag.name} går inte att läsa: {exc}") from exc
+def kommunforval(rot: Path | None = None) -> dict[str, Kommunforval]:
+    """Förval av nätverk per kommun, ur avsnittet `[ekologi]` i `data/kommuner/<kommun>.toml`.
+
+    Kommuner utan `[ekologi]` har inget förval och tas inte med. Alla nätverks-id kontrolleras mot
+    nätverksfilerna. `rot` pekar på en annan repo- eller arbetsmapp (som `kommuner.konfig.lista_kommuner`).
+    """
+    from kommuner.konfig import KommunKonfigFel, las_kommun, lista_kommuner
+
     alla = alla_natverk()
     ut: dict[str, Kommunforval] = {}
-    for kid, post in d.get("kommun", {}).items():
-        server = tuple(post.get("forval_server", []))
-        lokalt = tuple(post.get("forval_lokalt", []))
-        kv = dict(post.get("kvalitetskallor", {}))
+    for kid in lista_kommuner(rot):
+        try:
+            kommun = las_kommun(kid, rot=rot)
+        except KommunKonfigFel as exc:
+            raise EkologiFel(f"Kommunfilen {kid}.toml går inte att läsa: {exc}") from exc
+        e = kommun.ekologi
+        if e is None:
+            continue
+        server, lokalt, kv = e.forval_server, e.forval_lokalt, dict(e.kvalitetskallor)
         for nid in (*server, *lokalt, *kv, *kv.values()):
             if nid not in alla:
-                raise EkologiFel(f"Kommunfilen: {kid} nämner okänt nätverk {nid!r}.")
+                raise EkologiFel(f"Kommunfilen {kid}.toml ([ekologi]) nämner okänt nätverk {nid!r}.")
         for nid in server:
             if alla[nid].omfattning != "nmd" or not alla[nid].korbar:
-                raise EkologiFel(f"Kommunfilen: {kid}: {nid} är inget körbart NMD-nätverk.")
+                raise EkologiFel(f"Kommunfilen {kid}.toml: {nid} är inget körbart NMD-nätverk.")
         for nid in lokalt:
             if alla[nid].omfattning != "biotop":
-                raise EkologiFel(f"Kommunfilen: {kid}: {nid} är inte kommunspecifikt.")
-        ut[kid] = Kommunforval(
-            kid, str(post.get("namn", kid)), server, lokalt, kv, str(post.get("anmarkning", ""))
-        )
+                raise EkologiFel(f"Kommunfilen {kid}.toml: {nid} är inte kommunspecifikt.")
+        ut[kid] = Kommunforval(kid, kommun.namn, server, lokalt, kv, e.anmarkning)
     return ut
 
 

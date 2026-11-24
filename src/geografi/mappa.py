@@ -150,6 +150,8 @@ def mappa_geografi(
     register: Any = None,
     nmd_fil: Path | None = None,
     vmi_fil: Path | None = None,
+    trad_fil: Path | None = None,
+    trad_natverk: str = "adellov-nacka",
     nmd_troskel_m: float = 3000.0,
     baskarta_filer: Sequence[Path] = (),
     dwgread: str | None = None,
@@ -199,7 +201,7 @@ def mappa_geografi(
             list(d.get("varningar", [])), bool(d.get("oppen_for_mcp")),
         )  # fmt: skip
 
-    for _f, _n in ((nmd_fil, "NMD"), (vmi_fil, "VMI")):
+    for _f, _n in ((nmd_fil, "NMD"), (vmi_fil, "VMI"), (trad_fil, "Träd")):
         if _f is not None and not Path(_f).is_file():
             raise SkapaFel(f"{_n}-filen {_f} finns inte.")
     # 3. Höjdkälla. Kommunens filpaket kräver ingen nyckel; Lantmäteriets laser kräver kontots egen nyckel
@@ -461,7 +463,7 @@ def mappa_geografi(
 
     mark_lager, mark_kallor, mark_varn = bygg_markunderlag(
         geo_rot, bygge, karna, nmd_fil=nmd_fil, vmi_fil=vmi_fil, troskel_m=nmd_troskel_m,
-        villkor_kontrollerade=villkor_kontrollerade,
+        villkor_kontrollerade=villkor_kontrollerade, trad_fil=trad_fil, trad_natverk=trad_natverk,
     )  # fmt: skip
     varningar.extend(mark_varn)
     fk = kommun.filpaket
