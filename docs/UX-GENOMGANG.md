@@ -16,7 +16,7 @@ projektavgränsningen) och är inte rört.
    (scenariot) används inte. Planhandläggaren tror att rapporten gäller hens förslag och de valda frågorna; den gäller projektets
    färdiga beräkning med standardfrågor. Kräver API-stöd (körning och frågor i beställningen). Tills dess bör steg 5 säga vilken
    körning rapporten bygger på (se P2-15).
-2. **P1 · Två skal och två vägar till samma sak (alla sidor utanför flödet, M–S).** `#/projekt/<id>`, `#/fragor`, `#/om`, `#/nycklar`,
+2. **P1 · Två skal och två vägar till samma sak (alla sidor utanför flödet, M–S). Åtgärdat i U3.** `#/projekt/<id>`, `#/fragor`, `#/om`, `#/nycklar`,
    `#/administration`, `#/prov/webgpu` har ett äldre sidhuvud (START, PROJEKT, UTREDNINGSFRÅGOR, OM BERÄKNINGARNA) utan stegraden.
    "Projekt" där leder till en sida som inte är flödets steg 1, och Utredningsfrågor (`#/fragor`) är en andra frågesida vid sidan av
    steg 3 med andra ord (Vatten i stället för Skyfall). Man tappar orienteringen när man går till Nycklar och kommer inte tillbaka med ett klick.
@@ -55,7 +55,7 @@ Endast fynd:
 - P1 · Felet från `GET /api/geografier` visas som röd text utan väg vidare utom länken "Till projektlistan". Ge en handling:
   "Be en administratör om rollen utredare eller ägare" respektive "Lokalt: floden projekt skapa". Skilj 403 (behörighet) från
   nätverksfel. (L)
-- P2 · Sidan behåller stegraden med "1 Projekt" aktivt, men saknar projekt i huvudet; "Floden /" saknar sammanhang. (L)
+- P2 · *Åtgärdat i U3 (huvudet, utan att röra nyttprojekt-filerna):* stegraden visas inte utan projekt. Tidigare: sidan behöll stegraden med "1 Projekt" aktivt, men saknade projekt i huvudet; "Floden /" saknar sammanhang. (L)
 - P2 · Polygon blir sin omslutande rektangel (står i STATUS): visa den rektangel som faktiskt skapas innan man trycker Skapa. (M)
 - P3 · Kontrollera att "Skapa" förklarar varför den är grå (saknat namn, ingen avgränsning) med `aria-describedby`, som steg 3 och 5. (L)
 
@@ -111,7 +111,7 @@ Försöker: få en rapport att lämna vidare.
 
 ### 8 Nycklar (`#/nycklar`)
 Försöker: lägga in Lantmäteri-nyckel eller skapa MCP-token.
-- P1 · Äldre sidhuvud (fynd 2) och inget sätt att se *varför* man behöver nycklarna eller om de redan behövs (lokalt: config). (M)
+- P1 · *Åtgärdat (U3, sidhuvudet):* flödets sidhuvud med "Floden / Nycklar". Kvar: inget sätt att se *varför* man behöver nycklarna eller om de redan behövs (lokalt: config). (M)
 - P2 · Formulären var hoptryckta (etikett bredvid fält, knappar utan avstånd). *Åtgärdat:* etikett ovanför, bryts på smal skärm.
 - P2 · Sidan blandar tre saker (API-nycklar, MCP-token, anslutna appar) utan innehållsförteckning. Lägg ankarlänkar överst. (L)
 - P2 · Lokalt (inloggning av) visas bara en ruta som hänvisar till `config.local.toml`: korrekt men ger ingen väg att kontrollera
@@ -132,16 +132,16 @@ Försöker: (forskare) förstå metoderna; (planarkitekt) kontrollera att man ka
 - P2 · Mycket text och formler som text; många länkar till GitHub som är avstängda i kommunnät. En sammanfattning "Vad betyder skiss för mitt
   resultat?" överst vore mer användbar för målgruppen. (M)
 - P3 · 145 små pekytor (länkarna); på smal skärm svårt att träffa. (L)
-- Är nåbar bara via kontomenyn; rätt för en sida som är för specialister.
+- Är nåbar bara via kontomenyn; rätt för en sida som är för specialister. (Flödets huvud sedan tidigare; i U3 utan stegrad.)
 
 ### 11 WebGPU-prov (`#/prov/webgpu`)
-- P3 · Teknisk provsida utan länk (avsiktligt). Visas med det äldre sidhuvudet; "Inga resultat än" är tydligt. Bör ha en rad om att den bara
+- P3 · Teknisk provsida utan länk (avsiktligt). Visas sedan U3 med flödets sidhuvud ("Floden / WebGPU-prov"); "Inga resultat än" är tydligt. Bör ha en rad om att den bara
   är för utvecklare och inte ändrar något resultat. (L)
 
 ### 12 Äldre sidor (`#/projekt/<id>`, `#/fragor`, `#/om`, `#/forvaltning`)
-- P1 · Dubbla vägar (fynd 2). `#/projekt/demokvarteret` är hårdkodad till demon (`PROJEKT_ID`), `#/forvaltning` omdirigeras tyst till startsidan när den inte finns. (M–S)
-- P2 · Utredningsfrågor-sidan visar "Körs lokalt utan inloggning. Resultat sparas på den här datorn" även för vem som helst på en server. (L)
-- P2 · Luft och Buller visas på tre ställen med olika statustext. Hämta alltid ur `/api/moduler`. (L)
+- P1 · Dubbla vägar (fynd 2). *Åtgärdat i U3:* `#/projekt/<id>` omdirigeras till `#/p/<id>/forslag`, `#/fragor` är en frågekatalog, `#/forvaltning` har flödets huvud (omdirigeringen till projektlistan när den inte finns är kvar och avsiktlig).
+- P2 · *Åtgärdat (sidan är ersatt av frågekatalogen):* Utredningsfrågor-sidan visade "Körs lokalt utan inloggning. Resultat sparas på den här datorn" även för vem som helst på en server. (L)
+- P2 · Luft och Buller visas på tre ställen med olika statustext. Hämta alltid ur `/api/moduler`. (L) *Delvis åtgärdat i U3:* startsidan, projektsidan och Utredningsfrågor-demokorten är borta; kvar är steg 3 och Om beräkningarna.
 
 ## Tvärgående
 
@@ -159,7 +159,7 @@ dämpad text (ej mätt; kontrollera 4,5:1). (M)
 **Smal skärm.** Ingen sida har sidledes rullning (scrollWidth = 390 överallt). Flödet staplar karta över panel. Svagast: steg 2 (verktygsrad)
 och tabeller i Administration. (M)
 
-**Navigering.** Tillbaka-väg från kontosidorna saknas (fynd 2). Stegraden bör vara klickbar bara till steg som har det som krävs, och visa
+**Navigering.** *Åtgärdat i U3:* Tillbaka-väg från kontosidorna (ordmärket och "Floden / <sida>" leder till projektlistan; samma huvud överallt). Tidigare: tillbaka-väg från kontosidorna saknades (fynd 2). Stegraden bör vara klickbar bara till steg som har det som krävs, och visa
 vad som saknas på ett gråat steg. (M)
 
 ## Vad som åtgärdades i den här grenen
@@ -171,6 +171,32 @@ text om rapporter. Tester: `flode/projektlogik.test.ts` och rättade `kontosidor
 ## Uppdrag att lägga i PLAN.md
 
 1. Rapporten ska byggas på användarens körning och valda frågor (API + steg 3/5). S
-2. Ett skal: flytta `#/projekt`, `#/fragor`, `#/om`, Nycklar, Administration till flödets sidhuvud och ta bort de äldre dubbletterna. M–S
+2. Ett skal: flytta `#/projekt`, `#/fragor`, `#/om`, Nycklar, Administration till flödets sidhuvud och ta bort de äldre dubbletterna. M–S (**U3, klar**, se nedan)
 3. Gemensam ordlista, felmeddelanden med handling, sticky åtgärdsknapp i steg 3. M
 4. Tillgänglighetspass (kontrast, pekytor, kartavläsning med tangentbord, kort i stället för tabeller på smal skärm). M
+
+## U3 · Ett skal (åtgärdat)
+
+Före: `docs/bilder/ux/u3-fore/`, efter: `docs/bilder/ux/u3-efter/` (samma 13 vyer, bred och `-smal`; `python tools/ux_skarmbild.py --ut <mapp>`).
+Bilderna före är tagna mot en server med bygget före U3; `11-projektsida` visar efter U3 det flödessteg adressen leder till.
+
+- **Ett sidhuvud** (`webb/src/flode/huvud.ts`) på alla vyer: projektlistan, Nytt projekt, stegen, `#/fragor`, `#/om`, `#/matematik`, `#/nycklar`,
+  `#/administration`, `#/forvaltning`, `#/prov/webgpu` och arbetsbänken. Det äldre sidhuvudet (`sidhuvud()` i `sidor.ts`: START, PROJEKT, UTREDNINGSFRÅGOR,
+  OM BERÄKNINGARNA) är borttaget. Stegraden visas bara i ett projekt (`#/p/<id>/...`); på övriga sidor står "Floden / <sidans namn>" och sidan är markerad i kontomenyn.
+  Kontomenyn: Nycklar (inloggad), Administration (admin), Förvaltning (med kontodata), Frågekatalog, Om beräkningarna, Matematik och forskning.
+- **Adresser** (`omdirigering` i `webb/src/rutter.ts`, tester i `rutter.test.ts`):
+
+  | Gammal adress | Leder till |
+  | --- | --- |
+  | `#/projekt/<id>`, `#/oversikt/<id>` | `#/p/<id>/forslag` |
+  | `#/projekt`, `#/oversikt` | `#/` (projektlistan) |
+  | `#/fragor/<ref>` | `#/fragor` (frågekatalogen) |
+  | `#/karta...` | som förut (steg 2, med `?vy=` steg 4) |
+  | okänd adress | `#/` |
+
+- **`#/fragor` är en ren katalogvy** (`flode/fragekatalog.ts`, `fragekatalog-html.ts`): samma ämnen (Skyfall, Dagsljus och sol, Luft, Buller, Ekologi), samma frågor och
+  samma statusetiketter som steg 3, utan kryssrutor och utan körning, med länkar "Välj frågor i <projekt>" till steg 3. Den äldre K20-körsidan (`fragor.ts`, med
+  demokort, plan, körning och resultatkarta för enskilda frågefiler) är borttagen; frågefiler körs fortfarande med `floden fraga kor`. `fragor.css` ligger kvar
+  (importeras av routern) eftersom arbetsbänken, provsidan och kontosidorna delar stilar därifrån.
+- Borttaget som var parallella vägar: startsidan (`sidaStart`), projektsidan (`sidaProjekt`, `sidaProjektUtanData`, `rapportLista`), kontodelen i det äldre huvudet.
+  Projektraden i flödets steg 1 visar nu roll och delning med organisationen (`rollRad`), som "Dina projekt" på startsidan gjorde.

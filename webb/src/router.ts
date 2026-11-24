@@ -1,11 +1,14 @@
 /*
- * Enkel hash-router: #/ · #/projekt/<id> · #/fragor · #/om · #/matematik · #/forvaltning
- * (bara med inloggning och kontodata) · #/nycklar (inloggade) · #/administration (admin) ·
- * #/arbetsbank/<omrade> (kontrollfallens arbetsbänk).
+ * Enkel hash-router. Ett skal: flödets sidhuvud (flode/huvud.ts) på alla sidor, stegraden bara i ett projekt.
+ *   Flödet:   #/ (projektlistan) · #/nytt · #/p/<projekt>/<steg>
+ *   Sidor:    #/fragor (frågekatalogen) · #/om · #/matematik · #/forvaltning (bara med inloggning och kontodata) ·
+ *             #/nycklar (inloggade) · #/administration (admin) · #/prov/webgpu · #/arbetsbank/<omrade>
+ *   Omdirigeras: #/karta, #/projekt/<id>, #/oversikt, #/fragor/<ref> och okända adresser (se `omdirigering` i rutter.ts).
  * Arbetsbänken är den äldre kartan i index.html (main.ts) och göms i stället för att ritas om,
  * så att kartan finns kvar mellan sidbyten. Den finns inte i menyn eller på någon sida: den nås
  * bara med adressen och visas bara för superadmin, eller alltid när inloggning är av (lokalt).
  */
+import "./fragor.css"; // delade stilar (tabeller, lagerlistor, teckenförklaring) som arbetsbänken, provsidan och kontosidorna använder
 import {
   adminTillaten,
   arbetsbankTillaten,
@@ -15,31 +18,24 @@ import {
   laddaKonto,
   vidKontoandring,
 } from "./konto";
-import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
-import { avslutaFragor, visaFragor } from "./fragor";
-import { avslutaFlode, projektLaddat, tolkaFlodeAdress, visaFlode } from "./flode/index";
+import { hamtaModuler, hamtaOmraden } from "./api";
+import { avslutaFlode, projektLaddat, tolkaFlodeAdress, visaFlode, visaSkalsida } from "./flode/index";
+import { visaFragekatalog } from "./flode/fragekatalog";
+import { ritaFlodeHuvud, type SkalSida } from "./flode/huvud";
 import { visaMatematik } from "./matematik/sida";
 import { avslutaProv, visaProvWebgpu } from "./prov/webgpuProv";
 import { visaAdministration, visaNycklar } from "./kontosidor";
-import {
-  PROJEKT_ID,
-  sidaForvaltning,
-  sidaInloggning,
-  sidaOm,
-  sidaProjekt,
-  sidaProjektUtanData,
-  sidaStart,
-  sidhuvud,
-  type SidId,
-} from "./sidor";
-import { hamtaProjekt } from "./api";
-import { kartaOmdirigering, SIDTITLAR, tolkaHash, type RuttSida } from "./rutter";
-import type { ModulInfo, OmradeSammanfattning, ProjektListaPost, ProjektSvar } from "./types";
+import { sidaForvaltning, sidaInloggning, sidaOm } from "./sidor";
+import { omdirigering, SIDTITLAR, tolkaHash, type RuttSida } from "./rutter";
+import type { ModulInfo, OmradeSammanfattning } from "./types";
 
 export interface RouterKrokar {
   /** Arbetsbänken visas; `omradeId` är null när adressen inte anger något område. */
   visaArbetsbank(omradeId: string | null): void;
 }
+
+/** Sidor som inte beror på kontosvaret och därför inte ritas om när det kommer. */
+const EGET_TILLSTAND: ReadonlySet<RuttSida> = new Set<RuttSida>(["fragor", "arbetsbank", "prov"]);
 
 export function startaRouter(krokar: RouterKrokar): void {
   const sidhuvudEl = document.getElementById("sidhuvud");
@@ -51,10 +47,6 @@ export function startaRouter(krokar: RouterKrokar): void {
 
   let moduler: ModulInfo[] = [];
   let omraden: OmradeSammanfattning[] = [];
-  let projekt: ProjektSvar | null = null;
-  let harProjekt = false;
-  let projektLista: ProjektListaPost[] = [];
-  let projektListaKlar = false;
   const data = Promise.all([
     hamtaModuler()
       .then((s) => {
@@ -66,26 +58,13 @@ export function startaRouter(krokar: RouterKrokar): void {
         omraden = s.omraden;
       })
       .catch(() => undefined),
-    hamtaProjektLista()
-      .then(async (s) => {
-        projektLista = s.projekt;
-        // Demokvarteret har egen sida med siffror; projekt ur registret saknar beräkningar än.
-        harProjekt = s.projekt.some((p) => p.id === PROJEKT_ID && p.finns !== false);
-        if (harProjekt) projekt = await hamtaProjekt(PROJEKT_ID);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        projektListaKlar = true;
-      }),
   ]);
 
-  const sidId = (s: RuttSida): SidId => (s === "arbetsbank" || s === "prov" ? "om" : s);
-
   const rita = (): void => {
-    // Den gamla kartsidan finns inte kvar: #/karta leder till motsvarande steg i flödet.
-    const karta = kartaOmdirigering(window.location.hash);
-    if (karta) {
-      window.location.replace(karta);
+    // Äldre adresser och okända adresser leder till motsvarande plats i flödet (se `omdirigering`).
+    const mal = omdirigering(window.location.hash);
+    if (mal) {
+      window.location.replace(mal);
       return;
     }
     const rutt = tolkaHash(window.location.hash);
@@ -94,7 +73,7 @@ export function startaRouter(krokar: RouterKrokar): void {
 
     // Utloggad på en server med inloggning: bara inloggningssidan, oavsett adress.
     if (kontoLage().lage === "ut") {
-      avslutaFragor();
+      avslutaFlode();
       document.title = "Floden";
       document.body.dataset.sida = "inloggning";
       sidhuvudEl.innerHTML = "";
@@ -103,23 +82,22 @@ export function startaRouter(krokar: RouterKrokar): void {
       vySida.innerHTML = sidaInloggning(inloggningsAdress("/"));
       return;
     }
-    // Flödet (#/ och #/p/<projekt>/<steg>) har eget sidhuvud och egna steg.
+    // Flödet (#/ och #/p/<projekt>/<steg>) har egna steg och stegrad.
     const flode = tolkaFlodeAdress(window.location.hash);
     if (flode) {
-      avslutaFragor();
       document.body.dataset.sida = "flode";
       vyArbetsbank.hidden = true;
       vySida.hidden = false;
       visaFlode(sidhuvudEl, vySida, flode);
       return;
     }
-    avslutaFlode();
-    if (rutt.sida !== "fragor") avslutaFragor();
     if (rutt.sida !== "prov") avslutaProv();
+    // Allt annat har samma skal som flödet: samma stil och samma sidhuvud, men ingen stegrad.
+    document.body.dataset.sida = "flode";
+    const sida = rutt.sida as SkalSida;
 
-    // Matematik och forskning: flödets sidhuvud och stil, men inget steg är aktivt.
     if (rutt.sida === "matematik") {
-      document.body.dataset.sida = "flode";
+      avslutaFlode();
       vyArbetsbank.hidden = true;
       vySida.hidden = false;
       visaMatematik(sidhuvudEl, vySida);
@@ -141,7 +119,7 @@ export function startaRouter(krokar: RouterKrokar): void {
       window.location.replace("#/");
       return;
     }
-    // Sidor med behörighetskrav väntar på /konto/jag och går annars tillbaka till startsidan.
+    // Sidor med behörighetskrav väntar på /konto/jag och går annars tillbaka till projektlistan.
     const lage = kontoLage();
     const kravs: Partial<Record<RuttSida, () => boolean>> = {
       arbetsbank: arbetsbankTillaten,
@@ -152,7 +130,7 @@ export function startaRouter(krokar: RouterKrokar): void {
       window.location.replace("#/");
       return;
     }
-    sidhuvudEl.innerHTML = sidhuvud(sidId(rutt.sida));
+    if (rutt.sida !== "fragor") visaSkalsida(sidhuvudEl, vySida, sida);
     if (krav && lage.lage === "okand") {
       vyArbetsbank.hidden = true;
       vySida.hidden = false;
@@ -173,10 +151,9 @@ export function startaRouter(krokar: RouterKrokar): void {
     vyArbetsbank.hidden = true;
     vySida.hidden = false;
     if (rutt.sida === "fragor") {
-      // Frågesidan håller sitt eget tillstånd och ritas inte om vid adressbyte.
-      visaFragor(vySida, rutt.id);
+      // Frågekatalogen håller sitt eget tillstånd.
+      visaSkalsida(sidhuvudEl, vySida, "fragor", visaFragekatalog);
       window.scrollTo(0, 0);
-      fokuseraRubrik();
       return;
     }
     if (rutt.sida === "prov") {
@@ -187,17 +164,6 @@ export function startaRouter(krokar: RouterKrokar): void {
       return;
     }
     switch (rutt.sida) {
-      case "start":
-        vySida.innerHTML = sidaStart(moduler, harProjekt, projektLista);
-        break;
-      case "projekt":
-        if (rutt.id && rutt.id !== PROJEKT_ID) {
-          const p = projektLista.find((x) => x.id === rutt.id) ?? null;
-          vySida.innerHTML = p || projektListaKlar ? sidaProjektUtanData(p) : "";
-        } else {
-          vySida.innerHTML = sidaProjekt(projekt, moduler);
-        }
-        break;
       case "nycklar":
         void visaNycklar(vySida);
         break;
@@ -215,7 +181,7 @@ export function startaRouter(krokar: RouterKrokar): void {
     fokuseraRubrik();
   };
 
-  // Inloggningsläget kommer från /konto/jag och kan ändra meny, hälsning och förvaltningssidan.
+  // Inloggningsläget kommer från /konto/jag och kan ändra menyn och förvaltningssidan.
   vidKontoandring(() => {
     const flode = tolkaFlodeAdress(window.location.hash);
     if (flode && kontoLage().lage !== "ut") {
@@ -223,39 +189,25 @@ export function startaRouter(krokar: RouterKrokar): void {
       return;
     }
     const sida = tolkaHash(window.location.hash).sida;
-    if (kontoLage().lage === "ut" || (sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov")) {
+    if (kontoLage().lage === "ut" || !EGET_TILLSTAND.has(sida)) {
       rita();
-    } else sidhuvudEl.innerHTML = sidhuvud(sidId(sida));
+    } else ritaFlodeHuvud(sidhuvudEl, null, null, sida as SkalSida);
   });
   void laddaKonto();
 
   document.addEventListener("click", (h) => {
     const mal = h.target instanceof Element ? h.target : null;
-    if (!mal) return;
-    const knapp = mal.closest(".meny-knapp");
-    if (knapp instanceof HTMLButtonElement) {
-      const oppen = sidhuvudEl.classList.toggle("oppen");
-      knapp.setAttribute("aria-expanded", String(oppen));
-      return;
-    }
-    const lank = mal.closest("a");
-    if (!lank) return;
-    if (lank.classList.contains("hoppa-till")) {
-      h.preventDefault();
-      const innehall = vyArbetsbank.hidden ? vySida : document.getElementById("karta-huvudinnehall");
-      innehall?.focus();
-    }
-    if (sidhuvudEl.contains(lank)) sidhuvudEl.classList.remove("oppen");
+    const lank = mal?.closest("a");
+    if (!lank?.classList.contains("hoppa-till")) return;
+    h.preventDefault();
+    const innehall = vyArbetsbank.hidden ? vySida : document.getElementById("karta-huvudinnehall");
+    innehall?.focus();
   });
 
   window.addEventListener("hashchange", rita);
   rita();
-  // Sidorna ritas om när moduler, projekt och områden har kommit (frågorna och kontosidorna ritas inte om).
+  // Om beräkningarna ritas om när moduler och områden har kommit.
   void data.then(() => {
-    if (tolkaFlodeAdress(window.location.hash)) return;
-    const sida = tolkaHash(window.location.hash).sida;
-    if (sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov") {
-      rita();
-    }
+    if (tolkaHash(window.location.hash).sida === "om" && !tolkaFlodeAdress(window.location.hash)) rita();
   });
 }

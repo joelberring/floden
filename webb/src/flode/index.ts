@@ -9,7 +9,7 @@ import { tolkaFlodeAdress, type FlodeRutt } from "./adress.ts";
 import { visaForslag } from "./forslag.ts";
 import { visaFragor } from "./fragor.ts";
 import { visaNyttProjekt } from "./nyttprojekt.ts";
-import { ritaFlodeHuvud, sattProjektNamn } from "./huvud.ts";
+import { ritaFlodeHuvud, sattProjektNamn, SKALSIDOR, type SkalSida } from "./huvud.ts";
 import { visaProjektlista, type Avslutbar } from "./projektlista.ts";
 import { visaRapport } from "./rapport.ts";
 import { visaResultat } from "./resultat.ts";
@@ -70,4 +70,26 @@ export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt)
 
 export function projektLaddat(huvud: HTMLElement, rutt: FlodeRutt): void {
   ritaFlodeHuvud(huvud, rutt.projekt, rutt.steg);
+}
+
+/**
+ * Sida utanför flödet (Frågekatalog, Om beräkningarna, Nycklar ...): samma sidhuvud som flödet, utan
+ * stegrad, med sidans namn efter ordmärket. `bygg` ritar innehållet och ger en Avslutbar om sidan
+ * har något att städa upp; utan den är innehållet redan ritat av anroparen.
+ */
+export function visaSkalsida(huvud: HTMLElement, rot: HTMLElement, sida: SkalSida, bygg?: (rot: HTMLElement) => Avslutbar): void {
+  avslutaFlode();
+  document.title = `${SKALSIDOR[sida]} – Floden`;
+  ritaFlodeHuvud(huvud, null, null, sida);
+  if (!bygg) return;
+  const steg = bygg(rot);
+  aktiv = steg;
+  void steg.klar.then(() => {
+    if (aktiv !== steg) return;
+    const h = rot.querySelector<HTMLElement>("h1");
+    if (h) {
+      if (!h.hasAttribute("tabindex")) h.setAttribute("tabindex", "-1");
+      h.focus({ preventScroll: true });
+    }
+  });
 }

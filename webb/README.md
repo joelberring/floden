@@ -27,19 +27,12 @@ PYTHONPATH=src python -m floden.cli dagsljus demo --fore-efter   # bygger data/c
 
 Vattenfrågan (`vatten_a1_uppfyllnad.toml`) använder testsvitens A1 och behöver inget förarbete.
 
-## Sidan Utredningsfrågor (`#/fragor`)
+## Frågekatalogen (`#/fragor`)
 
-1. **Välj fråga.** Listan är frågefilerna (K20, `.toml`/`.json`) i frågemapparna. En fil som inte går att
-   tolka visas som ogiltig med kärnans felmeddelande; saknad indata visas tillsammans med frågefilens
-   inledande kommentar (där står kommandot som bygger den).
-2. **Plan.** Kärnans `planera`: antal jobb, hur många som redan finns i cachen (K22) och hur många som
-   ska köras, per analys, med rutor ritade i SWEREF-koordinater (mörk = allt i cachen).
-3. **Kör.** Körningen går i en bakgrundstråd i API-processen, ett jobb i taget (ingen extern kö). Status
-   och framsteg (antal jobb vars nyckel nu finns i cachen) hämtas var 0,7 s.
-4. **Resultat.** Varningar från lösarna överst, kartvy med lager per analys (bas, scenario, skillnad;
-   samma färgskala för bas och scenario), mätvärden per jobb (scenario och ruta), jämförelsetabell
-   (`efter − före`) och förhandsvisning av CSV/Parquet-filer. Till varje lager finns länkar till
-   GeoTIFF-filerna (full upplösning, en per ruta).
+Läsvy över alla frågor Floden kan besvara, per ämne, med samma ämnen, ord och statusetiketter som steg 3 (`flode/fragekatalog.ts`).
+Inget väljs och inget körs här: frågorna väljs och beräkningarna körs i steg 3 i ett projekt, och sidan länkar dit per projekt.
+Den äldre Utredningsfrågor-sidan (körning av enskilda K20-filer med planruta och resultatkarta) är borttagen för att det inte ska finnas två frågesidor;
+K20-filer körs med `floden fraga kor` och `floden fraga planera`. Webb-API:t (`/api/fragor`, `/api/korningar`) är oförändrat.
 
 ## Kartan (`src/karta/`)
 
@@ -67,21 +60,28 @@ står med "Logik porterad från O-Tid (MIT, joelberring/otid @ 4a446af, ...)" i 
 Q markera, W rita hus, A lägg till hörn, S ta bort hörn, T fäst, R rät vinkel, Z ångra, Shift+Z gör om,
 Enter avslutar, Esc avbryter, Backsteg tar bort senaste punkten, Delete tar bort det markerade.
 
-## Övriga sidor
+## Sidor och adresser
+
+Ett skal: **samma sidhuvud på alla sidor** (`flode/huvud.ts`: "Floden / <projekt eller sida>", kontoknapp med meny). Stegraden syns bara i ett projekt.
 
 | Adress | Sida |
 | --- | --- |
 | `#/` | Flödet, steg 1 Projekt: projektlistan (`GET /api/projekt`) och kartan för det valda projektet |
+| `#/nytt` | Nytt projekt (hör till steg 1) |
 | `#/p/<projekt>/forslag`, `/fragor`, `/resultat`, `/rapport` | Flödets steg 2 till 5 (kod i `webb/src/flode/`, stilen i `flode.css`; se *Flödet* nedan) |
-| `#/projekt` (alias `#/oversikt`) | Demokvarteret med siffror ur körningarna (`GET /api/projekt`) |
-| `#/karta[/<projekt>]` och `?vy=<vy>` | Gammal adress som bara omdirigeras: till `#/p/<projekt>/forslag`, med `?vy=` till `#/p/<projekt>/resultat?vy=` (`kartaOmdirigering` i `rutter.ts`). Den egna kartsidan är borttagen |
-| `#/fragor` och `#/fragor/<ref>` | Utredningsfrågor (se ovan) |
+| `#/fragor` | Frågekatalogen (se ovan) |
 | `#/om` | Om beräkningarna: modulerna och *Kontroll av beräkningarna* (A1–A9) |
+| `#/matematik` | Matematik och forskning |
+| `#/nycklar`, `#/administration` | Nycklar (inloggade) och Administration (admin) |
 | `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om beräkningarna* |
 | `#/forvaltning` | Visas bara när inloggning är på och kontoservern har data för kontot |
 | `#/prov/webgpu` | Prov av WebGPU-skuggarna mot serverns facit (`GET /api/prov/webgpu/fall`); ingen länk i menyn, bara superadmin med inloggning, öppen lokalt. Skissläge (f32). Se `docs/WEBGPU-ARKITEKTUR.md` 5 |
 
-Menyn är densamma på alla sidor och blir en *Meny*-knapp under 1100 px. Inget i gränssnittet visar
+**Omdirigeras** (`omdirigering` i `src/rutter.ts`): `#/projekt/<id>` och `#/oversikt/<id>` till `#/p/<id>/forslag`; `#/projekt` och `#/oversikt` till `#/`;
+`#/fragor/<ref>` till `#/fragor`; `#/karta[/<projekt>]` till `#/p/<projekt>/forslag`, med `?vy=<vy>` till `#/p/<projekt>/resultat?vy=<vy>`; okända adresser till `#/`.
+Det finns ingen start- eller projektsida vid sidan av flödet.
+
+Kontomenyn är densamma på alla sidor. Inget i gränssnittet visar
 hakparentes eller påhittade tal; ett test (`tests/webb/test_klient_platshallare.py`,
 `src/platshallare.test.ts`) söker igenom klientens text efter `[Ord]`-platshållare.
 
@@ -113,4 +113,4 @@ Ritlogik, scenario-API:erna, 3D-vyn och svepet är de befintliga. Små tillägg 
 - Kartstilen ligger i `src/karta/karta.css` (ersätter `kartverktyg.css`).
 
 Inte byggt än: att skapa projekt (knappen visar "kommer snart") och att skapa rapporter från webben.
-Om beräkningarna och Utredningsfrågor nås via kontomenyn.
+Om beräkningarna, Matematik och forskning och Frågekatalogen nås via kontomenyn.

@@ -109,7 +109,7 @@ körs och sparas **lokalt**; inget laddas upp. Detaljer, villkor och begränsnin
 7. **Kör frågorna** (exempel i `exempel/fragor/omrade_dagsljus.toml` och `omrade_vatten.toml`):
    `floden fraga kor exempel/fragor/omrade_dagsljus.toml` och `floden fraga kor exempel/fragor/omrade_vatten.toml`
 8. **Visa i webben:** `floden webb` och öppna http://localhost:8765, välj frågorna *omrade-dagsljus* och *omrade-vatten*
-   under **Frågor**.
+   (`floden fraga kor` skriver körningarna; de visas i flödets Resultat).
 
 Lasern har 1-2 punkter per m2 och ingen byggnadsklass; byggnadshöjderna är därför uppskattade ur oklassade punkter i
 husens polygoner (se varningarna). Källa: ©Lantmäteriet. Kontrollera produkternas användarvillkor.
@@ -183,8 +183,7 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
    *Hela kvarteret* ställer kameran. Allt som färgas är beräknat av Floden. Se `docs/WEBB3D.md`.
 4. **Läs av.** Värdena för före, efter och skillnad står under kartan i steg 4. Grå ytor är byggnader
    (tak, inte mark).
-5. **Utredningsfrågor.** Demokorten överst går att köra direkt (resultatet finns redan i cachen).
-   *Fler exempel (kräver egna data)* är hopfälld: de frågorna kan inte köras i demon.
+5. **Frågekatalogen** (`#/fragor`, kontomenyn). Alla frågor per ämne med samma statusetiketter som steg 3; inget körs här, frågorna väljs i steg 3. Den gamla Utredningsfrågor-sidan är borttagen (`floden fraga kor` kör frågefiler).
 6. **Om beräkningarna.** Modulerna, och *Kontroll av beräkningarna*: syntetiska fall med känt svar som
    modellen prövas mot.
 
