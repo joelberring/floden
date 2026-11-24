@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Skärmbilder av steg 1 ("Nytt projekt", `#/nytt`) och steg 5 (Skapa rapport), bred och smal.
 
 Förutsätter `floden demo` och `floden webb` (http://127.0.0.1:8765, inloggning av) och byggd webb. Steg 1 kräver inloggning
