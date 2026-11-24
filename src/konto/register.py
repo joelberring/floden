@@ -384,6 +384,91 @@ class Register:
             self.notera(c, "projektroll-beviljad", konto_id, f"projekt={projekt_id} roll=utredare")
         return projekt_id, nytt
 
+    def organisationer_for_skapa(self, konto_id: str) -> list[dict[str, str]]:
+        """Organisationerna kontot får skapa projekt i, med namn (sorterade på namn): alla för
+        superadmin, annars de där kontot är organisationsadmin eller ägare. Tom lista för ett
+        spärrat eller okänt konto och för enkla medlemmar och ledare. Samma regel som
+        `skapa_projekt_av` (webbens `POST /api/projekt` och MCP-verktyget `projekt_skapa`)."""
+        with self.db.lasning() as c:
+            orgar = c.execute("SELECT id, namn FROM organisation ORDER BY namn, id").fetchall()
+            return [
+                {"id": str(o["id"]), "namn": str(o["namn"])}
+                for o in orgar
+                if self._utforarens_niva(c, konto_id, o["id"]) >= _NIVA_ORGADMIN
+            ]
+
+    def projektnamn_finns(self, organisation_id: str, namn: str) -> bool:
+        """Finns ett projekt med det namnet i organisationen? (Tidigt besked innan något byggs.)"""
+        with self.db.lasning() as c:
+            return (
+                c.execute(
+                    "SELECT 1 FROM projekt WHERE organisation_id = ? AND namn = ?",
+                    (organisation_id, namn.strip()),
+                ).fetchone()
+                is not None
+            )
+
+    def skapa_projekt_av(
+        self,
+        utforare: str,
+        organisation_id: str,
+        namn: str,
+        *,
+        organisation_synlig: bool = False,
+    ) -> str:
+        """Nytt projekt i organisationen, skapat av ett konto i webben eller via MCP (inte av ett
+        serverkommando: se `registrera_projekt_for_konto`).
+
+        Kräver superadmin, eller organisationsadmin eller ägare i organisationen
+        (`BehorighetFel` annars). Skaparen blir `utredare` och `skapad_av`; projektet är privat
+        om inte `organisation_synlig` anges. Ett namn som redan finns i organisationen ger
+        `RegisterFel`: ett befintligt projekt återanvänds aldrig, så att ingen kan ge sig själv en
+        roll i ett privat projekt genom att skapa ett med samma namn. Händelsen har bara id:n."""
+        namn = namn.strip()
+        with self.db.transaktion() as c:
+            org = c.execute("SELECT 1 FROM organisation WHERE id = ?", (organisation_id,))
+            if not org.fetchone():
+                raise RegisterFel("Okänd organisation")
+            if self._utforarens_niva(c, utforare, organisation_id) < _NIVA_ORGADMIN:
+                raise BehorighetFel("Kräver organisationsadmin eller ägare")
+            if not namn or len(namn) > 120 or any(ord(t) < 32 for t in namn):
+                raise RegisterFel("Projektnamnet ska vara 1 till 120 tecken utan styrtecken")
+            if c.execute(
+                "SELECT 1 FROM projekt WHERE organisation_id = ? AND namn = ?",
+                (organisation_id, namn),
+            ).fetchone():
+                raise RegisterFel("Ett projekt med det namnet finns redan i organisationen")
+            projekt_id = _ny_id()
+            c.execute(
+                "INSERT INTO projekt (id, organisation_id, forvaltning_id, namn, skapad,"
+                " skapad_av, organisation_synlig) VALUES (?, ?, NULL, ?, ?, ?, ?)",
+                (projekt_id, organisation_id, namn, self.nu(), utforare, int(organisation_synlig)),
+            )
+            c.execute(
+                "INSERT INTO projektbehorighet (konto_id, projekt_id, roll, kalla, beviljad_av,"
+                " skapad) VALUES (?, ?, 'utredare', 'manuell', ?, ?)",
+                (utforare, projekt_id, utforare, self.nu()),
+            )
+            self.notera(c, "projekt-skapat", utforare, f"projekt={projekt_id} via=api")
+            self.notera(c, "projektroll-beviljad", utforare, f"projekt={projekt_id} roll=utredare")
+        return projekt_id
+
+    def ta_bort_nytt_projekt(self, utforare: str, projekt_id: str) -> None:
+        """Ångrar ett projekt som `skapa_projekt_av` just skapat när bygget av dess filer föll
+        (bara skaparen, och bara om ingen annan fått roll i det)."""
+        with self.db.transaktion() as c:
+            rad = c.execute("SELECT skapad_av FROM projekt WHERE id = ?", (projekt_id,)).fetchone()
+            if not rad or rad["skapad_av"] != utforare:
+                return
+            andra = c.execute(
+                "SELECT 1 FROM projektbehorighet WHERE projekt_id = ? AND konto_id != ?",
+                (projekt_id, utforare),
+            ).fetchone()
+            if andra:
+                return
+            c.execute("DELETE FROM projekt WHERE id = ?", (projekt_id,))
+            self.notera(c, "projekt-angrat", utforare, f"projekt={projekt_id}")
+
     # --- behörighet -------------------------------------------------------------------------
 
     def _utforarens_niva(self, c: sqlite3.Connection, utforare: str, organisation_id: str) -> int:

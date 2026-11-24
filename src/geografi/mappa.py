@@ -38,7 +38,7 @@ from geografi.modell import (
     versionsmapp,
 )
 from geografi.tillrinning import nedsampla, tillrinning_uppstroms
-from kommuner.konfig import KommunKonfig
+from kommuner.konfig import _REPO_ROT, KommunKonfig
 from kommuner.skapa import (
     SkapaFel,
     _oppna_register,
@@ -151,9 +151,11 @@ def mappa_geografi(
     nmd_fil: Path | None = None,
     vmi_fil: Path | None = None,
     nmd_troskel_m: float = 3000.0,
+    baskarta_filer: Sequence[Path] = (),
+    dwgread: str | None = None,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
-    from kommuner.baskarta import tak_till_gpkg
+    from kommuner.baskarta import byggnader_ur_lokala_filer, tak_till_gpkg
     from kommuner.filkallor import hamta_baskarta, hamta_hojdmodell
     from kommuner.hojdmodell import Hojdmodell, skriv_klippt_hojd
     from kommuner.k1_filpaket import bygg_omrade_filpaket
@@ -219,6 +221,28 @@ def mappa_geografi(
     hojd_max = float(kommun.dagsljus["hojd_max_m"])
     r_dagsljus = dagsljus_paverkansradie_m(hojd_max, h_min)
     kalla_bygg = byggnader_kalla or kommun.byggnader.kalla
+    # Baskartan som lokal fil är INTE öppna data (docs/BESLUT.md 2026-11-24): byggnaderna och allt som härleds direkt
+    # ur dem är stängt för MCP, vad `--villkor-kontrollerade` än säger.
+    stangd_baskarta = kalla_bygg == "lokal_fil"
+    if stangd_baskarta:
+        lk = kommun.byggnader.lokal
+        if lk is None:
+            raise SkapaFel("Kommunfilen saknar [byggnader.lokal] för byggnader ur en lokal fil.")
+        if not baskarta_filer:
+            raise SkapaFel(
+                "Byggnaderna kommer ur en lokal baskartefil som inte följer med Floden: ange den med "
+                "--baskarta-fil <sökväg> (ZIP, DWG eller dwgread-JSON; kan anges flera gånger), i containern "
+                "under /app/data/lokal/."
+            )
+        for nr, f in enumerate(baskarta_filer, start=1):
+            if not Path(f).is_file():
+                raise SkapaFel(f"Baskartefil {nr} finns inte (kontrollera sökvägen, i containern t.ex. under /app/data/lokal/).")
+        if villkor_kontrollerade:
+            skriv("--villkor-kontrollerade gäller inte byggnaderna ur den lokala baskartan: de förblir stängda för MCP.")
+        if kommun.hojd.kalla == "filpaket":
+            raise SkapaFel("Byggnader ur en lokal baskartefil kräver höjd från Lantmäteriets laser ([hojd] kalla = lantmateriet).")
+    elif baskarta_filer:
+        raise SkapaFel("--baskarta-fil hör till byggnader ur en lokal fil (kalla = lokal_fil i kommunfilen).")
     bygge = geo_rot / geografi_id / f".bygge-{version}"
     varningar: list[str] = []
     hojd_anvand = "lantmateriet"
@@ -283,6 +307,32 @@ def mappa_geografi(
             skriv(f"Byggnader: {antal} takkonturer ur baskartan.")
             return fil, bpaket
 
+        def _lokal_byggnader(ra: Path = ra, wfs_bbox: tuple[float, float, float, float] = wfs_bbox) -> Path:
+            from gemensamt.hash import sha256_fil
+            from markmodell.lagerprofil import las_lagerprofil
+
+            assert kommun.byggnader.lokal is not None
+            lk = kommun.byggnader.lokal
+            profil = las_lagerprofil(_REPO_ROT / "data" / "lagerprofiler" / f"{lk.lagerprofil}.toml")
+            skriv(f"Byggnader ur lokal baskarta ({len(baskarta_filer)} fil(er); namn och lager skrivs inte) ...")
+            fil, antal, v = byggnader_ur_lokala_filer(
+                list(baskarta_filer), bbox_publicering=wfs_bbox, epsg_publicering=lk.epsg, lagerprofil=profil,
+                ut=ra / "kommun" / "byggnader.gpkg", lager_monster=lk.lager_monster, hojd_fran=lk.hojd_fran,
+                z_tillagg_m=lk.z_tillagg_m, dwgread=dwgread,
+            )  # fmt: skip
+            varningar.extend(x for x in v if x not in varningar)
+            (ra / "filpaket").mkdir(parents=True, exist_ok=True)
+            (ra / "filpaket" / "kallor.json").write_text(
+                json.dumps(
+                    {"baskarta_lokal": [{"nr": i, "sha256": sha256_fil(f)} for i, f in enumerate(baskarta_filer, start=1)],
+                     "lagerprofil_sha256": profil.sha256},
+                    indent=2, sort_keys=True,
+                ) + "\n",
+                encoding="utf-8",
+            )
+            skriv(f"Byggnader: {antal} byggnadsytor ur baskartan (stängda för MCP).")
+            return fil
+
         if fil_hojd:
             if kalla_bygg == "lantmateriet":
                 raise SkapaFel("Byggnader från Lantmäteriet kan inte kombineras med kommunens höjdmodell: välj filpaket eller wfs.")
@@ -345,6 +395,8 @@ def mappa_geografi(
                 bygg_fil = _wfs_byggnader()
             elif kalla_bygg == "filpaket":
                 bygg_fil, _ = _baskarta_byggnader()
+            elif kalla_bygg == "lokal_fil":
+                bygg_fil = _lokal_byggnader()
             skriv("Bygger K1-markmodellen (rutor om 500 m) ...")
             bygg = bygg_omrade(
                 omr, ra / "lantmateriet", k1, byggnader_fil=bygg_fil, upplosning_m=kommun.lantmateriet.upplosning_m,
@@ -398,22 +450,31 @@ def mappa_geografi(
         licenser.append(kommun.byggnader.licens)
     elif kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None:
         licenser.append(fk.baskarta.licens)
+    elif stangd_baskarta:
+        licenser.append(kommun.byggnader.licens)
     lic = _strangaste_licens(licenser)
     skriv_oppenhet_toml(
-        lager_ra.mapp, oppen=False, licens=kommun.lantmateriet.licens,
-        kalla="Lantmäteriet (punktmoln, ortofoto, byggnader) och kommunens rådata",
+        lager_ra.mapp, oppen=False, licens="intern" if stangd_baskarta else kommun.lantmateriet.licens,
+        kalla="Lantmäteriet (punktmoln, ortofoto, byggnader) och kommunens rådata"
+        + (" (inklusive byggnader ur en baskarta som inte är öppna data)" if stangd_baskarta else ""),
         anledning="Rådata: punktmoln kan innehålla personuppgifter enligt Lantmäteriets villkor, och villkoren "
         "för ortofoto och byggnader är inte kontrollerade. Lämnas aldrig ut via MCP.",
     )  # fmt: skip
+    oppna_k1 = villkor_kontrollerade and not stangd_baskarta
     kalla_text = f"Härlett ur Lantmäteriet (laser) och {kommun.namn} (byggnader). ©Lantmäteriet."
+    if stangd_baskarta:
+        kalla_text = f"Härlett ur Lantmäteriet (laser) och {kommun.namn}s baskarta (byggnader), som inte är öppna data."
     anledning = (
-        "Villkoren är kontrollerade (--villkor-kontrollerade): markmodell och resultat är öppna."
+        "Byggnaderna är härledda ur en baskarta som inte är öppna data (beslut 2026-11-24): stängt för MCP och extern AI, "
+        "oavsett --villkor-kontrollerade. Ändras bara av en människa."
+        if stangd_baskarta
+        else "Villkoren är kontrollerade (--villkor-kontrollerade): markmodell och resultat är öppna."
         if villkor_kontrollerade
         else "Villkoren för Lantmäteriets och kommunens data är inte kontrollerade av Floden. Stängt för MCP tills "
         "geografin mappas om med --villkor-kontrollerade (ny version) eller oppenhet.toml ändras av en människa."
     )
     for mapp in (lager_k1.mapp, versionsmapp(geo_rot, geografi_id, version)):
-        skriv_oppenhet_toml(mapp, oppen=villkor_kontrollerade, licens=lic, kalla=kalla_text, anledning=anledning)
+        skriv_oppenhet_toml(mapp, oppen=oppna_k1, licens=lic, kalla=kalla_text, anledning=anledning)
 
     manifest: dict[str, Any] = {
         "kontrakt": KONTRAKT_GEOGRAFI,
@@ -468,14 +529,20 @@ def mappa_geografi(
                 ),
             },
             "byggnader": (
-                {"kalla": kalla_bygg, "licens": fk.baskarta.licens, "anmarkning": fk.baskarta.licens_anmarkning}
+                {
+                    "kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning,
+                    "stangd": True, "hojd_fran": kommun.byggnader.lokal.hojd_fran if kommun.byggnader.lokal else None,
+                    "antal_filer": len(baskarta_filer),
+                }
+                if stangd_baskarta
+                else {"kalla": kalla_bygg, "licens": fk.baskarta.licens, "anmarkning": fk.baskarta.licens_anmarkning}
                 if kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None
                 else {"kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning}
             ),
             **mark_kallor,
         },
         "motivering_karna": omrade.motivering,
-        "oppen_for_mcp": villkor_kontrollerade,
+        "oppen_for_mcp": oppna_k1,
         "varningar": varningar,
     }
     fil, sha = skriv_manifest(geo_rot, manifest)
@@ -484,9 +551,9 @@ def mappa_geografi(
         f"Klart: {ref}, manifest sha256 {sha[:12]}. Lager k1_rutnat {lager_k1.sha256[:12]} "
         f"({'nytt' if lager_k1.nytt else 'delas med en tidigare version'}), radata {lager_ra.sha256[:12]}."
     )
-    if not villkor_kontrollerade:
+    if not oppna_k1:
         skriv("MCP: härledd data är STÄNGD tills villkoren är kontrollerade (--villkor-kontrollerade).")
-    return MappaResultat(ref, fil, sha, True, varningar, villkor_kontrollerade)
+    return MappaResultat(ref, fil, sha, True, varningar, oppna_k1)
 
 
 __all__ = ["GeografiFel", "MappaResultat", "mappa_geografi", "skalfel_langd"]

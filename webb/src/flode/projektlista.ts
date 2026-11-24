@@ -1,14 +1,13 @@
 /*
  * Steg 1 · Projekt: projekten användaren har (vänsterlista med miniatyr, namn och en rad status) och
- * kartan över det valda projektet. "Nytt projekt" finns men säger "kommer snart": det finns inget
- * API för att skapa projekt.
+ * kartan över det valda projektet. "Nytt projekt" öppnar vyn `#/nytt` (nyttprojekt.ts).
  */
 import { hamtaProjekt, hamtaProjektLista } from "../api.ts";
 import { hamtaBildMedUtbredning, hamtaProjektInfo, type ProjektInfo } from "../karta/kartapi.ts";
 import type { Kartmotor } from "../karta/kartmotor.ts";
 import { esc, formatera } from "../sidor.ts";
 import type { ProjektSvar } from "../types.ts";
-import { flodeAdress } from "./adress.ts";
+import { flodeAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import { sattProjektNamn } from "./huvud.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
 
@@ -47,10 +46,9 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
       <section class="flode-lista" aria-labelledby="projekt-rubrik">
         <div class="flode-listhuvud">
           <h1 id="projekt-rubrik" class="flode-h">Projekt</h1>
-          <button type="button" class="flode-knapp svart liten" id="nytt-projekt" aria-describedby="nytt-not">Nytt projekt</button>
+          <a class="flode-knapp svart liten" id="nytt-projekt" href="${NYTT_PROJEKT_ADRESS}">Nytt projekt</a>
         </div>
         <div id="projekt-rader" class="flode-rader" aria-live="polite"><p class="flode-dampad">Hämtar projekten …</p></div>
-        <p class="flode-not" id="nytt-not">Kommer snart: att skapa nya projekt här. Än så länge byggs projekt med kommandona i README (<code>floden demo</code>).</p>
       </section>
       <section class="flode-karta" aria-label="Karta över valt projekt">
         <div class="flode-karta-yta" id="projekt-karta"></div>
@@ -59,9 +57,6 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
     </div>`;
   const rader = rot.querySelector<HTMLElement>("#projekt-rader") as HTMLElement;
   const kort = rot.querySelector<HTMLElement>("#projekt-kartkort") as HTMLElement;
-  rot.querySelector<HTMLButtonElement>("#nytt-projekt")?.addEventListener("click", () => {
-    rot.querySelector("#nytt-not")?.classList.add("framhav");
-  });
 
   const visaKarta = async (r: Rad): Promise<void> => {
     let info: ProjektInfo;

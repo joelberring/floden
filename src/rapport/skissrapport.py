@@ -710,7 +710,7 @@ class RapportTjanst:
             raise RapportFel("Ange minst en körning (korningar).")
         if not self.tjanst.rot.is_dir():
             raise RapportFel("Flodens rotmapp finns inte.")
-        self.tjanst._kravs_projekt(projekt)  # noqa: SLF001 - samma regel som webben
+        self.tjanst.kravs_rapportprojekt(projekt)
         prefix = AMNESPREFIX[amne]
         try:
             if fragor:
@@ -807,7 +807,7 @@ class RapportTjanst:
         scenario: Mapping[str, Any] | None = None,
     ) -> Bestallning:
         """Skapar och sparar en beställning (K30). Urvalet av frågor beräknas ur katalogen."""
-        self.tjanst._kravs_projekt(projekt)  # noqa: SLF001 - samma regel som webben
+        self.tjanst.kravs_rapportprojekt(projekt)
         b = skapa_bestallning(
             self.katalog,
             syfte=syfte,

@@ -143,6 +143,13 @@ class FlodenTjanst:
         with _oversatt():
             self.kv._kravs_projekt(projekt)  # noqa: SLF001 - samma regel som webben (404, ej byggd)
 
+    def kravs_rapportprojekt(self, projekt: str) -> None:
+        """Projektet en rapport eller beställning får gälla: demokvarteret (byggt), eller ett projekt i
+        kontoregistret (projekt i en geografi; deras körningar bär registrets id). Annat ger 404."""
+        if projekt != PROJEKT_ID and self.app._registrerat_projekt(projekt):  # noqa: SLF001
+            return
+        self._kravs_projekt(projekt)
+
     def metodstatus(self, losare: str) -> dict[str, Any]:
         """Klassning (`skiss` eller `rapport`) och underlag för en lösare, ur `metodstatus.toml`."""
         data: dict[str, Any] = {}

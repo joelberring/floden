@@ -185,6 +185,12 @@ docker compose -f docker-compose.prod.yml exec floden python -m konto.admin bjud
 - Projekt som ska höra till organisationen skapas med `floden projekt skapa ... --konto <konto-id> --organisation <org-id>` (se nedan). Redan skapade projekt i en annan organisation ändras inte.
 - Databasen migreras av sig själv till schemaversion 5 vid nästa start (befintliga roller gäller som förut). Ta en kopia av `data/konto/konto.sqlite` före uppdateringen.
 
+## Nytt projekt och rapport i webben (K48)
+
+Inget nytt kommando och ingen ny inställning: webbens "Nytt projekt" och "Skapa rapport" använder samma mappar som kommandona. Servern måste ha en mappad geografi (`floden geografi mappa ...`, se nedan) för att listan i "Nytt projekt" ska ha något att visa; geografierna läses ur `data/lokal/geo/` (förval, `floden geografi mappa`; projekten ligger i `data/lokal/projekt/`, kontoregistret i `data/konto/konto.sqlite`). Ett projekt som skapas i webben får sin mapp i `data/lokal/projekt/<namn-som-slug>/` (samma som `floden projekt skapa`) och en rad i kontoregistret med skaparen som utredare. Den som får skapa är superadmin, organisationsadmin och ägare (`docs/KONTO.md`).
+
+Rapportjobb sparas som `<rapportmapp>/jobb/j-<12 hex>.json` bredvid rapporterna (en liten fil per jobb, utan personuppgifter) och körs ett i taget i serverprocessen. Startas servern om medan ett jobb pågår blir jobbet `fel` ("avbröts när servern stoppades"); starta det igen i webben. Ingen backup behövs för jobbfilerna, men de ligger med rapporterna i den vanliga lagringen.
+
 ## Göteborg: geografin `goteborg-test` och ett provprojekt (etapp 3, S5)
 
 Geografi först (`docs/ARKITEKTUR-DRIFT.md` 0b): området mappas en gång som en **geografi** (kärna Haga 500 x 500 m + buffert,
@@ -273,6 +279,57 @@ loggar; kommunens adressfält och liknande sparas inte.
 **Oprövat.** Hela kedjan är provad bara mot en falsk Lantmäteriserver och syntetiska svar (utvecklingsmiljön når bara GitHub).
 Formatet på Göteborgs WFS (lagernamn, attribut, GeoJSON och axelordning) är antaget, och Lantmäteriets verkliga filer har inte
 körts genom bygget. Första körningen på servern är därför också provet.
+
+## Stockholm: geografin `stockholm-test` (byggnader ur Stockholms 3D-baskarta, inte öppna data)
+
+Joels beslut 2026-11-24 (`docs/BESLUT.md`): delar av Stockholms 3D-baskarta (DWG) får användas i projekt och ligga på Flodens server, men
+baskartan är **inte öppna data**. Därför ligger filen **bara** i serverns lokala datamapp, aldrig i git, loggar, `STATUS.md` eller PR-texter,
+och allt som härleds direkt ur den är **stängt** för MCP och extern AI. Kommunfilen är `data/kommuner/stockholm.toml` (EPSG:3011, höjd ur
+Lantmäteriets laser, byggnader `kalla = "lokal_fil"`). Geografin `stockholm-test` är ett **provområde** (500 x 500 m kring Mariatorget,
+Södermalm), inget planområde.
+
+**Lägg filen på servern** (på värden; `./data/lokal` i `docker-compose.prod.yml` är `/app/data/lokal` i containern). Använd `scp` eller liknande
+från din dator, och checka aldrig in den:
+
+```bash
+sudo mkdir -p /srv/floden/data/lokal/stockholm && sudo chown 1000:1000 /srv/floden/data/lokal/stockholm
+scp <baskartefilen> <server>:/srv/floden/data/lokal/stockholm/baskarta.zip
+```
+
+Filen kan vara en ZIP (med DWG eller dwgread-JSON), en DWG eller en dwgread-JSON, och flera filer (kartblad) kan anges. DWG kräver `dwgread`
+(finns i avbildningen, `FLODEN_DWGREAD`). Namnet ovan är ett exempel: ge filen vilket namn du vill, det skrivs aldrig i utskrift eller manifest.
+
+**Före första körningen:** superadmin-kontot ska ha en Lantmäteri-nyckel på sidan Nycklar (STAC Höjd, Laserdata Nedladdning, skog, gratis; Metod =
+basic för Geotorgets inloggning, se Göteborg ovan). Stockholm har ingen reserv: utan nyckel går mappningen inte.
+
+**Mappa geografin** (bara superadmin; tar några minuter):
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden geografi mappa stockholm-test --konto <superadmin-konto-id> --baskarta-fil /app/data/lokal/stockholm/baskarta.zip
+```
+
+`--baskarta-fil` kan anges flera gånger. Utskriften nämner bara antal byggnader och att höjden är okontrollerad, aldrig filnamn eller lagernamn.
+Kontrollera sedan, och visa inte utskriften utanför servern:
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden floden geografi visa stockholm-test@v1
+docker compose -f docker-compose.prod.yml exec floden floden projekt skapa --geografi stockholm-test@v1 --avgransning=153550,6577900,153750,6578100 --namn "Stockholm prov" --konto <konto-id>
+```
+
+**Stängt, alltid.** Geografins version, lagren `radata` och `k1_rutnat` och projekten i den får `oppenhet.toml` med `oppen = false` och licens `intern`;
+`--villkor-kontrollerade` öppnar dem **inte** (kommandot säger det). Manifestet har `kallor.byggnader.stangd = true` och `oppen_for_mcp = false`.
+MCP-spärren (`floden_mcp.oppenhet`, `docs/MCP.md`) nekar därmed sökvägarna (testat) och körningar vars indata ligger under dem (regeln i K38). Resultat och rapporter ur ett Stockholmsprojekt
+är alltså inte `oppet` och går inte att hämta via MCP eller skicka till en AI-tjänst.
+
+**Vad som är okontrollerat** (står också som varning i manifestet):
+
+- Byggnadshöjd (`[byggnader.lokal] hojd_fran`): förval `takkontur_z` = z (taknivå) på byggnadens linje, medel av hörnen, minus markhöjden ur lasern. Det är
+  **okontrollerat** att z är RH 2000 (annars `z_tillagg_m`), att z är takets och inte fotens höjd, och att byggnadens linje har z för alla hus. Hus utan giltig z
+  skattas ur Lantmäteriets laser (oklassade punkter) eller får standardhöjd, med en varning som anger antalet. `hojd_fran = "laser"` hoppar över baskartans z.
+- Lagertolkningen är profilen `data/lagerprofiler/stockholm_baskarta.toml`, som är "att bekräfta mot full lagerlista": byggnadens yta ger huset, byggnadens linje ger höjden.
+  Hittas inga byggnader säger felet det utan att nämna lagernamn; bryt då mot profilen eller ange `lager_monster` i `[byggnader.lokal]` (serverns egen kopia av kommunfilen).
+- Filens koordinatsystem antas vara EPSG:3011 (`[byggnader.lokal] epsg`). Terrängen i provområdet är inte kontrollerad; manifestet har höjdspann och lägsta punkt.
+- Filen läses helt in i minnet som objekt innan den klipps: en mycket stor DWG kan ta minuter och mycket minne. Ange i så fall bara det kartblad som täcker området.
 
 ## Uppdatera
 

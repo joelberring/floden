@@ -19,7 +19,11 @@ export interface FlodeRutt {
   steg: Steg;
   /** Projektets id; null i projektlistan. */
   projekt: string | null;
+  /** Sant på `#/nytt`: vyn där ett nytt projekt skapas (hör till steg 1). */
+  nytt?: true;
 }
+
+export const NYTT_PROJEKT_ADRESS = "#/nytt";
 
 const PROJEKTSTEG: ReadonlySet<string> = new Set(["forslag", "fragor", "resultat", "rapport"]);
 
@@ -29,6 +33,7 @@ export function tolkaFlodeAdress(hash: string): FlodeRutt | null {
   const [sokvag = ""] = utan.split("?", 1);
   const delar = sokvag.split("/").filter((d) => d.length > 0);
   if (delar.length === 0) return { steg: "projekt", projekt: null };
+  if (delar.length === 1 && delar[0] === "nytt") return { steg: "projekt", projekt: null, nytt: true };
   if (delar[0] !== "p" || !delar[1]) return null;
   let projekt: string;
   try {
