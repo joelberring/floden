@@ -46,6 +46,7 @@ STEG: Final[tuple[tuple[str, str], ...]] = (
 )
 _JOBB_RE = re.compile(r"^j-[0-9a-f]{12}$")
 _BEST_FALT = {"syfte", "skede", "mottagare_roll", "amnen", "villkor", "fragor", "bara_med_underlag", "scenario", "projekt"}
+_MAX_FRAGOR = 200
 STANDARD_SYFTE = "Tidig sållning av frågorna för förslaget."
 
 
@@ -77,18 +78,10 @@ class RapportJobbTjanst:
     # ------------------------------------------------------------------ vad som går att skapa
 
     def _korningar_for(self, projekt: str, amne: str) -> list[dict[str, Any]]:
-        """Klara körningar i projektet som rapporten kan bygga på (har ämnets analys och en jämförelse), nyast först."""
-        ut: list[dict[str, Any]] = []
-        for k in self.app.fragor.lista_korningar()["korningar"]:
-            if k.get("status") != "klar" or self.app.projekt_for_korning(str(k["korning_id"])) != projekt:
-                continue
-            try:
-                post = self.rt._korningspost(str(k["korning_id"]), amne)  # noqa: SLF001 - samma kontroll som rapport_skapa
-            except Exception:  # noqa: BLE001 - körningen duger inte för ämnet
-                continue
-            if post["jamforelser"]:
-                ut.append({"korning_id": post["korning_id"], "fraga_id": post["fraga_id"], "skapad": k.get("skapad")})
-        return ut
+        """Klara körningar i projektet som rapporten kan bygga på, i förvalsordning (`rapport.korningsval`)."""
+        from rapport.korningsval import korningar_for
+
+        return korningar_for(self.rt, projekt, amne)
 
     def mojligheter(self, projekt: str) -> dict[str, Any]:
         """Tillägg i `GET /api/projekt/<id>/rapporter` (K48): ämnena, om rapportmall finns och vilken körning som används."""
@@ -113,6 +106,7 @@ class RapportJobbTjanst:
                     "forklaring": forklaring,
                     "mall": saknad_mall(a) is None,
                     "forval_korning": kor[0]["korning_id"] if kor else None,
+                    "forval_slag": kor[0]["slag"] if kor else None,
                     "korningar": kor,
                 }
             )
@@ -127,7 +121,7 @@ class RapportJobbTjanst:
             raise FlodenWebbFel("Kroppen ska vara JSON.", status_kod=400) from exc
         if not isinstance(d, dict):
             raise FlodenWebbFel("Kroppen ska vara ett JSON-objekt.", status_kod=400)
-        okanda = set(d) - {"amne", "korning_id", "bestallning"}
+        okanda = set(d) - {"amne", "korning_id", "bestallning", "fragor", "scenario"}
         if okanda:
             raise FlodenWebbFel(f"Okända fält: {', '.join(sorted(okanda))}.", status_kod=400)
         return d
@@ -139,26 +133,24 @@ class RapportJobbTjanst:
             raise FlodenWebbFel(f"Okänt ämne. Välj bland: {', '.join(AMNEN_ORDNING)}.", status_kod=400)
         from rapport.bestallning import BestallningFel
         from rapport.skissrapport import RapportFel
-        from rapport.webbflode import AMNESNAMN, saknad_mall
+        from rapport.webbflode import saknad_mall
 
         forklaring = saknad_mall(amne)
         if forklaring is not None:
             raise FlodenWebbFel(forklaring, status_kod=409)
+        from rapport.korningsval import UnderlagFel, valj_korning
+
         kid = d.get("korning_id")
         if kid is not None and not isinstance(kid, str):
             raise FlodenWebbFel("korning_id ska vara text.", status_kod=400)
-        kandidater = self._korningar_for(projekt, amne)
-        if kid is None:
-            if not kandidater:
-                raise FlodenWebbFel(
-                    f"Det finns ingen klar beräkning av {AMNESNAMN[amne].lower()} med före och efter i projektet. "
-                    "Kör beräkningarna i steg 3 först.",
-                    status_kod=409,
-                )
-            kid = str(kandidater[0]["korning_id"])
-        elif kid not in {k["korning_id"] for k in kandidater}:
-            # Samma svar för en körning som saknas och en i ett annat projekt: ingen ledtråd om andras körningar.
-            raise FlodenWebbFel(f"Körningen '{kid}' finns inte i projektet eller duger inte för {amne}.", status_kod=404)
+        sc = d.get("scenario")
+        if sc is not None and not isinstance(sc, str):
+            raise FlodenWebbFel("scenario ska vara förslagets namn (slug) som text.", status_kod=400)
+        try:
+            valt = valj_korning(self.rt, projekt, amne, korning_id=kid, scenario=sc)
+        except UnderlagFel as exc:
+            raise FlodenWebbFel(str(exc), status_kod=exc.status) from exc
+        kid = str(valt["korning_id"])
         b = d.get("bestallning") or {}
         if not isinstance(b, dict) or set(b) - _BEST_FALT:
             raise FlodenWebbFel(
@@ -166,6 +158,17 @@ class RapportJobbTjanst:
             )
         if b.get("projekt", projekt) != projekt:
             raise FlodenWebbFel("bestallning.projekt ska vara projektet i adressen.", status_kod=400)
+        fragor_in = d.get("fragor")
+        if fragor_in is not None:
+            if (
+                not isinstance(fragor_in, list)
+                or len(fragor_in) > _MAX_FRAGOR
+                or not all(isinstance(f, str) and len(f) <= 20 for f in fragor_in)
+            ):
+                raise FlodenWebbFel("fragor ska vara en lista med fråge-id ur frågekatalogen (till exempel SK-03).", status_kod=400)
+            if b.get("fragor") and list(b["fragor"]) != fragor_in:
+                raise FlodenWebbFel("Ange frågorna antingen i fragor eller i bestallning.fragor, inte olika i båda.", status_kod=400)
+            b = {**b, "fragor": fragor_in}
         try:
             best = self.rt.bestallning_skapa(
                 syfte=str(b.get("syfte") or STANDARD_SYFTE),
@@ -193,6 +196,12 @@ class RapportJobbTjanst:
             "projekt": projekt,
             "amne": amne,
             "korning_id": kid,
+            "underlag": {
+                "slag": valt["slag"],
+                "scenario": valt["scenario"],
+                "fragor": list(best.urval),
+                "demo": valt["slag"] == "demo",
+            },
             "bestallning_id": best.bestallning_id,
             "status": "ko",
             "steg": None,
@@ -257,6 +266,7 @@ class RapportJobbTjanst:
             "amne": p["amne"],
             "korning_id": p["korning_id"],
             "bestallning_id": p["bestallning_id"],
+            "underlag": p.get("underlag"),
             "status": p["status"],
             "steg": steg_id,
             "steg_nr": nr,

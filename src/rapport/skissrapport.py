@@ -753,6 +753,11 @@ class RapportTjanst:
             self._korningspost(k, amne, None if best is None else best.scenario)
             for k in dict.fromkeys(korningar)
         ]
+        underlag_fn = getattr(self.tjanst.app, "korningsunderlag", None)
+        for post in posts:
+            # Vilket slags underlag körningen är (förslag, egen, demo): står i handlingsrutan (U2, K33 additivt).
+            if underlag_fn is not None:
+                post["underlag"] = underlag_fn(post["korning_id"])
         mott = tuple(Mottagare.fran_dict(m) for m in mottagare)
         if len({m.namn for m in mott}) != len(mott):
             raise RapportFel("Två mottagare har samma namn.")

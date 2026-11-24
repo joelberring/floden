@@ -266,6 +266,14 @@ def kartrubrik(typ: str, scenario: str | None, fore: str, efter: str) -> str:
     return amnestext.kartrubrik("skyfall", typ, scenario, fore, efter)
 
 
+def _underlagssuffix(k: Mapping[str, Any], sbk: bool) -> str:
+    """` – gäller förslaget …` eller `– demokörningen …` efter körningen i handlingsrutan (tom när slaget inte är känt)."""
+    from rapport.korningsval import underlagstext
+
+    t = underlagstext(k.get("underlag"), sbk)
+    return f" – {t}" if t else ""
+
+
 def _bestallningsrader(r: Rapport, sbk: bool) -> list[tuple[str, str]]:
     """Beställningen (K30) i handlingsrutan: syfte och mottagare."""
     b = r.bestallning
@@ -365,6 +373,7 @@ def bygg_dokument(
     if sbk:
         korningar = "; ".join(
             f"beräkning {k['korning_id']} (Floden, kodversion {k.get('kodversion')})"
+            + _underlagssuffix(k, True)
             for k in r.korningar
         )
         kontroll_text = (
@@ -392,7 +401,9 @@ def bygg_dokument(
             ("Rapport-id", r.rapport_id),
         )
     else:
-        korningar = "; ".join(f"{k['korning_id']} (kod {k.get('kodversion')})" for k in r.korningar)
+        korningar = "; ".join(
+            f"{k['korning_id']} (kod {k.get('kodversion')})" + _underlagssuffix(k, False) for k in r.korningar
+        )
         rader = (
             ("Handling", "Skissunderlag, nivå 1 (sållning)"),
             ("Projekt", r.projekt),

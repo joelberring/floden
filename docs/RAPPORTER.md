@@ -523,7 +523,25 @@ Floden.
   `pastaende_lagg_till`, `rapport_kontrollera`, `rapport_exportera`, `rapport_hamta` och resursen
   `floden://rapport/{rapport_id}`; promptarna `skissunderlag_skyfall`,
   `skissunderlag_dagsljus`, `skissunderlag_ekologi` och `skissunderlag_luft`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
-- **Webben:** projektsidan listar rapporterna med kontrollens utfall (grön/röd) och länkar till
+- **Webben, steg 5 "Skapa rapport" (U2):** rapporten speglar användarens val. Panelen visar under "Rapporten bygger på"
+  vilken körning (och vilket förslag) och vilka frågor från steg 3 rapporten bygger på, innan man trycker Skapa. Körningen
+  är den senaste för det ritade förslaget; finns ingen faller den tillbaka på projektets senaste egna körning och sist
+  demokörningen, och panelen varnar ("Förslaget är inte beräknat än … inte på ditt förslag") och rapportens handlingsruta
+  (raden Underlag) säger det: "demokörningen som följer med projektet; inget eget förslag är beräknat". Saknas körning
+  helt är knappen grå och panelen länkar till steg 3 (och steg 2). Frågorna är de som valts i steg 3 för ämnet (id ur
+  huvudkatalogen, till exempel SK-03); har inga valts tas alla frågor för ämnet och panelen säger det. Webben skickar
+  `fragor`, `scenario` (förslagets slug) och `korning_id` i `POST /api/projekt/<id>/rapporter` (K48); servern kontrollerar
+  att frågorna finns i katalogen och hör till ämnet (400), att körningen hör till projektet och duger för ämnet (404, samma
+  svar för en annans körning) och att kontot är utredare i projektet. Frågorna blir beställningens (K30) `fragor`.
+- **MCP och underlaget (U2):** `rapport_skapa` tar `korningar` som förut, men de får utelämnas: då väljs samma körning som i
+  webben (`forslag` = förslagets slug; annars egen körning; demokörningen sist) och svaret har `underlag` per körning
+  (`slag`: `forslag`, `egen`, `demo`). Frågorna och ingressen kommer som förut ur beställningen (`bestallning_id`, K30);
+  inget nytt beställningsfält uppfanns.
+- **Projektets avgränsning:** har projektet en polygon (`avgransning_polygon_3011`, K48) står "inom projektets avgränsning
+  (polygon)" i beläggens mottagare och nämnare i stället för "hela beräkningsområdet" (jämförelsemått och
+  `omrade.hela_omradet…`, som räknar celler inne i polygonen); projekt utan polygon som förut. Mått som inte avgränsas av
+  polygonen (lösarens egna summor, fasadpunkter, ekologi) behåller sin text.
+- **Webben, listor:** projektsidan listar rapporterna med kontrollens utfall (grön/röd) och länkar till
   Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
   Rapportmappen kan ändras med `[webb] rapportmapp`. Frågekatalogen nås med
   `GET /api/fragekatalog?omrade=dagsljus&villkor=…&text=…&ids=…` (samma innehåll som
@@ -538,7 +556,7 @@ språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Libera
 - Bara skyfall, dagsljus/sol, ekologi, luft och nivå 1 (buller har ingen skissrapport: Nord2000 inte konformt). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
 - Bara måtten i `MATTKATALOG` kan användas (vatten: statisk fyllning och dynamik; dagsljus:
   soltimmar på mark, SVF, VSC på fasadpunkter; ekologi: ECA, PC, fläckar och nätverksparametrar; luft: MKN-intervall för PM10 ur en given serie).
-- `POST /api/projekt/<id>/rapporter` finns inte på main (rapporter skapas via MCP och `RapportTjanst`; webben listar och hämtar bara). Skapa-i-webben byggs separat (`skapa-i-webben`); `RapportTjanst.skapa` tar ämnet `ekologi` direkt, så en POST som anropar den får det utan ändring.
+- Skapa-i-webben (K48) har referensflöde för skyfall och dagsljus; ekologi och luft skapas via MCP. Körningens förslagskoppling bygger på förslagsfilens senaste körning per analysmall: äldre körningar av samma förslag räknas som förslag men utan namn.
 - Dagsljus: demons körning har ett datum (20 mars) och ingen SVF. Sol på fasad, sol på tak,
   dagsljusfaktor i rum, utblick, årsstatistik och ekvinoktieskuggor (höst) finns inte i kärnan och
   redovisas som underlag som saknas. Nivå 1 bedömer inte mot krav.

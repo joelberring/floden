@@ -550,7 +550,7 @@ typsnitt, namngivna efter sha256). `rapport_id` = `r-` + 12 hex.
 | `rapport_id`, `niva` (1), `amne` (`skyfall` eller `dagsljus`), `projekt`, `titel`, `skapad` | |
 | `fragor` | Frågornas id ur katalogen; `katalog` har filen, källäget och frågornas text |
 | `bestallning` | Valfritt (tillagt 2026-11-23, ingen versionsökning: äldre rapporter utan fältet läses som förut). K30, eller null |
-| `korningar` | Per körning: `korning_id`, `fraga_id`, `beskrivning`, `kodversion`, `manifest`, `manifest_sha256`, `start`, `analyser` (analys, lösare, scenarier), `jamforelser`, `antaganden`, `scenarier` |
+| `korningar` | Per körning: `underlag` (tillagt 2026-11-24, additivt: `{slag: forslag|egen|demo|okand, scenario: {slug, namn}|null}`; handlingsrutan säger vad rapporten bygger på), `korning_id`, `fraga_id`, `beskrivning`, `kodversion`, `manifest`, `manifest_sha256`, `start`, `analyser` (analys, lösare, scenarier), `jamforelser`, `antaganden`, `scenarier` |
 | `mottagare` | `[{namn, polygon [[e, n], …] EPSG:3011, beskrivning}]` |
 | `pastaenden` | K32 |
 | `kartor` | `{kart_id, korning_id, jamforelse, analys, lager_id, typ (bas/scenario/skillnad), scenario, fil, png_sha256, bildtext, meta {norr, skalstock_m, enhet, skala, cellstorlek_m, kartutsnitt, utsnitt, metodstatus, roll, rubrik (valfri: kartans rubrik i klarspråk)}}`; `bildtext` är Flodens neutrala bildtext; dokumentet visar den i rapportens språkprofil |
@@ -1192,6 +1192,19 @@ gräns. **403**: saknar behörighet, eller inloggning av. **404**: geografin fin
 `amnen`, `villkor`, `fragor`, `bara_med_underlag`, `scenario`). Beställningen skapas direkt (K30), resten körs som **jobb**; svar **202**
 med jobbet. Ämnet utan rapportmall (`ekologi` tills R2-mallen finns) ger **409** med förklaringen; `planunderlag` ger 409; en körning som
 saknas, hör till ett annat projekt eller inte duger för ämnet ger 404.
+
+**U2, additivt (2026-11-24): rapporten speglar användarens förslag och val.** `POST .../rapporter` tar två fält till: `fragor`
+(lista med fråge-id ur huvudkatalogen, högst 200; blir beställningens `fragor`; anges de också i `bestallning.fragor` ska de vara
+lika, annars 400; okänt id eller fråga som inte hör till ämnet ger 400 med svensk text) och `scenario` (ett sparat förslags slug). Körningen
+väljs så: `korning_id` om angivet (ska höra till projektet och duga för ämnet, annars 404; med `scenario` ska den höra till
+förslaget, annars 400), annars den senaste klara körningen för `scenario` (förslaget finns inte: 404; har ingen körning: 409
+"Kör beräkningarna i steg 3 först"), annars förvalet: användarens senaste förslagskörning, sedan egen körning i projektet, och
+demokörningen sist. Rollkravet (utredare i projektet) är oförändrat. `GET .../rapporter` har per ämne `forval_slag` och per körning
+`slag` (`forslag`|`egen`|`demo`|`okand`) och `scenario` (`{slug, namn}` eller null), sorterade i förvalsordning. Jobbet och svaret
+har `underlag`: `{slag, scenario, fragor (urvalet), demo}`. Rapportens K33 har `korningar[].underlag` (se K33). Koden:
+`src/rapport/korningsval.py`, `FlodenApiApp.korningsunderlag`, `KartverktygTjanst.scenarier_per_korning`. Mottagare och nämnare i
+rapportens belägg säger "inom projektets avgränsning (polygon)" i stället för "hela beräkningsområdet" för projekt med
+`avgransning_polygon_3011`. MCP `rapport_skapa` får valfria `korningar` och `forslag` och svaret `underlag` (samma urval).
 
 **`GET /api/projekt/<id>/rapporter/jobb/<jobb_id>`** (läsare). Jobb (`<rapportmapp>/jobb/j-<12 hex>.json`): `kontrakt`, `jobb_id`, `projekt`,
 `amne`, `korning_id`, `bestallning_id`, `status` (`ko`, `kor`, `klar`, `fel`), `steg` (`skapar`, `paastaenden`, `kontrollerar`,

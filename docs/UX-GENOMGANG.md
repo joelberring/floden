@@ -15,7 +15,9 @@ projektavgränsningen) och är inte rört.
    och kör mot ämnets förvalda körning (`forval_korning`). Frågorna som valts i steg 3 följer inte med, och det ritade förslaget
    (scenariot) används inte. Planhandläggaren tror att rapporten gäller hens förslag och de valda frågorna; den gäller projektets
    färdiga beräkning med standardfrågor. Kräver API-stöd (körning och frågor i beställningen). Tills dess bör steg 5 säga vilken
-   körning rapporten bygger på (se P2-15).
+   körning rapporten bygger på (se P2-15). **Åtgärdat (U2, 2026-11-24):** steg 5 skickar frågorna från steg 3 och körningen för det
+   ritade förslaget, visar dem innan man skapar rapporten, och säger tydligt när rapporten skulle bygga på demokörningen eller en körning
+   som inte är förslagets; saknas körning länkas steg 3. Se `docs/RAPPORTER.md`.
 2. **P1 · Två skal och två vägar till samma sak (alla sidor utanför flödet, M–S). Åtgärdat i U3.** `#/projekt/<id>`, `#/fragor`, `#/om`, `#/nycklar`,
    `#/administration`, `#/prov/webgpu` har ett äldre sidhuvud (START, PROJEKT, UTREDNINGSFRÅGOR, OM BERÄKNINGARNA) utan stegraden.
    "Projekt" där leder till en sida som inte är flödets steg 1, och Utredningsfrågor (`#/fragor`) är en andra frågesida vid sidan av
@@ -100,11 +102,10 @@ Försöker: förstå vad förslaget gör och om det är ok.
 
 ### 7 Rapport (steg 5)
 Försöker: få en rapport att lämna vidare.
-- P1 · Rapporten bygger på förvald körning, inte på användarens förslag och val (fynd 1). (S)
+- ~~P1 · Rapporten bygger på förvald körning, inte på användarens förslag och val (fynd 1).~~ *Åtgärdat (U2):* panelen "Rapporten bygger på" och API-fälten `fragor`/`scenario`/`korning_id` (K48).
 - P2 · Tomtillståndet hänvisade till `floden mcp`. *Åtgärdat:* tydlig handling i webben. Samma text fanns på `#/projekt/<id>` (`python tools/rapport_demo.py`); *åtgärdat*.
 - P2 · "Planunderlag" valbart men knappen grå. *Åtgärdat:* "(inte än)".
-- P2 · Rapporten visar inte vilken körning, vilket förslag och vilket datum beräkningen har; bara skapad-datum. Lägg körnings-id och
-  scenarionamn i rapporthuvudet. (M)
+- P2 · Rapporten visar inte vilken körning, vilket förslag och vilket datum beräkningen har; bara skapad-datum. *Delvis åtgärdat (U2):* raden Underlag i handlingsrutan har körning och förslagsnamn (eller att det är demokörningen); datum kvar. (L)
 - P2 · Förhandsvisningens statusprickar är bara färg + `aria-label`; lägg text i listan (grön/gul/grå förklaras bara per prick). (L)
 - P3 · Datum skrivs med `toLocaleDateString("sv-SE")`; okej, men gå via en gemensam funktion som tal.ts. (L)
 - Smal skärm: förhandsvisningen under innehållsförteckningen och panelen; fungerar.

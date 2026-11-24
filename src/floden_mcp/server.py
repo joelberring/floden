@@ -1006,8 +1006,17 @@ def _registrera_rapportverktyg(
     )
     def rapport_skapa(
         korningar: Annotated[
-            list[str], Field(description="Körnings-id (klara), t.ex. ['demo-vatten'].")
-        ],
+            list[str] | None,
+            Field(
+                description="Körnings-id (klara), t.ex. ['demo-vatten']. Utelämnat: användarens senaste körning "
+                "för förslaget (forslag), annars projektets senaste egna körning, och demokörningen bara om inget "
+                "annat finns (det står då i rapporten)."
+            ),
+        ] = None,
+        forslag: Annotated[
+            str | None,
+            Field(description="Förslagets namn (slug, som i scenario_skapa) när korningar utelämnas."),
+        ] = None,
         amne: Annotated[
             str | None,
             Field(description="'skyfall' (förval), 'dagsljus' (dagsljus och sol), 'ekologi' eller 'luft'."),
@@ -1046,9 +1055,21 @@ def _registrera_rapportverktyg(
         modell: Modell = None,
         roll: Roll = None,
     ) -> dict[str, Any]:
+        amne_val = amne if amne or bestallning_id else "skyfall"
+        if not korningar:
+            from rapport.korningsval import UnderlagFel, valj_korning
+            from rapport.skissrapport import RapportFel
+
+            amne_k = amne_val
+            if amne_k is None and bestallning_id:
+                amne_k = rapporter.bestallningar.las(bestallning_id).rapportamne
+            try:
+                korningar = [str(valj_korning(rapporter, projekt, str(amne_k), scenario=forslag)["korning_id"])]
+            except UnderlagFel as exc:
+                raise RapportFel(str(exc)) from exc
         r = rapporter.skapa(
             projekt=projekt,
-            amne=amne if amne or bestallning_id else "skyfall",
+            amne=amne_val,
             bestallning=bestallning_id,
             korningar=korningar,
             niva=niva,
@@ -1065,6 +1086,10 @@ def _registrera_rapportverktyg(
         return {
             **sammanfattning(r, rapporter.arkiv),
             "installningar": r.installningar.till_dict(),
+            "underlag": [
+                {"korning_id": k["korning_id"], **(k.get("underlag") or {"slag": "okand", "scenario": None})}
+                for k in r.korningar
+            ],
             "fragor": [
                 {"id": f, "fraga": r.katalog["fragor"][f]["fraga"]} for f in r.fragor
             ],

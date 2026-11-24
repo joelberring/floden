@@ -56,6 +56,7 @@ from webb.moduler import visningsnamn
 
 FORMAT = "floden-kartverktyg/v1"
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,59}$")
+_PROJEKT_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,80}$")
 MAX_WMS_BYTES = 12 * 1024 * 1024
 MAX_CAPABILITIES_BYTES = 4 * 1024 * 1024
 WMS_TIDSGRANS_S = 20.0
@@ -497,6 +498,35 @@ class KartverktygTjanst:
                     }
                 )
         return {"scenarier": ut}
+
+    def scenarier_per_korning(self, projekt: str) -> dict[str, dict[str, str]]:
+        """Körnings-id -> `{slug, namn}` för sparade förslag i projektet som har en körning.
+
+        Läser scenariofilerna direkt (utan `_kravs_projekt`). Bara den senaste körningen per
+        analysmall finns kvar i filen; äldre körningar av samma förslag har ingen koppling."""
+        ut: dict[str, dict[str, str]] = {}
+        if not _PROJEKT_ID_RE.match(projekt):
+            return ut
+        mapp = self._scenariomapp(projekt)
+        if not mapp.is_dir():
+            return ut
+        for fil in sorted(mapp.glob("*.json")):
+            try:
+                d = json.loads(fil.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(d, dict) or d.get("format") != FORMAT:
+                continue
+            for k in (d.get("korningar") or {}).values():
+                if isinstance(k, dict) and isinstance(k.get("korning_id"), str):
+                    ut[k["korning_id"]] = {"slug": fil.stem, "namn": str(d.get("namn", fil.stem))}
+        return ut
+
+    def finns_scenario(self, projekt: str, namn_slug: str) -> bool:
+        """Finns ett sparat förslag med det namnet (slug) i projektet?"""
+        if not (_SLUG.match(namn_slug) and _PROJEKT_ID_RE.match(projekt)):
+            return False
+        return self._fil(projekt, namn_slug).is_file()
 
     def hamta_scenario(self, projekt: str, namn_slug: str) -> dict[str, Any]:
         self._kravs_projekt(projekt)
