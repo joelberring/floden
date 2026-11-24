@@ -100,7 +100,7 @@ def test_fraga_med_formaga_ger_markning_och_adresser() -> None:
     f = Fragekatalog.las().hamta("DL-10")
     d = fraga_med_formaga(f)
     assert d["floden"]["markning"] == "visat" and d["floden"]["adresser"]
-    assert fraga_med_formaga(Fragekatalog.las().hamta("LU-01"))["floden"] is None
+    assert fraga_med_formaga(Fragekatalog.las().hamta("BU-01"))["floden"] is None
 
 
 # ------------------------------------------------------------------ beställning (K30)

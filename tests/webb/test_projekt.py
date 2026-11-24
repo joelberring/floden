@@ -112,7 +112,7 @@ def test_moduler_ur_demon_ger_ratt_status(demo: Demo) -> None:
     m = {x["modul_id"]: x for x in d["moduler"]}
     assert [x["status"] for x in d["moduler"]] == [
         "finns_i_demon",
-        "finns_ej_forberaknad",
+        "finns_i_demon",  # luft: demon kör luft.mkn med två påhittade serier
         "under_utveckling",
         "finns_i_demon",
     ]
