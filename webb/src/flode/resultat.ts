@@ -25,6 +25,7 @@ import { formatera, formateraHogst } from "../tal.ts";
 import type { ProjektSvar, ProjektVy } from "../types.ts";
 import { meterPerPxFranZoom, zoomFranMeterPerPx } from "../vy3d/koord.ts";
 import { flodeAdress } from "./adress.ts";
+import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
 import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, regnText, resultatEtikett, slutsats, type Amne, type EkologiSvar, type Marksiffror, type Underlag } from "./nyckeltal.ts";
@@ -116,11 +117,13 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" role="tab" data-amne="ekologi" aria-selected="false">Ekologi</button>
         </div>
         <div id="rs-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar resultatet …</p></div>
+        ${extraAnalyserHtml()}
         <div class="flode-rad-slut"><a class="flode-knapp svart stor" href="${flodeAdress(projekt, "rapport")}">Skapa rapport</a></div>
       </aside>
     </div>`;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
+  kopplaExtraAnalyser(rot, ac.signal);
 
   const vyerFor = (k: "ritat" | "projekt"): ProjektVy[] => (k === "ritat" ? t.ritVyer : (projektSvar?.vyer ?? [])).filter((v) => v.avsnitt === amne);
 

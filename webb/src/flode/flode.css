@@ -347,3 +347,34 @@ body[data-sida="flode"] a:hover { color: #000; }
 .mat-mer[open] summary { margin-bottom: 8px; }
 .mat-mer { display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 600px) { .mat-sida { padding: 16px; } .mat-metod { padding: 12px; } }
+
+/* Kompletterande analyser i resultatpanelen (MKN-intervall & bullerskärmar) */
+.flode-extra {
+  margin-top: 12px;
+  border-top: 1px solid var(--kant, #d8d5cc);
+  padding-top: 10px;
+}
+.flode-extra summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.flode-extra-block {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+.flode-extra-rad {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+.flode-inmatning {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 4px 6px;
+  border: 1px solid var(--kant, #d8d5cc);
+  border-radius: 4px;
+  box-sizing: border-box;
+}

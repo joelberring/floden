@@ -710,5 +710,20 @@ class TestTestfallensProfiler(unittest.TestCase):
             self.assertEqual(former, {3, 5})
 
 
+class TestKonvexPrimarKant(unittest.TestCase):
+    def test_platt_impedansgrans_valjs_inte_som_primar_kant(self) -> None:
+        """En platt brytpunkt (β = π, t.ex. asfalt/gräs på upphöjd väg) får inte bli T₁."""
+        geo = geo_av(
+            [0.0, 1.75, 2.75, 3.75, 96.75],
+            [1.5, 1.5, 1.5, 0.0, 0.0],
+            h_s=0.01,
+            h_r=4.0,
+        )
+        kanter = valj_skarmkanter(geo)
+        assert kanter.primar is not None
+        # Index 1 (x = 1,75, z = 1,5) är platt; bara släntkrönet i index 2 (x = 2,75) är konvext.
+        self.assertEqual(kanter.primar.index, 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, resultatEtikett, slutsats, tal } from "./nyckeltal.ts";
+import {
+  antagandeRader,
+  formateraBullerSkarmar,
+  formateraMknIntervall,
+  intervallForklaring,
+  jamforelse,
+  kallRad,
+  nyckeltal,
+  resultatEtikett,
+  slutsats,
+  tal,
+  tolkaSkarmkandidater,
+  tolkaTallista,
+} from "./nyckeltal.ts";
 
 test("saknade tal visas som –, aldrig som noll", () => {
   assert.equal(tal(null, 1, "m"), "–");
@@ -81,4 +94,36 @@ test("ekologi: signalart, källa och antaganden kommer ur svaret och visas som t
   assert.equal(resultatEtikett({ resultat_etikett: null }), "");
   assert.deepEqual(antagandeRader(undefined), []);
   assert.equal(intervallForklaring({ intervall_typ: "faktorer" }), "");
+});
+
+
+test("MKN-intervall och bullerskärmar formateras utan egna beräkningar", () => {
+  const mkn = formateraMknIntervall({
+    min_dygn_over_grans: 12,
+    max_dygn_over_grans: 28,
+    min_arsmedel_ug_m3: 18.2,
+    max_arsmedel_ug_m3: 24.5,
+    min_percentil_90_4_ug_m3: 39.1,
+    max_percentil_90_4_ug_m3: 48.0,
+    klarar_mkn_garanterat: true,
+  });
+  assert.match(mkn.status, /Klarar MKN garanterat/);
+  assert.equal(mkn.tal[0]?.varde, "12 till 28 dygn");
+
+  const skarm = formateraBullerSkarmar({
+    riktvarde_db: 60,
+    valda_skarmar: [
+      { skarm_id: "Skärm A", marginal_vinst: 5.2, kumulativ_vinst: 5.2, vinst_ensam: 5.2, nya_godkanda: 2 },
+    ],
+    akustiska_bifurkationer: [{ skuggzon_bifurkation: true }, { skuggzon_bifurkation: false }],
+  });
+  assert.match(skarm.sammanfattning, /1 skärm valda mot riktvärde 60\s?dB \(1 skuggzonsbifurkationer\)/);
+  assert.equal(skarm.rader.length, 1);
+  assert.equal(skarm.rader[0]?.skarm_id, "Skärm A");
+
+  const synlig = JSON.stringify([mkn, skarm]);
+  assert.doesNotMatch(synlig, /\d\.\d/, "decimalkomma i MKN- och skärmpanelerna");
+  assert.deepEqual(tolkaTallista("10, 20.5; 30,2"), [10, 20.5, 30.2]);
+  assert.equal(tolkaTallista("abc"), null);
+  assert.deepEqual(tolkaSkarmkandidater("A: 1, 2\nB: 3, 4"), { A: [1, 2], B: [3, 4] });
 });

@@ -55,16 +55,16 @@ def test_ocksa_nycklar_kraver_alla_rapport() -> None:
 def test_markdown_ar_genererad_ur_registret() -> None:
     reg, ms = _reg()
     ny = mr.md_med_tabell(mr.MATEMATIK_MD.read_text(encoding="utf-8"), mr.markdown_block(reg, ms))
-    assert ny == mr.MATEMATIK_MD.read_text(encoding="utf-8"), (
-        "docs/MATEMATIK.md är inte i takt med registret: kör python tools/generera_matematik.py"
-    )
+    assert ny == mr.MATEMATIK_MD.read_text(
+        encoding="utf-8"
+    ), "docs/MATEMATIK.md är inte i takt med registret: kör python tools/generera_matematik.py"
 
 
 def test_webbdata_ar_genererad_ur_registret() -> None:
     reg, ms = _reg()
-    assert mr.TS_UT.read_text(encoding="utf-8") == mr.ts_innehall(reg, ms), (
-        "webb/src/matematik/data.generated.ts är inte i takt: kör tools/generera_matematik.py"
-    )
+    assert mr.TS_UT.read_text(encoding="utf-8") == mr.ts_innehall(
+        reg, ms
+    ), "webb/src/matematik/data.generated.ts är inte i takt: kör tools/generera_matematik.py"
 
 
 def test_dokumentet_har_formler_i_latex_och_fragorna_q1_till_q5() -> None:
@@ -91,3 +91,16 @@ def test_sokvagar_i_posterna_tolkas() -> None:
     assert mr.sokvag_i(post) == "src/dagsljus/intervall.py"
     assert mr.sokvag_i("testsvit grupp E (`floden testsvit --grupp E`)") is None
     assert mr.sokvag_i("K35") is None
+
+
+def test_kanda_avvikelser_finns_i_register_och_dokument() -> None:
+    reg, ms = _reg()
+    avv = reg.get("avvikelse", [])
+    assert len(avv) >= 6
+    assert any(a["id"] == "avv.buller.medvind_dal" for a in avv)
+    webb = mr.data_for_webben(reg, ms)
+    assert len(webb["avvikelser"]) == len(avv)
+    text = mr.MATEMATIK_MD.read_text(encoding="utf-8")
+    assert "## Kända avvikelser och begränsningar" in text
+    for a in avv:
+        assert a["titel"] in text
