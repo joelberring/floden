@@ -905,7 +905,7 @@ def _registrera_rapportverktyg(
     @verktyg(
         "fragekatalog_sok",
         "Söker i frågekatalogen (Stockholms utredningsfrågor, docs/utredningar-stockholm/fragor.json, "
-        "redaktionellt underlag; ekologifrågorna EK-01 till EK-12 ligger i fragor_ekologi.json). Filtrera på omrade (skyfall, ekologi, luft, buller, dagsljus, sol), villkor "
+        "redaktionellt underlag; 90 frågor, ekologifrågorna är EK-01 till EK-15). Filtrera på omrade (skyfall, ekologi, luft, buller, dagsljus, sol), villkor "
         "(t.ex. 'Planförslag') och text. För skyfall, dagsljus (DL) och solstudier (SO) står också vad "
         "Floden i dag kan belägga per fråga (floden.markning: visat, delvis, underlag saknas, "
         "ej tillämpligt).",
@@ -1314,7 +1314,7 @@ def _registrera_rapportverktyg(
             f"Gör ett skissunderlag för ekologi (grön infrastruktur och spridningssamband) för {plats} "
             f"(körning {korning}).\n"
             "1. bestallning_skapa(syfte, amnen=['ekologi'], scenario={'fore': 'fore', 'efter': [...]}): "
-            "beställningen väljer frågorna EK-01 till EK-12.\n"
+            "beställningen väljer frågorna EK-01 till EK-15.\n"
             "2. fragekatalog_sok(omrade='ekologi'): se floden.markning per fråga.\n"
             f"3. rapport_skapa(korningar=['{korning}'], bestallning_id=...).\n"
             "4. För varje fråga: pastaende_lagg_till. Tal bara som {{matt:<adress>}} ur "

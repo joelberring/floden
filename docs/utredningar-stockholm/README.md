@@ -1,8 +1,6 @@
-> Innehållet är sammanställt med AI-stöd (Codex) och ska granskas av en människa innan det används. Redaktionellt underlag, källäge 21 november 2026.
-
 # Utredningsunderlag för Stockholms stad
 
-**Välj ett område nedan för att beställa en utredning, granska en planhandling eller bygga frågor till rapportappen.** Varje guide visar vad Stockholm har undersökt, vilka regler och riktlinjer som är relevanta, vilket underlag frågan kräver och när en slutsats behöver vänta. Källäge 21 november 2026.
+**Välj ett område nedan för att beställa en utredning, granska en planhandling eller bygga frågor till rapportappen.** Varje guide visar vad Stockholm har undersökt, vilka regler och riktlinjer som är relevanta, vilket underlag frågan kräver och när en slutsats behöver vänta. Källäge 24 november 2026 för ekologi och 21 november 2026 för övriga ämnen.
 
 | Område | Vilket beslut guiden hjälper till med | Stockholmsunderlag att börja med |
 | --- | --- | --- |
@@ -11,8 +9,9 @@
 | [Skyfall](skyfall.md) | Pröva markens lämplighet, förändrad risk för grannar och tillgänglighet under ett extremregn. | Stadens 2024-kartering, Trafikflyget 4, Vanda 3 och Rålambshovsparken. |
 | [Dagsljus](dagsljus.md) | Hitta kritiska fasader och pröva ljustillgången per bostad, lokal och berört grannfönster. | Spöksonaten 1, Snöklockan 4 och Humlegårdsmästaren. |
 | [Solstudier](solstudier.md) | Bedöm varaktighet av sol, tillkommande skugga och om en gårds olika funktioner kan användas. | Futharken 2, stadens lekvärdesriktlinjer och MÖD P 1187-21. |
+| [Ekologiska samband och spridningsanalyser](ekologi.md) | Avgör vilken utformning som upprätthåller kontakten mellan livsmiljöer och vad som behöver undersökas i fält. | Miljöförvaltningens hjälpreda, regional grön infrastruktur, norra Årsta, Västra Hagsätra och Sjöstadshöjden. |
 
-**[Så brukar rapporterna vara upplagda](rapportdisposition.md)** jämför tio Stockholmshandlingar med sidhänvisningar. Här finns en kommenterad disposition för appen, ett exempel från en verklig skyfallsutredning och en jämförelse med stadens egen dagvattenmall.
+**[Så brukar rapporterna vara upplagda](rapportdisposition.md)** jämför tolv Stockholmshandlingar med sidhänvisningar. Här finns en kommenterad disposition för appen, ett exempel från en verklig skyfallsutredning och en jämförelse med stadens egen dagvattenmall.
 
 [Rapportmall och granskning](rapportstod.md) binder ihop områdena. [Frågekatalogen i JSON](fragor.json) innehåller samma utredningsfrågor som guiderna med stabila ID:n, villkor, typ av grund, begärt underlag och källhänvisningar. Den är redaktionellt underlag till appen. Val av regel, beräkning och bedömning behöver implementeras och verifieras för respektive ärende.
 
