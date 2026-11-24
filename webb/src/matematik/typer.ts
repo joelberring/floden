@@ -36,9 +36,25 @@ export interface MatematikFraga {
   underlag: MatematikLank[];
 }
 
+export type AvvikelseKategori = "metodtolkning" | "korare_format" | "numerik" | "fysikavgransning";
+
+export interface MatematikAvvikelse {
+  id: string;
+  doman: string;
+  domanNamn: string;
+  kategori: AvvikelseKategori;
+  kategoriText: string;
+  titel: string;
+  omfattning: string;
+  varfor: string;
+  kravs: string;
+  underlag: MatematikLank[];
+}
+
 export interface MatematikData {
   doman: MatematikDoman[];
   fragor: MatematikFraga[];
+  avvikelser: MatematikAvvikelse[];
   flodeText: Record<string, string>;
   /** Adressen till docs/MATEMATIK.md på GitHub. */
   kodbas: string;

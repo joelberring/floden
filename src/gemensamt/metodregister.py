@@ -30,6 +30,12 @@ FLODE_TEXT = {
     "cli": "Kommandorad, MCP och testsvit",
     "fristaende": "Fristående modul",
 }
+AVVIKELSE_KATEGORI_TEXT = {
+    "metodtolkning": "Metodtolkning",
+    "korare_format": "Körare och format",
+    "numerik": "Numerik / GPU",
+    "fysikavgransning": "Fysikavgränsning",
+}
 _RUTER = ("src/", "tests/", "tools/", "webb/", "rust/", "docs/", "data/", "testsvit/")
 
 
@@ -103,6 +109,20 @@ def kontrollera(
             s = sokvag_i(post)
             if s is not None and not (rot / s).exists():
                 fel.append(f"{q.get('id')}: sökvägen {s} finns inte")
+    sedda_avv: set[str] = set()
+    for a in reg.get("avvikelse", []):
+        aid = a.get("id", "?")
+        if aid in sedda_avv:
+            fel.append(f"{aid}: dubbelt avvikelse-id")
+        sedda_avv.add(aid)
+        if a.get("doman") not in reg.get("doman", {}):
+            fel.append(f"{aid}: okänd domän {a.get('doman')!r}")
+        if a.get("kategori") not in AVVIKELSE_KATEGORI_TEXT:
+            fel.append(f"{aid}: okänd kategori {a.get('kategori')!r}")
+        for post in a.get("underlag", []):
+            s = sokvag_i(post)
+            if s is not None and not (rot / s).exists():
+                fel.append(f"{aid}: sökvägen {s} finns inte")
     return fel
 
 
@@ -149,9 +169,25 @@ def data_for_webben(
         }
         for q in reg["fraga"]
     ]
+    avvikelser = [
+        {
+            "id": a["id"],
+            "doman": a["doman"],
+            "domanNamn": reg["doman"][a["doman"]]["namn"],
+            "kategori": a["kategori"],
+            "kategoriText": AVVIKELSE_KATEGORI_TEXT[a["kategori"]],
+            "titel": a["titel"],
+            "omfattning": a["omfattning"],
+            "varfor": a["varfor"],
+            "kravs": a["kravs"],
+            "underlag": [_lank(p, rot) for p in a.get("underlag", [])],
+        }
+        for a in reg.get("avvikelse", [])
+    ]
     return {
         "doman": domaner,
         "fragor": fragor,
+        "avvikelser": avvikelser,
         "flodeText": FLODE_TEXT,
         "kodbas": f"{GITHUB}/blob/main/docs/MATEMATIK.md",
     }
@@ -213,9 +249,33 @@ def markdown_domaner(reg: dict[str, Any], metodstatus: dict[str, Any]) -> str:
     return "\n".join(ut)
 
 
+def markdown_avvikelser(reg: dict[str, Any]) -> str:
+    """Kända avvikelser och begränsningar (varför alla testfall inte klaras än)."""
+    poster = reg.get("avvikelse", [])
+    if not poster:
+        return ""
+    ut = ["## Kända avvikelser och begränsningar\n"]
+    for a in poster:
+        doman = reg["doman"][a["doman"]]["namn"]
+        kat = AVVIKELSE_KATEGORI_TEXT[a["kategori"]]
+        ut.append(f"### {a['titel']} (`{a['id']}`)\n")
+        ut.append(f"- **Domän och typ:** {doman} ({kat})")
+        ut.append(f"- **Omfattning:** {a['omfattning']}")
+        ut.append(f"- **Varför det avviker:** {a['varfor']}")
+        ut.append(f"- **Vad som krävs:** {a['kravs']}")
+        underlag = ", ".join(f"`{p}`" for p in a.get("underlag", [])) or "inga"
+        ut.append(f"- **Underlag:** {underlag}")
+        ut.append("")
+    return "\n".join(ut)
+
+
 def markdown_block(reg: dict[str, Any], metodstatus: dict[str, Any]) -> str:
     tabell = markdown_tabell(reg, metodstatus)
-    return f"{tabell}\n\n{MARKOR_DOMANER}\n\n{markdown_domaner(reg, metodstatus)}"
+    avv = markdown_avvikelser(reg)
+    delar = [tabell, MARKOR_DOMANER, markdown_domaner(reg, metodstatus)]
+    if avv:
+        delar.append(avv)
+    return "\n\n".join(delar)
 
 
 def md_med_tabell(text: str, tabell: str) -> str:
