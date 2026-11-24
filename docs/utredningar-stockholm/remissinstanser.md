@@ -1,6 +1,6 @@
 # Länsstyrelsen och remissinstanserna i Stockholms planering
 
-**Börja med vilken instans som har mandat i frågan.** Länsstyrelsen Stockholm företräder statliga intressen i planprocessen. Trafikverket, Region Stockholms trafikförvaltning, miljöförvaltningen, Stockholm Vatten och Avfall och Storstockholms brandförsvar bidrar från olika ansvarsområden när de berörs. Boverket och de nationella tillsynsmyndigheterna tillför föreskrifter och vägledning. Vilka som behöver höras i ett faktiskt ärende avgörs av planens påverkan. Här används publicerade styrdokument, vägledningar och myndigheternas egna beskrivningar av arbetssätt. Källäge 21 november 2026. [LROLL][LROLL] · [PBL][PBL]
+**Börja med vilken instans som har mandat i frågan.** Länsstyrelsen Stockholm företräder statliga intressen i planprocessen. Trafikverket, Region Stockholms trafikförvaltning, miljöförvaltningen, Stockholm Vatten och Avfall och Storstockholms brandförsvar bidrar från olika ansvarsområden när de berörs. Boverket och de nationella tillsynsmyndigheterna tillför föreskrifter och vägledning. Vilka som behöver höras i ett faktiskt ärende avgörs av planens påverkan. Här används publicerade styrdokument, vägledningar och myndigheternas egna beskrivningar av arbetssätt. Ekologins källäge är 24 november 2026 och övriga områdens 21 november 2026. [LROLL][LROLL] · [PBL][PBL]
 
 I [fördjupningen om rapporternas disposition](rapportdisposition.md) finns exempel på var myndigheternas frågor besvaras, med originalmall, checklista och domskäl.
 
@@ -55,6 +55,17 @@ Boverkets BFS 2024:8 kap. 4 skiljer på bostäder och lokaler. I en ny bostad g�
 - **Länsstyrelsernas klimatanpassningschecklista** tar upp byggnadsutformning, gårdars mikroklimat, skugga och sammanhängande grönstruktur. **Länsstyrelsen Stockholms värmekartläggning** bygger på satellitobservationer av markytans temperatur med 100 meters upplösning. Den kan peka ut områden som bör undersökas närmare. En enskild lekplats kräver lokal geometri och en beräkning för den aktuella dagen och tiden. [LKLIM][LKLIM] · [LVARM][LVARM]
 - **Strålsäkerhetsmyndigheten och länsstyrelserna** har gett ut ett gemensamt planeringsstöd för UV-skyddade lekplatser. Det behandlar bland annat var skuggande växtlighet bör placeras i förhållande till sol och aktiviteter. Lägg in stillasittande lek och samlingsplatser som egna mottagare. UV-rådets syfte och utformning skiljer sig från prövningen av minskad sol hos en granne. [SSM][SSM] · [DOM][DOM]
 - **Stockholms lekvärdesriktlinjer** är källan till stadens bedömning av aktivitets- och reträttplatser i sol/skugga och till kriteriet för skuggad friyta inom tio år. Ange lokal källa, typ av gård, datum och klockslag för provet. Fem timmars sol i äldre *Solklart* har en annan avsändare och status. Något generellt timkrav från Länsstyrelsen Stockholm för alla bostadsgårdar har inte identifierats i genomgången. [LEK][LEK] · [LEKT][LEKT] · [SOLKL][SOLKL] · [LKLIM][LKLIM]
+
+## Ekologiska samband – lokala livsmiljöer och regional grönstruktur
+
+| Instans och handling | Vad som behöver gå att granska |
+| --- | --- |
+| Stockholms miljöförvaltning, *Hjälpredan – naturmiljö*, version 2020-12-03 | Avsnittet om spridningsanalys anger när en NVI bör kompletteras och vilka ambitionsnivåer som är möjliga. Redovisa vald nivå och motivering per nätverk. Vid volymstudie behöver det framgå hur läge eller volym påverkar sambandet i de olika alternativen. [Hjälpredan, s. 12][HJALPNAT] |
+| Länsstyrelsen Stockholm, regional handlingsplan och kartunderlag | Visa både länets utpekade strukturer och den platsundersökning som bär slutsatsen. Ange om det finns ett formellt skyddsbeslut. En regional värdetrakt är ett kunskapsunderlag. [Regional handlingsplan][LSGI] · [Kartor och underlag][LSKART] |
+| Länsstyrelsen Stockholm, *Fridlysta arter i detalj- och översiktsplanering* | Visa art, berörd funktion och vilka åtgärder som kan säkras. Om en fråga kvarstår behöver läsaren se om den gäller planens beslutsunderlag, särskilt samråd eller dispens. Kontrollera gällande artlista och bestämmelser mot förordningen, inklusive ändringen i november 2026. [Länets vägledning][LSART] · [Artskyddsförordningen][ARTS] |
+| Region Stockholm, regional utvecklingsplan 2026 | Visa vilken del av en kil eller vilket svagt grönt samband som kan påverkas och hur länets grönstruktur hänger ihop med lokala livsmiljöer. [Regionens förhållningssätt][REGGRON] |
+
+I [ämnesguiden](ekologi.md) finns beställningsfrågor, fältunderlag och exempel på vilka slutsatser som faktiskt fördes vidare till planering.
 
 ## Fält som hindrar felaktig tillskrivning i en AI-rapport
 
@@ -136,3 +147,9 @@ Registrera **utgivare, roll i ärendet, geografisk räckvidd, handlingstyp, vers
 [LEK]: https://start.stockholm/globalassets/start/om-stockholms-stad/politik-och-demokrati/styrdokument/lekvardesriktlinjer-for-stockholms-stad.pdf
 [LEKT]: https://leverantor.stockholm/entreprenad-i-stockholms-offentliga-miljoer/utformning-av-forskole--och-skolgardar/
 [SOLKL]: https://www.boverket.se/contentassets/1f125c4642bf4588b157a606bc426b17/solklart.pdf
+[HJALPNAT]: https://tillstand.stockholm/globalassets/foretag-och-organisationer/tillstand-och-regler/tillstand-regler-och-tillsyn/lokal-och-fastigheter/handbocker-och-riktlinjer-vid-byggnation-i-stockholm/hjalpredan-2020---naturmiljo.pdf
+[LSGI]: https://www.lansstyrelsen.se/download/18.1b1d393819324610c374878a/1732515906688/Gr%C3%B6n%20infrastruktur%20-%20Regional%20handlingsplan%20f%C3%B6r%20Stockholms%20l%C3%A4n.pdf
+[LSKART]: https://www.lansstyrelsen.se/stockholm/samhalle/planera-bygga-och-bo/gron-infrastruktur/kartor-och-underlag-for-planeringsarbete-med-gron-infrastruktur.html
+[LSART]: https://www.lansstyrelsen.se/stockholm/om-oss/vara-tjanster/publikationer/2024/fridlysta-arter-i-detalj--och-oversiktsplanering.html
+[ARTS]: https://www.riksdagen.se/sv/dokument-och-lagar/dokument/svensk-forfattningssamling/artskyddsforordning-2007845_sfs-2007-845/
+[REGGRON]: https://www.regionstockholm.se/regional-utveckling/den-regionala-utvecklingsplanen/rumslig-inriktning-innehallsida/regional-gron--och-blastruktur/

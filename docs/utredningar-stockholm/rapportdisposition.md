@@ -2,7 +2,7 @@
 
 **Låt läsaren hitta svaret först och kunna kontrollera det sedan.** I de granskade planutredningarna återkommer en rörelse från projektets fråga, via en jämförelse på en bestämd plats, till en bedömning av vad förslaget innebär. Rubrikerna och ordningen varierar. En bullerrapport kan lägga trafikuppgifterna sist. En dagsljusstudie kan visa nästan hela resonemanget på ritningar. I båda fallen måste läsaren kunna gå från slutsatsen tillbaka till rätt objekt, förslag och underlag. [Hemsamariten 1, s. 2–7][BCASE] · [Spöksonaten 1, s. 1–5][DVSC]
 
-Underlaget nedan är ett riktat urval av **tio Stockholmshandlingar**. Åtta är projektutredningar, en är en kommunal årsrapport om luft och en är en planbeskrivning med ett avsnitt om sol. Jämförelsen visar hur en rapport kan disponeras i olika beslutssituationer. Som stöd för rekommendationerna används också stadens dagvattenmall, dess checklista, myndighetsvägledning och en dom. Källäge 21 november 2026.
+Underlaget nedan är ett riktat urval av **tolv Stockholmshandlingar**. Nio är projektutredningar, en är en kommunal årsrapport om luft och två är planbeskrivningar med avsnitt om sol respektive naturmiljö. Jämförelsen visar hur en rapport kan disponeras i olika beslutssituationer. Som stöd för rekommendationerna används också stadens dagvattenmall, dess checklista, myndighetsvägledning och en dom. Ekologiexemplen granskades 24 november 2026 och övriga exempel 21 november 2026.
 
 ## Två sätt att läsa samma rapport
 
@@ -10,7 +10,7 @@ Underlaget nedan är ett riktat urval av **tio Stockholmshandlingar**. Åtta är
 
 **Den sakkunnige läser tillbaka från påståendet.** Vilken figur eller tabell bär slutsatsen? Vilken våning, väg, gård eller fasad visar den? Vilken geometri och vilket scenario kördes? Vilket bedömningsmått användes? I Liljeholmen kan läsaren gå från sammanfattningen till separata resultat för årsmedel, dygnsmått och gång- och cykelnät och sedan till trafikprognosen och modellens osäkerheter. Båda läsordningarna bör fungera även när rapporten exporteras till PDF. [Liljeholmen, s. 1 och 11–17][SLBP]
 
-## Så är de tio handlingarna faktiskt upplagda
+## Så är de tolv handlingarna faktiskt upplagda
 
 | Område och original | Läs i den här ordningen för att förstå dispositionen | Vad exemplet lär rapportförfattaren |
 | --- | --- | --- |
@@ -24,6 +24,8 @@ Underlaget nedan är ett riktat urval av **tio Stockholmshandlingar**. Åtta är
 | Dagsljus · [Snöklockan 4][DCASE] | Bakgrund och metod s. 2. Antaganden och urval s. 3. Nya bostäder s. 4. Befintlig bostad före och efter s. 5–6. Slutsatser s. 7. | Egna resultatuppslag för tillkommande och befintliga bostäder gör grannpåverkan läsbar. Urvalstexten på s. 3 och resultattexterna på s. 5–6 anger olika lägenhetsbeteckningar. Objektet behöver bekräftas innan resultatet återanvänds. |
 | Sol · [Lövholmen][LOVSOL] | Den fristående studien använder daterade skuggbilder och går vidare till tidskartor. På s. 9 tolkar författarna varaktigheten för bland annat förskolegårdar, lekplats, kvartersgård och kaj. | Ögonblicksbilden visar *var* skuggan faller vid ett klockslag. Tidskartan visar *hur länge* en yta är solbelyst under det redovisade dygnet eller perioden. Läsaren behöver båda bildernas tidsdefinition. |
 | Sol · [Futharken 2, planbeskrivning][FUTH] | På s. 47–48 finns bildserier vid dagjämning och solstånd tillsammans med stadsbyggnadskontorets text om skolgården och intilliggande naturreservat. | Här ingår bilderna i kommunens redogörelse för planens konsekvenser. I en kort redovisning behöver bildtext och brödtext tillsammans visa tidpunkt, plats och vem eller vad som påverkas. |
+| Ekologi · [Naturmiljöutredning norra Årsta][EKARSTA] | Från naturvärdesbedömning s. 8 går rapporten till metod s. 15, resultat per nätverk och scenario s. 21–29, syntes s. 30 och förslag om reservatsgräns s. 33. | En samlad karta över barrskog och ädellöv blir begriplig när läsaren först har sett respektive nätverk och vilka byggen som skiljer scenarierna åt. |
+| Ekologi · [Västra Hagsätra, planbeskrivning][EKHAG] | Läs naturförutsättningarna från s. 14 och konsekvenserna från s. 65. På s. 69 förklaras hur förlust av träd och placering av byggnader kan påverka sambanden vid Olshammarsgatan. | I planbeskrivningen får analyserna betydelse per kvarter. Läsaren ska kunna hitta både det lokala ingreppet och vilka områden som riskerar att få sämre kontakt. |
 
 ## En disposition att ge rapportappen
 
@@ -63,6 +65,7 @@ En sammanfattning som enbart säger att ”skyfall har beaktats” lämnar två 
 | Skyfall | Översikt av avrinningsväg som fortsätter över plangränsen och lokalisering av kritisk punkt. | Före- och efterkartor och en detalj för exempelvis entré, nedströms fastighet eller räddningsväg. Ange om kartan visar högsta djup per cell eller läget vid ett visst tidssteg. | Regn och scenario, modellversion, visad storhet och enhet, teckenförklaring samt objekt som beslutsfrågan gäller. [Trafikflyget 4][SCASE] · [Vanda 3][SCASE2] |
 | Dagsljus | Fasadöversikt eller situationsplan som motiverar vilka rum och våningar som prövas. | Rumsplaner och, för grannar, samma objekt före och efter. Redovisa beräknat värde och förändring så att även försämringar över ett jämförelsetal blir läsbara. | Byggnadsdel, våning, anonym objektkod, alternativ och mått. Ange vilken yta eller punkt måttet avser. [Spöksonaten 1][DVSC] · [MÖD P 7105-22, s. 16–17][MODLJ] |
 | Sol | Serie med samma utsnitt och nordriktning vid valda datum och klockslag. | Tidskarta om frågan gäller varaktighet, därefter bedömning per använd delyta. Redovisa befintlig och tillkommande skugga när grannpåverkan är frågan. | Datum, lokal tid och tidszon, scenario, berörda ytor och om figuren visar ett klockslag, en dygnssumma eller ett periodmedel. [Lövholmen, s. 9][LOVSOL] · [Futharken 2, s. 47–48][FUTH] |
+| Ekologi | Översiktskarta per artprofil med livsmiljöer, möjliga förbindelser och plangräns. | Nuläge och planalternativ med gemensam teckenförklaring samt en detaljkarta som visar var funktionen förändras. | Artprofil, scenario, tidshorisont, källa och vad färg eller linje anger. Ange om funktionen är observerad eller modellerad. [Norra Årsta][EKARSTA] · [Ämnesguiden](ekologi.md) |
 
 ## När en myndighet eller beställare styr upplägget
 
@@ -108,3 +111,5 @@ Appen bör hämta tal, enheter, scenarier och figurhänvisningar från verifiera
 [LST]: https://ext-dokument.lansstyrelsen.se/Stockholm/Klimat_och_risk/Rekommendationer_f%C3%B6r_hantering_av_%C3%B6versv%C3%A4mning_till_f%C3%B6ljd_av_skyfall.pdf
 [LLUFT]: https://www.lansstyrelsen.se/download/18.1b1d393819324610c3749455/1732517252808/Milj%C3%B6kvalitetsnormer%20f%C3%B6r%20luft%20-%20en%20v%C3%A4gledning%20f%C3%B6r%20detaljplanel%C3%A4ggning%20med%20h%C3%A4nsyn%20till%20luftkvalitet.pdf
 [TRVB]: https://bransch.trafikverket.se/for-dig-i-branschen/Planera-och-utreda/samhallsplanering/Miljo-halsa-och-landskap/buller-och-infrastruktur-i-samhallsplaneringen/
+[EKARSTA]: https://insynsverige.se/documentHandler.ashx?did=2004860
+[EKHAG]: https://etjanster.stockholm.se/Byggochplantjansten/File/GetFileByFileRecNo?recNo=10579514&type=gplan
