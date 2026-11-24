@@ -671,3 +671,7 @@ Mätt: provet 40 kontroller bred (inklusive steg 3-körning och steg 4), 21 smal
 Öppet: prövat i Chromium med beröringsemulering, inte på en riktig telefon (iOS Safari, nyp-zoom, långt tryck och snabbmeny); `punktAtgard` (lägg till och ta bort punkt) har kvar fast 10 px träffyta; handtagen på ett litet hus täcker det på pekskärm (cirka 40 px brett hus vid 0,76 m/px); provet bygger på demokvarteret, inte på ett geografiprojekt; skärmläsare är inte prövade (provet kontrollerar bara att kontroller har namn).
 Nästa: prova på en riktig telefon; geografiprojekt (Haga) i provet; skärmläsare.
 
+## 2026-11-24 kväll – hål vid rutans kant i kommunens höjdmodell (samordnaren)
+
+- Andra försöket med `goteborg-test` på servern stannade igen på "markhojd_rh2000 ... nan" (ruta mm_-211000_6412500). PR #91 fyllde bara hål som var helt inneslutna i rutans raster; hål under hus som når rutans kant förblev NaN.
+- Nu fylls alla celler utan värde som ligger inom någon plattas yttergräns (inte bara inneslutna), högst 150 m från närmaste värde. Celler utanför plattorna förblir NaN. Markhöjden under ett hus faller tillbaka på marken runt omkring även från tyngdpunkten, och ett hus helt utan markhöjd utelämnas med varning i stället för att stoppa kartläggningen.
