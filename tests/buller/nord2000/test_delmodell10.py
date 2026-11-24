@@ -598,13 +598,60 @@ class TestSpridningszon(unittest.TestCase):
             spridningszon(self.f, self.strale, zon(20.0, 90.0, HOG, 0.075, 20.0), C)
         with self.assertRaises(BullerFel):  # α = 0,5
             spridningszon(self.f, self.strale, zon(20.0, 90.0, HOG, 0.075, 10.0, 0.5), C)
-        with self.assertRaises(BullerFel):  # R' = 0,075·200 = 15
-            spridningszon(self.f, self.strale, zon(20.0, 220.0), C)
+        # R' > 10 (långa sneda strålar längs rak väg) begränsas till tabell 9:s övre kant (R' = 10)
+        # i nivakorrektion_ae_db, där ΔL_s ändå mättas mot −15 dB vid höga frekvenser (ekv. 291).
+        res_lang = spridningszon(self.f, RatStrale(0.0, 1.0, 300.0, 2.0), zon(20.0, 220.0), C)
+        self.assertTrue(np.all(np.isfinite(res_lang.dampning_db)))
+        self.assertAlmostEqual(float(res_lang.dampning_db[-1]), -15.0, places=6)
         with self.assertRaises(BullerFel):
             spridningszon(self.f, self.strale, zon(20.0, 90.0), 0.0)
         # h' utanför tabellen ger fel även om bara band med k_f = 0 efterfrågas.
         with self.assertRaises(BullerFel):
             spridningszon(self.f[:3], self.strale, zon(20.0, 90.0, HOG, 0.075, 20.0), C)
+
+    def test_cirkelstrale_nedat_och_uppat(self) -> None:
+        from buller.nord2000.delmodell10 import CirkelStrale
+
+        rat = RatStrale(0.0, 1.0, 100.0, 2.0)
+        noll = CirkelStrale(0.0, 1.0, 100.0, 2.0, 0.0)
+        med = CirkelStrale(0.0, 1.0, 100.0, 2.0, 1.0e-4)
+        mot = CirkelStrale(0.0, 1.0, 100.0, 2.0, -1.0e-4)
+        self.assertAlmostEqual(noll.punkt(50.0).z_m, rat.punkt(50.0).z_m, places=9)
+        # Medvind (ξ > 0) böjer strålen uppåt i mitten, motvind (ξ < 0) nedåt.
+        self.assertGreater(med.punkt(50.0).z_m, rat.punkt(50.0).z_m)
+        self.assertLess(mot.punkt(50.0).z_m, rat.punkt(50.0).z_m)
+
+    def test_karna_med_spridningszon_ger_extra_dampning_vid_hoga_frekvenser(self) -> None:
+        from buller.nord2000.karna import Nord2000Karna
+        from buller.typer import Terrangprofil, Vader
+
+        prof = Terrangprofil(
+            x_m=np.array([0.0, 100.0]),
+            z_m=np.array([0.0, 0.0]),
+            flodesresistivitet_kNsm4=np.array([200.0]),
+            rahet_m=np.array([0.0]),
+            kalla_hojd_m=0.3,
+            mottagare_hojd_m=1.5,
+        )
+        vader = Vader(
+            temperatur_c=15.0,
+            relativ_fuktighet_procent=70.0,
+            vind_m_s=0.0,
+            zu_m=10.0,
+            z0_m=0.05,
+            dt_dz_k_m=0.0,
+            std_vind_m_s=0.5,
+            std_dt_dz_k_m=0.0,
+            cv2=0.12,
+            ct2=0.008,
+        )
+        karna = Nord2000Karna()
+        utan = karna.berakna(prof, vader)
+        med = karna.berakna(prof, vader, spridningszon=zon(10.0, 80.0))
+        self.assertIn("+10", med.delmodell)
+        self.assertIsNotNone(med.spridningszon_db)
+        # Vid 10 kHz ger 70 m skog tydlig dämpning jämfört med fri gräsmark.
+        self.assertLess(float(med.overforing_db[-1]), float(utan.overforing_db[-1]) - 5.0)
 
 
 if __name__ == "__main__":

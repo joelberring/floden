@@ -38,6 +38,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 
 if TYPE_CHECKING:
+    from buller.nord2000.delmodell10 import Spridningszon
     from buller.testfall.kurvig_vag import KurvigVagGeometri
     from buller.testfall.stadsgata import StadsgataGeometri
 
@@ -294,6 +295,35 @@ def riktning_for_kallpunkt(
     return Kallriktning(vinkel_mot_fardriktning_rad(kallpunktsvinkel_rad), tuple(psi))
 
 
+def _har_skogsparametrar(fall: N2kFall) -> bool:
+    nycklar = ("skog_x_start_m", "skog_x_slut_m", "skog_nQ_per_m", "skog_H_m", "skog_a_trunc_m")
+    return all(k in fall.ovrigt for k in nycklar) and (
+        "skog_alfa" in fall.ovrigt or "skog_okand_symbol" in fall.ovrigt
+    )
+
+
+def _spridningszon_for_fall(fall: N2kFall, stracka: float) -> Spridningszon | None:
+    """Bygger en `Spridningszon` (Delmodell 10) ur `[ovrigt] skog_*` utdragen med `stracka`."""
+    if not _har_skogsparametrar(fall) or fall.vag is None:
+        return None
+    from buller.nord2000.delmodell10 import Spridningszon, Zonbalte
+
+    x0 = fall.vag.kalla_x_m
+    x_start = (float(fall.ovrigt["skog_x_start_m"]) - x0) * stracka
+    x_slut = (float(fall.ovrigt["skog_x_slut_m"]) - x0) * stracka
+    hojd = float(fall.ovrigt["skog_H_m"])
+    nq = float(fall.ovrigt["skog_nQ_per_m"])
+    alfa = float(fall.ovrigt.get("skog_alfa", fall.ovrigt["skog_okand_symbol"]))
+    stamradie = float(fall.ovrigt["skog_a_trunc_m"])
+    return Spridningszon(
+        balten=(Zonbalte(x_start_m=x_start, x_slut_m=x_slut, topp_z_m=hojd),),
+        nq_per_m=nq,
+        medelhojd_m=hojd,
+        absorption=alfa,
+        stamradie_m=stamradie,
+    )
+
+
 def berakna_rak_vag(
     karna: P2PKarna,
     emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
@@ -311,7 +341,13 @@ def berakna_rak_vag(
     """
     if fall.typ != TYP_RAK_VAG:
         raise BullerFel(f"Köraren kan bara räkna '{TYP_RAK_VAG}', inte '{fall.typ}'.")
-    if not fall.indata_fullstandig:
+    har_skog = _har_skogsparametrar(fall)
+    bara_skog_saknas = (
+        har_skog
+        and len(fall.indata_saknas) == 1
+        and "spridningszon" in fall.indata_saknas[0].lower()
+    )
+    if not fall.indata_fullstandig and not bara_skog_saknas:
         raise BullerFel(f"Indata är ofullständig: {'; '.join(fall.indata_saknas)}")
     if fall.vag is None or fall.vader is None or fall.mottagare_x_m is None:
         raise BullerFel(f"Fall {fall.id} saknar väg, väder eller mottagare.")
@@ -347,10 +383,10 @@ def berakna_rak_vag(
 
     bidrag = np.empty((antal, len(hojder), ANTAL_BAND))
     for k, vinkel in enumerate(vinklar):
+        stracka = 1.0 / math.cos(vinkel)
         langd_m = avstand_m * (math.tan(vinkel + steg / 2.0) - math.tan(vinkel - steg / 2.0))
-        profiler = [
-            fall.profil(kalla_hojd_m=hojd, stracka=1.0 / math.cos(vinkel)) for hojd in hojder
-        ]
+        profiler = [fall.profil(kalla_hojd_m=hojd, stracka=stracka) for hojd in hojder]
+        zon = _spridningszon_for_fall(fall, stracka) if har_skog else None
         if riktad is not None:
             effekt_db = riktad.ljudeffekt_db(
                 trafik,
@@ -373,7 +409,16 @@ def berakna_rak_vag(
                 vader, vind_m_s=vindkomponent_m_s(vader.vind_m_s, vindriktning, float(vinkel))
             )
         for j, profil in enumerate(profiler):
-            overforing_db = np.asarray(karna.overforing_db(profil, vader))
+            if zon is not None:
+                from buller.nord2000.karna import Nord2000Karna
+
+                if not isinstance(karna, Nord2000Karna):
+                    raise BullerFel(
+                        f"Kärnan {karna.namn} stöder inte spridningszoner (delmodell 10)."
+                    )
+                overforing_db = np.asarray(karna.overforing_db(profil, vader, spridningszon=zon))
+            else:
+                overforing_db = np.asarray(karna.overforing_db(profil, vader))
             if overforing_db.shape != (ANTAL_BAND,):
                 raise BullerFel(f"Kärnan {karna.namn} gav form {overforing_db.shape}.")
             bidrag[k, j, :] = effekt_db[j, :] + overforing_db
