@@ -253,4 +253,5 @@ def test_goteborgs_fil_ar_filpaket_forst_med_lantmateriet_som_reserv() -> None:
     assert k.byggnader.kalla == "filpaket"
     assert "ortofoto" not in str(k.lantmateriet.produkter) and k.lantmateriet.produkter == ("laser",)
     assert k.filpaket is not None and k.filpaket.baskarta is not None
-    assert k.filpaket.baskarta.urlar == ("https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip",)
+    assert k.filpaket.baskarta.urlar == ("https://opengeodata.goteborg.se/downloads/baskarta/baskarta_shp_v2.zip",)
+    assert k.filpaket.baskarta.objekt_falt == "typ" and k.filpaket.baskarta.objekt_monster == "(?i)^tak"

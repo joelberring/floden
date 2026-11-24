@@ -525,3 +525,9 @@ Mätt: 14 nya tester (`tests/kommuner/test_stockholm_lokal_baskarta.py`, synteti
 - Joel lägger filen i `/srv/floden/data/lokal/` och kör kommandot i `docs/DRIFT.md`; första körningen på servern är också provet. Kontot behöver en Lantmäteri-nyckel (ingen reserv).
 - Stängningen är prövad på sökvägar och projektets metadata; en körning med frågor mot ett Stockholmsprojekt följer indatans `oppenhet.toml` (K38) men är inte provkörd end-to-end.
 Nästa: kör provmappningen på servern, kontrollera varningarna (antal hus utan z) och bekräfta lagerprofilen mot den riktiga lagerlistan.
+
+## 2026-11-24 – Göteborgs baskarta som Shapefile (samordnaren)
+
+- Göteborgs `baskarta_dwg_v2.zip` svarade 404 från servern (produktbladet anger fortfarande adressen); `baskarta_shp_v2.zip` svarar 200. Kommunfilen pekar nu på Shapefile-paketet: lagret `byggnad_l` (PolylineZ, 3D), objekten väljs med fältet `typ` (`objekt_falt`/`objekt_monster` i `[filpaket.baskarta]`, nytt och valfritt).
+- Okontrollerat: att takkonturerna har `typ` som börjar med "Tak". Träffar uttrycket inget listar felet de `typ`-värden som finns, så att det kan justeras efter en körning.
+- Tester: fixturen i tests/kommuner/test_filpaket_mappa.py är nu en Shapefile med två objekt (en takkontur väljs, en fasad väljs bort), och ett nytt test för felet utan träff.

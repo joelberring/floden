@@ -20,6 +20,7 @@ from rasterio.transform import from_origin
 
 from geografi.modell import las_manifest
 from kommuner.konfig import KommunKonfig, tolka_kommun
+from kommuner.skapa import SkapaFel
 from kommuner.wfs import KommunKallaFel
 from lantmateriet.nycklar import NyckelFel
 from tests.kommuner.test_skapa import REPO, bygg_varld, mappa
@@ -27,7 +28,7 @@ from tests.lantmateriet.conftest import lm  # noqa: F401
 from tests.lantmateriet.falsk_server import FalskLm
 
 HOJD_URL = "https://opengeodata.goteborg.se/downloads/hojdmodell/test_1.zip"
-BASK_URL = "https://opengeodata.goteborg.se/downloads/baskarta/baskarta_dwg_v2.zip"
+BASK_URL = "https://opengeodata.goteborg.se/downloads/baskarta/baskarta_shp_v2.zip"
 
 
 def filkommun() -> KommunKonfig:
@@ -52,19 +53,20 @@ def paket(tmp: Path) -> dict[str, bytes]:
     zh = tmp / "h.zip"
     with zipfile.ZipFile(zh, "w") as f:
         f.write(t, "h/1.tif")
-    hus = [[147480, 6397600], [147490, 6397600], [147490, 6397610], [147480, 6397610]]
-    dwg = {
-        "OBJECTS": [
-            {"object": "LAYER", "handle": [0, 1, 40], "name": "TAK"},
-            {
-                "entity": "LWPOLYLINE", "handle": [0, 1, 50], "entmode": 2, "layer": [5, 1, 40, 40],
-                "flag": 1, "points": hus, "bulges": [], "elevation": 25.0,
-            },
-        ]
-    }
+    # Shapefile som Göteborgs baskarta_shp_v2: lagret byggnad_l (LineString Z) med fältet typ.
+    from shapely.geometry import LineString
+
+    hus = [(147480, 6397600, 25.0), (147490, 6397600, 25.0), (147490, 6397610, 25.0), (147480, 6397610, 25.0), (147480, 6397600, 25.0)]
+    fasad = [(147460, 6397600, 12.0), (147470, 6397600, 12.0), (147470, 6397610, 12.0), (147460, 6397610, 12.0), (147460, 6397600, 12.0)]
+    sd = tmp / "shp"
+    sd.mkdir()
+    gpd.GeoDataFrame(
+        {"typ": ["Takkontur", "Fasadlinje"]}, geometry=[LineString(hus), LineString(fasad)], crs="EPSG:3007"
+    ).to_file(sd / "byggnad_l.shp")
     zb = tmp / "b.zip"
     with zipfile.ZipFile(zb, "w") as f:
-        f.writestr("baskarta.json", json.dumps(dwg))
+        for fil in sorted(sd.iterdir()):
+            f.write(fil, f"baskarta/{fil.name}")
     return {HOJD_URL: zh.read_bytes(), BASK_URL: zb.read_bytes()}
 
 
@@ -123,3 +125,17 @@ def test_hojdmodellen_fallerar_och_nyckel_finns_ger_reserv_med_varning(lm: Falsk
     d, _ = las_manifest(v["rot"] / "geo", "goteborg-test@v1")
     assert d["parametrar"]["hojdkalla"] == "lantmateriet"
     assert any("reserv" in x.lower() for x in d["varningar"])
+
+
+def test_baskartans_objektfilter_utan_traff_visar_vardena(lm: FalskLm, tmp_path: Path) -> None:  # noqa: F811
+    v = varld(lm, tmp_path)
+    d = v["kommun"]
+    import dataclasses
+
+    fk = d.filpaket
+    assert fk is not None and fk.baskarta is not None
+    v["kommun"] = dataclasses.replace(
+        d, filpaket=dataclasses.replace(fk, baskarta=dataclasses.replace(fk.baskarta, objekt_monster="(?i)^finns_inte"))
+    )
+    with pytest.raises(SkapaFel, match="Takkontur"):
+        mappa(v, nycklar_fran=inga_nycklar, filhamtare=v["fh"])
