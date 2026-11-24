@@ -32,7 +32,10 @@ HOJD_MAX_M = 200.0
 MIN_YTA_M2 = 1.0
 VANINGSHOJD_M = 3.0
 """Våningshöjd för BTA-uppskattningen."""
-RITAD_TYPER: frozenset[str] = frozenset({"byggnad_ny", "byggnad_hojd", "byggnad_bort"})
+RITAD_TYPER: frozenset[str] = frozenset(
+    {"byggnad_ny", "byggnad_hojd", "byggnad_bort", "markhojd"}
+)
+"""`markhojd` (ny markyta med `niva_rh2000`) tillkom med skarvkontrollen (R3); ritas först i R3."""
 
 Rektangel = tuple[float, float, float, float]
 """(x_min, y_min, x_max, y_max) i EPSG:3011."""
@@ -186,6 +189,21 @@ def kontrollera_andringar(
             )
         elif typ == "byggnad_hojd":
             kontrollera_hojd(e.get("hojd_m"), f"Höjdändring '{aid}'")
+        elif typ == "markhojd":
+            namn = f"Ny markyta '{aid}'"
+            g = a.get("geometri")
+            if not isinstance(g, Mapping) or g.get("type") != "Polygon" or not g.get("coordinates"):
+                raise RitatFel(f"{namn}: saknar polygon.")
+            poly = kontrollera_ring(g["coordinates"][0], namn)
+            niva = e.get("niva_rh2000")
+            if (
+                isinstance(niva, bool)
+                or not isinstance(niva, int | float)
+                or not math.isfinite(niva)
+            ):
+                raise RitatFel(f"{namn}: saknar nivå (niva_rh2000, m RH 2000).")
+            if not yta_union.intersects(poly):
+                raise RitatFel(f"{namn} ligger utanför projektets område.")
         elif typ == "byggnad_bort" and not e.get("byggnads_id"):
             raise RitatFel(f"Borttagning '{aid}': saknar byggnads_id.")
     if not andringar:

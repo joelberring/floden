@@ -1,0 +1,201 @@
+# Ritverktyg för marken: generella lager, 3D-hus, mark i nivåer och skarvkontroll
+
+Status: förslag för Joel (2026-11-24), del 1 av uppdraget. Första byggsteget (R1, skarvkontrollen) är byggt och testat.
+Joels önskan: kartverktyget ska bli mer generellt (lagerhanteringen i O-Tid är för orienteringsspecifik, linjehanteringen är bra),
+kunna ha 3D-objekt som hus och hantera mark i nivåer, särskilt i mötet mellan baskarta och ny mark där "skarvar" lätt skapar sänkor
+där vatten samlas.
+
+## 1. Sammanfattning av förslaget
+
+1. **En generell lagermodell** (`floden-ritlager/v1`, additiv) där ett lager har geometrityp, *roll i beräkningen*
+   (byggnad, mark, hårdgjort, vegetation, vatten, brytlinje, öppning), stil, synlighet, låsning, källa och dataklass. Rollen, inte
+   ett symbolnummer, avgör vad ett objekt blir i K9/K1.
+2. **Linjehanteringen från O-Tid återanvänds** (rita, hörn, fäst, flytta, lägg till/ta bort punkt, klipp, slå ihop, vänd, följ kant,
+   ångra, tangentbord, pekskärm) och byggs ut från "ringar av hus" till linjer och ytor med höjdattribut.
+3. **Hus som extruderade polygoner** med våningar, takform och takhöjd (K9 `byggnad_ny` finns), placeras och redigeras i 2D med
+   levande 3D-förhandsvisning i den befintliga Three.js-vyn.
+4. **Mark i nivåer** som K9 `markhojd` med tre sätt att beskriva höjden (plan, lutande yta mellan två höjdlinjer, slänt), och
+   brytlinjer (mur, trappsteg, kantsten) som K1-brytlinjer.
+5. **Skarven är en egen modellerad zon**, inte en bieffekt: en övergångszon med vald slänt (konstant lutning, ingen trappa av halva
+   celler), och en **automatisk skarvkontroll** som jämför sänkor före och efter och redovisar nya och djupare sänkor vid kanten med läge,
+   yta, volym, största djup och förslag på åtgärd. **Skarvkontrollen är byggd (R1)** och syns redan i steg 2.
+
+## 2. Hur O-Tid hanterar linjer (läst vid commit `b0b952f`, MIT, © 2026 Joel Berring)
+
+Redigeraren ligger i `apps/web/src/components/map-project/` (gränssnitt, hjälphooks) och `apps/web/src/lib/map-project-*.ts` (ren
+logik), med geometrin i `packages/map-revision/src/` (utan webbläsare, kartans mm med y uppåt, objekt som `point | line | area | text`
+med `path` av kommandona `M`, `L`, `C`).
+
+| Område | Var | Hur det fungerar | Återanvänds i Floden |
+| --- | --- | --- | --- |
+| Rita | `lib/map-project-draw.ts` | Klick ger en hörnpunkt; tryck och dra ger en mjuk punkt (kubisk Bézier, styrpunkt en tredjedel av draget). Utkast blir objekt först vid två (linje) respektive tre (yta) punkter. | Rita med hörnpunkter återanvänds. Mjuka punkter (kurvor) behövs inte för mark: en höjdlinje är en polylinje med z per punkt. |
+| Hörn | `map-project-editor.tsx`, `packages/map-revision/edit.ts` | `vertices`, `moveVertex` (styrpunkter följer med), `insertVertex`, `deleteVertex` (minst 2 punkter på linje, 3 i ring), `insertPoints` (mittpunkter att dra ut). | Redan porterat för husringar (`formedit.ts`); generaliseras till linjer och ringar med hål. |
+| Träff | `map-revision/hit.ts` | `hitTest` på nivå, avstånd och ritordning; `boxTest` (Liang–Barsky) för markering med ruta. | Redan porterat (`hit.ts`). Utökas med linjer. |
+| Fäst | `lib/map-project-snap.ts` | Tre nivåer: 1) ändpunkt/brytpunkt, 2) skärning mellan två linjer eller kanter, 3) närmaste punkt på linje/kant. Index byggs i en Worker; räckvidd 10 px mus och 22 px finger (`SNAP_MOUSE_PX`, `SNAP_TOUCH_PX`). | Porterat för husens hörn och kanter (`snap.ts`). Utökas till att fästa mot brytlinjer, markytornas kanter och baskartans höjdkurvor. |
+| Vinkellås | `lib/map-project-draw-assist.ts` | 45 graders steg mot förra sträckan, 90 mot kanten man startade på, norr som referens; `followEdge` ("följ kant") ritar längs en befintlig linje. | Vinkellås porterat. **Följ kant är nytt att ta med**: det är det rätta sättet att rita ny markyta så att dess kant ligger exakt på en befintlig brytlinje eller byggnadskant (ingen glipa, ingen skarv av avrundning). |
+| Dela och slå ihop | `lib/map-project-join.ts` | `cutLineAt` (saxen: delar vid brytpunkt eller på sträckan; ändpunkter nekas), `joinLines` (samma symbol, ändar inom tolerans kedjas, vänds åt rätt håll; exakt två linjer slås alltid ihop vid närmaste ändar), `reverseLine`. | Tas med (R3). Nyckeln i Floden är lagret och rollen, inte symbolen. |
+| Lägg till/ta bort punkt | `lib/map-project-point-edit.ts` | `editPointAt(object, punkt, tolerans, ADD | REMOVE | EITHER)`. Ctrl/Cmd+klick i Markera växlar. | Redan porterat. |
+| Form | `map-revision/shape-edit.ts` | Förenkla (Douglas–Peucker, stegvis), gör mjuk/rak, cirkel. | Förenkla tas med för höjdlinjer med för många punkter; mjuk/cirkel inte. |
+| Ångra | `map-revision/history.ts` | Steg = objektets läge före och efter, grupp för flera objekt, högst 200 steg; ångra är en ny ändring (synkas), och ett steg som någon annan ändrat hoppas över. | Redan porterat (`historik.ts`); Floden har ingen flerpersonssynk i planförslaget, så "annan har ändrat" utelämnas tills det behövs. |
+| Tangentbord | `lib/map-project-keys.ts` | Q markera, W rita, E rektangel, A/S lägg till/ta bort punkt, X klipp, G slå ihop, V vänd, T fäst, Z ångra, Shift+Z gör om, Space hjul, 1–8 senaste symboler. Bokstäver läses ur `event.code` (samma oavsett tangentbordets språk), egna bindningar sparas i webbläsaren. | Delvis porterat (Q W A S T R Z). Läggs till: X, G, V, och bindningar som kan ändras. |
+| Pekskärm | `use-map-project-flick.ts`, `map-project-editor-types.ts` | Fingret flyttar kartan vid snabbt drag och flyttar det markerade först efter ett kort håll (`TOUCH_HOLD_MS` 120 ms); snäppräckvidd större för finger; verktygshjul med snärt. | Fingerräckvidd och håll-för-att-flytta tas med. Verktygshjulet ersätts av en fast verktygsrad (Floden har redan en). |
+
+**Slutsats om linjerna:** bra och generellt. Allt i `map-revision/edit.ts`, `hit.ts`, `history.ts` och `lib/*-join.ts`, `*-snap.ts`,
+`*-draw-assist.ts` är geometri utan orienteringskoppling, med objekt som nycklar och rena funktioner. Det som ska skrivas om i Floden
+är bara *datamodellen* (meter i SWEREF 99 18 00, z per punkt, roll i stället för symbol).
+
+### Vad som är orienteringsspecifikt i O-Tids lager
+
+`lib/map-project-layer-model.ts` bygger lagren på **normen** (ISOM 2017-2 eller ISSprOM 2019-2): huvudlagren är normens symbolgrupper
+(`LANDFORMS`, `ROCK`, `WATER`, `VEGETATION`, `MANMADE`, `TECHNICAL`, `COURSE`, `OTHER`), ett lager "Utanför normen" tar symboler som saknas,
+"FILE" är dolda skisslager ur kartfilen och "MARKING" är kartans ram och logga. `layerOf(symbol, standard)` slår upp symbolnumret i normens
+tabell; skala avgör norm (`standardFor`, ≤ 1:5 000 är sprintnormen). Lagrets tillstånd är bara tre flaggor (`hidden`, `locked`,
+`dimmed`) per lager och per symbol, och "arbetslager" är symbolnummer som grupperas fritt. Det bärande: **ett lager = en grupp
+symbolnummer ur en norm**. Det saknar geometrityp (symbolen avgör), roll i en beräkning, höjd, källa och dataklass. Det som är värt att
+behålla är lagerflaggorna (tänd, låst, tonad), ordningen, fällbara grupper och att tillståndet sparas per projekt.
+
+## 3. Jämförelse med Flodens nuvarande ritverktyg
+
+| Del | Nuläge i Floden | Lucka mot önskan |
+| --- | --- | --- |
+| Kartmotor | `webb/src/karta/kartmotor.ts` (MapLibre, exakt SWEREF-omräkning), steg 2 i `webb/src/flode/forslag.ts` | – |
+| Verktyg | `karta/ritverktyg.ts`: Markera, Rita hus, Lägg till/Ta bort hörn, Fäst, Rät vinkel, Ångra/Gör om; ren styrenhet utan webbläsare | Bara husringar. Inga linjer, inga markytor, inget klipp/sammanslagning, ingen följ kant. |
+| Fäst, träff, form | `snap.ts` (hörn, skärning, kant på byggnader), `hit.ts`, `formedit.ts` (ringar), `geom.ts` | Fäster bara mot byggnader. Inte mot brytlinjer, markkanter eller kurvor. |
+| Dokument | `plandok.ts`: `PlanDok` med `ny`/`hojd`/`bort`, historik, `K9Andring` (`byggnad_ny`, `byggnad_hojd`, `byggnad_bort`) | Inga markändringar. |
+| Lager | `karta/lager.ts` och `lagerpanel.ts`: grupperna Underlag, Geometri, Planförslag, Resultat; synlighet, opacitet, ordning, `egenVy` (3D), `visning` 2d/3d | Redan generell nog som panel, men lagren är *visningslager* (vad som syns). Ett **ritlager** med roll saknas: hus är ett lager "Planförslag", resten finns inte. |
+| Kontroll | `POST /api/kartverktyg/<projekt>/validera` (`src/webb/kartverktyg.py`, `karna/ritat.py::kontrollera_andringar`, `RITAD_TYPER`): giltig form, höjd, utbredning, K9-kontroll, `_instangt_vatten` (information om slutsänkor) | Ingen kontroll av mark. **Tillagt i R1:** `markhojd` och `skarvar`. |
+| K9 | `markhojd` finns som ändringstyp (polygon + `niva_rh2000` eller `landxml`; `delta_m` stöds inte än) och översätts till K3 `HojdYta` (`karna/k9_till_k1.py`, `lapp/tillampa.py`) | `HojdYta` sätter en **konstant nivå, hård kant** i polygonen: det är exakt det som ger skarvar. Ingen lutning, slänt eller utjämning. |
+| K1 brytlinjer | `brytlinjer.gpkg` med `typ` (kantsten, mur, stödmur, staket, bankkant) och `hojd_m`; sänkgrafen läser dem som kantbarriärer (`_berakna_kantbarriarer`) | Går inte att rita; bara härledda. |
+| 3D | `webb/src/vy3d/` (Three.js, `extrudera` av hus, terrängnät, vattenyta), `webb/src/kartsida3d.ts` (ritat förslag live), `src/webb/vy3d.py` (`/api/3d/`, rutvis) | Byggnader som lådor med platt tak; ingen takform. Marken visas inte som förändrad av förslaget. |
+
+Det som är gott i dag och ska behållas: servern kontrollerar och räknar, klienten visar (AGENTS.md 1), förslaget är ett K9-scenario med
+nyckel, ångra/gör om och sparande per förslag fungerar.
+
+## 4. Generell lagermodell (förslag `floden-ritlager/v1`)
+
+Ett **ritlager** är en samling objekt av samma geometrityp och roll i ett planförslag. Det ligger *bredvid* den befintliga lagerpanelen:
+panelens gruppen "Planförslag" listar ritlagren. Modellen är additiv; K9 behåller sina ändringstyper och ritlagren översätts till dem.
+
+```json
+{
+  "kontrakt": "floden-ritlager/v1",
+  "lager_id": "ny-gard",
+  "namn": "Ny gård",
+  "geometri": "polygon | linje | punkt",
+  "roll": "byggnad | mark | hardgjort | vegetation | vatten | brytlinje | oppning",
+  "stil": {"fyllning": "#c8d8b0", "linje": "#4a6a30", "linjebredd_px": 2, "monster": null},
+  "synlig": true, "last": false, "tonad": false, "opacitet": 1.0,
+  "kalla": "ritat | fil:<namn> | k1:<ruta>",
+  "dataklass": "oppen | intern | skyddad",
+  "egenskaper_mall": {"hojd_m": "tal", "niva_rh2000": "tal", "markslag": "kod"}
+}
+```
+
+Regler:
+
+- **Rollen avgör översättningen:** `byggnad` -> K9 `byggnad_ny` (polygon) eller `byggnad_hojd`; `mark` -> `markhojd` (polygon, med höjd enligt avsnitt 6);
+  `hardgjort` och `vegetation` -> `markhojd` med `markslag` (K1-koderna 1 respektive 4/5) respektive `vegetation` (`hojd_m`);
+  `vatten` -> `markslag` 8 eller `magasin`; `brytlinje` -> K1 brytlinje (`typ`, `hojd_m`); `oppning` -> K1 öppning (trumma, port, passage, `botten_rh2000`).
+  Rollen avgör också vilken lösare som berörs (`karna.geometri.markklass`, markklass per domän i `data/markklasser.toml`), så buller, luft och dagsljus får samma objekt.
+- **Geometritypen låser verktygen:** polygonlager ger Rita yta, linjelager ger Rita linje med klipp och sammanslagning, punktlager ger Placera.
+  Rollen begränsar geometrin (en byggnad är alltid polygon, en brytlinje alltid linje).
+- **Stil är bara visning;** den ingår inte i K9-nyckeln. **Synlig, låst och tonad** sparas per projekt i webbläsaren som i dag (`karta/lager.ts`), inte i scenariot.
+- **Källa och dataklass:** ett lager ritat av användaren är `oppen` om projektet är öppet; ett inläst lager (fil) ärver filens klass. Skyddat
+  (ledningar, skyddsklassat) laddas aldrig upp (AGENTS.md); kontrollen och MCP-spärren följer dataklassen som övriga svar.
+- **Förvalda mallar** i stället för en norm: *Hus*, *Mark (ny nivå)*, *Gata/hårdgjort*, *Grönyta*, *Vatten*, *Mur och kant*, *Passage/trumma*.
+  En användare kan döpa och lägga till egna lager inom rollerna. Det som O-Tid gör med normens grupper blir här rollerna.
+- **Hur det lagras:** ritlagrens objekt är i K9 `andringar` (nyckelad, reproducerbar). Lagrens metadata (namn, stil) sparas bredvid scenariot
+  som `ritlager.json` i förslagets mapp och påverkar inte nyckeln. Läs- och skrivregler: kontrakt K50 (föreslås, se R2).
+
+## 5. 3D-objekt: hus som extruderade polygoner
+
+K9 `byggnad_ny` har redan `geometri` (polygon), `hojd_m` eller `tak_rh2000`, och valfria `takform`, `andamal`, `vaningar` (K1 v2 kolumner).
+Förslaget:
+
+- **Ritas som polygon i 2D** (som i dag). Egenskapspanelen får **våningar** (3 m per våning är nuvarande uppskattning i `ritat.py`), **våningshöjd**,
+  **takform** (`platt`, `sadel`, `pulpet`, `valmat`; K1 har redan `takform` och `takfall_azimut_grader`, och `sankgraf.takvatten.tolka_takform` läser dem), och **taknock/ränna** som
+  höjd över takfot för sadel/pulpet. Hus har *golvnivå* = markhöjd under huset (som `markhojd_under_byggnad`) om inget annat anges; **entré** (`entre_rh2000`) anges för vattnets
+  tröskel.
+- **Redigering i 2D, förhandsvisning i 3D:** 2D-kartan är arbetsytan (fäst, hörn, rät vinkel); 3D-vyn (`vy3d/scen.ts`, `extrudera`) uppdateras live från `PlanDok` som i dag.
+  Nytt: `extrudera` får takform (väggar till takfot, sedan takytor ur ringen; sadel via ränna, pulpet via fall) och hus på sluttande mark får sockel som i `vy3d.py` (`z_fot`). Dra i en vägg i 3D kan komma
+  senare; det kräver träff mot extruderade ytor och ger inget som 2D inte redan gör.
+- **Fler 3D-objekt än hus** är inte i första omgången. Murar och trappsteg modelleras som brytlinjer med höjd (avsnitt 6), och visas i 3D som ytor längs linjen.
+- **Beräkning:** dagsljus (skuggor, VSC på fasader) och buller (hinder) läser takhöjden; vatten läser byggnaden som hinder och takvattnets fördelning ur takform. Alla redan på K1 v2.
+
+## 6. Mark i nivåer
+
+### 6.1 Fyra sätt att beskriva höjden på en ny markyta (K9 `markhojd`, additivt)
+
+| Sätt | Fält i `egenskaper` | Betydelse |
+| --- | --- | --- |
+| Plan | `niva_rh2000` (finns) | Konstant nivå i polygonen. Terrasser, torgytor, gårdsplaner. |
+| Lutande yta | `lutning`: `{"a": [x, y, z], "b": [x, y, z]}` eller `{"punkt": [x, y, z], "fall": 0.02, "riktning_grader": 190}` | Plan som går genom en eller två punkter med z, eller mellan två **höjdlinjer** (två ritade linjer med z; ytan interpoleras linjärt mellan dem). Gator, ramper, gårdar med fall mot en brunn. |
+| Slänt | `slant`: `{"forhallande": 3.0}` (1:3) eller `{"bredd_m": 4.0}` | Övergångszonen mellan ytan och basen, se 6.3. |
+| LandXML/TIN | `landxml` (finns) | Detaljprojekterad yta ur CAD. |
+
+`delta_m` (ändring relativt basen) är ett särskilt fall: nivån = basens z + delta, och är bara meningsfull med slänt, eftersom den ger hård kant annars. Det stöds i dag inte i K1-materialiseringen och
+tas upp i R5.
+
+### 6.2 Brytlinjer, murar och trappsteg
+
+Ritade linjer med `typ` (`kantsten`, `mur`, `stodmur`, `bankkant`, `staket`) och `hojd_m` (och z per punkt vid behov) blir K1 `brytlinjer`. Sänkgrafen behandlar dem som kantbarriärer (en mur
+hindrar vatten över kanten upp till `hojd_m`). **Trappsteg** är en stödmur med höjd = steghöjd plus en **öppning** av typen `passage` där trappan går (K1 `oppningar`, `botten_rh2000`), så att vattnet får en väg
+längs trappan. Att rita en brytlinje längs en markyta med "följ kant" ger exakt sammanfallande kanter.
+
+### 6.3 Hur den nya marken sätts ihop med befintlig markmodell
+
+Dagens `HojdYta` skriver `z = niva` i alla celler vars centrum ligger i polygonen (`_polygon_mask`). Det ger två problem: (1) en trappa av halva celler längs en
+sned kant, (2) en lodrät kant i terrängen när nivån skiljer sig från basen. Båda är skarvar. Förslag (R4):
+
+1. **Kantmått utan trappa.** Beräkna kantavståndet med polygonens *exakta* geometri vid cellcentrum (signerat avstånd, `shapely`), inte med celltillhörighet. Celler som polygonen
+   delvis täcker får `z = f * z_ny + (1 - f) * z_bas` med f = täckt andel (vikt per cell), så att ytan inte hoppar en halv cell i taget.
+2. **Slänt i dagsljus.** För varje punkt p på kanten: Δ(p) = z_ny(p) − z_bas(p). Slänten ligger utanför polygonen på avståndet W(p) = |Δ(p)| · n (n = förhållande, 1:3 betyder n = 3). Utanför
+   polygonen, på avståndet d från närmaste kantpunkt p: `z = z_bas + Δ(p) · (1 − d / W(p))` för d < W(p), annars oförändrat. Då är slänten rak med konstant lutning 1/n och möter basen utan hörn
+   där kanten är rak. Där Δ ≈ 0 blir W ≈ 0 (inget att jämna). Slänt *inåt* (skärning) är samma formel med Δ < 0.
+3. **Fall mot basens vattenväg.** Slänten är nödvändig men inte tillräcklig: den som dämmer en befintlig vattenväg skapar en sänka även med slänt (en uppdämd ramp är en damm).
+   Därför kontrolleras resultatet (avsnitt 7) och användaren får förslaget "ge ytan fall mot överfallet" eller "lägg ett utlopp" (en öppning i kanten).
+4. **Osäkerhet och markslag.** `osakerhet_m` och `markslag` gäller ytan; slänten får `osakerhet_m` som ytan och markslaget gräs (4) om inget annat anges.
+5. **Reproducerbarhet.** Utjämningen är en deterministisk funktion av polygonen, nivåerna, förhållandet och basens recept; ingår i K9-nyckeln via `egenskaper`, ingen ny fil.
+
+## 7. Skarvkontroll (byggd, R1)
+
+Syfte: hitta **nya lokala sänkor eller instängda ytor** som förslaget skapar längs skarven mellan ny mark och basen, redovisa läge, yta, volym och djup, och föreslå åtgärd.
+
+**Metod** (`src/sankgraf/skarvkontroll.py`, återanvänder `bygg_sankgraf`):
+
+1. Bygg sänkgrafen (Fill–Spill–Merge, K2) för markmodellen före och efter, med samma brytlinjer, öppningar och inställningar.
+2. **Fyllnadsdjup per cell** = lövsänkans överfall − markhöjd (0 utanför sänkor). Samma definition före och efter.
+3. Ökningen per cell = max(0, djup efter − djup före).
+4. För varje lövsänka efter: nya om djupet före är under `min_djup_m` (0,05 m) och efter över; djupare om ökningen är minst `min_okning_m` (0,03 m).
+5. **Band:** avståndet från varje cell till lappens kant (båda sidor); en sänka räknas om någon cell med ökat djup ligger inom `band_m` (10 m). Andra nya sänkor
+   (inne i ytan eller långt från kanten) räknas men listas inte som skarv ("övriga").
+6. Redovisning per fynd: läge (lägsta cell, EPSG:3011), botten och överfall (RH 2000, med överfallets läge), största djup före och efter, yta (m²), volym (m³, hela sänkans lagring), tillkommande volym (summan av ökningen), avstånd
+   till kanten, åtgärdsförslag. Sorterat på tillkommande volym; samma indata ger samma lista.
+7. K1-vägen (`kontrollera_skarvar_k1`) beskär rastret till lappen + band + 40 m (sänkgrafen byggs i Python) och nekar fönster över 1,5 miljoner celler med ett tydligt fel; före och efter beskärs lika.
+
+**Koppling:** `POST /api/kartverktyg/<projekt>/validera` accepterar K9 `markhojd` (polygon + `niva_rh2000`) och svarar additivt med `skarvar` (`floden-skarvkontroll/v1`, K49, eller null) och
+texterna i `varningar` (högst tre; resten i `skarvar.fynd`). Webben visar `varningar` redan som text i steg 2.
+
+**Begränsningar** (ärliga): bara markytor (`markhojd`) i vattnets rutor; byggnader som dammar ingår i `_instangt_vatten`, inte här. Fönstrets kant räknas som utlopp. Sänkor under 5 cm ignoreras. Kontrollen är en
+tidig varning, inte vattenberäkningen: dynamik, infiltration och ledningar ingår inte. Åtgärdsförslaget är text, inte en automatisk ändring (R5/R6 föreslår och räknar om).
+
+## 8. Stegvis plan
+
+| Steg | Innehåll | Storlek | Beroenden | Kontrakt (additivt) |
+| --- | --- | --- | --- | --- |
+| **R1** | Skarvkontrollen i Python, `markhojd` i `validera`, tester | S–M (klart) | G1, K9 | `validera`-svar får `skarvar`; `markhojd` tillåts i kartverktygets kontroll; `floden-skarvkontroll/v1` |
+| **R2** | Lagermodell: ritlager med roll, geometri, stil, flaggor, källa, dataklass; panelens grupp Planförslag listar dem; mallar; `ritlager.json` per förslag | M | R1 (för att rollen `mark` ska finnas) | K50 `floden-ritlager/v1` (ny fil, ändrar inte K9) |
+| **R3** | Linjer och ytor i klienten: rita linje/yta med z, fäst mot linjer och kanter, följ kant, klipp, slå ihop, vänd, förenkla, tangentbord (X G V), fingerräckvidd; brytlinjer som K9 `brytlinje_ny`/`brytlinje_bort` och `oppning_ny` | L | R2 | K9: nya ändringstyper `brytlinje_ny`, `oppning_ny` (additivt; K9 v1 behålls); K1 oförändrad |
+| **R4** | Mark i nivåer i kärnan: lutande yta, slänt i dagsljus, exakt kantavstånd med täckningsvikt (ingen trappa), `delta_m`; ersätter hård kant i `HojdYta` när `slant` anges | L | R1 | K9 `markhojd` får `lutning`, `slant`; K3 `HojdYta` får `lutning`, `slant_forhallande` (valfria fält, K3 v1 läses oförändrat) |
+| **R5** | Skarvkontrollen i klienten: markerar fynden i kartan (punkt, yta, överfallspil), listar dem i steg 2, knappen "Jämna ut skarven" (föreslår slänt/utlopp, kör om kontrollen) | M | R1, R3, R4 | `skarvar.fynd` (finns); ev. `atgarder` additivt |
+| **R6** | 3D: takformer i `extrudera`, markytor och slänter som yta i 3D-vyn, brytlinjer som murar; förhandsvisning live | M–L | R3, R4 | Inget nytt kontrakt (visning); `/api/3d/` kan få förslagets mark |
+| **R7** | Pekskärm och tillgänglighet: håll för att flytta, fingerräckvidd, stora handtag, tangentbordsbindningar som kan ändras, verktygsrad som i U4 | S–M | R3 | – |
+
+Ordning: R1 (klar) -> R2 och R4 kan göras parallellt -> R3 -> R5 -> R6 -> R7. Första användbara leverans för Joels önskan är R1 + R4: ny mark med slänt och automatisk kontroll av skarven, även innan ritverktyget för linjer är klart (ytan kan då
+läggas via K9 eller MCP `scenario_skapa`).
+
+## 9. Källor och licens
+
+- O-Tid (github.com/joelberring/otid, MIT, © 2026 Joel Berring), läst vid `b0b952f`. Kod som porteras får filhuvud med sökväg i O-Tid och commit, som i `webb/src/karta/*.ts` redan görs (`4a446af`); MIT-text ska
+  bevaras (`docs/ARKITEKTUR-DRIFT.md` avsnitt om återanvändning). I den här leveransen har ingen O-Tid-kod kopierats; skarvkontrollen är skriven för Floden (GPL v3).
+- Sänkgraf: Barnes m.fl. (Priority-Flood, Fill–Spill–Merge) som i `src/sankgraf/hierarki.py`.
