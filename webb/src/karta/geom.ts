@@ -59,6 +59,15 @@ export function boxAv(ring: readonly Punkt[]): Box {
   return b;
 }
 
+/**
+ * Handtagens räckvidd inuti en figur, begränsad så att kroppen alltid går att ta tag i: högst en fjärdedel av figurens smalaste mått.
+ * Med fingrets 22 px räckvidd täckte annars handtagen ett litet hus helt, och ett drag i mitten tog en mittpunkt i stället för huset.
+ */
+export function begransadRackvidd(rackvidd: number, ring: readonly Punkt[]): number {
+  const b = boxAv(ring);
+  return Math.min(rackvidd, 0.25 * Math.min(b.maxX - b.minX, b.maxY - b.minY));
+}
+
 /** Närmaste punkt på sträckan a-b: läget t (0-1), punkten och avståndet. */
 export function projicera(p: Punkt, a: Punkt, b: Punkt): { t: number; at: Punkt; distance: number } {
   const dx = b.x - a.x;

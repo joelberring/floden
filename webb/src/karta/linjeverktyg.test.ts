@@ -82,6 +82,8 @@ test("yta: tre hörn och Enter i marklagret; korsande kanter och för få punkte
   const f = [...dok.figurer.values()][0]!;
   assert.equal(f.typ, "yta");
   assert.equal(f.lager, "mark");
+  // Regression (webbläsarprovet): Enter efter fyra klick gav en yta utan hörn, för att ringen töms innan den kopierats.
+  assert.deepEqual(xy(f.punkter), [[0, 0], [10, 0], [10, 10], [0, 10]]);
   const o = dok.tillRitlager().objekt.find((x) => x.objekt_id === f.id)!;
   assert.equal(o.geometri.type, "Polygon");
   r.sattVerktyg("yta");
@@ -251,4 +253,19 @@ test("figurer följer med K50 fram och tillbaka, och lagret går inte att ta bor
   assert.equal(dok2.figurer.size, 1);
   assert.deepEqual(xy(dok2.figurer.get("linje_1")!.punkter), [[10, 10], [20, 10]]);
   assert.equal(dok.taBortLager("mur"), false);
+});
+
+test("pekaren lämnar kartan mitt i en linje: förhandsvisningen försvinner utan NaN, utkastet finns kvar (webbläsarprovet)", () => {
+  const { r } = skapa();
+  r.sattVerktyg("linje");
+  klicka(r, [[300, 300]]);
+  r.ror({ x: 320, y: 300 }, mus);
+  assert.notEqual(r.linje.mark, null);
+  r.lamnar();
+  assert.equal(r.mark, null);
+  assert.equal(r.linje.mark, null);
+  assert.equal(r.linje.ritText("linje", (v) => String(v)), null);
+  assert.equal(r.linje.utkast.length, 1);
+  klicka(r, [[320, 300]]);
+  assert.equal(r.linje.utkast.length, 2);
 });

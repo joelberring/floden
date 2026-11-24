@@ -223,3 +223,33 @@ läggas via K9 eller MCP `scenario_skapa`).
 **R6 3D** (`webb/src/vy3d/tak.ts`, `planyta.ts`, `planinnehall.ts`, `scen.ts`, `geometri.ts`, `karta/fordrojning.ts`). Takformer i `extrudera`: platt (som förut), sadel (27 grader), pulpet (10 grader, faller mot söder), mansard (knäck vid 70 % av avståndet); `hojd_m` är nockhöjden, väggarna följer taket och takytan delas längs knäckarna (areabevarande klippning). Ny mark ritas som yta på sin nivå eller lutning, slänten som remsa utåt (bredd |Δ|·n eller angiven bredd), schakt som skuggbild genom terrängen; murar och kanter (brytlinjer med höjd) som band med typens tjocklek. I steg 2 finns knappen "3D-förhandsvisning" som visar ritat förslag i den befintliga 3D-vyn och bygger om bara planen 150 ms efter senaste ritändringen (`fordrojd`).
 
 **Gränser.** (1) En slänt tar inte bort en dammvall tvärs en dalgång (se R4); då föreslås utlopp. (2) Utloppet är en 1 m bred passage, inte en dimensionerad ledning. (3) Takvinklar och pulpetens riktning är visningsval, inte K9-fält; takvattnet läser pulpet utan azimut som brutet tak. (4) Schakt syns bara som ton genom terrängen. (5) Markens höjd i 3D är basens. (6) Provat i test och build, inte i webbläsare eller på pekskärm.
+
+## 11. Prov i webbläsare och R7 (2026-11-24)
+
+**Provet** är `tools/ritverktyg_prov.py` (Playwright, Chromium/Chrome; förutsätter `floden demo`, `floden webb --port 8795` och byggd webb). Det går igenom steg 2 till 4 i demokvarteret med
+**riktiga** musklick, mushjul, tangenter och beröring (`page.mouse`, `page.touchscreen` och CDP:s `Input.dispatchTouchEvent`), inte interna anrop. Det enda som läses ur sidan är kartmotorn
+(när `window.__FLODEN_PROV__` är satt, bara av provet) för att räkna om SWEREF-punkter till skärmpixlar. Körs `python tools/ritverktyg_prov.py` (4-5 minuter, mest körningen i steg 3; `--utan-korning`, `--bara bred|smal|tangenter`).
+Skärmbilder: `docs/bilder/ritverktyg/` (01-16 bred, 20-26 smal 390x844 med beröring, 30-31 tangenter). Provet tar bort sina egna förslag (`ritprov`, `ritprov-smal`) efteråt.
+
+**Vad som fungerar** (alla kontroller gick igenom, 40 + 21 + 7): lagerpanelen och val av ritlager; Rita hus med fäst mot gårdens hörn (219; 219 exakt) och höjd i panelen; markyta med Enter, höjdval,
+nivå och slänt 1:3 i egenskapspanelen; skarvfynd (6 sänkor, 31,5 m³) för en upphöjd yta tvärs gatukorsningen och **Jämna ut skarven** (förslag med tre utlopp, före 6 sänkor och 31,5 m³, efter 3 och 5,8 m³,
+tillämpas och kan ångras); mur med följ kant (F och Skift) där punkterna sammanfaller exakt med ytans hörn; öppning (passage) med bottennivå; klipp, ångra och gör om i ett steg; markera en yta och dess
+egenskaper; 3D-förhandsvisning; sparat förslag som överlever omladdning; steg 3 (körning, Resultat öppnas av sig självt) och steg 4 med förslaget som "Ditt förslag". Smal skärm: ingen sidledes rullning,
+verktygsraden en rad, pekytor minst 40 px, tryck-ritning med Klar, Backa en punkt och Avbryt, håll och dra flyttar ett hus, ett snabbt drag panorerar, 3D ryms, alla kontroller har namn. Tangentbord: bindning ändras,
+sparas och återställs; Tab når verktygsknapparna med synligt fokus.
+
+**Fel som provet hittade och som är rättade** (varje med regressionstest i `webb/src/`):
+1. *Yta med Enter blev tom.* `avsluta` i `linjeverktyg.ts` tömde hörnlistan innan den kopierats när sista hörnet inte dubblerats (Enter efter fyra klick; bara dubbelklick fungerade). Ytan hade 0 hörn och servern svarade "minst tre olika hörn". Testet kontrollerade bara att geometrin var en Polygon.
+2. *Nya markytor visade "Ny nivå" men inget fält.* Höjdvalet saknade tomt val, så "Ny nivå" var förvald utan att något satts och ett val av den gav ingen ändring. Nu börjar listan med "Välj hur ytan får sin höjd".
+3. *Skift+klick (följ kant) nådde aldrig ritverktyget.* MapLibres rutzoom (`boxZoom`) tog Skift-klicket. Avstängd; F fungerade redan.
+4. *NaN när pekaren lämnar kartan under ritning* ("Längd NaN m", `Invalid LngLat object` i konsolen, även med mus när man går till verktygsraden mitt i en ritning): `lamnar` skickade NaN som position. Ny `lamnar()` tar bara bort förhandsvisningen.
+5. *favicon.ico gav 404 vid varje sidladdning* (ett konsolfel). Ikonlänk tillagd.
+6. *Pekskärm: ett drag i mitten av ett litet hus tog en mittpunkt i stället för huset* (handtagens räckvidd 22 px täckte huset). Räckvidden begränsas nu till en fjärdedel av figurens smalaste mått inuti figuren.
+
+**R7 byggt:** håll fingret stilla 450 ms mot en markerad figur (eller ett handtag) och dra för att flytta (`kartmotor.ts`: `touchstart`/`touchmove`/`touchend`; rör fingret sig före hållningen panorerar kartan); handtag och fästring större med grov pekare (`pointer: coarse`); fingerräckvidd också för husets hörn
+(som linjer och ytor redan hade); verktygsraden är en sidledes rullande rad på smal skärm (förut fem rader som täckte halva kartan); knapparna Klar, Backa en punkt och Avbryt (Enter, Backsteg och Esc) så att man kan avsluta utan tangentbord; hjälptexterna säger "tryck" på pekskärm; zoomknapparna 44 px.
+Tangentbindningarna (R3) och etiketterna fanns redan och är nu prövade.
+
+**Gränser, ärligt.** Prövat i Chromium med beröringsemulering, inte på en riktig telefon (iOS Safari: långt tryck kan ge förstoringsglas eller snabbmeny trots `-webkit-touch-callout: none`; ej känt). Stödet för att lägga till och ta bort punkt (`punktAtgard`) har fortfarande fast 10 px träffyta (inte fingerräckvidd). Två fingrar (nyp) zoomar kartan som förut men det är inte provat. Dubbeltryck för att avsluta
+är opålitligt och ersätts av Klar eller ett tryck på första hörnet. Provet använder en upphöjd yta i gatukorsningen för skarvfyndet; **Jämna ut skarven tog bort tre av sex sänkor och 82 % av volymen, inte alla** (panelen säger det: "Åtgärden tar inte bort alla sänkor"). Alla tal i klienten går genom `tal.ts`; provet skriver sina egna siffror med decimalkomma.
+

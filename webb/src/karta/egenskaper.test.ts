@@ -84,3 +84,15 @@ test("fästindex: en öppen linje har ingen sträcka från sista till första pu
   assert.equal(fastAt(sluten, { punkt: { x: 5, y: 5.2 }, rackvidd: 0.5 })?.typ, "kant");
   assert.equal(oppen.strackor.length, 2);
 });
+
+test("ny markyta utan höjdläge: listan börjar med ett tomt val, så att ett val av Ny nivå ger fältet (webbläsarprovet)", () => {
+  const nytt = faltFor("mark", {}).find((f) => f.nyckel === "hojdlage")!;
+  assert.equal(nytt.varde, "");
+  assert.equal(nytt.alternativ![0]!.varde, "");
+  assert.equal(faltFor("mark", {}).some((f) => f.nyckel === "niva_rh2000"), false);
+  const r = andraFalt("mark", {}, "hojdlage", "niva", { punkter: [{ x: 0, y: 0, z: 12 }, { x: 1, y: 0 }, { x: 1, y: 1 }] });
+  assert.ok("patch" in r && r.patch["niva_rh2000"] === 12);
+  const satt = faltFor("mark", { niva_rh2000: 12 });
+  assert.equal(satt.find((f) => f.nyckel === "hojdlage")!.alternativ![0]!.varde, "niva");
+  assert.ok(satt.some((f) => f.nyckel === "niva_rh2000"));
+});

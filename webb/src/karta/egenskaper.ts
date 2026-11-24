@@ -172,7 +172,9 @@ const typText = (v: unknown): string => (typeof v === "string" ? v : "");
 
 function markFalt(e: Egenskaper): Falt[] {
   const lage = hojdlage(e);
-  const f: Falt[] = [{ nyckel: "hojdlage", etikett: "Höjd", slag: "val", varde: lage ?? "", alternativ: HOJDLAGEN }];
+  // Utan angivet läge visas ett tomt val; annars visade listan "Ny nivå" utan att något fält fanns (och ett val av den gav ingen ändring).
+  const alternativ = lage === undefined ? [{ varde: "", etikett: "Välj hur ytan får sin höjd" }, ...HOJDLAGEN] : HOJDLAGEN;
+  const f: Falt[] = [{ nyckel: "hojdlage", etikett: "Höjd", slag: "val", varde: lage ?? "", alternativ }];
   const l = obj(e["lutning"]);
   if (lage === "niva") f.push({ nyckel: "niva_rh2000", etikett: "Nivå", slag: "tal", enhet: "m RH 2000", varde: visa(e["niva_rh2000"]) });
   if (lage === "delta") f.push({ nyckel: "delta_m", etikett: "Höjning (negativ för sänkning)", slag: "tal", enhet: "m", varde: visa(e["delta_m"]) });

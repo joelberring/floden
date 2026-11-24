@@ -119,3 +119,56 @@ test("K9 ur dokumentet: nytt hus och höjdändring", () => {
   assert.equal(a[0]?.typ, "byggnad_ny");
   assert.equal(a[0]?.egenskaper?.hojd_m, 18);
 });
+
+test("pekskärm (R7): ett hörn går att ta tag i på fingrets räckvidd (22 px) men inte på musens (9 px)", () => {
+  const { r, skapade } = skapa();
+  ritaHus(r, [[200, 200], [220, 200], [220, 220], [200, 220]]);
+  r.tangent(tang("Enter"));
+  assert.equal(r.val?.id, skapade[0]);
+  const finger: Pekare = { pekare: "touch", ctrl: false, shift: false, alt: false };
+  // 0,5 m per px: musens räckvidd 4,5 m, fingrets 11 m. Punkten ligger 8,5 m diagonalt utanför hörnet (220, 220).
+  const bort = { x: 226, y: 226 };
+  assert.equal(r.ned(bort, mus), false);
+  assert.equal(r.ned(bort, finger), true);
+  assert.equal(r.drar, true);
+  r.upp();
+  assert.equal(r.drar, false);
+});
+
+test("Klar, Backa och Avbryt som tangenter (knapparna på pekskärm): Enter, Backsteg och Esc", () => {
+  const { r, dok } = skapa();
+  ritaHus(r, [[200, 200], [220, 200], [220, 220]]);
+  assert.equal(r.utkast.length, 3);
+  r.tangent(tang("Backspace"));
+  assert.equal(r.utkast.length, 2);
+  r.tangent(tang("Escape"));
+  assert.equal(r.utkast.length, 0);
+  assert.equal(dok.ny.size, 0);
+});
+
+test("pekaren lämnar kartan mitt i en ritning: förhandsvisningen försvinner utan NaN, utkastet finns kvar (webbläsarprovet)", () => {
+  const { r } = skapa();
+  ritaHus(r, [[200, 200], [220, 200], [220, 220]]);
+  r.ror({ x: 205, y: 225 }, mus);
+  assert.notEqual(r.mark, null);
+  assert.ok(r.ritText() !== null);
+  r.lamnar();
+  assert.equal(r.mark, null);
+  assert.equal(r.ritText(), null);
+  assert.equal(r.utkast.length, 3);
+});
+
+test("pekskärm: ett drag i mitten av ett litet hus flyttar huset, inte en mittpunkt (handtagens räckvidd begränsas inuti figuren)", () => {
+  const { r, dok, skapade } = skapa();
+  ritaHus(r, [[200, 200], [220, 200], [220, 220], [200, 220]]);
+  r.tangent(tang("Enter"));
+  const finger: Pekare = { pekare: "touch", ctrl: false, shift: false, alt: false };
+  const forst = dok.ny.get(skapade[0]!)!.ring;
+  assert.equal(r.ned({ x: 210, y: 210 }, finger), true); // 10 m från varje mittpunkt, inom fingrets 11 m
+  r.ror({ x: 210, y: 210 }, finger);
+  r.ror({ x: 240, y: 210 }, finger);
+  r.upp();
+  const efter = dok.ny.get(skapade[0]!)!.ring;
+  assert.equal(efter.length, forst.length); // inget nytt hörn
+  assert.deepEqual(efter.map((p) => [Math.round(p.x), Math.round(p.y)]), [[230, 200], [250, 200], [250, 220], [230, 220]]);
+});

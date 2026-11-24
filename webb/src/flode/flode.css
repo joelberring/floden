@@ -316,8 +316,10 @@ body[data-sida="flode"] a:hover { color: #000; }
   .flode-papper { padding: 24px 20px; }
   .flode-kartkort { left: 12px; bottom: 12px; }
   .flode-kartkort-hoger { right: 12px; left: auto; }
-  .flode-verktyg { left: 12px; top: 12px; right: 12px; flex-direction: row; flex-wrap: wrap; }
-  .flode-verktyg-skil { width: 1px; height: 22px; margin: 6px 2px; }
+  /* En enda rad som går att svepa i sidled: verktygsraden täcker inte kartan (förut fem rader, hälften av kartan) */
+  .flode-verktyg { left: 12px; top: 12px; right: 12px; flex-direction: row; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
+  .flode-verktyg button { flex: none; white-space: nowrap; }
+  .flode-verktyg-skil { flex: none; width: 1px; height: 22px; margin: 6px 2px; }
   .flode-zoom { top: auto; bottom: 96px; right: 12px; }
   .flode-stegrad { gap: 0; }
   .flode-steg { padding: 6px 8px; font-size: 12px; }
@@ -421,6 +423,7 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 .flode-skapa-rad p { margin: 0; }
 /* Pekytor på smal skärm: minst 40 px höga (WCAG 2.5.8 kräver 24 px, 44 px rekommenderas) */
 @media (max-width: 600px) {
+  .flode-verktyg button { min-height: 44px; }
   .flode-verktyg button, .flode-zoom button, .flode-segment button, .flode-chips button, .flode-flikar button, .flode-scen-knappar button { min-height: 40px; }
 }
 
@@ -450,3 +453,9 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 .flode-3d-yta { position: relative; flex: 1 1 auto; min-height: 0; }
 @media (max-width: 760px) { .flode-3d { left: 12px; right: 12px; bottom: 12px; width: auto; height: 46%; } }
 .flode-zoom button[aria-pressed="true"] { background: var(--fl-ink); color: #fff; }
+
+/* Pekskärm (R7): inget markerande av text eller snabbmeny när fingret hålls mot kartan för att flytta en figur */
+@media (pointer: coarse) {
+  .kartmotor, .kartmotor canvas { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+  .flode-zoom button { min-width: 44px; min-height: 44px; }
+}

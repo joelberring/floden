@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Tar skärmbilder av webbens flöde (docs/bilder/demo-*.png och 3d-*.png).
 
 Förutsätter att API:t och klienten körs och att demokvarteret är byggt:
