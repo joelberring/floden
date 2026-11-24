@@ -224,7 +224,7 @@ Design: `docs/design/RITVERKTYG.md` (Joels önskan 2026-11-24: generellt kartver
 | Uppdrag | Beskrivning | Storlek | Beroenden | Status |
 | --- | --- | --- | --- | --- |
 | R1 Skarvkontroll | `sankgraf.skarvkontroll` (nya/djupare sänkor vid kanten på ny mark, före/efter), `markhojd` i `validera`, fältet `skarvar` (K49), tester med syntetiska markmodeller och demokvarteret | S–M | G1 | klar (PR öppen) |
-| R2 Lagermodell | Ritlager med roll (byggnad, mark, hårdgjort, vegetation, vatten, brytlinje, öppning), geometri, stil, synlighet, låsning, källa, dataklass; mallar; K50 | M | R1 | redo (förslag, Joel bekräftar) |
+| R2 Lagermodell | Ritlager med roll (byggnad, mark, hårdgjort, vegetation, vatten, brytlinje, öppning), geometri, stil, synlighet, låsning, källa, dataklass; mallar; K50 | M | R1 | klar (PR öppen): `karna.ritlager` (K50, översättning per roll, dataklass), `data/ritlager/standard.toml`, API additivt, ritlagerpanelen i steg 2; brytlinjer och öppningar räknas först i R3 |
 | R3 Linjer och ytor | Rita linje/yta med z, fäst mot linjer, följ kant, klipp, slå ihop, vänd, förenkla, tangentbord, fingerräckvidd; K9 `brytlinje_ny`, `oppning_ny` (porterat ur O-Tid) | L | R2 | väntar |
 | R4 Mark i nivåer | Lutande yta, slänt i dagsljus, exakt kantavstånd utan halvcellstrappa, `delta_m`; `markhojd` `lutning`/`slant`, K3 `HojdYta` additivt | L | R1 | klar (kärnan och API:t, `lapp.markniva`; klientens ritverktyg är R3/R5) |
 | R5 Skarv i klienten | Fynden i kartan och i steg 2, "Jämna ut skarven" (slänt eller utlopp) och ny kontroll | M | R1, R3, R4 | väntar |

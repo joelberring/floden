@@ -18,6 +18,7 @@ import {
   type ScenarioPost,
 } from "../karta/kartapi.ts";
 import { LagerLista } from "../karta/lager.ts";
+import { monteraRitlagerpanel } from "../karta/ritlagerpanel.ts";
 import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { TOM_RITVY, type RitVy } from "../karta/kartmotor.ts";
 import { FORVALD_HOJD_M, Ritverktyg, TANGENTER, type Meddelande, type Verktyg } from "../karta/ritverktyg.ts";
@@ -32,7 +33,7 @@ import { monteraUnderlagForm, taBortUnderlag } from "./underlag.ts";
 import { forslagInfoHtml, type HusUppgift } from "./forslagtext.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
 import type { Avslutbar } from "./projektlista.ts";
-import { andringarMedTak, FORVALD_TAKFORM, skapaDokFor, sparaTillstand, takformFran, TAKFORMER, tillstandFor } from "./tillstand.ts";
+import { forslagKropp, FORVALD_TAKFORM, skapaDokFor, sparaTillstand, takformFran, TAKFORMER, tillstandFor } from "./tillstand.ts";
 
 const TAL0 = talFormat(0);
 
@@ -104,6 +105,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         <p class="flode-liten flode-dampad" id="fs-hojd-hjalp"></p>
         <p class="flode-liten flode-dampad" id="fs-projektkalla" hidden></p>
         <div class="flode-ruta" id="fs-info" role="status"></div>
+        <details class="flode-detalj" id="fs-ritlager-ruta" open>
+          <summary>Ritlager</summary>
+          <div class="ritlagerpanel" id="fs-ritlager"></div>
+        </details>
         <details class="flode-detalj" id="fs-lager-ruta">
           <summary>Lager och underlag</summary>
           <div class="lagerpanel" id="fs-lagerpanel"></div>
@@ -150,8 +155,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     monteraLagerpanel(el("fs-lagerpanel"), lagerLista, {
       andrad: synkaLager,
       taBort: (id) => taBortUnderlag(projekt, bas, id),
-      grupper: ["underlag", "geometri", "planforslag"],
+      grupper: ["underlag", "geometri"], // förslagets lager är ritlagren (K50), inte en fast rad
     });
+    if (dok.lager.length === 0) dok.sattLager(info.ritlager?.lager ?? []);
+    monteraRitlagerpanel(el("fs-ritlager"), dok, info.ritlager?.roller ?? [], { andrad: () => planeraRitning() });
     monteraUnderlagForm(el("fs-underlag"), projekt, bas, ac.signal);
     void bas.ladda(projekt).then(synkaLager);
     const verktyg = new Ritverktyg(
@@ -203,10 +210,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         const d = await hamtaScenario(projekt, t.scenario.slug);
         if (avslutad) return;
         t.takform = takformFran(d.andringar);
-        dok.fran(d.andringar);
+        dok.fran(d.fria_andringar ?? d.andringar, d.ritlager);
         namnFalt.value = d.namn;
         t.namn = d.namn;
-        sparat = JSON.stringify(andringarMedTak(dok, t.takform)) + d.namn;
+        sparat = JSON.stringify(forslagKropp(dok, t.takform)) + d.namn;
       } catch {
         t.scenario = null; // Filen finns inte längre; man börjar om.
       }
@@ -223,7 +230,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     const uppdateraRit = (): void => {
       const v = verktyg;
       const hus: RitVy["hus"] = [];
-      for (const h of dok.ny.values()) hus.push({ id: h.id, ring: v.dragRing?.id === h.id ? v.dragRing.ring : h.ring, vald: Boolean(v.val?.ny && v.val.id === h.id), slag: "ny" });
+      for (const h of dok.ny.values()) if (dok.arSynligt(h)) hus.push({ id: h.id, ring: v.dragRing?.id === h.id ? v.dragRing.ring : h.ring, vald: Boolean(v.val?.ny && v.val.id === h.id), slag: "ny" });
       if (v.val && !v.val.ny) {
         const b = info.byggnader.find((x) => x.id === v.val?.id);
         if (b) hus.push({ id: b.id, ring: b.ring.map(([x, y]) => ({ x, y })), vald: true, slag: dok.bort.has(b.id) ? "bort" : "andrad" });
@@ -311,7 +318,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           meddelande = { typ: "fel", text: r.text };
         } else if (r.slag === "forslag") {
           t.takform = takformFran(r.andringar);
-          dok.fran(r.andringar);
+          dok.fran(r.andringar, { kontrakt: "floden-ritlager/v1", objekt: [] });
           meddelande = { typ: "info", text: `Läste in ${r.andringar.length} ändringar ur förslagsfilen.` };
         } else {
           dok.grupp("fil", () => {
@@ -404,15 +411,15 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       planeraRitning();
     };
     const kontrolleraOchSpara = async (): Promise<void> => {
-      const andringar = andringarMedTak(dok, t.takform);
-      if (andringar.length === 0) {
+      const kropp = forslagKropp(dok, t.takform);
+      if (dok.tom()) {
         kontroll = null;
         kontrollFel = null;
         planeraRitning();
         return;
       }
       try {
-        kontroll = await kontrolleraAndringar(projekt, andringar);
+        kontroll = await kontrolleraAndringar(projekt, kropp);
         kontrollFel = null;
       } catch (e) {
         kontroll = null;
@@ -421,19 +428,19 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       if (avslutad) return;
       if (kontroll?.giltig) {
         // Sparandet går i en kö så att två ändringar i följd inte skapar två förslag.
-        sparKo = sparKo.then(() => spara(andringarMedTak(dok, t.takform)));
+        sparKo = sparKo.then(() => spara(forslagKropp(dok, t.takform)));
         await sparKo;
       }
       planeraRitning();
     };
     let sparKo: Promise<void> = Promise.resolve();
-    const spara = async (andringar: ReturnType<typeof andringarMedTak>): Promise<void> => {
+    const spara = async (kropp: ReturnType<typeof forslagKropp>): Promise<void> => {
       const namn = (namnFalt.value.trim() || "Mitt förslag").trim();
-      const nyckel = JSON.stringify(andringar) + namn;
+      const nyckel = JSON.stringify(kropp) + namn;
       if (nyckel === sparat) return;
       try {
         const gammal = t.scenario;
-        let d = await sparaScenario(projekt, gammal ? gammal.namn : namn, andringar, gammal?.slug);
+        let d = await sparaScenario(projekt, gammal ? gammal.namn : namn, kropp, gammal?.slug);
         if (gammal && gammal.namn !== namn) d = await bytScenarioNamn(projekt, gammal.slug, namn);
         t.scenario = { slug: d.slug, namn: d.namn };
         t.namn = namnFalt.value.trim();
@@ -478,11 +485,11 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       if (avslutad) return;
       t.takform = takformFran(d.andringar);
       verktyg.markera(null);
-      dok.fran(d.andringar);
+      dok.fran(d.fria_andringar ?? d.andringar, d.ritlager);
       t.scenario = { slug: d.slug, namn: d.namn };
       t.namn = d.namn;
       namnFalt.value = d.namn;
-      sparat = JSON.stringify(andringarMedTak(dok, t.takform)) + d.namn;
+      sparat = JSON.stringify(forslagKropp(dok, t.takform)) + d.namn;
       sparaTillstand(t);
       ritaSparade();
     };
@@ -518,7 +525,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
             t.scenario = { slug: d.slug ?? slug, namn: d.namn };
             t.namn = d.namn;
             namnFalt.value = d.namn;
-            sparat = JSON.stringify(andringarMedTak(dok, t.takform)) + d.namn;
+            sparat = JSON.stringify(forslagKropp(dok, t.takform)) + d.namn;
             sparaTillstand(t);
           }
           return lasSparade();

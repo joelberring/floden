@@ -1282,5 +1282,47 @@ Koordinater i EPSG:3011, höjder RH 2000, enheter m, m², m³. Högst tre fynd s
 **Regel.** Fyllnadsdjupet i en cell är lövsänkans överfall minus markhöjden (K2, `sankgraf.hierarki.bygg_sankgraf`), före och efter. En sänka är *ny* om största djup före är under `min_djup_m` och efter minst så stort,
 *djupare* om djupet ökat med minst `min_okning_m`; den redovisas om en cell med ökat djup ligger inom `band_m` från lappens kant (båda sidor). Samma indata ger samma lista (sorterad på tillkommande volym).
 
-**R4 (byggt):** K9 `markhojd` har `lutning`, `delta_m` och `slant`; K3 `HojdYta` har `lutning`, `delta_m`, `slant_forhallande`, `slant_bredd_m`, `slant_markslag` (se K3 och K9). Lappens yta i kontrollen är polygonerna plus de celler vars höjd ändrats, så att släntens zon räknas som lapp (band och `avstand_till_kant_m` mäts från släntens yttre kant). Själva svaret `floden-skarvkontroll/v1` är oförändrat. K50 `floden-ritlager/v1` (ritlager) är ett förslag i designen.
+**R4 (byggt):** K9 `markhojd` har `lutning`, `delta_m` och `slant`; K3 `HojdYta` har `lutning`, `delta_m`, `slant_forhallande`, `slant_bredd_m`, `slant_markslag` (se K3 och K9). Lappens yta i kontrollen är polygonerna plus de celler vars höjd ändrats, så att släntens zon räknas som lapp (band och `avstand_till_kant_m` mäts från släntens yttre kant). Själva svaret `floden-skarvkontroll/v1` är oförändrat. K50 `floden-ritlager/v1` (ritlager) är byggt (R2, nedan).
 
+## K50 – Ritlager `floden-ritlager/v1` (v1)
+
+Tillagt 2026-11-24 (R2 i `docs/design/RITVERKTYG.md`, beslut i `docs/BESLUT.md` 2026-11-24; additivt, ändrar inget äldre kontrakt: K9 behåller sina ändringstyper). Kod: `karna.ritlager`, mallar i `data/ritlager/<namn>.toml` (förval `standard.toml`).
+
+Ett **ritlager** är en samling objekt av samma geometrityp och **roll i beräkningen**. Rollen, inte ett symbolnummer, avgör vilken K9-/K1-ändring ett objekt blir när förslaget kontrolleras, sparas och körs.
+
+```json
+{
+  "kontrakt": "floden-ritlager/v1",
+  "lager": [
+    {"lager_id": "hus", "namn": "Hus", "geometri": "polygon", "roll": "byggnad",
+     "stil": {"fyllning": "#d98c5f", "linje": "#8a4b24", "linjebredd_px": 2, "monster": null},
+     "synlig": true, "last": false, "tonad": false, "opacitet": 1.0,
+     "kalla": "ritat", "dataklass": "oppen",
+     "egenskaper_mall": {"hojd_m": "tal"}, "egenskaper_forval": {}}
+  ],
+  "objekt": [
+    {"objekt_id": "nytt_hus", "lager_id": "hus",
+     "geometri": {"type": "Polygon", "coordinates": []}, "egenskaper": {"hojd_m": 18.0}}
+  ]
+}
+```
+
+- **Lager.** `lager_id` (a-z, 0-9, `-`, `_`, högst 60 tecken, unikt), `namn` (1-60 tecken), `roll` (`byggnad`, `mark`, `hardgjort`, `vegetation`, `vatten`, `brytlinje`, `oppning`), `geometri` (`polygon`, `linje`, `punkt`; rollen begränsar: byggnad, mark, hårdgjort, vegetation och vatten är polygon, brytlinje och öppning är linje; `punkt` är reserverad), `stil` (bara visning: `fyllning` och `linje` som `#rrggbb`, `linjebredd_px` 0-20, `monster`), `synlig`, `last`, `tonad`, `opacitet` (0-1), `kalla` (`ritat`, `fil:<namn>`, `k1:<ruta>`, `baskarta:<profil>`, `lokal:<namn>`, `ledning...`), `dataklass`, `egenskaper_mall` (egenskap -> `tal`, `kod` eller `text`; vägledning för panelen) och `egenskaper_forval` (värden som gäller objekt som inte anger egenskapen; tillägg mot designen, t.ex. markslag 4 i Grönyta). Stil, synlighet, låsning och tonad ingår **inte** i K9-nyckeln.
+- **Objekt.** Geometri som GeoJSON i EPSG:3011 av lagrets typ (ringar normaliseras: moturs, 1 cm). Egenskaper utanför rollens tillåtna (nedan) ger fel. `objekt_id` (bokstäver, siffror, `-`, `_`) blir `andring_id`.
+- **Roll -> K9/K1** (`karna.ritlager.oversatt`, testad per roll):
+
+| Roll | Egenskaper | Blir |
+| --- | --- | --- |
+| `byggnad` | `hojd_m` eller `tak_rh2000`; `takform`, `andamal`, `vaningar` | K9 `byggnad_ny` |
+| `mark` | `niva_rh2000` (krävs); `osakerhet_m`, `markslag` | K9 `markhojd` (-> K3 `HojdYta`) |
+| `hardgjort` | `niva_rh2000`, `osakerhet_m` (valfria) | K9 `markslag` kod 1; med nivå `markhojd` med `markslag` 1 |
+| `vegetation` | `hojd_m` (>= 0) och/eller `markslag` (4 gräs, 5 skog) | K9 `vegetation` och/eller `markslag`; andra ändringen får id `<objekt_id>~markslag` |
+| `vatten` | `volym_m3`, `botten_rh2000`, `markslag` | K9 `markslag` kod 8; med `volym_m3` `magasin` |
+| `brytlinje` | `typ` (kantsten, mur, stodmur, staket, bankkant), `hojd_m` | K1 brytlinje |
+| `oppning` | `typ` (trumma, port, passage), `bredd_m`, `botten_rh2000` (krävs) | K1 öppning |
+
+  Brytlinjer och öppningar har ingen K9-ändringstyp än (kommer med R3): de översätts och kontrolleras men **tillämpas inte**, och förslaget får en varning om det. Vid dubbla `andring_id` (fri ändring och ritat objekt) ges fel, inget skrivs över.
+- **Dataklass** (`oppen`, `intern`, `skyddad`; `personuppgifter` nekas, AGENTS.md). Effektiv klass (`effektiv_dataklass`): en stängd källa (`baskarta:`, `ledning`, `lokal:`) är minst `intern` (ledningar `skyddad`) vad lagret än deklarerar; en `fil:`-källa utan deklarerad klass är `intern`; ett lager `ritat` i ett stängt projekt är minst `intern`. Ett stängt lager **lämnas inte ut via MCP**: `for_mcp` ger bara id, namn, roll och klass, utan objekt. Ett förslag med objekt i ett stängt lager skriver sin K9-fil till `<kartverktygsmapp>/<projekt>/k9_stangda/` med en `oppenhet.toml` (K38) med `oppen = false`, så att körningen av det inte heller lämnas ut. MCP:s klasser `oppet`, `internt`, `skyddat` motsvarar dem (`till_mcp_klass`).
+- **Förval.** Ett dokument utan `lager`, och ett förslag utan ritlager, får lagren i `data/ritlager/standard.toml`: Hus (byggnad), Mark (ny nivå) (mark), Gata och hårdgjort (hardgjort), Grönyta (vegetation, markslag 4), Vatten (vatten), Mur och kant (brytlinje), Passage och trumma (oppning).
+
+**API (additivt).** `GET /api/kartverktyg/<projekt>` får `ritlager: {kontrakt, lager, roller}` (förvalda lager och vad varje roll blir). `POST .../validera` och `POST .../scenarier[/<slug>]` tar `ritlager` (objekten översätts och läggs till `andringar`, som är de fria ändringarna) och svarar med `andringar` (hela K9) och `ritlager` (normaliserat). Förslagsfilen (`floden-kartverktyg/v1`, oförändrad version) får fältet `ritlager`; `andringar` i filen är hela K9, så äldre läsare och körvägen fungerar som förut. `GET .../scenarier/<slug>` ger `ritlager` (förvalda lager om filen saknar det) och `fria_andringar` (K9 som inte kommer ur objekt). Samma objekt ger samma K9 och samma nyckel som en handskriven ändring. MCP `projekt_info` får `ritlager` (stängda lager utan innehåll) och `roller`.

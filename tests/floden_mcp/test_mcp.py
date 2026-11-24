@@ -666,3 +666,11 @@ def test_kor_lage_idag_utan_forslag(mcp: Mcp) -> None:
     assert mcp.ok("vanta", {"korning_ids": ids, "tidsgrans_s": 600})["alla_klara"]
     assert mcp.app.korningsunderlag(ids[0])["slag"] == "lage_idag"
     assert mcp.app.projekt_for_korning(ids[0]) == "demokvarteret"
+
+
+def test_projekt_info_har_ritlager_och_roller_men_inga_objekt(mcp: Mcp) -> None:
+    """K50 (R2): MCP ser lagren och rollerna; ett stängt lager lämnas bara ut som namn och roll."""
+    r = mcp.ok("projekt_info")["ritlager"]
+    assert r["kontrakt"] == "floden-ritlager/v1" and r["objekt"] == [] and r["stangda_lager"] == []
+    assert [x["roll"] for x in r["lager"]][:2] == ["byggnad", "mark"]
+    assert {x["roll"] for x in r["roller"]} >= {"byggnad", "brytlinje", "oppning"}

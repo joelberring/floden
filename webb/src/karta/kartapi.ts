@@ -2,6 +2,7 @@
 import { lasJson } from "../api";
 import type { Utbredning, ProjektVyLike } from "./kartapi-typer";
 import type { K9Andring } from "./plandok";
+import type { RitLager, RitlagerDok, RollInfo } from "./ritlager";
 import type { WmsSvar } from "./wms";
 
 export type { Utbredning };
@@ -23,6 +24,8 @@ export interface ProjektInfo {
   analyser: Array<{ id: string; namn: string; mall: string; analys: string; forval: boolean }>;
   scenarier: ScenarioPost[];
   ortofoto: { finns: false } | { finns: true; antal_filer: number; png: string; kalla: string };
+  /** Additivt (R2, K50): förvalda ritlager och rollerna (vad ett objekt blir i beräkningen). */
+  ritlager?: { kontrakt: string; lager: RitLager[]; roller: RollInfo[] };
   /** Additivt (projekt i en geografi): vad för slags projekt, och dess avgränsning och dataklass (K38). */
   paahittat?: boolean;
   slag?: "demo" | "geografi";
@@ -49,6 +52,10 @@ export interface Scenario extends ScenarioPost {
   skapad: string;
   beskrivning: string;
   andringar: K9Andring[];
+  /** Additivt (K50): förslagets lager och objekt; förslag utan lager får de förvalda. */
+  ritlager?: RitlagerDok;
+  /** Additivt: K9-ändringar som inte kommer ur ritade objekt. */
+  fria_andringar?: K9Andring[];
 }
 
 export interface Kontroll {
@@ -59,6 +66,13 @@ export interface Kontroll {
   information?: string[];
   hus: Array<{ andring_id: string; yta_m2: number; hojd_m: number; vaningar: number; bta_m2: number; vaningshojd_m: number }>;
   andringar: K9Andring[];
+  ritlager?: RitlagerDok | null;
+}
+
+/** Det klienten skickar: fria K9-ändringar och (K50) ritlagren med objekt. */
+export interface ForslagIn {
+  andringar: K9Andring[];
+  ritlager?: RitlagerDok;
 }
 
 export interface PlanPost {
@@ -86,11 +100,11 @@ export interface KorningPost {
 }
 
 export const hamtaProjektInfo = (p: string): Promise<ProjektInfo> => lasJson(`${BAS}/${encodeURIComponent(p)}`);
-export const kontrolleraAndringar = (p: string, andringar: K9Andring[]): Promise<Kontroll> => post(`${BAS}/${encodeURIComponent(p)}/validera`, { andringar });
+export const kontrolleraAndringar = (p: string, forslag: ForslagIn): Promise<Kontroll> => post(`${BAS}/${encodeURIComponent(p)}/validera`, forslag);
 export const listaScenarier = (p: string): Promise<{ scenarier: ScenarioPost[] }> => lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier`);
 export const hamtaScenario = (p: string, slug: string): Promise<Scenario> => lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}`);
-export const sparaScenario = (p: string, namn: string, andringar: K9Andring[], slug?: string): Promise<Scenario> =>
-  post(`${BAS}/${encodeURIComponent(p)}/scenarier${slug ? `/${encodeURIComponent(slug)}` : ""}`, { namn, andringar });
+export const sparaScenario = (p: string, namn: string, forslag: ForslagIn, slug?: string): Promise<Scenario> =>
+  post(`${BAS}/${encodeURIComponent(p)}/scenarier${slug ? `/${encodeURIComponent(slug)}` : ""}`, { namn, ...forslag });
 export const bytScenarioNamn = (p: string, slug: string, namn: string): Promise<Scenario> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/byt-namn`, { namn });
 export const taBortScenario = (p: string, slug: string): Promise<{ borttaget: boolean }> =>

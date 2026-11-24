@@ -152,7 +152,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 | Verktyg | Gör |
 | --- | --- |
 | `projekt_skapa` | skapar ett projekt i en mappad geografi (`geografi`, `namn`, `avgransning` som GeoJSON-polygon eller `[xmin, ymin, xmax, ymax]` i EPSG:3011, `organisation_synlig`, `organisation`): samma kod, behörighet och svar som webbens `POST /api/projekt` (K48); svaret har `projekt_id` och varningar |
-| `projekt_lista`, `projekt_info` | projekt (per konto: med inloggning på bara de som kontot har tillgång till, med roll), utbredning, antal byggnader, tillgängliga analyser |
+| `projekt_lista`, `projekt_info` | projekt (per konto: med inloggning på bara de som kontot har tillgång till, med roll), utbredning, antal byggnader, tillgängliga analyser, ritlager och roller (K50; stängda lager bara som namn och roll, aldrig innehåll) |
 | `geometri_sammanfattning` | byggnader: antal, fotavtryck, höjder, takformer, höjdkälla |
 | `byggnader_lista` | byggnader (valfritt inom ett område) |
 | `fragor_lista` | K20-frågor och om de är giltiga och körda |

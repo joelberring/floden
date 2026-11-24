@@ -1,6 +1,6 @@
 # Ritverktyg för marken: generella lager, 3D-hus, mark i nivåer och skarvkontroll
 
-Status: förslag för Joel (2026-11-24), del 1 av uppdraget. R1 (skarvkontrollen) och R4 (mark i nivåer i kärnan: lutande yta, `delta_m`, exakt kant, slänt) är byggda och testade.
+Status: förslag för Joel (2026-11-24), del 1 av uppdraget. R1 (skarvkontrollen), R2 (lagermodellen, K50) och R4 (mark i nivåer i kärnan: lutande yta, `delta_m`, exakt kant, slänt) är byggda och testade.
 Joels önskan: kartverktyget ska bli mer generellt (lagerhanteringen i O-Tid är för orienteringsspecifik, linjehanteringen är bra),
 kunna ha 3D-objekt som hus och hantera mark i nivåer, särskilt i mötet mellan baskarta och ny mark där "skarvar" lätt skapar sänkor
 där vatten samlas.
@@ -105,7 +105,7 @@ Regler:
 - **Förvalda mallar** i stället för en norm: *Hus*, *Mark (ny nivå)*, *Gata/hårdgjort*, *Grönyta*, *Vatten*, *Mur och kant*, *Passage/trumma*.
   En användare kan döpa och lägga till egna lager inom rollerna. Det som O-Tid gör med normens grupper blir här rollerna.
 - **Hur det lagras:** ritlagrens objekt är i K9 `andringar` (nyckelad, reproducerbar). Lagrens metadata (namn, stil) sparas bredvid scenariot
-  som `ritlager.json` i förslagets mapp och påverkar inte nyckeln. Läs- och skrivregler: kontrakt K50 (föreslås, se R2).
+  som `ritlager.json` i förslagets mapp och påverkar inte nyckeln. Läs- och skrivregler: kontrakt K50 (byggt i R2). **Avvikelse från förslaget i R2:** metadata och objekt sparas i förslagsfilen under `ritlager` (en fil per förslag, ingen `ritlager.json`), och `andringar` i filen är hela K9 (fria ändringar + översatta objekt) så att körvägen och äldre läsare är oförändrade. Synlig och låst följer förslaget i stället för webbläsaren (de ingår aldrig i K9-nyckeln). Stängda lager skriver K9 till `k9_stangda/`. Klienten ritar bara hus (rollen byggnad) i R2; övriga roller listas, bevaras och översätts av servern men ritas först i R3.
 
 ## 5. 3D-objekt: hus som extruderade polygoner
 
@@ -190,7 +190,7 @@ tidig varning, inte vattenberäkningen: dynamik, infiltration och ledningar ing�
 | Steg | Innehåll | Storlek | Beroenden | Kontrakt (additivt) |
 | --- | --- | --- | --- | --- |
 | **R1** | Skarvkontrollen i Python, `markhojd` i `validera`, tester | S–M (klart) | G1, K9 | `validera`-svar får `skarvar`; `markhojd` tillåts i kartverktygets kontroll; `floden-skarvkontroll/v1` |
-| **R2** | Lagermodell: ritlager med roll, geometri, stil, flaggor, källa, dataklass; panelens grupp Planförslag listar dem; mallar; `ritlager.json` per förslag | M | R1 (för att rollen `mark` ska finnas) | K50 `floden-ritlager/v1` (ny fil, ändrar inte K9) |
+| **R2 (klar 2026-11-24)** | Lagermodell: ritlager med roll, geometri, stil, flaggor, källa, dataklass; ritlagerpanelen i steg 2; mallar (`data/ritlager/standard.toml`); lagren sparas **i förslagsfilen** (`ritlager`, inte en separat `ritlager.json`) | M | R1 (för att rollen `mark` ska finnas) | K50 `floden-ritlager/v1` (ny, ändrar inte K9) |
 | **R3** | Linjer och ytor i klienten: rita linje/yta med z, fäst mot linjer och kanter, följ kant, klipp, slå ihop, vänd, förenkla, tangentbord (X G V), fingerräckvidd; brytlinjer som K9 `brytlinje_ny`/`brytlinje_bort` och `oppning_ny` | L | R2 | K9: nya ändringstyper `brytlinje_ny`, `oppning_ny` (additivt; K9 v1 behålls); K1 oförändrad |
 | **R4 (klar 2026-11-24)** | Mark i nivåer i kärnan: lutande yta, slänt i dagsljus, exakt kantavstånd med täckningsvikt (ingen trappa), `delta_m`; ersätter hård kant i `HojdYta` när något av de nya fälten anges | L | R1 | K9 `markhojd` får `lutning`, `delta_m`, `slant`; K3 `HojdYta` får `lutning`, `delta_m`, `slant_forhallande`, `slant_bredd_m`, `slant_markslag` (valfria fält, K3 v1 läses oförändrat) |
 | **R5** | Skarvkontrollen i klienten: markerar fynden i kartan (punkt, yta, överfallspil), listar dem i steg 2, knappen "Jämna ut skarven" (föreslår slänt/utlopp, kör om kontrollen) | M | R1, R3, R4 | `skarvar.fynd` (finns); ev. `atgarder` additivt |

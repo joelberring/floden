@@ -6,6 +6,7 @@
 import type { K9Andring } from "../karta/plandok.ts";
 import { PlanDok } from "../karta/plandok.ts";
 import type { ProjektInfo } from "../karta/kartapi.ts";
+import type { RitlagerDok } from "../karta/ritlager.ts";
 import type { ProjektVy } from "../types.ts";
 
 export type Skede = "skiss" | "planunderlag";
@@ -131,6 +132,22 @@ export function andringarMedTak(dok: PlanDok, takform: ReadonlyMap<string, strin
   });
 }
 
+/** Det som skickas till servern vid kontroll och sparande: fria K9-ändringar och ritlagren (K50) med objekten. */
+export interface ForslagKropp {
+  andringar: K9Andring[];
+  ritlager: RitlagerDok;
+}
+
+export function forslagKropp(dok: PlanDok, takform: ReadonlyMap<string, string>): ForslagKropp {
+  return {
+    andringar: dok.tillFriaAndringar(),
+    ritlager: dok.tillRitlager((id) => {
+      const tak = takform.get(id);
+      return tak && tak !== FORVALD_TAKFORM ? { takform: tak } : {};
+    }),
+  };
+}
+
 /** Tar upp takformerna ur ett laddat scenario. */
 export function takformFran(andringar: ReadonlyArray<K9Andring>): Map<string, string> {
   const m = new Map<string, string>();
@@ -146,7 +163,7 @@ export function skapaDokFor(t: FlodeTillstand, info: ProjektInfo): void {
   const bas = new Map(info.byggnader.map((b) => [b.id, b.hojd_m]));
   const gammal = t.dok;
   const dok = new PlanDok((id) => bas.get(id));
-  if (!gammal.tom()) dok.fran(gammal.tillAndringar());
+  if (!gammal.tom() || gammal.lager.length > 0) dok.taOver(gammal);
   t.dok = dok;
 }
 

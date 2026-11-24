@@ -50,7 +50,8 @@ någon extern tjänst som standard.
 | `lager.ts`, `lagerpanel.ts` | Lagermodell (grupper, synlighet, täckning, ordning, hopfällning, sparat per projekt, lager som egen vy för en kommande 3D-vy) och panelen |
 | `wms.ts` | Underlag från WMS/kakelmall (servern är proxy, `POST /api/kartverktyg/wms/lager`) |
 | `snap.ts`, `hit.ts`, `formedit.ts`, `historik.ts`, `geom.ts` | Porterade ritalgoritmer (fäst, träff, hörnredigering, ångra/gör om) |
-| `plandok.ts` | Planförslagets dokument: nya hus, höjdändringar, rivningar, som K9-ändringar |
+| `plandok.ts` | Planförslagets dokument: nya hus (i sina ritlager), höjdändringar, rivningar; K9-ändringar för de fria och K50 för objekten |
+| `ritlager.ts`, `ritlagerpanel.ts` | Ritlager (K50): roll, synlighet, låsning, valt lager att rita i, lägga till och ta bort lager; panelen i steg 2 (kommer ur `ritlager` i projektinfo, sparas med förslaget) |
 | `ritverktyg.ts` | Styrenhet för verktygen och kortkommandona (testbar utan webbläsare) |
 | `kartapi.ts` | Anrop till `/api/kartverktyg/...` |
 
@@ -106,7 +107,7 @@ Ritlogik, scenario-API:erna, 3D-vyn och svepet är de befintliga. Små tillägg 
 `GET /api/korningar/<id>/marksiffror?lager=` (samma mark-siffror som projektsidan) och
 `GET /api/projekt/<id>/rapporter/<rapport>` (rubriker, påståenden och kontrollpunkter till förhandsvisningen).
 **En kartsida, inte två.** Det som fanns bara på den gamla kartsidan bor nu i flödet:
-- Steg 2 (`flode/forslag.ts`): ritverktygen i en fast verktygsrad, zoom, lagerpanelen (grupperna Underlag, Geometri, Planförslag via `PanelKrokar.grupper`), WMS och kakelmall (`flode/underlag.ts`), sparade förslag, info om förslaget (`flode/forslagtext.ts`). Lagerlogiken delas med steg 4 genom `BasLager` (`flode/kartdel.ts`, `flode/rasterlager.ts`).
+- Steg 2 (`flode/forslag.ts`): ritverktygen i en fast verktygsrad, zoom, lagerpanelen (grupperna Underlag och Geometri via `PanelKrokar.grupper`) och ritlagerpanelen (R2, K50: förslagets lager med roll, Visa, Lås och valt lager; nya hus hamnar i valt byggnadslager, ett låst eller släckt lager går inte att rita i eller markera i; lager med andra roller än Byggnad listas och bevaras men ritas först med linje- och ytverktyget, R3), WMS och kakelmall (`flode/underlag.ts`), sparade förslag, info om förslaget (`flode/forslagtext.ts`). Lagerlogiken delas med steg 4 genom `BasLager` (`flode/kartdel.ts`, `flode/rasterlager.ts`).
 - Steg 4 (`flode/resultat.ts`): 3D, värdeavläsning, tak-kryssruta, teckenförklaring och *Visa osäkerhet*: K40 `/api/analys/intervall` och K41 `/api/analys/svf-intervall` som `[min; max]` med liten text under talet, och K36 `/api/analys/bifurkationer` som lager med känsliga överfall (`flode/osakerhet.ts`, HTML i `flode/panelhtml.ts`). Intervallen tar bara `omrade_id` och gäller därför projektets markmodell (läget före), inte det ritade förslaget; panelen säger det.
 - Avtappning (mm/h) för skyfall ställs in i steg 3 (`flode/tillstand.ts`, `lasAvtappning`).
 - **Tal** skrivs alltid med decimalkomma och smalt hårt mellanrum (U+202F) som tusentalsavskiljare via `src/tal.ts` (`formatera`, `formateraHogst`, `talFormat`) och `flode/nyckeltal.ts`. Ett test (`tal.test.ts`) söker i flödets, kartans och 3D-vyns källkod efter `toFixed`, `toLocaleString` och `Intl.NumberFormat`, och `flode/osakerhet.test.ts` söker i de renderade panelerna efter `\d\.\d`. Arbetsbänkens äldre `main.ts` (`#/arbetsbank/<id>`) räknas inte in.
