@@ -3,6 +3,7 @@ import { lasJson } from "../api";
 import type { Utbredning, ProjektVyLike } from "./kartapi-typer";
 import type { K9Andring } from "./plandok";
 import type { RitLager, RitlagerDok, RollInfo } from "./ritlager";
+import type { AtgardSvar, Skarvar } from "./skarv";
 import type { WmsSvar } from "./wms";
 
 export type { Utbredning };
@@ -70,6 +71,8 @@ export interface Kontroll {
   hus: Array<{ andring_id: string; yta_m2: number; hojd_m: number; vaningar: number; bta_m2: number; vaningshojd_m: number }>;
   andringar: K9Andring[];
   ritlager?: RitlagerDok | null;
+  /** Additivt (R1, K49): skarvkontrollens fynd, eller null/utelämnat när förslaget saknar ny mark. */
+  skarvar?: Skarvar | null;
 }
 
 /** Det klienten skickar: fria K9-ändringar och (K50) ritlagren med objekt. */
@@ -104,6 +107,8 @@ export interface KorningPost {
 
 export const hamtaProjektInfo = (p: string): Promise<ProjektInfo> => lasJson(`${BAS}/${encodeURIComponent(p)}`);
 export const kontrolleraAndringar = (p: string, forslag: ForslagIn): Promise<Kontroll> => post(`${BAS}/${encodeURIComponent(p)}/validera`, forslag);
+/** Föreslår och verifierar en åtgärd för skarven (R5); ändrar inget på servern. */
+export const foreslaSkarvatgard = (p: string, forslag: ForslagIn): Promise<AtgardSvar> => post(`${BAS}/${encodeURIComponent(p)}/skarvatgard`, forslag);
 export const listaScenarier = (p: string): Promise<{ scenarier: ScenarioPost[] }> => lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier`);
 export const hamtaScenario = (p: string, slug: string): Promise<Scenario> => lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}`);
 export const sparaScenario = (p: string, namn: string, forslag: ForslagIn, slug?: string): Promise<Scenario> =>

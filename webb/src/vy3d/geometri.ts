@@ -6,6 +6,7 @@ import { ShapeUtils, Vector2 } from "three";
 import { avkvantisera, CELLER, INGET_VARDE, rutHorn, type Rut } from "./rutnat.ts";
 import { type Origo } from "./koord.ts";
 import type { Behallare } from "./format.ts";
+import { delaKant, takFor, takTrianglar, type Takform } from "./tak.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Terräng
@@ -166,7 +167,10 @@ export function byggnaderFran(b: Behallare): ByggnaderBuf {
 export interface Hus {
   ringar: Array<Array<[number, number]>>;
   yFot: number;
+  /** Höjden till det högsta på taket (nock). Med takform stiger taket ur en takfot lägre än så. */
   yTak: number;
+  /** Takform (R6). Utan värde, eller platt, ritas ett platt tak (som förut). */
+  takform?: Takform;
 }
 
 export interface HusGeometri {
@@ -187,6 +191,62 @@ export function extrudera(hus: Hus[]): HusGeometri {
   const triHus: number[] = [];
   const kanter: number[] = [];
   hus.forEach((h, hi) => {
+    const tak = h.takform && h.takform !== "platt" ? takFor(h.takform, h.ringar[0] ?? [], h.yTak - h.yFot) : null;
+    if (tak) {
+      const fot = h.yTak - tak.resning;
+      const topp = (x: number, z: number): number => fot + tak.hojdOverFot(x, z);
+      for (const ring of h.ringar) {
+        const n = ring.length;
+        if (n < 3) continue;
+        for (let k = 0; k < n; k++) {
+          const a = ring[k] as [number, number];
+          const b = ring[(k + 1) % n] as [number, number];
+          const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          const nx = (b[1] - a[1]) / l;
+          const nz = -(b[0] - a[0]) / l;
+          const delar = delaKant(a, b, tak);
+          for (let i = 0; i + 1 < delar.length; i++) {
+            const p = delar[i] as [number, number];
+            const q = delar[i + 1] as [number, number];
+            const yp = topp(p[0], p[1]);
+            const yq = topp(q[0], q[1]);
+            const base = pos.length / 3;
+            pos.push(p[0], h.yFot, p[1], q[0], h.yFot, q[1], q[0], yq, q[1], p[0], yp, p[1]);
+            for (let c = 0; c < 4; c++) nor.push(nx, 0, nz);
+            ind.push(base, base + 1, base + 2, base, base + 2, base + 3);
+            triHus.push(hi, hi);
+            kanter.push(p[0], yp, p[1], q[0], yq, q[1]);
+            kanter.push(p[0], h.yFot, p[1], q[0], h.yFot, q[1]);
+          }
+          kanter.push(a[0], h.yFot, a[1], a[0], topp(a[0], a[1]), a[1]);
+        }
+      }
+      for (const t of takTrianglar(h.ringar, tak)) {
+        const [p0, p1, p2] = t as [[number, number, number], [number, number, number], [number, number, number]];
+        const ux = p1[0] - p0[0];
+        const uy = p1[1] - p0[1];
+        const uz = p1[2] - p0[2];
+        const vx = p2[0] - p0[0];
+        const vy = p2[1] - p0[1];
+        const vz = p2[2] - p0[2];
+        let nx = uy * vz - uz * vy;
+        let ny = uz * vx - ux * vz;
+        let nz = ux * vy - uy * vx;
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        const tecken = ny < 0 ? -1 : 1; // normalen pekar uppåt
+        nx = (tecken * nx) / nl;
+        ny = (tecken * ny) / nl;
+        nz = (tecken * nz) / nl;
+        const base = pos.length / 3;
+        for (const p of t) {
+          pos.push(p[0], fot + p[1], p[2]);
+          nor.push(nx, ny, nz);
+        }
+        ind.push(base, base + 1, base + 2);
+        triHus.push(hi);
+      }
+      return;
+    }
     h.ringar.forEach((ring) => {
       const n = ring.length;
       if (n < 3) return;

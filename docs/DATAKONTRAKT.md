@@ -319,7 +319,7 @@ Bas + diff, gemensamt för alla moduler (vatten, luft, buller, dagsljus). Kod: `
 
 Tillämpning på K1 v2 (`karna.geometri.tillampa`): `byggnads_id` är `byggnad_id` i `byggnader.gpkg` (ett id som
 finns i ingen ruta i basen ger fel; ett id som bara finns i vissa rutor hoppas över i de andra). `byggnad_ny` kräver
-`hojd_m` (över mark) eller `tak_rh2000`, inte entré; id = `andring_id`; valfria `takform`, `andamal`, `vaningar`.
+`hojd_m` (över mark) eller `tak_rh2000`, inte entré; id = `andring_id`; valfria `takform`, `andamal`, `vaningar`. Ritverktyget (R6) erbjuder `platt`, `sadel`, `pulpet` och `mansard` (visas i 3D; `hojd_m` är höjden till nocken; sadel och mansard har nocken längs längdaxeln, pulpet faller mot söder; inga nya fält).
 `byggnad_hojd` tar exakt en av `hojd_m` (ny höjd över mark), `tak_rh2000` eller `delta_m` (±). `byggnad_bort` tar
 valfritt `markslag` (K1-kod för marken efter rivningen; annars närmaste granncellens). `vegetation` sätter
 vegetationshöjden över mark (0 tar bort) i polygonen. Alla tre ändringstyperna ger fel på en v1-ruta.
@@ -1289,6 +1289,10 @@ Koordinater i EPSG:3011, höjder RH 2000, enheter m, m², m³. Högst tre fynd s
 *djupare* om djupet ökat med minst `min_okning_m`; den redovisas om en cell med ökat djup ligger inom `band_m` från lappens kant (båda sidor). Samma indata ger samma lista (sorterad på tillkommande volym).
 
 **R4 (byggt):** K9 `markhojd` har `lutning`, `delta_m` och `slant`; K3 `HojdYta` har `lutning`, `delta_m`, `slant_forhallande`, `slant_bredd_m`, `slant_markslag` (se K3 och K9). Lappens yta i kontrollen är polygonerna plus de celler vars höjd ändrats, så att släntens zon räknas som lapp (band och `avstand_till_kant_m` mäts från släntens yttre kant). Själva svaret `floden-skarvkontroll/v1` är oförändrat. K50 `floden-ritlager/v1` (ritlager) är byggt (R2, nedan).
+
+**R5 (byggt, additivt):** (1) Varje fynd i `skarvar.fynd` har valfria `omrade` (GeoJSON `Polygon`/`MultiPolygon` i EPSG:3011, sänkans yttre kant; för sänkor över 20 000 celler det konvexa höljet) så att klienten kan rita sänkan som yta; äldre läsare ignorerar fältet. (2) `validera` räknar nu även `brytlinje_ny`, `brytlinje_bort` och `oppning_ny` i lappen, så ett utlopp syns i kontrollen. (3) Nytt anrop `POST /api/kartverktyg/<projekt>/skarvatgard` (roll utredare, samma kropp som `validera`) svarar `floden-skarvatgard/v1`:
+`{"kontrakt", "fore": <skarvar>, "atgard": null | {"slag": "slant"|"utlopp"|"kombination", "text", "steg": [...], "mal_id", "andra": [K9-ändringar som ersätter], "nya": [K9-ändringar som läggs till], "efter": <skarvar>, "loser_allt": bool}, "skal": text|null, "skarvar": <skarvar för förslaget>}`.
+Förslaget är deterministiskt: slänt 1:3, 1:5, 1:10 på den största ytan som angränsar till fyndet, därefter ett utlopp (passage, `oppning_ny`, 1 m bred, sänkt till sänkans botten, genom överfallet, 2 m förbi kanten), upp till tre rundor; varje kandidat verifieras genom att kontrollen körs om (`efter`). Klienten tillämpar åtgärden först efter bekräftelse. Ingen ändring av K9.
 
 ## K50 – Ritlager `floden-ritlager/v1` (v1)
 

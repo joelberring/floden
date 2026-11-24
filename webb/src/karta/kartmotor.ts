@@ -14,6 +14,7 @@ import type { Utbredning } from "../fragor-typer";
 import { swerefTillWgs84, wgs84TillSweref } from "../sweref";
 import type { Punkt, Ring } from "./geom";
 import { overfallTillGeoJson, MAT_I_FALT, type OverfallPunkt } from "./overfall";
+import type { SkarvFigurer } from "./skarv";
 import type { Pekare } from "./ritverktyg";
 
 export type RasterKalla =
@@ -99,12 +100,18 @@ const BYGGNADER = "byggnader";
 const RUTOR = "rutor";
 const RIT = "rit";
 const OVERFALL = "overfall";
+const SKARV = "skarv";
 // Lagerordning ovanför rasterlagren, nerifrån.
 const OVERLAGER = [
   "byggnader-fyll",
   "byggnader-kant",
   "rutor-linje",
   "overfall-punkter",
+  "skarv-yta-fyll",
+  "skarv-yta-linje",
+  "skarv-pil",
+  "skarv-spets",
+  "skarv-punkt",
   "rit-hus-fyll",
   "rit-hus-kant",
   "rit-bort-kant",
@@ -133,6 +140,10 @@ export class Kartmotor {
   private rit: RitVy = TOM_RITVY;
   private overfall: OverfallPunkt[] = [];
   private overfallPopup: maplibregl.Popup | null = null;
+  private skarv: SkarvFigurer | null = null;
+  private skarvForaldrad = false;
+  private skarvMarkorer: maplibregl.Marker[] = [];
+  private skarvPopup: maplibregl.Popup | null = null;
   private lyssnare: PekarLyssnare | null = null;
   private dragPan = true;
   private readonly slappLyssnare: () => void;
@@ -239,6 +250,8 @@ export class Kartmotor {
     window.removeEventListener("blur", this.slappLyssnare);
     this.karta.remove();
     this.overfallPopup?.remove();
+    this.skarvPopup?.remove();
+    for (const m of this.skarvMarkorer) m.remove();
     this.notisEl.remove();
     this.etikettEl.remove();
   }
@@ -301,7 +314,7 @@ export class Kartmotor {
 
   private byggOverlager(): void {
     const k = this.karta;
-    for (const s of [BYGGNADER, RUTOR, OVERFALL, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
+    for (const s of [BYGGNADER, RUTOR, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -328,6 +341,16 @@ export class Kartmotor {
       type: "circle",
       source: OVERFALL,
       paint: { "circle-radius": 7, "circle-color": "#c2410c", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 },
+    });
+    k.addLayer({ id: "skarv-yta-fyll", type: "fill", source: `${SKARV}-yta`, paint: { "fill-color": "#1565c0", "fill-opacity": 0.38 } });
+    k.addLayer({ id: "skarv-yta-linje", type: "line", source: `${SKARV}-yta`, paint: { "line-color": "#0d47a1", "line-width": 2 } });
+    k.addLayer({ id: "skarv-pil", type: "line", source: `${SKARV}-pil`, paint: { "line-color": "#c2410c", "line-width": 3 } });
+    k.addLayer({ id: "skarv-spets", type: "fill", source: `${SKARV}-spets`, paint: { "fill-color": "#c2410c", "fill-opacity": 1 } });
+    k.addLayer({
+      id: "skarv-punkt",
+      type: "circle",
+      source: `${SKARV}-punkt`,
+      paint: { "circle-radius": 5, "circle-color": "#0d47a1", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 },
     });
     k.addLayer({
       id: "rit-hus-fyll",
@@ -419,6 +442,52 @@ export class Kartmotor {
     this.nar(() => this.synkaOverlager());
   }
 
+  /** Skarvkontrollens fynd (R5): sänkans yta, pil till överfallet och en numrerad punkt per fynd. `foraldrad` tonar ner dem medan kontrollen räknas om. */
+  settSkarv(f: SkarvFigurer | null, foraldrad = false): void {
+    this.skarv = f;
+    this.skarvForaldrad = foraldrad;
+    this.nar(() => this.synkaSkarv());
+  }
+
+  private synkaSkarv(): void {
+    if (!this.klar || this.slut) return;
+    const k = this.karta;
+    const f = this.skarv;
+    const fc = (features: Fc["features"]): Fc => ({ type: "FeatureCollection", features });
+    this.satt(`${SKARV}-yta`, fc((f?.ytor ?? []).map((y) => ({ type: "Feature", properties: { nr: y.nr }, geometry: { type: "Polygon", coordinates: [llRing(y.ring)] } }))));
+    this.satt(`${SKARV}-pil`, fc((f?.pilar ?? []).map((p) => ({ type: "Feature", properties: { nr: p.nr }, geometry: { type: "LineString", coordinates: p.linje.map(ll) } }))));
+    this.satt(`${SKARV}-spets`, fc((f?.pilar ?? []).filter((p) => p.spets.length === 3).map((p) => ({ type: "Feature", properties: { nr: p.nr }, geometry: { type: "Polygon", coordinates: [llRing(p.spets)] } }))));
+    this.satt(`${SKARV}-punkt`, fc((f?.punkter ?? []).map((p) => ({ type: "Feature", properties: { nr: p.nr, text: p.text }, geometry: { type: "Point", coordinates: ll(p.p) } }))));
+    const ton = this.skarvForaldrad ? 0.35 : 1;
+    k.setPaintProperty("skarv-yta-fyll", "fill-opacity", 0.38 * ton);
+    k.setPaintProperty("skarv-yta-linje", "line-opacity", ton);
+    k.setPaintProperty("skarv-pil", "line-opacity", ton);
+    k.setPaintProperty("skarv-spets", "fill-opacity", ton);
+    k.setPaintProperty("skarv-punkt", "circle-opacity", ton);
+    // Numren är DOM-markörer (kartan har inga teckensnitt för text i lagren); de byts bara när fynden ändras.
+    const nyckel = JSON.stringify((f?.punkter ?? []).map((p) => [p.nr, p.p.x, p.p.y]));
+    if (nyckel !== this.skarvMarkorNyckel) {
+      this.skarvMarkorNyckel = nyckel;
+      for (const m of this.skarvMarkorer) m.remove();
+      this.skarvMarkorer = (f?.punkter ?? []).map((p) => {
+        const el = document.createElement("div");
+        el.className = "skarv-markor";
+        el.textContent = String(p.nr);
+        el.title = p.text;
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          this.skarvPopup?.remove();
+          const ruta = document.createElement("div");
+          ruta.textContent = p.text;
+          this.skarvPopup = new maplibregl.Popup({ closeButton: true, closeOnClick: true, offset: 14, className: "overfall-popup" }).setLngLat(ll(p.p)).setDOMContent(ruta).addTo(this.karta);
+        });
+        return new maplibregl.Marker({ element: el, offset: [12, -12] }).setLngLat(ll(p.p)).addTo(k);
+      });
+    }
+    for (const m of this.skarvMarkorer) m.getElement().style.opacity = String(ton);
+  }
+  private skarvMarkorNyckel = "";
+
   /** Tänder eller släcker överfallslagret (lagret "Känsliga överfall" i lagerpanelen). */
   settOverfallStil(stil: { synlig: boolean; opacitet: number }): void {
     this.nar(() => {
@@ -484,6 +553,7 @@ export class Kartmotor {
       })),
     });
     this.satt(OVERFALL, overfallTillGeoJson(this.overfall));
+    this.synkaSkarv();
     const r = this.rit;
     this.satt(`${RIT}-hus`, {
       type: "FeatureCollection",

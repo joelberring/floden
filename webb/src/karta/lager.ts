@@ -30,7 +30,7 @@ export interface EgenVy {
   namn: string;
   /** Knapptext i panelen när vyn är av respektive på. */
   knapp?: { av: string; pa: string };
-  montera(yta: HTMLElement): { avmontera(): void; uppdatera?(): void };
+  montera(yta: HTMLElement): { avmontera(): void; uppdatera?(): void; uppdateraPlan?(): void };
 }
 
 /** Vilken vy ett lager gäller för; utan värde gäller det båda. */

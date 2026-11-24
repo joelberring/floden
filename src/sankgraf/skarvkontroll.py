@@ -86,9 +86,11 @@ class SkarvFynd:
     avstand_till_kant_m: float
     """Kortaste avståndet från en cell med ökat djup till lappens kant."""
     atgard: str
+    omrade: dict[str, Any] | None = None
+    """Sänkans yttre kant som GeoJSON (Polygon eller MultiPolygon, EPSG:3011, 0,1 m), för kartan."""
 
     def som_dict(self) -> dict[str, Any]:
-        return {
+        ut: dict[str, Any] = {
             "nr": self.nr,
             "typ": self.typ,
             "x_m": _r(self.x_m, 2),
@@ -105,6 +107,9 @@ class SkarvFynd:
             "avstand_till_kant_m": _r(self.avstand_till_kant_m, 1),
             "atgard": self.atgard,
         }
+        if self.omrade is not None:
+            ut["omrade"] = self.omrade
+        return ut
 
     def text(self) -> str:
         """Meningen som visas för användaren (decimalkomma, enheter)."""
@@ -322,6 +327,7 @@ def kontrollera_skarvar(
             tillkommande_volym_m3=tillkommande,
             avstand_till_kant_m=avst,
             atgard=_atgard(float(dj.max()), float(lov.overfall_rh2000), ox, oy, avst),
+            omrade=_omrade(rr[dj >= min_djup_m], kk[dj >= min_djup_m], geo),
         )
         kandidater.append((-tillkommande, y, x, fynd, ar_ny))
     kandidater.sort(key=lambda t: (round(t[0], 9), round(t[1], 6), round(t[2], 6)))
@@ -343,6 +349,45 @@ def _cell_xy(geo: GeoTransformInfo, rad: int, kol: int) -> tuple[float, float]:
     x = geo.x_min + (kol + 0.5) * float(geo.pixelstorlek_x)
     y = geo.y_max - (rad + 0.5) * float(geo.pixelstorlek_y)
     return float(x), float(y)
+
+
+MAX_CELLER_OMRADE = 20_000
+"""Över så många celler ersätts en sänkas kant med cellcentras konvexa hölje (snabbare)."""
+
+
+def _omrade(
+    rad: NDArray[np.int64], kol: NDArray[np.int64], geo: GeoTransformInfo
+) -> dict[str, Any] | None:
+    """Sänkans yttre kant (cellerna som en yta, utan hål, förenklad till en cell) som GeoJSON."""
+    import shapely
+    from shapely.geometry import MultiPoint
+
+    if rad.size == 0:
+        return None
+    dx = float(geo.pixelstorlek_x)
+    dy = float(geo.pixelstorlek_y)
+    x0 = geo.x_min + kol.astype(np.float64) * dx
+    y1 = geo.y_max - rad.astype(np.float64) * dy
+    if rad.size > MAX_CELLER_OMRADE:
+        yta = MultiPoint(np.column_stack([x0 + dx / 2, y1 - dy / 2])).convex_hull.buffer(
+            0.5 * max(dx, dy), cap_style="square"
+        )
+    else:
+        yta = shapely.union_all(shapely.box(x0, y1 - dy, x0 + dx, y1))
+    yta = yta.simplify(max(dx, dy))
+    if yta.is_empty:
+        return None
+    delar = [yta] if yta.geom_type == "Polygon" else list(getattr(yta, "geoms", []))
+    ringar = [
+        [[round(float(x), 1), round(float(y), 1)] for x, y in p.exterior.coords]
+        for p in sorted(delar, key=lambda p: (-p.area, p.bounds))
+        if p.geom_type == "Polygon" and not p.is_empty
+    ]
+    if not ringar:
+        return None
+    if len(ringar) == 1:
+        return {"type": "Polygon", "coordinates": [ringar[0]]}
+    return {"type": "MultiPolygon", "coordinates": [[r] for r in ringar]}
 
 
 def _atgard(djup: float, overfall: float, ox: float, oy: float, avstand: float) -> str:

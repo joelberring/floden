@@ -459,6 +459,31 @@ class KartverktygTjanst:
             "ritlager": ritdok,
         }
 
+    def skarvatgard(self, projekt: str, kropp: Mapping[str, Any]) -> dict[str, Any]:
+        """Föreslår och verifierar en åtgärd för skarvkontrollens fynd (R5, `sankgraf.skarvatgard`).
+
+        Tar samma kropp som `validera`. Förslaget (slänt, sedan utlopp) tillämpas på K9-ändringarna
+        och skarvkontrollen körs om för varje förslag; svaret är `floden-skarvatgard/v1`. Inget
+        sparas eller ändras: klienten tillämpar förslaget efter bekräftelse och kontrollerar igen.
+        """
+        from sankgraf.skarvatgard import foresla
+
+        v = self.validera(projekt, kropp)
+        if not v["giltig"]:
+            raise _fel("Förslaget har fel som måste rättas först: " + " ".join(v["fel"]))
+        mallar = self._kravs_projekt(projekt)
+
+        def kor(lista: list[dict[str, Any]]) -> dict[str, Any] | None:
+            try:
+                k9 = self._k9_per_bas(mallar, self._normalisera(lista), "skarvatgard")
+            except (RitatFel, ScenarioFel):
+                return {"antal": 10**9, "tillkommande_volym_m3": float("inf"), "fynd": []}
+            return self._skarvar(mallar, k9)[1]
+
+        ut = foresla(v["andringar"], v["skarvar"], kor)
+        ut["skarvar"] = v["skarvar"]
+        return ut
+
     def _skarvar(
         self, mallar: Mapping[str, Mall], k9: Mapping[str, tuple[Planscenario, list[str]]]
     ) -> tuple[list[str], dict[str, Any] | None]:
@@ -484,7 +509,13 @@ class KartverktygTjanst:
         mappar = [r.mapp for r in mall.rutor]
         if valj_k1_version(mappar) < 2:
             return [], None
-        lapp = k9_till_lapp(mark, Planscenario("skarv", sc.bas_recept, mark))
+        # Brytlinjer och öppningar (R3) räknas med: ett utlopp (R5) ska synas i kontrollen, och en
+        # mur kan ändra vilka sänkor som uppstår. Lappens yta för kontrollen är fortfarande bara
+        # markytorna (polygonerna nedan).
+        vektor = tuple(
+            a for a in sc.andringar if a.typ in ("brytlinje_ny", "brytlinje_bort", "oppning_ny")
+        )
+        lapp = k9_till_lapp(mark + vektor, Planscenario("skarv", sc.bas_recept, mark + vektor))
         polygoner = [
             tuple((float(x), float(y)) for x, y in (a.geometri or {})["coordinates"][0][:-1])
             for a in mark
