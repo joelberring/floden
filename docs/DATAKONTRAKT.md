@@ -206,6 +206,22 @@ Negativa värden i `cell_till_nod.tif` är markörer, inte nod-id.
 
 Gatusektioner definieras i `config.toml` under `[sektioner]` (kantsten, tvärfall, bredder, brunnsavstånd).
 
+**`hojdytor` (tillägg R4, 2026-11-24, additivt; K3 förblir v1).** En höjdyta (`HojdYta`) har som förut `yta_id`, `polygon`, `hojd_rh2000`, `landxml`,
+`koordinat_ordning`, `osakerhet_m`, `markslag`. Nya valfria fält (skrivs i `lapp.json` bara när de används, så äldre lappar får oförändrad hash):
+
+| Fält | Betydelse |
+| --- | --- |
+| `lutning` | Lutande yta i stället för `hojd_rh2000`; exakt en form: `{"punkter": [[E,N,z],...]}` (minst 3, plan i minsta kvadrat), `{"a": [E,N,z], "b": [E,N,z]}` (plan som stiger/faller från a till b, inget tvärfall), `{"punkt": [E,N,z], "fall": 0.02, "riktning_grader": 190}` (fall = m/m nedåt i riktningen, azimut medurs från norr, förval 0) eller `{"hojdlinje_a": [[E,N,z],...], "hojdlinje_b": [[E,N,z],...]}` (två höjdlinjer; z interpoleras efter avståndet till linjerna) |
+| `delta_m` | Nivån är basens höjd plus `delta_m` (±) i stället för `hojd_rh2000` |
+| `slant_forhallande` | Slänt utanför polygonen, förhållande 1:n (n > 0): bredd W = abs(Δ) · n där Δ = ytans nivå − basens nivå vid närmaste kantpunkt |
+| `slant_bredd_m` | Slänt med fast bredd W (alternativ till `slant_forhallande`, inte båda) |
+| `slant_markslag` | Markslag på slänten (förval 4, gräs); kräver slänt |
+
+Exakt ett av `hojd_rh2000`, `lutning`, `delta_m` (eller `landxml`, som inte kan kombineras med de nya fälten). **En yta utan `lutning`, `delta_m` och slänt tillämpas exakt som förut**
+(hård kant, celler vars centrum ligger i polygonen; samma raster byte för byte). Med något av de nya fälten används exakt kantavstånd (`lapp.markniva`): utan slänt får kantceller höjden
+`f · z_ny + (1 − f) · z_bas` med f = exakt täckt andel av cellen (ingen halvcellstrappa); med slänt är höjden inne i polygonen ytans och utanför `z_bas + Δ(p) · (1 − d / W(p))` för
+avståndet d < W(p) från närmaste kantpunkt p (rak slänt med lutningen 1/n). Slänten hoppar över byggnadsceller och celler utan höjd, och ger cellerna `osakerhet_m` och markslag 4.
+
 ## K4 – Regn (v1)
 
 - **Punktregn:** CSV med `tid_s, intensitet_mm_h`, samma över hela området.
@@ -299,7 +315,7 @@ Bas + diff, gemensamt för alla moduler (vatten, luft, buller, dagsljus). Kod: `
 ```
 
 Ändringstyper: `byggnad_ny`, `byggnad_bort` (`byggnads_id`), `byggnad_hojd` (`byggnads_id`, `hojd_m`),
-`markhojd`, `markslag` (`kod` enligt K1), `gata`, `magasin` (`volym_m3`), `vegetation` (`hojd_m`).
+`markhojd` (polygon + exakt en av `niva_rh2000`, `lutning`, `delta_m` eller `landxml`, och valfritt `slant`, se nedan), `markslag` (`kod` enligt K1), `gata`, `magasin` (`volym_m3`), `vegetation` (`hojd_m`).
 
 Tillämpning på K1 v2 (`karna.geometri.tillampa`): `byggnads_id` är `byggnad_id` i `byggnader.gpkg` (ett id som
 finns i ingen ruta i basen ger fel; ett id som bara finns i vissa rutor hoppas över i de andra). `byggnad_ny` kräver
@@ -310,6 +326,12 @@ vegetationshöjden över mark (0 tar bort) i polygonen. Alla tre ändringstypern
 Geometri som GeoJSON i EPSG:3011. En ändring med samma `andring_id` som i föräldern ersätter den.
 En fil vars `nyckel` inte stämmer med innehållet avvisas. K3 (projektlapp) är vattnets tillämpning
 av ett scenario.
+
+**`markhojd` (tillägg R4, 2026-11-24, additivt; K9 förblir v1).** `egenskaper` får, utöver `niva_rh2000`, `landxml`, `markslag` och `osakerhet_m`:
+`lutning` (formerna i K3 ovan), `delta_m` (höj/sänk relativt befintlig mark) och `slant`: `{"forhallande": 3.0}` (1:3) eller `{"bredd_m": 4.0}`, valfritt `"markslag": 4`.
+Exakt en av `niva_rh2000`, `lutning`, `delta_m` (annars `ScenarioFel`); `landxml` kan inte kombineras med `lutning`, `delta_m` eller `slant`. Översättningen till K3 är
+`karna.k9_till_k1.markhojd_till_hojdyta` (`slant.forhallande` → `slant_forhallande`, `slant.bredd_m` → `slant_bredd_m`, `slant.markslag` → `slant_markslag`). Ett `markhojd` utan de nya
+nycklarna ger samma K3-lapp, samma nyckel och samma raster som förut. `delta_m` på `markhojd` gav tidigare fel; det tillämpas nu på K1-rutor (K1 v1 och v2).
 
 ## K10 – Utredningsfråga (v1)
 
@@ -435,7 +457,7 @@ nycklarna för de jobb man beror på.
 (`karna.k9_till_k1`; `vatten.scenario_lapp` är ett tunt lager ovanpå samma funktion). Alla `bas_recept` i K9 måste finnas
 bland basrutornas `recept.json`, annars fel. På K1 v2-rutor tillämpas `byggnad_ny`,
 `byggnad_bort`, `byggnad_hojd` och `vegetation` av `karna.geometri` (se K9); på v1-rutor ger de tre senare
-och `markhojd` med `delta_m` fel. Nyckeln beror på de utplattade
+fel. Nyckeln beror på de utplattade
 ändringarna, inte på hur kedjan är uppdelad.
 
 **Lappnyckel** (scenario med lapp, per ruta) = sha256 över basrutans hash, `lapp.json`,
@@ -1260,7 +1282,7 @@ Koordinater i EPSG:3011, höjder RH 2000, enheter m, m², m³. Högst tre fynd s
 **Regel.** Fyllnadsdjupet i en cell är lövsänkans överfall minus markhöjden (K2, `sankgraf.hierarki.bygg_sankgraf`), före och efter. En sänka är *ny* om största djup före är under `min_djup_m` och efter minst så stort,
 *djupare* om djupet ökat med minst `min_okning_m`; den redovisas om en cell med ökat djup ligger inom `band_m` från lappens kant (båda sidor). Samma indata ger samma lista (sorterad på tillkommande volym).
 
-**Planerade tillägg (R4, inte byggda):** K9 `markhojd` får valfria `lutning` och `slant`; K3 `HojdYta` får `lutning` och `slant_forhallande`. K50 `floden-ritlager/v1` (ritlager) är byggt (R2, nedan).
+**R4 (byggt):** K9 `markhojd` har `lutning`, `delta_m` och `slant`; K3 `HojdYta` har `lutning`, `delta_m`, `slant_forhallande`, `slant_bredd_m`, `slant_markslag` (se K3 och K9). Lappens yta i kontrollen är polygonerna plus de celler vars höjd ändrats, så att släntens zon räknas som lapp (band och `avstand_till_kant_m` mäts från släntens yttre kant). Själva svaret `floden-skarvkontroll/v1` är oförändrat. K50 `floden-ritlager/v1` (ritlager) är byggt (R2, nedan).
 
 ## K50 – Ritlager `floden-ritlager/v1` (v1)
 

@@ -1,6 +1,6 @@
 # Ritverktyg för marken: generella lager, 3D-hus, mark i nivåer och skarvkontroll
 
-Status: förslag för Joel (2026-11-24), del 1 av uppdraget. R1 (skarvkontrollen) och R2 (lagermodellen, K50) är byggda och testade.
+Status: förslag för Joel (2026-11-24), del 1 av uppdraget. R1 (skarvkontrollen), R2 (lagermodellen, K50) och R4 (mark i nivåer i kärnan: lutande yta, `delta_m`, exakt kant, slänt) är byggda och testade.
 Joels önskan: kartverktyget ska bli mer generellt (lagerhanteringen i O-Tid är för orienteringsspecifik, linjehanteringen är bra),
 kunna ha 3D-objekt som hus och hantera mark i nivåer, särskilt i mötet mellan baskarta och ny mark där "skarvar" lätt skapar sänkor
 där vatten samlas.
@@ -64,7 +64,7 @@ behålla är lagerflaggorna (tänd, låst, tonad), ordningen, fällbara grupper 
 | Dokument | `plandok.ts`: `PlanDok` med `ny`/`hojd`/`bort`, historik, `K9Andring` (`byggnad_ny`, `byggnad_hojd`, `byggnad_bort`) | Inga markändringar. |
 | Lager | `karta/lager.ts` och `lagerpanel.ts`: grupperna Underlag, Geometri, Planförslag, Resultat; synlighet, opacitet, ordning, `egenVy` (3D), `visning` 2d/3d | Redan generell nog som panel, men lagren är *visningslager* (vad som syns). Ett **ritlager** med roll saknas: hus är ett lager "Planförslag", resten finns inte. |
 | Kontroll | `POST /api/kartverktyg/<projekt>/validera` (`src/webb/kartverktyg.py`, `karna/ritat.py::kontrollera_andringar`, `RITAD_TYPER`): giltig form, höjd, utbredning, K9-kontroll, `_instangt_vatten` (information om slutsänkor) | Ingen kontroll av mark. **Tillagt i R1:** `markhojd` och `skarvar`. |
-| K9 | `markhojd` finns som ändringstyp (polygon + `niva_rh2000` eller `landxml`; `delta_m` stöds inte än) och översätts till K3 `HojdYta` (`karna/k9_till_k1.py`, `lapp/tillampa.py`) | `HojdYta` sätter en **konstant nivå, hård kant** i polygonen: det är exakt det som ger skarvar. Ingen lutning, slänt eller utjämning. |
+| K9 | `markhojd` finns som ändringstyp (polygon + `niva_rh2000` eller `landxml`; R4 la till `lutning`, `delta_m` och `slant`) och översätts till K3 `HojdYta` (`karna/k9_till_k1.py`, `lapp/tillampa.py`) | `HojdYta` sätter en **konstant nivå, hård kant** i polygonen: det är exakt det som ger skarvar. Ingen lutning, slänt eller utjämning (före R4; R4 la till dem som valfria fält). |
 | K1 brytlinjer | `brytlinjer.gpkg` med `typ` (kantsten, mur, stödmur, staket, bankkant) och `hojd_m`; sänkgrafen läser dem som kantbarriärer (`_berakna_kantbarriarer`) | Går inte att rita; bara härledda. |
 | 3D | `webb/src/vy3d/` (Three.js, `extrudera` av hus, terrängnät, vattenyta), `webb/src/kartsida3d.ts` (ritat förslag live), `src/webb/vy3d.py` (`/api/3d/`, rutvis) | Byggnader som lådor med platt tak; ingen takform. Marken visas inte som förändrad av förslaget. |
 
@@ -133,8 +133,9 @@ Förslaget:
 | Slänt | `slant`: `{"forhallande": 3.0}` (1:3) eller `{"bredd_m": 4.0}` | Övergångszonen mellan ytan och basen, se 6.3. |
 | LandXML/TIN | `landxml` (finns) | Detaljprojekterad yta ur CAD. |
 
-`delta_m` (ändring relativt basen) är ett särskilt fall: nivån = basens z + delta, och är bara meningsfull med slänt, eftersom den ger hård kant annars. Det stöds i dag inte i K1-materialiseringen och
-tas upp i R5.
+`delta_m` (ändring relativt basen) är ett särskilt fall: nivån = basens z + delta; det är mest meningsfullt med slänt (annars hård kant med konstant vägg). **Byggt i R4**
+(`lapp.markniva`, K3 `HojdYta` och K9 `markhojd`): fälten heter `lutning` (fyra former: `punkter`, `a`+`b`, `punkt`+`fall`+`riktning_grader`, `hojdlinje_a`+`hojdlinje_b`), `delta_m` och
+`slant` (`forhallande` 1:n eller `bredd_m`, ev. `markslag`; K3: `slant_forhallande`, `slant_bredd_m`, `slant_markslag`). Se `docs/DATAKONTRAKT.md` K3 och K9.
 
 ### 6.2 Brytlinjer, murar och trappsteg
 
@@ -145,7 +146,7 @@ längs trappan. Att rita en brytlinje längs en markyta med "följ kant" ger exa
 ### 6.3 Hur den nya marken sätts ihop med befintlig markmodell
 
 Dagens `HojdYta` skriver `z = niva` i alla celler vars centrum ligger i polygonen (`_polygon_mask`). Det ger två problem: (1) en trappa av halva celler längs en
-sned kant, (2) en lodrät kant i terrängen när nivån skiljer sig från basen. Båda är skarvar. Förslag (R4):
+sned kant, (2) en lodrät kant i terrängen när nivån skiljer sig från basen. Båda är skarvar. Förslag (R4, byggt):
 
 1. **Kantmått utan trappa.** Beräkna kantavståndet med polygonens *exakta* geometri vid cellcentrum (signerat avstånd, `shapely`), inte med celltillhörighet. Celler som polygonen
    delvis täcker får `z = f * z_ny + (1 - f) * z_bas` med f = täckt andel (vikt per cell), så att ytan inte hoppar en halv cell i taget.
@@ -156,6 +157,11 @@ sned kant, (2) en lodrät kant i terrängen när nivån skiljer sig från basen.
    Därför kontrolleras resultatet (avsnitt 7) och användaren får förslaget "ge ytan fall mot överfallet" eller "lägg ett utlopp" (en öppning i kanten).
 4. **Osäkerhet och markslag.** `osakerhet_m` och `markslag` gäller ytan; slänten får `osakerhet_m` som ytan och markslaget gräs (4) om inget annat anges.
 5. **Reproducerbarhet.** Utjämningen är en deterministisk funktion av polygonen, nivåerna, förhållandet och basens recept; ingår i K9-nyckeln via `egenskaper`, ingen ny fil.
+6. **Utfall i R4 (byggt, `src/lapp/markniva.py`).** Punkt 1 gäller när ytan har `lutning`, `delta_m` eller slänt; med slänt är höjden kontinuerlig i läget, så täckningsvikten behövs
+   bara utan slänt. En yta utan de nya fälten tillämpas **oförändrat** (cellmask, hård kant; byte-för-byte samma raster, testat) så att befintliga scenarier och cache-nycklar inte ändras. Slänten
+   hoppar över byggnadsceller. LandXML kan inte kombineras med slänt än. Skarvkontrollen räknar släntens zon som lapp. **Vad slänten gör och inte gör:** den tar bort kanten och halvcellstrappan
+   (en snedställd, sänkt yta som med cellmask gav en ny sänka vid kanten ger ingen med exakt kant eller slänt), men en yta som ligger över marken tvärs över en vattenväg dämmer fortfarande med slänt; då
+   behövs fall eller utlopp (punkt 3). En slänt kring en sänkt yta (Δ < 0) sänker marken utanför ytan och kan öka den tillkommande volymen något (demokvarteret, flera fall).
 
 ## 7. Skarvkontroll (byggd, R1)
 
@@ -186,12 +192,12 @@ tidig varning, inte vattenberäkningen: dynamik, infiltration och ledningar ing�
 | **R1** | Skarvkontrollen i Python, `markhojd` i `validera`, tester | S–M (klart) | G1, K9 | `validera`-svar får `skarvar`; `markhojd` tillåts i kartverktygets kontroll; `floden-skarvkontroll/v1` |
 | **R2 (klar 2026-11-24)** | Lagermodell: ritlager med roll, geometri, stil, flaggor, källa, dataklass; ritlagerpanelen i steg 2; mallar (`data/ritlager/standard.toml`); lagren sparas **i förslagsfilen** (`ritlager`, inte en separat `ritlager.json`) | M | R1 (för att rollen `mark` ska finnas) | K50 `floden-ritlager/v1` (ny, ändrar inte K9) |
 | **R3** | Linjer och ytor i klienten: rita linje/yta med z, fäst mot linjer och kanter, följ kant, klipp, slå ihop, vänd, förenkla, tangentbord (X G V), fingerräckvidd; brytlinjer som K9 `brytlinje_ny`/`brytlinje_bort` och `oppning_ny` | L | R2 | K9: nya ändringstyper `brytlinje_ny`, `oppning_ny` (additivt; K9 v1 behålls); K1 oförändrad |
-| **R4** | Mark i nivåer i kärnan: lutande yta, slänt i dagsljus, exakt kantavstånd med täckningsvikt (ingen trappa), `delta_m`; ersätter hård kant i `HojdYta` när `slant` anges | L | R1 | K9 `markhojd` får `lutning`, `slant`; K3 `HojdYta` får `lutning`, `slant_forhallande` (valfria fält, K3 v1 läses oförändrat) |
+| **R4 (klar 2026-11-24)** | Mark i nivåer i kärnan: lutande yta, slänt i dagsljus, exakt kantavstånd med täckningsvikt (ingen trappa), `delta_m`; ersätter hård kant i `HojdYta` när något av de nya fälten anges | L | R1 | K9 `markhojd` får `lutning`, `delta_m`, `slant`; K3 `HojdYta` får `lutning`, `delta_m`, `slant_forhallande`, `slant_bredd_m`, `slant_markslag` (valfria fält, K3 v1 läses oförändrat) |
 | **R5** | Skarvkontrollen i klienten: markerar fynden i kartan (punkt, yta, överfallspil), listar dem i steg 2, knappen "Jämna ut skarven" (föreslår slänt/utlopp, kör om kontrollen) | M | R1, R3, R4 | `skarvar.fynd` (finns); ev. `atgarder` additivt |
 | **R6** | 3D: takformer i `extrudera`, markytor och slänter som yta i 3D-vyn, brytlinjer som murar; förhandsvisning live | M–L | R3, R4 | Inget nytt kontrakt (visning); `/api/3d/` kan få förslagets mark |
 | **R7** | Pekskärm och tillgänglighet: håll för att flytta, fingerräckvidd, stora handtag, tangentbordsbindningar som kan ändras, verktygsrad som i U4 | S–M | R3 | – |
 
-Ordning: R1 (klar) -> R2 och R4 kan göras parallellt -> R3 -> R5 -> R6 -> R7. Första användbara leverans för Joels önskan är R1 + R4: ny mark med slänt och automatisk kontroll av skarven, även innan ritverktyget för linjer är klart (ytan kan då
+Ordning: R1 (klar) -> R2 och R4 kan göras parallellt -> R3 -> R5 -> R6 -> R7. Första användbara leverans för Joels önskan är R1 + R4 (båda klara i kärnan och API:t; klientens ritverktyg återstår i R3/R5): ny mark med slänt och automatisk kontroll av skarven, även innan ritverktyget för linjer är klart (ytan kan då
 läggas via K9 eller MCP `scenario_skapa`).
 
 ## 9. Källor och licens
