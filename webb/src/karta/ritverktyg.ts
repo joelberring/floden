@@ -19,9 +19,11 @@ import { avstand, btaUppskattning, sjalvkorsande, yta, type Punkt, type Ring } f
 import { traffAvstand, traffTest, type HusForm } from "./hit.ts";
 import type { PlanDok } from "./plandok.ts";
 import { formatera } from "../tal.ts";
-import { byggFastIndex, fastAt, fastPaStrale, fastRackvidd, lasVinkel, ringExtra, utkastExtra, vinkelRef, type FastIndex, type FastTraff } from "./snap.ts";
+import { arLinjeVerktyg, Linjeverktyg, type ExtraLinje, type LinjeVerktyg } from "./linjeverktyg.ts";
+import { FORVAL, bindningAv, kommandoFor, type Kommando, type Tangentkarta } from "./tangenter.ts";
+import { fastAt, fastPaStrale, fastRackvidd, lasVinkel, ringExtra, utkastExtra, vinkelRef, type FastIndex, type FastTraff } from "./snap.ts";
 
-export type Verktyg = "valj" | "hus" | "laggtill" | "tabort";
+export type Verktyg = "valj" | "hus" | "laggtill" | "tabort" | LinjeVerktyg;
 
 /** Förvald höjd för ett nytt hus (m) tills man anger en annan i höjdpanelen. */
 export const FORVALD_HOJD_M = 12;
@@ -65,14 +67,23 @@ export interface Miljo {
   meddela(m: Meddelande | null): void;
   /** Ett nytt hus har ritats klart (för att öppna höjdpanelen). */
   husSkapat?(id: string): void;
+  /** En ny linje eller yta har ritats klart (för att öppna egenskapspanelen). */
+  figurSkapad?(id: string): void;
 }
 
 /** Tangenterna (som O-Tids förval); visas i verktygsraden. */
 export const TANGENTER = {
   valj: "Q",
   hus: "W",
+  linje: "E",
+  yta: "⇧W",
   laggtill: "A",
   tabort: "S",
+  klipp: "X",
+  ihop: "G",
+  vand: "V",
+  forenkla: "⇧S",
+  foljkant: "F",
   fast: "T",
   ratVinkel: "R",
   angra: "Z",
@@ -88,6 +99,12 @@ export class Ritverktyg {
   verktyg: Verktyg = "valj";
   fastPa = true;
   ratVinkel = false;
+  /** Följ kant: nya punkter följer kanten som senaste punkten ligger på (tangent F, eller håll Skift). */
+  foljKant = false;
+  /** Linjer och ytor (R3). */
+  readonly linje: Linjeverktyg;
+  /** Tangentkartan (kan ändras av användaren; förval i tangenter.ts). */
+  tangentkarta: Tangentkarta = FORVAL;
   val: Val | null = null;
   utkast: Punkt[] = [];
   /** Pekarens punkt efter fäst och vinkellås (för förhandsvisning och nästa klick). */
@@ -99,17 +116,17 @@ export class Ritverktyg {
   dragRing: { id: string; ring: Ring } | null = null;
   private drag: Drag | null = null;
   private startFast: FastTraff | undefined;
-  private index: FastIndex | undefined;
-  private indexNr = -1;
   private readonly dok: PlanDok;
   private readonly bas: Map<string, BasByggnad>;
   private readonly miljo: Miljo;
   private lyssnare: Array<() => void> = [];
 
-  constructor(dok: PlanDok, bas: readonly BasByggnad[], miljo: Miljo) {
+  constructor(dok: PlanDok, bas: readonly BasByggnad[], miljo: Miljo, extraLinjer: readonly ExtraLinje[] = []) {
     this.dok = dok;
     this.bas = new Map(bas.map((b) => [b.id, b]));
     this.miljo = miljo;
+    this.linje = new Linjeverktyg(dok, this.bas, extraLinjer, miljo, () => ({ fastPa: this.fastPa, ratVinkel: this.ratVinkel, foljKant: this.foljKant }));
+    this.linje.vidAndring(() => this.signalera());
     dok.vidAndring(() => this.andrad());
   }
 
@@ -137,6 +154,8 @@ export class Ritverktyg {
   sattVerktyg(v: Verktyg): void {
     if (v === this.verktyg) return;
     this.avbrytUtkast();
+    this.linje.avbryt();
+    this.linje.avbrytDrag();
     this.drag = null;
     this.dragRing = null;
     this.verktyg = v;
@@ -152,6 +171,11 @@ export class Ritverktyg {
     this.signalera();
   }
 
+  vaxlaFoljKant(): void {
+    this.foljKant = !this.foljKant;
+    this.signalera();
+  }
+
   vaxlaRatVinkel(): void {
     this.ratVinkel = !this.ratVinkel;
     this.signalera();
@@ -159,6 +183,7 @@ export class Ritverktyg {
 
   markera(v: Val | null): void {
     this.val = v;
+    if (v && this.linje.val) this.linje.markera(null);
     this.signalera();
   }
 
@@ -183,6 +208,7 @@ export class Ritverktyg {
 
   /** Text vid pekaren medan man ritar: ytan med den här punkten som sista hörn. */
   ritText(): string | null {
+    if (arLinjeVerktyg(this.verktyg)) return this.linje.ritText(this.verktyg, (v) => fmt(v));
     if (this.verktyg !== "hus" || this.utkast.length < 2 || !this.mark) return null;
     const ring = [...this.utkast, this.mark];
     const a = yta(ring);
@@ -200,13 +226,7 @@ export class Ritverktyg {
   }
 
   private fastIndex(): FastIndex {
-    if (this.index && this.indexNr === this.dok.andringsNr) return this.index;
-    const objekt: Array<{ id: string; ringar: Ring[] }> = [];
-    for (const b of this.bas.values()) objekt.push({ id: `b:${b.id}`, ringar: [b.ring, ...b.hal] });
-    for (const h of this.dok.ny.values()) if (this.dok.arSynligt(h)) objekt.push({ id: `n:${h.id}`, ringar: [h.ring] }); // låsta lager går att fästa mot, dolda inte
-    this.index = byggFastIndex(objekt);
-    this.indexNr = this.dok.andringsNr;
-    return this.index;
+    return this.linje.fastIndex(); // byggnader, nya hus, figurer, brytlinjer och avgränsning
   }
 
   // ------------------------------------------------------------------ fäst och vinkel
@@ -252,6 +272,13 @@ export class Ritverktyg {
       this.dra(p, e);
       return;
     }
+    if (arLinjeVerktyg(this.verktyg) || this.linje.drar) {
+      this.linje.ror(this.verktyg, p, e);
+      this.mark = this.linje.mark;
+      this.fast = this.linje.fast;
+      this.lasLinje = this.linje.lasLinje;
+      return;
+    }
     if (this.verktyg === "hus") {
       this.mark = this.beräkna(p, e);
     } else {
@@ -266,6 +293,24 @@ export class Ritverktyg {
     if (this.verktyg === "hus") {
       this.klickaHus(p, e);
       return;
+    }
+    if (arLinjeVerktyg(this.verktyg)) {
+      this.linje.klick(this.verktyg, p, e);
+      this.mark = this.linje.mark;
+      this.fast = this.linje.fast;
+      this.lasLinje = this.linje.lasLinje;
+      if (this.linje.val) this.val = null;
+      if (this.verktyg === "linje" || this.verktyg === "yta") {
+        if (this.linje.val && this.linje.utkast.length === 0) this.sattVerktyg("valj");
+      }
+      return;
+    }
+    if (this.linje.val && (this.verktyg === "laggtill" || this.verktyg === "tabort" || (this.verktyg === "valj" && e.ctrl))) {
+      if (this.verktyg === "laggtill") {
+        if (this.linje.punktAtgard("laggtill", p)) return;
+      } else if (this.verktyg === "tabort") {
+        if (this.linje.punktAtgard("tabort", p)) return;
+      } else if (this.linje.punktAtgard("tabort", p) || this.linje.punktAtgard("laggtill", p)) return;
     }
     const tol = ATT_TRAFFA_PX * this.miljo.meterPerPx();
     const mpp = this.miljo.meterPerPx();
@@ -296,6 +341,12 @@ export class Ritverktyg {
 
   /** Markerar huset under punkten (nya hus före befintliga). Returnerar vad som markerades. */
   valjVid(p: Punkt, tolerans: number): Val | null {
+    if (this.linje.valjVid(p, tolerans)) {
+      this.val = null;
+      this.miljo.meddela(null);
+      this.signalera();
+      return null;
+    }
     const traffar = traffTest(this.husFormer(), p, tolerans);
     const forsta = traffar[0];
     if (!forsta) {
@@ -317,7 +368,7 @@ export class Ritverktyg {
     const skal = !l
       ? "Det finns inget byggnadslager. Lägg till ett lager med rollen Byggnad i lagerpanelen."
       : l.roll !== "byggnad"
-        ? `Lagret ${l.namn} har rollen ${l.roll}. Hus ritas i ett lager med rollen Byggnad; välj ett sådant lager i lagerpanelen. Ritverktyg för linjer och ytor kommer i ett senare steg.`
+        ? `Lagret ${l.namn} har rollen ${l.roll}. Hus ritas i ett lager med rollen Byggnad; välj ett sådant lager i lagerpanelen.`
         : `Lagret ${l.namn} är ${l.last ? "låst" : "släckt"}. Lås upp eller tänd det i lagerpanelen, eller välj ett annat lager.`;
     this.miljo.meddela({ typ: "fel", text: skal });
     return false;
@@ -343,6 +394,7 @@ export class Ritverktyg {
 
   dubbelklick(): void {
     if (this.verktyg === "hus") this.avsluta();
+    else this.linje.dubbelklick(this.verktyg);
   }
 
   /** Avslutar utkastet: minst tre hörn och ingen korsning, annars ett tydligt besked och man ritar vidare. */
@@ -395,6 +447,7 @@ export class Ritverktyg {
 
   /** Börjar dra ett hörn eller huset. Returnerar true om kartan inte ska panorera. */
   ned(p: Punkt, e: Pekare): boolean {
+    if (this.verktyg === "valj" && this.linje.val && this.linje.ned(p, e)) return true;
     if (this.verktyg !== "valj" || !this.val?.ny || e.ctrl) return false;
     const ring = this.ringAv(this.val);
     if (!ring) return false;
@@ -453,6 +506,11 @@ export class Ritverktyg {
   }
 
   upp(): void {
+    if (this.linje.drar) {
+      this.linje.upp();
+      this.fast = null;
+      return;
+    }
     const d = this.drag;
     this.drag = null;
     const r = this.dragRing;
@@ -475,13 +533,17 @@ export class Ritverktyg {
 
   /** Pågår ett drag av ett hörn eller hus? */
   get drar(): boolean {
-    return this.drag !== null;
+    return this.drag !== null || this.linje.drar;
   }
 
   // ------------------------------------------------------------------ åtgärder
 
   /** Tar bort det markerade: ett nytt hus tas bort, en befintlig byggnad rivs (eller rivningen ångras). */
   taBortVal(): void {
+    if (this.linje.val) {
+      this.linje.taBortVal();
+      return;
+    }
     const v = this.val;
     if (!v) return;
     if (v.ny) {
@@ -523,55 +585,79 @@ export class Ritverktyg {
     }
     if (kommando || t.altKey) return false;
     if (t.key === "Escape") {
-      if (this.utkast.length > 0) this.avbrytUtkast();
+      if (this.linje.drar) this.linje.avbrytDrag();
+      else if (this.linje.utkast.length > 0 || this.linje.ihopForsta) this.linje.avbryt();
+      else if (this.utkast.length > 0) this.avbrytUtkast();
       else if (this.drag) {
         this.drag = null;
         this.dragRing = null;
         this.signalera();
       } else if (this.verktyg !== "valj") this.sattVerktyg("valj");
-      else this.markera(null);
+      else {
+        this.linje.markera(null);
+        this.markera(null);
+      }
+      return true;
+    }
+    if (t.key === "Enter" && this.linje.utkast.length > 0 && (this.verktyg === "linje" || this.verktyg === "yta")) {
+      this.linje.avsluta(this.verktyg);
+      if (this.linje.val && this.linje.utkast.length === 0) this.sattVerktyg("valj");
       return true;
     }
     if (t.key === "Enter" && this.utkast.length > 0) {
       this.avsluta();
       return true;
     }
+    if (t.key === "Backspace" && this.linje.utkast.length > 0) {
+      this.linje.slappSenastePunkt();
+      return true;
+    }
     if (t.key === "Backspace" && this.utkast.length > 0) {
       this.slappSenastePunkt();
       return true;
     }
-    if ((t.key === "Delete" || t.key === "Backspace") && this.val && this.utkast.length === 0) {
+    if ((t.key === "Delete" || t.key === "Backspace") && (this.val || this.linje.val) && this.utkast.length === 0) {
       this.taBortVal();
       return true;
     }
-    const nyckel = t.shiftKey ? `Shift+${k.toUpperCase()}` : k.toUpperCase();
-    switch (nyckel) {
-      case "Q":
-        this.sattVerktyg("valj");
+    const kmd = kommandoFor(this.tangentkarta, bindningAv(t));
+    return kmd ? this.kommando(kmd) : false;
+  }
+
+  /** Utför ett kommando ur tangentkartan (tangent eller knapp). Returnerar false för ett okänt. */
+  kommando(k: Kommando): boolean {
+    switch (k) {
+      case "valj":
+      case "hus":
+      case "linje":
+      case "yta":
+      case "laggtill":
+      case "tabort":
+      case "klipp":
+      case "ihop":
+        this.sattVerktyg(k);
         return true;
-      case "W":
-        this.sattVerktyg("hus");
+      case "vand":
+        this.linje.vandVal();
         return true;
-      case "A":
-        this.sattVerktyg("laggtill");
+      case "forenkla":
+        this.linje.forenklaVal();
         return true;
-      case "S":
-        this.sattVerktyg("tabort");
+      case "foljkant":
+        this.vaxlaFoljKant();
         return true;
-      case "T":
+      case "fast":
         this.vaxlaFast();
         return true;
-      case "R":
+      case "ratVinkel":
         this.vaxlaRatVinkel();
         return true;
-      case "Z":
+      case "angra":
         this.angra();
         return true;
-      case "Shift+Z":
+      case "goraOm":
         this.goraOm();
         return true;
-      default:
-        return false;
     }
   }
 }

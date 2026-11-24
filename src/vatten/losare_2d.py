@@ -84,7 +84,8 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             bas_brytlinjer=k1.brytlinjer, bas_oppningar=k1.oppningar,
         )
         mark_z, markslag = t.mark_z, t.markslag
-        brytlinjer.extend(t.kantstens_brytlinjer)
+        brytlinjer = list(t.alla_brytlinjer)  # basens (efter ev. borttag), gatornas och ritade
+        oppningar = t.oppningar
         andrade = int(np.count_nonzero(t.andrad_mask))
     if oppningar:
         mark_z, markslag = _applicera_oppningar(mark_z, markslag, k1.geo, oppningar)

@@ -36,6 +36,9 @@ export interface ProjektInfo {
   oppen?: boolean;
   licens?: string | null;
   varningar?: string[];
+  /** Additivt (R3): basens brytlinjer (fästmål och visning). */
+  brytlinjer?: Array<{ typ: string; hojd_m: number; koordinater: Array<[number, number]> }>;
+  brytlinjer_trunkerade?: boolean;
 }
 
 export interface ScenarioPost {

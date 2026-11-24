@@ -16,6 +16,7 @@ from lapp.kontrakt import (
     Gatusektion,
     LappFel,
     LappGata,
+    LappOppning,
     ProjektLapp,
     las_gatusektioner_fran_konfig,
 )
@@ -368,6 +369,162 @@ def _berakna_andrad_mask(
     return np.asarray(~(z_lika & osak_lika & slag_lika), dtype=np.bool_)
 
 
+# ---------------------------------------------------------------- brytlinjer och öppningar (R3)
+
+_KLIPP_AVRUNDNING = 6
+_MIN_DEL_M = 0.01
+OPPNING_KALLA_PLAN = "plan"
+
+
+def _linje_mask(
+    koordinater: Sequence[tuple[float, float]], geo: GeoTransformInfo, radie_m: float
+) -> NDArray[np.bool_]:
+    """Celler inom `radie_m` plus en cell från en linje (för att peka ut vad som ändrats).
+
+    Linjen samplas tätare än en halv cell; varje prov markerar sin cell, och masken vidgas sedan
+    med radien i hela celler (minst en). Deterministisk, ingen slump.
+    """
+    mask = np.zeros((geo.hojd, geo.bredd), dtype=bool)
+    dx = float(geo.pixelstorlek_x)
+    dy = float(geo.pixelstorlek_y)
+    steg = 0.4 * min(dx, dy)
+    pts: list[tuple[float, float]] = []
+    for (e0, n0), (e1, n1) in zip(koordinater[:-1], koordinater[1:], strict=True):
+        langd = math.hypot(e1 - e0, n1 - n0)
+        n = max(1, math.ceil(langd / steg))
+        pts.extend((e0 + (e1 - e0) * i / n, n0 + (n1 - n0) * i / n) for i in range(n))
+    if koordinater:
+        pts.append(koordinater[-1])
+    if not pts:
+        return mask
+    e = np.array([p[0] for p in pts])
+    n_ = np.array([p[1] for p in pts])
+    kol = np.floor((e - geo.x_min) / dx).astype(np.int64)
+    rad = np.floor((geo.y_max - n_) / dy).astype(np.int64)
+    ok = (kol >= 0) & (kol < geo.bredd) & (rad >= 0) & (rad < geo.hojd)
+    mask[rad[ok], kol[ok]] = True
+    r = max(1, math.ceil(radie_m / min(dx, dy)))
+    ut = mask.copy()
+    for dr in range(-r, r + 1):
+        for dk in range(-r, r + 1):
+            r0, r1 = max(0, dr), geo.hojd + min(0, dr)
+            k0, k1 = max(0, dk), geo.bredd + min(0, dk)
+            ut[r0:r1, k0:k1] |= mask[r0 - dr : r1 - dr, k0 - dk : k1 - dk]
+    return ut
+
+
+def _rutans_yta(geo: GeoTransformInfo, marginal_m: float = 1.0) -> Any:
+    from shapely.geometry import box
+
+    return box(
+        geo.x_min - marginal_m,
+        geo.y_min - marginal_m,
+        geo.x_max + marginal_m,
+        geo.y_max + marginal_m,
+    )
+
+
+def _delar(geom: Any, typ: str, hojd_m: float) -> list[BrytlinjePost]:
+    """Linjedelarna i en shapely-geometri som brytlinjer (mikrometeravrundade, inga stumpar)."""
+    from shapely.geometry import LineString
+
+    delar = [geom] if isinstance(geom, LineString) else list(getattr(geom, "geoms", ()))
+    ut: list[BrytlinjePost] = []
+    for d in delar:
+        if not isinstance(d, LineString) or d.is_empty or d.length < _MIN_DEL_M:
+            continue
+        ut.append(
+            BrytlinjePost(
+                typ=typ,
+                hojd_m=hojd_m,
+                koordinater=tuple(
+                    (round(float(x), _KLIPP_AVRUNDNING), round(float(y), _KLIPP_AVRUNDNING))
+                    for x, y in d.coords
+                ),
+            )
+        )
+    return ut
+
+
+def _klipp_brytlinjer(
+    poster: Sequence[BrytlinjePost], zon: Any, typ: str | None = None
+) -> tuple[list[BrytlinjePost], list[BrytlinjePost]]:
+    """Klipper bort `zon` ur brytlinjerna: (kvarvarande, borttagna delar). Orörda poster behålls."""
+    from shapely.geometry import LineString
+
+    kvar: list[BrytlinjePost] = []
+    bort: list[BrytlinjePost] = []
+    for p in poster:
+        if len(p.koordinater) < 2 or (typ is not None and p.typ != typ):
+            kvar.append(p)
+            continue
+        ls = LineString(p.koordinater)
+        if not ls.intersects(zon):
+            kvar.append(p)
+            continue
+        kvar.extend(_delar(ls.difference(zon), p.typ, p.hojd_m))
+        bort.extend(_delar(ls.intersection(zon), p.typ, p.hojd_m))
+    return kvar, bort
+
+
+def _vektorandringar(
+    lapp: ProjektLapp,
+    geo: GeoTransformInfo,
+    bas_brytlinjer: Sequence[BrytlinjePost],
+    kantstens: Sequence[BrytlinjePost],
+    bas_oppningar: Sequence[OppningPost],
+) -> tuple[list[BrytlinjePost], list[BrytlinjePost], list[OppningPost], NDArray[np.bool_]]:
+    """Brytlinjer och öppningar efter lappen: (bas, genererade + nya, öppningar, ändrade celler).
+
+    Ordning: 1) `brytlinjer_bort` klipper basens brytlinjer, 2) `brytlinjer_nya` läggs till,
+    3) varje ny öppning klipper bort brytlinjerna inom sin bredd (så att vattnet kommer igenom;
+    marken längs den sänks av `_applicera_oppningar` hos den som läser K1). Nya poster som inte rör
+    rutan hoppas över. Samma lapp ger alltid samma listor.
+    """
+    from shapely.geometry import LineString
+
+    mask = np.zeros((geo.hojd, geo.bredd), dtype=bool)
+    yta = _rutans_yta(geo)
+    bas = list(bas_brytlinjer)
+    for b in lapp.brytlinjer_bort:
+        sel = LineString(b.koordinater)
+        if not sel.intersects(yta):
+            continue
+        bas, tagna = _klipp_brytlinjer(bas, sel.buffer(b.tolerans_m), b.typ)
+        for t in tagna:
+            mask |= _linje_mask(t.koordinater, geo, b.tolerans_m)
+    nya: list[BrytlinjePost] = list(kantstens)
+    for n in lapp.brytlinjer_nya:
+        if not LineString(n.koordinater).intersects(yta):
+            continue
+        nya.append(BrytlinjePost(typ=n.typ, hojd_m=n.hojd_m, koordinater=tuple(n.koordinater)))
+        mask |= _linje_mask(n.koordinater, geo, 0.0)
+    opp: list[OppningPost] = list(bas_oppningar)
+    for o in lapp.oppningar_nya:
+        ls = LineString(o.koordinater)
+        if not ls.intersects(yta):
+            continue
+        opp.append(_oppningspost(o))
+        halv = 0.5 * o.bredd_m
+        mask |= _linje_mask(o.koordinater, geo, halv)
+        zon = ls.buffer(halv, cap_style="flat")
+        bas, t1 = _klipp_brytlinjer(bas, zon)
+        nya, t2 = _klipp_brytlinjer(nya, zon)
+        for t in (*t1, *t2):
+            mask |= _linje_mask(t.koordinater, geo, halv)
+    return bas, nya, opp, mask
+
+
+def _oppningspost(o: LappOppning) -> OppningPost:
+    return OppningPost(
+        typ=o.typ,
+        bredd_m=o.bredd_m,
+        botten_rh2000=o.botten_rh2000,
+        kalla=OPPNING_KALLA_PLAN,
+        koordinater=tuple(o.koordinater),
+    )
+
+
 def tillampa_lapp(
     bas_mark_z: NDArray[np.float32],
     bas_osakerhet_z: NDArray[np.float32],
@@ -547,6 +704,18 @@ def tillampa_lapp(
         ny_markslag,
     )
 
+    # 6. Brytlinjer och öppningar (R3). Rasterna ändras inte här: den som läser K1 bränner in
+    # öppningarna (`_applicera_oppningar`) och sänkgrafen läser brytlinjerna som kantbarriärer.
+    bas_bryt_efter: list[BrytlinjePost] = list(bas_brytlinjer)
+    bryt_genererade: list[BrytlinjePost] = list(kantstens_brytlinjer)
+    oppningar_efter: list[OppningPost] = list(bas_oppningar)
+    if lapp.har_vektorandringar:
+        bas_bryt_efter, bryt_genererade, oppningar_efter, vektor_mask = _vektorandringar(
+            lapp, bas_geo, bas_brytlinjer, kantstens_brytlinjer, bas_oppningar
+        )
+        andrad_mask = np.asarray(andrad_mask | vektor_mask, dtype=np.bool_)
+        projekt_mask |= vektor_mask
+
     recept_data: dict[str, Any] = {
         "kontrakt": "K1+K3/v1",
         "bas_recept_sha256": bas_recept_sha256,
@@ -577,9 +746,9 @@ def tillampa_lapp(
         geo=bas_geo,
         andrad_mask=andrad_mask,
         projekt_mask=np.asarray(projekt_mask, dtype=np.bool_),
-        bas_brytlinjer=tuple(bas_brytlinjer),
-        kantstens_brytlinjer=tuple(kantstens_brytlinjer),
-        oppningar=tuple(bas_oppningar),
+        bas_brytlinjer=tuple(bas_bryt_efter),
+        kantstens_brytlinjer=tuple(bryt_genererade),
+        oppningar=tuple(oppningar_efter),
         registrerade_entreer=tuple(registrerade_entreer),
         magasin_botten_rh2000=magasin_botten,
     )

@@ -72,7 +72,7 @@ export function monteraRitlagerpanel(rot: HTMLElement, dok: PlanDok, roller: rea
               <label class="rl-vaxla"><input type="checkbox" data-last="${esc(r.id)}" ${r.last ? "checked" : ""}/> Lås</label>
               <button type="button" class="ikonknapp" data-bort="${esc(r.id)}" aria-label="Ta bort lagret ${esc(r.namn)}" ${r.kanTasBort ? "" : "disabled"} title="${r.kanTasBort ? "Ta bort det tomma lagret" : "Lagret har objekt; ta bort dem först"}">×</button>
             </div>
-            <p class="rl-roll flode-liten flode-dampad">${esc(r.rollNamn)}: ${esc(r.blir)}${r.kanRitas ? "" : " Ritas med linje- och ytverktyget som kommer i ett senare steg."}${r.stangt ? ' <strong class="rl-stangt">Stängt: lämnas inte ut via MCP.</strong>' : ""}</p>
+            <p class="rl-roll flode-liten flode-dampad">${esc(r.rollNamn)}: ${esc(r.blir)}${r.kanRitas ? "" : ""}${r.stangt ? ' <strong class="rl-stangt">Stängt: lämnas inte ut via MCP.</strong>' : ""}</p>
           </li>`;
         })
         .join("")}</ul>

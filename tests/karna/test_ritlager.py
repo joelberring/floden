@@ -61,7 +61,6 @@ def test_roll_ger_k9_andring(lager_id: str, geom: dict[str, Any], egen: dict[str
     # gronyta har förvalet markslag 4 (gräs) i standardmallen; objektets eget värde går före
     res = rl.oversatt(d)
     assert [(a["typ"], a["egenskaper"]) for a in res.k9] == typer
-    assert res.k1 == [] and res.ej_tillampade == []
     for a in res.k9:  # kärnan godtar ändringen (typ, id, geometri)
         Andring.fran_dict(a)
     assert res.k9[0]["andring_id"] == "o1"
@@ -73,21 +72,37 @@ def test_vegetation_med_hojd_och_markslag_ger_tva_andringar_med_stabila_id() -> 
     assert res.objekt_till_andringar == {"o1": ["o1", "o1" + rl.SEKUNDAR_SUFFIX]}
 
 
-def test_brytlinje_blir_k1_brytlinje_som_inte_tillampas_an() -> None:
+def test_brytlinje_blir_k9_brytlinje_ny_som_tillampas() -> None:
     res = rl.oversatt(dok("mur-och-kant", LINJE, {"typ": "stödmur", "hojd_m": 1.2}))
-    assert res.k9 == []
-    (b,) = res.k1
-    assert b["typ"] == "brytlinje" and b["egenskaper"] == {"typ": "stodmur", "hojd_m": 1.2}
+    (b,) = res.k9
+    assert b["typ"] == "brytlinje_ny" and b["egenskaper"] == {"typ": "stodmur", "hojd_m": 1.2}
     assert b["geometri"]["type"] == "LineString"
-    assert len(res.ej_tillampade) == 1 and "Mur och kant" in res.ej_tillampade[0] and "R3" in res.ej_tillampade[0]
+    Andring.fran_dict(b)
 
 
-def test_oppning_blir_k1_oppning_som_inte_tillampas_an() -> None:
+def test_brytlinje_med_bort_blir_brytlinje_bort() -> None:
+    res = rl.oversatt(dok("mur-och-kant", LINJE, {"bort": True, "typ": "kantsten", "tolerans_m": 1.0}))
+    (b,) = res.k9
+    assert b["typ"] == "brytlinje_bort" and b["egenskaper"] == {"typ": "kantsten", "tolerans_m": 1.0}
+    res = rl.oversatt(dok("mur-och-kant", LINJE, {"bort": True}))
+    assert res.k9[0]["egenskaper"] == {}
+
+
+def test_oppning_blir_k9_oppning_ny() -> None:
     res = rl.oversatt(dok("passage", LINJE, {"typ": "trumma", "bredd_m": 0.8, "botten_rh2000": 5.2}))
-    assert res.k9 == []
-    (o,) = res.k1
-    assert o["typ"] == "oppning" and o["egenskaper"] == {"typ": "trumma", "bredd_m": 0.8, "botten_rh2000": 5.2}
-    assert "Passage och trumma" in res.ej_tillampade[0]
+    (o,) = res.k9
+    assert o["typ"] == "oppning_ny" and o["egenskaper"] == {"typ": "trumma", "bredd_m": 0.8, "botten_rh2000": 5.2}
+    Andring.fran_dict(o)
+
+
+def test_mark_med_lutning_delta_och_slant() -> None:
+    lut = {"punkt": [10, 10, 5.0], "fall": 0.02, "riktning_grader": 90}
+    res = rl.oversatt(dok("mark", yta(), {"lutning": lut, "slant": {"forhallande": 3}}))
+    (m,) = res.k9
+    assert m["typ"] == "markhojd" and m["egenskaper"]["lutning"]["fall"] == 0.02
+    assert m["egenskaper"]["slant"] == {"forhallande": 3.0}
+    res = rl.oversatt(dok("mark", yta(), {"delta_m": -0.4, "slant": {"bredd_m": 2}}))
+    assert res.k9[0]["egenskaper"] == {"delta_m": -0.4, "slant": {"bredd_m": 2.0}}
 
 
 def test_oversattningen_ar_deterministisk_och_oberoende_av_ordning_och_stil() -> None:
@@ -108,11 +123,17 @@ def test_oversattningen_ar_deterministisk_och_oberoende_av_ordning_och_stil() ->
         ("hus", yta(), {"hojd_m": "tolv"}, "ska vara ett tal"),
         ("hus", LINJE, {"hojd_m": 12}, "ska vara polygon"),
         ("mark", yta(), {}, "saknar nivån"),
+        ("mark", yta(), {"niva_rh2000": 3, "delta_m": 1}, "exakt en av"),
+        ("mark", yta(), {"delta_m": 1, "slant": {"forhallande": 3, "bredd_m": 2}}, "exakt en av forhallande"),
+        ("mark", yta(), {"lutning": {"a": [0, 0, 1]}}, "lutning"),
         ("gata", yta(), {"osakerhet_m": 0.2}, "ange också nivån"),
         ("gronyta", yta(), {"hojd_m": -1}, "får inte vara under"),
         ("gronyta", yta(), {"markslag": 1}, "markslag ska vara"),
         ("vatten", yta(), {"botten_rh2000": 3}, "ange också volymen"),
         ("mur-och-kant", LINJE, {}, "saknar typ"),
+        ("mur-och-kant", LINJE, {"typ": "mur"}, "saknar höjden"),
+        ("mur-och-kant", LINJE, {"typ": "mur", "hojd_m": 0}, "måste vara större än 0"),
+        ("mur-och-kant", LINJE, {"bort": True, "tolerans_m": 9}, "högst 5 m"),
         ("mur-och-kant", LINJE, {"typ": "vägg"}, "okänd brytlinjetyp"),
         ("passage", LINJE, {"typ": "trumma", "bredd_m": 1}, "saknar bottennivån"),
         ("passage", LINJE, {"typ": "tunnel", "bredd_m": 1, "botten_rh2000": 1}, "okänd öppningstyp"),

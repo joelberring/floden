@@ -250,7 +250,11 @@ def tillampa_pa_v2_ruta(
     lapp_ran = False
     nya_k3_byggnader = list(lapp.byggnader) if lapp is not None else []
     if lapp is not None and (
-        lapp.hojdytor or lapp.gator or lapp.magasin or lapp.markslag_andringar
+        lapp.hojdytor
+        or lapp.gator
+        or lapp.magasin
+        or lapp.markslag_andringar
+        or lapp.har_vektorandringar
     ):
         lapp_k3 = replace(lapp, byggnader=(), operationer=())
         res = tillampa_lapp(
@@ -426,8 +430,8 @@ def tillampa_pa_v2_ruta(
         or not np.array_equal(mark2, mark)
         or not np.array_equal(slag2, slag)
         or not np.array_equal(osak1, osak)
-        or len(bryt1) != len(bryt0)
-        or len(opp1) != len(opp0)
+        or list(bryt1) != list(bryt0)
+        or list(opp1) != list(opp0)
     )
     if not andrat:
         return False

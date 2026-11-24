@@ -56,7 +56,7 @@ def test_fel_i_ritat_objekt_ger_tydligt_fel_inte_undantag(kv: Kv) -> None:
     assert not v["giltig"] and "som inte finns" in v["fel"][0]
 
 
-def test_mark_i_lager_blir_markhojd_och_brytlinje_varnas_for(kv: Kv) -> None:
+def test_mark_i_lager_blir_markhojd_och_brytlinje_blir_brytlinje_ny(kv: Kv) -> None:
     u = kv.json("GET", P)[1]["utbredning"]
     cx, cy = (u["x_min"] + u["x_max"]) / 2, (u["y_min"] + u["y_max"]) / 2
     mark = kvadrat(cx - 15, cy - 15, 30)
@@ -70,9 +70,9 @@ def test_mark_i_lager_blir_markhojd_och_brytlinje_varnas_for(kv: Kv) -> None:
     }
     _, v = kv.json("POST", f"{P}/validera", {"andringar": [], **ob})
     assert v["giltig"], v
-    assert [(a["typ"], a["andring_id"]) for a in v["andringar"]] == [("markhojd", "platan")]
+    assert [(a["typ"], a["andring_id"]) for a in v["andringar"]] == [("brytlinje_ny", "muren"), ("markhojd", "platan")]
     assert v["skarvar"] is not None and v["skarvar"]["antal"] >= 1  # skarvkontrollen (K49) ser rollen mark
-    assert any("Mur och kant" in t and "räknas inte än" in t for t in v["varningar"])
+    assert not any("räknas inte" in t for t in v["varningar"])  # muren räknas sedan R3
 
 
 def test_spara_hamta_och_gammal_fil(kv: Kv) -> None:

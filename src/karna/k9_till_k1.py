@@ -15,6 +15,13 @@ K9-scenario ger samma K1-rutor oavsett väg:
 - `gata` → `LappGata`: kräver `sektion`; valfritt `profil_rh2000`, `markslag_korbana`,
   `markslag_gangbana`.
 - `magasin` → `LappMagasin`: kräver `volym_m3`; valfritt `botten_rh2000`, `markslag`.
+- `brytlinje_ny` → `LappBrytlinje` (R3): LineString, kräver `typ` (kantsten, mur, stodmur, staket,
+  bankkant) och `hojd_m` (över 0). Räknas av sänkgrafen och 2D-lösaren som kantbarriär.
+- `brytlinje_bort` → `LappBrytlinjeBort` (R3): LineString som väljare; valfritt `tolerans_m`
+  (förval 0,5, högst 5) och `typ`. Delen av basens brytlinjer inom toleransen tas bort.
+- `oppning_ny` → `LappOppning` (R3): LineString, kräver `typ` (trumma, port, passage), `bredd_m`
+  och `botten_rh2000`. Marken längs linjen sänks till botten och brytlinjer som korsar den klipps
+  bort inom bredden, så att vattnet kommer igenom.
 Övriga typer ger ett tydligt fel i stället för att hoppas över: ett scenario som bara delvis
 tillämpas ger resultat som ser rätt ut men inte är det.
 
@@ -35,7 +42,18 @@ from karna.scenario import Andring, Planscenario, ScenarioFel, las_scenario, pla
 
 # Höjs när översättningen ändras (ingår i rutornas lappnyckel).
 K9_TILL_K3_VERSION = "1"
-STODDA_TYPER: frozenset[str] = frozenset({"markhojd", "markslag", "magasin", "gata", "byggnad_ny"})
+STODDA_TYPER: frozenset[str] = frozenset(
+    {
+        "markhojd",
+        "markslag",
+        "magasin",
+        "gata",
+        "byggnad_ny",
+        "brytlinje_ny",
+        "brytlinje_bort",
+        "oppning_ny",
+    }
+)
 GEOMETRI_TYPER: frozenset[str] = frozenset({"byggnad_bort", "byggnad_hojd", "vegetation"})
 
 
@@ -86,6 +104,15 @@ def _tal(e: Mapping[str, Any], namn: str, a: Andring) -> float:
     if isinstance(v, bool) or not isinstance(v, int | float):
         raise ScenarioFel(f"{a.typ} '{a.andring_id}': '{namn}' måste vara ett tal, fick {v!r}.")
     return float(v)
+
+
+def _text(e: Mapping[str, Any], namn: str, a: Andring) -> str:
+    if namn not in e:
+        raise ScenarioFel(f"{a.typ} '{a.andring_id}' saknar egenskapen '{namn}'.")
+    v = e[namn]
+    if not isinstance(v, str) or not v.strip():
+        raise ScenarioFel(f"{a.typ} '{a.andring_id}': '{namn}' måste vara text, fick {v!r}.")
+    return v.strip()
 
 
 def markhojd_till_hojdyta(a: Andring) -> Any:
@@ -150,10 +177,14 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
     inte på listordningen. Överlappande ändringar med olika id tillämpas alltså i id-ordning.
     """
     from lapp.kontrakt import (
+        LappBrytlinje,
+        LappBrytlinjeBort,
         LappByggnad,
+        LappFel,
         LappGata,
         LappMagasin,
         LappMarkslag,
+        LappOppning,
         ProjektLapp,
     )
 
@@ -164,6 +195,7 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
             f"K1-rutor än: {', '.join(ej)}. Stöds: {', '.join(sorted(STODDA_TYPER))}."
         )
     hojdytor, markslag, magasin, gator, byggnader = [], [], [], [], []
+    bryt_nya, bryt_bort, opp_nya = [], [], []
     for a in sorted(andringar, key=lambda x: x.andring_id):
         e = a.egenskaper
         if a.typ == "markhojd":
@@ -207,6 +239,41 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
                     **gk,
                 )
             )
+        elif a.typ in ("brytlinje_ny", "brytlinje_bort", "oppning_ny"):
+            try:
+                if a.typ == "brytlinje_ny":
+                    typ = _text(e, "typ", a)
+                    bryt_nya.append(
+                        LappBrytlinje(
+                            brytlinje_id=a.andring_id,
+                            koordinater=_linje(a.geometri, a),
+                            typ=typ,
+                            hojd_m=_tal(e, "hojd_m", a),
+                        )
+                    )
+                elif a.typ == "brytlinje_bort":
+                    bk: dict[str, Any] = {}
+                    if "tolerans_m" in e:
+                        bk["tolerans_m"] = _tal(e, "tolerans_m", a)
+                    if e.get("typ") is not None:
+                        bk["typ"] = _text(e, "typ", a)
+                    bryt_bort.append(
+                        LappBrytlinjeBort(
+                            bort_id=a.andring_id, koordinater=_linje(a.geometri, a), **bk
+                        )
+                    )
+                else:
+                    opp_nya.append(
+                        LappOppning(
+                            oppning_id=a.andring_id,
+                            koordinater=_linje(a.geometri, a),
+                            typ=_text(e, "typ", a),
+                            bredd_m=_tal(e, "bredd_m", a),
+                            botten_rh2000=_tal(e, "botten_rh2000", a),
+                        )
+                    )
+            except LappFel as exc:
+                raise ScenarioFel(f"{a.typ} '{a.andring_id}': {exc}") from exc
         elif a.typ == "byggnad_ny":
             if "entre_rh2000" not in e or "entre_punkt" not in e:
                 raise ScenarioFel(
@@ -239,6 +306,9 @@ def k9_till_lapp(andringar: Sequence[Andring], scenario: Planscenario) -> Any:
         gator=tuple(gator),
         magasin=tuple(magasin),
         markslag_andringar=tuple(markslag),
+        brytlinjer_nya=tuple(bryt_nya),
+        brytlinjer_bort=tuple(bryt_bort),
+        oppningar_nya=tuple(opp_nya),
     )
 
 

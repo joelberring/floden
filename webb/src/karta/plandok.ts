@@ -6,9 +6,10 @@
  * Mönstret (objekt med nyckel, läge före och efter, grupp) är O-Tids (MIT, joelberring/otid @
  * 4a446af, packages/map-revision/src/history.ts och state.ts), se historik.ts.
  */
-import { franGeoRing, normaliseraRing, tillGeoRing, type Ring } from "./geom.ts";
+import { kopiaP, type P3 } from "./linje.ts";
+import { franGeoRing, normaliseraRing, signeradYta, tillGeoRing, type Ring } from "./geom.ts";
 import { registreraSteg, ta, tomHistorik, type Historik, type Steg } from "./historik.ts";
-import { KONTRAKT_RITLAGER, kopiaLager, type RitLager, type RitObjekt, type RitlagerDok } from "./ritlager.ts";
+import { KONTRAKT_RITLAGER, kopiaLager, type Geometrityp, type RitLager, type RitObjekt, type RitlagerDok } from "./ritlager.ts";
 
 export interface NyttHus {
   id: string;
@@ -21,8 +22,27 @@ export interface NyttHus {
   extra?: Record<string, unknown>;
 }
 
-export type DokNyckel = `ny:${string}` | `hojd:${string}` | `bort:${string}`;
-type Lage = NyttHus | number | true;
+/** En ritad linje eller yta i ett ritlager (K50) med annan roll än byggnad: mur, kant, öppning, ny mark, vatten ... */
+export interface Figur {
+  id: string;
+  lager: string;
+  typ: "linje" | "yta";
+  /** Linje: punkterna i ordning. Yta: öppen ring, moturs. `z` (m RH 2000) är bara ett hjälpmedel i klienten; lutningen skickas i egenskaperna. */
+  punkter: P3[];
+  /** Egenskaper enligt rollen (K50), t.ex. `hojd_m` för en mur eller `niva_rh2000` för ny mark. */
+  egenskaper: Record<string, unknown>;
+}
+
+export const kopiaFigur = (f: Figur): Figur => ({
+  id: f.id,
+  lager: f.lager,
+  typ: f.typ,
+  punkter: f.punkter.map(kopiaP),
+  egenskaper: JSON.parse(JSON.stringify(f.egenskaper)) as Record<string, unknown>,
+});
+
+export type DokNyckel = `ny:${string}` | `hojd:${string}` | `bort:${string}` | `fig:${string}`;
+type Lage = NyttHus | Figur | number | true;
 
 /** En K9-ändring så som servern tar emot den. */
 export interface K9Andring {
@@ -40,10 +60,35 @@ const kopia = (h: NyttHus): NyttHus => {
   return k;
 };
 
+/** Linjen med punkterna avrundade till 1 cm och utan dubbletter efter varandra (som servern). `z` följer med (mm). */
+export function normaliseraLinje(punkter: readonly P3[]): P3[] {
+  const r = (v: number): number => Math.round(v * 100) / 100;
+  const ut: P3[] = [];
+  for (const p of punkter) {
+    const q: P3 = { x: r(p.x), y: r(p.y) };
+    if (p.z !== undefined) q.z = Math.round(p.z * 1000) / 1000;
+    const s = ut[ut.length - 1];
+    if (!s || s.x !== q.x || s.y !== q.y) ut.push(q);
+  }
+  return ut;
+}
+
+/** Ytans öppna ring moturs (som servern), med `z` per hörn kvar. */
+export function normaliseraYta(punkter: readonly P3[]): P3[] {
+  const ren = normaliseraLinje(punkter);
+  const f = ren[0];
+  const s = ren[ren.length - 1];
+  if (ren.length > 1 && f && s && f.x === s.x && f.y === s.y) ren.pop();
+  if (ren.length >= 3 && signeradYta(ren) < 0) return [ren[0] as P3, ...ren.slice(1).reverse()];
+  return ren;
+}
+
 export class PlanDok {
   readonly ny = new Map<string, NyttHus>();
   readonly hojd = new Map<string, number>();
   readonly bort = new Set<string>();
+  /** Ritade linjer och ytor (R3) i lager med annan roll än byggnad. */
+  readonly figurer = new Map<string, Figur>();
   /** Ritlagren (K50). Tomt tills de satts (förvalda lager ur projektinfo, eller förslagets egna). Inte en del av ångra. */
   lager: RitLager[] = [];
   /** Lagret nya hus ritas i. */
@@ -82,6 +127,10 @@ export class PlanDok {
       const h = this.ny.get(id);
       return h ? kopia(h) : null;
     }
+    if (typ === "fig") {
+      const f = this.figurer.get(id);
+      return f ? kopiaFigur(f) : null;
+    }
     if (typ === "hojd") return this.hojd.get(id) ?? null;
     return this.bort.has(id) ? true : null;
   }
@@ -93,6 +142,9 @@ export class PlanDok {
     if (typ === "ny") {
       if (lage === null) this.ny.delete(id);
       else this.ny.set(id, kopia(lage as NyttHus));
+    } else if (typ === "fig") {
+      if (lage === null) this.figurer.delete(id);
+      else this.figurer.set(id, kopiaFigur(lage as Figur));
     } else if (typ === "hojd") {
       if (lage === null) this.hojd.delete(id);
       else this.hojd.set(id, lage as number);
@@ -197,7 +249,99 @@ export class PlanDok {
   }
 
   tom(): boolean {
-    return this.ny.size === 0 && this.hojd.size === 0 && this.bort.size === 0 && this.ovrigaObjekt.length === 0 && this.ovrigaAndringar.length === 0;
+    return this.ny.size === 0 && this.figurer.size === 0 && this.hojd.size === 0 && this.bort.size === 0 && this.ovrigaObjekt.length === 0 && this.ovrigaAndringar.length === 0;
+  }
+
+  // ------------------------------------------------------------------ linjer och ytor (R3)
+
+  /** Nästa lediga id för en linje eller yta: `linje_1`, `yta_1`, ... (K50 `objekt_id`). */
+  nyttFigurId(typ: "linje" | "yta"): string {
+    let n = 1;
+    while (this.figurer.has(`${typ}_${n}`) || this.ny.has(`${typ}_${n}`)) n++;
+    return `${typ}_${n}`;
+  }
+
+  /** Lagret en figur ligger i. */
+  lagerForFigur(f: Figur): RitLager | undefined {
+    return this.lagerAv(f.lager);
+  }
+
+  arFigurSynlig(f: Figur): boolean {
+    return this.lagerForFigur(f)?.synlig ?? true;
+  }
+
+  /** Figuren går att markera och ändra om dess lager är tänt och olåst. */
+  arFigurRedigerbar(f: Figur): boolean {
+    const l = this.lagerForFigur(f);
+    return !l || (l.synlig && !l.last);
+  }
+
+  /**
+   * Lagret en ny linje (`linje`) eller yta (`polygon`) ritas i: det valda om det passar (rätt geometri,
+   * inte byggnad för ytor, tänt och olåst), annars det första som passar, som då blir valt.
+   * Undefined när inget lager passar.
+   */
+  lagerForRitning(geometri: Geometrityp): RitLager | undefined {
+    const passar = (l: RitLager): boolean => l.geometri === geometri && l.roll !== "byggnad" && l.synlig && !l.last;
+    const valt = this.lagerAv(this.aktivtLager);
+    if (valt && passar(valt)) return valt;
+    const forsta = this.lager.find(passar);
+    if (forsta) this.aktivtLager = forsta.lager_id;
+    return forsta;
+  }
+
+  /** Lägger till en ny linje eller yta i ett lager (förvalda egenskaper ur lagrets förval). */
+  laggTillFigur(typ: "linje" | "yta", punkter: readonly P3[], lager: string, egenskaper: Record<string, unknown> = {}, id = this.nyttFigurId(typ)): Figur {
+    const f: Figur = {
+      id,
+      lager,
+      typ,
+      punkter: typ === "yta" ? normaliseraYta(punkter) : normaliseraLinje(punkter),
+      egenskaper: { ...egenskaper },
+    };
+    this.satta(`fig:${id}`, f);
+    return f;
+  }
+
+  sattFigurPunkter(id: string, punkter: readonly P3[]): void {
+    const f = this.figurer.get(id);
+    if (f) this.satta(`fig:${id}`, { ...kopiaFigur(f), punkter: f.typ === "yta" ? normaliseraYta(punkter) : normaliseraLinje(punkter) });
+  }
+
+  /** Sätter egenskaper på en figur. `null` som värde tar bort egenskapen. */
+  sattFigurEgenskaper(id: string, egenskaper: Record<string, unknown>): void {
+    const f = this.figurer.get(id);
+    if (!f) return;
+    const ny = { ...f.egenskaper };
+    for (const [k, v] of Object.entries(egenskaper)) {
+      if (v === null || v === undefined) delete ny[k];
+      else ny[k] = v;
+    }
+    this.satta(`fig:${id}`, { ...kopiaFigur(f), egenskaper: ny });
+  }
+
+  taBortFigur(id: string): void {
+    this.satta(`fig:${id}`, null);
+  }
+
+  /** Delar en linje i två (klipp): den första behåller id, den andra blir en ny figur med samma lager och egenskaper. Ett steg för ångra. */
+  delaFigur(id: string, ett: readonly P3[], tva: readonly P3[]): Figur | undefined {
+    const f = this.figurer.get(id);
+    if (!f || f.typ !== "linje") return undefined;
+    let ny: Figur | undefined;
+    this.grupp(`dela-${id}`, () => {
+      this.sattFigurPunkter(id, ett);
+      ny = this.laggTillFigur("linje", tva, f.lager, f.egenskaper);
+    });
+    return ny;
+  }
+
+  /** Slår ihop två linjer i samma lager (slå ihop): den första får de nya punkterna, den andra tas bort. Ett steg för ångra. */
+  slaIhopFigurer(forsta: string, andra: string, punkter: readonly P3[]): void {
+    this.grupp(`ihop-${forsta}`, () => {
+      this.sattFigurPunkter(forsta, punkter);
+      this.taBortFigur(andra);
+    });
   }
 
   // ------------------------------------------------------------------ ritlager (K50)
@@ -264,6 +408,7 @@ export class PlanDok {
   antalILager(id: string): number {
     let n = this.ovrigaObjekt.filter((o) => o.lager_id === id).length;
     for (const h of this.ny.values()) if (this.lagerForHus(h)?.lager_id === id) n++;
+    for (const f of this.figurer.values()) if (f.lager === id) n++;
     return n;
   }
 
@@ -287,6 +432,17 @@ export class PlanDok {
         lager_id: lager,
         geometri: { type: "Polygon", coordinates: [tillGeoRing(normaliseraRing(h.ring))] },
         egenskaper: { ...h.extra, hojd_m: h.hojd_m, ...extra(h.id) },
+      });
+    }
+    for (const f of [...this.figurer.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+      objekt.push({
+        objekt_id: f.id,
+        lager_id: f.lager,
+        geometri:
+          f.typ === "yta"
+            ? { type: "Polygon", coordinates: [tillGeoRing(normaliseraYta(f.punkter))] }
+            : { type: "LineString", coordinates: normaliseraLinje(f.punkter).map((p) => [p.x, p.y]) },
+        egenskaper: { ...f.egenskaper },
       });
     }
     objekt.push(...this.ovrigaObjekt.map((o) => ({ ...o, egenskaper: { ...o.egenskaper } })));
@@ -329,6 +485,7 @@ export class PlanDok {
     this.ny.clear();
     this.hojd.clear();
     this.bort.clear();
+    this.figurer.clear();
     this.ovrigaObjekt = [];
     this.ovrigaAndringar = [];
     this.historik = tomHistorik();
@@ -360,6 +517,11 @@ export class PlanDok {
       const roll = this.lagerAv(o.lager_id)?.roll;
       if (roll === "byggnad" && o.geometri.type === "Polygon") {
         nyttHus(o.objekt_id, o.geometri as { coordinates: number[][][] }, o.egenskaper, o.lager_id);
+      } else if (roll !== undefined && roll !== "byggnad" && (o.geometri.type === "Polygon" || o.geometri.type === "LineString")) {
+        const yta = o.geometri.type === "Polygon";
+        const koord = o.geometri.coordinates as number[][] | number[][][];
+        const punkter = yta ? franGeoRing((koord as number[][][])[0] ?? []) : (koord as number[][]).map((p) => ({ x: p[0] as number, y: p[1] as number }));
+        this.figurer.set(o.objekt_id, { id: o.objekt_id, lager: o.lager_id, typ: yta ? "yta" : "linje", punkter, egenskaper: { ...o.egenskaper } });
       } else {
         this.ovrigaObjekt.push({ ...o, egenskaper: { ...o.egenskaper } });
       }

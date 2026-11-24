@@ -47,6 +47,7 @@ from karna.ritat import (
     VANINGSHOJD_M,
     RitatFel,
     kontrollera_andringar,
+    normalisera_linje,
     normalisera_ring,
 )
 from karna.rutscenario import Ruta, las_bas
@@ -71,6 +72,7 @@ MAX_WMS_BYTES = 12 * 1024 * 1024
 MAX_CAPABILITIES_BYTES = 4 * 1024 * 1024
 WMS_TIDSGRANS_S = 20.0
 MAX_BYGGNADER = 20_000
+MAX_BRYTLINJER = 20_000
 ORTOFOTO_MAX_PX = 2048
 
 _PROJEKT_ID = "demokvarteret"
@@ -271,6 +273,33 @@ class KartverktygTjanst:
         self._byggnader[kalla.id] = lista
         return lista
 
+    def _alla_brytlinjer(self, kalla: Projektkalla) -> list[dict[str, Any]]:
+        """Basens brytlinjer (K1 `brytlinjer.gpkg`) som fästmål och för att visa vad som finns (R3).
+
+        En linje som ligger i flera rutor (överlapp) tas en gång. Sorterad, så att svaret är stabilt."""
+        from sankgraf.typer import las_brytlinjer_fran_gpkg
+
+        sedda: set[tuple[Any, ...]] = set()
+        lista: list[dict[str, Any]] = []
+        for m in kalla.mallar.values():
+            for r in m.rutor:
+                fil = r.mapp / "brytlinjer.gpkg"
+                if not fil.is_file():
+                    continue
+                try:
+                    poster = las_brytlinjer_fran_gpkg(fil)
+                except Exception:  # noqa: BLE001 - en trasig fil hindrar inte kartan
+                    continue
+                for p in poster:
+                    kord = tuple((round(float(x), 2), round(float(y), 2)) for x, y in p.koordinater)
+                    nyckel = (p.typ, round(float(p.hojd_m), 3), kord)
+                    if nyckel in sedda:
+                        continue
+                    sedda.add(nyckel)
+                    lista.append({"typ": p.typ, "hojd_m": round(float(p.hojd_m), 3), "koordinater": [list(k) for k in kord]})
+        lista.sort(key=lambda d: (d["typ"], d["hojd_m"], d["koordinater"]))
+        return lista
+
     def _analyser(self, mallar: Mapping[str, Mall]) -> list[dict[str, Any]]:
         ut: list[dict[str, Any]] = []
         for kort, m in mallar.items():
@@ -292,6 +321,7 @@ class KartverktygTjanst:
         rutor = self._rutor_alla(mallar)
         byggn = self._alla_byggnader(kalla)
         trunkerad = len(byggn) > MAX_BYGGNADER
+        brytl = self._alla_brytlinjer(kalla)
         return {
             "id": projekt,
             "paahittat": kalla.paahittat,
@@ -328,6 +358,9 @@ class KartverktygTjanst:
             "fokus": self._fokus(mallar),
             "byggnader": byggn[:MAX_BYGGNADER],
             "byggnader_trunkerade": trunkerad,
+            # Additivt (R3): basens brytlinjer (fästmål och visning).
+            "brytlinjer": brytl[:MAX_BRYTLINJER],
+            "brytlinjer_trunkerade": len(brytl) > MAX_BRYTLINJER,
             "analyser": self._analyser(mallar),
             "scenarier": self.lista_scenarier(projekt)["scenarier"],
             "ortofoto": self.ortofoto_info(projekt),
@@ -366,6 +399,17 @@ class KartverktygTjanst:
                     "type": "Polygon",
                     "coordinates": [normalisera_ring(g["coordinates"][0])],
                 }
+            elif (
+                d["typ"] in ("brytlinje_ny", "brytlinje_bort", "oppning_ny")
+                and isinstance(g, Mapping)
+                and g.get("type") == "LineString"
+                and isinstance(g.get("coordinates"), list)
+            ):
+                d["geometri"] = {"type": "LineString", "coordinates": normalisera_linje(g["coordinates"])}
+            for k in ("hojd_m", "bredd_m", "botten_rh2000", "tolerans_m"):
+                v = d["egenskaper"].get(k)
+                if isinstance(v, int | float) and not isinstance(v, bool):
+                    d["egenskaper"][k] = float(v)
             ut.append(d)
         return ut
 
@@ -390,9 +434,8 @@ class KartverktygTjanst:
             if kropp.get("ritlager") is not None:
                 # K50: rollen avgör vilken K9-ändring varje ritat objekt blir (karna.ritlager.oversatt).
                 ritdok = ritl.kontrollera_dokument(kropp["ritlager"])
-                k9_lista, oversatt = ritl.sla_ihop(andringar, ritdok)
+                k9_lista, _ = ritl.sla_ihop(andringar, ritdok)
                 andringar = self._normalisera(k9_lista)
-                varningar.extend(oversatt.ej_tillampade)
             res = kontrollera_andringar(andringar, self._rutor_alla(mallar))
             hus = res["hus"]
             varningar.extend(res["varningar"])
