@@ -614,6 +614,8 @@ def skarm_tva_kanter(
         f_s = 1.0 if f_s_lista is None else f_s_lista[nr]
         qs, qm, qr = complex(q_s[nr]), complex(q_m[nr]), complex(q_r[nr])
 
+        tryck_cache: dict[tuple[float, float, float, float, float, float], complex] = {}
+
         def tryck(
             theta_1s: float,
             theta_2r: float,
@@ -625,12 +627,17 @@ def skarm_tva_kanter(
             qs: complex = qs,
             qm: complex = qm,
             qr: complex = qr,
+            cache: dict[tuple[float, float, float, float, float, float], complex] = tryck_cache,
         ) -> complex:
             """p̂ = p2edge(…), ekv. (192), för ett av trycken p̂₁–p̂₄.
 
             Bara θ_1S, θ_2R, R_S, R_R, τ_S och τ_R skiljer mellan de fyra trycken (ekv. 198);
             θ_1R, θ_2S, R_M och τ_M är skärmens egna. Räta strålar: τ = R/c.
             """
+            nyckel = (theta_1s, theta_2r, vag_s, vag_r, tid_s, tid_r)
+            sparat = cache.get(nyckel)
+            if sparat is not None:
+                return sparat
             if rata:
                 geometri = tva_kanter_rata_stralar(
                     vinklar.beta1_rad,
@@ -659,9 +666,11 @@ def skarm_tva_kanter(
                     vag_mitten_m=kanter.vag_mitten_m,
                     vag_mottagare_m=vag_r,
                 )
-            return tjock_skarm_tryck_reflektionskoefficienter(
+            ut = tjock_skarm_tryck_reflektionskoefficienter(
                 f, geometri, qs, qm, qr, ordnad.viktigast
             )
+            cache[nyckel] = ut
+            return ut
 
         p_ff = tjock_skarm_tryck_reflektionskoefficienter(
             f, kanter, qs, qm, qr, ordnad.viktigast
