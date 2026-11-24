@@ -25,7 +25,7 @@ export function jobbText(j: RapportJobb): string {
   if (j.status === "fel") return `Rapporten kunde inte skapas: ${j.fel ?? "okänt fel"}`;
   if (j.status === "klar") {
     if (j.kontroll && !j.kontroll.exporterad) {
-      return `Rapporten är skapad men kontrollen hittade ${j.kontroll.antal_fel} fel, så PDF och Word är inte exporterade. Felen står under Kontroll.`;
+      return `Rapporten är skapad men kontrollen hittade ${j.kontroll.antal_fel} fel, så PDF och Word är inte exporterade. ${(j.kontroll.fel ?? []).join(" ")}`.trim();
     }
     return "Rapporten är klar. PDF och Word är exporterade.";
   }

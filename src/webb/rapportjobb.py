@@ -332,6 +332,8 @@ class RapportJobbTjanst:
         k = rt.kontrollera(r.rapport_id, av="webb")
         antal_fel = sum(len(x.get("fel", [])) for x in k["punkter"])
         kontroll: dict[str, Any] = {"godkand": bool(k["godkand"]), "antal_fel": antal_fel, "exporterad": False}
+        if not k["godkand"]:
+            kontroll["fel"] = [str(f)[:300] for x in k["punkter"] for f in x.get("fel", [])][:10]
         if k["godkand"]:
             self._satt(jid, steg="exporterar", kontroll=kontroll)
             rt.exportera(r.rapport_id, "pdf", av="webb")

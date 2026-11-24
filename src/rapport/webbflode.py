@@ -74,19 +74,15 @@ def skyfall_pastaenden(r: Rapport, *, demo: bool, regn_ur_idf: bool = True) -> l
                 "saknat_underlag": ["Mottagare: platser som påverkas, som polygoner i EPSG:3011."],
             }
         elif d["fraga_id"] == "SK-02" and not regn_ur_idf:
-            # Projektets körning har ett fast regndjup (`regn_mm`), inte en IDF-källa: återkomsttid och
-            # varaktighet finns då inte som mätvärden, och beläggen bär bara det som finns.
-            mv = f"matvarde.{analys}.{efter}"
+            # Projektets körning har ett fast regndjup (`regn_mm`), inte en IDF-källa: regnet finns då inte som
+            # mätvärden alls, så ingen siffra påstås.
             d = {
                 "fraga_id": "SK-02",
-                "status": "villkorat",
-                "fordjupning": "ja",
-                "text": "Sållningen är gjord med ett fast regndjup på {{matt:" + mv + ".regn_mm|avrundning=1}}, "
-                "som blockregn. Återkomsttid och varaktighet anges inte i körningen. Vilket regn och vilken "
-                "säkerhetsnivå som ska gälla behöver bestämmas i planarbetet.",
-                "belagg": [f"{mv}.regn_mm"],
-                "forutsattning": str(d.get("forutsattning", "")),
-                "ansvarig_funktion": str(d.get("ansvarig_funktion", "")),
+                "status": "underlag_saknas",
+                "fordjupning": "kan_inte_avgoras",
+                "text": "Körningen använder ett fast regndjup utan återkomsttid och varaktighet som mätvärden, så regnet "
+                "kan inte redovisas här. Vilket regn och vilken säkerhetsnivå som ska gälla behöver bestämmas i planarbetet.",
+                "saknat_underlag": ["Dimensionerande regn (återkomsttid, varaktighet, klimatfaktor) för projektet."],
             }
         else:
             d["text"] = byt(str(d["text"]))

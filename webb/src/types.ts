@@ -853,7 +853,7 @@ export interface RapportJobb {
   steg_totalt: number;
   text: string;
   rapport_id: string | null;
-  kontroll: { godkand: boolean; antal_fel: number; exporterad: boolean } | null;
+  kontroll: { godkand: boolean; antal_fel: number; exporterad: boolean; fel?: string[] } | null;
   lankar: { pdf: string; word: string } | null;
   fel: string | null;
   status_url: string;

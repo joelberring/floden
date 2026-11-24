@@ -275,8 +275,12 @@ def test_projekt_i_geografin_kan_fa_en_rapport_i_webben(v: Varld) -> None:
                 break
             time.sleep(0.5)
         assert jobb["status"] == "klar", jobb
-        assert jobb["kontroll"]["godkand"], jobb
-        assert jobb["lankar"]["pdf"].startswith(f"/api/projekt/{pid}/rapporter/r-")
+        # Lantmäteriets härledda data är stängda tills en människa kontrollerat villkoren (K38): rapporten skapas
+        # och kontrolleras, men kontrollen spärrar exporten och säger varför. Ingen länk till PDF eller Word.
+        assert jobb["rapport_id"], jobb
+        assert jobb["kontroll"]["godkand"] is False and jobb["kontroll"]["exporterad"] is False, jobb["kontroll"]
+        assert any("dataklassen" in f for f in jobb["kontroll"]["fel"]), jobb["kontroll"]
+        assert jobb["lankar"] is None
     # En annan organisations administratör ser varken projektet, körningarna eller rapporterna.
     assert v.http("di", "GET", f"/api/projekt/{pid}/rapporter")[0] == 403
     assert v.http("di", "POST", f"/api/projekt/{pid}/rapporter", {"amne": "skyfall"})[0] == 403
