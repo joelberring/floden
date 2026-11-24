@@ -86,6 +86,20 @@ test("de öppna frågorna Q1–Q5 finns med underlag", () => {
   assert.ok(q2?.underlag.some((u) => u.text.startsWith("tools/exportera_q2_underlag.py") && u.href));
 });
 
+test("kända avvikelser och begränsningar visas med orsak och underlag", () => {
+  const html = sidaMatematik();
+  const t = text(html);
+  assert.match(t, /Kända avvikelser och begränsningar/);
+  assert.ok(html.includes('data-hopp="mat-avvikelser"'));
+  assert.ok(MATEMATIK.avvikelser.length >= 6);
+  for (const a of MATEMATIK.avvikelser) {
+    assert.ok(t.includes(a.titel), a.titel);
+    assert.ok(a.varfor.length > 20, `${a.id} saknar förklaring`);
+    assert.ok(a.kravs.length > 10, `${a.id} saknar krav`);
+    assert.ok(a.underlag.some((u) => u.href), `${a.id} saknar länk till underlag`);
+  }
+});
+
 test("ingen persondata i sidan", () => {
   const t = JSON.stringify(MATEMATIK);
   assert.doesNotMatch(t, /Samuel|person X/);
