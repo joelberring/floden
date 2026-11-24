@@ -39,6 +39,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from buller.testfall.kurvig_vag import KurvigVagGeometri
+    from buller.testfall.stadsgata import StadsgataGeometri
 
 from buller.emission.direktivitet import Kallriktning
 from buller.emission.modell import Trafikflode, Vagforhallanden
@@ -66,6 +67,7 @@ _VILLKOR_MOTTAGARHOJD = "mottagare_hojd_m"
 _VINDRIKTNING = "vindriktning_grader"  # bladens φ, i fallets [vader_tillagg]
 _VINDRIKTNING_NORR = "vindriktning_grader_fran_norr"
 TYP_KURVIG_VAG = "nord2000_kurvig_vag"
+TYP_STADSGATA = "nord2000_stadsgata"
 VILLKOR_REGELVARIANT = "regelvariant"
 
 
@@ -432,6 +434,48 @@ def _berakna_kurvig_vag_serie(
     )
 
 
+def _berakna_stadsgata_serie(
+    karna: P2PKarna,
+    emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
+    fall: N2kFall,
+    serie: Facitserie,
+    a_vagning_db: Flyttal,
+    geometri: StadsgataGeometri,
+    *,
+    direktivitet: bool = True,
+) -> Berakning:
+    """Beräknar en serie för ett stadsgatefall (`nord2000_stadsgata`)."""
+    from buller.testfall.stadsgata import berakna_stadsgata
+
+    if fall.vader is None:
+        raise BullerFel(f"Fall {fall.id} saknar väder.")
+    pos = str(fall.ovrigt.get("mottagarposition", "")).strip()
+    if not pos:
+        raise BullerFel(f"Fall {fall.id} saknar [ovrigt] mottagarposition.")
+    hojd = float(serie.villkor.get(_VILLKOR_MOTTAGARHOJD, 1.5))
+    rho = float(serie.villkor.get("energireflektionskoefficient", 1.0))
+    forhallanden = forhallanden_for_fall(fall)
+    if forhallanden is None:
+        forhallanden = Vagforhallanden("DAC", 12.0, lufttemperatur_c=fall.vader.temperatur_c)
+    laeq_db, leq_db = berakna_stadsgata(
+        karna,
+        emission,
+        geometri,
+        pos,
+        hojd,
+        rho,
+        fall.vader,
+        a_vagning_db,
+        forhallanden=forhallanden,
+        direktivitet=direktivitet,
+    )
+    return Berakning(
+        totalnivaer_db={"LAeq_24h": laeq_db},
+        spektrum_db={"Leq_24h": leq_db},
+        direktivitet=direktivitet,
+    )
+
+
 def kor_fall(
     karna: P2PKarna,
     emission: Emissionsmodell | EmissionsmodellMedDirektivitet,
@@ -443,6 +487,7 @@ def kor_fall(
     kravda_storheter: Collection[str] | None = None,
     direktivitet: bool = True,
     kurvig_vag_geometri: KurvigVagGeometri | None = None,
+    stadsgata_geometri: StadsgataGeometri | None = None,
 ) -> Fallresultat:
     """Kör ett fall och jämför med facit.
 
@@ -477,6 +522,16 @@ def kor_fall(
                     serie,
                     vagning,
                     kurvig_vag_geometri,
+                    direktivitet=direktivitet,
+                )
+            elif fall.typ == TYP_STADSGATA and stadsgata_geometri is not None:
+                berakning = _berakna_stadsgata_serie(
+                    karna,
+                    emission,
+                    fall,
+                    serie,
+                    vagning,
+                    stadsgata_geometri,
                     direktivitet=direktivitet,
                 )
             else:
@@ -539,6 +594,7 @@ def kor_alla(
     a_vagning_db: Flyttal | None = None,
     direktivitet: bool = True,
     kurvig_vag_geometri: KurvigVagGeometri | None = None,
+    stadsgata_geometri: StadsgataGeometri | None = None,
 ) -> list[Fallresultat]:
     """Kör alla Nord2000-fall under `rot` (t.ex. `testsvit/N_nord2000`).
 
@@ -554,6 +610,7 @@ def kor_alla(
             a_vagning_db=a_vagning_db,
             direktivitet=direktivitet,
             kurvig_vag_geometri=kurvig_vag_geometri,
+            stadsgata_geometri=stadsgata_geometri,
         )
         for fall in hitta_fall(rot)
     ]
