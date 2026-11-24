@@ -30,6 +30,13 @@ EKOLOGI_STEG = [
     ("3-fragor-ekologi", "fragor", 'button[data-amne="ekologi"]'),
     ("4-resultat-ekologi", "resultat", 'button[role="tab"][data-amne="ekologi"]'),
 ]
+# Panelerna som flyttades in från den gamla kartsidan: lager och underlag (steg 2, ritverktygen syns
+# alltid) och "Visa osäkerhet" med intervall och känsliga överfall (steg 4, fliken Skyfall och Sol).
+NYA_PANELER = [
+    ("2-forslag-lager", "forslag", "open", "#fs-lager-ruta, #fs-underlag-ruta"),
+    ("4-resultat-osakerhet", "resultat", "click", "#rs-osakerhet"),
+    ("4-resultat-sol-osakerhet", "resultat", "sol", "#rs-osakerhet"),
+]
 STORLEKAR = [("", 1440, 900, False), ("-smal", 390, 844, True)]
 
 
@@ -73,6 +80,20 @@ def main() -> None:
                 _vanta(sida, steg)
                 sida.locator(knapp).first.click()
                 sida.wait_for_timeout(6000)
+                sida.screenshot(path=str(UT / f"flode-{namn}{suffix}.png"), full_page=hel)
+                print(f"flode-{namn}{suffix}.png")
+            for namn, steg, handling, valjare in NYA_PANELER:
+                sida.goto(f"{args.url}/#/p/{args.projekt}/{steg}")
+                _vanta(sida, steg)
+                if handling == "open":
+                    for v in valjare.split(", "):
+                        sida.locator(v).evaluate("e => e.setAttribute('open', '')")
+                else:
+                    if handling == "sol":
+                        sida.locator('button[role="tab"][data-amne="dagsljus"]').click()
+                        sida.wait_for_timeout(2500)
+                    sida.locator(valjare).first.click()
+                    sida.wait_for_timeout(4000)
                 sida.screenshot(path=str(UT / f"flode-{namn}{suffix}.png"), full_page=hel)
                 print(f"flode-{namn}{suffix}.png")
             # Matematik och forskning (#/matematik): lång sida, hela sidan tas även på bred skärm.

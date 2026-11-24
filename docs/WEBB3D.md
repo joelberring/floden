@@ -8,7 +8,7 @@ i perspektiv och ritar bara det Floden redan har räknat.
 Three.js ritar i en egen canvas som ersätter kartan (`egenVy` i lagermodellen). Skäl: kameran
 får egen perspektiv och arbetar i SWEREF-meter med exakta höjder (ingen Mercator-förvrängning),
 två scener kan ritas för svep och sida vid sida, och Three.js (ca 530 kB) laddas först när man
-öppnar 3D (dynamisk import) så att kartsidan inte blir tyngre. Kameran följer kartan: samma mitt och
+öppnar 3D (dynamisk import) så att flödet inte blir tyngre. Kameran följer kartan: samma mitt och
 meter per pixel vid start (`webb/src/vy3d/koord.ts`), därefter tiltas den.
 
 ## Data (server: `src/webb/vy3d.py`, format `src/webb/vy3d_format.py`)

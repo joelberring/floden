@@ -7,7 +7,6 @@
 #
 # `anvandarflode` (var metoden nås, kontrollerat mot koden 2026-11-23):
 #   flode      i webbflödet (#/p/<projekt>/...), via K21-lösare
-#   karta      i webbklienten utanför flödet (#/karta/...)
 #   api        bara som endpoint i webb-API:t, ingen knapp eller panel i klienten
 #   cli        kommandorad (`floden kor`, `floden testsvit`), MCP eller K21-lösare utan webbflöde
 #   fristaende modul med tester, men inte inkopplad någonstans
@@ -91,11 +90,11 @@ id = "vatten.bifurkation"
 doman = "vatten"
 namn = "Bifurkationsdetektor"
 sammanfattning = "Flaggar överfallspunkter där höjdosäkerheten kan få vattnet att byta utlopp, med påverkad avrinningsyta och volym."
-anvandarflode = "karta"
-kod = ["src/sankgraf/bifurkation.py", "src/webb/api.py (POST /api/analys/bifurkationer)", "webb/src/karta/overfall.ts"]
+anvandarflode = "flode"
+kod = ["src/sankgraf/bifurkation.py", "src/webb/api.py (POST /api/analys/bifurkationer)", "webb/src/karta/overfall.ts", "webb/src/flode/osakerhet.ts"]
 kontrakt = ["K34", "K35", "K36"]
 facit = ["tests/sankgraf/test_bifurkation.py", "tests/webb/test_bifurkation_projekt.py", "tests/tvad/test_felindikator.py"]
-anmarkning = "Nås som lager i kartsidan (#/karta), inte i flödet. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
+anmarkning = "Nås i Resultat (steg 4, fliken Skyfall, knappen \"Visa osäkerhet\") som nyckeltal och lagret \"Känsliga överfall\" på kartan; den gamla kartsidan (#/karta) är borttagen. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2."
 [[metod.formel]]
 latex = '\Delta z = \max(0,\, z_2 - z_1), \qquad \sigma = \sqrt{\sigma_1^2 + \sigma_2^2}, \qquad \text{instabil om } \frac{\Delta z}{\sigma} \le k'
 text = "Δz = max(0, z₂ − z₁), σ = √(σ₁² + σ₂²); instabil om Δz/σ ≤ k (k = 2)"
@@ -105,11 +104,11 @@ id = "vatten.intervall"
 doman = "vatten"
 namn = "Monoton intervallanalys för vatten"
 sammanfattning = "Under fast flödestopologi är maxdjupet monotont i regn, initial förlust och avtappning; två extremkörningar ger garanterade gränser, med grenunion kring instabila bifurkationer."
-anvandarflode = "api"
-kod = ["src/dynamik/intervall.py", "src/webb/api.py (POST /api/analys/intervall)"]
+anvandarflode = "flode"
+kod = ["src/dynamik/intervall.py", "src/webb/api.py (POST /api/analys/intervall)", "webb/src/flode/osakerhet.ts"]
 kontrakt = ["K40", "K34"]
 facit = ["tests/dynamik/test_intervall.py (50 slumpade scenarier på vart och ett av A1–A4, totalt 200, alla inneslutna)", "tests/webb/test_analys_steg_a.py"]
-anmarkning = "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Ingen panel i klienten (K40: läses av inget i webbklienten)."
+anmarkning = "Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Visas i Resultat (steg 4, fliken Skyfall, knappen \"Visa osäkerhet\") som [min; max]; gäller projektets markmodell (läget före), inte ett ritat förslag."
 [[metod.formel]]
 latex = 'h_{\min}(t) \le h_u(t) \le h_{\max}(t), \qquad (h_{\min}, h_{\max}) \text{ ur två extremkörningar}'
 text = "h_min(t) ≤ h_u(t) ≤ h_max(t); gränserna ur två extremkörningar (mer regn, lägre förlust, lägre avtappning ⇒ högre nivå)"
@@ -157,11 +156,11 @@ id = "dagsljus.svf_intervall"
 doman = "dagsljus"
 namn = "Monotona SVF-intervall"
 sammanfattning = "SVF är antiton i byggnadshöjd: körningar med z − σ och z + σ ger garanterat [SVF_min, SVF_max] per cell."
-anvandarflode = "api"
-kod = ["src/dagsljus/intervall.py (kor_monoton_svf_intervall)", "src/webb/api.py (POST /api/analys/svf-intervall)"]
+anvandarflode = "flode"
+kod = ["src/dagsljus/intervall.py (kor_monoton_svf_intervall)", "src/webb/api.py (POST /api/analys/svf-intervall)", "webb/src/flode/osakerhet.ts"]
 kontrakt = ["K41"]
 facit = ["tests/dagsljus/test_modern_matte.py (20 slumpade höjdscenarier inneslutna)", "tests/webb/test_analys_steg_a.py"]
-anmarkning = "Ingen panel i klienten."
+anmarkning = "Visas i Resultat (steg 4, fliken Sol, knappen \"Visa osäkerhet\") som [min; max] av medel-SVF; gäller projektets markmodell (läget före), inte ett ritat förslag."
 [[metod.formel]]
 latex = '\mathrm{SVF}(H - \sigma) \ge \mathrm{SVF}(H) \ge \mathrm{SVF}(H + \sigma)'
 text = "SVF(H − σ) ≥ SVF(H) ≥ SVF(H + σ)"
@@ -207,7 +206,7 @@ anvandarflode = "api"
 kod = ["src/luft/kanslighet.py (kor_monoton_mkn_intervall)", "src/webb/api.py (POST /api/analys/luft-mkn)"]
 kontrakt = ["K43"]
 facit = ["tests/luft/test_kanslighet.py (50 MKN-scenarier inneslutna)", "tests/webb/test_analys_steg_b.py"]
-anmarkning = "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Ingen panel i klienten."
+anmarkning = "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under \"Fler analyser\" med egna timvärden."
 [[metod.formel]]
 latex = 'c_{\text{lo}} = c_{\text{bg}} + \frac{e_{\text{lo}}}{d_{\text{hi}}}\,c_{\text{lokal}}, \qquad c_{\text{hi}} = c_{\text{bg}} + \frac{e_{\text{hi}}}{d_{\text{lo}}}\,c_{\text{lokal}}'
 text = "c_lo = c_bg + (e_lo/d_hi)·c_lokal,  c_hi = c_bg + (e_hi/d_lo)·c_lokal; dygn över 50 µg/m³ räknas i båda serierna"

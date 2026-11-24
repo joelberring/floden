@@ -37,6 +37,7 @@ import { lasKartanText } from "./kartforklaring";
 import { felHtml } from "./felvisning";
 import { esc, PROJEKT_ID } from "./sidor";
 import { vattenAntagandenRader } from "./antaganden.ts";
+import { talFormat } from "./tal.ts";
 import type { ModulInfo } from "./types";
 
 const LAGRING_BAKGRUND = "floden.bakgrund";
@@ -101,9 +102,9 @@ let rot: HTMLElement | null = null;
 
 /* ---------- Formatering ---------- */
 
-const TAL = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 4 });
-const DEC1 = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 1 });
-const HELTAL = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 0 });
+const TAL = talFormat(4);
+const DEC1 = talFormat(1);
+const HELTAL = talFormat(0);
 
 export function formateraVarde(v: unknown): string {
   if (v === null || v === undefined) return "–";
@@ -591,7 +592,7 @@ function ritaResultat(): void {
     return;
   }
   const kartlank = t.vald?.i_demon
-    ? `<a class="textlank" href="#/karta/${PROJEKT_ID}">Öppna på kartan med före, efter och svep →</a>`
+    ? `<a class="textlank" href="#/p/${PROJEKT_ID}/resultat">Öppna på kartan med före, efter och svep →</a>`
     : "";
   sek.innerHTML = `
     <div class="sektionsrad linje-under-stark">
@@ -770,7 +771,7 @@ async function lasAvlasning(korning: string, lager: string, e: number, n: number
   }
 }
 
-const DEC2 = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 });
+const DEC2 = talFormat(2);
 
 function formateraAvlasning(v: number, enhet: string, typ: string): string {
   const tecken = typ === "skillnad" && v > 0 ? "+" : "";

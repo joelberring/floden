@@ -1,7 +1,8 @@
 /* Teckenförklaring för ett rasterlager (färgskala eller klasser) i klarspråk. */
 import type { LagerPost } from "./fragor-typer";
+import { talFormat } from "./tal.ts";
 
-const TAL = new Intl.NumberFormat("sv-SE", { maximumFractionDigits: 2 });
+const TAL = talFormat(2);
 
 function esc(text: string): string {
   return text

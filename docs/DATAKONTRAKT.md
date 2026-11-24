@@ -634,7 +634,7 @@ Registrerat 2026-11-23 i efterhand (ingen formatändring). Ett JSON-svar, ingen 
 
 **Skrivs av** `FlodenWebbTjanst.kor_bifurkation_analys` i `src/webb/api.py`, som kör
 `detektera_bifurkationer` och `tvad.felindikator.berakna_2d_felindikator` på områdets basgraf.
-**Läses av** webbklienten (`webb/src/karta/kartapi.ts`, `BifurkationAnalysSvar`, panelen i `kartsida.ts`).
+**Läses av** webbklienten (`webb/src/karta/kartapi.ts`, `BifurkationAnalysSvar`, resultatpanelen i `webb/src/flode/resultat.ts` och `osakerhet.ts`).
 
 | Fält | Typ | Enhet | Innehåll |
 | --- | --- | --- | --- |
