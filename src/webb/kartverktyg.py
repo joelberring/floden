@@ -38,6 +38,7 @@ from shapely.geometry import Polygon
 
 from gemensamt import avgransning as avgr_mod
 from gemensamt.hash import sha256_fil
+from karna import ritlager as ritl
 from karna.geometri import las_byggnader
 from karna.geometri.tillampa import valj_k1_version, verifiera_byggnadsreferenser
 from karna.k9_till_k1 import dela_andringar
@@ -330,6 +331,12 @@ class KartverktygTjanst:
             "analyser": self._analyser(mallar),
             "scenarier": self.lista_scenarier(projekt)["scenarier"],
             "ortofoto": self.ortofoto_info(projekt),
+            # Additivt (R2, K50): förvalda ritlager och rollerna (vad ett objekt blir i beräkningen).
+            "ritlager": {
+                "kontrakt": ritl.KONTRAKT,
+                "lager": ritl.standardlager(),
+                "roller": ritl.roller_for_api(),
+            },
         }
 
     # ------------------------------------------------------------------ kontroll
@@ -378,7 +385,14 @@ class KartverktygTjanst:
         information: list[str] = []
         hus: list[dict[str, Any]] = []
         skarvar: dict[str, Any] | None = None
+        ritdok: dict[str, Any] | None = None
         try:
+            if kropp.get("ritlager") is not None:
+                # K50: rollen avgör vilken K9-ändring varje ritat objekt blir (karna.ritlager.oversatt).
+                ritdok = ritl.kontrollera_dokument(kropp["ritlager"])
+                k9_lista, oversatt = ritl.sla_ihop(andringar, ritdok)
+                andringar = self._normalisera(k9_lista)
+                varningar.extend(oversatt.ej_tillampade)
             res = kontrollera_andringar(andringar, self._rutor_alla(mallar))
             hus = res["hus"]
             varningar.extend(res["varningar"])
@@ -399,6 +413,7 @@ class KartverktygTjanst:
             "hus": hus,
             "andringar": andringar,
             "skarvar": skarvar,
+            "ritlager": ritdok,
         }
 
     def _skarvar(
@@ -675,8 +690,16 @@ class KartverktygTjanst:
         return self._fil(projekt, namn_slug).is_file()
 
     def hamta_scenario(self, projekt: str, namn_slug: str) -> dict[str, Any]:
+        """Det sparade förslaget. Additivt: `ritlager` (K50; ett förslag utan lager får de förvalda) och
+        `fria_andringar` (K9 som inte kommer ur ritade objekt, t.ex. höjdändring av en befintlig byggnad)."""
         self._kravs_projekt(projekt)
-        return self._las(projekt, namn_slug)
+        d = self._las(projekt, namn_slug)
+        try:
+            doc = ritl.kontrollera_dokument(d.get("ritlager"))
+            fria = ritl.fria_andringar(d.get("andringar", []), doc)
+        except RitatFel as exc:
+            raise _fel(f"Förslagets lager går inte att läsa: {exc}") from exc
+        return {**d, "ritlager": doc, "fria_andringar": fria}
 
     def spara_scenario(
         self, projekt: str, namn_slug: str | None, kropp: Mapping[str, Any]
@@ -711,6 +734,8 @@ class KartverktygTjanst:
             "andringar": v["andringar"],
             "korningar": gammal.get("korningar", {}),
         }
+        if v.get("ritlager") is not None:
+            d["ritlager"] = v["ritlager"]  # K50, additivt; `andringar` är redan hela K9 (fria + översatta)
         fil.parent.mkdir(parents=True, exist_ok=True)
         tmp = fil.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -776,6 +801,7 @@ class KartverktygTjanst:
         k9 = self._k9_per_bas(
             mallar, d["andringar"], namn_slug, beskrivning=f"Ritat i kartan: {d['namn']}"
         )
+        stangt = ritl.har_stangt_innehall(d.get("ritlager"), kalla.oppen)
         poster: list[dict[str, Any]] = []
         for kort, analyser in urval.items():
             m = mallar[kort]
@@ -785,7 +811,7 @@ class KartverktygTjanst:
                     f"Förslaget har ingen ändring som berör området för {kort}; "
                     "välj en annan analys eller rita inom området."
                 )
-            k9_fil = self.mapp / projekt / "k9" / f"{namn_slug}__{kort}.json"
+            k9_fil = self._k9_fil(projekt, namn_slug, kort, stangt)
             skriv_scenario(sc, k9_fil)
             fragedir.mkdir(parents=True, exist_ok=True)
             max_slug = 60 - len(prefix) - 2 - len(kort)
@@ -802,6 +828,26 @@ class KartverktygTjanst:
                  "k9_nyckel": sc.nyckel, "analyser": analyser}
             )
         return poster
+
+    def _k9_fil(self, projekt: str, namn_slug: str, kort: str, stangt: bool) -> Path:
+        """K9-filen för en körning. Ett förslag med objekt i ett stängt ritlager (K50, t.ex. Stockholms
+        baskarta) skrivs till `k9_stangda/`, som är markerad `oppen = false` (K38): körningen av det
+        lämnas då inte ut via MCP. Den andra platsens gamla fil tas bort så att klassen inte kan hänga kvar."""
+        namn = f"{namn_slug}__{kort}.json"
+        oppen_fil = self.mapp / projekt / "k9" / namn
+        stangd_mapp = self.mapp / projekt / "k9_stangda"
+        stangd_fil = stangd_mapp / namn
+        if stangt:
+            stangd_mapp.mkdir(parents=True, exist_ok=True)
+            (stangd_mapp / "oppenhet.toml").write_text(
+                'kontrakt = "floden-oppenhet/v1"\noppen = false\n'
+                'kalla = "Förslag med objekt i ett stängt ritlager (K50)"\n',
+                encoding="utf-8",
+            )
+            oppen_fil.unlink(missing_ok=True)
+            return stangd_fil
+        stangd_fil.unlink(missing_ok=True)
+        return oppen_fil
 
     def _ref_for(self, fil: Path) -> str:
         for ref, f in self.fragor._fragefiler().items():  # noqa: SLF001

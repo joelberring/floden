@@ -234,6 +234,11 @@ class FlodenTjanst:
             "antal_byggnader": len(info["byggnader"]),
             "tillgangliga_analyser": info["analyser"],
             "hojd_max_m": info["hojd_max_m"],
+            # K50: ritlagren och rollerna. Stängda lager lämnas aldrig ut med innehåll (`ritlager.for_mcp`).
+            "ritlager": {
+                **self._ritlager_for_mcp(info),
+                "roller": info["ritlager"]["roller"],
+            },
             "sparade_scenarier": info["scenarier"],
             "ortofoto": info["ortofoto"],
             "slag": info["slag"],
@@ -253,6 +258,13 @@ class FlodenTjanst:
             else None,
             "kodversion": self.kodversion,
         }
+
+    @staticmethod
+    def _ritlager_for_mcp(info: Mapping[str, Any]) -> dict[str, Any]:
+        from karna import ritlager
+
+        doc = {"kontrakt": ritlager.KONTRAKT, "lager": info["ritlager"]["lager"], "objekt": []}
+        return ritlager.for_mcp(doc, info.get("oppen"))
 
     def _byggnadsposter(self, projekt: str = PROJEKT_ID) -> list[dict[str, Any]]:
         kalla = self.kv.kalla(projekt)

@@ -8,12 +8,17 @@
  */
 import { franGeoRing, normaliseraRing, tillGeoRing, type Ring } from "./geom.ts";
 import { registreraSteg, ta, tomHistorik, type Historik, type Steg } from "./historik.ts";
+import { KONTRAKT_RITLAGER, kopiaLager, type RitLager, type RitObjekt, type RitlagerDok } from "./ritlager.ts";
 
 export interface NyttHus {
   id: string;
   /** Öppen ring, moturs. */
   ring: Ring;
   hojd_m: number;
+  /** Ritlagret (K50) huset ligger i; utan värde det första byggnadslagret. */
+  lager?: string;
+  /** Övriga egenskaper ur filen (t.ex. våningar, tak_rh2000) som bevaras vid sparande. */
+  extra?: Record<string, unknown>;
 }
 
 export type DokNyckel = `ny:${string}` | `hojd:${string}` | `bort:${string}`;
@@ -21,18 +26,32 @@ type Lage = NyttHus | number | true;
 
 /** En K9-ändring så som servern tar emot den. */
 export interface K9Andring {
-  typ: "byggnad_ny" | "byggnad_hojd" | "byggnad_bort";
+  /** Byggnadstyperna ritas här; andra K9-typer (t.ex. markhojd) bevaras oförändrade. */
+  typ: string;
   andring_id: string;
   geometri: { type: "Polygon"; coordinates: number[][][] } | null;
   egenskaper: Record<string, unknown>;
 }
 
-const kopia = (h: NyttHus): NyttHus => ({ id: h.id, hojd_m: h.hojd_m, ring: h.ring.map((p) => ({ x: p.x, y: p.y })) });
+const kopia = (h: NyttHus): NyttHus => {
+  const k: NyttHus = { id: h.id, hojd_m: h.hojd_m, ring: h.ring.map((p) => ({ x: p.x, y: p.y })) };
+  if (h.lager !== undefined) k.lager = h.lager;
+  if (h.extra) k.extra = { ...h.extra };
+  return k;
+};
 
 export class PlanDok {
   readonly ny = new Map<string, NyttHus>();
   readonly hojd = new Map<string, number>();
   readonly bort = new Set<string>();
+  /** Ritlagren (K50). Tomt tills de satts (förvalda lager ur projektinfo, eller förslagets egna). Inte en del av ångra. */
+  lager: RitLager[] = [];
+  /** Lagret nya hus ritas i. */
+  aktivtLager: string | null = null;
+  /** Ritade objekt i lager som klienten inte kan redigera än (andra roller än byggnad): bevaras oförändrade. */
+  private ovrigaObjekt: RitObjekt[] = [];
+  /** K9-ändringar klienten inte känner igen (t.ex. markhojd ur en fil): bevaras oförändrade. */
+  private ovrigaAndringar: K9Andring[] = [];
   private historik: Historik<DokNyckel, Lage> = tomHistorik();
   private version = 0;
   private lyssnare: Array<() => void> = [];
@@ -143,8 +162,9 @@ export class PlanDok {
   }
 
   /** Lägger till ett nytt hus (ring moturs, avrundad) och returnerar det. */
-  laggTillHus(ring: Ring, hojd: number, id = this.nyttId()): NyttHus {
+  laggTillHus(ring: Ring, hojd: number, id = this.nyttId(), lager: string | undefined = this.aktivtHusLager()?.lager_id): NyttHus {
     const h: NyttHus = { id, ring: normaliseraRing(ring), hojd_m: hojd };
+    if (lager !== undefined) h.lager = lager;
     this.satta(`ny:${id}`, h);
     return h;
   }
@@ -177,7 +197,107 @@ export class PlanDok {
   }
 
   tom(): boolean {
-    return this.ny.size === 0 && this.hojd.size === 0 && this.bort.size === 0;
+    return this.ny.size === 0 && this.hojd.size === 0 && this.bort.size === 0 && this.ovrigaObjekt.length === 0 && this.ovrigaAndringar.length === 0;
+  }
+
+  // ------------------------------------------------------------------ ritlager (K50)
+
+  /** Sätter lagren (förval eller förslagets egna). Behåller det aktiva lagret om det finns kvar. */
+  sattLager(lista: readonly RitLager[]): void {
+    this.lager = lista.map(kopiaLager);
+    if (!this.lager.some((l) => l.lager_id === this.aktivtLager)) this.aktivtLager = this.forstaHusLager()?.lager_id ?? null;
+    this.signalera();
+  }
+
+  lagerAv(id: string | null | undefined): RitLager | undefined {
+    return id ? this.lager.find((l) => l.lager_id === id) : undefined;
+  }
+
+  private forstaHusLager(): RitLager | undefined {
+    return this.lager.find((l) => l.roll === "byggnad" && l.synlig && !l.last) ?? this.lager.find((l) => l.roll === "byggnad");
+  }
+
+  /** Lagret ett hus ligger i (utan angivet lager: det första byggnadslagret). */
+  lagerForHus(h: NyttHus): RitLager | undefined {
+    return this.lagerAv(h.lager) ?? this.lager.find((l) => l.roll === "byggnad");
+  }
+
+  /** Lagret ett nytt hus ritas i just nu, om det är ett tänt och olåst byggnadslager. */
+  aktivtHusLager(): RitLager | undefined {
+    const l = this.lagerAv(this.aktivtLager);
+    return l && l.roll === "byggnad" && l.synlig && !l.last ? l : undefined;
+  }
+
+  /** Huset syns om dess lager är tänt (utan lagerlista syns allt). */
+  arSynligt(h: NyttHus): boolean {
+    return this.lagerForHus(h)?.synlig ?? true;
+  }
+
+  /** Huset går att markera och ändra om dess lager är tänt och olåst. */
+  arRedigerbart(h: NyttHus): boolean {
+    const l = this.lagerForHus(h);
+    return !l || (l.synlig && !l.last);
+  }
+
+  sattAktivtLager(id: string): void {
+    if (this.lagerAv(id) && this.aktivtLager !== id) {
+      this.aktivtLager = id;
+      this.signalera();
+    }
+  }
+
+  andraLager(id: string, f: (l: RitLager) => void): void {
+    const l = this.lagerAv(id);
+    if (!l) return;
+    f(l);
+    this.signalera();
+  }
+
+  laggTillLager(l: RitLager): void {
+    if (this.lagerAv(l.lager_id)) return;
+    this.lager.push(kopiaLager(l));
+    if (!this.aktivtLager && l.roll === "byggnad") this.aktivtLager = l.lager_id;
+    this.signalera();
+  }
+
+  /** Antal objekt i ett lager (nya hus och bevarade objekt). */
+  antalILager(id: string): number {
+    let n = this.ovrigaObjekt.filter((o) => o.lager_id === id).length;
+    for (const h of this.ny.values()) if (this.lagerForHus(h)?.lager_id === id) n++;
+    return n;
+  }
+
+  /** Tar bort ett tomt lager. Returnerar false om det har objekt (de måste flyttas eller tas bort först). */
+  taBortLager(id: string): boolean {
+    if (this.antalILager(id) > 0 || !this.lagerAv(id)) return false;
+    this.lager = this.lager.filter((l) => l.lager_id !== id);
+    if (this.aktivtLager === id) this.aktivtLager = this.forstaHusLager()?.lager_id ?? null;
+    this.signalera();
+    return true;
+  }
+
+  /** K50-dokumentet för servern: lagren och alla ritade objekt, med husen i sina lager. `extra` ger egenskaper per hus (t.ex. takform). */
+  tillRitlager(extra: (id: string) => Record<string, unknown> = () => ({})): RitlagerDok {
+    const objekt: RitObjekt[] = [];
+    for (const h of [...this.ny.values()].sort((a, b) => a.id.localeCompare(b.id))) {
+      const lager = this.lagerForHus(h)?.lager_id ?? h.lager;
+      if (!lager) continue;
+      objekt.push({
+        objekt_id: h.id,
+        lager_id: lager,
+        geometri: { type: "Polygon", coordinates: [tillGeoRing(normaliseraRing(h.ring))] },
+        egenskaper: { ...h.extra, hojd_m: h.hojd_m, ...extra(h.id) },
+      });
+    }
+    objekt.push(...this.ovrigaObjekt.map((o) => ({ ...o, egenskaper: { ...o.egenskaper } })));
+    const dok: RitlagerDok = { kontrakt: KONTRAKT_RITLAGER, objekt };
+    if (this.lager.length > 0) dok.lager = this.lager.map(kopiaLager);
+    return dok;
+  }
+
+  /** K9-ändringar som inte kommer ur ritade objekt: höjdändring och rivning av befintliga byggnader, och bevarade okända. */
+  tillFriaAndringar(): K9Andring[] {
+    return this.tillAndringar().filter((a) => a.typ !== "byggnad_ny").concat(this.ovrigaAndringar.map((a) => ({ ...a })));
   }
 
   /** K9-ändringarna: nya hus, höjdändringar, borttagningar. Samma ordning varje gång (id). */
@@ -188,7 +308,7 @@ export class PlanDok {
         typ: "byggnad_ny",
         andring_id: h.id,
         geometri: { type: "Polygon", coordinates: [tillGeoRing(normaliseraRing(h.ring))] },
-        egenskaper: { hojd_m: h.hojd_m },
+        egenskaper: { ...h.extra, hojd_m: h.hojd_m },
       });
     }
     for (const [bid, hojd] of [...this.hojd.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -201,21 +321,47 @@ export class PlanDok {
     return ut;
   }
 
-  /** Ersätter dokumentet med K9-ändringar (laddat scenario). Historiken töms. */
-  fran(andringar: ReadonlyArray<K9Andring>): void {
+  /**
+   * Ersätter dokumentet med K9-ändringar (laddat scenario). Historiken töms. Med `ritlager` (K50) kommer
+   * husen ur objekten i sina lager och `andringar` är de fria ändringarna; utan hamnar husen i första byggnadslagret.
+   */
+  fran(andringar: ReadonlyArray<K9Andring>, ritlager?: RitlagerDok | null): void {
     this.ny.clear();
     this.hojd.clear();
     this.bort.clear();
+    this.ovrigaObjekt = [];
+    this.ovrigaAndringar = [];
     this.historik = tomHistorik();
+    if (ritlager?.lager && ritlager.lager.length > 0) {
+      this.lager = ritlager.lager.map(kopiaLager);
+      if (!this.lager.some((l) => l.lager_id === this.aktivtLager)) this.aktivtLager = this.forstaHusLager()?.lager_id ?? null;
+    }
+    const nyttHus = (id: string, geo: { coordinates: number[][][] }, e: Record<string, unknown>, lager?: string): void => {
+      const { hojd_m, takform: _tak, ...extra } = e;
+      void _tak;
+      const h: NyttHus = { id, ring: franGeoRing(geo.coordinates[0] ?? []), hojd_m: Number(hojd_m) };
+      if (lager !== undefined) h.lager = lager;
+      if (Object.keys(extra).length > 0) h.extra = extra;
+      this.ny.set(id, h);
+    };
     for (const a of andringar) {
       const e = a.egenskaper;
       if (a.typ === "byggnad_ny" && a.geometri) {
-        const ring = franGeoRing(a.geometri.coordinates[0] ?? []);
-        this.ny.set(a.andring_id, { id: a.andring_id, ring, hojd_m: Number(e.hojd_m) });
+        nyttHus(a.andring_id, a.geometri, e);
       } else if (a.typ === "byggnad_hojd") {
         this.hojd.set(String(e.byggnads_id), Number(e.hojd_m));
       } else if (a.typ === "byggnad_bort") {
         this.bort.add(String(e.byggnads_id));
+      } else {
+        this.ovrigaAndringar.push({ ...a });
+      }
+    }
+    for (const o of ritlager?.objekt ?? []) {
+      const roll = this.lagerAv(o.lager_id)?.roll;
+      if (roll === "byggnad" && o.geometri.type === "Polygon") {
+        nyttHus(o.objekt_id, o.geometri as { coordinates: number[][][] }, o.egenskaper, o.lager_id);
+      } else {
+        this.ovrigaObjekt.push({ ...o, egenskaper: { ...o.egenskaper } });
       }
     }
     this.signalera();
@@ -224,5 +370,13 @@ export class PlanDok {
   /** Töm dokumentet (nytt scenario). */
   rensa(): void {
     this.fran([]);
+  }
+
+  /** Tar över hela innehållet (och lagren) från ett annat dokument, t.ex. när sidan byggs om. */
+  taOver(annat: PlanDok): void {
+    this.lager = annat.lager.map(kopiaLager);
+    this.aktivtLager = annat.aktivtLager;
+    const lager = annat.tillRitlager();
+    this.fran(annat.tillFriaAndringar(), { ...lager, lager: this.lager });
   }
 }

@@ -205,3 +205,17 @@
   border-left: 3px solid var(--f-linje-stark);
   padding-left: 8px;
 }
+
+/* Ritlagerpanelen (steg 2, K50) */
+.rl-lista { list-style: none; margin: 0 0 10px; padding: 0; }
+.rl-rad { padding: 6px; border: 1px solid var(--fl-line, #ddd); border-radius: 6px; margin-bottom: 6px; }
+.rl-rad.aktiv { border-color: var(--fl-ink, #111); }
+.rl-rad.last .rl-namn { font-style: italic; }
+.rl-topp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rl-namn { flex: 1 1 auto; min-width: 6em; }
+.rl-prov { width: 14px; height: 14px; border: 2px solid; border-radius: 3px; display: inline-block; flex: none; }
+.rl-vaxla { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.rl-roll { margin: 4px 0 0; }
+.rl-stangt { color: var(--fl-fel, #a11); }
+.rl-ny { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.rl-ny input[type="text"] { flex: 1 1 8em; min-width: 6em; }

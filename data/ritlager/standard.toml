@@ -1,0 +1,81 @@
+# Förvalda ritlager (K50 `floden-ritlager/v1`, se docs/DATAKONTRAKT.md och docs/design/RITVERKTYG.md avsnitt 4).
+#
+# Ett ritlager har en *roll i beräkningen*; rollen, inte ett symbolnummer, avgör vad ett ritat objekt blir i K9/K1
+# (`karna.ritlager.oversatt`). Mallen är bara förvalet: ett förslag som sparats utan lager får dessa, och användaren
+# kan lägga till egna lager inom rollerna. Stil är bara visning och ingår aldrig i K9-nyckeln.
+# Färgerna är hexkoder (#rrggbb). Källa `ritat` = ritat i kartan; dataklass `oppen` följer projektets öppenhet.
+kontrakt = "floden-ritlager/v1"
+mall = "standard"
+namn = "Standard"
+version = 1
+
+[[lager]]
+lager_id = "hus"
+namn = "Hus"
+geometri = "polygon"
+roll = "byggnad"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { fyllning = "#d98c5f", linje = "#8a4b24", linjebredd_px = 2 }
+egenskaper_mall = { hojd_m = "tal", takform = "kod" }
+
+[[lager]]
+lager_id = "mark"
+namn = "Mark (ny nivå)"
+geometri = "polygon"
+roll = "mark"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { fyllning = "#c9b98f", linje = "#7a6a3c", linjebredd_px = 2 }
+egenskaper_mall = { niva_rh2000 = "tal" }
+
+[[lager]]
+lager_id = "gata"
+namn = "Gata och hårdgjort"
+geometri = "polygon"
+roll = "hardgjort"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { fyllning = "#a8a8a8", linje = "#5c5c5c", linjebredd_px = 2 }
+egenskaper_mall = { niva_rh2000 = "tal" }
+
+[[lager]]
+lager_id = "gronyta"
+namn = "Grönyta"
+geometri = "polygon"
+roll = "vegetation"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { fyllning = "#b7d89a", linje = "#4a6a30", linjebredd_px = 2 }
+egenskaper_mall = { hojd_m = "tal", markslag = "kod" }
+egenskaper_forval = { markslag = 4 }
+
+[[lager]]
+lager_id = "vatten"
+namn = "Vatten"
+geometri = "polygon"
+roll = "vatten"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { fyllning = "#9cc7e8", linje = "#2f6f9f", linjebredd_px = 2 }
+egenskaper_mall = { volym_m3 = "tal", botten_rh2000 = "tal" }
+
+[[lager]]
+lager_id = "mur-och-kant"
+namn = "Mur och kant"
+geometri = "linje"
+roll = "brytlinje"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { linje = "#6b3fa0", linjebredd_px = 3 }
+egenskaper_mall = { typ = "kod", hojd_m = "tal" }
+
+[[lager]]
+lager_id = "passage"
+namn = "Passage och trumma"
+geometri = "linje"
+roll = "oppning"
+kalla = "ritat"
+dataklass = "oppen"
+stil = { linje = "#1f8a70", linjebredd_px = 3 }
+egenskaper_mall = { typ = "kod", bredd_m = "tal", botten_rh2000 = "tal" }

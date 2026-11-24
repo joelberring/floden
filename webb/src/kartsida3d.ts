@@ -204,7 +204,7 @@ export function planHus(ktx: Kontext3d): PlanHus[] {
   if (ktx.arRitatResultat()) return [];
   const ut: PlanHus[] = [];
   const bas = new Map(ktx.info.byggnader.map((b) => [b.id, b]));
-  for (const h of d.ny.values()) ut.push({ slag: "ny", ringar: [h.ring.map((p) => [p.x, p.y] as [number, number])], hojd_m: h.hojd_m });
+  for (const h of d.ny.values()) if (d.arSynligt(h)) ut.push({ slag: "ny", ringar: [h.ring.map((p) => [p.x, p.y] as [number, number])], hojd_m: h.hojd_m });
   for (const [id, hojd] of d.hojd) {
     const b = bas.get(id);
     if (b) ut.push({ slag: "andrad", ringar: [b.ring, ...b.hal], hojd_m: hojd });

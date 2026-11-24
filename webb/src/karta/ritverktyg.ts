@@ -127,7 +127,9 @@ export class Ritverktyg {
   }
 
   private finns(v: Val): boolean {
-    return v.ny ? this.dok.ny.has(v.id) : this.bas.has(v.id);
+    if (!v.ny) return this.bas.has(v.id);
+    const h = this.dok.ny.get(v.id);
+    return h !== undefined && this.dok.arRedigerbart(h); // ett hus i ett dolt eller låst lager går inte att ha markerat
   }
 
   // ------------------------------------------------------------------ tillstånd
@@ -193,7 +195,7 @@ export class Ritverktyg {
   private husFormer(): HusForm[] {
     const ut: HusForm[] = [];
     for (const b of this.bas.values()) ut.push({ id: `b:${b.id}`, ringar: [b.ring, ...b.hal] });
-    for (const h of this.dok.ny.values()) ut.push({ id: `n:${h.id}`, ringar: [h.ring] });
+    for (const h of this.dok.ny.values()) if (this.dok.arRedigerbart(h)) ut.push({ id: `n:${h.id}`, ringar: [h.ring] });
     return ut;
   }
 
@@ -201,7 +203,7 @@ export class Ritverktyg {
     if (this.index && this.indexNr === this.dok.andringsNr) return this.index;
     const objekt: Array<{ id: string; ringar: Ring[] }> = [];
     for (const b of this.bas.values()) objekt.push({ id: `b:${b.id}`, ringar: [b.ring, ...b.hal] });
-    for (const h of this.dok.ny.values()) objekt.push({ id: `n:${h.id}`, ringar: [h.ring] });
+    for (const h of this.dok.ny.values()) if (this.dok.arSynligt(h)) objekt.push({ id: `n:${h.id}`, ringar: [h.ring] }); // låsta lager går att fästa mot, dolda inte
     this.index = byggFastIndex(objekt);
     this.indexNr = this.dok.andringsNr;
     return this.index;
@@ -308,7 +310,21 @@ export class Ritverktyg {
     return this.val;
   }
 
+  /** Ritlagret ett nytt hus hamnar i, eller ett besked om varför det inte går (inget tänt och olåst byggnadslager valt). */
+  private husLagerKontroll(): boolean {
+    if (this.dok.aktivtHusLager() || this.dok.lager.length === 0) return true;
+    const l = this.dok.lagerAv(this.dok.aktivtLager);
+    const skal = !l
+      ? "Det finns inget byggnadslager. Lägg till ett lager med rollen Byggnad i lagerpanelen."
+      : l.roll !== "byggnad"
+        ? `Lagret ${l.namn} har rollen ${l.roll}. Hus ritas i ett lager med rollen Byggnad; välj ett sådant lager i lagerpanelen. Ritverktyg för linjer och ytor kommer i ett senare steg.`
+        : `Lagret ${l.namn} är ${l.last ? "låst" : "släckt"}. Lås upp eller tänd det i lagerpanelen, eller välj ett annat lager.`;
+    this.miljo.meddela({ typ: "fel", text: skal });
+    return false;
+  }
+
   private klickaHus(p: Punkt, e: Pekare): void {
+    if (this.utkast.length === 0 && !this.husLagerKontroll()) return;
     const rack = fastRackvidd(e.pekare, this.miljo.meterPerPx());
     const q = this.beräkna(p, e);
     const forsta = this.utkast[0];
@@ -344,6 +360,7 @@ export class Ritverktyg {
       this.miljo.meddela({ typ: "fel", text: "Huset är för litet (under 1 m²)." });
       return false;
     }
+    if (!this.husLagerKontroll()) return false;
     const h = this.dok.laggTillHus(ring, FORVALD_HOJD_M);
     this.utkast = [];
     this.mark = null;
