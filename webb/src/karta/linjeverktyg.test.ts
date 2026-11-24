@@ -82,6 +82,8 @@ test("yta: tre hörn och Enter i marklagret; korsande kanter och för få punkte
   const f = [...dok.figurer.values()][0]!;
   assert.equal(f.typ, "yta");
   assert.equal(f.lager, "mark");
+  // Regression (webbläsarprovet): Enter efter fyra klick gav en yta utan hörn, för att ringen töms innan den kopierats.
+  assert.deepEqual(xy(f.punkter), [[0, 0], [10, 0], [10, 10], [0, 10]]);
   const o = dok.tillRitlager().objekt.find((x) => x.objekt_id === f.id)!;
   assert.equal(o.geometri.type, "Polygon");
   r.sattVerktyg("yta");

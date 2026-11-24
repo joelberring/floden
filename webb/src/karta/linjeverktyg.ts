@@ -297,8 +297,9 @@ export class Linjeverktyg {
         this.miljo.meddela({ typ: "fel", text: "Ytan är för liten (under 0,5 m²)." });
         return false;
       }
+      const slutring = [...ring]; // ring kan vara samma lista som punkter: töm den inte innan den kopierats
       punkter.length = 0;
-      punkter.push(...ring);
+      punkter.push(...slutring);
     }
     const lager = this.dok.lagerForRitning(verktyg === "yta" ? "polygon" : "linje");
     if (!lager) return this.lagerKontroll(verktyg);
