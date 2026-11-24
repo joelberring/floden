@@ -13,10 +13,10 @@ Kontrakt: K30, K32 och K33 i `DATAKONTRAKT.md`.
 
 | Nivå | Vad | Status |
 | --- | --- | --- |
-| 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1) och **dagsljus och sol** (R2) |
+| 1 Skissunderlag | Sållning, inte bedömning mot krav. 2–6 sidor: karta per ämne (före, efter, skillnad), jämförelse av alternativ, trafikljus per fråga ("behöver fördjupas"), saknat underlag, alla metoder med valideringsstatus. Ansvarig utredare valfri. | Finns för **skyfall** (R1), **dagsljus och sol** och **ekologi** (R2) |
 | 2 Publicerbart planunderlag | Bedömning mot bedömningsgrunder, metodnotis och ansvarig utredare, granskning och signering. | R3; fälten finns förberedda i K32/K33 (`bedomningsgrund`, `granskning`, `signering`, `skede`, `revision`) |
 
-Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall och dagsljus/sol är klara på nivå 1; luft och buller återstår.
+Ordning för ämnena (Joel 2026-11-22): skyfall → dagsljus/sol → luft → buller. Skyfall, dagsljus/sol och ekologi är klara på nivå 1; luft och buller återstår (avsnittet "Luft och buller: vad som saknas").
 
 ## Påstående, belägg och platshållare
 
@@ -209,6 +209,85 @@ SO-15 *visat*; de som markerats *delvis* får status *underlag saknas* för det 
 | SO-15 Vilken tidsperiod representerar varje figur och hur knyts den till delytans användning? | visat | Varje karta är en dygnssumma (timmar per dygn, medel över de datum körningen räknade); datum och tidssteg står i antagandena och beläggen. | Ögonblicksbilder och periodmedel för flera perioder ingår inte; vilken yta slutsatsen gäller anges med mottagare. | visat |
 
 
+## Skissunderlaget för ekologi (R2)
+
+Ämnet `ekologi` (grön infrastruktur och spridningssamband) följer dagsljusets mönster: beställning
+(K30, ämnet `ekologi`), frågor, körning, rapport, kontroll och export. Underlaget är en sållning för en
+signalart eller artgrupp: det visar hur ett förslag ändrar konnektiviteten i ett habitatnätverk (K45),
+inte om arten finns eller hur väl sambandet fungerar i fält.
+
+**Frågorna EK-01 till EK-12** ligger i en egen fil, `docs/utredningar-stockholm/fragor_ekologi.json`,
+med egna källor (Naturvårdsverkets och Länsstyrelsens vägledning för grön infrastruktur, Stockholms,
+Nackas och Södertäljes nätverksrapporter, Saura och Pascual-Hortal 2007 för PC, McRae m.fl. 2008 för
+strömtäthet, NMD). Katalogen visade ingen fråga om grön infrastruktur eller spridningssamband, så
+området är tillagt separat; den granskade `fragor.json` (75 frågor) är oförändrad.
+`Fragekatalog.las_alla()` läser båda och används av rapporttjänsten, `fragekatalog_sok` och
+`GET /api/fragekatalog`; `Fragekatalog.las()` ger fortfarande bara de 75 granskade frågorna.
+Ekologifrågorna är redaktionellt underlag sammanställt med AI-stöd (källäge 23 november 2026) och ska granskas.
+
+**Mått och belägg.** Alla tal kommer ur körningens K0-manifest och `ekologi.json` via beläggskällan:
+
+| Adress | Innehåll |
+| --- | --- |
+| `matvarde.<analys>.<scenario>[.<ruta>].<mått>` | `eca_m2`, `eca_min_m2`, `eca_max_m2`, `pc`, `pc_min`, `pc_max`, `antal_flackar`, `total_habitat_area_m2`, `cellstorlek_m` (`MATTKATALOG`, `belaggskalla.EKOLOGI_MATT`) |
+| `ekojamforelse.<analys>.<fore>.<efter>[.<ruta>].<mått>` | skillnad efter minus före: `delta_eca_m2`, `delta_eca_procent`, `delta_pc`, `delta_antal_flackar`, `delta_total_habitat_area_m2`; bara när nätverk, huvudscenario, cellstorlek, tröskel och analysparametrar är lika |
+| `ekonatverk.<analys>.<scenario>[.<ruta>].<parameter>` | nätverkets parametrar som de användes: `troskel_m`, `d50_m`, `troskel_hog_m`, `d50_hog_m`, `min_area_m2`, `cellstorlek_m`, `analys_area_m2` (statistik "parameter (indata)") |
+
+ECA och PC är en siffra per körning (huvudscenariots spridningströskel). Intervallet
+`eca_min_m2`/`eca_max_m2` är källbaserat: lägsta och högsta värde mellan nätverkets tröskelscenarier,
+inte en statistisk konfidens. Upplösningen är 1 m² för ECA och 0,000001 för PC.
+
+**Texten (språkprofilen sbk och neutral).** Signalart och källa ska stå (källans årtal och sidor står i
+antagandena, eftersom ett årtal i en påståendetext vore ett tal utan belägg). Habitat ur NMD heter
+*potentiell livsmiljö, okänd kvalitet*. Antagandet *p saknas i källan; d50 = tröskel/2* står i
+antagandelistan (ur nätverkets fil) när källan inte anger sannolikheten. Kontrollen inför export
+underkänner en ekologirapport som saknar etiketten, signalart, källa, d50-antagandet eller
+flaskhalskartan, och påståenden som säger att arten förekommer, att livsmiljön har hög kvalitet eller att
+sambandet är säkrat. Orden *livsmiljö* utan *potentiell* underkänns också.
+
+**Kartor.** Flaskhalsar visas som strömtäthet (J, normaliserad 0-1, ingen fysikalisk enhet) före, efter och
+som skillnad, med samma färgskala; kartan har tomvärdesförklaring (tak, byggnader, celler utan värde) och
+enheten "normaliserad strömtäthet (0-1)" i bildtexten. Resultatlagrets etikett i webben ändras inte.
+
+| Fråga | Floden i dag | Belägg Floden kan ge | Saknas och varför | Status i demon |
+| --- | --- | --- | --- | --- |
+| EK-01 Vilka ekologiska samband och värdekärnor för grön infrastruktur finns i och kring planområdet? | delvis | Det habitatnätverk som beräkningen avser: namn, signalart, källa och år, tröskel och minsta fläckarea (parametrar med belägg). | Andra kända nätverk, värdekärnor och regionala samband i området ingår inte; Floden läser inga länsstyrelse- eller kommunlager. | underlag saknas |
+| EK-02 Vilka signalarter representerar sambandet, och på vad bygger valet? | visat | Signalart eller artgrupp, källa med sida och om habitatdefinitionen är ett antagande (ur nätverkets fil i körningen). | Valet av signalart för en annan plats är ett val i utredningen, inte en beräkning. | visat |
+| EK-03 Hur har habitatet avgränsats, och vad är känt om dess kvalitet? | delvis | Habitatklasser i markunderlaget (NMD), minsta fläckarea, antal fläckar och total habitatarea. Resultatet kallas potentiell livsmiljö, okänd kvalitet. | Ålder, struktur och naturvärde finns inte i NMD; verklig kvalitet är okänd. | underlag saknas |
+| EK-04 Vilken spridningsförmåga och vilka motståndsvärden har använts? | visat | Spridningströskel och d50 (med antagandet d50 = tröskel/2 när p saknas i källan) samt motstånd per markslag med källa och säkerhet. | Mätt spridningssannolikhet för platsens arter saknas när källan inte anger den. | visat |
+| EK-05 Hur ändras konnektiviteten för sambandet före och efter förslaget? | visat | ECA, PC och antal habitatfläckar före och efter, skillnaden (ΔECA) och intervallet mellan källans tröskelscenarier. | Resultatet gäller potentiell livsmiljö i det påhittade eller inlästa markunderlaget, inte verkliga arters förekomst. | visat |
+| EK-06 Var finns flaskhalsarna i sambandet, och hur förändras de av förslaget? | delvis | Karta över strömtäthet (flaskhalsar) före, efter och som skillnad, med samma skala. | Strömtätheten är normaliserad (0-1) och ger inga tal per flaskhals i rapporten; flaskhalsar ger inte barriärverkan i fält. | underlag saknas |
+| EK-07 Vilka habitatfläckar är viktigast för sambandet, och berörs de av förslaget? | delvis | Antal habitatfläckar och total habitatarea före och efter (betydelsen dPC per fläck finns i körningens resultatfil). | dPC per fläck redovisas inte som tal i rapporten i dag. | underlag saknas |
+| EK-08 Hur känsligt är resultatet för antaganden om spridning, motstånd och habitatval? | delvis | Källbaserat intervall för ECA och PC mellan nätverkets tröskelscenarier, före och efter. | Intervallet täcker källans tröskelscenarier, inte all osäkerhet i habitatval och motstånd. | underlag saknas |
+| EK-09 Hur förhåller sig förslaget till kommunens och länets mål och planer för grön infrastruktur? | ej tillämpligt | – | Hur förslaget förhåller sig till kommunens och länets planer är en bedömning i ärendet; Floden läser inga planer. | ej tillämpligt |
+| EK-10 Vad saknas för att bedöma sambandets funktion för verkliga arter? | underlag saknas | – | Fältinventering, habitatkvalitet, barriärer som markunderlaget saknar och förekomst av arterna ingår inte i Floden. | underlag saknas |
+| EK-11 Hur långt utanför planområdet har sambandet analyserats, och varför? | delvis | Cellstorlek och längsta spridningströskel (parametrar). Kontextbufferten är tröskeln, högst 5 km, när markunderlaget läses ur geografin. | Fläckar utanför markunderlaget ingår inte; bufferten är ett val i körningen. | underlag saknas |
+| EK-12 Kan beräkningen återskapas? | delvis | Cellstorlek och antal fläckar; nätverkets och markunderlagets kontrollsummor står i körningens manifest (bilagan). | Kontrollsummorna är fakta i bilagan, inte tal som rapporten refererar. | underlag saknas |
+
+Exempel: `docs/exempel/skissunderlag_ekologi_demo.pdf` och `.docx` (påhittat demokvarter, nätverket
+Barrskogssamband (Nacka 2020, NMD), före och efter ett nytt hus, 12 frågor). ECA är 25 360 m² före och
+25 290 m² efter (skillnad −71 m², −0,28 %); PC 0,00268 före och 0,00266 efter; 16 habitatfläckar i båda
+lägena; det källbaserade ECA-intervallet är 25 360 till 39 636 m² före och 25 289 till 39 494 m² efter. Det
+är ett påhittat NMD-lager: talen säger inget om verkliga arter.
+
+### Luft och buller: vad som saknas (R3, nivå 1)
+
+Luft och buller har **ingen skissrapport** (`rapport_skapa` ger ett tydligt fel). Skälet är kontrollerat:
+
+- `POST /api/analys/luft-mkn` och `POST /api/analys/buller-skarmar` är tillståndslösa analyser: de skapar
+  inget K0-manifest, ingen körning i körningsregistret och inga belägg via `FlodenTjanst`. Tabellbyggarna i
+  `rapport.r2_domaner` formaterar tal själva och får därför inte nå en rapport direkt.
+- Luftlösarna `luft.halt` och `luft.vindkomfort` är K20-körningar med K0-manifest, men demon har ingen luftkörning
+  (vägar som GeoPackage och väder som CSV saknas), inga mått för luft i `MATTKATALOG` och ingen jämförelse
+  med kartlager i luftdomänen som rapportens karta och kontroll kräver.
+- **Buller:** Nord2000-kärnan har `nord2000_konform = False` (testfallen 33 av 80 godkända, grupp N 2026-11-21) och är
+  spärrad för rapport (`docs/MATEMATIK.md`). Ingen bullerrapport skapas, och Nord2000-koden är orörd.
+
+Vad som behövs för luft (inte gjort): en K21-lösare som tar timvis lokal halt som indata och ger MKN-intervallet som
+`matvarden` i ett K0-manifest, mått i `MATTKATALOG` (storhet, tidsdefinition, statistik, upplösning), en luftdomän i
+`_AMNESDOMAN`/`AMNEN_NIVA1`, en demokörning och frågorna LU-xx i `FLODEN_FORMAGA`. Buller kräver dessutom att
+Nord2000 blir konformt (separat arbete).
+
 ## Inställningar: språkprofil och layout
 
 Inställningarna lagras i rapporten (K33, fältet `installningar`), så att samma rapport alltid ger
@@ -360,7 +439,7 @@ Floden.
 
 ## Köra
 
-- **Referensflöde utan AI:** `PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus]
+- **Referensflöde utan AI:** `PYTHONPATH=src python tools/rapport_demo.py [--amne skyfall|dagsljus|ekologi]
   [--roll planhandlaggare|byggaktor|granskare] [--alla-fragor] [--exempel docs/exempel]`
   (kräver `floden demo`). Skapar rapporten i `data/lokal/rapporter/<rapport_id>/`, lägger fasta
   påståenden (`rapport.referensflode`, `rapport.referensflode_dagsljus`), kontrollerar och
@@ -369,8 +448,8 @@ Floden.
 - **Via MCP:** en AI kan gå beställning, frågor, körning, rapport och export: `bestallning_skapa`,
   `bestallning_hamta`, `fragekatalog_sok`, `rapport_skapa` (med `bestallning_id`),
   `pastaende_lagg_till`, `rapport_kontrollera`, `rapport_exportera`, `rapport_hamta` och resursen
-  `floden://rapport/{rapport_id}`; promptarna `skissunderlag_skyfall` och
-  `skissunderlag_dagsljus`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
+  `floden://rapport/{rapport_id}`; promptarna `skissunderlag_skyfall`,
+  `skissunderlag_dagsljus` och `skissunderlag_ekologi`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
 - **Webben:** projektsidan listar rapporterna med kontrollens utfall (grön/röd) och länkar till
   Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
   Rapportmappen kan ändras med `[webb] rapportmapp`. Frågekatalogen nås med
@@ -383,9 +462,10 @@ språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Libera
 
 ## Begränsningar
 
-- Bara skyfall, dagsljus/sol och nivå 1 (luft och buller har ingen skissrapport än; frågorna finns i katalogen). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
+- Bara skyfall, dagsljus/sol, ekologi och nivå 1 (luft och buller har ingen skissrapport än: inga körningar med belägg, Nord2000 inte konformt). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
 - Bara måtten i `MATTKATALOG` kan användas (vatten: statisk fyllning och dynamik; dagsljus:
-  soltimmar på mark, SVF, VSC på fasadpunkter).
+  soltimmar på mark, SVF, VSC på fasadpunkter; ekologi: ECA, PC, fläckar och nätverksparametrar).
+- `POST /api/projekt/<id>/rapporter` finns inte på main (rapporter skapas via MCP och `RapportTjanst`; webben listar och hämtar bara). Skapa-i-webben byggs separat (`skapa-i-webben`); `RapportTjanst.skapa` tar ämnet `ekologi` direkt, så en POST som anropar den får det utan ändring.
 - Dagsljus: demons körning har ett datum (20 mars) och ingen SVF. Sol på fasad, sol på tak,
   dagsljusfaktor i rum, utblick, årsstatistik och ekvinoktieskuggor (höst) finns inte i kärnan och
   redovisas som underlag som saknas. Nivå 1 bedömer inte mot krav.

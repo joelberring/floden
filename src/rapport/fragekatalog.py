@@ -22,17 +22,25 @@ STANDARD_KATALOG: Final[Path] = (
     Path(__file__).resolve().parents[2] / "docs" / "utredningar-stockholm" / "fragor.json"
 )
 
+STANDARD_EKOLOGIKATALOG: Final[Path] = (
+    Path(__file__).resolve().parents[2] / "docs" / "utredningar-stockholm" / "fragor_ekologi.json"
+)
+"""Ekologifrågorna (EK-xx, grön infrastruktur och spridningssamband): ett eget område i en egen
+fil, i samma format som `fragor.json`. Den granskade katalogen ändras inte."""
+
 AMNESPREFIX: Final[dict[str, tuple[str, ...]]] = {
     "skyfall": ("SK",),
     "dagsljus": ("DL", "SO"),
+    "ekologi": ("EK",),
     "luft": ("LU",),
     "buller": ("BU",),
 }
 """Rapportämne -> frågornas id-prefix. Rapportämnet `dagsljus` omfattar katalogens områden
-`dagsljus` (DL) och `solstudier` (SO). Skissrapport finns för skyfall (R1) och dagsljus (R2)."""
+`dagsljus` (DL) och `solstudier` (SO). Skissrapport finns för skyfall (R1), dagsljus och ekologi (R2)."""
 AMNESOMRADEN: Final[dict[str, tuple[str, ...]]] = {
     "skyfall": ("skyfall",),
     "dagsljus": ("dagsljus", "solstudier"),
+    "ekologi": ("ekologi",),
     "luft": ("luft",),
     "buller": ("buller",),
 }
@@ -497,6 +505,116 @@ FLODEN_FORMAGA.update(
     }
 )
 
+_EKO_MV = "matvarde.<analys>.<scenario>[.<ruta>].<mått>"
+_EKO_JF = "ekojamforelse.<analys>.<fore>.<efter>[.<ruta>].<mått>"
+_EKO_NV = "ekonatverk.<analys>.<scenario>[.<ruta>].<parameter>"
+FLODEN_FORMAGA.update(
+    {
+        "EK-01": Formaga(
+            "delvis",
+            "Det habitatnätverk som beräkningen avser: namn, signalart, källa och år, "
+            "tröskel och minsta fläckarea (parametrar med belägg).",
+            "Andra kända nätverk, värdekärnor och regionala samband i området ingår inte; "
+            "Floden läser inga länsstyrelse- eller kommunlager.",
+            (_EKO_NV,),
+            "underlag_saknas",
+        ),
+        "EK-02": Formaga(
+            "kan",
+            "Signalart eller artgrupp, källa med sida och om habitatdefinitionen är ett "
+            "antagande (ur nätverkets fil i körningen).",
+            "Valet av signalart för en annan plats är ett val i utredningen, inte en "
+            "beräkning.",
+            (_EKO_NV,),
+            "visat",
+        ),
+        "EK-03": Formaga(
+            "delvis",
+            "Habitatklasser i markunderlaget (NMD), minsta fläckarea, antal fläckar och "
+            "total habitatarea. Resultatet kallas potentiell livsmiljö, okänd kvalitet.",
+            "Ålder, struktur och naturvärde finns inte i NMD; verklig kvalitet är okänd.",
+            (_EKO_MV, _EKO_NV),
+            "underlag_saknas",
+        ),
+        "EK-04": Formaga(
+            "kan",
+            "Spridningströskel och d50 (med antagandet d50 = tröskel/2 när p saknas i "
+            "källan) samt motstånd per markslag med källa och säkerhet.",
+            "Mätt spridningssannolikhet för platsens arter saknas när källan inte anger "
+            "den.",
+            (_EKO_NV,),
+            "visat",
+        ),
+        "EK-05": Formaga(
+            "kan",
+            "ECA, PC och antal habitatfläckar före och efter, skillnaden (ΔECA) och "
+            "intervallet mellan källans tröskelscenarier.",
+            "Resultatet gäller potentiell livsmiljö i det påhittade eller inlästa "
+            "markunderlaget, inte verkliga arters förekomst.",
+            (_EKO_MV, _EKO_JF, _EKO_NV),
+            "visat",
+        ),
+        "EK-06": Formaga(
+            "delvis",
+            "Karta över strömtäthet (flaskhalsar) före, efter och som skillnad, med samma "
+            "skala.",
+            "Strömtätheten är normaliserad (0-1) och ger inga tal per flaskhals i "
+            "rapporten; flaskhalsar ger inte barriärverkan i fält.",
+            (_EKO_MV,),
+            "underlag_saknas",
+        ),
+        "EK-07": Formaga(
+            "delvis",
+            "Antal habitatfläckar och total habitatarea före och efter (betydelsen dPC per "
+            "fläck finns i körningens resultatfil).",
+            "dPC per fläck redovisas inte som tal i rapporten i dag.",
+            (_EKO_MV, _EKO_JF),
+            "underlag_saknas",
+        ),
+        "EK-08": Formaga(
+            "delvis",
+            "Källbaserat intervall för ECA och PC mellan nätverkets tröskelscenarier, före "
+            "och efter.",
+            "Intervallet täcker källans tröskelscenarier, inte all osäkerhet i habitatval "
+            "och motstånd.",
+            (_EKO_MV,),
+            "underlag_saknas",
+        ),
+        "EK-09": Formaga(
+            "saknas",
+            "",
+            "Hur förslaget förhåller sig till kommunens och länets planer är en bedömning i "
+            "ärendet; Floden läser inga planer.",
+            (),
+            "ej_tillampligt",
+        ),
+        "EK-10": Formaga(
+            "saknas",
+            "",
+            "Fältinventering, habitatkvalitet, barriärer som markunderlaget saknar och "
+            "förekomst av arterna ingår inte i Floden.",
+            (),
+            "underlag_saknas",
+        ),
+        "EK-11": Formaga(
+            "delvis",
+            "Cellstorlek och längsta spridningströskel (parametrar). Kontextbufferten är "
+            "tröskeln, högst 5 km, när markunderlaget läses ur geografin.",
+            "Fläckar utanför markunderlaget ingår inte; bufferten är ett val i körningen.",
+            (_EKO_NV,),
+            "underlag_saknas",
+        ),
+        "EK-12": Formaga(
+            "delvis",
+            "Cellstorlek och antal fläckar; nätverkets och markunderlagets kontrollsummor "
+            "står i körningens manifest (bilagan).",
+            "Kontrollsummorna är fakta i bilagan, inte tal som rapporten refererar.",
+            (_EKO_NV,),
+            "underlag_saknas",
+        ),
+    }
+)
+
 
 def _fraga(data: Any, nr: int) -> Fraga:
     if not isinstance(data, dict):
@@ -544,6 +662,32 @@ class Fragekatalog:
             kallor=dict(data.get("kallor", {})),
             granskningsdatum=str(data.get("granskningsdatum", "")),
             fil=str(sokvag),
+        )
+
+    @classmethod
+    def las_alla(
+        cls, fil: str | Path = STANDARD_KATALOG, ekologifil: str | Path | None = None
+    ) -> Fragekatalog:
+        """Den granskade katalogen plus ekologifrågorna (EK-xx) om filen finns.
+
+        Ekologifilen är ett eget område med egna källor (`fragor_ekologi.json`); den granskade
+        katalogen ändras inte. Saknas ekologifilen läses bara den granskade katalogen."""
+        bas = cls.las(fil)
+        if ekologifil is None:
+            ekologifil = Path(fil).with_name(STANDARD_EKOLOGIKATALOG.name)
+        eko = Path(ekologifil)
+        if not eko.is_file():
+            return bas
+        tillagg = cls.las(eko)
+        ids = {f.id for f in bas.fragor}
+        dubbla = sorted(f.id for f in tillagg.fragor if f.id in ids)
+        if dubbla:
+            raise FragekatalogFel(f"Ekologikatalogen har id som redan finns: {', '.join(dubbla)}.")
+        return cls(
+            fragor=bas.fragor + tillagg.fragor,
+            kallor={**tillagg.kallor, **bas.kallor},
+            granskningsdatum=bas.granskningsdatum,
+            fil=bas.fil,
         )
 
     def hamta(self, fraga_id: str) -> Fraga:
@@ -610,7 +754,7 @@ def formaga_for(fraga_id: str) -> Formaga | None:
 
 def formagetabell_markdown(amne: str = "skyfall") -> str:
     """Tabellen över ämnets frågor som den står i `docs/RAPPORTER.md`."""
-    katalog = Fragekatalog.las()
+    katalog = Fragekatalog.las_alla()
     rader = [
         "| Fråga | Floden i dag | Belägg Floden kan ge | Saknas och varför | Status i demon |",
         "| --- | --- | --- | --- | --- |",
@@ -659,6 +803,7 @@ __all__ = [
     "FLODEN_MARKNING",
     "MARKNING_TEXT",
     "OMRADESALIAS",
+    "STANDARD_EKOLOGIKATALOG",
     "STANDARD_KATALOG",
     "Formaga",
     "Fraga",

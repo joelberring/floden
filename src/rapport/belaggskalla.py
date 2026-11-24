@@ -137,6 +137,46 @@ DAGSLJUS_MATT.update(
 )
 MATTKATALOG.update(DAGSLJUS_MATT)
 
+_EKO_TID = "ingen tidsdimension (statisk landskapsmodell: ett läge, inget förlopp)"
+_EKO_STAT = "en siffra per körning, huvudscenariots spridningströskel"
+_EKO_INT = "{} mellan nätverkets tröskelscenarier (källbaserat intervall)"
+EKOLOGI_MATT: Final[dict[tuple[str, str], Matt]] = {
+    ("ekologi.konnektivitet", "matvarde:eca_m2"): Matt(
+        "ekvivalent sammanhängande habitatarea (ECA) för potentiell livsmiljö", _EKO_TID, _EKO_STAT, 1.0
+    ),
+    ("ekologi.konnektivitet", "matvarde:eca_min_m2"): Matt(
+        "ekvivalent sammanhängande habitatarea (ECA) för potentiell livsmiljö, lägsta värde",
+        _EKO_TID, _EKO_INT.format("lägsta värde"), 1.0,
+    ),
+    ("ekologi.konnektivitet", "matvarde:eca_max_m2"): Matt(
+        "ekvivalent sammanhängande habitatarea (ECA) för potentiell livsmiljö, högsta värde",
+        _EKO_TID, _EKO_INT.format("högsta värde"), 1.0,
+    ),
+    ("ekologi.konnektivitet", "matvarde:pc"): Matt(
+        "konnektivitetsindex PC (sannolikhet att två slumpvis valda punkter i habitatet kan nå varandra)",
+        _EKO_TID, _EKO_STAT, 1e-6,
+    ),
+    ("ekologi.konnektivitet", "matvarde:pc_min"): Matt(
+        "konnektivitetsindex PC, lägsta värde", _EKO_TID, _EKO_INT.format("lägsta värde"), 1e-6
+    ),
+    ("ekologi.konnektivitet", "matvarde:pc_max"): Matt(
+        "konnektivitetsindex PC, högsta värde", _EKO_TID, _EKO_INT.format("högsta värde"), 1e-6
+    ),
+    ("ekologi.konnektivitet", "matvarde:antal_flackar"): Matt(
+        "antal habitatfläckar (minst minsta area)", _EKO_TID, _EKO_STAT, 1.0
+    ),
+    ("ekologi.konnektivitet", "matvarde:total_habitat_area_m2"): Matt(
+        "total area potentiell livsmiljö (habitatfläckar)", _EKO_TID, _EKO_STAT, 1.0
+    ),
+    ("ekologi.konnektivitet", "matvarde:cellstorlek_m"): Matt(
+        "rastrets cellstorlek", _EKO_TID, "parameter (indata)", 0.1
+    ),
+    ("ekologi.konnektivitet", "stromtathet"): Matt(
+        "strömtäthet (normaliserad 0-1, flaskhalsar)", _EKO_TID, "per cell", 0.001
+    ),
+}
+MATTKATALOG.update(EKOLOGI_MATT)
+
 JAMFORELSEMATT: Final[dict[str, str]] = {
     "max_okning": "största ökning i en cell på mark (efter minus före)",
     "max_minskning": "största minskning i en cell på mark (före minus efter)",
@@ -310,9 +350,13 @@ class FlodenBelaggKalla:
             from rapport.fasadbelagg import fasad_belagg
 
             return fasad_belagg(self, adress, korning_id, delar)
+        if typ in ("ekojamforelse", "ekonatverk"):
+            from rapport.ekologibelagg import ekologi_belagg
+
+            return ekologi_belagg(self, adress, korning_id, delar)
         raise BelaggFel(
             f"Okänd beläggstyp '{typ}' i '{adress}'. Tillåtna: jamforelse, matvarde, omrade, "
-            "fasad, fasadjamforelse."
+            "fasad, fasadjamforelse, ekojamforelse, ekonatverk."
         )
 
     def _jamforelse(self, adress: str, korning_id: str, namn: str, matt: str) -> Belagg:
@@ -557,6 +601,7 @@ class FlodenBelaggKalla:
 
 __all__ = [
     "DAGSLJUS_MATT",
+    "EKOLOGI_MATT",
     "HELA_OMRADET",
     "HELA_OMRADET_NAMN",
     "HELA_OMRADET_MARK",

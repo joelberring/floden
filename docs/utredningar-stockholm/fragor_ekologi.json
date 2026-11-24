@@ -1,0 +1,205 @@
+{
+  "granskningsdatum": "2026-11-23",
+  "syfte": "Redaktionellt frågeunderlag för ekologi (grön infrastruktur och spridningssamband). Frågorna är ett eget område och ingår inte i den granskade katalogen fragor.json. Källäge 23 november 2026, sammanställt med AI-stöd och ska granskas. Tillämpning avgörs per ärende.",
+  "kallor": {
+    "EKGI": {
+      "titel": "Att ta fram handlingsplaner för grön infrastruktur",
+      "url": "https://www.naturvardsverket.se/vagledning-och-stod/samhallsplanering/handlingsplaner-for-gron-infrastruktur/",
+      "lasanvisning": "Naturvårdsverket, vägledning till regionala handlingsplaner för grön infrastruktur."
+    },
+    "EKREG": {
+      "titel": "Grön infrastruktur, regional handlingsplan för Stockholms län",
+      "url": "https://www.lansstyrelsen.se/stockholm/samhalle/planera-bygga-och-bo/gron-infrastruktur/regional-handlingsplan-for-gron-infrastruktur.html",
+      "lasanvisning": "Länsstyrelsen Stockholm, regional handlingsplan 2019 och tillhörande nätverksanalyser."
+    },
+    "EKREG17": {
+      "titel": "Regional grön infrastruktur i Stockholms län, bilaga 1&2 (metodbeskrivningar för nätverksanalys och täthetsanalys)",
+      "url": "https://ext-dokument.lansstyrelsen.se/Stockholm/Lankade_dokument/LstAB_GI_natverksanalyser_2017/Regional_gron_infrastuktur_i_S_Bilaga_1%262_Slutversion.pdf",
+      "lasanvisning": "Ekologigruppen 2017 för Länsstyrelsen Stockholm, habitatfrågorna på PDF-s. 4 och 7."
+    },
+    "EKHNS": {
+      "titel": "Habitatnätverk i Stockholms stad 2022",
+      "url": "https://docs.miljo.stockholm.se/Natur/Habitatnatverk%20i%20Stockholms%20stad%20-%20rapport%20231219.pdf",
+      "lasanvisning": "Stockholms stad, Miljöförvaltningen 2023-12-19: artprofiler s. 7-15, GIS-metod s. 34-43, friktion i bilaga 4."
+    },
+    "EKNACKA": {
+      "titel": "Grön infrastruktur i Nacka kommun och ekologiska samband för arter knutna till gammal ädellövskog och gammal barrskog",
+      "url": "https://handlingar.nacka.se/handlingar/Naturvardsradet/2020/20201123/Rapport_Gr%C3%B6n_infrastruktur_i_Nacka_kommun_inkl_bilagor.pdf",
+      "lasanvisning": "Bovin 2020 (WSP för Nacka kommun), bilaga 1 och 2."
+    },
+    "EKSODERT": {
+      "titel": "Ekologiska samband i Södertälje, bilaga 4 spridningssamband",
+      "url": "https://www.sodertalje.se/globalassets/styrande-dokument/bilaga-4---spridningssamband-i-sodertalje-kommun-ekologigruppen-2020.pdf",
+      "lasanvisning": "Ekologigruppen 2020: metod s. 13-16 (d50 och avklippning vid kvoten 0,5 av tröskeln)."
+    },
+    "EKPC": {
+      "titel": "A new habitat availability index to integrate connectivity in landscape conservation planning (PC)",
+      "url": "https://doi.org/10.1016/j.landurbplan.2007.03.005",
+      "lasanvisning": "Saura och Pascual-Hortal 2007, Landscape and Urban Planning 83, 91-103: PC och dPC."
+    },
+    "EKCS": {
+      "titel": "Using circuit theory to model connectivity in ecology, evolution, and conservation",
+      "url": "https://doi.org/10.1890/07-1861.1",
+      "lasanvisning": "McRae m.fl. 2008, Ecology 89, 2712-2724: strömtäthet som mått på flaskhalsar."
+    },
+    "EKNMD": {
+      "titel": "Nationella marktäckedata",
+      "url": "https://www.naturvardsverket.se/verktyg-och-tjanster/kartor-och-karttjanster/nationella-marktackedata/ladda-ner-nationella-marktackedata/",
+      "lasanvisning": "Naturvårdsverket, produktdokumentation och kodnyckel för respektive karteringsår."
+    },
+    "EKKALLOR": {
+      "titel": "Habitatnätverk i svensk stadsmiljö (Flodens källsammanställning)",
+      "url": "",
+      "lasanvisning": "docs/ekologi/habitatnatverk-svensk-stadsmiljo.md i Floden: parametrar per nätverk med källa, sida och säkerhet."
+    }
+  },
+  "fragor": [
+    {
+      "id": "EK-01",
+      "omrade": "ekologi",
+      "typ": "Vägledning",
+      "villkor": "Alla planer",
+      "fraga": "Vilka ekologiska samband och värdekärnor för grön infrastruktur finns i och kring planområdet?",
+      "redovisning": "Lista kända habitatnätverk och spridningssamband (art eller artgrupp, källa, år) och hur de ligger i förhållande till planområdet. Redovisa vilket nätverk beräkningen avser.",
+      "kallor": [
+        "EKGI",
+        "EKREG",
+        "EKHNS"
+      ]
+    },
+    {
+      "id": "EK-02",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Alla planer",
+      "fraga": "Vilka signalarter representerar sambandet, och på vad bygger valet?",
+      "redovisning": "Ange signalart eller artgrupp och källa (rapport, år, sida). Ange om habitatdefinitionen är belagd för arten eller ett antagande i modellen.",
+      "kallor": [
+        "EKNACKA",
+        "EKHNS",
+        "EKKALLOR"
+      ]
+    },
+    {
+      "id": "EK-03",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Alla planer",
+      "fraga": "Hur har habitatet avgränsats, och vad är känt om dess kvalitet?",
+      "redovisning": "Redovisa markslagsunderlag och version (till exempel NMD), vilka klasser som räknas som habitat och minsta fläckarea. Skriv potentiell livsmiljö, okänd kvalitet när ålder, struktur och naturvärde saknas.",
+      "kallor": [
+        "EKNMD",
+        "EKREG17",
+        "EKKALLOR"
+      ]
+    },
+    {
+      "id": "EK-04",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Alla planer",
+      "fraga": "Vilken spridningsförmåga och vilka motståndsvärden har använts?",
+      "redovisning": "Ange spridningströskel i effektiva meter och d50, och om sannolikheten p anges i källan eller är ett antagande (här d50 = tröskel/2). Redovisa motstånd per markslag med källa och säkerhet.",
+      "kallor": [
+        "EKSODERT",
+        "EKNACKA",
+        "EKPC"
+      ]
+    },
+    {
+      "id": "EK-05",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Planer som ändrar mark eller bebyggelse",
+      "fraga": "Hur ändras konnektiviteten för sambandet före och efter förslaget?",
+      "redovisning": "Redovisa ECA och PC före och efter, skillnaden, antal habitatfläckar och intervallet mellan källans tröskelscenarier. Samma metod, indata och parametrar ska gälla i båda lägena.",
+      "kallor": [
+        "EKPC",
+        "EKNACKA"
+      ]
+    },
+    {
+      "id": "EK-06",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Planer som ändrar mark eller bebyggelse",
+      "fraga": "Var finns flaskhalsarna i sambandet, och hur förändras de av förslaget?",
+      "redovisning": "Visa strömtäthet som karta före, efter och som skillnad med samma skala och förklara tomvärden (byggnader och ytor utan värde).",
+      "kallor": [
+        "EKCS",
+        "EKPC"
+      ]
+    },
+    {
+      "id": "EK-07",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Planer som ändrar mark eller bebyggelse",
+      "fraga": "Vilka habitatfläckar är viktigast för sambandet, och berörs de av förslaget?",
+      "redovisning": "Redovisa fläckarnas betydelse (dPC) och om förslaget tar bort, delar eller isolerar någon fläck.",
+      "kallor": [
+        "EKPC"
+      ]
+    },
+    {
+      "id": "EK-08",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Alla planer",
+      "fraga": "Hur känsligt är resultatet för antaganden om spridning, motstånd och habitatval?",
+      "redovisning": "Redovisa det källbaserade intervallet mellan tröskelscenarier och vilka antaganden som kan ändra slutsatsen. Skilj osäkerhet i parametrar från osäkerhet i habitatdefinitionen.",
+      "kallor": [
+        "EKNACKA",
+        "EKSODERT",
+        "EKKALLOR"
+      ]
+    },
+    {
+      "id": "EK-09",
+      "omrade": "ekologi",
+      "typ": "Kommunal riktlinje",
+      "villkor": "Alla planer",
+      "fraga": "Hur förhåller sig förslaget till kommunens och länets mål och planer för grön infrastruktur?",
+      "redovisning": "Hänvisa till kommunens grönstrukturprogram och Länsstyrelsens regionala handlingsplan. Vad som är ett godtagbart intrång avgörs i ärendet, inte i beräkningen.",
+      "kallor": [
+        "EKGI",
+        "EKREG"
+      ]
+    },
+    {
+      "id": "EK-10",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Alla planer",
+      "fraga": "Vad saknas för att bedöma sambandets funktion för verkliga arter?",
+      "redovisning": "Redovisa vad som inte är känt: förekomst och kvalitet hos habitatet (ålder, naturvärde, struktur), barriärer som markunderlaget saknar (vägklass, stängsel, ljus, buller) och fältinventering. Skilj potentiell från verklig förekomst.",
+      "kallor": [
+        "EKKALLOR",
+        "EKHNS"
+      ]
+    },
+    {
+      "id": "EK-11",
+      "omrade": "ekologi",
+      "typ": "Metod",
+      "villkor": "Alla planer",
+      "fraga": "Hur långt utanför planområdet har sambandet analyserats, och varför?",
+      "redovisning": "Redovisa kontextbuffert, längsta spridningströskel, markunderlagets källa och att fläckar utanför bufferten inte ingår.",
+      "kallor": [
+        "EKREG17",
+        "EKNMD"
+      ]
+    },
+    {
+      "id": "EK-12",
+      "omrade": "ekologi",
+      "typ": "Projektkontroll",
+      "villkor": "Alla planer",
+      "fraga": "Kan beräkningen återskapas?",
+      "redovisning": "Redovisa nätverkets id och kontrollsumma, markunderlagets kontrollsumma, cellstorlek, körning och kodversion.",
+      "kallor": [
+        "EKKALLOR"
+      ]
+    }
+  ]
+}

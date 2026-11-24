@@ -38,7 +38,7 @@ def _delar(p: Pastaende) -> list[dict[str, Any]]:
 
 def _fragetexter(r: Rapport) -> dict[str, str]:
     try:
-        katalog = Fragekatalog.las()
+        katalog = Fragekatalog.las_alla()
         return {f.id: f.fraga for f in katalog.fragor}
     except FragekatalogFel:
         return {}

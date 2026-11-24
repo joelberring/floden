@@ -728,7 +728,7 @@ class FlodenApiApp:
 
         fil = self.konfig_fil.resolve().parent / "docs" / "utredningar-stockholm" / "fragor.json"
         try:
-            katalog = Fragekatalog.las(fil) if fil.is_file() else Fragekatalog.las()
+            katalog = Fragekatalog.las_alla(fil) if fil.is_file() else Fragekatalog.las_alla()
         except FragekatalogFel as exc:
             raise FlodenWebbFel(str(exc), status_kod=500) from exc
 

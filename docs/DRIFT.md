@@ -150,8 +150,22 @@ docker compose -f docker-compose.prod.yml exec floden floden geografi mappa <geo
 ```
 
 Båda är valfria; `--nmd-troskel-m` (förval 3000, begränsas till 2-5 km) är den längsta spridningströskel som geografin ska
-prövas mot. Det som saknas än: att ekologilösaren läser lagren ur projektets geografi i stället för indataroller (se PLAN);
-tills dess anges `nmd` som indata som ovan. Stockholms nätverk 2022 körs bara lokalt mot stadens biotopdatabas (inte öppen) och ska aldrig laddas upp.
+prövas mot. **Ekologilösaren läser lagren ur geografin** (indataroll `geografi`, tillagd 2026-11-23): ange manifestet i frågefilen,
+
+```toml
+[[analyser]]
+id = "konnektivitet"
+losare = "ekologi.konnektivitet"
+parametrar = { natverk = "barrskog-nacka", max_celler = 600000, max_flackar = 120 }
+indata = { geografi = "data/lokal/geo/<geografi-id>/v1/manifest.json" }
+```
+
+Lösaren verifierar lagrens sha256, klipper ut projektets rutor plus kontextbuffert (nätverkets längsta tröskel, 2-5 km, aldrig
+utanför lagret) och lägger K9-hus ovanpå som NMD 51. Är geografins lager mappat med kortare buffert än behovet varnar lösaren.
+Kärna plus 3 km buffert blir många celler: höj `max_celler` och `max_flackar` efter området (felen säger vad som behövs).
+Indatarollen `nmd` finns kvar som alternativ och kan inte kombineras med `geografi`. Inget av det här är prövat mot riktiga
+NMD- eller VMI-filer. Stockholms nätverk 2022 körs bara lokalt mot stadens biotopdatabas (inte öppen) och ska aldrig laddas upp.
+
 ## Organisation och kollega (organisationsroller)
 
 Roller i en organisation: `medlem` < `ledare` < `organisationsadmin` < `agare`. Organisationsadmin och ägare är utredare, ledare är läsare, i de av organisationens projekt som är **delade med organisationen** (inte i privata projekt, inte i andras). Nya projekt är privata. Superadmin ger fortfarande ingen projektdata. Detaljer: `docs/KONTO.md` avsnitt 5 och 11.

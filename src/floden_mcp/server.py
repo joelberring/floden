@@ -84,7 +84,7 @@ Arbetsgång: projekt_info och geometri_sammanfattning för att förstå området
 byggnads-id; scenario_skapa för ett ritat hus eller en ändring; korplan för att se vad som räknas;
 kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild för att läsa resultatet.
 Rapporter (R1, R2): bestallning_skapa (syfte, skede, mottagare, ämnen; valfritt), fragekatalog_sok,
-rapport_skapa (skyfall eller dagsljus/sol; med bestallning_id styr beställningen frågorna och
+rapport_skapa (skyfall, dagsljus/sol eller ekologi; med bestallning_id styr beställningen frågorna och
 ingressen), rapport_installningar, pastaende_lagg_till (tal bara som platshållare
 {{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_hamta.
 Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
@@ -861,7 +861,7 @@ def _registrera_rapportverktyg(
     @verktyg(
         "fragekatalog_sok",
         "Söker i frågekatalogen (Stockholms utredningsfrågor, docs/utredningar-stockholm/fragor.json, "
-        "redaktionellt underlag). Filtrera på omrade (skyfall, luft, buller, dagsljus, sol), villkor "
+        "redaktionellt underlag; ekologifrågorna EK-01 till EK-12 ligger i fragor_ekologi.json). Filtrera på omrade (skyfall, ekologi, luft, buller, dagsljus, sol), villkor "
         "(t.ex. 'Planförslag') och text. För skyfall, dagsljus (DL) och solstudier (SO) står också vad "
         "Floden i dag kan belägga per fråga (floden.markning: visat, delvis, underlag saknas, "
         "ej tillämpligt).",
@@ -953,7 +953,8 @@ def _registrera_rapportverktyg(
     @verktyg(
         "rapport_skapa",
         "Skapar ett skissunderlag (nivå 1: sållning, inte bedömning mot krav) för ett ämne ("
-        "'skyfall' eller 'dagsljus', se bestallning_skapa) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
+        "'skyfall', 'dagsljus' eller 'ekologi', se bestallning_skapa; luft och buller har ingen skissrapport än: "
+        "inga luft- eller bullerkörningar ger belägg, och Nord2000 är inte konformt) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
         "skillnad; samma takmask som webben), hämtar metodernas valideringsstatus och väljer frågor "
         "ur katalogen. Svaret listar beläggsadresser du kan använda i pastaende_lagg_till.",
     )
@@ -963,7 +964,7 @@ def _registrera_rapportverktyg(
         ],
         amne: Annotated[
             str | None,
-            Field(description="'skyfall' (förval) eller 'dagsljus' (dagsljus och sol)."),
+            Field(description="'skyfall' (förval), 'dagsljus' (dagsljus och sol) eller 'ekologi'."),
         ] = None,
         bestallning_id: Annotated[
             str | None,
@@ -1251,6 +1252,32 @@ def _registrera_rapportverktyg(
             "4. För varje fråga: pastaende_lagg_till. Tal bara som {{matt:<adress>}} ur "
             "belagg_adresser. Saknas underlag: status underlag_saknas och skriv vad som saknas. "
             "Bedöm inte mot krav; VSC mot BRE:s gräns är ett antal punkter, inte ett utlåtande.\n"
+            "5. rapport_kontrollera; rätta det som underkänns.\n"
+            "6. rapport_exportera format 'word' och 'pdf'.\n"
+            "Du äger inget tal. Metoderna är skisser."
+        )
+
+    @server.prompt(
+        name="skissunderlag_ekologi",
+        title="Skissunderlag ekologi (grön infrastruktur) för …",
+        description="Skissunderlag (nivå 1) för ekologisk konnektivitet: beställning, EK-frågor, "
+        "körning, rapport, kontroll och export.",
+    )
+    def skissunderlag_ekologi(
+        plats: str = "demokvarteret", korning: str = "demo-ekologi"
+    ) -> str:
+        return (
+            f"Gör ett skissunderlag för ekologi (grön infrastruktur och spridningssamband) för {plats} "
+            f"(körning {korning}).\n"
+            "1. bestallning_skapa(syfte, amnen=['ekologi'], scenario={'fore': 'fore', 'efter': [...]}): "
+            "beställningen väljer frågorna EK-01 till EK-12.\n"
+            "2. fragekatalog_sok(omrade='ekologi'): se floden.markning per fråga.\n"
+            f"3. rapport_skapa(korningar=['{korning}'], bestallning_id=...).\n"
+            "4. För varje fråga: pastaende_lagg_till. Tal bara som {{matt:<adress>}} ur "
+            "belagg_adresser (matvarde, ekojamforelse, ekonatverk). Skriv signalart och källa, "
+            "'potentiell livsmiljö, okänd kvalitet' om NMD-habitat och antagandet om d50. Saknas "
+            "underlag: status underlag_saknas. Säg inget om att arten finns eller att "
+            "sambandet är säkrat.\n"
             "5. rapport_kontrollera; rätta det som underkänns.\n"
             "6. rapport_exportera format 'word' och 'pdf'.\n"
             "Du äger inget tal. Metoderna är skisser."
