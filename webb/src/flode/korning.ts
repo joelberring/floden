@@ -38,7 +38,7 @@ export async function startaKorning(t: FlodeTillstand, analyser: string[]): Prom
   t.ritVyer = [];
   signalera();
   try {
-    await korScenario(t.projekt, sc.slug, analyser, null);
+    await korScenario(t.projekt, sc.slug, analyser, t.avtappning);
   } catch (e) {
     t.korning = { slug: sc.slug, text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs };
     signalera();

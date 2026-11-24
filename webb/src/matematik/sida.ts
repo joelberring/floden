@@ -12,7 +12,6 @@ import type { FlodeNiva, MatematikData, MatematikLank, MatematikMetod } from "./
 
 const NIVA_KLASS: Record<FlodeNiva, string> = {
   flode: "svarar",
-  karta: "delvis",
   api: "delvis",
   cli: "delvis",
   fristaende: "saknas",

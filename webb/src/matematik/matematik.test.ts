@@ -66,7 +66,7 @@ test("statusmärkningen skiljer metodstatus och var metoden nås", () => {
   const html = sidaMatematik();
   assert.match(html, /Metodstatus: skiss/);
   assert.doesNotMatch(html, /Metodstatus: rapport/);
-  for (const t of ["I användarflödet", "Bara i API:t", "Fristående modul", "Kommandorad, MCP och testsvit", "I kartsidan"]) {
+  for (const t of ["I användarflödet", "Bara i API:t", "Fristående modul", "Kommandorad, MCP och testsvit"]) {
     assert.ok(html.includes(t), t);
   }
   // Märkningen följer koden: luft och buller är inte i flödet, ekologi är det.

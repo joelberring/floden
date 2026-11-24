@@ -1,5 +1,5 @@
 /*
- * Enkel hash-router: #/ · #/projekt/<id> · #/karta/<id> · #/fragor · #/om · #/matematik · #/forvaltning
+ * Enkel hash-router: #/ · #/projekt/<id> · #/fragor · #/om · #/matematik · #/forvaltning
  * (bara med inloggning och kontodata) · #/nycklar (inloggade) · #/administration (admin) ·
  * #/arbetsbank/<omrade> (kontrollfallens arbetsbänk).
  * Arbetsbänken är den äldre kartan i index.html (main.ts) och göms i stället för att ritas om,
@@ -18,7 +18,6 @@ import {
 import { hamtaModuler, hamtaOmraden, hamtaProjektLista } from "./api";
 import { avslutaFragor, visaFragor } from "./fragor";
 import { avslutaFlode, projektLaddat, tolkaFlodeAdress, visaFlode } from "./flode/index";
-import { avslutaKarta, visaKarta } from "./kartsida";
 import { visaMatematik } from "./matematik/sida";
 import { avslutaProv, visaProvWebgpu } from "./prov/webgpuProv";
 import { visaAdministration, visaNycklar } from "./kontosidor";
@@ -34,7 +33,7 @@ import {
   type SidId,
 } from "./sidor";
 import { hamtaProjekt } from "./api";
-import { SIDTITLAR, tolkaHash, type RuttSida } from "./rutter";
+import { kartaOmdirigering, SIDTITLAR, tolkaHash, type RuttSida } from "./rutter";
 import type { ModulInfo, OmradeSammanfattning, ProjektListaPost, ProjektSvar } from "./types";
 
 export interface RouterKrokar {
@@ -83,13 +82,18 @@ export function startaRouter(krokar: RouterKrokar): void {
   const sidId = (s: RuttSida): SidId => (s === "arbetsbank" || s === "prov" ? "om" : s);
 
   const rita = (): void => {
+    // Den gamla kartsidan finns inte kvar: #/karta leder till motsvarande steg i flödet.
+    const karta = kartaOmdirigering(window.location.hash);
+    if (karta) {
+      window.location.replace(karta);
+      return;
+    }
     const rutt = tolkaHash(window.location.hash);
     document.title = SIDTITLAR[rutt.sida];
     document.body.dataset.sida = rutt.sida;
 
     // Utloggad på en server med inloggning: bara inloggningssidan, oavsett adress.
     if (kontoLage().lage === "ut") {
-      avslutaKarta();
       avslutaFragor();
       document.title = "Floden";
       document.body.dataset.sida = "inloggning";
@@ -102,7 +106,6 @@ export function startaRouter(krokar: RouterKrokar): void {
     // Flödet (#/ och #/p/<projekt>/<steg>) har eget sidhuvud och egna steg.
     const flode = tolkaFlodeAdress(window.location.hash);
     if (flode) {
-      avslutaKarta();
       avslutaFragor();
       document.body.dataset.sida = "flode";
       vyArbetsbank.hidden = true;
@@ -111,7 +114,6 @@ export function startaRouter(krokar: RouterKrokar): void {
       return;
     }
     avslutaFlode();
-    if (rutt.sida !== "karta") avslutaKarta();
     if (rutt.sida !== "fragor") avslutaFragor();
     if (rutt.sida !== "prov") avslutaProv();
 
@@ -184,12 +186,6 @@ export function startaRouter(krokar: RouterKrokar): void {
       fokuseraRubrik();
       return;
     }
-    if (rutt.sida === "karta") {
-      void visaKarta(vySida, rutt.parametrar.get("vy"));
-      window.scrollTo(0, 0);
-      fokuseraRubrik();
-      return;
-    }
     switch (rutt.sida) {
       case "start":
         vySida.innerHTML = sidaStart(moduler, harProjekt, projektLista);
@@ -227,7 +223,7 @@ export function startaRouter(krokar: RouterKrokar): void {
       return;
     }
     const sida = tolkaHash(window.location.hash).sida;
-    if (kontoLage().lage === "ut" || (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov")) {
+    if (kontoLage().lage === "ut" || (sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov")) {
       rita();
     } else sidhuvudEl.innerHTML = sidhuvud(sidId(sida));
   });
@@ -254,11 +250,11 @@ export function startaRouter(krokar: RouterKrokar): void {
 
   window.addEventListener("hashchange", rita);
   rita();
-  // Sidorna ritas om när moduler, projekt och områden har kommit (kartan, frågorna och kontosidorna ritas inte om).
+  // Sidorna ritas om när moduler, projekt och områden har kommit (frågorna och kontosidorna ritas inte om).
   void data.then(() => {
     if (tolkaFlodeAdress(window.location.hash)) return;
     const sida = tolkaHash(window.location.hash).sida;
-    if (sida !== "karta" && sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov") {
+    if (sida !== "fragor" && sida !== "arbetsbank" && sida !== "prov") {
       rita();
     }
   });

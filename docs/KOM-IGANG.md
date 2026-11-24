@@ -145,7 +145,7 @@ köras om utan kostnad: är inget ändrat tar det under en sekund, och `--tvinga
 Kvarteret är **syntetiskt**: ett påhittat område med fyra kvarter, gator, gårdar och en skålformad
 sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkliga byggnader.
 
-**Förslag till visning (följ menyn: Start, Projekt, Karta, Utredningsfrågor, Om beräkningarna):**
+**Förslag till visning (följ flödets fem steg: Projekt, Förslag, Frågor, Resultat, Rapport):**
 
 1. **Start.** Tre steg: välj ett exempel, se före och efter, läs av värden. Under dem står vad Floden
    kan räkna på, med ärlig status per del: *Vatten* och *Dagsljus* finns i demon; *Luft* finns men en
@@ -155,31 +155,33 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
    (höjt hus, nytt hus) och siffror ur körningarnas egna resultat: soltimmar på mark och skyfall före
    och efter. Byggnadernas tak räknas inte som mark. Ett mått som inte går att räkna visas inte.
    *Teknisk information* (lösare, versioner, regnets parametrar) är hopfälld.
-3. **Karta.** Välj vy (dagsljus höjt hus, dagsljus nytt hus, vatten nytt hus) och läge: *Före*, *Efter*,
-   *Skillnad*, *Svep* (dra reglaget) eller *Sida vid sida*. Rutan *Så läser du kartan* förklarar färgerna.
-   Till höger ligger **lagerpanelen** (Underlag, Geometri, Planförslag, Resultat): tänd och släck lager,
-   ändra täckning, dra eller flytta lager med pilarna, fäll ihop grupper. Valen sparas i webbläsaren per
-   projekt. Ortofoto finns bara om du hämtat det lokalt (`floden data lantmateriet`); en WMS-tjänst kan
-   läggas till under *Lägg till underlag från en tjänst* (ingen är förvald, servern hämtar bilderna).
+3. **Förslag (steg 2) och Resultat (steg 4).** Det finns en enda kartsida i webben, flödet; den gamla
+   sidan `#/karta` är borttagen och adressen leder hit (`#/karta/<projekt>` till steg 2,
+   `#/karta/<projekt>?vy=<vy>` till steg 4).
+   **Steg 2, Förslag:** ritverktygen ligger alltid synliga till vänster (Markera, Rita hus, Lägg till och ta
+   bort hörn, Ta bort hus, Fäst, Rät vinkel, Ångra, Gör om, Läs in fil), zoom uppe till höger. Panelen har
+   *Lager och underlag* (lagerpanelen med Underlag, Geometri och Planförslag; ortofoto finns bara om du
+   hämtat det lokalt med `floden data lantmateriet`; en WMS-tjänst eller kakelmall läggs till under
+   *Underlag*, ingen är förvald, servern hämtar bilderna) och *Sparade förslag* (öppna, byt namn, ta bort).
+   Valen sparas i webbläsaren per projekt.
    **Prova själv: rita ett hus.** Välj *Rita hus* (W), klicka husets hörn (hörn och kanter på befintliga
    byggnader fäster, en orange ring visar var; *Rät vinkel* låser 45 och 90 grader), dubbelklicka eller
-   tryck Enter. Ange höjden i panelen (yta och uppskattad bruttoarea visas, 3 m per våning), tryck
-   *Räkna före och efter*: planen visar vad som räknas om, påverkansradie och uppskattad tid, och
-   *Starta beräkningen* kör samma beräkningar som resten av Floden. Resultatet kommer i samma karta,
-   gruppen *Resultat*. *Markera* (Q) väljer ett hus: ändra höjd, riv en befintlig byggnad, flytta ett nytt
-   hus eller dess hörn. Ångra är Z, gör om Shift+Z. *Spara förslaget* skriver en fil på din dator
-   (`data/lokal/kartverktyg/`, inte i git); förslag kan öppnas, få nytt namn och tas bort. Ett hus utanför
-   kvarteret, ett som korsar sig självt eller en höjd över 200 m nekas med ett tydligt besked.
-   **Se kvarteret i 3D.** Under resultatflikarna väljer du *Visa som: 3D* (eller *Visa 3D* på lagret 3D-vy i
-   panelen). Terräng, byggnader, ditt ritade förslag och resultaten ligger i samma lagerpanel som i kartan:
-   soltimmar på marken, dagsljus (VSC) som färgade punkter på fasaderna, vattenytan med maxdjup, före, efter,
-   skillnad, svep eller sida vid sida. Dra för att rotera, högerknapp för att flytta, rulla för att zooma;
-   *Rakt uppifrån*, *Snett*, *Norr uppåt* och *Hela kvarteret* ställer kameran. Allt som färgas är beräknat av
-   Floden (inga skuggor räknas av grafikkortet); ett hus du ritar i kartan syns direkt i 3D. Luft och buller
-   har inget 3D-resultat och visas som otillgängliga med förklaring. Ett ritverktyg tar dig tillbaka till
-   kartan. Se `docs/WEBB3D.md`.
-4. **Hovra** över kartan: värdena för före, efter och skillnad står under kartan. Grå ytor är byggnader
-   (tak, inte mark). Byggnadslagret och värden på tak slås av och på under kartan.
+   tryck Enter. Ange höjden i panelen (yta och uppskattad bruttoarea visas, 3 m per våning). Förslaget
+   sparas som en fil på din dator (`data/lokal/kartverktyg/`, inte i git). Ett hus utanför kvarteret, ett
+   som korsar sig självt eller en höjd över 200 m nekas med ett tydligt besked. Under steg 3 körs
+   beräkningen.
+   **Steg 4, Resultat:** flikarna Skyfall, Sol och Ekologi, med lägena *Före*, *Efter*, *Skillnad*, *Svep*
+   och *3D*. Rutan *Så läser du kartan* förklarar färgerna; hovra för värden och slå av och på värden på
+   tak. **Visa osäkerhet** (flikarna Skyfall och Sol) lägger intervall från K40 och K41 under siffrorna
+   som `[min; max]` och känsliga överfall (K36) som markörer i kartan, med listan *Var bör vi mäta*.
+   Osäkerheten gäller projektets markmodell (läget före), inte det du ritat. Alla tal skrivs med
+   decimalkomma.
+   **Se kvarteret i 3D.** Välj *3D* i lägesraden. Soltimmar på marken, dagsljus (VSC) som färgade punkter
+   på fasaderna, vattenytan med maxdjup, före, efter, skillnad, svep eller sida vid sida. Dra för att
+   rotera, högerknapp för att flytta, rulla för att zooma; *Rakt uppifrån*, *Snett*, *Norr uppåt* och
+   *Hela kvarteret* ställer kameran. Allt som färgas är beräknat av Floden. Se `docs/WEBB3D.md`.
+4. **Läs av.** Värdena för före, efter och skillnad står under kartan i steg 4. Grå ytor är byggnader
+   (tak, inte mark).
 5. **Utredningsfrågor.** Demokorten överst går att köra direkt (resultatet finns redan i cachen).
    *Fler exempel (kräver egna data)* är hopfälld: de frågorna kan inte köras i demon.
 6. **Om beräkningarna.** Modulerna, och *Kontroll av beräkningarna*: syntetiska fall med känt svar som
@@ -192,12 +194,7 @@ kontot. Den slås på i `config.local.toml`
 `docs/KONTO.md` (avsnitt 2 för Google-klienten, avsnitt 8 för hur den är kopplad i webben). Med
 inloggning på visas en *Logga in med Google*-knapp och, när du är inloggad, ditt namn och *Logga ut*.
 
-Flödets fem steg: `docs/bilder/flode-{1-projekt,2-forslag,3-fragor,4-resultat,5-rapport}.png` och `-smal` (390 px; `python tools/flode_skarmbild.py`). Skärmbilder (bred 1440 px och smal 800 px med `-smal`): `docs/bilder/demo-projekt.png`, `demo-karta.png` (+ `demo-karta-vatten.png`), `demo-fragor.png`, `demo-dagsljus.png`,
-`demo-vatten.png` (`python tools/webb_skarmbild.py --demo`). Kartverktyget: `docs/bilder/kartverktyg-lager.png`,
-`kartverktyg-rita.png` (mitt i ritningen, med fästmarkör), `kartverktyg-hojd.png` och `kartverktyg-resultat.png`
-(före och efter efter en körning; `python tools/webb_skarmbild.py --kartverktyg`, kräver Chrome).
-3D: `docs/bilder/3d-soltimmar-fore.png`, `3d-soltimmar-efter.png`, `3d-vsc-fasader.png`, `3d-vatten.png` och
-`3d-ritat-hus.png` (`python tools/webb_skarmbild.py --3d`).
+Flödets fem steg: `docs/bilder/flode-{1-projekt,2-forslag,3-fragor,4-resultat,5-rapport}.png` och `-smal` (390 px; `python tools/flode_skarmbild.py`), dessutom `flode-2-forslag-lager`, `flode-4-resultat-osakerhet` och `flode-4-resultat-sol-osakerhet` (lager och underlag, intervall och känsliga överfall). Övriga skärmbilder (`python tools/webb_skarmbild.py --demo`): `docs/bilder/demo-projekt.png`, `demo-fragor.png`, `demo-dagsljus.png`, `demo-vatten.png`. 3D (`--3d`): `docs/bilder/3d-soltimmar-fore.png`, `3d-soltimmar-efter.png`, `3d-vsc-fasader.png`, `3d-vatten.png`.
 
 ## En ny kommun: konfigurera, inte koda
 

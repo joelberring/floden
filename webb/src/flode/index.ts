@@ -3,6 +3,7 @@
  * stegbyte. Anropas av routern; allt annat i flödet ligger i den här mappen.
  */
 import "./flode.css";
+import "../karta/karta.css";
 import { hamtaProjektLista } from "../api.ts";
 import { tolkaFlodeAdress, type FlodeRutt } from "./adress.ts";
 import { visaForslag } from "./forslag.ts";

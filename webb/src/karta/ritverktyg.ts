@@ -18,6 +18,7 @@ import { andraHornVid, flyttaHorn, flyttaRing, infogaHorn, infogaPunkter, narmas
 import { avstand, btaUppskattning, sjalvkorsande, yta, type Punkt, type Ring } from "./geom.ts";
 import { traffAvstand, traffTest, type HusForm } from "./hit.ts";
 import type { PlanDok } from "./plandok.ts";
+import { formatera } from "../tal.ts";
 import { byggFastIndex, fastAt, fastPaStrale, fastRackvidd, lasVinkel, ringExtra, utkastExtra, vinkelRef, type FastIndex, type FastTraff } from "./snap.ts";
 
 export type Verktyg = "valj" | "hus" | "laggtill" | "tabort";
@@ -559,5 +560,5 @@ export class Ritverktyg {
 }
 
 function fmt(v: number): string {
-  return Math.round(v).toLocaleString("sv-SE");
+  return formatera(Math.round(v), 0);
 }

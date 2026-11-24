@@ -16,7 +16,7 @@ ett manifest med sha256 för indata, kod och parametrar, och **ingen metod är k
 tills en människa beslutar annat (`data/mcp/metodstatus.toml`, `docs/BESLUT.md`).
 
 **Var en metod nås** (kontrollerat mot koden 2026-11-23): *i användarflödet* (webbflödet `#/p/<projekt>/...` via
-K21-lösare), *i kartsidan* (`#/karta`), *bara i API:t* (endpoint utan knapp eller panel i klienten), *kommandorad,
+K21-lösare), *bara i API:t* (endpoint utan knapp eller panel i klienten), *kommandorad,
 MCP och testsvit* eller *fristående modul* (testad men inte inkopplad). Att något har ett API betyder alltså inte
 att en planerare når det.
 
@@ -34,11 +34,11 @@ om en sökväg inte finns eller om en metod pekar på en saknad metodstatus. For
 | Vatten | Sänkgraf som sammanslagningsträd | `src/sankgraf/hierarki.py`<br>`src/sankgraf/persistens.py`<br>`src/sankgraf/fyllning.py`<br>`src/sankgraf/takvatten.py`<br>`src/sankgraf/avtappning.py` | K1 (v2), K2 (v2) | skiss | I användarflödet |
 | Vatten | Händelsestyrd dynamik i grafen | `src/dynamik/handelsestyrd.py`<br>`src/dynamik/nodmodell.py`<br>`src/dynamik/enhetssvar.py`<br>`src/dynamik/tidsstegning.py` | K4, K6, K21 (lösaren vatten.dynamik) | skiss | I användarflödet |
 | Vatten | 2D lokal tröghet, subgrid och hybrid | `src/tvad/lokal_troghet.py`<br>`src/tvad/hybrid.py`<br>`src/tvad/subgrid.py`<br>`src/tvad/felindikator.py`<br>`src/vatten/losare_2d.py`<br>`rust/tvad_karna` | K1, K5, K6, K36 (felindikator i API-svaret) | skiss | Kommandorad, MCP och testsvit |
-| Vatten | Bifurkationsdetektor | `src/sankgraf/bifurkation.py`<br>`src/webb/api.py`<br>`webb/src/karta/overfall.ts` | K34, K35, K36 | skiss | I kartsidan (#/karta), inte i flödet |
-| Vatten | Monoton intervallanalys för vatten | `src/dynamik/intervall.py`<br>`src/webb/api.py` | K40, K34 | skiss | Bara i API:t |
+| Vatten | Bifurkationsdetektor | `src/sankgraf/bifurkation.py`<br>`src/webb/api.py`<br>`webb/src/karta/overfall.ts`<br>`webb/src/flode/osakerhet.ts` | K34, K35, K36 | skiss | I användarflödet |
+| Vatten | Monoton intervallanalys för vatten | `src/dynamik/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K40, K34 | skiss | I användarflödet |
 | Dagsljus | Horisont, soltimmar, SVF och VSC | `src/dagsljus/horisont.py`<br>`src/dagsljus/matt.py`<br>`src/dagsljus/solposition.py`<br>`src/dagsljus/floden_losare.py`<br>`src/dagsljus/ruta.py` | K1 (v2), K11, K21 (lösarna dagsljus.*) | skiss | I användarflödet |
 | Dagsljus | Dozier–Frew: horisont i linjär tid | `src/dagsljus/intervall.py`<br>`src/webb/api.py` | K41 | skiss | Bara i API:t |
-| Dagsljus | Monotona SVF-intervall | `src/dagsljus/intervall.py`<br>`src/webb/api.py` | K41 | skiss | Bara i API:t |
+| Dagsljus | Monotona SVF-intervall | `src/dagsljus/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K41 | skiss | I användarflödet |
 | Luft | Vindfält och spridning som M-matris | `src/luft/transport.py`<br>`src/luft/snabbvind.py`<br>`src/luft/lbm.py`<br>`src/luft/vindkomfort.py`<br>`src/karna/luft_losare.py` | K21 (lösarna luft.halt, luft.vindkomfort) | skiss | Kommandorad, MCP och testsvit |
 | Luft | Adjungerad känslighet och åtgärdsval | `src/luft/kanslighet.py` | – | skiss | Fristående modul |
 | Luft | Monotona MKN-intervall | `src/luft/kanslighet.py`<br>`src/webb/api.py` | K43 | skiss | Bara i API:t |
@@ -102,11 +102,11 @@ Flaggar överfallspunkter där höjdosäkerheten kan få vattnet att byta utlopp
 
 $$ \Delta z = \max(0,\, z_2 - z_1), \qquad \sigma = \sqrt{\sigma_1^2 + \sigma_2^2}, \qquad \text{instabil om } \frac{\Delta z}{\sigma} \le k $$
 
-- **Kod:** `src/sankgraf/bifurkation.py`, `src/webb/api.py (POST /api/analys/bifurkationer)`, `webb/src/karta/overfall.ts`
+- **Kod:** `src/sankgraf/bifurkation.py`, `src/webb/api.py (POST /api/analys/bifurkationer)`, `webb/src/karta/overfall.ts`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K34, K35, K36
 - **Facittest:** tests/sankgraf/test_bifurkation.py; tests/webb/test_bifurkation_projekt.py; tests/tvad/test_felindikator.py
-- **Status:** skiss (metodstatus); i kartsidan (#/karta), inte i flödet
-- **Observera:** Nås som lager i kartsidan (#/karta), inte i flödet. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Nås i Resultat (steg 4, fliken Skyfall, knappen "Visa osäkerhet") som nyckeltal och lagret "Känsliga överfall" på kartan; den gamla kartsidan (#/karta) är borttagen. Gränsen är m ≤ k (inte strikt <), standard k = 2. Detta är en heuristik, ingen persistensteori: se öppen fråga Q2.
 
 ### Monoton intervallanalys för vatten (`vatten.intervall`)
 
@@ -114,11 +114,11 @@ Under fast flödestopologi är maxdjupet monotont i regn, initial förlust och a
 
 $$ h_{\min}(t) \le h_u(t) \le h_{\max}(t), \qquad (h_{\min}, h_{\max}) \text{ ur två extremkörningar} $$
 
-- **Kod:** `src/dynamik/intervall.py`, `src/webb/api.py (POST /api/analys/intervall)`
+- **Kod:** `src/dynamik/intervall.py`, `src/webb/api.py (POST /api/analys/intervall)`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K40, K34
 - **Facittest:** tests/dynamik/test_intervall.py (50 slumpade scenarier på vart och ett av A1–A4, totalt 200, alla inneslutna); tests/webb/test_analys_steg_a.py
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Ingen panel i klienten (K40: läses av inget i webbklienten).
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Garantin gäller delträd utan bifurkation; berörda noder märks `monoton_garanterad = False`. Visas i Resultat (steg 4, fliken Skyfall, knappen "Visa osäkerhet") som [min; max]; gäller projektets markmodell (läget före), inte ett ritat förslag.
 
 ## 4. Dagsljus
 
@@ -156,11 +156,11 @@ SVF är antiton i byggnadshöjd: körningar med z − σ och z + σ ger garanter
 
 $$ \mathrm{SVF}(H - \sigma) \ge \mathrm{SVF}(H) \ge \mathrm{SVF}(H + \sigma) $$
 
-- **Kod:** `src/dagsljus/intervall.py (kor_monoton_svf_intervall)`, `src/webb/api.py (POST /api/analys/svf-intervall)`
+- **Kod:** `src/dagsljus/intervall.py (kor_monoton_svf_intervall)`, `src/webb/api.py (POST /api/analys/svf-intervall)`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K41
 - **Facittest:** tests/dagsljus/test_modern_matte.py (20 slumpade höjdscenarier inneslutna); tests/webb/test_analys_steg_a.py
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Ingen panel i klienten.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Visas i Resultat (steg 4, fliken Sol, knappen "Visa osäkerhet") som [min; max] av medel-SVF; gäller projektets markmodell (läget före), inte ett ritat förslag.
 
 ## 5. Luft
 
