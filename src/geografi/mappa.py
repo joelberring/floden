@@ -304,6 +304,7 @@ def mappa_geografi(
             fil, antal, v = tak_till_gpkg(
                 [q.fil for q in bpaket], bbox_publicering=wfs_bbox, epsg_publicering=fk.baskarta.epsg,
                 lager_monster=fk.baskarta.lager_monster, ut=ra / "kommun" / "byggnader.gpkg",
+                objekt_falt=fk.baskarta.objekt_falt, objekt_monster=fk.baskarta.objekt_monster,
             )  # fmt: skip
             varningar.extend(x for x in v if x not in varningar)
             skriv(f"Byggnader: {antal} takkonturer ur baskartan.")
