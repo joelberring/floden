@@ -11,6 +11,7 @@
  * "Visa värden även på tak" och "Så läser du kartan" kommer från den gamla kartsidan.
  */
 import { hamtaAvlasning, hamtaMarkhojd, hamtaProjekt, hamtaResultat, lasJson } from "../api.ts";
+import { ApiFel } from "../apifel.ts";
 import { markhojdAvlasning } from "./markhojd.ts";
 import { monteraOsmKryss } from "./osmval.ts";
 import type { AvlasningSvar, LagerPost, ResultatSvar } from "../fragor-typer.ts";
@@ -583,7 +584,15 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
 
   const klar = (async () => {
     try {
-      [projektSvar, info] = await Promise.all([hamtaProjekt(projekt), hamtaProjektInfo(projekt)]);
+      // Projektets färdiga exempel (`/api/projekt/<id>`) finns bara för demokvarteret: ett projekt i en geografi svarar 404
+      // där och har bara sina egna körningar. Det är inget fel; då visas inga "Projektets exempel".
+      [projektSvar, info] = await Promise.all([
+        hamtaProjekt(projekt).catch((e: unknown) => {
+          if (e instanceof ApiFel && e.status === 404) return null;
+          throw e;
+        }),
+        hamtaProjektInfo(projekt),
+      ]);
     } catch (e) {
       el("rs-innehall").innerHTML = `<h1 class="flode-h" id="rs-rubrik">Resultatet</h1>${felBeskedHtml(sidFel(e, "Resultatet", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/resultat`), esc)}`;
       kopplaLaddaOm(el("rs-innehall"));

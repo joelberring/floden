@@ -230,6 +230,7 @@ Design: `docs/design/RITVERKTYG.md` (Joels önskan 2026-11-24: generellt kartver
 | R5 Skarv i klienten | Fynden i kartan och i steg 2, "Jämna ut skarven" (slänt eller utlopp) och ny kontroll | M | R1, R3, R4 | klar 2026-11-24 |
 | R6 3D | Takformer i `extrudera`, ny mark och slänter, murar som brytlinjer, live | M–L | R3, R4 | klar 2026-11-24 |
 | R7 Pekskärm | Håll för att flytta, fingerräckvidd, stora handtag, egna tangentbindningar | S–M | R3 | klar 2026-11-24 (prövad i Chromium med beröringsemulering, `tools/ritverktyg_prov.py`; ej prövad på en riktig telefon) |
+| R8 Geografiprojekt i webben | Nytt projekt med OSM-bakgrund och sammanfattade varningar; markmodellen (skuggning, höjdkurvor, markhöjd) och OSM som lager i steg 2 och 4; markhöjd under pekaren; "Spara förslag" med status; prov mot syntetiskt geografiprojekt | S–M | R7 | klar 2026-11-25 (prövat i Chromium mot påhittad geografi; OSM-plattor ersatta av påhittade bilder i provet, riktiga OSM nåddes inte; ej prövat mot Göteborgs riktiga data) |
 
 ## Sist – OAuth för Claude-appen (parkerat 2026-11-23, Joels beslut)
 

@@ -727,10 +727,8 @@ def geografi(p: Prov, webblasare: Browser, med_korning: bool) -> None:
     a, b = p.skarm(cx, cy)
     s.mouse.move(a, b, steps=4)
     s.mouse.move(a + 6, b + 6, steps=2)
-    try:
+    with contextlib.suppress(Exception):
         s.wait_for_function("() => { const e = document.querySelector('#fs-markhojd'); return !!e && !e.hidden && /Markhöjd/.test(e.innerText); }", timeout=8000)
-    except Exception:  # noqa: BLE001
-        pass
     mh = s.inner_text("#fs-markhojd")
     import re
 
@@ -779,10 +777,8 @@ def geografi(p: Prov, webblasare: Browser, med_korning: bool) -> None:
     s.wait_for_timeout(500)
     s.fill("#fs-hojd", "12")
     s.keyboard.press("Enter")
-    try:
+    with contextlib.suppress(Exception):
         s.wait_for_function("() => /Kunde inte spara/.test(document.querySelector('#fs-sparstatus')?.innerText ?? '')", timeout=20_000)
-    except Exception:  # noqa: BLE001
-        pass
     st = s.inner_text("#fs-sparstatus")
     p.ok("ett serverfel vid sparandet visas bredvid knappen med skälet", st.startswith("Kunde inte spara") and "Disken är full" in st, st)
     p.ok("felet är en alert och röd", s.get_attribute("#fs-sparstatus", "role") == "alert" and s.locator("#fs-sparstatus.fel").count() == 1)
@@ -796,10 +792,8 @@ def geografi(p: Prov, webblasare: Browser, med_korning: bool) -> None:
     )
     net.fel_sparande = None
     s.click("#fs-spara")
-    try:
+    with contextlib.suppress(Exception):
         s.wait_for_function("() => /^Sparat som/.test(document.querySelector('#fs-sparstatus')?.innerText ?? '')", timeout=30_000)
-    except Exception:  # noqa: BLE001
-        pass
     st = s.inner_text("#fs-sparstatus")
     p.ok("Spara förslag sparar och bekräftar med namn och klockslag", re.fullmatch(r"Sparat som Geoprov kl\. \d\d:\d\d på den här datorn\.", st.strip()) is not None, st)
     p.ok("bekräftelsen står också i kartans hjälprad", "Förslaget är sparat som Geoprov" in p.hjalp(), p.hjalp())
@@ -840,10 +834,8 @@ def geografi(p: Prov, webblasare: Browser, med_korning: bool) -> None:
     a, b = _mitt(s, "#rs-a canvas")
     s.mouse.move(a, b, steps=5)
     s.mouse.move(a + 8, b + 5, steps=3)
-    try:
+    with contextlib.suppress(Exception):
         s.wait_for_function("() => /Markhöjd/.test(document.querySelector('#rs-avl')?.innerText ?? '')", timeout=8000)
-    except Exception:  # noqa: BLE001
-        pass
     p.ok("steg 4 visar markhöjden under pekaren", re.search(r"Markhöjd -?\d+,\d{2} m RH 2000", s.inner_text("#rs-avl")) is not None, s.inner_text("#rs-avl").replace("\n", " "))
     p.ok("steg 4 har OSM-kryssrutan och OSM-bakgrunden är tänd", s.is_checked("#rs-osm-kryss") and "© OpenStreetMap-bidragsgivare" in s.inner_text(".maplibregl-ctrl-attrib"))
     p.bild("46-geo-steg4")
@@ -861,7 +853,7 @@ def nytt_projekt(p: Prov, webblasare: Browser) -> None:
     net = Natet(p.ctx, p.url, _csp_ur_caddyfile())
     import glob
 
-    mf = sorted(glob.glob("/tmp/floden-geoprov/geo/goteborg-test/v1/manifest.json"))
+    mf = sorted(glob.glob("/tmp/floden-geoprov/data/lokal/geo/goteborg-test/v1/manifest.json"))
     mani = json.loads(Path(mf[0]).read_text(encoding="utf-8")) if mf else {"karna_3011": [-210251.0, 6413249.0, -209749.0, 6413751.0], "gransen_3011": [-210500.0, 6413000.0, -209500.0, 6414000.0]}
 
     def poly(r: list[float]) -> dict[str, Any]:
