@@ -213,11 +213,12 @@ def test_fragekatalogen_och_filter() -> None:
     plan = k.sok(omrade="skyfall", villkor=["planförslag"])
     assert {"SK-03", "SK-06"} <= {f.id for f in plan}  # 'Alla områden' gäller alltid
     assert "SK-08" not in {f.id for f in plan}
-    # kartlagda frågor: SK (R1), DL och SO (R2) och EK (R2), alla ur huvudkatalogen
+    # kartlagda frågor: SK (R1), DL och SO, EK och LU (R2), alla ur huvudkatalogen
     kartlagda = {f.id for f in k.fragor if f.id[:2] in ("SK", "DL", "SO")}
     ekologi = {f.id for f in k.fragor if f.id.startswith("EK-")}
-    assert len(kartlagda) == 45 and len(ekologi) == 15
-    assert set(FLODEN_FORMAGA) == kartlagda | ekologi
+    luft = {f.id for f in k.fragor if f.id.startswith("LU-")}
+    assert len(kartlagda) == 45 and len(ekologi) == 15 and len(luft) == 15
+    assert set(FLODEN_FORMAGA) == kartlagda | ekologi | luft
 
 
 def test_fragemappningen_i_rapporter_md_stammer_med_koden() -> None:

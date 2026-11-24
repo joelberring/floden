@@ -24,9 +24,9 @@ if TYPE_CHECKING:
     from rapport.skissrapport import Rapport, RapportTjanst
 
 AMNEN_MED_MALL: Final[tuple[str, ...]] = ("skyfall", "dagsljus")
-"""Ämnen som webbflödet har påståenden för (R1 och R2). Ekologi har en R2-mall via MCP men inga påståenden i webbflödet än."""
+"""Ämnen som webbflödet har påståenden för (R1 och R2). Ekologi och luft har en R2-mall via MCP men inga påståenden i webbflödet."""
 
-AMNESNAMN: Final[dict[str, str]] = {"skyfall": "Skyfall", "dagsljus": "Dagsljus och sol", "ekologi": "Ekologi"}
+AMNESNAMN: Final[dict[str, str]] = {"skyfall": "Skyfall", "dagsljus": "Dagsljus och sol", "ekologi": "Ekologi", "luft": "Luft"}
 
 
 def saknad_mall(amne: str) -> str | None:
@@ -37,6 +37,12 @@ def saknad_mall(amne: str) -> str | None:
         return (
             f"Rapportmall (R2) för {AMNESNAMN[amne].lower()} saknas än: rapporten kan inte skapas förrän mallen "
             "finns. Beräkningsresultaten finns i steg 4."
+        )
+    if amne == "luft":
+        return (
+            "Skissunderlaget för luft (R2) bygger på en given timserie av lokalt haltbidrag från ett annat verktyg och en "
+            "uttryckligt angiven bakgrund (lösaren luft.mkn), och webben har inget sätt att ange dem än. Det kan "
+            "skapas via MCP (rapport_skapa)."
         )
     if amne not in AMNEN_MED_MALL:
         return (

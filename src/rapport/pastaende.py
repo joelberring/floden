@@ -67,6 +67,7 @@ _TILLATNA_BETECKNINGAR: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\bTabell\s+\d+\b"),
     re.compile(r"\bd50\b"),  # spridningsavståndet där sannolikheten är hälften (ekologi)
     re.compile(r"\bNMD\s*\d{1,3}\b"),  # NMD-klasskod (identifierare, inte ett tal)
+    re.compile(r"\bPM\s?(?:10|2,5)\b"),  # partikelfraktion (beteckning, inte ett tal)
 )
 _OPTIONER: Final[frozenset[str]] = frozenset({"avrundning", "enhet", "tecken", "format"})
 

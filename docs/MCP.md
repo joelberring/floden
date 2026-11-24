@@ -172,7 +172,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 | `bestallning_skapa` | beställning (K30): syfte, skede, mottagare, ämnen, frågor, villkor, scenario; ger frågeurval och id |
 | `bestallning_hamta` | en beställning med id, eller projektets beställningar |
 | `fragekatalog_sok` | frågekatalogen (Stockholms utredningsfrågor) med vad Floden kan belägga per fråga i skyfall (SK), dagsljus (DL) och solstudier (SO): `floden.markning` är visat, delvis, underlag_saknas eller ej_tillampligt |
-| `rapport_skapa` | skissunderlag (nivå 1) för skyfall eller dagsljus/sol (`amne` eller `bestallning_id`) över klara körningar: kartor, metodstatus, frågor, beläggsadresser; valfria `installningar` (språk och layout) |
+| `rapport_skapa` | skissunderlag (nivå 1) för skyfall, dagsljus/sol, ekologi eller luft (luft utan scenario, analyser med `luft.mkn`; `amne` eller `bestallning_id`) över klara körningar: kartor, metodstatus, frågor, beläggsadresser; valfria `installningar` (språk och layout) |
 | `rapport_installningar` | visar eller ändrar rapportens inställningar: `sprakprofil` (`sbk` förval, `neutral`), `numrerade_rubriker`, `numrerade_figurer`, `avsandare`, `diarienummer`, `handlaggare`, `accentfarg`, `logotyp`, `typsnitt_brodtext`, `typsnitt_rubriker` (lokala sökvägar; bara sha256 lagras och svaras) |
 | `pastaende_lagg_till` | påstående med status, fördjupning, text med platshållare `{{matt:<adress>}}` och belägg; vägras utan giltiga belägg |
 | `rapport_kontrollera` | kontrollen inför export (spårning, scenario, nämnare, mått, osäkerhet, karta, status, dataskydd, metodstatus) |
@@ -182,7 +182,7 @@ Alla verktyg tar valfritt `modell` och `roll` (deklaration som loggas). Alla sva
 Resurser: `floden://metod/{vatten,dagsljus,luft,karna,validering,mcp}` (metoddokumenten) och
 `floden://kontrakt/{datakontrakt,k0,k1,k9,k10,k11,k20,k21,k22}` och `floden://rapport/{rapport_id}`
 (K33 som JSON). Frågekatalogen nås med `fragekatalog_sok`. Promptar: `utforska_demokvarteret`,
-`prova_nytt_hus`, `skissunderlag_skyfall` och `skissunderlag_dagsljus`. Kedjan beställning, frågor, körning, rapport, kontroll och export går att köra helt via MCP (testet `test_bestallning_till_export_via_mcp_for_dagsljus`). Rapporterna och deras inställningar beskrivs i
+`prova_nytt_hus`, `skissunderlag_skyfall`, `skissunderlag_dagsljus`, `skissunderlag_ekologi` och `skissunderlag_luft`. Kedjan beställning, frågor, körning, rapport, kontroll och export går att köra helt via MCP (testet `test_bestallning_till_export_via_mcp_for_dagsljus`). Rapporterna och deras inställningar beskrivs i
 `docs/RAPPORTER.md`. Sökvägar till logotyp och typsnitt hamnar aldrig i körloggen (argumentvärden
 loggas inte), i svaren eller i rapporten; bara filens sha256.
 

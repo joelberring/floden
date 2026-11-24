@@ -84,7 +84,7 @@ Arbetsgång: projekt_info och geometri_sammanfattning för att förstå området
 byggnads-id; scenario_skapa för ett ritat hus eller en ändring; korplan för att se vad som räknas;
 kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild för att läsa resultatet.
 Rapporter (R1, R2): bestallning_skapa (syfte, skede, mottagare, ämnen; valfritt), fragekatalog_sok,
-rapport_skapa (skyfall, dagsljus/sol eller ekologi; med bestallning_id styr beställningen frågorna och
+rapport_skapa (skyfall, dagsljus/sol, ekologi eller luft; med bestallning_id styr beställningen frågorna och
 ingressen), rapport_installningar, pastaende_lagg_till (tal bara som platshållare
 {{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_hamta.
 Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
@@ -997,10 +997,11 @@ def _registrera_rapportverktyg(
     @verktyg(
         "rapport_skapa",
         "Skapar ett skissunderlag (nivå 1: sållning, inte bedömning mot krav) för ett ämne ("
-        "'skyfall', 'dagsljus' eller 'ekologi', se bestallning_skapa; luft och buller har ingen skissrapport än: "
-        "luft har lösaren luft.mkn men ingen mall, och buller är spärrat eftersom Nord2000 inte är konformt) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
-        "skillnad; samma takmask som webben), hämtar metodernas valideringsstatus och väljer frågor "
-        "ur katalogen. Svaret listar beläggsadresser du kan använda i pastaende_lagg_till.",
+        "'skyfall', 'dagsljus', 'ekologi' eller 'luft', se bestallning_skapa; buller har ingen skissrapport: "
+        "det är spärrat eftersom Nord2000 inte är konformt) över en eller flera klara körningar. Floden ritar kartor (före, efter, "
+        "skillnad; samma takmask som webben; luft har ingen karta), hämtar metodernas valideringsstatus och väljer frågor "
+        "ur katalogen. Luft bygger på lösaren luft.mkn: MKN-intervall för PM10 ur en given timserie och en angiven "
+        "bakgrund, en analys per serie (före och efter är två analyser). Svaret listar beläggsadresser du kan använda i pastaende_lagg_till.",
     )
     def rapport_skapa(
         korningar: Annotated[
@@ -1008,7 +1009,7 @@ def _registrera_rapportverktyg(
         ],
         amne: Annotated[
             str | None,
-            Field(description="'skyfall' (förval), 'dagsljus' (dagsljus och sol) eller 'ekologi'."),
+            Field(description="'skyfall' (förval), 'dagsljus' (dagsljus och sol), 'ekologi' eller 'luft'."),
         ] = None,
         bestallning_id: Annotated[
             str | None,
@@ -1325,6 +1326,32 @@ def _registrera_rapportverktyg(
             "5. rapport_kontrollera; rätta det som underkänns.\n"
             "6. rapport_exportera format 'word' och 'pdf'.\n"
             "Du äger inget tal. Metoderna är skisser."
+        )
+
+    @server.prompt(
+        name="skissunderlag_luft",
+        title="Skissunderlag luft (PM10 mot MKN som intervall) för …",
+        description="Skissunderlag (nivå 1) för luft: beställning, LU-frågor, körning av luft.mkn, rapport, "
+        "kontroll och export.",
+    )
+    def skissunderlag_luft(plats: str = "demokvarteret", korning: str = "demo-luft") -> str:
+        return (
+            f"Gör ett skissunderlag för luft (PM10 mot dygnsnormen som intervall) för {plats} (körning {korning}).\n"
+            "Förutsättning: lösaren luft.mkn räknar inte fram haltbidraget. Den tar en given timserie (CSV "
+            "tid,lokal_ug_m3) från ett annat verktyg och en uttryckligt angiven bakgrund, en analys per serie. "
+            "Före och efter är två analyser med samma bakgrund, faktorer och gräns.\n"
+            "1. bestallning_skapa(syfte, amnen=['luft']): beställningen väljer frågorna LU-01 till LU-15. "
+            "Ange inget scenario (före och efter är analyser, inte scenarier).\n"
+            "2. fragekatalog_sok(omrade='luft'): se floden.markning per fråga.\n"
+            f"3. rapport_skapa(korningar=['{korning}'], bestallning_id=...).\n"
+            "4. För varje fråga: pastaende_lagg_till. Tal bara som {{matt:<adress>}} ur belagg_adresser "
+            "(matvarde.<analys>.<scenario>.<mått>). Skriv att serien är extern, att bakgrunden är ett antagande "
+            "och att intervallet är en känslighet, inte en konfidens. Säg aldrig att normen klaras eller "
+            "överskrids om intervallet korsar högsta antalet dygn; då kan underlaget varken säga det ena eller "
+            "det andra. Saknas underlag: status underlag_saknas.\n"
+            "5. rapport_kontrollera; rätta det som underkänns.\n"
+            "6. rapport_exportera format 'word' och 'pdf'.\n"
+            "Du äger inget tal. Metoden är en skiss."
         )
 
 

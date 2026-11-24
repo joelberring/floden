@@ -319,6 +319,14 @@ Den räknar **inte** fram haltbidraget: `luft.halt` ger bara årsmedel, ingen ti
 annat verktyg. Intervallet är en känslighet för två faktorer, inte en statistisk konfidens. En serie som inte är ett helt
 år ger en varning (antal dygn över gränsen gäller då bara perioden). Test: `tests/karna/test_luft_mkn.py`.
 
+**Rapportväg (R2, 2026-11-24).** `luft.mkn` är ämnet `luft` i `rapport_skapa` (MCP; webbens "Skapa rapport" förklarar att serie och
+bakgrund behövs): före och efter är två analyser (`mkn_fore`, `mkn_efter`) med samma parametrar i scenariot `bas`, inte två
+scenarier. Mallen, frågorna LU-01 till LU-15, kontrollen (inget påstående att normen klaras eller överskrids när
+intervallet korsar gränsen) och demon med två påhittade serier (`demovarld.luftserier`) står i `docs/RAPPORTER.md`
+("Skissunderlaget för luft"). Antagandena (serien utanför Floden, bakgrunden som antagande, känslighet och inte konfidens)
+skrivs av Floden ur K0-manifestet. Exempel: `docs/exempel/skissunderlag_luft_demo.pdf`. Tester:
+`tests/rapport/test_luft_rapport.py`.
+
 ### 10.4 Mätt
 
 Syntetiskt K1 v2-kvarter byggt med markmodellens byggare (`dagsljus.exempelkvarter`, platt mark):

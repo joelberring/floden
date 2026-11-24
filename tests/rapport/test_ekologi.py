@@ -262,7 +262,7 @@ def test_tal_utan_platshallare_vagras(m: Miljo) -> None:
         m.rt.lagg_till_pastaende(rr.rapport_id, forfattare="ai", **{**kw, "text": kw["text"] + " ECA är 25000 m²."})
 
 
-def test_luft_och_buller_har_ingen_skissrapport(m: Miljo) -> None:
-    for amne, text in (("buller", "Nord2000"), ("luft", "belägg")):
+def test_buller_har_ingen_skissrapport_och_luft_kraver_luft_mkn(m: Miljo) -> None:
+    for amne, text in (("buller", "Nord2000"), ("luft", "luft.mkn")):
         with pytest.raises(RapportFel, match=text):
             m.rt.skapa(projekt="demokvarteret", amne=amne, korningar=["demo-ekologi"])
