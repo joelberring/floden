@@ -109,8 +109,8 @@ def pastaenden(k: LuftKontekst, fragor: Sequence[str] | None = None) -> list[Map
         motivering="Val av normer, normtyp och lagrum avgörs i ärendet. Floden visar högsta antal dygn över dygnsgränsen för PM10 ur en given serie; kvävedioxid, PM2,5 och årsmedelnormen prövas inte.")  # fmt: skip
     # LU-02
     bel = [mv(la, "bakgrund_ug_m3") for la in lagen]
-    text = "Bakgrunden för PM10 är en konstant halt som läggs till serien. Den är ett antagande: " + " ".join(
-        f"i läget {la.namn} är den {_m(mv(la, 'bakgrund_ug_m3'))}." for la in lagen
+    text = "Bakgrunden för PM10 är en konstant halt som läggs till serien. Den är ett antagande. " + " ".join(
+        f"I läget {la.namn} är den {_m(mv(la, 'bakgrund_ug_m3'))}." for la in lagen
     ) + " Körningen anger inte vilken station, vilket observationsår eller vilken datatäckning bakgrunden bygger på."
     add("LU-02", "underlag_saknas", "ja", text, belagg=bel,
         saknat_underlag=["Närmaste representativa station, observationsår, datatäckning och normalår för bakgrunden, och hur bakgrunden skiljer sig från projektets gaturum."])  # fmt: skip
@@ -188,9 +188,9 @@ def pastaenden(k: LuftKontekst, fragor: Sequence[str] | None = None) -> list[Map
     # LU-11
     bel = [b for la in lagen for b in intervall_belagg(la)[:2]]
     add("LU-11", "underlag_saknas", "ja",
-        "Underlaget föreslår ingen åtgärd. Det jämför bara de serier som har lagts in: "
+        "Underlaget föreslår ingen åtgärd. Det jämför bara de serier som har lagts in. "
         + " ".join(
-            f"i läget {la.namn} är intervallet {_m(mv(la, 'lagst_antal_dygn'))} till {_m(mv(la, 'hogst_antal_dygn'))} dygn."
+            f"I läget {la.namn} är intervallet {_m(mv(la, 'lagst_antal_dygn'))} till {_m(mv(la, 'hogst_antal_dygn'))} per år."
             for la in lagen
         )
         + " Ändrad trafik, gatugeometri, placering av vistelseyta och drift prövas bara om en serie per alternativ läggs in.",
