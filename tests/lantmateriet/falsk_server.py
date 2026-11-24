@@ -5,6 +5,7 @@ O-Tid (MIT, joelberring/otid @ 4a446af) använder: OAuth2 client credentials, `P
 WGS 84-bbox, nedladdning med Bearer.
 """
 
+# ruff: noqa: E501
 from __future__ import annotations
 
 import base64
@@ -56,6 +57,7 @@ class FalskLm:
         self.omdirigera: dict[str, str] = {}
         self.cirkel = False  # nästa-länken pekar alltid på samma sida
         self.avvisa_alla = False  # 403 på alla sök/fil-anrop
+        self.avvisa_tjanster: set[str] = set()  # "hojd", "bild", "vektor": 403 för en produkts tjänst
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.port = self._httpd.server_address[1]
         self.bas = f"http://127.0.0.1:{self.port}"
@@ -163,6 +165,9 @@ class FalskLm:
                     extra = {"Retry-After": server.retry_after} if server.retry_after else None
                     self._svar(st, b"{}", extra=extra)
                     return
+                if any(self.path == f"/stac-{n}/v1/search" for n in server.avvisa_tjanster):
+                    self._svar(403)
+                    return
                 for nyckel, plats in (
                     ("hojd", "/stac-hojd/v1/search"),
                     ("bild", "/stac-bild/v1/search"),
@@ -228,6 +233,9 @@ class FalskLm:
                     return
                 for nyckel in ("hojd", "bild", "vektor"):
                     if p == f"/stac-{nyckel}/v1/collections":
+                        if nyckel in server.avvisa_tjanster:
+                            self._svar(403)
+                            return
                         self._svar(
                             200, json.dumps({"collections": server.samlingar[nyckel]}).encode()
                         )

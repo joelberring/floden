@@ -223,8 +223,9 @@ på servern; ingen kod anropar den än). Lagring och regler (`src/konto/nycklar.
   att nyckelhanteringen inte är påslagen på servern, `PUT` ger 503 `nycklar-av`, och ingenting sparas okrypterat.
   Borttagning kräver ingen hemlighet och fungerar även då. Med inloggning av finns ingen nyckelsida (404).
 - **Visas aldrig igen.** Databasen har chiffertexten och de fyra sista tecknen av det fält som identifierar nyckeln
-  (`slutar_pa`; för Lantmäteriet hemligheten). Svaren har bara `sparad`, `sparad_datum` och `slutar_pa`. Användaren kan
-  ersätta (ny `PUT`) eller ta bort sin nyckel.
+  (`slutar_pa`; för Lantmäteriet användarnamnet eller nyckeln, aldrig lösenordet eller hemligheten; rader som sparades
+  före 2026-11-24 har de fyra sista tecknen av hemligheten tills nyckeln sparas på nytt). Svaren har bara `sparad`,
+  `sparad_datum` och `slutar_pa`. Användaren kan ersätta (ny `PUT`) eller ta bort sin nyckel.
 - **Aldrig i loggar, felmeddelanden, körlogg, `run.json` eller svar.** Felen nämner fältets id, aldrig värdet (inte
   heller namnet på ett okänt fält); händelser och loggrader har konto-id och typ. Klartexten når bara serverkod som
   ska använda nyckeln (`NyckelForrad.las`): det finns ingen väg till den från HTTP eller MCP.
@@ -234,11 +235,41 @@ på servern; ingen kod anropar den än). Lagring och regler (`src/konto/nycklar.
 | --- | --- |
 | `GET /konto/nycklar` | alla typer med status, fälten de består av, och `paslagen`/`orsak`/`text` |
 | `GET /konto/nycklar/<typ>` | en typ: `sparad`, `sparad_datum`, `slutar_pa`, `paslagen` |
-| `PUT /konto/nycklar/<typ>` | sparar eller ersätter; kropp `{"nyckel": …}` (`anthropic`) eller `{"klient_id": …, "klient_hemlighet": …, "metod": …}` (`lantmateriet`; `metod` förval `oauth2`) |
+| `PUT /konto/nycklar/<typ>` | sparar eller ersätter; kropp `{"nyckel": …}` (`anthropic`) eller `{"klient_id": …, "klient_hemlighet": …, "metod": …}` (`lantmateriet`; `metod` är `basic` eller `oauth2`, förval `basic`) |
 | `DELETE /konto/nycklar/<typ>` | tar bort (`borttagen` eller `fanns-inte`) |
 
 Inloggning krävs (401). `PUT` och `DELETE` kräver CSRF (kaka och `X-Floden-CSRF`) och rätt `Origin`, som alla andra skrivande
 anrop (403 annars). Okänd typ ger 404, ogiltigt värde 400 (8 till 512 synliga tecken utan blanksteg), kropp över 4 kB 413.
+
+**Lantmäteri på sidan Nycklar.** Avsnittet har tre delar (webb: `webb/src/kontosidor-html.ts`; API: `lantmateriet`-posten i
+`GET /konto/nycklar`):
+
+- **Sätt att logga in** som två alternativknappar med begripliga etiketter: *Geotorgets användarnamn och lösenord
+  (privatperson)* (`metod = basic`, **förval**, som i O-Tid) och *API-portalens nyckel och hemlighet* (`oauth2`). Fältet
+  `metod` har `val_etiketter` och `standard` i API-svaret. Ett förval ändrar inte en redan sparad nyckel: den behåller sin
+  metod tills användaren sparar om. (Tidigare var förvalet `oauth2`, och den som missade att sätta `basic` fick 401.)
+- **Produkter att beställa på Geotorget**: tabellen *Produkt | Används till | Behövs/Valfri* ur
+  `data/lantmateriet/produkter.toml` (svarsfältet `produkter`; koden i `src/lantmateriet/produkter.py`), med länk till
+  Geotorget och till den här filen ("Så kopplar du Lantmäteriet"). Registret har bara avgiftsfria produkter
+  (`docs/BESLUT.md` 2026-11-24, listan i `docs/GEOTORGET.md`) och inga med personuppgiftsnära innehåll (Lägenhet,
+  Belägenhetsadress, Fastighetsindelning, Samfällighetsförening används inte).
+- **Beställningstid**: en tydlig rad (`bestallning_text`) om att en beställning på Geotorget kan ta tid, ibland dagar,
+  innan produkten är aktiv, och att Lantmäteriet då svarar 401 eller 403.
+
+Sparade värden visas aldrig: bara "Sparad <datum>, slutar på …<fyra tecken>".
+
+**Så kopplar du Lantmäteriet.** (1) Skaffa ett Geotorget-konto (privatperson) på geotorget.lantmateriet.se. (2) Beställ
+produkterna i tabellen för det du vill göra; Laserdata Nedladdning, skog behövs för markmodellen, de andra är valfria.
+(3) Vänta tills Geotorget visar produkten som aktiv (kan ta dagar). (4) Lägg in användarnamn och lösenord på sidan Nycklar
+med *Geotorgets användarnamn och lösenord* valt. Har du i stället en nyckel och hemlighet från API-portalen
+(apimanager.lantmateriet.se), välj *API-portalens nyckel och hemlighet*.
+
+**Felmeddelandet vid 401/403.** Svarar Lantmäteriet 401 eller 403 för en produkts tjänst säger Floden vilken produkt det
+gäller (namn ur registret, samling och vad Floden använder den till), att den kan saknas eller inte vara aktiv ännu, att
+en beställning kan ta tid, och (om `oauth2` är valt) att Geotorgets inloggning kanske är det rätta. Lantmäteriet svarar
+likadant vid fel uppgifter, fel inloggningssätt och obeställd produkt, så Floden kan inte skilja dem; det står i texten.
+Nekas själva tokenanropet (API-portalen, `oauth2`) sägs att nyckeln eller inloggningssättet inte godtogs, inte att en
+produkt saknas.
 
 **Lantmäteri-hämtningen.** Med `[konto] inloggning = "pa"` läser `floden data lantmateriet --konto <konto-id>` kontots egen
 nyckel (`lantmateriet.nycklar.las_nycklar_for_konto`) och aldrig servernyckeln i miljön eller `config.local.toml`; saknas

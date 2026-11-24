@@ -1,5 +1,6 @@
 """Lantmäteri-hämtningen: med inloggning på gäller användarens egen nyckel, annars som förut."""
 
+# ruff: noqa: E501
 from __future__ import annotations
 
 from pathlib import Path
@@ -43,7 +44,7 @@ def test_inloggning_pa_anvander_kontots_nyckel_och_aldrig_servernyckeln(
     f, anna, bo = forrad
     pa = {"konto": {"inloggning": "pa"}}
     n = las_nycklar_for_konto(anna, konfig=pa, miljo=SERVERMILJO, forrad=f)
-    assert (n.id, n.hemlighet, n.metod) == (ANV_ID, ANV_HEMLIGHET, "oauth2")
+    assert (n.id, n.hemlighet, n.metod) == (ANV_ID, ANV_HEMLIGHET, "basic")  # förvalet på sidan Nycklar
     # Bo har ingen nyckel: fel, trots att servernyckeln finns i miljön.
     with pytest.raises(NyckelFel, match="ingen Lantmäteri-nyckel"):
         las_nycklar_for_konto(bo, konfig=pa, miljo=SERVERMILJO, forrad=f)

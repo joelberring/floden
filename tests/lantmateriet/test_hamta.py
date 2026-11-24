@@ -1,5 +1,6 @@
 """Hämtning med manifest, idempotens, återupptagning, omdirigeringar och byggnadsklippning."""
 
+# ruff: noqa: E501
 from __future__ import annotations
 
 import io
@@ -234,7 +235,14 @@ def zip_med_gpkg(tmp: Path, epsg: int = 3006) -> bytes:
         return shapely.Polygon([t.transform(x, y) for x, y in pts])
 
     gdf = gpd.GeoDataFrame(
-        {"objektidentitet": ["h1", "h2", "borta"], "antal_vaningar": [4, 3, 2]},
+        {
+            "objektidentitet": ["h1", "h2", "borta"],
+            "vaningar": [4, 3, 2],
+            "hojd_m": [12.0, 9.5, 6.0],
+            # Påhittade attribut som inte får sparas (dataminimering):
+            "adress": ["Provgatan 1", "Provgatan 2", "Provgatan 3"],
+            "fastighetsbeteckning": ["Prov 1:1", "Prov 1:2", "Prov 1:3"],
+        },
         geometry=[hus(E0 + 20, N0 + 20), hus(E0 + 120, N0 + 60), hus(E0 + 5000, N0 + 5000)],
         crs=f"EPSG:{epsg}",
     )
@@ -265,7 +273,14 @@ def test_byggnader_zip_klipps_till_omradet(lm: FalskLm, klient: LmKlient, tmp_pa
     r = hamta_omrade(klient, om, ut, laser=False, byggnader=True, skriv=lambda _: None)
     assert r.byggnader_klippt is not None
     gdf = gpd.read_file(r.byggnader_klippt)
-    assert sorted(gdf["objektidentitet"]) == ["h1", "h2"]  # "borta" klipptes bort
+    assert len(gdf) == 2  # "borta" klipptes bort
+    # Dataminimering: bara geometri, höjd och våningar (plus ett löpnummer), inga adresser eller id:n.
+    assert sorted(gdf.columns) == ["byggnad_id", "geometry", "hojd_m", "vaningar"]
+    assert sorted(gdf["vaningar"]) == [3, 4]
+    assert sorted(gdf["byggnad_id"]) == ["lm000001", "lm000002"]
+    assert not (ut / "byggnader" / "byggnad_kn0180").exists()  # uppackade originalet städas bort
+    assert "Provgatan" not in r.byggnader_klippt.read_bytes().decode("latin-1")
+    assert "Prov 1:" not in r.byggnader_klippt.read_bytes().decode("latin-1")
     assert gdf.crs.to_epsg() == 3011
     assert abs(gdf.geometry.area.iloc[0] - 100.0) < 0.5  # 10 x 10 m, tillbaka i EPSG:3011
     # Andra körningen: samma resultat och ingen omklippning (nyckel oförändrad)

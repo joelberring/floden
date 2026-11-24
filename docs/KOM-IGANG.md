@@ -90,7 +90,8 @@ körs och sparas **lokalt**; inget laddas upp. Detaljer, villkor och begränsnin
 ("Hämta öppna data från Lantmäteriet"). **Prövat bara mot en falsk server**, inte mot Lantmäteriet.
 
 1. **Nycklar.** Hos Lantmäteriet (API-portalen `apimanager.lantmateriet.se`) ska du ha nyckel och hemlighet, och
-   produkterna Laserdata Nedladdning skog, Byggnad och Ortofoto Nedladdning ska vara beställda på Geotorget.
+   produkterna Laserdata Nedladdning, skog, Byggnad Nedladdning, vektor (valfri) och Ortofoto Nedladdning (valfri) ska vara
+   beställda på Geotorget (en beställning kan ta dagar; tabellen finns på sidan Nycklar och i `data/lantmateriet/produkter.toml`).
    Har du lagt in dem i O-Tid (Mitt konto) går de inte att läsa ut därifrån, så hämta dem igen. Lägg dem i
    `config.local.toml` (kopiera `config.local.toml.example`, avsnittet `[lantmateriet]`) eller i miljön:
    `export LANTMATERIET_KLIENT_ID=...` och `export LANTMATERIET_KLIENT_HEMLIGHET=...`.

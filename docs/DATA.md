@@ -85,11 +85,25 @@ O-Tid sparar kontots nycklar krypterade och **visar dem aldrig igen** (bara fyra
 Mitt konto i O-Tid kan de inte läsas ut därifrån. Hämta dem på nytt hos Lantmäteriet (API-portalen
 `apimanager.lantmateriet.se` för nyckel och hemlighet, eller använd Geotorgets inloggning med `basic`).
 Produkterna måste vara **beställda på Geotorget** för kontot. Floden använder de gratis: STAC Höjd med **Laserdata
-Nedladdning, skog** och Ortofoto Nedladdning (gratis, men av som förval för Göteborg). Lantmäteriets byggnadsprodukter
-kan kosta och är avstängda som förval (kommunens egna öppna data används: se `docs/DRIFT.md`, "Göteborg"). Geotorgets
-användarnamn och lösenord kräver **Metod = basic** på sidan Nycklar; förvalet oauth2 gäller API-portalens nyckel och
-hemlighet. Lantmäteriet svarar 401/403 både vid fel nyckel eller metod och vid obeställd produkt; det går inte att skilja
-dem, och felet säger det och nämner metoden.
+Nedladdning, skog**, Ortofoto Nedladdning och Byggnad Nedladdning, vektor (alla avgiftsfria, `docs/BESLUT.md` 2026-11-24).
+Vilka produkter Floden använder, till vad och om de behövs eller är valfria står i `data/lantmateriet/produkter.toml`
+och visas som tabell på sidan Nycklar (`docs/KONTO.md`, avsnitt 10). Ortofoto är av som förval för Göteborg, och
+Göteborgs och Stockholms förval för byggnader är oförändrade (baskarta respektive lokal fil); Lantmäteriets byggnader
+väljs med `floden geografi mappa ... --byggnader-kalla lantmateriet` (se nedan). Geotorgets användarnamn och lösenord
+kräver **Metod = basic** (`LANTMATERIET_METOD=basic`; på sidan Nycklar är det förvalet) medan `oauth2` gäller
+API-portalens nyckel och hemlighet. Lantmäteriet svarar 401/403 både vid fel nyckel eller metod och vid obeställd eller
+ännu inte aktiv produkt (en beställning kan ta dagar); det går inte att skilja dem, men felet nämner produkten som
+nekades och säger det.
+**Byggnader ur Lantmäteriet (Byggnad Nedladdning, vektor).** `--byggnader-kalla lantmateriet` hämtar zip-filen via
+`stac-vektor`, packar upp GeoPackage och klipper till området. **Dataminimering:** av Lantmäteriets attribut sparas bara
+geometri samt höjd- och våningsfält (`hojd_m`, `tak_rh2000`, `vaningar` m.fl., se `BEHALL_HOJDFALT` i
+`src/lantmateriet/hamta.py`); varje byggnad får ett löpnummer (`lm000001`) i stället för Lantmäteriets id, och inga
+adresser eller fastighetsbeteckningar följer med. De uppackade originalfilerna raderas efter klippningen; originalzippen
+ligger kvar bara i den stängda rådatan (lokal datamapp respektive serverns `_lager`, aldrig i git). Kombineras med
+kommunens höjdmodell (Göteborg) eller med Lantmäteriets laser (Stockholm); i det senare fallet ger laserns oklassade
+punkter inne i fotavtrycken takhöjden. Fältnamnen i Lantmäteriets riktiga produkt är inte kontrollerade: heter höjdfältet
+något annat sparas ingen höjd och byggnaden får standardhöjd (varning).
+
 Adresserna kan ändras med `LANTMATERIET_TOKEN_URL`, `LANTMATERIET_STAC_HOJD_URL`, `LANTMATERIET_STAC_BILD_URL` och
 `LANTMATERIET_STAC_VEKTOR_URL` (som O-Tids `OTID_LM_*`).
 

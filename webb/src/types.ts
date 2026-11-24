@@ -666,6 +666,20 @@ export interface NyckelFaltInfo {
   namn: string;
   krav: boolean;
   val: string[];
+  /** Texten användaren ser för varje värde i `val` (till exempel inloggningssätten hos Lantmäteriet). */
+  val_etiketter?: Record<string, string>;
+  /** Förvalt värde när fältet lämnas tomt. */
+  standard?: string | null;
+}
+
+/** En rad i tabellen "Produkter att beställa på Geotorget" (ur data/lantmateriet/produkter.toml). */
+export interface NyckelProdukt {
+  roll: string;
+  namn: string;
+  stac: string;
+  anvands_till: string;
+  behovs: boolean;
+  anmarkning: string;
 }
 
 /** Status för en sparad nyckel. Själva nyckeln lämnar aldrig servern efter att den sparats. */
@@ -677,6 +691,10 @@ export interface NyckelStatus {
   sparad: number | null;
   sparad_datum: string | null;
   slutar_pa: string | null;
+  /** Bara för Lantmäteriet: produkterna som ska beställas på Geotorget. */
+  produkter?: NyckelProdukt[];
+  bestallning_text?: string;
+  geotorget_url?: string;
 }
 
 export interface NycklarSvar {

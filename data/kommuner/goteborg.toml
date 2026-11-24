@@ -101,7 +101,7 @@ licens_anmarkning = "Laserdata Nedladdning, skog: CC0 enligt produktsidan; kontr
 # --- Byggnader ---------------------------------------------------------------------------------
 [byggnader]
 # "filpaket" (baskartans TAK, förval), "wfs" (kommunens WFS: avstängd i Göteborg, valfri) eller "lantmateriet"
-# (STAC-vektor: Lantmäteriets byggnadsprodukter kan kosta, därför avstängda som förval).
+# (STAC-vektor: Byggnad Nedladdning, vektor, avgiftsfri; kräver nyckel och väljs med --byggnader-kalla lantmateriet).
 kalla = "filpaket"
 wfs_url = "https://opengeodata.goteborg.se/services/baskarta/wfs"
 tillatna_varddomaner = ["goteborg.se"]   # https, och värden ska vara eller sluta på någon av dem

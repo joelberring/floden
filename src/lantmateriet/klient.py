@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from lantmateriet.nycklar import NyckelFel, Nycklar
+from lantmateriet.produkter import alla_produkter_text
 
 logg = logging.getLogger("floden.lantmateriet")
 
@@ -118,6 +119,11 @@ class LmKlient:
 
     # -- adresser -------------------------------------------------------------------------
 
+    @property
+    def metod(self) -> str:
+        """Inloggningssättet (`oauth2` eller `basic`); aldrig själva uppgifterna."""
+        return self._nycklar.metod
+
     def tillaten_adress(self, url: str) -> bool:
         """Nycklar skickas bara till Lantmäteriets värdar (eller de konfigurerade, i tester)."""
         d = urllib.parse.urlsplit(url)
@@ -207,7 +213,11 @@ class LmKlient:
                 fornyat = True
                 continue
             if status in (401, 403):
-                raise NyckelFel(_nyckelmeddelande(status))
+                raise NyckelFel(
+                    _nyckelmeddelande(status, token=not med_nycklar),
+                    status=status,
+                    steg="token" if not med_nycklar else "tjanst",
+                )
             if status == 429 or status in (502, 503, 504):
                 if forsok < self._max_forsok:
                     self._sov(_vantetid(svarh.get("retry-after"), forsok))
@@ -340,7 +350,7 @@ class LmKlient:
                     fornyat = True
                     continue
                 if status in (401, 403):
-                    raise NyckelFel(_nyckelmeddelande(status))
+                    raise NyckelFel(_nyckelmeddelande(status), status=status, steg="tjanst")
                 if status == 429 or status in (502, 503, 504):
                     self._sov(_vantetid(svarh.get("retry-after"), 0))
                     return "vanta"
@@ -389,13 +399,18 @@ def _vantetid(retry_after: str | None, forsok: int) -> float:
     return min(2.0 ** (forsok + 1), MAX_VANTAN_S)
 
 
-def _nyckelmeddelande(status: int) -> str:
+def _nyckelmeddelande(status: int, *, token: bool = False) -> str:
+    """Texten när Lantmäteriet sa nej utan att vi vet vilken produkt det gällde (hämtningen byter
+    den mot en text om produkten, `produkter.produkt_fel_text`). Ingen nyckel i texten."""
+    if token:
+        return (
+            f"API-portalen godtog inte nyckeln och hemligheten ({status}). Har du Geotorgets "
+            "användarnamn och lösenord (privatperson)? Välj då det inloggningssättet på sidan "
+            "Nycklar; API-portalens nyckel och hemlighet är ett annat inloggningssätt."
+        )
     return (
-        f"Lantmäteriet sa nej ({status}). Använder du Geotorgets användarnamn och "
-        "lösenord? Sätt Metod = basic på sidan Nycklar (förvalet oauth2 gäller bara "
-        "API-portalens nyckel och hemlighet). Stämmer metoden kan produkten saknas för "
-        "kontot: Floden behöver STAC Höjd med Laserdata Nedladdning, skog (gratis); "
-        "kontrollera på Geotorget under dina beställningar att den finns och är aktiv. "
-        "Lantmäteriet svarar likadant vid fel nyckel och obeställd produkt. "
-        "För Göteborg finns kommunens egen höjdmodell som reserv (CC0, ingen nyckel)."
+        f"Lantmäteriet sa nej ({status}). Antingen är en produkt inte beställd på Geotorget eller "
+        "inte aktiv ännu (en beställning kan ta tid, ibland dagar), eller så stämmer inte "
+        "inloggningssättet eller uppgifterna på sidan Nycklar. Floden behöver: "
+        f"{alla_produkter_text()}. Lantmäteriet svarar likadant i alla fallen."
     )

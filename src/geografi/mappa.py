@@ -205,13 +205,16 @@ def mappa_geografi(
     # 3. Höjdkälla. Kommunens filpaket kräver ingen nyckel; Lantmäteriets laser kräver kontots egen nyckel
     # (och är reserven om kommunens fil fallerar). Nyckeln kontrolleras före all hämtning när den behövs.
     fil_hojd = kommun.hojd.kalla == "filpaket"
+    kalla_bygg = byggnader_kalla or kommun.byggnader.kalla
     klient: Any = None
     try:
-        if not fil_hojd or kommun.hojd.reserv_lantmateriet:
+        # Byggnader från Lantmäteriet (Byggnad Nedladdning, vektor, avgiftsfri) kräver kontots nyckel även när
+        # höjden kommer ur kommunens fil.
+        if not fil_hojd or kommun.hojd.reserv_lantmateriet or kalla_bygg == "lantmateriet":
             nycklar = nycklar_fran(konto_id) if nycklar_fran else las_nycklar_for_konto(konto_id, konfig=konfig)
             klient = (klient_fabrik or (lambda n: LmKlient(n, Tjanster.fran_miljo())))(nycklar)
     except Exception as exc:
-        if not fil_hojd:
+        if not fil_hojd or kalla_bygg == "lantmateriet":
             raise
         skriv(f"Ingen Lantmäteri-nyckel ({exc}); reserven används inte. Kommunens höjdmodell används.")
     if fil_hojd:
@@ -220,7 +223,6 @@ def mappa_geografi(
     h_min = float(kommun.dagsljus["h_min_grader"])
     hojd_max = float(kommun.dagsljus["hojd_max_m"])
     r_dagsljus = dagsljus_paverkansradie_m(hojd_max, h_min)
-    kalla_bygg = byggnader_kalla or kommun.byggnader.kalla
     # Baskartan som lokal fil är INTE öppna data (docs/BESLUT.md 2026-11-24): byggnaderna och allt som härleds direkt
     # ur dem är stängt för MCP, vad `--villkor-kontrollerade` än säger.
     stangd_baskarta = kalla_bygg == "lokal_fil"
@@ -333,9 +335,17 @@ def mappa_geografi(
             skriv(f"Byggnader: {antal} byggnadsytor ur baskartan (stängda för MCP).")
             return fil
 
+        def _lm_byggnader(ra: Path = ra, omr: Any = omr) -> Path | None:
+            """Byggnad Nedladdning, vektor ur Lantmäteriet, klippt till området (bara geometri och höjd/våningar)."""
+            skriv("Hämtar Lantmäteriets byggnader (Byggnad Nedladdning, vektor; kontots egen nyckel) ...")
+            lm_b = hamta_omrade(
+                klient, omr, ra / "lantmateriet", laser=False, byggnader=True,
+                marginal_m=kommun.lantmateriet.marginal_m, skriv=skriv,
+            )  # fmt: skip
+            varningar.extend(v for v in lm_b.varningar if v not in varningar)
+            return lm_b.byggnader_klippt
+
         if fil_hojd:
-            if kalla_bygg == "lantmateriet":
-                raise SkapaFel("Byggnader från Lantmäteriet kan inte kombineras med kommunens höjdmodell: välj filpaket eller wfs.")
             try:
                 cache = geo_rot / "_filcache"
                 fk = kommun.filpaket
@@ -358,6 +368,8 @@ def mappa_geografi(
                         ) from exc
                 elif kalla_bygg == "wfs":
                     bygg_fil = _wfs_byggnader()
+                elif kalla_bygg == "lantmateriet":
+                    bygg_fil = _lm_byggnader()
                 klippt = ra / "hojd" / "hojdmodell_klippt.tif"
                 varningar.extend(x for x in skriv_klippt_hojd(hoj, extent, kommun.lantmateriet.upplosning_m, klippt) if x not in varningar)
                 (ra / "filpaket").mkdir(parents=True, exist_ok=True)
@@ -455,7 +467,9 @@ def mappa_geografi(
     licenser = [kommun.lantmateriet.licens] if hojd_anvand == "lantmateriet" else []
     if hojd_anvand == "filpaket" and fk is not None and fk.hojdmodell is not None:
         licenser.append(fk.hojdmodell.licens)
-    if kalla_bygg == "wfs":
+    if kalla_bygg == "lantmateriet":
+        licenser.append(kommun.lantmateriet.licens)
+    elif kalla_bygg == "wfs":
         licenser.append(kommun.byggnader.licens)
     elif kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None:
         licenser.append(fk.baskarta.licens)
@@ -546,6 +560,11 @@ def mappa_geografi(
                 if stangd_baskarta
                 else {"kalla": kalla_bygg, "licens": fk.baskarta.licens, "anmarkning": fk.baskarta.licens_anmarkning}
                 if kalla_bygg == "filpaket" and fk is not None and fk.baskarta is not None
+                else {
+                    "kalla": kalla_bygg, "licens": kommun.lantmateriet.licens,
+                    "anmarkning": "Byggnad Nedladdning, vektor (avgiftsfri). ©Lantmäteriet. Bara geometri och höjd/våningar sparas.",
+                }
+                if kalla_bygg == "lantmateriet"
                 else {"kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning}
             ),
             **mark_kallor,

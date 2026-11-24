@@ -94,7 +94,14 @@ const nycklar = (paslagen: boolean): NycklarSvar => ({
     { typ: "anthropic", namn: "Anthropic (Claude)", beskrivning: "API-nyckel.", falt: [{ id: "nyckel", namn: "API-nyckel", krav: true, val: [] }], sparad: 1800000000, sparad_datum: "2027-01-15", slutar_pa: "abcd" },
     { typ: "lantmateriet", namn: "Lantmäteriet", beskrivning: "Nyckel och hemlighet.", falt: [
       { id: "klient_id", namn: "Nyckel", krav: true, val: [] }, { id: "klient_hemlighet", namn: "Hemlighet", krav: true, val: [] },
-      { id: "metod", namn: "Metod", krav: false, val: ["oauth2", "basic"] }], sparad: null, sparad_datum: null, slutar_pa: null },
+      { id: "metod", namn: "Sätt att logga in", krav: false, val: ["basic", "oauth2"], standard: "basic", val_etiketter: { basic: "Geotorgets användarnamn och lösenord (privatperson)", oauth2: "API-portalens nyckel och hemlighet" } }],
+      sparad: null, sparad_datum: null, slutar_pa: null,
+      produkter: [
+        { roll: "laser", namn: "Laserdata Nedladdning, skog", stac: "stac-hojd", anvands_till: "Markmodellen för skyfall och dagsljus.", behovs: true, anmarkning: "" },
+        { roll: "byggnader", namn: "Byggnad Nedladdning, vektor", stac: "stac-vektor", anvands_till: "Byggnadernas fotavtryck.", behovs: false, anmarkning: "" },
+      ],
+      bestallning_text: "En beställning på Geotorget kan ta tid, ibland dagar, innan produkten är aktiv. Tills dess svarar Lantmäteriet 401 eller 403.",
+      geotorget_url: "https://www.geotorget.lantmateriet.se" },
   ],
 });
 
@@ -109,8 +116,27 @@ test("nyckelsidan visar bara datum och de fyra sista tecknen, aldrig ett värde"
   assert.doesNotMatch(html, /data-ta-bort-nyckel="lantmateriet"/); // inget att ta bort
   // Fälten är lösenordsfält och har aldrig ett ifyllt värde.
   assert.match(html, /type="password"[^>]*name="nyckel"/);
-  assert.doesNotMatch(html, /<input[^>]*\svalue=/);
+  assert.doesNotMatch(html, /<input(?![^>]*type="radio")[^>]*\svalue=/);
   settKontoLage({ lage: "av" });
+});
+
+test("Lantmäteri-nyckeln: tabell över produkter att beställa, tidsbesked och tydligt val av inloggningssätt", () => {
+  settKontoLage(anvandare());
+  const html = sidaNycklar(nycklar(true));
+  const t = text(html);
+  assert.match(t, /Produkter att beställa på Geotorget/);
+  assert.match(html, /<th scope="col">Produkt<\/th><th scope="col">Används till<\/th><th scope="col">Behövs\/Valfri<\/th>/);
+  assert.match(html, /data-produkt="laser"[\s\S]*Laserdata Nedladdning, skog[\s\S]*Behövs/);
+  assert.match(html, /data-produkt="byggnader"[\s\S]*Byggnad Nedladdning, vektor[\s\S]*Valfri/);
+  assert.match(t, /beställning[^.]*kan ta tid, ibland dagar/);
+  assert.match(t, /401 eller 403/);
+  assert.match(html, /Så kopplar du Lantmäteriet/);
+  // Inloggningssätt som alternativknappar: Geotorgets inloggning förvald, oauth2 som andra val.
+  assert.match(html, /<input type="radio" name="metod" id="[^"]+" value="basic" checked \/> Geotorgets användarnamn och lösenord \(privatperson\)/);
+  assert.match(html, /value="oauth2" \/> API-portalens nyckel och hemlighet/);
+  assert.doesNotMatch(html, /<select[^>]*name="metod"/);
+  // Anthropic-typen har ingen produkttabell.
+  assert.equal((html.match(/data-produkter/g) ?? []).length, 1);
 });
 
 test("nyckelsidan stänger av sig när servern saknar hemligheten, och när inloggning är av", () => {

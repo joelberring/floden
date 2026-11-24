@@ -25,6 +25,7 @@ from kommuner.wfs import KommunKallaFel
 from lantmateriet.nycklar import NyckelFel
 from tests.kommuner.test_skapa import REPO, bygg_varld, mappa
 from tests.lantmateriet.conftest import lm  # noqa: F401
+from tests.lantmateriet.falsk_server import HEMLIGHET as HEMLIGHET_FALSK
 from tests.lantmateriet.falsk_server import FalskLm
 
 HOJD_URL = "https://opengeodata.goteborg.se/downloads/hojdmodell/test_1.zip"
@@ -134,3 +135,68 @@ def test_baskartan_fallerar_ger_tydligt_fel_och_ingen_reserv(lm: FalskLm, tmp_pa
     with pytest.raises(SkapaFel, match="baskarta"):
         mappa(v, filhamtare=v["fh"])
     assert lm.antal("GET", "/stac") == 0
+
+
+def lm_byggnadszip(tmp: Path) -> bytes:
+    """Byggnad Nedladdning, vektor som en zip med en GeoPackage (EPSG:3007), med påhittade adresser som inte får sparas."""
+    import io
+
+    import shapely
+
+    hus = shapely.box(147480, 6397600, 147490, 6397610)
+    gdf = gpd.GeoDataFrame(
+        {
+            "objektidentitet": ["a1"], "hojd_m": [12.0], "vaningar": [4],
+            "adress": ["Provgatan 1"], "fastighetsbeteckning": ["Prov 1:1"],
+        },
+        geometry=[hus], crs="EPSG:3007",
+    )  # fmt: skip
+    g = tmp / "lm_byggnad.gpkg"
+    gdf.to_file(g, layer="byggnad_yta", driver="GPKG")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(g, "kommun/byggnad_kn1480.gpkg")
+    return buf.getvalue()
+
+
+def _lm_byggnad_feature(lm: FalskLm) -> dict[str, Any]:  # noqa: F811
+    return {
+        "type": "Feature", "id": "kn1480", "collection": "byggnad", "bbox": [11.0, 57.0, 12.5, 58.5],
+        "properties": {"datetime": "2025-01-01T00:00:00Z", "proj:epsg": 3006},
+        "assets": {"data": {"href": f"{lm.bas}/files/byggnad_kn1480.zip", "type": "application/zip"}},
+    }  # fmt: skip
+
+
+def test_byggnader_ur_lantmateriet_med_kommunens_hojdmodell(lm: FalskLm, tmp_path: Path) -> None:  # noqa: F811, E501
+    """`--byggnader-kalla lantmateriet`: höjden ur kommunens fil, byggnaderna ur Lantmäteriets vektorprodukt (falsk server).
+    Bara geometri och höjd/våningar sparas; inga adresser eller fastighetsbeteckningar; Göteborgs förval är oförändrat."""
+    v = varld(lm, tmp_path)
+    assert v["kommun"].byggnader.kalla == "filpaket"  # förvalet rörs inte
+    lm.filer["/files/byggnad_kn1480.zip"] = lm_byggnadszip(tmp_path)
+    lm.vektor_features = [_lm_byggnad_feature(lm)]
+    res = mappa(v, byggnader_kalla="lantmateriet", filhamtare=v["fh"])
+    assert res.nytt
+    assert v["fh"].anrop == [HOJD_URL]  # baskartan hämtades inte
+    assert lm.antal("POST", "/stac-vektor") >= 1 and lm.antal("POST", "/stac-hojd") == 0  # ingen laser
+    d, _ = las_manifest(v["rot"] / "geo", "goteborg-test@v1")
+    assert d["parametrar"]["hojdkalla"] == "filpaket" and d["parametrar"]["byggnadskalla"] == "lantmateriet"
+    assert d["kallor"]["byggnader"]["kalla"] == "lantmateriet" and "kostar" not in json.dumps(d).lower()
+    radata = v["rot"] / "geo" / "_lager" / d["lager"]["radata"]["sha256"]
+    klippt = radata / "lantmateriet" / "byggnader" / "byggnader_klippt.gpkg"
+    gdf = gpd.read_file(klippt)
+    assert sorted(gdf.columns) == ["byggnad_id", "geometry", "hojd_m", "vaningar"] and len(gdf) == 1
+    for f in radata.rglob("*"):
+        if f.is_file() and f.suffix != ".zip":  # originalzippen är Lantmäteriets egen fil, bara i den stängda rådatan
+            data = f.read_bytes()
+            assert b"Provgatan" not in data and b"Prov 1:" not in data, f.name
+
+
+def test_byggnader_ur_lantmateriet_ej_aktiv_produkt_namnger_produkten(lm: FalskLm, tmp_path: Path) -> None:  # noqa: F811, E501
+    v = varld(lm, tmp_path)
+    lm.avvisa_tjanster = {"vektor"}
+    with pytest.raises(NyckelFel) as e:
+        mappa(v, byggnader_kalla="lantmateriet", filhamtare=v["fh"])
+    text = str(e.value)
+    assert "Byggnad Nedladdning, vektor" in text and "403" in text and "ibland dagar" in text
+    assert "Geotorget" in text
+    assert HEMLIGHET_FALSK not in text

@@ -97,6 +97,7 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
     h.preventDefault();
     const varden: Record<string, string> = {};
     for (const el of Array.from(form.elements)) {
+      if (el instanceof HTMLInputElement && el.type === "radio" && !el.checked) continue;
       if ((el instanceof HTMLInputElement || el instanceof HTMLSelectElement) && el.name) varden[el.name] = el.value;
     }
     void sparaNyckel(typ, varden).then(
