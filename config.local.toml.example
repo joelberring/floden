@@ -17,7 +17,7 @@ lagerprofil = ""
 [lantmateriet]
 klient_id = ""
 klient_hemlighet = ""
-metod = "oauth2"                       # "oauth2" (API-portalens nyckel) eller "basic" (Geotorgets inloggning)
+metod = "oauth2"                       # "oauth2" (API-portalens nyckel och hemlighet) eller "basic" (Geotorgets användarnamn och lösenord)
 
 [sokvagar]
 # Exempel på att lägga cache utanför repot:

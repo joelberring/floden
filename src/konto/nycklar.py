@@ -1,7 +1,9 @@
 """Användarens egna API-nycklar, krypterade i kontodatabasen (en rad per konto och typ).
 
 Typer: `lantmateriet` (Lantmäteriets STAC/nedladdning: klient-id, hemlighet och metod, samma som
-`lantmateriet.nycklar`) och `anthropic` (för framtida AI-körningar på servern; ingen kod anropar
+`lantmateriet.nycklar`; svaret har också tabellen över produkter att beställa på Geotorget ur
+`data/lantmateriet/produkter.toml`; metoden är förvald till `basic`, men en redan sparad nyckel
+behåller sin metod) och `anthropic` (för framtida AI-körningar på servern; ingen kod anropar
 den än). Så här skyddas nycklarna:
 
 - Krypteringen är Fernet (`cryptography`, följer med PyJWT[crypto]). Hemligheten kommer ur
@@ -60,6 +62,7 @@ class NyckelFalt:
     krav: bool = True
     val: tuple[str, ...] = ()  # tillåtna värden, tom = fri text
     standard: str | None = None
+    val_etiketter: tuple[tuple[str, str], ...] = ()  # (värde, text användaren ser) för `val`
 
 
 @dataclass(frozen=True)
@@ -76,25 +79,29 @@ NYCKELTYPER: dict[str, NyckelTyp] = {
         id="lantmateriet",
         namn="Lantmäteriet (STAC och nedladdning)",
         beskrivning=(
-            "Två fall. (1) API-portalens nyckel och hemlighet (apimanager.lantmateriet.se): "
-            "Metod = oauth2. (2) Geotorgets användarnamn och lösenord, som i O-Tid: Metod = basic. "
-            "Använder du Geotorgets inloggning och lämnar Metod på oauth2 svarar Lantmäteriet 401. "
-            "Floden använder höjddata (STAC Höjd, Laserdata Nedladdning, skog, gratis) "
-            "och ortofoto (Ortofoto Nedladdning, gratis); Lantmäteriets "
-            "byggnadsprodukter är avstängda som förval."
+            "Välj hur du loggar in hos Lantmäteriet. Det vanligaste för en privatperson är "
+            "Geotorgets användarnamn och lösenord. API-portalens nyckel och hemlighet "
+            "(apimanager.lantmateriet.se) är ett annat sätt. Fel val ger 401 från Lantmäteriet. "
+            "Floden använder bara avgiftsfria produkter, och varje produkt i tabellen nedan "
+            "måste vara beställd på Geotorget för kontot."
         ),
         falt=(
-            NyckelFalt("klient_id", "Nyckel (oauth2) eller Geotorgets användarnamn (basic)"),
-            NyckelFalt("klient_hemlighet", "Hemlighet (oauth2) eller Geotorgets lösenord (basic)"),
             NyckelFalt(
                 "metod",
-                "Metod (oauth2 = nyckel och hemlighet, basic = Geotorgets inloggning)",
+                "Sätt att logga in",
                 krav=False,
-                val=("oauth2", "basic"),
-                standard="oauth2",
+                val=("basic", "oauth2"),
+                standard="basic",
+                val_etiketter=(
+                    ("basic", "Geotorgets användarnamn och lösenord (privatperson)"),
+                    ("oauth2", "API-portalens nyckel och hemlighet"),
+                ),
             ),
+            NyckelFalt("klient_id", "Användarnamn (Geotorget) eller nyckel (API-portalen)"),
+            NyckelFalt("klient_hemlighet", "Lösenord (Geotorget) eller hemlighet (API-portalen)"),
         ),
-        identifierande="klient_hemlighet",
+        # Användarnamnet eller nyckeln visas som "slutar på ...", inte lösenordet (nya sparningar).
+        identifierande="klient_id",
     ),
     "anthropic": NyckelTyp(
         id="anthropic",
@@ -147,6 +154,34 @@ class NyckelForrad:
         self._fernet, self._orsak = _bygg_fernet(hemlighet)
         if self._orsak == "ogiltig":
             logg.error("%s är ogiltig: nycklar kan inte sparas", HEMLIGHET_MILJOVARIABEL)
+        self._ratta_slutar_pa()
+
+    def _ratta_slutar_pa(self) -> None:
+        """Lantmäteriets `identifierande` fält bytte 2026-11-24 från lösenordet till namnet.
+        Äldre rader bär de sista tecknen av hemligheten i klartext: de räknas om ur den krypterade
+        raden, och går den inte att läsa töms fältet (tom text). Görs vid varje start (billigt)."""
+        try:
+            with self._register.db.transaktion() as c:
+                rader = c.execute(
+                    "SELECT konto_id, typ, krypterad, slutar_pa FROM konto_nyckel"
+                    " WHERE typ = 'lantmateriet'"
+                ).fetchall()
+                for rad in rader:
+                    nytt = ""
+                    if self._fernet is not None:
+                        try:
+                            ra = self._fernet.decrypt(str(rad["krypterad"]).encode("ascii"))
+                            falt = NYCKELTYPER["lantmateriet"].identifierande
+                            nytt = str(json.loads(ra)["varden"][falt])[-SLUTAR_PA_TECKEN:]
+                        except (InvalidToken, ValueError, KeyError, TypeError):
+                            nytt = ""
+                    if rad["slutar_pa"] != nytt:
+                        c.execute(
+                            "UPDATE konto_nyckel SET slutar_pa = ? WHERE konto_id = ? AND typ = ?",
+                            (nytt, rad["konto_id"], rad["typ"]),
+                        )
+        except Exception:  # noqa: BLE001 - tabellen kan saknas i äldre/tomma databaser
+            logg.debug("slutar_pa kunde inte rättas", exc_info=True)
 
     @property
     def paslagen(self) -> bool:
@@ -179,17 +214,32 @@ class NyckelForrad:
 
     def _status(self, t: NyckelTyp, rad: Any) -> dict[str, Any]:
         sparad = int(rad["sparad"]) if rad else None
-        return {
+        ut: dict[str, Any] = {
             "typ": t.id,
             "namn": t.namn,
             "beskrivning": t.beskrivning,
             "falt": [
-                {"id": f.id, "namn": f.namn, "krav": f.krav, "val": list(f.val)} for f in t.falt
+                {
+                    "id": f.id,
+                    "namn": f.namn,
+                    "krav": f.krav,
+                    "val": list(f.val),
+                    "val_etiketter": dict(f.val_etiketter),
+                    "standard": f.standard,
+                }
+                for f in t.falt
             ],
             "sparad": sparad,
             "sparad_datum": datum_text(sparad),
-            "slutar_pa": str(rad["slutar_pa"]) if rad else None,
+            "slutar_pa": (str(rad["slutar_pa"]) or None) if rad else None,
         }
+        if t.id == "lantmateriet":
+            from lantmateriet.produkter import BESTALLNING_TID_TEXT, GEOTORGET_URL, tabell_for_api
+
+            ut["produkter"] = tabell_for_api()
+            ut["bestallning_text"] = BESTALLNING_TID_TEXT
+            ut["geotorget_url"] = GEOTORGET_URL
+        return ut
 
     def status(self, konto_id: str, typ_id: str) -> dict[str, Any]:
         t = self.typ(typ_id)

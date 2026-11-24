@@ -27,7 +27,9 @@ from shapely.geometry.base import BaseGeometry
 from data_inlasning.cache import DataInlasningFel
 from gemensamt.hash import sha256_fil
 from lantmateriet.klient import ATTRIBUTION, LantmaterietFel, LmKlient
+from lantmateriet.nycklar import NyckelFel
 from lantmateriet.omrade import Omrade
+from lantmateriet.produkter import produkt_fel_text
 from lantmateriet.stac import (
     ROLL_BYGGNADER,
     ROLL_LASER,
@@ -48,6 +50,21 @@ MANIFEST_NAMN = "lantmateriet_manifest.json"
 TILLSTAND_NAMN = ".lantmateriet_tillstand.json"
 MANIFEST_KONTRAKT = "LM-hamtning/v1"
 KLIPPT_BYGGNADER = "byggnader_klippt.gpkg"
+KLIPPT_VERSION = 2  # höjs när det som sparas ändras; gamla klippta filer byggs då om
+
+# Dataminimering (AGENTS.md): av Lantmäteriets byggnadsattribut sparas bara höjd och våningar, som
+# `markmodell.byggnadskallor.FaltMappning`. Inga adresser, fastighetsbeteckningar eller id:n
+# följer med; byggnaderna får löpnummer i stället.
+BEHALL_HOJDFALT = (
+    "takhojd_rh2000",
+    "tak_rh2000",
+    "hojd_m",
+    "height",
+    "hojd",
+    "vaningar",
+    "building:levels",
+    "levels",
+)
 
 VILLKOR = {
     ROLL_LASER: (
@@ -263,25 +280,36 @@ def hamta_omrade(
         plan.append((ROLL_BYGGNADER, klient.tjanster.vektor, byggnads_samling))
 
     for roll, bas, tvingad in plan:
-        samling = valj_samling(lista_samlingar(klient, bas), roll, tvingad=tvingad)
-        samlingar[roll] = samling
-        skriv(f"{roll}: samling '{samling}'")
-        träffar = list(sok(klient, bas, bbox, samling, roll))
-        valda = _valj(roll, träffar, sokyta_wgs)
-        if not valda:
-            raise LantmaterietFel(
-                f"Inga {roll}-filer i samlingen '{samling}' för området. Är området i Sverige, "
-                "och är produkten beställd för kontot?"
-            )
-        skriv(f"{roll}: {len(träffar)} träffar, {len(valda)} filer väljs")
-        for obj in valda:
-            post, nyss = _hamta_en(klient, obj, mapp, tillstand, skriv)
-            filer.append(post)
-            if nyss:
-                res.hamtade += 1
-            else:
-                res.hoppade += 1
-            _skriv_tillstand(mapp, tillstand)
+        try:
+            samling = valj_samling(lista_samlingar(klient, bas), roll, tvingad=tvingad)
+            samlingar[roll] = samling
+            skriv(f"{roll}: samling '{samling}'")
+            träffar = list(sok(klient, bas, bbox, samling, roll))
+            valda = _valj(roll, träffar, sokyta_wgs)
+            if not valda:
+                raise LantmaterietFel(
+                    f"Inga {roll}-filer i samlingen '{samling}' för området. Är området i Sverige, "
+                    "och är produkten beställd för kontot?"
+                )
+            skriv(f"{roll}: {len(träffar)} träffar, {len(valda)} filer väljs")
+            for obj in valda:
+                post, nyss = _hamta_en(klient, obj, mapp, tillstand, skriv)
+                filer.append(post)
+                if nyss:
+                    res.hamtade += 1
+                else:
+                    res.hoppade += 1
+                _skriv_tillstand(mapp, tillstand)
+        except NyckelFel as exc:
+            if exc.steg == "token" or exc.status is None:
+                raise
+            # Lantmäteriet sa nej till en produkts tjänst eller fil: säg vilken produkt, och att
+            # en beställning kan ta tid innan den är aktiv.
+            raise NyckelFel(
+                produkt_fel_text(roll, exc.status, samling=samlingar.get(roll), metod=klient.metod),
+                status=exc.status,
+                steg="tjanst",
+            ) from None
 
     if byggnader:
         res.byggnader_klippt = klipp_byggnader(
@@ -332,6 +360,7 @@ def klipp_byggnader(
             "yta": shapely.to_wkt(polygon, rounding_precision=2),
             "marginal": marginal_m,
             "lager": lager,
+            "version": KLIPPT_VERSION,
         },
         sort_keys=True,
     )
@@ -394,16 +423,31 @@ def klipp_byggnader(
                 gdf = gdf.to_crs(epsg=3011)
             gdf = gdf[gdf.geometry.intersects(yta)]
             if len(gdf):
-                ram.append(gdf)
+                ram.append(_bara_geometri_och_hojd(gdf))
+
+    def _stada() -> None:
+        # Uppackade filer har alla attribut; bara det minimerade lagret ska finnas kvar.
+        for z in zippar:
+            shutil.rmtree(utmapp / (mapp / z.fil).stem, ignore_errors=True)
+
     if not ram:
+        _stada()
         varningar.append("Inga byggnader i området i de hämtade byggnadsfilerna.")
         return None
     ihop = gpd.GeoDataFrame(pd.concat(ram, ignore_index=True), crs="EPSG:3011")
+    ihop.insert(0, "byggnad_id", [f"lm{n:06d}" for n in range(1, len(ihop) + 1)])
     mal.parent.mkdir(parents=True, exist_ok=True)
     mal.unlink(missing_ok=True)
     ihop.to_file(mal, layer="byggnader", driver="GPKG")
     nyckelfil.write_text(nyckel, encoding="utf-8")
+    _stada()
     return mal
+
+
+def _bara_geometri_och_hojd(gdf: Any) -> Any:
+    """Geometri plus höjd- och våningsfält (se `BEHALL_HOJDFALT`); alla andra attribut kastas."""
+    behall = [k for k in gdf.columns if k != "geometry" and str(k).lower() in BEHALL_HOJDFALT]
+    return gdf[[*behall, "geometry"]].reset_index(drop=True)
 
 
 def geometri_till_epsg(g: BaseGeometry, fran: int, till: int) -> BaseGeometry:

@@ -1,5 +1,6 @@
 """Användarens egna API-nycklar: kryptering, API, CSRF, isolering och avstängning utan hemlighet."""
 
+# ruff: noqa: E501
 from __future__ import annotations
 
 import json
@@ -111,7 +112,22 @@ def test_nyckeln_visas_aldrig_igen_bara_datum_och_fyra_sista_tecken(miljo: Miljo
     assert enskild["paslagen"] is True
     _, oversikt, rak_oversikt = _las(webb, "/konto/nycklar")
     lmrad = next(t for t in oversikt["typer"] if t["typ"] == "lantmateriet")
-    assert lmrad["slutar_pa"] == LM_HEMLIGHET[-4:]
+    assert lmrad["slutar_pa"] == LM_ID[-4:]  # användarnamnet eller nyckeln, aldrig lösenordet
+    assert LM_HEMLIGHET[-4:] != LM_ID[-4:]
+    # Tabellen över produkter att beställa på Geotorget och inloggningssättet som tydligt val.
+    namn = [p["namn"] for p in lmrad["produkter"]]
+    assert "Laserdata Nedladdning, skog" in namn and "Byggnad Nedladdning, vektor" in namn
+    assert all(p["behovs"] in (True, False) and p["anvands_till"] for p in lmrad["produkter"])
+    assert not any(
+        ord_ in n for n in namn for ord_ in ("Lägenhet", "Belägenhet", "Fastighetsindelning", "Samfällighet")
+    )
+    assert "ibland dagar" in lmrad["bestallning_text"]
+    metod = next(f for f in lmrad["falt"] if f["id"] == "metod")
+    assert metod["standard"] == "basic" and metod["val"][0] == "basic"
+    assert metod["val_etiketter"] == {
+        "basic": "Geotorgets användarnamn och lösenord (privatperson)",
+        "oauth2": "API-portalens nyckel och hemlighet",
+    }
     for kropp in (*svar_put, rakropp, rak_oversikt):
         for hemligt in (ANTHROPIC, LM_ID, LM_HEMLIGHET):
             assert hemligt.encode() not in kropp
@@ -307,11 +323,37 @@ def test_ogiltiga_varden_nekas(miljo: Miljo) -> None:
     assert status == 413
     with miljo.register.db.lasning() as c:
         assert c.execute("SELECT COUNT(*) FROM konto_nyckel").fetchone()[0] == 0
-    # Metod utelämnad: oauth2.
+    # Metod utelämnad: basic (förvalet; en nyckel som sparats med oauth2 behåller den).
     lm = {"klient_id": LM_ID, "klient_hemlighet": LM_HEMLIGHET}
     assert _skriv(webb, "PUT", "/konto/nycklar/lantmateriet", lm)[0] == 200
     forrad = miljo.adapter.nycklar
     assert forrad is not None
     konto_id = miljo.register.konto_via_epost("anna@example.test")
     assert konto_id is not None
-    assert forrad.las(konto_id.id, "lantmateriet") == {**lm, "metod": "oauth2"}
+    assert forrad.las(konto_id.id, "lantmateriet") == {**lm, "metod": "basic"}
+    oauth = {**lm, "metod": "oauth2"}
+    assert _skriv(webb, "PUT", "/konto/nycklar/lantmateriet", oauth)[0] == 200
+    assert forrad.las(konto_id.id, "lantmateriet") == oauth
+
+
+def test_gamla_lantmaterierader_visar_inte_slutet_av_losenordet(miljo: Miljo) -> None:
+    """Före 2026-11-24 sparades de sista tecknen av lösenordet (Geotorget) i klartext. Vid start
+    räknas de om ur den krypterade raden till användarnamnets sista tecken."""
+    hemlighet = _slå_på(miljo)
+    webb, konto_id = _inloggad(miljo)
+    lm = {"klient_id": LM_ID, "klient_hemlighet": LM_HEMLIGHET, "metod": "basic"}
+    assert _skriv(webb, "PUT", "/konto/nycklar/lantmateriet", lm)[0] == 200
+    with miljo.register.db.transaktion() as c:
+        c.execute(
+            "UPDATE konto_nyckel SET slutar_pa = ? WHERE konto_id = ? AND typ = 'lantmateriet'",
+            (LM_HEMLIGHET[-4:], konto_id),
+        )
+    NyckelForrad(miljo.register, hemlighet)
+    with miljo.register.db.lasning() as c:
+        rad = c.execute("SELECT slutar_pa FROM konto_nyckel WHERE typ = 'lantmateriet'").fetchone()
+    assert rad["slutar_pa"] == LM_ID[-4:] != LM_HEMLIGHET[-4:]
+    # Går raden inte att läsa (fel hemlighet) töms fältet i stället.
+    NyckelForrad(miljo.register, Fernet.generate_key().decode())
+    with miljo.register.db.lasning() as c:
+        rad = c.execute("SELECT slutar_pa FROM konto_nyckel WHERE typ = 'lantmateriet'").fetchone()
+    assert rad["slutar_pa"] == ""

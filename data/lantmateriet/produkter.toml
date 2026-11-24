@@ -1,0 +1,41 @@
+# Lantmäteriets produkter som Floden använder, med namnen som på Geotorget.
+# Alla är avgiftsfria (docs/BESLUT.md 2026-11-24, kontrollerade av Joel). Avgiftsbelagda produkter används inte.
+# Dataminimering (AGENTS.md): produkter med personuppgiftsnära innehåll (Lägenhet, Belägenhetsadress,
+# Fastighetsindelning, Samfällighetsförening) används inte och står därför inte här.
+# Läses av src/lantmateriet/produkter.py: sidan Nycklar visar tabellen, felmeddelandena nämner produkten.
+#
+# roll        = Flodens namn för produkten i koden (laser, orto, byggnader)
+# stac        = STAC-tjänsten Floden söker i (stac-hojd, stac-bild, stac-vektor)
+# samling     = vilken samling som väljs (id eller titel; kan tvingas med --laser-samling m.fl.)
+# behovs      = true: behövs för att hämta ett område med Lantmäteriets data; false: valfri
+# anmarkning  = när den behövs eller inte
+
+[[produkt]]
+roll = "laser"
+namn = "Laserdata Nedladdning, skog"
+stac = "stac-hojd"
+samling = "samlingen vars namn nämner laser och skog"
+anvands_till = "Markmodellen för skyfall och dagsljus: terräng och byggnadshöjd ur laserpunkterna."
+behovs = true
+anmarkning = "Behövs när höjden hämtas från Lantmäteriet. Kommuner med egen öppen höjdmodell (Göteborg) använder den i första hand."
+avgiftsfri = true
+
+[[produkt]]
+roll = "byggnader"
+namn = "Byggnad Nedladdning, vektor"
+stac = "stac-vektor"
+samling = "samlingen vars namn nämner byggnad (inte INSPIRE, visning eller direkt)"
+anvands_till = "Byggnadernas fotavtryck (med höjd eller våningar om de finns) för skyfall och dagsljus. Väljs med --byggnader-kalla lantmateriet."
+behovs = false
+anmarkning = "Valfri. Behövs bara för kommuner utan öppen baskarta när byggnaderna ska hämtas från Lantmäteriet."
+avgiftsfri = true
+
+[[produkt]]
+roll = "orto"
+namn = "Ortofoto Nedladdning"
+stac = "stac-bild"
+samling = "samlingen vars namn nämner ortofoto (inte historiska, INSPIRE eller visning)"
+anvands_till = "Flygbild i kartan och underlag för markslag (belagd yta) i markmodellen."
+behovs = false
+anmarkning = "Valfri. Hämtas bara när kommunens inställning eller kommandot ber om ortofoto."
+avgiftsfri = true

@@ -5,8 +5,9 @@ Protokoll och logik porterade från O-Tid (MIT, joelberring/otid @ 4a446af):
 
 Två metoder, som i O-Tid:
 
-- `oauth2` (förval): API-portalens nyckel och hemlighet (`apimanager.lantmateriet.se`), OAuth2
-  client credentials. Organisationens systemkonto.
+- `oauth2`: API-portalens nyckel och hemlighet (`apimanager.lantmateriet.se`), OAuth2 client
+  credentials. Organisationens systemkonto. Förval när nycklarna kommer ur miljön eller
+  `config.local.toml` utan `metod` (oförändrat); på sidan Nycklar är förvalet `basic`.
 - `basic`: Geotorgets användarnamn och lösenord (privatperson), skickas som HTTP Basic.
 
 Miljövariabler (vinner över filen): `LANTMATERIET_KLIENT_ID`, `LANTMATERIET_KLIENT_HEMLIGHET`,
@@ -36,7 +37,17 @@ _REPO_ROT = Path(__file__).resolve().parents[2]
 
 
 class NyckelFel(Exception):
-    """Nycklar saknas eller Lantmäteriet godtog dem inte (401/403)."""
+    """Nycklar saknas eller Lantmäteriet godtog dem inte (401/403).
+
+    `status` är Lantmäteriets svarskod (annars `None`). `steg` är `token` när API-portalens
+    tokenanrop nekades (då är det nyckeln eller inloggningssättet som är fel, inte en produkt) och
+    `tjanst` när en produkts tjänst eller fil nekades (nyckeln kan vara rätt men produkten saknas
+    eller är inte aktiv ännu). Texten innehåller aldrig ett nyckelvärde."""
+
+    def __init__(self, text: str, *, status: int | None = None, steg: str | None = None) -> None:
+        super().__init__(text)
+        self.status = status
+        self.steg = steg
 
 
 @dataclass(frozen=True)

@@ -228,21 +228,28 @@ def test_lokalt_filpaket(tmp_path: Path) -> None:
         lokalt_filpaket(tmp_path / "saknas.zip")
 
 
-def test_401_namnar_metod_basic_och_produkten() -> None:
+def test_401_namnar_inloggningssatt_och_produkterna() -> None:
     from lantmateriet.klient import _nyckelmeddelande
 
     t = _nyckelmeddelande(401)
-    assert "Geotorgets användarnamn och lösenord" in t and "Metod = basic" in t
-    assert "Laserdata Nedladdning, skog" in t and "STAC Höjd" in t
+    assert "Geotorget" in t and "ibland dagar" in t and "inloggningssättet" in t
+    assert "Laserdata Nedladdning, skog" in t and "Byggnad Nedladdning, vektor" in t
+    tok = _nyckelmeddelande(401, token=True)
+    assert "Geotorgets användarnamn och lösenord" in tok and "Laserdata" not in tok
 
 
-def test_nyckelsidan_forklarar_oauth2_och_basic() -> None:
+def test_nyckelsidan_forklarar_inloggningssatten_med_basic_som_forval() -> None:
     from konto.nycklar import NYCKELTYPER
 
     typ = NYCKELTYPER["lantmateriet"]
-    assert "Metod = basic" in typ.beskrivning and "oauth2" in typ.beskrivning
+    assert "Geotorgets användarnamn och lösenord" in typ.beskrivning and "API-portalens" in typ.beskrivning
+    metod = next(f for f in typ.falt if f.id == "metod")
+    assert metod.standard == "basic" and metod.val == ("basic", "oauth2")
+    etiketter = dict(metod.val_etiketter)
+    assert etiketter["basic"] == "Geotorgets användarnamn och lösenord (privatperson)"
+    assert etiketter["oauth2"] == "API-portalens nyckel och hemlighet"
     namn = " ".join(f.namn for f in typ.falt)
-    assert "användarnamn" in namn and "lösenord" in namn and "basic" in namn
+    assert "Användarnamn" in namn and "Lösenord" in namn
 
 
 def test_goteborgs_fil_ar_filpaket_forst_med_lantmateriet_som_reserv() -> None:

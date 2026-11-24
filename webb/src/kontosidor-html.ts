@@ -13,6 +13,8 @@ import type {
   AdminOrganisationDetalj,
   AdminProjektDetalj,
   McpTokenSvar,
+  NyckelFaltInfo,
+  NyckelProdukt,
   NyckelStatus,
   NycklarSvar,
   NyMcpToken,
@@ -39,15 +41,53 @@ export function nyckelStatusText(n: NyckelStatus): string {
   return `Sparad ${n.sparad_datum}, slutar på …${n.slutar_pa ?? ""}`;
 }
 
+/** Val med begripliga etiketter som alternativknappar (förvalet först markerat), annars en lista. */
+function valFalt(n: NyckelStatus, f: NyckelFaltInfo): string {
+  const id = `nyckel-${n.typ}-${f.id}`;
+  const etiketter = f.val_etiketter ?? {};
+  if (Object.keys(etiketter).length > 0) {
+    const forval = f.standard ?? f.val[0] ?? "";
+    const knappar = f.val
+      .map(
+        (v, i) => `<label class="val-rad"><input type="radio" name="${esc(f.id)}" id="${esc(id)}-${i}" value="${esc(v)}"${v === forval ? " checked" : ""} /> ${esc(etiketter[v] ?? v)}</label>`,
+      )
+      .join("");
+    return `<fieldset class="falt-rad val-grupp" data-val="${esc(f.id)}"><legend>${esc(f.namn)}</legend>${knappar}</fieldset>`;
+  }
+  const val = f.val.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
+  return `<label class="falt-rad" for="${esc(id)}">${esc(f.namn)}
+          <select id="${esc(id)}" class="kontroll" name="${esc(f.id)}">${val}</select></label>`;
+}
+
+/** Tabellen "Produkter att beställa på Geotorget": Produkt | Används till | Behövs/Valfri. */
+export function produktTabell(n: NyckelStatus): string {
+  const rader: NyckelProdukt[] = n.produkter ?? [];
+  if (rader.length === 0) return "";
+  const lank = n.geotorget_url
+    ? ` <a href="${esc(n.geotorget_url)}" target="_blank" rel="noopener noreferrer">Geotorget</a>.`
+    : "";
+  const tr = rader
+    .map(
+      (p) => `<tr data-produkt="${esc(p.roll)}">
+        <td>${esc(p.namn)}</td><td>${esc(p.anvands_till)}${p.anmarkning ? ` <span class="dampad">${esc(p.anmarkning)}</span>` : ""}</td>
+        <td>${p.behovs ? "Behövs" : "Valfri"}</td></tr>`,
+    )
+    .join("");
+  return `<div data-produkter>
+      <h3 class="etikett">Produkter att beställa på Geotorget</h3>
+      <p class="avsnitt-ingress">Varje produkt beställs för sig, avgiftsfritt, för ditt konto på${lank || " Geotorget."} Beställ de som Floden ska använda för det du vill göra. <a href="https://github.com/joelberring/floden/blob/main/docs/KONTO.md" target="_blank" rel="noopener noreferrer">Så kopplar du Lantmäteriet</a>.</p>
+      <div class="tabell-ruta"><table class="data-tabell">
+        <thead><tr><th scope="col">Produkt</th><th scope="col">Används till</th><th scope="col">Behövs/Valfri</th></tr></thead>
+        <tbody>${tr}</tbody></table></div>
+      <p class="hjalp-ruta" role="note" data-bestallning-tid>${esc(n.bestallning_text ?? "En beställning kan ta tid, ibland dagar, innan produkten är aktiv. Lantmäteriet svarar då 401 eller 403.")}</p>
+    </div>`;
+}
+
 function nyckelFormular(n: NyckelStatus): string {
   const falt = n.falt
     .map((f) => {
+      if (f.val.length > 0) return valFalt(n, f);
       const id = `nyckel-${n.typ}-${f.id}`;
-      if (f.val.length > 0) {
-        const val = f.val.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join("");
-        return `<label class="falt-rad" for="${esc(id)}">${esc(f.namn)}
-          <select id="${esc(id)}" class="kontroll" name="${esc(f.id)}">${val}</select></label>`;
-      }
       return `<label class="falt-rad" for="${esc(id)}">${esc(f.namn)}
         <input id="${esc(id)}" class="kontroll" type="password" name="${esc(f.id)}" autocomplete="off" spellcheck="false" required /></label>`;
     })
@@ -57,6 +97,7 @@ function nyckelFormular(n: NyckelStatus): string {
     <section class="nyckel-avsnitt" data-nyckel-typ="${esc(n.typ)}">
       <div class="sektionsrad linje-under-stark">${etikett(n.namn)}</div>
       <p class="avsnitt-ingress">${esc(n.beskrivning)}</p>
+      ${produktTabell(n)}
       <p class="nyckel-status" data-status><strong>${esc(nyckelStatusText(n))}</strong></p>
       <form data-nyckelform="${esc(n.typ)}" autocomplete="off">
         ${falt}

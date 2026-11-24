@@ -206,12 +206,12 @@ Göteborgs WFS är avstängd ("Service WFS is disabled"), så kommunfilen använ
 - Paketen hämtas en gång till `data/lokal/geo/_filcache/<sha256>/` och klipps till geografins område. `geo/<id>/v1` sparar den klippta höjden (`radata/hojd/hojdmodell_klippt.tif`), takkonturerna (`radata/kommun/byggnader.gpkg`) och paketens sha256 (`radata/filpaket/kallor.json`).
 - **Byggnadshöjd:** baskartans lager har inget höjdattribut. Höjden är takkonturens z (RH 2000, medel av hörnen) minus markhöjden ur höjdmodellen. Konturer utan z (2D) får standardhöjd och en varning; höjdmodellen är en markmodell och ger ingen takhöjd. Utan en kontur för ett hus finns inget hus.
 - DWG kräver LibreDWG:s `dwgread` (`FLODEN_DWGREAD`; byggs in i avbildningen, LibreDWG 0.13.3, GPL v3). Finns en GeoPackage- eller Shapefile-variant i paketet läses den i stället (inget dwgread behövs); en dwgread-JSON i ZIP-filen läses också.
-- Lantmäteriets laser är bara **reserv** för höjden (`[hojd] reserv_lantmateriet`): om höjdmodellen inte går att hämta och kontot har en nyckel. Då varnar manifestet. Lantmäteriets byggnadsprodukter är avstängda som förval (förvalet är oförändrat). Att de kostar gäller inte alla: **Byggnad Nedladdning, vektor** är märkt avgiftsfri, se `docs/GEOTORGET.md` (produkter och avgifter, kontrollerat 2026-11-24).
-- Använder du Lantmäteri-nyckeln: Geotorgets användarnamn och lösenord kräver **Metod = basic** på sidan Nycklar; förvalet oauth2 gäller API-portalens nyckel och hemlighet. Produkten är STAC Höjd, Laserdata Nedladdning, skog (gratis). Ortofoto Nedladdning är gratis och får användas, men är avstängd som förval för Göteborg (`produkter = ["laser"]`).
+- Lantmäteriets laser är bara **reserv** för höjden (`[hojd] reserv_lantmateriet`): om höjdmodellen inte går att hämta och kontot har en nyckel. Då varnar manifestet. Göteborgs förval för byggnader är oförändrat (baskartans tak); Lantmäteriets Byggnad Nedladdning, vektor (avgiftsfri) kan väljas med `--byggnader-kalla lantmateriet` och kräver då en Lantmäteri-nyckel även om höjden kommer ur kommunens fil.
+- Använder du Lantmäteri-nyckeln: på sidan Nycklar är *Geotorgets användarnamn och lösenord (privatperson)* förvalt (`basic`); *API-portalens nyckel och hemlighet* är `oauth2`. Sidan visar tabellen över produkter att beställa på Geotorget (`data/lantmateriet/produkter.toml`) och att en beställning kan ta dagar innan den är aktiv (alla produkter och avgifter: `docs/GEOTORGET.md`). Svarar Lantmäteriet 401/403 nämner felet vilken produkt det gäller. Produkten för höjd är STAC Höjd, Laserdata Nedladdning, skog (gratis). Ortofoto Nedladdning är gratis och får användas, men är avstängd som förval för Göteborg (`produkter = ["laser"]`).
 
 **Före första körningen**
 
-- Kontot som blir utredare i projektet ska vara medlem i en organisation (steg 2 och 3 nedan om det saknas). Superadmin-kontot behöver ingen Lantmäteri-nyckel för Göteborg, men en nyckel (Metod = basic för Geotorgets inloggning) ger reserven.
+- Kontot som blir utredare i projektet ska vara medlem i en organisation (steg 2 och 3 nedan om det saknas). Superadmin-kontot behöver ingen Lantmäteri-nyckel för Göteborg, men en nyckel (Sätt att logga in: Geotorgets användarnamn och lösenord) ger reserven.
 
 ```bash
 docker compose -f docker-compose.prod.yml exec floden python -m konto.admin konto-id <superadmin-epost>
@@ -299,8 +299,8 @@ scp <baskartefilen> <server>:/srv/floden/data/lokal/stockholm/baskarta.zip
 Filen kan vara en ZIP (med DWG eller dwgread-JSON), en DWG eller en dwgread-JSON, och flera filer (kartblad) kan anges. DWG kräver `dwgread`
 (finns i avbildningen, `FLODEN_DWGREAD`). Namnet ovan är ett exempel: ge filen vilket namn du vill, det skrivs aldrig i utskrift eller manifest.
 
-**Före första körningen:** superadmin-kontot ska ha en Lantmäteri-nyckel på sidan Nycklar (STAC Höjd, Laserdata Nedladdning, skog, gratis; Metod =
-basic för Geotorgets inloggning, se Göteborg ovan). Stockholm har ingen reserv: utan nyckel går mappningen inte.
+**Före första körningen:** superadmin-kontot ska ha en Lantmäteri-nyckel på sidan Nycklar (STAC Höjd, Laserdata Nedladdning, skog, gratis; Sätt att logga in =
+Geotorgets användarnamn och lösenord, se Göteborg ovan). Stockholm har ingen reserv: utan nyckel går mappningen inte.
 
 **Mappa geografin** (bara superadmin; tar några minuter):
 
