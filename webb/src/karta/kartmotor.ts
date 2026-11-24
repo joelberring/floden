@@ -172,12 +172,18 @@ export class Kartmotor {
       renderWorldCopies: false,
       attributionControl: false,
       dragRotate: false,
+      boxZoom: false, // Skift+klick är följ kant i ritverktygen; kartans rutzoom åt Skift-klicket
       pitchWithRotate: false,
       doubleClickZoom: false,
       fadeDuration: 0,
       preserveDrawingBuffer: true,
     });
     this.karta.touchZoomRotate.disableRotation();
+    // Valfritt provuttag: bara när sidan själv satt `__FLODEN_PROV__` (tools/ritverktyg_prov.py) lämnas motorn ut, så att provet kan
+    // räkna om SWEREF-punkter till skärmpixlar. Ritandet i provet sker ändå med riktiga musklick och tangenter.
+    if ((window as unknown as { __FLODEN_PROV__?: boolean }).__FLODEN_PROV__) {
+      (window as unknown as { __floden_kartmotor?: Kartmotor }).__floden_kartmotor = this;
+    }
     this.karta.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     this.karta.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 110 }), "bottom-left");
     this.notisEl = document.createElement("div");
