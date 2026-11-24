@@ -1,4 +1,4 @@
-"""Tar skärmbilder av webbens frågesida (docs/bilder/webb-*.png).
+"""Tar skärmbilder av webbens flöde (docs/bilder/demo-*.png och 3d-*.png).
 
 Förutsätter att API:t och klienten körs och att demokvarteret är byggt:
 
@@ -29,44 +29,6 @@ from playwright.sync_api import Browser, Page, sync_playwright
 UT = Path(__file__).resolve().parents[1] / "docs" / "bilder"
 
 
-def _kor_fraga(sida: Page, url: str, ref: str) -> None:
-    sida.goto(f"{url}/#/fragor")
-    sida.wait_for_selector(f"[data-fraga={ref}]")
-    sida.click(f"[data-fraga={ref}]")
-    sida.wait_for_selector("#kor-fraga:not([disabled])", timeout=60_000)
-
-
-def _resultat_med_varningar(sida: Page, fil: Path) -> None:
-    """Resultatrubrik, varningar och kartvy med lager (utan de långa tabellerna)."""
-    topp = sida.locator("#fr-resultat").bounding_box()
-    karta = sida.locator(".resultat-karta").bounding_box()
-    assert topp is not None and karta is not None
-    rull = sida.evaluate("window.scrollY")  # bounding_box() räknar från fönstrets överkant
-    topp["y"] += rull
-    karta["y"] += rull
-    sida.screenshot(
-        path=str(fil),
-        full_page=True,
-        clip={
-            "x": topp["x"] - 8,
-            "y": topp["y"],
-            "width": topp["width"] + 16,
-            "height": karta["y"] + karta["height"] - topp["y"] + 8,
-        },
-    )
-
-
-def _hovra(sida: Page, rel_x: float, rel_y: float) -> None:
-    """Flyttar markören till en relativ punkt i kartytan och väntar in avläsningen."""
-    sida.locator("#vy-yta").scroll_into_view_if_needed()
-    ruta = sida.locator("#vy-yta").bounding_box()
-    assert ruta is not None
-    x, y = ruta["x"] + ruta["width"] * rel_x, ruta["y"] + ruta["height"] * rel_y
-    sida.mouse.move(x - 5, y - 5)
-    sida.mouse.move(x, y)
-    sida.wait_for_timeout(900)
-
-
 def _sida(
     sida: Page, url: str, adress: str, vantar_pa: str, fil: str, *, helsida: bool = True
 ) -> None:
@@ -77,28 +39,22 @@ def _sida(
 
 
 def _demo(webblasare: Browser, url: str) -> None:
-    """demo-*.png: projektsidan (1440 och 800 px) samt frågesidans resultat. Kartan har egna bilder
+    """demo-*.png i flödet (U3 tog bort projektsidan och demokorten på `#/fragor`): resultatet i 1440 och 800 px
+    (demo-projekt), steg 3 (demo-fragor) och resultatet för vatten och dagsljus. Kartan har egna bilder
     i tools/flode_skarmbild.py (steg 2 och 4)."""
     for bredd, suffix in ((1440, ""), (800, "-smal")):
         sida = webblasare.new_page(viewport={"width": bredd, "height": 1000})
-        _sida(sida, url, "#/projekt/demokvarteret", ".jamfor-tabell", f"demo-projekt{suffix}.png")
+        _sida(sida, url, "#/p/demokvarteret/resultat", "#rs-a canvas", f"demo-projekt{suffix}.png", helsida=False)
         sida.close()
 
     sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
-    _sida(sida, url, "#/fragor", "[data-demo=demo_dagsljus]", "demo-fragor.png")
-    sida.click("[data-demo=demo_vatten]")
-    sida.wait_for_selector(".resultat-karta", timeout=60_000)
-    sida.wait_for_timeout(1200)
-    sida.locator("#fr-resultat").scroll_into_view_if_needed()
-    _hovra(sida, 0.5, 0.5)
-    _resultat_med_varningar(sida, UT / "demo-vatten.png")
+    _sida(sida, url, "#/p/demokvarteret/fragor", "#fr-lista input", "demo-fragor.png", helsida=False)
+    sida.close()
 
-    sida.click("[data-demo=demo_dagsljus]")
-    sida.wait_for_selector(".resultat-karta", timeout=60_000)
-    sida.wait_for_timeout(1200)
-    sida.locator("#fr-resultat").scroll_into_view_if_needed()
-    _hovra(sida, 0.34, 0.77)
-    _resultat_med_varningar(sida, UT / "demo-dagsljus.png")
+    for vy, fil in (("vatten-nytt-hus", "demo-vatten.png"), ("dagsljus-hojd", "demo-dagsljus.png")):
+        sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
+        _sida(sida, url, f"#/p/demokvarteret/resultat?vy={vy}", "#rs-a canvas", fil, helsida=False)
+        sida.close()
 
 
 def _vy3d(webblasare: Browser, url: str) -> None:
@@ -223,22 +179,12 @@ def main() -> None:
             _demo(webblasare, url)
             webblasare.close()
             return
-        sida = webblasare.new_page(viewport={"width": 1440, "height": 1000})
-
-        _kor_fraga(sida, url, "dagsljus_fore_efter")
-        sida.locator("#fr-plan").screenshot(path=str(UT / "webb-plan.png"))
-        sida.click("#kor-fraga")
-        sida.wait_for_selector(".resultat-karta", timeout=600_000)
-        sida.wait_for_timeout(1500)
-        sida.locator("#fr-resultat").scroll_into_view_if_needed()
-        _resultat_med_varningar(sida, UT / "webb-resultat.png")
-
-        _kor_fraga(sida, url, "vatten_a1_uppfyllnad")
-        sida.click("#kor-fraga")
-        sida.wait_for_selector(".resultat-karta", timeout=120_000)
-        sida.wait_for_timeout(1000)
-        sida.locator(".resultat-karta").screenshot(path=str(UT / "webb-vatten.png"))
         webblasare.close()
+        raise SystemExit(
+            "Utan flagga fanns webb-plan, webb-resultat och webb-vatten från den äldre "
+            "Utredningsfrågor-sidan, som togs bort i U3. Använd --demo, --3d eller "
+            "tools/flode_skarmbild.py."
+        )
 
 
 if __name__ == "__main__":

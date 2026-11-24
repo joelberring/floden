@@ -10,6 +10,9 @@ import { esc } from "../sidor.ts";
 import { flodeAdress } from "./adress.ts";
 import { webGpuSkissStatus } from "../gpu/webgpuMotor.ts";
 import { arPagaende, startaKorning, vidKorning } from "./korning.ts";
+import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
+import { kontoLage } from "../konto.ts";
+import { korradHtml, utanForslagRuta } from "./korlage.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { AMNEN, etikett, franK20, raknaPerAmne, tolkaKatalog, type FlodeFraga } from "./status.ts";
 import { lasAvtappning, MOTTAGARE, sparaTillstand, tillstandFor, type Skede } from "./tillstand.ts";
@@ -49,12 +52,13 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
   let amne = "skyfall";
   let lista: FragelistaSvar | null = null;
   let info: ProjektInfo | null = null;
-  let tidText = "–";
+  let tidText = t.scenario ? "–" : "visas när ett förslag är ritat";
   let planNr = 0;
 
   rot.innerHTML = `
     <div class="flode-sida">
       <section class="flode-bred" aria-labelledby="fragor-rubrik">
+        <div id="fr-forslagruta"></div>
         <div class="flode-rubrikrad">
           <h1 id="fragor-rubrik" class="flode-h">Vilka frågor ska besvaras?</h1>
           <div role="group" aria-label="Ämne" class="flode-chips" id="fr-amnen"></div>
@@ -83,14 +87,15 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
           <p class="flode-fel flode-liten" id="fr-avtappning-fel" role="alert" hidden></p>
         </details>
         <dl class="flode-sammanfattning" id="fr-sammanfattning"></dl>
-        <div class="flode-rad-slut">
-          <p class="flode-liten flode-dampad" id="fr-kor-not" role="status"></p>
+        <details class="flode-detalj" id="fr-teknik">
+          <summary>Teknisk information</summary>
           <p class="flode-liten flode-dampad" id="fr-gpu"></p>
-          <button type="button" class="flode-knapp svart stor" id="fr-kor" aria-describedby="fr-kor-not">Kör beräkningarna</button>
-        </div>
+        </details>
       </aside>
-    </div>`;
+    </div>
+    <div class="flode-handlingsrad" id="fr-handlingsrad" role="region" aria-label="Köra beräkningarna"></div>`;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
+  kopplaLaddaOm(rot, ac.signal);
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
 
   const valdaPoster = (): FlodeFraga[] => (lista?.fragor ?? []).filter((f) => t.valda?.has(f.id));
@@ -139,18 +144,13 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       <dt>Valda frågor (alla ämnen)</dt><dd>${valda.length}</dd>
       <dt>Beräkningar</dt><dd>${analyser.length > 0 ? esc(analyser.map((a) => a.namn).join(", ")) : "–"}</dd>
       <dt>Uppskattad tid</dt><dd>${esc(tidText)}</dd>`;
-    const kor = el<HTMLButtonElement>("fr-kor");
     const nu = arPagaende(t);
-    const not = el("fr-kor-not");
-    let hinder = "";
-    if (!t.scenario) hinder = `Rita först ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a>. Utan förslag visar <a href="${flodeAdress(projekt, "resultat")}">Resultat</a> projektets färdiga beräkningar.`;
-    else if (analyser.length === 0) hinder = "Välj minst en fråga som Floden kan räkna på (skyfall eller dagsljus och sol).";
-    if (avtappningFel) hinder = "Rätta avtappningen först.";
-    kor.disabled = nu || hinder !== "";
-    if (nu) not.textContent = t.korning?.text ?? "";
-    else if (t.korning?.fel) not.innerHTML = `<span class="flode-fel" role="alert">${esc(t.korning.fel)}</span>`;
-    else not.innerHTML = hinder;
-    kor.textContent = nu ? "Beräknar …" : "Kör beräkningarna";
+    el("fr-forslagruta").innerHTML = t.scenario ? "" : utanForslagRuta(projekt, esc);
+    el("fr-handlingsrad").innerHTML = korradHtml(
+      { harForslag: Boolean(t.scenario), antalBerakningar: analyser.length, avtappningFel, pagar: nu, forloppText: t.korning?.text, korFel: t.korning?.fel ?? null },
+      projekt,
+      esc,
+    );
   };
 
   let avtappningFel = false;
@@ -158,7 +158,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     const nr = ++planNr;
     const analyser = info ? analyserFor(info, valdaPoster()) : [];
     if (!t.scenario || analyser.length === 0) {
-      tidText = "–";
+      tidText = t.scenario ? "–" : "visas när ett förslag är ritat";
       ritaSammanfattning();
       return;
     }
@@ -234,7 +234,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
     try {
       [lista, info] = await Promise.all([hamtaFragelista(), hamtaProjektInfo(projekt)]);
     } catch (e) {
-      el("fr-lista").innerHTML = `<p class="flode-fel" role="alert">Frågorna gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}. Är servern igång?</p>`;
+      el("fr-lista").innerHTML = felBeskedHtml(sidFel(e, "Frågorna", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/fragor`), esc);
       ritaBestallning();
       return;
     }

@@ -22,10 +22,10 @@ projektavgränsningen) och är inte rört.
    `#/administration`, `#/prov/webgpu` har ett äldre sidhuvud (START, PROJEKT, UTREDNINGSFRÅGOR, OM BERÄKNINGARNA) utan stegraden.
    "Projekt" där leder till en sida som inte är flödets steg 1, och Utredningsfrågor (`#/fragor`) är en andra frågesida vid sidan av
    steg 3 med andra ord (Vatten i stället för Skyfall). Man tappar orienteringen när man går till Nycklar och kommer inte tillbaka med ett klick.
-3. **P1 · Nytt projekt är en återvändsgränd lokalt (annan agent, plus åtgärdat i projektlistan).** Knappen visades alltid och ledde
+3. **P1 · Nytt projekt är en återvändsgränd lokalt (annan agent, plus åtgärdat i projektlistan). Åtgärdat i U4: sidan förklarar varför och ger en handling, se "U4".** Knappen visades alltid och ledde
    till "Geografierna gick inte att hämta: Att skapa projekt kräver inloggning". Knappen ersätts nu i lokalt läge av en förklaring.
    Själva sidans felhantering ligger hos den andra agenten (se "Nytt projekt").
-4. **P2 · Steg 3 kan inte köras utan ett ritat förslag, och säger det först nederst (S3, L).** Knappen "Kör beräkningarna" är grå
+4. **P2 · Steg 3 kan inte köras utan ett ritat förslag, och säger det först nederst (S3, L). Åtgärdat i U4: förklaring överst och fast handlingsrad, se "U4".** Knappen "Kör beräkningarna" är grå
    och ligger under skärmens nederkant i bredd 1440x900 på steg 3; orsaken står i en liten text ovanför. Åtgärdat delvis: länk till
    Resultat och `aria-describedby`. Kvar: knappen bör ligga synlig utan rullning.
 5. **P2 · Fristående räknare med exempeltal i Resultat (steg 4, L, åtgärdat).** "Fler analyser: MKN-intervall och bullerskärmar"
@@ -54,9 +54,9 @@ Försöker: hitta sitt projekt och komma till kartan.
 
 ### 3 Nytt projekt (`#/nytt`, `webb/src/flode/nyttprojekt*.ts`, `src/webb/projektskapa.py`) – annan agent, orört
 Endast fynd:
-- P1 · Felet från `GET /api/geografier` visas som röd text utan väg vidare utom länken "Till projektlistan". Ge en handling:
+- ~~P1 · Felet från `GET /api/geografier` visas som röd text utan väg vidare utom länken "Till projektlistan". Ge en handling:
   "Be en administratör om rollen utredare eller ägare" respektive "Lokalt: floden projekt skapa". Skilj 403 (behörighet) från
-  nätverksfel. (L)
+  nätverksfel. (L)~~ *Åtgärdat (U4).*
 - P2 · *Åtgärdat i U3 (huvudet, utan att röra nyttprojekt-filerna):* stegraden visas inte utan projekt. Tidigare: sidan behöll stegraden med "1 Projekt" aktivt, men saknade projekt i huvudet; "Floden /" saknar sammanhang. (L)
 - P2 · Polygon blir sin omslutande rektangel (står i STATUS): visa den rektangel som faktiskt skapas innan man trycker Skapa. (M)
 - P3 · Kontrollera att "Skapa" förklarar varför den är grå (saknat namn, ingen avgränsning) med `aria-describedby`, som steg 3 och 5. (L)
@@ -67,23 +67,23 @@ Försöker: rita ett hus och se vad det gör.
   de är lägen). Förslag: `aria-pressed` finns; lägg till tooltip/ledtext på första besök. (L)
 - P2 · Tom panel: "Inget ritat än" är bra, men "Välj frågor" längst ned är aktiv utan förslag; man kan gå vidare utan att ha ritat. Det
   är avsikten (projektets beräkningar), men knappen bör heta "Välj frågor" bara med förslag och annars "Hoppa över: se projektets beräkningar". (L)
-- P2 · Planunderlag/Lager och underlag: filfältet `#fs-fil` saknar etikett (dolt, men skärmläsare når det). (L)
+- ~~P2 · Planunderlag/Lager och underlag: filfältet `#fs-fil` saknar etikett (dolt, men skärmläsare når det). (L)~~ *Åtgärdat (U4): `aria-label`.*
 - P3 · Pekytor under 32 px för verktygsknappar på smal skärm (25 element mätta). (L)
 - P3 · Smal skärm: verktygsraden tar 1/3 av kartans höjd. Förslag: horisontellt rullbar rad med ikoner. (M)
 
 ### 5 Frågor (steg 3)
 Försöker: välja vad som ska besvaras och köra.
-- P1 (delvis åtgärdat) · Kan inte köras utan förslag. *Åtgärdat:* texten länkar till Resultat och knappen har `aria-describedby`.
-  *Kvar:* knappen ligger under vikningen på bred skärm (panelen är högre än fönstret); sätt panelen i `position: sticky; bottom: 0` (L).
+- ~~P1 (delvis åtgärdat) · Kan inte köras utan förslag. *Åtgärdat:* texten länkar till Resultat och knappen har `aria-describedby`.
+  *Kvar:* knappen ligger under vikningen på bred skärm (panelen är högre än fönstret); sätt panelen i `position: sticky; bottom: 0` (L).~~ *Åtgärdat (U4): fast handlingsrad.*
 - P1 · **De valda frågorna påverkar inget**: de styr bara vilka beräkningar som körs (via frågans domän), inte rapporten (se fynd 1).
   Frågor med "Underlag saknas" går att kryssa utan effekt. Förslag: inaktivera kryssrutan eller visa "Besvaras inte i den här körningen". (M)
 - P2 · "Valda frågor 34" räknar alla ämnen men listan visar ett ämne. *Åtgärdat:* etiketten säger "(alla ämnen)".
 - P2 · Ämnesraden blandar Skyfall/Dagsljus och sol/Luft/Buller/Ekologi; Luft och Buller är valbara men går inte att köra
   (se README: Buller under utveckling). Markera ämnen utan körning i raden, inte bara per fråga. (L)
 - P2 · "Planunderlag" kan väljas men finns inte. *Åtgärdat:* heter "Planunderlag (inte än)".
-- P2 · WebGPU-raden ("f32 skissläge · formella resultat räknas i f64") är teknisk text för planarkitekten; flytta till hjälp eller
-  Om beräkningarna. (L)
-- P2 · "Uppskattad tid –" utan förklaring när inget är beräknat; skriv "visas när ett förslag är ritat". (L)
+- ~~P2 · WebGPU-raden ("f32 skissläge · formella resultat räknas i f64") är teknisk text för planarkitekten; flytta till hjälp eller
+  Om beräkningarna. (L)~~ *Åtgärdat (U4): ligger under "Teknisk information".*
+- ~~P2 · "Uppskattad tid –" utan förklaring när inget är beräknat; skriv "visas när ett förslag är ritat". (L)~~ *Åtgärdat (U4).*
 - P3 · Beställningen (skede, mottagare, syfte) finns både här och i steg 5 med samma värden; två ställen att ändra samma sak. Behåll ett. (M)
 - Smal skärm: en lång lista och beställningen under; knappen längst ned i listan, tydligt.
 
@@ -151,7 +151,7 @@ Försöker: (forskare) förstå metoderna; (planarkitekt) kontrollera att man ka
 via `tal.ts` i flödet; ISO-datum och `toLocaleDateString` förekommer (se ovan). (M)
 
 **Tomtillstånd och fel.** Fel visas med `role="alert"` och nästan alltid "Är servern igång?", vilket är fel text för en användare på en
-server. Skilj nätverksfel, 401/403 (behörighet) och 5xx, och ge en handling. (M)
+server. Skilj nätverksfel, 401/403 (behörighet) och 5xx, och ge en handling. (M) *Åtgärdat (U4) för projektlistan, Nytt projekt, steg 2–5.*
 
 **Tillgänglighet.** Hoppa-till-innehåll finns, `lang="sv"`, h1 per sida, synlig fokusram (2 px) på tangentbordet, flikar med pilar, förlopp med
 `role="status"`. Kvar: filfält utan etikett (steg 2), kartvärden bara vid hovring, färgade statusprickar, pekytor under 32 px, kontrast på
@@ -201,3 +201,51 @@ Bilderna före är tagna mot en server med bygget före U3; `11-projektsida` vis
   (importeras av routern) eftersom arbetsbänken, provsidan och kontosidorna delar stilar därifrån.
 - Borttaget som var parallella vägar: startsidan (`sidaStart`), projektsidan (`sidaProjekt`, `sidaProjektUtanData`, `rapportLista`), kontodelen i det äldre huvudet.
   Projektraden i flödets steg 1 visar nu roll och delning med organisationen (`rollRad`), som "Dina projekt" på startsidan gjorde.
+
+## U4 · Ordlista, fel med handling, fast handlingsrad (åtgärdat 2026-11-24)
+
+Före: `docs/bilder/ux/u4-fore/` (Nytt projekt och steg 3). Efter: `docs/bilder/ux/u4-efter/` (`02-nytt-projekt` lokalt, `02c-nytt-saknar-roll`,
+`02d-nytt-natverksfel`, `04-fragor`, `04b-fragor-vy` = bara fönstret, `06-rapport`; bred och `-smal`; `python tools/ux_skarmbild.py --ut <mapp>`).
+Tillstånden 02c och 02d är påhittade svar i webbläsarens rutt. Utloggad besökare på en server med inloggning når aldrig Nytt projekt: appen visar
+inloggningssidan först. Inloggningslänken i Nytt projekt gäller bara en session som gått ut medan sidan var öppen.
+
+**Nytt projekt (`#/nytt`).** `felhandling.ts` (`nyttProjektFel`) skiljer fem fall utan att förlita sig på texten: inte inloggad/utgången session (länk "Logga in", återvänder
+hit), lokalt utan inloggning (kontoläge av: förklarar att rollerna finns i kontosystemet och pekar på `floden projekt skapa`), inloggad utan rätt (vem som kan
+skapa projekt: superadmin, organisationsadmin, ägare; be din organisationsadmin), nätverksfel och serverfel (Försök igen), och ingen mappad geografi
+(olika text för superadmin och andra). Formuläret visas aldrig om det inte går att skapa: `GET /api/geografier` ger redan `far_skapa_projekt` och 403,
+så inget API-fält behövdes. `lasJson` kastar nu `ApiFel` med HTTP-status (0 = ingen kontakt; `apifel.ts`), meddelandet är oförändrat.
+
+**Steg 3 utan förslag.** `POST /api/kartverktyg/<projekt>/scenarier/<slug>/kor` kräver ett sparat förslag med minst en ändring som berör området
+(`Förslaget har ingen ändring…`), och `POST /api/kor` är den äldre områdesberäkningen (`omrade_id`), inte projektets frågeflöde. Att räkna "läget idag"
+utan förslag skulle kräva en ny körväg (K20 med bara `fore`) och är därför ett uppdrag (se PLAN). Valt: sidan säger det överst ("Inget förslag är ritat …
+projektets befintliga läge är redan beräknat och visas i Resultat") med knapparna **Rita ett förslag** (steg 2) och **Visa projektets befintliga resultat**
+(steg 4), och körknappen visas inte som död knapp. Frågorna går att välja redan nu.
+
+**Fast handlingsrad.** Steg 3: `.flode-handlingsrad` (sticky, längst ned, `korlage.ts`) med statustext (`role="status"`) och knapp(ar); tar plats i flödet så att den
+inte täcker slutet av innehållet, staplar ihop sig på smal skärm (knapparna sida vid sida), `scroll-padding-bottom` så att fokuserade fält inte hamnar under den,
+`env(safe-area-inset-bottom)`. Steg 5: knappen och dess förklaring (`.flode-skapa-rad`) är sticky i panelen.
+
+**Fel med handling i övrigt.** Projektlistan, steg 2 (kartan), steg 3 (frågorna), steg 4 och steg 5 använder `sidFel` (inloggning, behörighet, nätverk, server; "Försök igen"
+laddar om sidan). "Är servern igång?" är borttagen ur flödet och Om beräkningarna.
+
+**Tillgänglighet.** Kontrast uträknad för flödets text- och bakgrundspar (dämpad text 5,6–6,3:1, fel 7,6:1, etiketter 6,9–7,7:1; alla över 4,5:1). Filfältet `#fs-fil`
+har etikett. Pekytor minst 40 px på smal skärm (verktyg, zoom, segment, ämnesknappar, flikar). Handlingsraden ligger sist i DOM, så Tab slutar vid körknappen. Felrutor
+har `role="alert"` och får fokus på Nytt projekt.
+
+### Ordlista (använd i gränssnitt, rapporter och dokument)
+
+| Använd | Inte | Betyder |
+| --- | --- | --- |
+| **Skyfall** | Vatten, översvämning (som ämne) | Ämnet för regn som ger vatten på marken; "vatten" bara för vattendjup och vattnets väg |
+| **Dagsljus och sol** | Sol, Soltimmar (som ämne) | Ämnet; *soltimmar*, *VSC* och *dagsljusfaktor* är mått under det |
+| **Förslag** | Scenario, Ritat, K9 | Det planarkitekten ritar i steg 2 (hus, höjder, rivningar); sparas som scenario på servern |
+| **Läget idag** / projektets befintliga läge | Före, bas, referens (utom på kartans Före/Efter-knappar) | Projektet utan förslaget |
+| **Beräkning** | Körning, jobb | Det Floden räknar; "körning" bara i spårbarhet (körningens id) och i "Kör beräkningarna" |
+| **Fråga** | Analys, mall | En utredningsfråga ur frågekatalogen (SK-01 …); en *beräkning* svarar på en eller flera frågor |
+| **Beställning** | Order, uppdrag | Skede, mottagare och syfte som styr rapporten |
+| **Skiss** / **Planunderlag** | Utkast | Skede: skiss finns, planunderlag inte än |
+| **Skillnad** | Delta, diff | Efter minus före; **Svep** = dra en gräns på kartan mellan före och efter |
+| **Underlag saknas** | Ej tillgänglig | Frågan kan inte besvaras med data som finns |
+| **Osäkerhet** | Felmarginal | Intervall och känsliga överfall; gäller markmodellen före, inte förslaget |
+
+Termerna i ordlistan är genomgångna i steg 3, 5 och felmeddelandena; steg 4 och kartans lager återstår att läsa mot listan (se PLAN, U5).

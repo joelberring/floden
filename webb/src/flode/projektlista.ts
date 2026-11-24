@@ -8,6 +8,7 @@ import type { Kartmotor } from "../karta/kartmotor.ts";
 import { esc, formatera } from "../sidor.ts";
 import type { ProjektSvar } from "../types.ts";
 import { kontoLage, vidKontoandring } from "../konto.ts";
+import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
 import { flodeAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import { sattProjektNamn } from "./huvud.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
@@ -120,7 +121,8 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
       );
     } catch (e) {
       if (avslutad) return;
-      rader.innerHTML = `<p class="flode-fel" role="alert">Projekten gick inte att hämta: ${esc(e instanceof Error ? e.message : String(e))}. Är servern igång?</p>`;
+      rader.innerHTML = felBeskedHtml(sidFel(e, "Projekten", kontoLage(), "/#/"), esc);
+      kopplaLaddaOm(rader);
       return;
     }
     if (avslutad) return;
