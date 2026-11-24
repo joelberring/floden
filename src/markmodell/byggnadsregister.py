@@ -245,6 +245,10 @@ class ByggnadsPost:
         }
 
 
+MIN_TAK_OVER_MARK_M = 1.0
+"""Lägsta rimliga takhöjd över mark (m) för en takhöjd ur källan; lägre ignoreras med varning."""
+
+
 def markhojd_under_byggnad(
     terrang_z: NDArray[np.float32], ruta: Ruta, polygon: Ring, hal: Sequence[Ring] = ()
 ) -> float:
@@ -342,8 +346,12 @@ def hojdsatt_byggnader(
         tak: float | None = None
         osak: float | None = None
         hojdkalla = "standard"
-        if kand.tak_rh2000 is not None:
+        if kand.tak_rh2000 is not None and float(kand.tak_rh2000) - mark >= MIN_TAK_OVER_MARK_M:
             tak, hojdkalla, osak = float(kand.tak_rh2000), "kalla_tak", None
+        elif kand.tak_rh2000 is not None:
+            # z under eller nära marken (z = 0 i baskartan, fel höjdsystem): inte en takhöjd.
+            over = float(kand.tak_rh2000) - mark
+            varningar.append(f"{bid}: källans takhöjd ligger {over:.2f} m över marken; ignorerad")
         elif har_laser and tak_z.size:
             inne = shapely.contains_xy(
                 shapely.Polygon(kand.polygon, list(kand.hal)), tak_e, tak_n

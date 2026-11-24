@@ -669,3 +669,7 @@ Nästa: R7 (pekskärm, tillgänglighet); provkör R5/R6 i webbläsare och ta sk�
 
 - Andra försöket med `goteborg-test` på servern stannade igen på "markhojd_rh2000 ... nan" (ruta mm_-211000_6412500). PR #91 fyllde bara hål som var helt inneslutna i rutans raster; hål under hus som når rutans kant förblev NaN.
 - Nu fylls alla celler utan värde som ligger inom någon plattas yttergräns (inte bara inneslutna), högst 150 m från närmaste värde. Celler utanför plattorna förblir NaN. Markhöjden under ett hus faller tillbaka på marken runt omkring även från tyngdpunkten, och ett hus helt utan markhöjd utelämnas med varning i stället för att stoppa kartläggningen.
+
+## 2026-11-24 natt – takhöjd under marken (samordnaren)
+
+- Göteborg Haga (goteborg-test@v2): byggnadshöjder från −0,84 m. Några takkonturer i baskartan har z = 0 (eller nära marken). En takhöjd ur källan som ligger mindre än 1 m över marken ignoreras nu med varning, och huset går vidare till nästa höjdkälla (laser, höjd, våningar eller standard).
