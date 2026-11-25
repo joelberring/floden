@@ -2586,6 +2586,27 @@ class FlodenApiApp:
                     return float("nan")
 
             return _json_svar(200, kv.markhojd(projekt, _tal("e"), _tal("n")))
+        if verb == "POST" and rest == ["sektion"]:
+            kropp_s = json_kropp()
+            korning_id = kropp_s.get("korning_id")
+            if korning_id is not None and korning_id != "":
+                if not isinstance(korning_id, str):
+                    raise FlodenWebbFel(
+                        "Fältet 'korning_id' måste vara en text eller null.", status_kod=400
+                    )
+                if self.projekt_for_korning(korning_id.strip()) != projekt:
+                    raise FlodenWebbFel(f"Okänd körning '{korning_id}'.", status_kod=404)
+            return _json_svar(
+                200,
+                kv.sektion(
+                    projekt,
+                    kropp_s.get("punkter"),
+                    korning_id=korning_id,
+                    fore_lager=kropp_s.get("fore_lager"),
+                    efter_lager=kropp_s.get("efter_lager"),
+                    steg_m=kropp_s.get("steg_m"),
+                ),
+            )
         if verb == "POST" and rest == ["validera"]:
             return _json_svar(200, kv.validera(projekt, json_kropp()))
         if verb == "POST" and rest == ["skarvatgard"]:
@@ -2596,10 +2617,11 @@ class FlodenApiApp:
             valda_l = [str(x) for x in kropp_l.get("analyser", [])]
             avt_l = kropp_l.get("avtappning_mm_h")
             regn_l = kropp_l.get("regn")
+            sol_l = kropp_l.get("sol")
             if verb == "POST" and rest == ["lage-idag", "plan"]:
-                return _json_svar(200, kv.planera_lage_idag(projekt, valda_l, avt_l, regn_l))
+                return _json_svar(200, kv.planera_lage_idag(projekt, valda_l, avt_l, regn_l, sol_l))
             if verb == "POST" and rest == ["lage-idag", "kor"]:
-                return _json_svar(202, kv.kor_lage_idag(projekt, valda_l, avt_l, regn_l))
+                return _json_svar(202, kv.kor_lage_idag(projekt, valda_l, avt_l, regn_l, sol_l))
             if verb == "GET" and rest == ["lage-idag", "status"]:
                 return _json_svar(200, kv.status_lage_idag(projekt))
             return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
@@ -2623,10 +2645,11 @@ class FlodenApiApp:
             valda = [str(x) for x in kropp_d.get("analyser", [])]
             avt = kropp_d.get("avtappning_mm_h")
             regn = kropp_d.get("regn")
+            sol = kropp_d.get("sol")
             if verb == "POST" and tail == ["plan"]:
-                return _json_svar(200, kv.planera(projekt, namn, valda, avt, regn))
+                return _json_svar(200, kv.planera(projekt, namn, valda, avt, regn, sol))
             if verb == "POST" and tail == ["kor"]:
-                return _json_svar(202, kv.kor(projekt, namn, valda, avt, regn))
+                return _json_svar(202, kv.kor(projekt, namn, valda, avt, regn, sol))
             if verb == "GET" and tail == ["status"]:
                 return _json_svar(200, kv.status(projekt, namn))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
@@ -3121,6 +3144,26 @@ class FlodenApiApp:
             return _utan_cors(_json_svar(200, self.korningar_for_konto(konto_id)))
         if self.konto.aktiv and verb == "POST":
             start = [urllib.parse.unquote(d) for d in req.sokvag.split("/") if d]
+            if len(start) == 4 and start[:2] == ["api", "kartverktyg"] and start[3] == "sektion":
+                konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
+                try:
+                    sektion_payload = json.loads(kropp_in.decode("utf-8")) if kropp_in else {}
+                except (UnicodeDecodeError, ValueError, RecursionError):
+                    sektion_payload = {}
+                kid = (
+                    sektion_payload.get("korning_id")
+                    if isinstance(sektion_payload, Mapping)
+                    else None
+                )
+                if isinstance(kid, str) and kid.strip():
+                    kid_ren = kid.strip()
+                    if (
+                        not self.konto_far_se_korning(konto_id, kid_ren)
+                        or self.projekt_for_korning(kid_ren) != start[2]
+                    ):
+                        return _utan_cors(
+                            _json_svar(404, {"fel": f"Okänd körning '{kid}'.", "status": 404})
+                        )
             if len(start) == 4 and start[:2] == ["api", "fragor"] and start[3] == "kor":
                 konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
                 try:
@@ -3319,7 +3362,12 @@ def _projekt_krav(verb: str, sokvag: str) -> tuple[str, str] | None:
     if grupp == "3d":
         return projekt_id, "lasare"
     if grupp == "kartverktyg" and projekt_id != "wms":
-        minst = "lasare" if verb in ("GET", "HEAD", "OPTIONS") else "utredare"
+        rest = delar[3:]
+        minst = (
+            "lasare"
+            if verb in ("GET", "HEAD", "OPTIONS") or (verb == "POST" and rest == ["sektion"])
+            else "utredare"
+        )
         return projekt_id, minst
     return None
 

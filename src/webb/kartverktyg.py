@@ -31,7 +31,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET  # noqa: S405 - svaret begränsas i storlek, inga externa entiteter hämtas
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +66,7 @@ from webb.projektkalla import (
     hitta_projektmapp,
     stampel_for,
 )
+from webb.sektion import RasterLager, berakna_sektion, validera_sektion_punkter
 
 FORMAT = "floden-kartverktyg/v1"
 _SLUG = re.compile(r"^[a-z0-9][a-z0-9_\-]{0,59}$")
@@ -119,11 +120,26 @@ _STANDARDJAMFORELSE = {
     "vatten.statisk_fyllning": ("max_djup", 0.01),
     "vatten.dynamik": ("max_djup", 0.01),
     "dagsljus.soltimmar_mark": ("soltimmar", 0.1),
+    "dagsljus.soltimmar_sammanhangande": ("sammanhangande_soltimmar", 0.5),
 }
 """Lösare -> (utdata, tröskel) för jämförelsen före/efter när mallen saknar jämförelser (som `skriv_fragor`)."""
 
 _LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
 _LOSARE_MED_REGN = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
+_LOSARE_MED_SOL = frozenset({"dagsljus.soltimmar_mark", "dagsljus.soltimmar_sammanhangande"})
+_SOL_NYCKLAR = frozenset(
+    {"datum_iso", "start_timme", "slut_timme", "sammanhangande", "inkludera_vsc"}
+)
+_DATUM_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DAGSLJUS_GEMENSAMMA_PAR = (
+    "azimutriktningar",
+    "hojd_max_m",
+    "h_min_grader",
+    "cellstorlek_m",
+    "omsampling",
+    "vegetation",
+    "enhet",
+)
 _REGN_NYCKLAR = frozenset(
     {"aterkomsttid_ar", "varaktighet_min", "klimatfaktor", "regn_mm", "regntyp", "berakningstyp"}
 )
@@ -349,6 +365,88 @@ def _tillampa_regn(
     else:
         parametrar["regn_mm"] = round(float(serie.total_djup_mm), 3)
         parametrar["varaktighet_min"] = var_min
+
+
+def _sol(v: Any) -> dict[str, Any] | None:
+    """Validerar valfria dagsljusparametrar (`sol`) ur kartverktyget, eller None (mallens förval gäller).
+
+    Strikt validering (HTTP 400):
+    - Inga okända nycklar (tillåtna: `datum_iso`, `start_timme`, `slut_timme`, `sammanhangande`, `inkludera_vsc`)
+    - `datum_iso`: giltigt `YYYY-MM-DD` via `datetime.date.fromisoformat`
+    - `start_timme`: ändligt tal i `[0, 23]`
+    - `slut_timme`: ändligt tal i `[1, 24]`
+    - Om båda ges: `start_timme < slut_timme`
+    - `sammanhangande` och `inkludera_vsc`: `bool` eller `None`
+    """
+    if v is None:
+        return None
+    if not isinstance(v, Mapping):
+        raise _fel("Solinställningen måste vara ett JSON-objekt.", 400)
+    okanda = sorted(str(k) for k in v if k not in _SOL_NYCKLAR)
+    if okanda:
+        raise _fel(f"Okända solparametrar: {', '.join(okanda)}.", 400)
+    ut: dict[str, Any] = {}
+    raa_datum = v.get("datum_iso")
+    if raa_datum is not None:
+        if not isinstance(raa_datum, str) or not _DATUM_ISO_RE.match(raa_datum):
+            raise _fel(
+                f"Solparametern 'datum_iso' måste ha formatet ÅÅÅÅ-MM-DD, fick {raa_datum!r}.",
+                400,
+            )
+        try:
+            date.fromisoformat(raa_datum)
+        except ValueError as exc:
+            raise _fel(f"Ogiltigt datum i 'datum_iso': {raa_datum!r}.", 400) from exc
+        ut["datum_iso"] = raa_datum
+    for nyckel, lo, hi in (("start_timme", 0.0, 23.0), ("slut_timme", 1.0, 24.0)):
+        raa = v.get(nyckel)
+        if raa is None:
+            continue
+        if isinstance(raa, bool) or not isinstance(raa, int | float) or not math.isfinite(float(raa)):
+            raise _fel(f"Solparametern '{nyckel}' måste vara ett ändligt tal, fick {raa!r}.", 400)
+        val = float(raa)
+        if val < lo or val > hi:
+            raise _fel(
+                f"Solparametern '{nyckel}' måste ligga i [{lo:g}, {hi:g}], fick {val:g}.",
+                400,
+            )
+        ut[nyckel] = val
+    if "start_timme" in ut and "slut_timme" in ut and ut["start_timme"] >= ut["slut_timme"]:
+        raise _fel(
+            f"Solparametern 'start_timme' ({ut['start_timme']:g}) måste vara mindre än 'slut_timme' ({ut['slut_timme']:g}).",
+            400,
+        )
+    for nyckel in ("sammanhangande", "inkludera_vsc"):
+        raa_b = v.get(nyckel)
+        if raa_b is None:
+            continue
+        if not isinstance(raa_b, bool):
+            raise _fel(f"Solparametern '{nyckel}' måste vara sant eller falskt, fick {raa_b!r}.", 400)
+        ut[nyckel] = raa_b
+    return ut or None
+
+
+def _tillampa_sol(
+    losare: str,
+    parametrar: dict[str, Any],
+    sol: Mapping[str, Any] | None,
+) -> None:
+    """Skriver in validerade dagsljusparametrar på `dagsljus.soltimmar_mark` / `dagsljus.soltimmar_sammanhangande`."""
+    if sol is None or losare not in _LOSARE_MED_SOL:
+        return
+    if "datum_iso" in sol:
+        parametrar["datum"] = [str(sol["datum_iso"])]
+    if "start_timme" in sol:
+        parametrar["start_timme"] = float(sol["start_timme"])
+    if "slut_timme" in sol:
+        parametrar["slut_timme"] = float(sol["slut_timme"])
+    start_eff = float(parametrar.get("start_timme", 0.0))
+    slut_eff = float(parametrar.get("slut_timme", 24.0))
+    if not (0.0 <= start_eff < slut_eff <= 24.0):
+        raise _fel(
+            f"Soltidsfönstret måste uppfylla 0 <= start_timme < slut_timme <= 24, fick [{start_eff:g}, {slut_eff:g}].",
+            400,
+        )
 
 
 def slug(namn: str) -> str:
@@ -1224,6 +1322,7 @@ class KartverktygTjanst:
         prefix: str = "rita",
         parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster.
 
@@ -1263,13 +1362,13 @@ class KartverktygTjanst:
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
-                avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn,
+                avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn, sol=sol,
             )
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             ref = self._ref_for(fil)
             poster.append(
                 {"mall": kort, "ref": ref, "fraga_id": fraga_id, "k9": str(k9_fil.name),
-                 "k9_nyckel": sc.nyckel, "analyser": analyser}
+                 "k9_nyckel": sc.nyckel, "analyser": [str(a["id"]) for a in innehall["analyser"]]}
             )
         return poster
 
@@ -1305,6 +1404,44 @@ class KartverktygTjanst:
 
         return Path(os.path.relpath(till, fran.parent)).as_posix()
 
+    @staticmethod
+    def _valj_med_vsc(
+        m: Mall,
+        analyser: Sequence[str],
+        sol: Mapping[str, Any] | None,
+        scenarier: list[str],
+    ) -> tuple[list[Any], dict[str, Any] | None]:
+        """Returnerar `(valda_analyser, syntetisk_vsc_post)` och lägger till VSC vid `sol.inkludera_vsc=True`."""
+        valda = [a for a in m.fraga.analyser if a.id in analyser]
+        if not (sol is not None and sol.get("inkludera_vsc") is True):
+            return valda, None
+        dagsljus_valda = [a for a in valda if a.losare.startswith("dagsljus.")]
+        if not dagsljus_valda or any(a.losare == "dagsljus.vsc_fasad" for a in valda):
+            return valda, None
+        mall_vsc = next((a for a in m.fraga.analyser if a.losare == "dagsljus.vsc_fasad"), None)
+        if mall_vsc is not None:
+            befintliga = {a.id for a in valda}
+            mall_per_id = {a.id: a for a in m.fraga.analyser}
+            for dep in mall_vsc.beror_pa:
+                if dep not in befintliga and dep in mall_per_id:
+                    valda.append(mall_per_id[dep])
+                    befintliga.add(dep)
+            valda.append(mall_vsc)
+            return valda, None
+        ref = dagsljus_valda[0]
+        befintliga = {a.id for a in valda}
+        vsc_id = "vsc" if "vsc" not in befintliga else "vsc_fasad"
+        par = {k: v for k, v in ref.parametrar.items() if k in _DAGSLJUS_GEMENSAMMA_PAR}
+        synt: dict[str, Any] = {
+            "id": vsc_id,
+            "losare": "dagsljus.vsc_fasad",
+            "scenarier": list(scenarier),
+            "parametrar": par,
+        }
+        if ref.fokus is not None:
+            synt["fokus"] = list(ref.fokus)
+        return valda, synt
+
     def _k20(
         self,
         m: Mall,
@@ -1317,18 +1454,24 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None = None,
         parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
-        valda = [a for a in m.fraga.analyser if a.id in analyser]
+        valda, synt_vsc = self._valj_med_vsc(m, analyser, sol, ["fore", "ritat"])
+        valda_ids = {a.id for a in valda}
+        if synt_vsc is not None:
+            valda_ids.add(str(synt_vsc["id"]))
         dynamisk = regn is not None and regn.get("berakningstyp") == "dynamisk"
+        sammanhangande = sol is not None and sol.get("sammanhangande") is True
         ut_analyser: list[dict[str, Any]] = []
         losare_per_analys: dict[str, str] = {}
         for a in valda:
-            losare = (
-                "vatten.dynamik"
-                if (dynamisk and a.losare == "vatten.statisk_fyllning")
-                else a.losare
-            )
+            if dynamisk and a.losare == "vatten.statisk_fyllning":
+                losare = "vatten.dynamik"
+            elif sammanhangande and a.losare == "dagsljus.soltimmar_mark":
+                losare = "dagsljus.soltimmar_sammanhangande"
+            else:
+                losare = a.losare
             losare_per_analys[a.id] = losare
             post: dict[str, Any] = {
                 "id": a.id,
@@ -1341,22 +1484,34 @@ class KartverktygTjanst:
             if avtappning_mm_h is not None and losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
             _tillampa_regn(losare, post["parametrar"], regn, avtappning_mm_h=avtappning_mm_h)
+            _tillampa_sol(losare, post["parametrar"], sol)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
             if a.beror_pa:
-                post["beror_pa"] = [b for b in a.beror_pa if b in analyser]
+                post["beror_pa"] = [b for b in a.beror_pa if b in valda_ids]
             if a.indata:
                 post["indata"] = {k: self._rel(fil, p) for k, p in a.indata.items()}
             ut_analyser.append(post)
+        if synt_vsc is not None:
+            ut_analyser.append(synt_vsc)
         sedda: set[tuple[str, str]] = set()
         jamf: list[dict[str, Any]] = []
         for j in m.fraga.jamforelser:
-            if j.analys not in analyser or (j.analys, j.utdata) in sedda:
+            if j.analys not in valda_ids:
                 continue
-            sedda.add((j.analys, j.utdata))
+            utdata = j.utdata
+            troskel = j.troskel
+            if (
+                losare_per_analys.get(j.analys) == "dagsljus.soltimmar_sammanhangande"
+                and utdata == "soltimmar"
+            ):
+                utdata, troskel = _STANDARDJAMFORELSE["dagsljus.soltimmar_sammanhangande"]
+            if (j.analys, utdata) in sedda:
+                continue
+            sedda.add((j.analys, utdata))
             jamf.append(
-                {"analys": j.analys, "utdata": j.utdata, "fore": "fore", "efter": "ritat",
-                 "troskel": j.troskel}
+                {"analys": j.analys, "utdata": utdata, "fore": "fore", "efter": "ritat",
+                 "troskel": troskel}
             )
         if not m.fraga.jamforelser:
             # Ett projekt i en geografi utan scenarier i sina frågor (nuläget): samma jämförelser som
@@ -1402,6 +1557,7 @@ class KartverktygTjanst:
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Planen för att räkna före och efter: vad som räknas om, radie och uppskattad tid."""
         poster = self._skriv_fragor(
@@ -1410,6 +1566,7 @@ class KartverktygTjanst:
             valda,
             avtappning_mm_h=_avtappning(avtappning_mm_h),
             regn=_regn(regn),
+            sol=_sol(sol),
         )
         return {"slug": namn_slug, "fragor": self._planposter(poster)}
 
@@ -1451,16 +1608,18 @@ class KartverktygTjanst:
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Startar körningen. `avtappning_mm_h` (valfri) gäller vattnets analyser i körningen;
         utan den gäller standard 0 mm/h (ledningsnätet antas fullt). `regn` (valfri) styr
-        regnparametrarna för skyfallslösarna; utan den gäller projektmallens förval."""
+        regnparametrarna för skyfallslösarna; `sol` (valfri) styr dagsljusparametrarna."""
         poster = self._skriv_fragor(
             projekt,
             namn_slug,
             valda,
             avtappning_mm_h=_avtappning(avtappning_mm_h),
             regn=_regn(regn),
+            sol=_sol(sol),
         )
         d = self._las(projekt, namn_slug)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
@@ -1501,17 +1660,24 @@ class KartverktygTjanst:
         analyser: Sequence[str],
         avtappning_mm_h: float | None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """K20 för läget idag: ett enda scenario (`fore`, projektets befintliga läge), inga jämförelser."""
         bas = self._rel(fil, m.bas)
+        valda, synt_vsc = self._valj_med_vsc(m, analyser, sol, ["fore"])
+        valda_ids = {a.id for a in valda}
+        if synt_vsc is not None:
+            valda_ids.add(str(synt_vsc["id"]))
         dynamisk = regn is not None and regn.get("berakningstyp") == "dynamisk"
+        sammanhangande = sol is not None and sol.get("sammanhangande") is True
         ut_analyser: list[dict[str, Any]] = []
-        for a in (a for a in m.fraga.analyser if a.id in analyser):
-            losare = (
-                "vatten.dynamik"
-                if (dynamisk and a.losare == "vatten.statisk_fyllning")
-                else a.losare
-            )
+        for a in valda:
+            if dynamisk and a.losare == "vatten.statisk_fyllning":
+                losare = "vatten.dynamik"
+            elif sammanhangande and a.losare == "dagsljus.soltimmar_mark":
+                losare = "dagsljus.soltimmar_sammanhangande"
+            else:
+                losare = a.losare
             post: dict[str, Any] = {
                 "id": a.id,
                 "losare": losare,
@@ -1521,13 +1687,16 @@ class KartverktygTjanst:
             if avtappning_mm_h is not None and losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
             _tillampa_regn(losare, post["parametrar"], regn, avtappning_mm_h=avtappning_mm_h)
+            _tillampa_sol(losare, post["parametrar"], sol)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
             if a.beror_pa:
-                post["beror_pa"] = [b for b in a.beror_pa if b in analyser]
+                post["beror_pa"] = [b for b in a.beror_pa if b in valda_ids]
             if a.indata:
                 post["indata"] = {k: self._rel(fil, p) for k, p in a.indata.items()}
             ut_analyser.append(post)
+        if synt_vsc is not None:
+            ut_analyser.append(synt_vsc)
         return {
             "kontrakt": "K20/v1",
             "fraga_id": fraga_id,
@@ -1543,6 +1712,7 @@ class KartverktygTjanst:
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Skriver en K20 per mall (bara `fore`) för de valda analyserna. Returnerar poster som `_skriv_fragor`."""
         kalla = self.kalla(projekt)
@@ -1562,10 +1732,17 @@ class KartverktygTjanst:
         for kort, analyser in urval.items():
             fraga_id = f"{LAGE_IDAG_PREFIX}{proj}-{kort}"
             fil = fragedir / f"{fraga_id}.json"
-            innehall = self._lage_k20(mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn)
+            innehall = self._lage_k20(
+                mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol
+            )
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             poster.append(
-                {"mall": kort, "ref": self._ref_for(fil), "fraga_id": fraga_id, "analyser": analyser}
+                {
+                    "mall": kort,
+                    "ref": self._ref_for(fil),
+                    "fraga_id": fraga_id,
+                    "analyser": [str(a["id"]) for a in innehall["analyser"]],
+                }
             )
         return poster
 
@@ -1575,9 +1752,12 @@ class KartverktygTjanst:
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Planen för läget idag (bara `fore`): jobb, vad som finns i cachen och uppskattad tid."""
-        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h), _regn(regn))
+        poster = self._skriv_lage_fragor(
+            projekt, valda, _avtappning(avtappning_mm_h), _regn(regn), _sol(sol)
+        )
         fragor = self._planposter(poster)
         tider = [f["uppskattad_tid_s"] for f in fragor]
         return {
@@ -1594,11 +1774,14 @@ class KartverktygTjanst:
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
+        sol: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Startar körningen av läget idag och sparar den som projektets egen (`projekt_id` på körningen,
         och `<projekt>/lage-idag.json` pekar ut den senaste per mall). Samma körkö, samma cache och
         samma roll (utredare) som övriga körningar; en pågående körning av samma fråga återanvänds."""
-        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h), _regn(regn))
+        poster = self._skriv_lage_fragor(
+            projekt, valda, _avtappning(avtappning_mm_h), _regn(regn), _sol(sol)
+        )
         d = self._las_lage(projekt)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
         ut: list[dict[str, Any]] = []
@@ -2167,6 +2350,149 @@ class KartverktygTjanst:
             gammal = (nyckel, self._geometri_delar(projekt, "terrang"))
             self._terrang[projekt] = gammal
         return gammal[1]
+
+    def sektion(
+        self,
+        projekt: str,
+        punkter: Any,
+        *,
+        korning_id: str | None = None,
+        fore_lager: str | None = None,
+        efter_lager: str | None = None,
+        steg_m: float | None = None,
+    ) -> dict[str, Any]:
+        """Beräknar deterministisk sektion/tvärsnitt längs en linje/polylinje (`floden-sektion/v1`).
+
+        Utan `korning_id` samplas projektets terräng (`terrang.tif`) och byggnader.
+        Med `korning_id` läses scenariots markhöjder, vattendjup + takmask (`<lager_id>.npy` /
+        `<lager_id>.tak.npy`) och scenariots byggnader (före och ev. efter).
+        """
+        kalla = self.kalla(projekt)
+        try:
+            validera_sektion_punkter(punkter)
+        except ValueError as exc:
+            raise _fel(str(exc), 400) from exc
+
+        eff_steg: float | None = None
+        if steg_m is not None:
+            if (
+                isinstance(steg_m, bool)
+                or not isinstance(steg_m, int | float)
+                or not math.isfinite(float(steg_m))
+                or float(steg_m) <= 0.0
+            ):
+                raise _fel(f"steg_m måste vara ett ändligt tal > 0, fick {steg_m!r}.", 400)
+            eff_steg = float(steg_m)
+
+        for f_namn, f_val in (
+            ("korning_id", korning_id),
+            ("fore_lager", fore_lager),
+            ("efter_lager", efter_lager),
+        ):
+            if f_val is not None and not isinstance(f_val, str):
+                raise _fel(f"Fältet '{f_namn}' måste vara en text eller null.", 400)
+
+        kid = korning_id.strip() if isinstance(korning_id, str) and korning_id.strip() else None
+        fl = fore_lager.strip() if isinstance(fore_lager, str) and fore_lager.strip() else None
+        el = efter_lager.strip() if isinstance(efter_lager, str) and efter_lager.strip() else None
+
+        if kid is None:
+            if fl is not None or el is not None:
+                raise _fel("Ange 'korning_id' när 'fore_lager' eller 'efter_lager' anges.", 400)
+            terrang_fore: Any = self._terrang_cache(projekt)
+            byggnader_fore: Any = self._alla_byggnader(kalla)
+            try:
+                return berakna_sektion(
+                    punkter,
+                    terrang_fore,
+                    byggnader_fore=byggnader_fore,
+                    steg_m=eff_steg,
+                )
+            except ValueError as exc:
+                raise _fel(str(exc), 400) from exc
+
+        from karna.geometri import las_terrang
+
+        k = self.fragor._hamta(kid)  # noqa: SLF001 - samma paket
+        s = self.fragor._sammanstallning(k)  # noqa: SLF001 - samma paket
+        res = self.fragor.resultat(kid)
+        lager_per_id = {str(la["id"]): la for la in res.get("lager", [])}
+
+        def _las_djup_och_tak(lager_id: str) -> tuple[str, RasterLager, Any]:
+            la = lager_per_id.get(lager_id)
+            if la is None:
+                raise _fel(f"Okänt lager '{lager_id}' i körningen '{kid}'.", 404)
+            npy_fil = k.mapp / "webb" / f"{lager_id}.npy"
+            if not npy_fil.is_file():
+                raise _fel(f"Rasterdata saknas för lager '{lager_id}'.", 404)
+            arr = np.load(npy_fil, mmap_mode="r")
+            u = la["utbredning"]
+            px = float(la["pixelstorlek_m"])
+            raster = RasterLager(
+                raster=arr,
+                x_min=float(u["x_min"]),
+                y_max=float(u["y_max"]),
+                pixelstorlek_x=px,
+                pixelstorlek_y=px,
+            )
+            takfil = k.mapp / "webb" / f"{lager_id}.tak.npy"
+            tak = np.load(takfil, mmap_mode="r") if takfil.is_file() else None
+            return str(la["scenario"]), raster, tak
+
+        fore_scen: str | None = None
+        efter_scen: str | None = None
+        djup_fore: RasterLager | None = None
+        tak_fore: Any = None
+        djup_efter: RasterLager | None = None
+        tak_efter: Any = None
+        if fl is not None:
+            fore_scen, djup_fore, tak_fore = _las_djup_och_tak(fl)
+        if el is not None:
+            efter_scen, djup_efter, tak_efter = _las_djup_och_tak(el)
+        if fore_scen is None:
+            scenarier = list(s.get("scenarier", ()))
+            fore_scen = str(scenarier[0]) if scenarier else None
+
+        rutor_per_scenario, _ = self.fragor._scenariorutor(k, s)  # noqa: SLF001 - samma paket
+        if (
+            rutor_per_scenario is not None
+            and fore_scen is not None
+            and rutor_per_scenario.get(fore_scen)
+        ):
+            terrang_fore = [las_terrang(mapp) for mapp in rutor_per_scenario[fore_scen].values()]
+        else:
+            terrang_fore = self._terrang_cache(projekt)
+
+        terrang_efter: Any = None
+        if (
+            rutor_per_scenario is not None
+            and efter_scen is not None
+            and rutor_per_scenario.get(efter_scen)
+        ):
+            terrang_efter = [las_terrang(mapp) for mapp in rutor_per_scenario[efter_scen].values()]
+
+        bygg_data = res.get("byggnader")
+        bygg_per_scen = bygg_data.get("scenarier", {}) if isinstance(bygg_data, Mapping) else {}
+        byggnader_fore = bygg_per_scen.get(fore_scen) if fore_scen is not None else None
+        if byggnader_fore is None:
+            byggnader_fore = self._alla_byggnader(kalla)
+        byggnader_efter = bygg_per_scen.get(efter_scen) if efter_scen is not None else None
+
+        try:
+            return berakna_sektion(
+                punkter,
+                terrang_fore,
+                terrang_efter=terrang_efter,
+                djup_fore=djup_fore,
+                tak_fore=tak_fore,
+                djup_efter=djup_efter,
+                tak_efter=tak_efter,
+                byggnader_fore=byggnader_fore,
+                byggnader_efter=byggnader_efter,
+                steg_m=eff_steg,
+            )
+        except ValueError as exc:
+            raise _fel(str(exc), 400) from exc
 
     # ------------------------------------------------------------------ ortofoto (GeoTIFF)
 
