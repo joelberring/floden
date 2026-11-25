@@ -2,6 +2,15 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-25 – Göteborg 2×2 batch-E2E med ZSTD-COG, mockad S3 och 3-lagers rensning (grenen `goteborg-batch-e2e`) (agent)
+Gjort (grenen `goteborg-batch-e2e`; sista pusselbiten ur `SWARM-PLAN-GOTEBORG.md` Våg 2; inga ändringar i `src/`, `BESLUT.md` eller kontrakt):
+- **`tests/e2e/test_goteborg_batch.py` (+ `tests/e2e/__init__.py`):** Komplett offline end-to-end-test av ett 2×2-rututsnitt i Göteborg (SWEREF 99 18 00 / EPSG:3011, 500×500 m + 25 m överlapp med syntetiska byggnader och 3D-kantstenar i `brytlinjer.gpkg`). Verifierar `kor_batch_rutor` + `skapa_k1_rutkorare` (`vatten2d` + `dagsljus`) mot mockad `S3Lagring` (`kommun="goteborg"`), ZSTD/DEFLATE-COG (`tiled=True`, `PREDICTOR=3`), K0-manifest (`run.json`, SHA-256, volymfel < 1e-3), återupptagning (4/4 hoppade i pass 2) samt alla tre rensningslager (tempkatalog inkl. simulerad `radata.laz`, S3 lifecycle policy och lokal LRU-cache `torrkor=True/False`).
+Mätt:
+- **`pytest tests/e2e/test_goteborg_batch.py`:** **1 passed** (2–3 s offline). **`ruff check tests/e2e/`:** **0 fel**. **`mypy tests/e2e/`:** **0 fel**.
+- **Uppmätt skala (syntetiska 2×2-rutor, `cpu_f64`, ZSTD-COG, 8 S3-objekt/ruta):** `5,0 m` (110×110): `0,413 s/ruta`, `0,103 MB/ruta` (~82,7 MB / 800 rutor); `2,5 m` (220×220): `1,176 s/ruta`, `0,438 MB/ruta` (~350,1 MB / 800 rutor).
+Öppet: Skarp körning på Colab GPU (`scripts/colab_forberakna.py`) mot riktigt Hetzner Object Storage-konto.
+Nästa: Uppdatera servern, sätt upp Hetzner S3-bucket + nycklar enligt `docs/ARKITEKTUR-DRIFT.md` 4b och kör live-verifiering mot `https://floden.berring.se`.
+
 ## 2026-11-25 – Parallell CI-matris, Cargo-cache och paketgränstester (grenen `ci-paket-snabbhet`) (agent)
 Gjort (grenen `ci-paket-snabbhet`; ingen domänkod rörd, `BESLUT.md` och kontrakt orörda):
 - **CI-uppsnabbning (`.github/workflows/ci.yml`, `pyproject.toml`):** Delade upp det tidigare 22–34 min enkeltrådade jobbet i snabbt separat `lint-och-typer` (`ruff` + `mypy` + `floden --help`), cachat `bygg-rust` (`Swatinem/rust-cache@v2`, delas som artifact till `vatten-och-rust`) och 6 balanserade parallella testjobb (`webb`, `kommuner`, `rapport-och-mcp`, `domaner`, `vatten-och-rust`, `karna-och-ovrigt`) med `pytest-xdist==3.6.1` (`-n auto --dist loadfile`). Lade till `concurrency` (`cancel-in-progress` på PR, aldrig på `main`), `push` enbart på `main` + `pull_request` på PR:er (eliminerar dubbelkörningar), `cache: "npm"` i `webb-klient`, samt behöll gate-jobbet `kvalitet-och-tester` för befintligt branch-skydd och `avbildning.yml`.
