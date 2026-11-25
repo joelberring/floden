@@ -173,5 +173,10 @@ def vattenytor_i_ruta(
     nara = np.unique(delar[fron])
     nara = nara[nara > 0]
     mask = np.isin(delar, nara)
-    niva[mask] = lokal_niva[mask].astype(np.float32)
+    # En plan nivå per vattenyta: median av strandlinjens z längs ytans strand (inte närmaste punkt per
+    # cell, som ger steg där strandlinjernas z varierar).
+    for d_id in nara:
+        del_mask = delar == d_id
+        strand = del_mask & fron
+        niva[del_mask] = np.float32(np.median(lokal_niva[strand]))
     return mask, niva
