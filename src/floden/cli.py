@@ -1702,6 +1702,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_mcp(subparsers)
 
+    from gemensamt.lagring_cli import registrera as registrera_lagring
+
+    registrera_lagring(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Floden i webbläsaren: klient och API från samma port.",
@@ -1953,6 +1957,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from floden_mcp.cli import kor as kor_mcp
 
         return kor_mcp(args)
+    if args.kommando == "lagring":
+        from gemensamt.lagring_cli import kor as kor_lagring
+
+        return kor_lagring(args)
     if args.kommando == "forberakna":
         from karna.batch import (
             BatchFel,
