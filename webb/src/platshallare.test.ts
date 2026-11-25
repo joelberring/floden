@@ -82,7 +82,8 @@ test("ett skal: samma sidhuvud och meny på alla sidor, med samma punkter", () =
 test("stegraden finns bara i ett projekt; på övriga sidor markeras sidan i menyn och står efter ordmärket", () => {
   settKontoLage({ lage: "av" });
   assert.match(flodeHuvudHtml("demokvarteret", "fragor"), /class="flode-stegrad"/);
-  assert.match(flodeHuvudHtml("demokvarteret", "fragor"), /aria-current="page"><span class="flode-steg-nr">3<\/span> Frågor/);
+  assert.match(flodeHuvudHtml("demokvarteret", "karta"), /aria-current="page"><span class="flode-steg-nr">2<\/span> Karta &amp; analys/);
+  assert.match(flodeHuvudHtml("demokvarteret", "fragor"), /aria-current="page"><span class="flode-steg-nr">3<\/span> Rapport/);
   assert.doesNotMatch(flodeHuvudHtml(null, null), /flode-stegrad/); // projektlistan
   for (const s of Object.keys(SKALSIDOR) as SkalSida[]) {
     const h = flodeHuvudHtml(null, null, s);

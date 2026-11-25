@@ -11,6 +11,7 @@ import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
 import { kontoLage } from "../konto.ts";
 import type { RapportAmne, RapportJobb, RapportRad } from "../types.ts";
 import type { Avslutbar } from "./projektlista.ts";
+import { flodeAdress } from "./adress.ts";
 import { hamtaFragelista } from "./fragor.ts";
 import { arPagaende, skapaPanelHtml, valjUnderlag } from "./rapportskapa.ts";
 import type { FlodeFraga } from "./status.ts";
@@ -97,9 +98,35 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   const underlagNu = (): ReturnType<typeof valjUnderlag> =>
     valjUnderlag(amnen.find((a) => a.id === valtAmne), t.scenario, t.valda, katalog);
 
+  const frageurvalHtml = (): string => {
+    const amnesFragor = (katalog ?? []).filter((f) => f.amne === valtAmne);
+    const valdaAntal = amnesFragor.filter((f) => t.valda?.has(f.id)).length;
+    const listaHtml =
+      amnesFragor.length > 0
+        ? `<div class="ar-rapport-fraglista">${amnesFragor
+            .map(
+              (f) => `<label class="ar-rapport-fragarad"><input type="checkbox" data-rp-fraga="${esc(f.id)}"${t.valda?.has(f.id) ? " checked" : ""} /><span>${esc(f.id)} ${esc(f.text)}</span></label>`,
+            )
+            .join("")}</div>`
+        : `<p class="flode-liten flode-dampad">Inga katalogfrågor hämtade för det här ämnet än.</p>`;
+    return `<details class="ar-rapport-fragor" id="rp-frageurval">
+      <summary>Frågeurval &amp; beställning (${amnesFragor.length > 0 ? `${valdaAntal} av ${amnesFragor.length} valda` : "alla frågor"})</summary>
+      ${listaHtml}
+      <p class="flode-liten flode-dampad">Välj vilka frågor som ska ingå i rapporten, eller öppna <a href="${flodeAdress(projekt, "fragor")}">hela frågevyn</a>.</p>
+    </details>`;
+  };
+
   const ritaSkapa = (): void => {
     const m = rot.querySelector<HTMLElement>("#rp-skapa");
-    if (m) m.innerHTML = skapaPanelHtml({ projekt, underlag: underlagNu(), amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
+    if (!m) return;
+    const oppen = m.querySelector<HTMLDetailsElement>("#rp-frageurval")?.open ?? false;
+    m.innerHTML =
+      frageurvalHtml() +
+      skapaPanelHtml({ projekt, underlag: underlagNu(), amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
+    if (oppen) {
+      const det = m.querySelector<HTMLDetailsElement>("#rp-frageurval");
+      if (det) det.open = true;
+    }
   };
 
   const ritaTom = (text: string, fel = false, ferdig = false): void => {
@@ -260,10 +287,16 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   rot.addEventListener(
     "change",
     (h) => {
-      const m = h.target as HTMLSelectElement;
+      const m = h.target as HTMLInputElement | HTMLSelectElement;
       if (m.id === "rp-mottagare") {
         t.bestallning.mottagare = m.value;
         sparaTillstand(t);
+      } else if (m.dataset.rpFraga) {
+        t.valda ??= new Set();
+        if ((m as HTMLInputElement).checked) t.valda.add(m.dataset.rpFraga);
+        else t.valda.delete(m.dataset.rpFraga);
+        sparaTillstand(t);
+        ritaSkapa();
       }
     },
     { signal: ac.signal },

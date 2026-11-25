@@ -1,19 +1,21 @@
 /*
- * Flödet: väljer steg ur adressen, ritar huvudet och steget, och flyttar fokus till rubriken vid
- * stegbyte. Anropas av routern; allt annat i flödet ligger i den här mappen.
+ * Flödet: 1 Projekt → 2 Karta & analys → 3 Rapport.
+ * Väljer vy ur adressen (100 % bakåtkompatibel med äldre adresser som /forslag, /resultat, /fragor),
+ * ritar huvudet och steget, och flyttar fokus till rubriken vid stegbyte.
  */
 import "./flode.css";
+import "./arbetsyta.css";
 import "../karta/karta.css";
 import { hamtaProjektLista } from "../api.ts";
 import { tolkaFlodeAdress, type FlodeRutt } from "./adress.ts";
-import { visaForslag } from "./forslag.ts";
+import { visaArbetsyta } from "./arbetsyta.ts";
 import { visaFragor } from "./fragor.ts";
-import { visaNyttProjekt } from "./nyttprojekt.ts";
 import { ritaFlodeHuvud, sattProjektNamn, SKALSIDOR, type SkalSida } from "./huvud.ts";
+import { visaNyttProjekt } from "./nyttprojekt.ts";
 import { visaProjektInstallningar } from "./projektinstallningar.ts";
 import { visaProjektlista, type Avslutbar } from "./projektlista.ts";
 import { visaRapport } from "./rapport.ts";
-import { visaResultat } from "./resultat.ts";
+import { tillstandFor } from "./tillstand.ts";
 
 export { tolkaFlodeAdress };
 
@@ -26,16 +28,17 @@ export function avslutaFlode(): void {
 
 export const STEGTITEL: Record<string, string> = {
   projekt: "Projekt",
-  forslag: "Förslag",
+  karta: "Karta & analys",
+  forslag: "Karta & analys",
   fragor: "Frågor",
-  resultat: "Resultat",
+  resultat: "Karta & analys",
   rapport: "Rapport",
 };
 
 /** Visar flödets steg. `huvud` är sidhuvudselementet, `rot` innehållet. */
 export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt): void {
   avslutaFlode();
-  document.title = `${STEGTITEL[rutt.steg]} – Floden`;
+  document.title = `${STEGTITEL[rutt.steg] ?? "Floden"} – Floden`;
   const aktivtSteg = rutt.installningar ? null : rutt.steg;
   if (rutt.installningar) document.title = "Projektinställningar – Floden";
   ritaFlodeHuvud(huvud, rutt.projekt, aktivtSteg);
@@ -56,9 +59,13 @@ export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt)
   if (rutt.nytt) steg = visaNyttProjekt(rot);
   else if (rutt.installningar && p !== null) steg = visaProjektInstallningar(rot, p);
   else if (rutt.steg === "projekt" || p === null) steg = visaProjektlista(rot, null, rutt.arkiverade === true);
-  else if (rutt.steg === "forslag") steg = visaForslag(rot, p);
-  else if (rutt.steg === "fragor") steg = visaFragor(rot, p);
-  else if (rutt.steg === "resultat") steg = visaResultat(rot, p);
+  else if (rutt.steg === "karta") steg = visaArbetsyta(rot, p, "nulage");
+  else if (rutt.steg === "forslag") steg = visaArbetsyta(rot, p, "redigera");
+  else if (rutt.steg === "resultat") {
+    const t = tillstandFor(p);
+    const harJustKortForslag = t.ritVyer.length > 0 && !t.korning?.lage;
+    steg = visaArbetsyta(rot, p, harJustKortForslag ? "efter" : "nulage");
+  } else if (rutt.steg === "fragor") steg = visaFragor(rot, p);
   else steg = visaRapport(rot, p);
   aktiv = steg;
   // Fokus på rubriken när steget är ritat (och går att nå med tangentbordet).

@@ -3,9 +3,19 @@ import type { LagerPost } from "./fragor-typer.ts";
 import type { ProjektVy } from "./types.ts";
 
 export type Lage = "fore" | "efter" | "skillnad" | "svep" | "3d";
+export type ArbetsLage = "nulage" | "redigera" | "efter" | "skillnad" | "svep" | "3d";
 
 export const LAGEN: Array<[Lage, string]> = [
   ["fore", "Före"],
+  ["efter", "Efter"],
+  ["skillnad", "Skillnad"],
+  ["svep", "Svep"],
+  ["3d", "3D"],
+];
+
+export const ARBETSLAGEN: Array<[ArbetsLage, string]> = [
+  ["nulage", "Nuläge"],
+  ["redigera", "Redigera förslag"],
   ["efter", "Efter"],
   ["skillnad", "Skillnad"],
   ["svep", "Svep"],

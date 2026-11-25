@@ -54,7 +54,9 @@ test("teckenforklaringHtml visar rubrik med enhet, färgrutor med exakta klasser
   assert.match(utan, /från 0,5 m/);
   assert.doesNotMatch(utan, /tecken-notis/);
 
-  const med = teckenforklaringHtml(klassLager, "Största vattendjup", { osakerhetFore: true });
+  const med = teckenforklaringHtml(klassLager, "Största vattendjup", { osakerhetFore: true, regnRad: "100-årsregn · 60 min · kf 1,25 = 68 mm" });
+  assert.match(med, /class="tecken-regn"/);
+  assert.match(med, /100-årsregn · 60 min · kf 1,25 = 68 mm/);
   assert.match(med, /class="tecken-notis"/);
   assert.ok(med.includes(OSAKERHET_FORE_NOTIS));
   assert.equal(osakerhetNotisText(false), "");

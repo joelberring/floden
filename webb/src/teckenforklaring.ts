@@ -18,6 +18,8 @@ export interface TeckenforklaringVal {
   osakerhetFore?: boolean;
   /** Egen liten notis under skalan (ersätter standardnotisen om satt). */
   notis?: string;
+  /** Tydlig 1-radig etikett om vilket regn kartan visar (ovanför skalan). */
+  regnRad?: string;
 }
 
 /** Rubrik med enhet när enheten inte redan ingår i rubriktexten. */
@@ -67,6 +69,7 @@ export function teckenforklaringHtml(l: LagerPost, rubrik: string = l.namn, val:
   const notis = val.notis ?? osakerhetNotisText(Boolean(val.osakerhetFore));
   return `
     <div class="teckenforklaring">
+      ${val.regnRad ? `<p class="tecken-regn">${esc(val.regnRad)}</p>` : ""}
       <h3 class="etikett-liten">${esc(titel)}</h3>
       ${skalaHtml(l)}
       ${notis ? `<p class="tecken-notis">${esc(notis)}</p>` : ""}

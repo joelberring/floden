@@ -79,7 +79,7 @@ test("okända adresser leder till projektlistan; sidor och flödessteg lämnas",
   for (const h of ["#/finns-inte", "#/kartor", "#/p/demokvarteret/saknas", "#/p/demokvarteret/fragor/extra"]) {
     assert.equal(omdirigering(h), "#/", h);
   }
-  for (const h of ["", "#", "#/", "#/nytt", "#/p/demokvarteret", "#/p/demokvarteret/rapport", "#/om", "#/matematik", "#/nycklar", "#/administration", "#/forvaltning", "#/prov/webgpu", "#/arbetsbank/A1_x"]) {
+  for (const h of ["", "#", "#/", "#/nytt", "#/p/demokvarteret", "#/p/demokvarteret/karta", "#/p/demokvarteret/rapport", "#/om", "#/matematik", "#/nycklar", "#/administration", "#/forvaltning", "#/prov/webgpu", "#/arbetsbank/A1_x"]) {
     assert.equal(omdirigering(h), null, h);
   }
 });

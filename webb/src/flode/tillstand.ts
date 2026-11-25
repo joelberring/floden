@@ -8,6 +8,7 @@ import { PlanDok } from "../karta/plandok.ts";
 import type { ProjektInfo } from "../karta/kartapi.ts";
 import type { RitlagerDok } from "../karta/ritlager.ts";
 import type { ProjektVy } from "../types.ts";
+import { lasRegnVal, STANDARD_REGNVAL, type RegnVal } from "./regnval.ts";
 
 export type Skede = "skiss" | "planunderlag";
 export const MOTTAGARE: ReadonlyArray<{ id: string; namn: string }> = [
@@ -54,6 +55,11 @@ export interface FlodeTillstand {
   bestallning: Bestallning;
   /** Avtappning till ledningsnätet i mm/h; null = lösarens standard 0 mm/h (ledningsnätet antas fullt). */
   avtappning: number | null;
+  /** Vald regninställning (Standard, 10-årsregn, 100-årsregn, Extremregn eller Eget). */
+  regn: RegnVal;
+  /** Regn+avtappningssignatur för senaste klara körning av läget idag respektive förslag. */
+  lageRegnSignatur: string | null;
+  ritRegnSignatur: string | null;
   korning: KorningLage | null;
   /** Vyer ur körningen av det ritade förslaget. */
   ritVyer: ProjektVy[];
@@ -70,6 +76,7 @@ interface Sparat {
   valda: string[] | null;
   bestallning: Bestallning;
   avtappning?: number | null;
+  regn?: RegnVal;
 }
 
 export const FORVAL_BESTALLNING: Bestallning = {
@@ -91,6 +98,9 @@ export function tillstandFor(projekt: string): FlodeTillstand {
     valda: null,
     bestallning: { ...FORVAL_BESTALLNING },
     avtappning: null,
+    regn: { ...STANDARD_REGNVAL },
+    lageRegnSignatur: null,
+    ritRegnSignatur: null,
     korning: null,
     ritVyer: [],
     lageVyer: [],
@@ -103,6 +113,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
       t.valda = s.valda ? new Set(s.valda) : null;
       t.bestallning = { ...FORVAL_BESTALLNING, ...s.bestallning };
       t.avtappning = typeof s.avtappning === "number" && Number.isFinite(s.avtappning) && s.avtappning >= 0 ? s.avtappning : null;
+      t.regn = lasRegnVal(s.regn);
     }
   } catch {
     /* Går det inte att läsa börjar man om; inget går förlorat på servern. */
@@ -119,6 +130,7 @@ export function sparaTillstand(t: FlodeTillstand): void {
       valda: t.valda ? [...t.valda] : null,
       bestallning: t.bestallning,
       avtappning: t.avtappning,
+      regn: t.regn,
     };
     sessionStorage.setItem(NYCKEL + t.projekt, JSON.stringify(s));
   } catch {

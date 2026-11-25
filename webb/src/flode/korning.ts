@@ -5,6 +5,7 @@
 import { korLageIdag, korScenario, lageIdagStatus, scenarioStatus } from "../karta/kartapi.ts";
 import { formatera } from "../tal.ts";
 import type { ProjektVy } from "../types.ts";
+import { regnSignatur, tillRegnParam } from "./regnval.ts";
 import type { FlodeTillstand } from "./tillstand.ts";
 
 type Lyssnare = () => void;
@@ -35,41 +36,43 @@ export async function startaKorning(t: FlodeTillstand, analyser: string[]): Prom
   const sc = t.scenario;
   if (!sc || analyser.length === 0) return;
   const startadMs = Date.now();
+  const sign = regnSignatur(t.regn, t.avtappning);
   t.korning = { slug: sc.slug, text: "Beräknar … (0 s)", klar: false, fel: null, startadMs };
   t.ritVyer = [];
   signalera();
   try {
-    await korScenario(t.projekt, sc.slug, analyser, t.avtappning);
+    await korScenario(t.projekt, sc.slug, analyser, t.avtappning, tillRegnParam(t.regn));
   } catch (e) {
     t.korning = { slug: sc.slug, text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs };
     signalera();
     return;
   }
   stoppa(t.projekt);
-  timers.set(t.projekt, window.setInterval(() => void kolla(t), 1200));
-  void kolla(t);
+  timers.set(t.projekt, window.setInterval(() => void kolla(t, sign), 1200));
+  void kolla(t, sign);
 }
 
 /** Startar körningen av läget idag (projektets befintliga läge, bara före) för de valda analyserna. */
 export async function startaLageIdag(t: FlodeTillstand, analyser: string[]): Promise<void> {
   if (analyser.length === 0) return;
   const startadMs = Date.now();
-  t.korning = { slug: "", text: `Beräknar läget idag … (${formatera(0, 0)} s)`, klar: false, fel: null, startadMs, lage: true };
+  const sign = regnSignatur(t.regn, t.avtappning);
+  t.korning = { slug: "", text: `Beräknar nuläge … (${formatera(0, 0)} s)`, klar: false, fel: null, startadMs, lage: true };
   t.lageVyer = [];
   signalera();
   try {
-    await korLageIdag(t.projekt, analyser, t.avtappning);
+    await korLageIdag(t.projekt, analyser, t.avtappning, tillRegnParam(t.regn));
   } catch (e) {
     t.korning = { slug: "", text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs, lage: true };
     signalera();
     return;
   }
   stoppa(t.projekt);
-  timers.set(t.projekt, window.setInterval(() => void kolla(t), 1200));
-  void kolla(t);
+  timers.set(t.projekt, window.setInterval(() => void kolla(t, sign), 1200));
+  void kolla(t, sign);
 }
 
-async function kolla(t: FlodeTillstand): Promise<void> {
+async function kolla(t: FlodeTillstand, sign: string): Promise<void> {
   const k = t.korning;
   if (!k || k.klar) {
     stoppa(t.projekt);
@@ -88,8 +91,13 @@ async function kolla(t: FlodeTillstand): Promise<void> {
     } else if (alla.length > 0 && klara.length === alla.length) {
       stoppa(t.projekt);
       const vyer = klara.flatMap((x) => x.vyer) as ProjektVy[];
-      if (k.lage) t.lageVyer = vyer;
-      else t.ritVyer = vyer;
+      if (k.lage) {
+        t.lageVyer = vyer;
+        t.lageRegnSignatur = sign;
+      } else {
+        t.ritVyer = vyer;
+        t.ritRegnSignatur = sign;
+      }
       t.korning = { ...k, klar: true, fel: null, text: `Klart på ${formatera(s, 0)} s.` };
     } else {
       const fr = alla.map((x) => x.status.framsteg as { klara: number; totalt: number } | undefined).filter((x): x is { klara: number; totalt: number } => Boolean(x));
