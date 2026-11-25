@@ -33,6 +33,13 @@ services:
       FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET: ${FLODEN_KONTO_GOOGLE_KLIENT_HEMLIGHET:-}
       # Krypterar användarnas API-nycklar (sidan Nycklar). Saknas den är nyckelsidan avstängd. docs/DRIFT.md.
       FLODEN_NYCKELHEMLIGHET: ${FLODEN_NYCKELHEMLIGHET:-}
+      # Valfri S3-objektlagring (Hetzner Object Storage, avsnitt 4b i docs/ARKITEKTUR-DRIFT.md).
+      FLODEN_S3_TYP: ${FLODEN_S3_TYP:-}
+      FLODEN_S3_ENDPOINT: ${FLODEN_S3_ENDPOINT:-}
+      FLODEN_S3_BUCKET: ${FLODEN_S3_BUCKET:-}
+      FLODEN_S3_REGION: ${FLODEN_S3_REGION:-}
+      FLODEN_S3_ACCESS_KEY: ${FLODEN_S3_ACCESS_KEY:-}
+      FLODEN_S3_SECRET_KEY: ${FLODEN_S3_SECRET_KEY:-}
     volumes:
       - ./config.local.toml:/app/config.local.toml:ro
       # Bara på serverns disk tills förrådet (S4) finns. Kontodatabasen är det enda som inte går att räkna om.

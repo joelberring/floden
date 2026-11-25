@@ -1,0 +1,12 @@
+[Unit]
+Description=Floden lokal LRU-cachestädning (S3-cache på Hetzner VPS)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/floden
+# Kör städning inuti den löpande Floden-containern mot konfigurerad [lagring.lokal_cache]
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml exec -T floden floden lagring stada
+Nice=10
+IOSchedulingClass=idle

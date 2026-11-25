@@ -218,6 +218,40 @@ flowchart LR
   - *GPU-leverantör:* samma kö fungerar med en GPU-maskin. Hetzner har GPU bara som dedikerade servrar (inte per timme); för GPU per timme krävs en annan leverantör. Kön behöver inte ändras, bara "starta/radera"-delen.
 - **Skillnad mot O-Tid:** jobben får bara öppna data och påhittade lappar. Ingen ledningsdata och inga interna stadsdata till en molnarbetare (AGENTS.md).
 
+### 4b. Hetzner Object Storage (S3) och automatisk rensning i tre lager
+
+För att kunna förberäkna hela kommuner (t.ex. Göteborg, Stockholm) i Colab/GPU och strömma resultat till Hetzner-servern utan att fylla VPS-disken lagras färdiga ZSTD-komprimerade COG-rutor, `sankgraf.parquet`, `recept.json` och `run.json` i **Hetzner Object Storage** (S3-kompatibelt i EU, t.ex. `https://fsn1.your-objectstorage.com` eller `hel1`). Öppen grunddata ligger alltid i en egen bucket (`floden-oppen-eu`) skild från eventuell skyddsklassad eller icke-öppen stadsdata (`AGENTS.md`).
+
+#### Två separata S3-nycklar i Hetzner Console (minsta behörighet)
+
+Skapa **två separata S3-nycklar** under *Object Storage → S3 Credentials* i Hetzner Console och begränsa dem med bucket-policy per prefix:
+
+1. **Webbserverns nyckel (läs + projekt/skiss):**
+   - **Läsrättighet (`s3:GetObject`, `s3:ListBucket`):** `geografi/*` (kan aldrig skriva över förberäknade kommunkartor).
+   - **Läs- och skrivrättighet (`s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`):** `projekt/*` och `tmp/skiss/*`.
+   - Läggs i serverns `.env` som `FLODEN_S3_ACCESS_KEY` / `FLODEN_S3_SECRET_KEY` (aldrig i git).
+
+2. **Batch-nyckel (Colab / GPU-körningar):**
+   - **Läs- och skrivrättighet (`s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`):** enbart `geografi/*` och `tmp/radata/*` i den **öppna** bucketen (`floden-oppen-eu`).
+   - Ingen åtkomst till `projekt/*` och aldrig till någon intern/skyddsklassad bucket.
+   - Används med `floden forberakna --lagring s3 --kommun <kommun> --dataklass oppen`.
+
+#### Automatisk rensning i tre lager
+
+| Lager | Plats | Mekanism | Kommando / Drift |
+| --- | --- | --- | --- |
+| 1 | Colab / batcharbetare | Isolerad `TemporaryDirectory` per 500×500 m-ruta; rå-LAZ raderas direkt i `finally` efter verifierad uppladdning | Automatiskt i `floden forberakna --lagring s3` (`--behall-radata` stänger av för felsökning) |
+| 2 | Hetzner Object Storage | Server-side S3 Lifecycle Policy: `tmp/radata/` = 2 dagar, `tmp/skiss/` = 14 dagar, avbrutna multiparts = 1 dag | `floden lagring installera-livscykel` |
+| 3 | Hetzner VPS (lokal LRU-cache) | Städning efter `max_alder_dagar` (14 d) och LRU-eviction ned till `0,85 × max_gb` (10 GB) | `deploy/floden-cache-stada.timer` + `deploy/floden-cache-stada.service` (dagligen kl. 03:00), eller `floden lagring stada --torrkor` |
+
+Installera systemd-timern på Hetzner-servern:
+
+```bash
+sudo cp deploy/floden-cache-stada.service deploy/floden-cache-stada.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now floden-cache-stada.timer
+```
+
 ## 5. Beräkningsservern: starkare men mer sällan (hela Stockholm)
 
 Joel 2026-11-21: Flodens beräkningsserver blir troligen **starkare** än O-Tids geo-server men körs **mer sällan** (batch, inte ständigt på). Serverlösningen sätts upp senare, "lite O-Tid men anpassad för dessa uppgifter". Minst en körning ska omfatta **hela Stockholm**; provområdet (ca 1 km²) kommer först.

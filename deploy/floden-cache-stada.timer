@@ -1,0 +1,11 @@
+[Unit]
+Description=Daglig städning av Flodens lokala S3 LRU-cache kl. 03:00
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=floden-cache-stada.service
+
+[Install]
+WantedBy=timers.target
