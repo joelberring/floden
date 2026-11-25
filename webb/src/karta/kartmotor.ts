@@ -16,6 +16,7 @@ import type { Punkt, Ring } from "./geom";
 import { overfallTillGeoJson, MAT_I_FALT, type OverfallPunkt } from "./overfall";
 import type { SkarvFigurer } from "./skarv";
 import type { Pekare } from "./ritverktyg";
+import type { MatLinjeVy } from "../flode/matverktyg";
 
 export type RasterKalla =
   | { slag: "bild"; url: string; utbredning: Utbredning; skarpa?: boolean }
@@ -112,6 +113,7 @@ const RIT = "rit";
 const OVERFALL = "overfall";
 const ANALYS = "analys";
 const SKARV = "skarv";
+const MAT = "mat";
 // Lagerordning ovanför rasterlagren, nerifrån.
 const OVERLAGER = [
   "byggnader-fyll",
@@ -143,6 +145,9 @@ const OVERLAGER = [
   "rit-horn",
   "rit-fast",
   "rit-punkter",
+  "mat-linje-skugga",
+  "mat-linje",
+  "mat-punkter",
 ];
 
 /** Pekskärm (grov pekare): större handtag och hållning för att flytta. */
@@ -186,6 +191,8 @@ export class Kartmotor {
   private readonly slappLyssnare: () => void;
   private notisEl: HTMLElement;
   private etikettEl: HTMLElement;
+  private mat: MatLinjeVy | null = null;
+  private matEtikettEl: HTMLElement;
   private slut = false;
 
   /** Anropas med markörens SWEREF-koordinat (E, N), eller null när markören lämnar vyn. */
@@ -194,6 +201,8 @@ export class Kartmotor {
   onKlickPunkt: ((e: number, n: number) => void) | null = null;
   /** Anropas när användaren själv flyttat eller zoomat vyn. */
   onVyAndrad: (() => void) | null = null;
+  /** Anropas när kartskalan (meter per pixel) ändras (även vid load, zoom och anpassa). */
+  onSkalaAndrad: ((meterPerPx: number) => void) | null = null;
 
   constructor(behallare: HTMLElement, startVy?: Vy) {
     behallare.classList.add("kartmotor");
@@ -233,8 +242,15 @@ export class Kartmotor {
     this.etikettEl.className = "kartetikett";
     this.etikettEl.hidden = true;
     behallare.appendChild(this.etikettEl);
+    this.matEtikettEl = document.createElement("div");
+    this.matEtikettEl.className = "kartetikett ar-matetikett";
+    this.matEtikettEl.hidden = true;
+    behallare.appendChild(this.matEtikettEl);
     this.karta.getCanvas().setAttribute("aria-label", "Karta i SWEREF 99 18 00. Dra för att panorera, rulla för att zooma.");
 
+    const meddelaSkala = (): void => {
+      if (!this.slut && this.onSkalaAndrad) this.onSkalaAndrad(this.meterPerPx());
+    };
     this.karta.on("load", () => {
       this.byggOverlager();
       this.kopplaOverfall();
@@ -243,6 +259,7 @@ export class Kartmotor {
       for (const f of this.vantande.splice(0)) f();
       this.synkaRaster();
       this.synkaOverlager();
+      meddelaSkala();
     });
     const sweref = (e: maplibregl.MapMouseEvent): Punkt => {
       const [x, y] = wgs84TillSweref(e.lngLat.lng, e.lngLat.lat);
@@ -332,11 +349,18 @@ export class Kartmotor {
     window.addEventListener("blur", slapp);
     this.karta.on("moveend", (e) => {
       if ((e as { originalEvent?: unknown }).originalEvent) this.onVyAndrad?.();
+      meddelaSkala();
     });
     this.karta.on("move", (e) => {
       if ((e as { originalEvent?: unknown }).originalEvent) this.onVyAndrad?.();
+      meddelaSkala();
     });
-    this.karta.on("render", () => this.placeraEtikett());
+    this.karta.on("zoom", meddelaSkala);
+    this.karta.on("resize", meddelaSkala);
+    this.karta.on("render", () => {
+      this.placeraEtikett();
+      this.placeraMatEtikett();
+    });
   }
 
   avsluta(): void {
@@ -351,6 +375,7 @@ export class Kartmotor {
     for (const m of this.skarvMarkorer) m.remove();
     this.notisEl.remove();
     this.etikettEl.remove();
+    this.matEtikettEl.remove();
   }
 
   private nar(f: () => void): void {
@@ -431,7 +456,7 @@ export class Kartmotor {
   private byggOverlager(): void {
     const k = this.karta;
     const grov = arGrovPekare(); // pekskärm: större handtag
-    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
+    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`, MAT]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -528,6 +553,9 @@ export class Kartmotor {
       paint: { "circle-radius": grov ? 16 : 9, "circle-color": "rgba(255,255,255,0)", "circle-stroke-color": "#c2410c", "circle-stroke-width": 3 },
     });
     k.addLayer({ id: "rit-punkter", type: "circle", source: `${RIT}-punkter`, paint: { "circle-radius": grov ? 7 : 4, "circle-color": "#111111", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
+    k.addLayer({ id: "mat-linje-skugga", type: "line", source: MAT, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#ffffff", "line-width": 5, "line-opacity": 0.95 } });
+    k.addLayer({ id: "mat-linje", type: "line", source: MAT, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#111111", "line-width": 2.5 } });
+    k.addLayer({ id: "mat-punkter", type: "circle", source: MAT, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": grov ? 8 : 5, "circle-color": "#111111", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } });
   }
 
   private satt(id: string, data: Fc): void {
@@ -699,6 +727,46 @@ export class Kartmotor {
     this.placeraEtikett();
   }
 
+  /** Ritar mätlinjen (breddmätning i EPSG:3011) ovanpå alla andra lager, eller null för att rensa. */
+  settMatLinje(linje: MatLinjeVy | null): void {
+    this.mat = linje;
+    this.nar(() => this.synkaMat());
+    this.placeraMatEtikett();
+  }
+
+  private synkaMat(): void {
+    if (!this.klar || this.slut) return;
+    const m = this.mat;
+    if (!m) {
+      this.satt(MAT, TOM);
+      return;
+    }
+    const a = ll(m.a);
+    const b = ll(m.b);
+    this.satt(MAT, {
+      type: "FeatureCollection",
+      features: [
+        { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [a, b] } },
+        { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: a } },
+        { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: b } },
+      ],
+    });
+  }
+
+  private placeraMatEtikett(): void {
+    const m = this.mat;
+    if (!m || this.slut) {
+      this.matEtikettEl.hidden = true;
+      return;
+    }
+    const mitt: Punkt = { x: (m.a.x + m.b.x) / 2, y: (m.a.y + m.b.y) / 2 };
+    const s = this.karta.project(ll(mitt));
+    this.matEtikettEl.textContent = m.text;
+    this.matEtikettEl.style.left = `${Math.round(s.x)}px`;
+    this.matEtikettEl.style.top = `${Math.round(s.y - 14)}px`;
+    this.matEtikettEl.hidden = false;
+  }
+
   private synkaOverlager(): void {
     if (!this.klar || this.slut) return;
     this.satt(BYGGNADER, {
@@ -780,6 +848,7 @@ export class Kartmotor {
     this.satt(`${RIT}-horn`, punkter(r.horn));
     this.satt(`${RIT}-fast`, punkter(r.fast ? [r.fast.at] : []));
     this.satt(`${RIT}-punkter`, punkter(r.utkast));
+    this.synkaMat();
   }
 
   // ------------------------------------------------------------------ DOM-lager

@@ -16,6 +16,7 @@ import { korradHtml, uppskattadTidText, utanForslagRuta } from "./korlage.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { AMNEN, etikett, franK20, raknaPerAmne, tolkaKatalog, type FlodeFraga } from "./status.ts";
 import { lasAvtappning, MOTTAGARE, sparaTillstand, tillstandFor, type Skede } from "./tillstand.ts";
+import { tillRegnParam } from "./regnval.ts";
 
 export interface FragelistaSvar {
   fragor: FlodeFraga[];
@@ -164,7 +165,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       lageTidText = "–";
       if (analyser.length > 0) {
         try {
-          const p = await planeraLageIdag(projekt, analyser.map((a) => a.id), t.avtappning);
+          const p = await planeraLageIdag(projekt, analyser.map((a) => a.id), t.avtappning, tillRegnParam(t.regn));
           if (nr !== planNr || avslutad) return;
           lageTidText = uppskattadTidText(p.fragor.map((f) => f.uppskattad_tid_s));
         } catch {
@@ -180,7 +181,7 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       return;
     }
     try {
-      const p = await planeraScenario(projekt, t.scenario.slug, analyser.map((a) => a.id), t.avtappning);
+      const p = await planeraScenario(projekt, t.scenario.slug, analyser.map((a) => a.id), t.avtappning, tillRegnParam(t.regn));
       if (nr !== planNr || avslutad) return;
       tidText = uppskattadTidText(p.fragor.map((f) => f.uppskattad_tid_s));
     } catch {
