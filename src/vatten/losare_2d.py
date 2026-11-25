@@ -25,6 +25,7 @@ Basens K1-filer hittas via `vatten.registrera_bas`.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,7 @@ _PARAMETRAR = {
     "avtappning_omraden", "takvatten", "takvatten_andel_ledning",
     "rannsten_1d", "rannsten_korbana_sida",
     "enhet", "precision",
+    "vattenniva_rh2000_m",
 }
 
 
@@ -129,6 +131,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         )
     termer = Kalltermer(avtappning=avtappning, infiltration=infiltration)
     tider, mm_h = _regn(p)
+    vattenniva = p.get("vattenniva_rh2000_m")
     res = kor_2d_lokal_troghet(
         mark_z, markslag, k1.geo, tider, mm_h,
         slut_tid_s=p.get("slut_tid_s"),
@@ -138,8 +141,12 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         brytlinjer=brytlinjer,
         enhet=str(p.get("enhet", "cpu")),
         precision=p.get("precision", "f64"),
+        vattenniva_rh2000_m=float(vattenniva) if vattenniva is not None else None,
     )
-    skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar={"losare": "vatten.2d"})
+    k6_param: dict[str, Any] = {"losare": "vatten.2d"}
+    if vattenniva is not None:
+        k6_param["vattenniva_rh2000_m"] = float(vattenniva)
+    skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar=k6_param)
 
     # Valfri 1D-rännstenslänk längs 3D-kantstenar (`rannsten_1d="auto"` aktiveras automatiskt
     # när K1 brytlinjer.gpkg innehåller 3D-kantstenar med `z_kron_rh2000`).
@@ -228,6 +235,11 @@ def nod_2d(scenario: Planscenario, parametrar: Mapping[str, Any]) -> Nod:
         raise BlaytorFel(f"Basen {bas[:12]}… är inte registrerad (registrera_bas).")
     _regn(parametrar)  # validera tidigt
     p = dict(parametrar)
+    if "vattenniva_rh2000_m" in p and p["vattenniva_rh2000_m"] is not None:
+        vn = p["vattenniva_rh2000_m"]
+        if isinstance(vn, bool) or not isinstance(vn, int | float) or not math.isfinite(float(vn)):
+            raise BlaytorFel(f"vattenniva_rh2000_m måste vara ett ändligt tal, fick {vn!r}.")
+        p["vattenniva_rh2000_m"] = float(vn)
     p.update(_tak(p))
     p["avtappning_angiven"] = "avtappning_mm_h" in parametrar
     p["avtappning_mm_h"] = float(p.get("avtappning_mm_h", 0.0))

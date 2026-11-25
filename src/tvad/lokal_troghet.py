@@ -48,11 +48,13 @@ from tvad.subgrid import (
     projicera_djup_till_fin,
     projicera_falt_till_fin,
     vattenniva_fran_volym,
+    volym_fran_vattenniva,
 )
 
 GRAVITATION_M_S2 = 9.81
 KONTRAKT_K6 = "K6/v1"
 FROUDE_MAX = 2.0
+MARKSLAG_VATTEN = 8
 _MIN_RAND_LUTNING = 1e-3
 _DT_MIN_S = 1e-4
 
@@ -695,6 +697,8 @@ def _kor_lokal_troghet_xp(
     tak_ut_m2: float,
     tak_ledning_m2: float,
     t_klocka_0: float,
+    vatten_mask_np: NDArray[np.bool_] | None = None,
+    vatten_mal_vol_np: NDArray[np.float64] | None = None,
 ) -> TvadResultat:
     """Tät 2D lokal-tröghetsloop på valfri array-backend (`cupy` eller `numpy`)."""
     hojd, bredd = z_bed_np.shape
@@ -709,6 +713,17 @@ def _kor_lokal_troghet_xp(
     z_kant_u = till_enhet(z_kant_u_np, xp, dtype=dtyp)
     z_kant_v = till_enhet(z_kant_v_np, xp, dtype=dtyp)
     safe_area = till_enhet(np.where(aktiv_np, aktiv_area_np, 1.0), xp, dtype=dtyp)
+    har_vatten_rand = vatten_mask_np is not None and bool(np.any(vatten_mask_np))
+    vatten_mask = (
+        till_enhet(vatten_mask_np, xp, dtype=np.bool_)
+        if har_vatten_rand and vatten_mask_np is not None
+        else None
+    )
+    vatten_mal_vol = (
+        till_enhet(vatten_mal_vol_np, xp, dtype=dtyp)
+        if har_vatten_rand and vatten_mal_vol_np is not None
+        else None
+    )
 
     vast_mask = till_enhet(rand_konfig.vast_mask, xp, dtype=np.bool_)
     vast_lut = till_enhet(rand_konfig.vast_lutning, xp, dtype=dtyp)
@@ -750,6 +765,14 @@ def _kor_lokal_troghet_xp(
     u_max = 0.0
     courant_hast_max = 0.0
 
+    if har_vatten_rand and vatten_mask is not None and vatten_mal_vol is not None:
+        init_v = float(till_numpy(xp.sum(xp.where(vatten_mask, vatten_mal_vol, noll))))
+        if init_v > 0.0:
+            volym = xp.where(vatten_mask, vatten_mal_vol, volym)
+            in_m3 += init_v
+            h_eff = xp.where(aktiv, volym / safe_area, noll)
+            zs = z_bed + h_eff
+
     while t_nu < t_slut - 1e-12:
         h_max = float(till_numpy(xp.max(h_eff))) if h_eff.size > 0 else 0.0
         vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max, min_djup_m)) + u_max
@@ -768,6 +791,11 @@ def _kor_lokal_troghet_xp(
             volym = volym + regn_area * dtyp(regn_m)
             in_m3 += total_regn_area * regn_m
             ut_m3 += tak_ut_m2 * regn_m
+            if har_vatten_rand and vatten_mask is not None and vatten_mal_vol is not None:
+                diff_v = xp.where(vatten_mask, vatten_mal_vol - volym, noll)
+                in_m3 += float(till_numpy(xp.sum(xp.maximum(diff_v, noll))))
+                ut_m3 += float(till_numpy(xp.sum(xp.maximum(-diff_v, noll))))
+                volym = xp.where(vatten_mask, vatten_mal_vol, volym)
             h_eff = xp.where(aktiv, volym / safe_area, noll)
             zs = z_bed + h_eff
 
@@ -849,6 +877,12 @@ def _kor_lokal_troghet_xp(
         ut_m3 += float(till_numpy(ut_steg))
 
         volym = xp.where(aktiv, xp.maximum(volym, noll), noll)
+
+        if har_vatten_rand and vatten_mask is not None and vatten_mal_vol is not None:
+            diff_v = xp.where(vatten_mask, vatten_mal_vol - volym, noll)
+            in_m3 += float(till_numpy(xp.sum(xp.maximum(diff_v, noll))))
+            ut_m3 += float(till_numpy(xp.sum(xp.maximum(-diff_v, noll))))
+            volym = xp.where(vatten_mask, vatten_mal_vol, volym)
 
         h_fore = h_eff
         h_eff = xp.where(aktiv, volym / safe_area, noll)
@@ -938,6 +972,7 @@ def kor_2d_lokal_troghet(
     brytlinjer: Sequence[BrytlinjePost] = (),
     enhet: str = "cpu",
     precision: Literal["f64", "f32"] = "f64",
+    vattenniva_rh2000_m: float | None = None,
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -989,6 +1024,10 @@ def kor_2d_lokal_troghet(
         raise TvadFel(f"theta måste ligga i (0, 1], fick {theta}.")
     if precision not in ("f64", "f32"):
         raise TvadFel(f"precision måste vara 'f64' eller 'f32', fick {precision!r}.")
+    if vattenniva_rh2000_m is not None and not math.isfinite(float(vattenniva_rh2000_m)):
+        raise TvadFel(
+            f"vattenniva_rh2000_m måste vara ett ändligt tal, fick {vattenniva_rh2000_m}."
+        )
 
     xp, enhet_namn = hamta_backend(enhet)
     dtyp_val: type[np.float64] | type[np.float32] = np.float32 if precision == "f32" else np.float64
@@ -1064,6 +1103,30 @@ def kor_2d_lokal_troghet(
         z_bed, aktiv, dx, dy, oppna_rander=oppna_rander, subgrid=subgrid
     )
 
+    if subgrid is not None:
+        f_sub = subgrid.faktor
+        pad_v = np.zeros((hojd * f_sub, bredd * f_sub), dtype=np.bool_)
+        pad_a = np.zeros((hojd * f_sub, bredd * f_sub), dtype=np.bool_)
+        pad_v[:hojd_fin, :bredd_fin] = (markslag == MARKSLAG_VATTEN) & np.isfinite(mark_z)
+        pad_a[:hojd_fin, :bredd_fin] = (markslag != MARKSLAG_BYGGNAD) & np.isfinite(mark_z)
+        n_v = pad_v.reshape(hojd, f_sub, bredd, f_sub).sum(axis=(1, 3))
+        n_a = pad_a.reshape(hojd, f_sub, bredd, f_sub).sum(axis=(1, 3))
+        vatten_mask = np.asarray(aktiv & (n_v > 0) & (2 * n_v >= n_a), dtype=np.bool_)
+        har_vatten_rand = bool(np.any(vatten_mask))
+        if har_vatten_rand and vattenniva_rh2000_m is not None:
+            mal_zs = np.full((hojd, bredd), float(vattenniva_rh2000_m), dtype=np.float64)
+            vatten_mal_vol = np.where(vatten_mask, volym_fran_vattenniva(mal_zs, subgrid), 0.0)
+        else:
+            vatten_mal_vol = np.zeros((hojd, bredd), dtype=np.float64)
+    else:
+        vatten_mask = np.asarray(aktiv & (markslag == MARKSLAG_VATTEN), dtype=np.bool_)
+        har_vatten_rand = bool(np.any(vatten_mask))
+        if har_vatten_rand and vattenniva_rh2000_m is not None:
+            mal_h = np.maximum(0.0, float(vattenniva_rh2000_m) - z_bed)
+            vatten_mal_vol = np.where(vatten_mask, mal_h * aktiv_area, 0.0)
+        else:
+            vatten_mal_vol = np.zeros((hojd, bredd), dtype=np.float64)
+
     if ar_gpu_backend(xp) or precision == "f32":
         if subgrid is not None or kalltermer is not None:
             if enhet == "cuda":
@@ -1106,6 +1169,8 @@ def kor_2d_lokal_troghet(
                 tak_ut_m2=tak_ut_m2,
                 tak_ledning_m2=tak_ledning_m2,
                 t_klocka_0=t_klocka_0,
+                vatten_mask_np=vatten_mask if har_vatten_rand else None,
+                vatten_mal_vol_np=vatten_mal_vol if har_vatten_rand else None,
             )
 
     volym = np.zeros((hojd, bredd), dtype=np.float64)
@@ -1151,6 +1216,18 @@ def kor_2d_lokal_troghet(
     q_cell_x = np.zeros((hojd, bredd), dtype=np.float64)
     q_cell_y = np.zeros((hojd, bredd), dtype=np.float64)
 
+    if har_vatten_rand and bool(np.any(vatten_mal_vol > 0.0)):
+        volym = np.where(vatten_mask, vatten_mal_vol, volym)
+        in_m3 += float(np.sum(vatten_mal_vol))
+        if subgrid is not None:
+            zs = vattenniva_fran_volym(volym, subgrid)
+            h_eff = np.where(aktiv, volym / safe_area, 0.0)
+        else:
+            h_eff = np.where(aktiv, volym / safe_area, 0.0)
+            zs = z_bed + h_eff
+        np.maximum(max_zs, zs, out=max_zs)
+        np.maximum(max_djup_grov, h_eff, out=max_djup_grov)
+
     while t_nu < t_slut - 1e-12:
         h_max = float(np.max(h_eff)) if h_eff.size > 0 else 0.0
         vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max, min_djup_m)) + u_max
@@ -1170,6 +1247,11 @@ def kor_2d_lokal_troghet(
             volym += regn_area * regn_m
             in_m3 += total_regn_area * regn_m
             ut_m3 += tak_ut_m2 * regn_m
+            if har_vatten_rand:
+                diff_v = np.where(vatten_mask, vatten_mal_vol - volym, 0.0)
+                in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+                ut_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
+                volym = np.where(vatten_mask, vatten_mal_vol, volym)
             if subgrid is not None:
                 zs = vattenniva_fran_volym(volym, subgrid)
                 h_eff = np.where(aktiv, volym / safe_area, 0.0)
@@ -1369,6 +1451,13 @@ def kor_2d_lokal_troghet(
             in_m3 += float(np.sum(np.maximum(diff, 0.0)))
             ut_m3 += float(np.sum(np.maximum(-diff, 0.0)))
             volym = np.where(tvingat.mask & aktiv, mal_v, volym)
+
+        # 6c. Vattenyta (markslag == 8): dränerar överskott till ut_m3 eller håller vattennivån
+        if har_vatten_rand:
+            diff_v = np.where(vatten_mask, vatten_mal_vol - volym, 0.0)
+            in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+            ut_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
+            volym = np.where(vatten_mask, vatten_mal_vol, volym)
 
         # 7. Uppdatera vattenyta och effektivt djup (spara h_fore för hastighetsberäkning)
         h_fore = h_eff

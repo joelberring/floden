@@ -155,6 +155,7 @@ def mappa_geografi(
     nmd_troskel_m: float = 3000.0,
     baskarta_filer: Sequence[Path] = (),
     dwgread: str | None = None,
+    nan_varning_andel: float = 0.20,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
     from kommuner.baskarta import byggnader_ur_lokala_filer, tak_till_gpkg
@@ -393,7 +394,17 @@ def mappa_geografi(
                     if strandlinjer:
                         skriv_strandlinjer(strandlinjer, ra / "kommun" / "strandlinjer.gpkg")
                 klippt = ra / "hojd" / "hojdmodell_klippt.tif"
-                varningar.extend(x for x in skriv_klippt_hojd(hoj, extent, kommun.lantmateriet.upplosning_m, klippt) if x not in varningar)
+                varningar.extend(
+                    x
+                    for x in skriv_klippt_hojd(
+                        hoj,
+                        extent,
+                        kommun.lantmateriet.upplosning_m,
+                        klippt,
+                        nan_varning_andel=nan_varning_andel,
+                    )
+                    if x not in varningar
+                )
                 (ra / "filpaket").mkdir(parents=True, exist_ok=True)
                 (ra / "filpaket" / "kallor.json").write_text(
                     json.dumps(
@@ -408,11 +419,24 @@ def mappa_geografi(
                 hojd_anvand = "filpaket"
                 skriv("Bygger K1-markmodellen ur kommunens höjdmodell (rutor om 500 m) ...")
                 bygg = bygg_omrade_filpaket(
-                    omr, k1, hojdmodell=Hojdmodell([klippt], epsg_antagen=3011), hojd_paket=hpaket,
-                    byggnader_fil=bygg_fil, byggnader_paket=bpaket,
-                    upplosning_m=kommun.lantmateriet.upplosning_m, skriv=skriv, strandlinjer=strandlinjer,
-                    vatten_marginal_m=vk.marginal_m if vk else 0.2, vatten_max_avstand_m=vk.max_avstand_m if vk else 2.0,
-                )  # fmt: skip
+                    omr,
+                    k1,
+                    hojdmodell=Hojdmodell(
+                        [klippt],
+                        epsg_antagen=3011,
+                        fyll_smahal=False,
+                        nan_varning_andel=nan_varning_andel,
+                    ),
+                    hojd_paket=hpaket,
+                    byggnader_fil=bygg_fil,
+                    byggnader_paket=bpaket,
+                    upplosning_m=kommun.lantmateriet.upplosning_m,
+                    skriv=skriv,
+                    strandlinjer=strandlinjer,
+                    vatten_marginal_m=vk.marginal_m if vk else 0.2,
+                    vatten_max_avstand_m=vk.max_avstand_m if vk else 2.0,
+                    nan_varning_andel=nan_varning_andel,
+                )
                 vatten_info = (
                     {"m2": round(bygg.vatten_m2, 1), "niva_m_rh2000": list(bygg.vatten_niva_m) if bygg.vatten_niva_m else None,
                      "strandlinjer": len(strandlinjer), "marginal_m": vk.marginal_m, "max_avstand_m": vk.max_avstand_m}
@@ -474,6 +498,50 @@ def mappa_geografi(
         f"Terräng i kärnan: {terr.get('z_min_m')} till {terr.get('z_max_m')} m (relief {terr.get('relief_m')} m), "
         f"lägsta punkt E {terr.get('lagpunkt_e_m')}, N {terr.get('lagpunkt_n_m')} (EPSG:3011)."
     )
+
+    luck_poster: list[dict[str, Any]] = []
+    if hasattr(bygg, "hojd_luckor") and getattr(bygg, "hojd_luckor", None):
+        luck_poster = [d.till_dict() for d in bygg.hojd_luckor]
+    else:
+        from testsvit.k1_io import las_geotiff
+
+        for mark_fil in sorted(k1.glob("mm_*/mark.tif")):
+            zm, _ = las_geotiff(mark_fil)
+            z_arr = np.asarray(zm, dtype=np.float32)
+            tot = int(z_arr.size)
+            n_nan = int(np.count_nonzero(np.isnan(z_arr)))
+            andel = n_nan / tot if tot > 0 else 0.0
+            luck_poster.append(
+                {
+                    "ruta": mark_fil.parent.name,
+                    "totalt_celler": tot,
+                    "nan_fore_andel": round(andel, 6),
+                    "nan_efter_andel": round(andel, 6),
+                    "nan_fore_procent": round(100.0 * andel, 2),
+                    "nan_efter_procent": round(100.0 * andel, 2),
+                    "huvudsaklig_orsak": "saknar_markdata" if n_nan > 0 else "inga_luckor",
+                    "over_troskel": andel > nan_varning_andel,
+                }
+            )
+    max_nan_andel = max((float(p["nan_efter_andel"]) for p in luck_poster), default=0.0)
+    over_rutor = [str(p["ruta"]) for p in luck_poster if p["over_troskel"]]
+    hog_nan_flagga = bool(over_rutor)
+    if hog_nan_flagga:
+        nan_varn = (
+            f"Höjdmodellens NaN-andel överstiger tröskeln ({100.0 * nan_varning_andel:.0f} %): "
+            f"upp till {100.0 * max_nan_andel:.1f} % saknar markhöjd i {len(over_rutor)} ruta/rutor "
+            f"({', '.join(over_rutor[:5])})."
+        )
+        if nan_varn not in varningar:
+            varningar.append(nan_varn)
+        skriv(f"VARNING: {nan_varn}")
+    hojd_kvalitet: dict[str, Any] = {
+        "nan_troskel_andel": float(nan_varning_andel),
+        "hog_nan_flagga": hog_nan_flagga,
+        "max_nan_andel": round(max_nan_andel, 6),
+        "rutor_over_troskel": over_rutor,
+        "rutor": luck_poster,
+    }
 
     # 4. Lager (innehållsadresserade) och öppenhet.
     lm_manifest_sha = None
@@ -569,7 +637,11 @@ def mappa_geografi(
             "terrang_karna": terr,
             "tillrinning": {k: tr[k] for k in ("cell_m", "celler", "yta_m2", "krav_buffert_m", "nar_kanten")},
             **({"vattenytor": vatten_info} if vatten_info else {}),
+            "hojdmodell_kvalitet": hojd_kvalitet,
             "sankgraf": "inte förberäknad: byggs och cachas av kärnan (K22) vid första körningen",
+        },
+        "flaggor": {
+            "hojdmodell_hog_nan": hog_nan_flagga,
         },
         "kallor": {
             "hojd": {
