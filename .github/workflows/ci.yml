@@ -13,6 +13,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+
 jobs:
   lint-och-typer:
     runs-on: ubuntu-latest
@@ -90,15 +96,24 @@ jobs:
       matrix:
         include:
           - namn: webb
+            workers: auto
             args: tests/webb
           - namn: kommuner
+            workers: auto
             args: tests/kommuner
           - namn: rapport-och-mcp
+            workers: auto
             args: tests/rapport tests/floden_mcp
-          - namn: domaner
-            args: tests/buller tests/dagsljus tests/luft tests/ekologi tests/demovarld tests/rutt tests/benchmark
+          - namn: buller
+            workers: auto
+            args: tests/buller
+          # 2 workers ger luftens 1e5-prestandatester god marginal utan CPU-trängsel.
+          - namn: luft-dagsljus-ekologi
+            workers: "2"
+            args: tests/luft tests/dagsljus tests/ekologi tests/demovarld tests/rutt tests/benchmark
           # Fångar tests/karna, tests/gemensamt, tests/konto, rotfiler samt alla framtida kataloger (t.ex. tests/e2e).
           - namn: karna-och-ovrigt
+            workers: auto
             args: >-
               tests
               --ignore=tests/webb
@@ -140,7 +155,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Enhetstester (${{ matrix.namn }})
-        run: python -m pytest -n auto --dist loadfile ${{ matrix.args }}
+        run: python -m pytest -n ${{ matrix.workers }} --dist loadfile ${{ matrix.args }}
 
   vatten-och-rust:
     runs-on: ubuntu-latest
