@@ -455,6 +455,29 @@ class Konnektivitet(Analyslosare):
         )
 
 
+def bygg_dpc_tabell(
+    flackar: Any,
+    betydelse: Mapping[int, Any],
+) -> list[dict[str, Any]]:
+    """Bygger sorterad dPC-tabell per habitatfläck (`flack_id`, `area_ha`, `dpc_procent`,
+    `dpc_intra`, `dpc_flux`, `dpc_connector`), viktigaste fläcken först."""
+    rader: list[dict[str, Any]] = []
+    for f in flackar:
+        b = betydelse[f.flack_id]
+        rader.append(
+            {
+                "flack_id": int(f.flack_id),
+                "area_ha": round(float(f.area_m2) / 10_000.0, 6),
+                "dpc_procent": float(b.dpc_procent),
+                "dpc_intra": float(b.dpc_intra_procent),
+                "dpc_flux": float(b.dpc_flux_procent),
+                "dpc_connector": float(b.dpc_connector_procent),
+            }
+        )
+    rader.sort(key=lambda r: (-float(r["dpc_procent"]), int(r["flack_id"])))
+    return rader
+
+
 def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     """Körning för ett habitatnätverk (K47): NMD (eller biotopraster) som mark, K9-hus som NMD 51."""
     from data_inlasning.nmd import NMD_BYGGNAD, NmdFel, NmdLager, lagg_hus_som_nmd51, las_nmd
@@ -468,7 +491,7 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         till_artprofil,
     )
     from ekologi.artprofil_format import artprofil_till_dict
-    from ekologi.natverk import METODSTATUS_TEXT
+    from ekologi.natverk import METODSTATUS_TEXT, rensa_rivna_hus_i_nmd
     from karna.geometri.mosaik import bygg_ytmosaik
     from karna.geometri.rasterfil import GeometriFel
     from testsvit.k1_io import skriv_geotiff
@@ -563,10 +586,34 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     klasser, andrade = lagg_hus_som_nmd51(
         NmdLager(klasser, x0, y1, cell), hus_mask, mos.x_min_m, mos.y_max_m, cell, int(hus_kod)
     )
-    varningar.append(
-        f"{andrade} celler lades som byggnad ur K1/K9 ({'NMD 51' if not biotop else 'klassen byggnad'}); "
-        "rivna hus tas inte bort ur markunderlaget."
-    )
+    rensade = 0
+    if not biotop:
+        klasser, rensade = rensa_rivna_hus_i_nmd(
+            klasser,
+            x0,
+            y1,
+            cell,
+            mos.markslag,
+            mos.x_min_m,
+            mos.y_max_m,
+            cell,
+            hus_kod=int(hus_kod),
+        )
+        if rensade:
+            varningar.append(
+                f"{andrade} celler lades som byggnad ur K1/K9 (NMD 51) och {rensade} rivna "
+                "byggnadsceller rensades från NMD 51 till öppen mark/grönyta enligt K1/K9."
+            )
+        else:
+            varningar.append(
+                f"{andrade} celler lades som byggnad ur K1/K9 (NMD 51); inga byggnadsceller "
+                "rensades från NMD 51."
+            )
+    else:
+        varningar.append(
+            f"{andrade} celler lades som byggnad ur K1/K9 (klassen byggnad); "
+            "rivna hus tas inte bort ur biotopunderlaget."
+        )
     if p.get("anvand_vmi"):
         vfil = k.indata.get("kand_vatmark")
         vmi_lager = geo_mark.vmi if geo_mark is not None else None
@@ -671,6 +718,8 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
         raise LosarFel(f"{namn}: {exc}") from exc
     natverk_dok = nv.som_dict(huvud.scenario_id)
     natverk_dok["scenarier"] = scen_rader
+    natverk_dok["dpc_tabell"] = bygg_dpc_tabell(habitat.flackar, betydelse)
+    natverk_dok["rivna_hus_rensade_celler"] = rensade
     natverk_dok["habitat_huvud"] = {
         "id": "kandidater", "klasser": list(nv.habitat_klasser), "antal_flackar": hr.antal_flackar,
         "total_habitat_area_m2": hr.total_habitat_area_m2, "ECA_m2": hr.eca_m2, "PC": hr.pc,

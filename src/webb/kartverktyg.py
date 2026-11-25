@@ -18,12 +18,14 @@ filer via `FragaTjanst`.
 
 from __future__ import annotations
 
+import http.client
 import io
 import ipaddress
 import json
 import math
 import re
 import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -71,6 +73,36 @@ _PROJEKT_ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,80}$")
 MAX_WMS_BYTES = 12 * 1024 * 1024
 MAX_CAPABILITIES_BYTES = 4 * 1024 * 1024
 WMS_TIDSGRANS_S = 20.0
+MAX_WMS_OMDIRIGERINGAR = 5
+
+
+class _PinnadHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS-anslutning som ansluter direkt till en redan validerad IP-adress (DNS-pinning)
+    men behåller ursprungligt värdnamn för TLS SNI och certifikatverifiering."""
+
+    def __init__(
+        self,
+        pinned_ip: str,
+        port: int,
+        *,
+        sni_host: str,
+        timeout: float = WMS_TIDSGRANS_S,
+        context: ssl.SSLContext | None = None,
+    ) -> None:
+        ssl_ctx = context or ssl.create_default_context()
+        super().__init__(
+            pinned_ip,
+            port=port,
+            timeout=timeout,
+            context=ssl_ctx,
+        )
+        self._pinned_ip = pinned_ip
+        self._sni_host = sni_host
+        self._ssl_ctx = ssl_ctx
+
+    def connect(self) -> None:
+        sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
+        self.sock = self._ssl_ctx.wrap_socket(sock, server_hostname=self._sni_host)
 MAX_BYGGNADER = 20_000
 MAX_BRYTLINJER = 20_000
 ORTOFOTO_MAX_PX = 2048
@@ -1451,16 +1483,32 @@ class KartverktygTjanst:
 
     # ------------------------------------------------------------------ WMS (proxy)
 
-    def _kontrollera_adress(self, url: str) -> urllib.parse.SplitResult:
+    @staticmethod
+    def _splitta_adress(url: str) -> urllib.parse.SplitResult:
         delar = urllib.parse.urlsplit(url.strip())
         if delar.scheme not in ("http", "https") or not delar.hostname:
             raise _fel("Adressen måste börja med http:// eller https://.", 400)
+        return delar
+
+    def _kontrollera_och_los_upp(self, url: str) -> tuple[urllib.parse.SplitResult, str, int]:
+        """Validerar URL, gör en enda DNS-uppslagning och kontrollerar alla returnerade IP-adresser.
+
+        Returnerar `(delar, pinnad_ip, port)` så att anslutningen kan pinnas direkt mot den
+        validerade IP-adressen utan ny DNS-uppslagning (skydd mot DNS-rebinding).
+        """
+        delar = self._splitta_adress(url)
+        assert delar.hostname is not None
+        port = delar.port or (443 if delar.scheme == "https" else 80)
         try:
-            traffar = socket.getaddrinfo(delar.hostname, delar.port or 80)
+            traffar = socket.getaddrinfo(delar.hostname, port, type=socket.SOCK_STREAM)
         except OSError as exc:
             raise _fel(f"Adressen {delar.hostname} går inte att nå: {exc}", 502) from exc
+        if not traffar:
+            raise _fel(f"Adressen {delar.hostname} gav inga IP-adresser.", 502)
+        pinnad_ip: str | None = None
         for t in traffar:
-            raw_ip = ipaddress.ip_address(t[4][0])
+            ip_str = str(t[4][0])
+            raw_ip = ipaddress.ip_address(ip_str)
             ip = (
                 raw_ip.ipv4_mapped
                 if isinstance(raw_ip, ipaddress.IPv6Address) and raw_ip.ipv4_mapped is not None
@@ -1469,33 +1517,78 @@ class KartverktygTjanst:
             if ip.is_loopback:
                 if not self.tillat_loopback:
                     raise _fel("Adresser på den här datorn är inte tillåtna som underlag.", 400)
+                if pinnad_ip is None:
+                    pinnad_ip = ip_str
                 continue
-            if not ip.is_global:
+            if (
+                ip.is_private
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+                or not ip.is_global
+            ):
                 raise _fel("Den adressen är inte tillåten.", 400)
+            if pinnad_ip is None:
+                pinnad_ip = ip_str
+        assert pinnad_ip is not None
+        return delar, pinnad_ip, port
+
+    def _kontrollera_adress(self, url: str) -> urllib.parse.SplitResult:
+        delar, _, _ = self._kontrollera_och_los_upp(url)
         return delar
 
+    @staticmethod
+    def _host_header(hostname: str, scheme: str, port: int) -> str:
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        standard_port = 443 if scheme == "https" else 80
+        return host if port == standard_port else f"{host}:{port}"
+
     def _hamta(self, url: str, max_bytes: int) -> tuple[bytes, str]:
-        self._kontrollera_adress(url)
-        tjanst = self
-
-        class _Omdirigering(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-                tjanst._kontrollera_adress(newurl)  # noqa: SLF001
-                return super().redirect_request(req, fp, code, msg, headers, newurl)
-
-        oppnare = urllib.request.build_opener(_Omdirigering)
-        req = urllib.request.Request(url, headers={"User-Agent": "Floden-kartverktyg"})  # noqa: S310
-        try:
-            with oppnare.open(req, timeout=WMS_TIDSGRANS_S) as svar:  # noqa: S310
+        """Hämtar URL med DNS-pinning: ansluter direkt till validerad IP med korrekt Host/SNI."""
+        aktuell = url
+        for _ in range(MAX_WMS_OMDIRIGERINGAR + 1):
+            delar, pinnad_ip, port = self._kontrollera_och_los_upp(aktuell)
+            assert delar.hostname is not None
+            host_header = self._host_header(delar.hostname, delar.scheme, port)
+            sokvag = delar.path or "/"
+            if delar.query:
+                sokvag = f"{sokvag}?{delar.query}"
+            conn: http.client.HTTPConnection
+            if delar.scheme == "https":
+                conn = _PinnadHTTPSConnection(
+                    pinnad_ip, port, sni_host=delar.hostname, timeout=WMS_TIDSGRANS_S
+                )
+            else:
+                conn = http.client.HTTPConnection(pinnad_ip, port, timeout=WMS_TIDSGRANS_S)
+            try:
+                conn.request(
+                    "GET",
+                    sokvag,
+                    headers={"Host": host_header, "User-Agent": "Floden-kartverktyg"},
+                )
+                svar = conn.getresponse()
+                if svar.status in (301, 302, 303, 307, 308):
+                    plats = svar.getheader("Location")
+                    svar.read(0)
+                    if not plats:
+                        raise _fel(f"Tjänsten svarade med fel {svar.status}.", 502)
+                    aktuell = urllib.parse.urljoin(aktuell, plats)
+                    continue
+                if svar.status >= 400:
+                    raise _fel(f"Tjänsten svarade med fel {svar.status}.", 502)
                 data: bytes = svar.read(max_bytes + 1)
                 typ = svar.headers.get_content_type()
-        except urllib.error.HTTPError as exc:
-            raise _fel(f"Tjänsten svarade med fel {exc.code}.", 502) from exc
-        except (urllib.error.URLError, OSError, ValueError) as exc:
-            raise _fel(f"Tjänsten gick inte att nå: {exc}", 502) from exc
-        if len(data) > max_bytes:
-            raise _fel("Svaret från tjänsten är för stort.", 502)
-        return data, typ
+            except FlodenWebbFel:
+                raise
+            except (http.client.HTTPException, OSError, ValueError) as exc:
+                raise _fel(f"Tjänsten gick inte att nå: {exc}", 502) from exc
+            finally:
+                conn.close()
+            if len(data) > max_bytes:
+                raise _fel("Svaret från tjänsten är för stort.", 502)
+            return data, typ
+        raise _fel("För många omdirigeringar från tjänsten.", 502)
 
     @staticmethod
     def _lokalt(tag: str) -> str:
@@ -1504,7 +1597,7 @@ class KartverktygTjanst:
     def wms_lager(self, kropp: Mapping[str, Any]) -> dict[str, Any]:
         """GetCapabilities via servern: titel, version och lager med stödda koordinatsystem."""
         url = str(kropp.get("url", "")).strip()
-        delar = self._kontrollera_adress(url)
+        delar = self._splitta_adress(url)
         fraga = {
             k: v
             for k, v in urllib.parse.parse_qsl(delar.query, keep_blank_values=True)
@@ -1579,7 +1672,7 @@ class KartverktygTjanst:
             return query.get(namn, [standard])[0]
 
         url = q("url")
-        delar = self._kontrollera_adress(url)
+        delar = self._splitta_adress(url)
         lager = q("lager")
         if not lager:
             raise _fel("Lager saknas.", 400)

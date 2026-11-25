@@ -367,6 +367,22 @@ class Vy3dTjanst:
 
     # -- världen --------------------------------------------------------------------------
 
+    def _kontrollera_projekt(self, projekt: str) -> None:
+        """Kontrollerar projektbehörighet/existens innan cache eller data läses."""
+        self.kartverktyg._kravs_projekt(projekt)  # noqa: SLF001 - samma paket
+
+    def _projekt_for_korning(self, korning_id: str) -> str | None:
+        """Projektet som äger körningen (samma regel som `FlodenApiApp.projekt_for_korning`)."""
+        k = self.fragor.korning_eller_none(korning_id)
+        if k is not None and k.projekt_id:
+            return str(k.projekt_id)
+        demo = self.fragor.demo()
+        if demo.get("finns"):
+            for post in demo.get("delar", {}).values():
+                if isinstance(post, dict) and post.get("korning_id") == korning_id:
+                    return "demokvarteret"
+        return None
+
     def _bas_rutor(self, projekt: str) -> list[Ruta]:
         mallar = self.kartverktyg._kravs_projekt(projekt)  # noqa: SLF001 - samma paket
         # Den största basen (dagsljus: hela kvarteret) bär terrängen.
@@ -374,7 +390,7 @@ class Vy3dTjanst:
         return list(bas.rutor)
 
     def terrang(self, projekt: str) -> _Terrang:
-        self.kartverktyg._kravs_projekt(projekt)  # noqa: SLF001 - samma paket
+        self._kontrollera_projekt(projekt)
         with self._lock:
             terrang = self._terrang_per_projekt.get(projekt)
             if terrang is None:
@@ -451,21 +467,30 @@ class Vy3dTjanst:
                 [("z", q)],
             )
 
-        return self._cachad(f"terrang|{t.nyckel()}|{lod}|{tx}|{ty}", bygg)
+        return self._cachad(f"terrang|{projekt}|{t.nyckel()}|{lod}|{tx}|{ty}", bygg)
 
     # -- körningar och scenarier ------------------------------------------------------------
 
-    def _korning(self, korning_id: str) -> tuple[Any, dict[str, Any]]:
+    def _korning(
+        self, korning_id: str, projekt: str | None = None
+    ) -> tuple[Any, dict[str, Any]]:
+        if projekt is not None:
+            self._kontrollera_projekt(projekt)
         k = self.fragor._hamta(korning_id)  # noqa: SLF001 - samma paket
+        if projekt is not None:
+            agare = self._projekt_for_korning(korning_id)
+            if agare != projekt:
+                raise _fel(f"Okänd körning '{korning_id}'.", 404)
         return k, self.fragor._sammanstallning(k)  # noqa: SLF001
 
     def _scenariomappar(
         self, projekt: str, korning_id: str | None, scenario: str | None
     ) -> tuple[list[Path], str, str | None]:
         """(rutmappar, scenario-id, bas-id). Utan körning: projektets bas."""
+        self._kontrollera_projekt(projekt)
         if korning_id is None:
             return [Path(r.mapp) for r in self._bas_rutor(projekt)], "bas", None
-        k, s = self._korning(korning_id)
+        k, s = self._korning(korning_id, projekt)
         ordning = list(s["scenarier"])
         sid = scenario or ordning[0]
         if sid not in s["scenarier"]:
@@ -485,7 +510,7 @@ class Vy3dTjanst:
 
     def korningsinfo(self, projekt: str, korning_id: str) -> dict[str, Any]:
         """Vad en körning har att visa i 3D: scenarier, fasad, luft, buller och tidsserier."""
-        k, s = self._korning(korning_id)
+        k, s = self._korning(korning_id, projekt)
         lager, _ = self.fragor._lager(k, s)  # noqa: SLF001
         fasad: dict[str, set[str]] = {}
         doman: dict[str, list[str]] = {}
@@ -534,7 +559,7 @@ class Vy3dTjanst:
         for m in sorted(mappar + (bas_mappar or [])):
             h.update(str(m.name).encode())
             h.update(sha256_fil(m / "recept.json").encode())
-        nyckel = f"byggnader|{t.nyckel()}|{h.hexdigest()}|{sid}"
+        nyckel = f"byggnader|{projekt}|{t.nyckel()}|{h.hexdigest()}|{sid}"
 
         def bygg() -> bytes:
             return self._bygg_byggnader(t, mappar, bas_mappar, sid)
@@ -613,8 +638,10 @@ class Vy3dTjanst:
 
     # -- resultat på mark ------------------------------------------------------------------
 
-    def _lagerpost(self, korning_id: str, lager_id: str) -> tuple[Any, dict[str, Any]]:
-        k, s = self._korning(korning_id)
+    def _lagerpost(
+        self, korning_id: str, lager_id: str, projekt: str | None = None
+    ) -> tuple[Any, dict[str, Any]]:
+        k, s = self._korning(korning_id, projekt)
         lager, _ = self.fragor._lager(k, s)  # noqa: SLF001
         la = next((x for x in lager if x["id"] == lager_id), None)
         if la is None:
@@ -631,10 +658,12 @@ class Vy3dTjanst:
             v = np.where(np.asarray(tak, dtype=bool), np.float32(np.nan), v).astype(np.float32)
         return np.asarray(v, dtype=np.float32), fil
 
-    def varde_spann(self, korning_id: str, lager_id: str) -> tuple[float, float]:
-        k, la = self._lagerpost(korning_id, lager_id)
+    def varde_spann(
+        self, korning_id: str, lager_id: str, projekt: str | None = None
+    ) -> tuple[float, float]:
+        k, la = self._lagerpost(korning_id, lager_id, projekt)
         v, fil = self._varden(k, la)
-        nyckel = f"{fil}|{fil.stat().st_mtime_ns}|{fil.stat().st_size}"
+        nyckel = f"{projekt or ''}|{fil}|{fil.stat().st_mtime_ns}|{fil.stat().st_size}"
         with self._lock:
             if nyckel in self._spann:
                 return self._spann[nyckel]
@@ -648,7 +677,7 @@ class Vy3dTjanst:
         self, projekt: str, korning_id: str, lager_id: str, lod: int, tx: int, ty: int
     ) -> bytes:
         """Cellvärden för en ruta ur ett resultatlager; tak och saknade värden blir inget värde."""
-        k, la = self._lagerpost(korning_id, lager_id)
+        k, la = self._lagerpost(korning_id, lager_id, projekt)
         x0, y0, c = ruta_hornet(lod, tx, ty)
         u = la["utbredning"]
         s = rutstorlek_m(lod)
@@ -658,8 +687,11 @@ class Vy3dTjanst:
         st = fil.stat()
         takfil = fil.with_suffix(".tak.npy")
         tst = takfil.stat().st_mtime_ns if takfil.is_file() else 0
-        nyckel = f"mark|{korning_id}|{lager_id}|{st.st_mtime_ns}|{st.st_size}|{tst}|{lod}|{tx}|{ty}"
-        lo, hi = self.varde_spann(korning_id, lager_id)
+        nyckel = (
+            f"mark|{projekt}|{korning_id}|{lager_id}"
+            f"|{st.st_mtime_ns}|{st.st_size}|{tst}|{lod}|{tx}|{ty}"
+        )
+        lo, hi = self.varde_spann(korning_id, lager_id, projekt)
 
         def bygg() -> bytes:
             v, _ = self._varden(k, la)
@@ -720,11 +752,11 @@ class Vy3dTjanst:
     ) -> bytes:
         """VSC (procent) i K11-fasadpunkterna; med `jamfor` också skillnaden mot det scenariot."""
         t = self.terrang(projekt)
-        k, s = self._korning(korning_id)
+        k, s = self._korning(korning_id, projekt)
         if scenario not in s["scenarier"]:
             raise _fel(f"Körningen har inget scenario '{scenario}'.")
         e0, n0, z0 = self._origo(t)
-        nyckel = f"fasad|{t.nyckel()}|{korning_id}|{scenario}|{analys}|{jamfor}|{k.slut}"
+        nyckel = f"fasad|{projekt}|{t.nyckel()}|{korning_id}|{scenario}|{analys}|{jamfor}|{k.slut}"
 
         def bygg() -> bytes:
             efter = self._fasad_punkter(k, s, analys, scenario)
