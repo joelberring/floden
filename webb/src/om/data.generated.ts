@@ -97,7 +97,7 @@ export const OM: OmData = {
       ],
       "testat": [
         {
-          "text": "Testsvit grupp A (A1 till A13, syntetiska fall med känt svar) och Environment Agency-fallen EA1, EA2 och EA8A samt Hunters analytiska fall D1",
+          "text": "Testsvit grupp A (A1 till A13 och A5b, syntetiska fall med känt svar) och Environment Agency-fallen EA1, EA2 och EA8A samt Hunters analytiska fall D1",
           "kalla": {
             "text": "docs/VALIDERING.md",
             "href": "https://github.com/joelberring/floden/blob/main/docs/VALIDERING.md"
@@ -105,8 +105,8 @@ export const OM: OmData = {
         },
         {
           "text": "Hela facittestsviten för alla ämnen (`floden testsvit`), godkända fall",
-          "godkanda": 17,
-          "av": 17,
+          "godkanda": 18,
+          "av": 18,
           "kalla": {
             "text": "STATUS.md",
             "href": "https://github.com/joelberring/floden/blob/main/STATUS.md"
