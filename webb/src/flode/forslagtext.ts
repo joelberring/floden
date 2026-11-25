@@ -3,6 +3,7 @@
  * bruttoarea (en uppskattning, ingen beräkning), serverns kontroll och om förslaget är sparat.
  * Alla tal går genom `tal.ts`. Ingen DOM, så att texten går att testa.
  */
+import { yta, type Punkt } from "../karta/geom.ts";
 import { esc } from "../sidor.ts";
 import { formatera } from "../tal.ts";
 
@@ -82,4 +83,85 @@ export function sparStatus(i: SparIn): { typ: SparTyp; text: string } {
     return { typ: "sparat", text: `Sparat som ${i.sparatNamn}${i.tid ? ` kl. ${i.tid}` : ""} på den här datorn.` };
   }
   return { typ: "osparat", text: i.giltig === null ? "Osparade ändringar. Kontrollerar förslaget …" : "Osparade ändringar. Tryck Spara förslag." };
+}
+
+export interface MarkYtaIn {
+  /** Ritlagrets roll (enbart `"mark"` ingår; om utelämnad antas `"mark"`). */
+  roll?: string;
+  /** Öppen ring i SWEREF 99 18 00 (meter). Används om `yta_m2` inte anges direkt. */
+  punkter?: readonly Punkt[];
+  /** Färdigberäknad yta i m². */
+  yta_m2?: number;
+  egenskaper?: Record<string, unknown>;
+}
+
+export interface MarkVolym {
+  /** Summa av `yta_m2 * delta_m` för markytor med `delta_m > 0` (m³). */
+  fyllnad_m3: number;
+  /** Summa av `yta_m2 * |delta_m|` för markytor med `delta_m < 0` (m³, positivt tal). */
+  schakt_m3: number;
+  /** `fyllnad_m3 - schakt_m3` (m³). */
+  netto_m3: number;
+  /** Antal markytor med explicit `delta_m` som ingick i summan. */
+  antal_beraknade: number;
+  /** Antal markytor med absolut nivå (`niva_rh2000`) eller `lutning` som kräver serverns terrängmodell. */
+  ej_berakningsbara: number;
+}
+
+/**
+ * Deterministisk schakt- och fyllnadsvolym för ritade `mark`-ytor med explicit `delta_m`.
+ * Gissar aldrig för ytor med `niva_rh2000` eller `lutning` (de kräver serverns terrängmodell och räknas i `ej_berakningsbara`).
+ */
+export function beraknaMarkvolym(ytor: readonly MarkYtaIn[]): MarkVolym {
+  let fyllnad_m3 = 0;
+  let schakt_m3 = 0;
+  let antal_beraknade = 0;
+  let ej_berakningsbara = 0;
+
+  for (const y of ytor) {
+    if (y.roll !== undefined && y.roll !== "mark") continue;
+    const e = y.egenskaper ?? {};
+    const delta = e["delta_m"];
+    if (typeof delta === "number" && Number.isFinite(delta)) {
+      const area =
+        typeof y.yta_m2 === "number" && Number.isFinite(y.yta_m2) && y.yta_m2 >= 0
+          ? y.yta_m2
+          : y.punkter
+            ? yta(y.punkter)
+            : 0;
+      const v = area * delta;
+      if (v > 0) fyllnad_m3 += v;
+      else if (v < 0) schakt_m3 += -v;
+      antal_beraknade++;
+    } else {
+      const harNiva = typeof e["niva_rh2000"] === "number" && Number.isFinite(e["niva_rh2000"]);
+      const harLutning = Boolean(e["lutning"] && typeof e["lutning"] === "object");
+      if (harNiva || harLutning) ej_berakningsbara++;
+    }
+  }
+
+  return {
+    fyllnad_m3,
+    schakt_m3,
+    netto_m3: fyllnad_m3 - schakt_m3,
+    antal_beraknade,
+    ej_berakningsbara,
+  };
+}
+
+/** Kompakt formatering av schakt- och fyllnadsvolym via `../tal.ts`. */
+export function markvolymText(v: MarkVolym): string {
+  if (v.antal_beraknade === 0 && v.ej_berakningsbara === 0) return "";
+  const delar: string[] = [];
+  if (v.antal_beraknade > 0) {
+    const nettoPrefix = v.netto_m3 > 0 ? "+" : "";
+    delar.push(
+      `Fyllnad ${formatera(v.fyllnad_m3, 0)} m³ · Schakt ${formatera(v.schakt_m3, 0)} m³ · Netto ${nettoPrefix}${formatera(v.netto_m3, 0)} m³`,
+    );
+  }
+  if (v.ej_berakningsbara > 0) {
+    const n = formatera(v.ej_berakningsbara, 0);
+    delar.push(`${n} ${v.ej_berakningsbara === 1 ? "markyta" : "markytor"} med nivå/lutning kräver terrängmodell`);
+  }
+  return delar.join(" · ");
 }

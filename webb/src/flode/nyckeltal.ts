@@ -60,6 +60,35 @@ export interface EkologiLage {
   antal_flackar?: number | null;
 }
 
+export interface EkologiDpcPost {
+  flack_id: number;
+  area_m2?: number | null;
+  area_ha?: number | null;
+  effektiv_area_m2?: number | null;
+  centroid_e_m?: number | null;
+  centroid_n_m?: number | null;
+  dPC_procent?: number | null;
+  dPC_intra_procent?: number | null;
+  dPC_flux_procent?: number | null;
+  dPC_connector_procent?: number | null;
+  dpc_procent?: number | null;
+  dpc_intra?: number | null;
+  dpc_flux?: number | null;
+  dpc_connector?: number | null;
+}
+
+export interface EkologiFlaskhalsPost {
+  e_m: number;
+  n_m: number;
+  stromtathet: number;
+}
+
+export interface EkologiFlaskhalsar {
+  fore?: EkologiFlaskhalsPost[];
+  efter?: EkologiFlaskhalsPost[];
+  minsta_avstand_m?: number;
+}
+
 /** Det av `floden-ekologi/v1` som panelen visar. */
 export interface EkologiSvar {
   fore?: EkologiLage;
@@ -77,6 +106,85 @@ export interface EkologiSvar {
   resultat_etikett?: string | null;
   antaganden?: string[];
   intervall_typ?: string;
+  /** Sorterad dPC-tabell per habitatfläck ur `/api/analys/ekologi` (PR #126). */
+  dPC_efter?: EkologiDpcPost[];
+  /** Alternativt fältnamn från `bygg_dpc_tabell` (`area_ha`, `dpc_procent`, `dpc_intra`, ...). */
+  dpc_tabell?: EkologiDpcPost[];
+  /** Största flaskhalsar ur strömtätheten i SWEREF 99 18 00 (m). */
+  storsta_flaskhalsar?: EkologiFlaskhalsar | EkologiFlaskhalsPost[] | null;
+}
+
+export interface DpcTabellRad {
+  flack_id: string;
+  area: string;
+  dpc_procent: string;
+  intra: string;
+  flux: string;
+  connector: string;
+}
+
+export interface FlaskhalsPunkt {
+  e_m: number;
+  n_m: number;
+  stromtathet: number;
+  stromtathet_text: string;
+}
+
+/** Sorterade, färdigformaterade dPC-rader ur ekologisvaret (viktigaste fläcken först). */
+export function dpcTabellRader(e: EkologiSvar | null | undefined, maxRader = 5): DpcTabellRad[] {
+  const kalla = Array.isArray(e?.dPC_efter)
+    ? e.dPC_efter
+    : Array.isArray(e?.dpc_tabell)
+      ? e.dpc_tabell
+      : [];
+  if (kalla.length === 0 || maxRader <= 0) return [];
+
+  const dpcVarde = (r: EkologiDpcPost): number | null => nummer(r.dPC_procent ?? r.dpc_procent);
+
+  const sorterade = [...kalla].sort((a, b) => {
+    const da = dpcVarde(a);
+    const db = dpcVarde(b);
+    if (da !== null && db !== null && da !== db) return db - da;
+    if (da !== null && db === null) return -1;
+    if (da === null && db !== null) return 1;
+    return (nummer(a.flack_id) ?? 0) - (nummer(b.flack_id) ?? 0);
+  });
+
+  return sorterade.slice(0, maxRader).map((r) => {
+    const areaM2 = nummer(r.area_m2);
+    const areaHa = nummer(r.area_ha);
+    const areaText = areaM2 !== null ? yta(areaM2, 0) : areaHa !== null ? yta(areaHa * 10000, 0) : "–";
+    return {
+      flack_id: nummer(r.flack_id) === null ? "–" : formatera(r.flack_id, 0),
+      area: areaText,
+      dpc_procent: tal(dpcVarde(r), 1, "%"),
+      intra: tal(nummer(r.dPC_intra_procent ?? r.dpc_intra), 1, "%"),
+      flux: tal(nummer(r.dPC_flux_procent ?? r.dpc_flux), 1, "%"),
+      connector: tal(nummer(r.dPC_connector_procent ?? r.dpc_connector), 1, "%"),
+    };
+  });
+}
+
+/** Flaskhalspunkter i SWEREF 99 18 00 (m) ur ekologisvaret; tom lista när de saknas. */
+export function flaskhalsPunkter(e: EkologiSvar | null | undefined, lage: "efter" | "fore" = "efter"): FlaskhalsPunkt[] {
+  const s = e?.storsta_flaskhalsar;
+  if (!s) return [];
+  const lista = Array.isArray(s) ? s : (s[lage] ?? s.efter ?? s.fore ?? []);
+  if (!Array.isArray(lista)) return [];
+  const ut: FlaskhalsPunkt[] = [];
+  for (const p of lista) {
+    const em = nummer(p?.e_m);
+    const nm = nummer(p?.n_m);
+    const st = nummer(p?.stromtathet);
+    if (em === null || nm === null || st === null) continue;
+    ut.push({
+      e_m: em,
+      n_m: nm,
+      stromtathet: st,
+      stromtathet_text: formatera(st, 3),
+    });
+  }
+  return ut;
 }
 
 /** Signalart och källa på en rad, ur svaret; tom text när svaret saknar nätverk. */
