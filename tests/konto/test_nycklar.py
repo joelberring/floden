@@ -223,8 +223,8 @@ def test_inloggning_kravs_och_okand_typ_ger_404(miljo: Miljo) -> None:
         assert ut.anrop(metod, "/konto/nycklar/anthropic")[0] == 401
     assert ut.anrop("GET", "/konto/nycklar")[0] == 401
     webb, _ = _inloggad(miljo)
-    assert _las(webb, "/konto/nycklar/openai")[0] == 404
-    assert _skriv(webb, "PUT", "/konto/nycklar/openai", {"nyckel": ANTHROPIC})[0] == 404
+    assert _las(webb, "/konto/nycklar/okand-typ")[0] == 404
+    assert _skriv(webb, "PUT", "/konto/nycklar/okand-typ", {"nyckel": ANTHROPIC})[0] == 404
     assert (
         webb.anrop(
             "POST", "/konto/nycklar/anthropic", headers={"Origin": ORIGIN, **webb.csrf_headers()}
@@ -357,3 +357,44 @@ def test_gamla_lantmaterierader_visar_inte_slutet_av_losenordet(miljo: Miljo) ->
     with miljo.register.db.lasning() as c:
         rad = c.execute("SELECT slutar_pa FROM konto_nyckel WHERE typ = 'lantmateriet'").fetchone()
     assert rad["slutar_pa"] == ""
+
+
+def test_flera_ai_leverantorer_och_val_av_primar_ai(miljo: Miljo) -> None:
+    """Gemini och OpenAI kan sparas bredvid Anthropic; primär AI-leverantör kan väljas och bytas."""
+    _slå_på(miljo)
+    webb, konto_id = _inloggad(miljo)
+    forrad = miljo.adapter.nycklar
+    assert forrad is not None
+
+    # Innan någon AI-nyckel sparats är primar_ai None och försök att välja osparad nekas (400)
+    st, ov, _ = _las(webb, "/konto/nycklar")
+    assert st == 200 and ov["primar_ai"] is None
+    assert set(ov["ai_leverantorer"]) == {"anthropic", "gemini", "openai"}
+    st_fel, _ = _skriv(webb, "PUT", "/konto/nycklar/primar-ai", {"typ": "gemini"})
+    assert st_fel == 400
+
+    # Spara första AI-nyckeln (Gemini) -> blir automatiskt primär
+    gemini_nyckel = "AIzaSy-EXEMPEL-GEMINI-KEY-1234"
+    openai_nyckel = "sk-proj-EXEMPEL-OPENAI-KEY-5678"
+    assert _skriv(webb, "PUT", "/konto/nycklar/gemini", {"nyckel": gemini_nyckel})[0] == 200
+    assert forrad.primar_ai(konto_id) == "gemini"
+    assert forrad.las(konto_id, "gemini") == {"nyckel": gemini_nyckel}
+
+    # Spara Anthropic och OpenAI -> Gemini förblir primär tills användaren byter
+    assert _skriv(webb, "PUT", "/konto/nycklar/anthropic", {"nyckel": ANTHROPIC})[0] == 200
+    assert _skriv(webb, "PUT", "/konto/nycklar/openai", {"nyckel": openai_nyckel})[0] == 200
+    assert forrad.primar_ai(konto_id) == "gemini"
+
+    # Byt primär till OpenAI via API
+    st_byt, svar_byt = _skriv(webb, "PUT", "/konto/nycklar/primar-ai", {"typ": "openai"})
+    assert st_byt == 200 and svar_byt["primar_ai"] == "openai"
+    _, ov2, _ = _las(webb, "/konto/nycklar")
+    assert ov2["primar_ai"] == "openai"
+
+    # Ta bort primär nyckel (OpenAI) -> faller tillbaka automatiskt till kvarvarande sparad nyckel
+    assert _skriv(webb, "DELETE", "/konto/nycklar/openai")[0] == 200
+    assert forrad.primar_ai(konto_id) in ("anthropic", "gemini")
+
+    # Ogiltig AI-leverantör ger 400
+    assert _skriv(webb, "PUT", "/konto/nycklar/primar-ai", {"typ": "okand-ai"})[0] == 400
+

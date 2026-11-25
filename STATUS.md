@@ -7,6 +7,15 @@ Gjort (bara dokument; ingen kod, `BESLUT.md` och kontrakt orörda): (1) Nytt avs
 Mätt: `ruff check tools` rent; `pytest -q tests/gemensamt` 104 godkända. Lägesbilden är kontrollerad mot koden på punkter som kan avgöras billigt (moduler och tester finns, `vatten.dynamik` skriver bara `max_djup` medan `DynamikResultat` har ankomsttider, `vatten.2d` skriver hastighet och ankomsttid, `docs/benchmark/jamforelse/` finns inte, luft har ingen GPU-väg, `fragor`-mappningen); övriga rader bygger på STATUS-posterna.
 Öppet: (1) Joels observation om rutor med 46–85 % NaN i `goteborg-test` är inte reproducerad eller belagd i repot; uppdrag 6 utgår från den. (2) Webbens och OM-sidans plan har inte ändrats utöver testsviten; lägg till punkter i `data/om/floden.toml` om uppdragen startas. (3) Uppdrag 8 (J1) startas bara om Joel bekräftar J1.
 Nästa: Joel väljer Neon-uppdrag (förslag första omgång: 5, 1, 6).
+## 2026-11-25 – Flera AI-API-nycklar, primär AI-väljare och MCP-klientväljare (grenen `nycklar-ai-och-mcp`) (agent)
+Gjort (grenen `nycklar-ai-och-mcp`; additiva API-/databasändringar, `BESLUT.md` orörd):
+- **Backend (`src/konto/databas.py` `SCHEMA_V7`, `src/konto/nycklar.py`, `src/konto/kontoapi.py`):** Lade till `gemini` (Google Gemini) och `openai` bredvid `anthropic` i `NYCKELTYPER` (med `kategori: "ai"` vs `"data"`), kolumnen `konto.primar_ai` samt ändpunkten `PUT /konto/nycklar/primar-ai`. Första sparade AI-nyckeln blir automatiskt primär; vid borttagning faller `primar_ai` tillbaka till nästa sparade AI-nyckel.
+- **Webbklient (`webb/src/types.ts`, `webb/src/api.ts`, `webb/src/kontosidor-html.ts`, `webb/src/kontosidor.ts`):** Ny sektion **Aktiv AI-leverantör** på `#/nycklar` för att med ett klick välja primär leverantör bland sparade nycklar, samt **MCP-klientväljare** (**Antigravity**, **Claude Code**, **Codex**, **HTTP / API**) under *MCP-token* med färdiga kopieringsblock och stöd för flera samtidiga tokens.
+- **Dokumentation (`docs/MCP.md`):** Lade till anslutningsguide för Antigravity (`~/.gemini/config/mcp_config.json`, Streamable HTTP och lokal stdio).
+Mätt: `pytest tests/konto/`: **166 passed** (nytt test `test_flera_ai_leverantorer_och_val_av_primar_ai`). `node --test webb/src/kontosidor.test.ts`: **18 passed** (nytt test för `mcpKonfig` och `primar_ai`). `ruff check` (5 filer) och `mypy` (3 filer): **0 fel**.
+Öppet: Serverns framtida egna AI-körningar (när sådana kopplas in) läser kontots primära nyckel via `forrad.primar_ai(konto_id)` + `forrad.las(konto_id, typ)`.
+Nästa: Uppdatera servern när PR:en är inne i `main`, skapa en MCP-token för Antigravity på `#/nycklar` och klistra in JSON-blocket i `~/.gemini/config/mcp_config.json`.
+
 ## 2026-11-25 – Vattenytor ur baskartans strandlinjer (grenen `goteborg-vattenytor`) (agent)
 Gjort (inga kontraktsändringar, `BESLUT.md` orörd, bara öppna data/CC0):
 - `[filpaket.baskarta.vatten]` (valfritt, strikt validerat i `src/kommuner/konfig.py`: `lager_monster`, `objekt_falt`, `objekt_monster`, `marginal_m` (0,2), `max_avstand_m` (2,0)); aktiverat i `data/kommuner/goteborg.toml` (`hydrografi_l`, `typ` Strandlinje).

@@ -72,7 +72,10 @@ class NyckelTyp:
     beskrivning: str
     falt: tuple[NyckelFalt, ...]
     identifierande: str  # fältet vars fyra sista tecken visas efter att nyckeln sparats
+    kategori: str = "data"  # "data" eller "ai"
 
+
+AI_NYCKELTYPER: tuple[str, ...] = ("anthropic", "gemini", "openai")
 
 NYCKELTYPER: dict[str, NyckelTyp] = {
     "lantmateriet": NyckelTyp(
@@ -102,16 +105,38 @@ NYCKELTYPER: dict[str, NyckelTyp] = {
         ),
         # Användarnamnet eller nyckeln visas som "slutar på ...", inte lösenordet (nya sparningar).
         identifierande="klient_id",
+        kategori="data",
     ),
     "anthropic": NyckelTyp(
         id="anthropic",
         namn="Anthropic (Claude)",
         beskrivning=(
-            "API-nyckel till Claude, sparad för framtida AI-körningar på servern. Ingen kod "
-            "använder den än."
+            "API-nyckel till Claude, sparad krypterad för AI-körningar på servern."
         ),
         falt=(NyckelFalt("nyckel", "API-nyckel"),),
         identifierande="nyckel",
+        kategori="ai",
+    ),
+    "gemini": NyckelTyp(
+        id="gemini",
+        namn="Google Gemini",
+        beskrivning=(
+            "API-nyckel till Google Gemini API (aistudio.google.com), sparad krypterad för "
+            "AI-körningar på servern."
+        ),
+        falt=(NyckelFalt("nyckel", "API-nyckel"),),
+        identifierande="nyckel",
+        kategori="ai",
+    ),
+    "openai": NyckelTyp(
+        id="openai",
+        namn="OpenAI",
+        beskrivning=(
+            "API-nyckel till OpenAI API, sparad krypterad för AI-körningar på servern."
+        ),
+        falt=(NyckelFalt("nyckel", "API-nyckel"),),
+        identifierande="nyckel",
+        kategori="ai",
     ),
 }
 
@@ -217,6 +242,7 @@ class NyckelForrad:
         ut: dict[str, Any] = {
             "typ": t.id,
             "namn": t.namn,
+            "kategori": t.kategori,
             "beskrivning": t.beskrivning,
             "falt": [
                 {
@@ -250,6 +276,50 @@ class NyckelForrad:
             ).fetchone()
         return self._status(t, rad)
 
+    def primar_ai(self, konto_id: str) -> str | None:
+        """Kontots aktiva/primära AI-leverantör (bara om en nyckel är sparad för den)."""
+        with self._register.db.lasning() as c:
+            rad = c.execute("SELECT primar_ai FROM konto WHERE id = ?", (konto_id,)).fetchone()
+            sparade = {
+                str(r["typ"])
+                for r in c.execute(
+                    "SELECT typ FROM konto_nyckel WHERE konto_id = ?", (konto_id,)
+                ).fetchall()
+            }
+        vald = str(rad["primar_ai"]) if (rad and rad["primar_ai"]) else None
+        if vald in AI_NYCKELTYPER and vald in sparade:
+            return vald
+        for typ_id in AI_NYCKELTYPER:
+            if typ_id in sparade:
+                return typ_id
+        return None
+
+    def satt_primar_ai(self, konto_id: str, typ_id: str | None) -> str | None:
+        """Sätter kontots aktiva/primära AI-leverantör (kräver att nyckeln är sparad)."""
+        if typ_id is not None and typ_id not in AI_NYCKELTYPER:
+            raise NyckelForradFel(
+                "ogiltig-ai-leverantor",
+                f"Ogiltig AI-leverantör. Tillåtna: {', '.join(AI_NYCKELTYPER)}",
+            )
+        with self._register.db.transaktion() as c:
+            if c.execute("SELECT 1 FROM konto WHERE id = ?", (konto_id,)).fetchone() is None:
+                raise NyckelForradFel("okant-konto", "Okänt konto", 404)
+            if typ_id is not None:
+                har = c.execute(
+                    "SELECT 1 FROM konto_nyckel WHERE konto_id = ? AND typ = ?",
+                    (konto_id, typ_id),
+                ).fetchone()
+                if har is None:
+                    raise NyckelForradFel(
+                        "nyckel-saknas",
+                        "Spara en API-nyckel för leverantören innan den väljs som primär.",
+                    )
+            c.execute("UPDATE konto SET primar_ai = ? WHERE id = ?", (typ_id, konto_id))
+            self._register.notera(
+                c, "primar-ai-andrad", konto_id, f"typ={typ_id or 'ingen'}"
+            )
+        return typ_id
+
     def oversikt(self, konto_id: str) -> dict[str, Any]:
         with self._register.db.lasning() as c:
             rader = {
@@ -259,11 +329,19 @@ class NyckelForrad:
                     (konto_id,),
                 ).fetchall()
             }
+            konto_rad = c.execute(
+                "SELECT primar_ai FROM konto WHERE id = ?", (konto_id,)
+            ).fetchone()
+        vald = str(konto_rad["primar_ai"]) if (konto_rad and konto_rad["primar_ai"]) else None
+        if vald not in AI_NYCKELTYPER or vald not in rader:
+            vald = next((aid for aid in AI_NYCKELTYPER if aid in rader), None)
         return {
             "paslagen": self.paslagen,
             "orsak": self._orsak,
             "text": None if self.paslagen else self.avstangd_text(),
             "typer": [self._status(t, rader.get(t.id)) for t in NYCKELTYPER.values()],
+            "primar_ai": vald,
+            "ai_leverantorer": list(AI_NYCKELTYPER),
         }
 
     # --- skriva ------------------------------------------------------------------------------
@@ -332,6 +410,14 @@ class NyckelForrad:
                 " sparad = excluded.sparad",
                 (konto_id, t.id, krypterad, slutar_pa, nu),
             )
+            if t.id in AI_NYCKELTYPER:
+                rad_p = c.execute(
+                    "SELECT primar_ai FROM konto WHERE id = ?", (konto_id,)
+                ).fetchone()
+                if rad_p is not None and not rad_p["primar_ai"]:
+                    c.execute(
+                        "UPDATE konto SET primar_ai = ? WHERE id = ?", (t.id, konto_id)
+                    )
             self._register.notera(c, "nyckel-sparad", konto_id, f"typ={t.id}")
         return self.status(konto_id, t.id)
 
@@ -344,6 +430,21 @@ class NyckelForrad:
                 "DELETE FROM konto_nyckel WHERE konto_id = ? AND typ = ?", (konto_id, t.id)
             ).rowcount
             if n:
+                if t.id in AI_NYCKELTYPER:
+                    rad_p = c.execute(
+                        "SELECT primar_ai FROM konto WHERE id = ?", (konto_id,)
+                    ).fetchone()
+                    if rad_p is not None and rad_p["primar_ai"] == t.id:
+                        kvar = {
+                            str(r["typ"])
+                            for r in c.execute(
+                                "SELECT typ FROM konto_nyckel WHERE konto_id = ?", (konto_id,)
+                            ).fetchall()
+                        }
+                        nasta = next((aid for aid in AI_NYCKELTYPER if aid in kvar), None)
+                        c.execute(
+                            "UPDATE konto SET primar_ai = ? WHERE id = ?", (nasta, konto_id)
+                        )
                 self._register.notera(c, "nyckel-borttagen", konto_id, f"typ={t.id}")
         return bool(n)
 
