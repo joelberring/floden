@@ -73,7 +73,7 @@ export function projektLaddat(huvud: HTMLElement, rutt: FlodeRutt): void {
 }
 
 /**
- * Sida utanför flödet (Frågekatalog, Om beräkningarna, Nycklar ...): samma sidhuvud som flödet, utan
+ * Sida utanför flödet (Frågekatalog, Om Floden, Nycklar ...): samma sidhuvud som flödet, utan
  * stegrad, med sidans namn efter ordmärket. `bygg` ritar innehållet och ger en Avslutbar om sidan
  * har något att städa upp; utan den är innehållet redan ritat av anroparen.
  */

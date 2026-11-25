@@ -190,7 +190,7 @@ sänka, byggt med markmodellens egna byggare. Inga verkliga data och inga verkli
 4. **Läs av.** Värdena för före, efter och skillnad står under kartan i steg 4. Grå ytor är byggnader
    (tak, inte mark).
 5. **Frågekatalogen** (`#/fragor`, kontomenyn). Alla frågor per ämne med samma statusetiketter som steg 3; inget körs här, frågorna väljs i steg 3. Den gamla Utredningsfrågor-sidan är borttagen (`floden fraga kor` kör frågefiler).
-6. **Om beräkningarna.** Modulerna, och *Kontroll av beräkningarna*: syntetiska fall med känt svar som
+6. **Om Floden** (`#/om`, genereras ur `data/om/floden.toml`, se `docs/OM-FLODEN.md`). Vad Floden kan nu, planen och jämförelsen med andra verktyg; därunder modulerna, och *Kontroll av beräkningarna*: syntetiska fall med känt svar som
    modellen prövas mot.
 
 **Inloggning med Google** är avslagen som standard och då visas varken förvaltningssida eller

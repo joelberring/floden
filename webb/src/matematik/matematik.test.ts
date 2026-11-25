@@ -26,7 +26,7 @@ test("routern kräver inloggning före sidan och ritar den med flödets sidhuvud
   assert.match(k, /visaMatematik\(sidhuvudEl, vySida\)/);
 });
 
-test("kontomenyn har länken bredvid Om beräkningarna", () => {
+test("kontomenyn har länken bredvid Om Floden", () => {
   for (const lage of [
     { lage: "av" } as KontoLage,
     { lage: "in", namn: "A B", epost: "a@x.se", medlemskap: [], projekt: [] } as KontoLage,
