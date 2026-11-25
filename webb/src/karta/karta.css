@@ -219,3 +219,6 @@
 .rl-stangt { color: var(--fl-fel, #a11); }
 .rl-ny { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .rl-ny input[type="text"] { flex: 1 1 8em; min-width: 6em; }
+
+/* Etikett med volym på en sänka (analyslager, steg 4) */
+.analys-etikett { padding: 1px 5px; border-radius: 4px; background: rgba(255, 255, 255, 0.85); color: #0b2b4a; font-size: 11px; font-weight: 600; white-space: nowrap; pointer-events: none; }

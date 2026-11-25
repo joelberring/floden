@@ -116,6 +116,8 @@ export interface KorningSvar {
 export type Teckenforklaring =
   | { typ: "kontinuerlig"; min: number; max: number; stopp: string[] }
   | { typ: "klasser"; klasser: Array<{ fran: number; farg: string; etikett: string }> }
+  /** Heltalsklasser (vindkomfort, kontrollflaggor): en färg per klassvärde. */
+  | { typ: "kategorier"; kategorier: Array<{ varde: number; farg: string; etikett: string }> }
   | {
       typ: "divergerande";
       min: number;
@@ -134,6 +136,12 @@ export interface LagerPost {
   roll: string;
   typ: "bas" | "scenario" | "skillnad";
   primar: boolean;
+  /** Ämnet lösaren hör till: vatten, geometri, dagsljus, ekologi, luft, buller. */
+  doman?: string;
+  /** Kontrollager (avskuren horisont, byggnad utan känd höjd, slutet område): visar osäkerhet, inte ett mått. */
+  kontroll?: boolean;
+  /** Skillnaden är efter minus före av de visade lagren (frågan jämförde inte rollen själv); ingen GeoTIFF. */
+  harledd?: boolean;
   enhet: string;
   farg: string;
   skala: { min: number; max: number };

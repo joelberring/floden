@@ -2698,6 +2698,10 @@ class FlodenApiApp:
         if verb == "GET" and len(delar) == 3 and delar[1] == "lager" and delar[2].endswith(".png"):
             png = self.fragor.lager_png(delar[0], delar[2].removesuffix(".png"))
             return _binart_svar(200, png, "image/png")
+        if verb == "GET" and len(delar) == 4 and delar[1] == "vektor":
+            return _json_svar(
+                200, self.fragor.vektor(delar[0], delar[2], delar[3].removesuffix(".json"))
+            )
         if verb == "GET" and len(delar) >= 3 and delar[1] == "fil":
             innehall, typ = self.fragor.fil(delar[0], "/".join(delar[2:]))
             return _binart_svar(200, innehall, typ)

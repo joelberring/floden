@@ -241,3 +241,5 @@ sedan inget `/oauth/token`, och varken "kod utfärdad" eller "godkännande avvis
 tas upp: logga vart 302:an pekar (felkod eller kod, aldrig koden själv) och prova hela flödet mot en lokal
 Claude-liknande klient. Rättat hittills: Origin claude.ai (#60), Origin null (#61), okänt scope (#62),
 saknade formulärfält (#64).
+
+- **Alla analyser som kartlager (steg 4, Visa)** – `klar` 2026-11-25. Rest: Luft-flik, buller som analyslösare, dynamikens tid/hastighet som utdata (se STATUS).

@@ -268,3 +268,33 @@ Joel provade `goteborg-test@v2` (Haga) på servern: "jättemycket text i vänste
 - **Spara:** knappen "Spara förslag" med namn under namnfältet, och en statusrad som säger Inget att spara än / Osparade ändringar / Sparar / Sparat som X kl. HH:MM / Kunde inte spara: skälet / förslaget har fel. "Välj frågor" sparar först; går det inte stannar man kvar, ser skälet, och länken blir "Gå vidare utan att spara". Den automatiska sparningen finns kvar.
 - **Fel som provet hittade:** Resultat (steg 4) gav "Okänt projekt" för varje geografiprojekt (projektets färdiga exempel finns bara för demokvarteret; 404 därifrån är nu inget fel). Klientfilerna skickade `Referrer-Policy: same-origin`, så OSM hade inte fått någon Referer. `connect-src` (förut `default-src 'self'`) blockerade `blob:`/`data:`-hämtningar som MapLibre gör.
 - **Kvar:** OSM-plattor har inte hämtats på riktigt (sandlådan nådde inte tile.openstreetmap.org); provet byter plattorna mot påhittade bilder och kontrollerar adress, Referer, zoom, antal och att inget hämtas när lagret är släckt. Höjdkurvorna är en bild över hela projektet (högst 2048 px nedsamplat, ekvidistans ur höjdspannet), inte plattor: ett mycket stort projekt får grövre kurvor.
+
+## Analyser i kartan (2026-11-25)
+
+Fråga: kan man se alla analyser visuellt, till exempel för vatten? Inventering av vad Floden räknar och vad steg 4 visade före och efter
+grenen `alla-analyser-visuellt`. "Bara MCP" betyder att det fanns i körningens filer eller i MCP-verktygen men inte som val i webben.
+
+| Analys | Roll | Enhet | Visades | Visning nu |
+| --- | --- | --- | --- | --- |
+| Skyfall, statisk fyllning och dynamik | `max_djup` | m | ja | oförändrad (klasser i blått) |
+| Marklutning (`geometri.lutning`) | `lutning` | grader | bara MCP | val under Skyfall, sekventiell skala |
+| Sänkgrafen: sänkor med kapacitet | (graf, ingen roll) | m³, m, m² | nej (steg 2: skarvfynd) | vektorlager "Sänkor med volym": yta vid fullt, djupklass, etikett med m³ |
+| Sänkgrafen: flödesvägar, tillrinning | (graf) | m, %, min | nej | vektorlager "Flödesvägar" färgade efter gångtid; avrinningsområdet står i sänkans text |
+| Bifurkation (K36) | känsliga överfall | m, m³ | ja ("Visa osäkerhet") | oförändrad |
+| Intervall vatten (K40), SVF (K41) | spann | m, andel | ja, som tal `[min; max]` | oförändrad; inget kartlager (svaret är tal per projekt, inget raster) |
+| Skarvkontroll (K49) | fynd | m | ja, i steg 2 | oförändrad |
+| Dynamikens hastighet och ankomsttid | finns inte | | nej | lämnas inte av modellen: dynamiken är fyll-spill i sänkgrafen och ger bara `max_djup` (tid till överfall per sänka finns i nodresultatet men skrivs inte till körningen). Flödesvägens gångtid visas. Kräver ny lösarversion om det ska bli ett raster |
+| Dagsljus: soltimmar | `soltimmar` | h | ja | oförändrad |
+| Dagsljus: himmelsandel | `svf` | andel | bara MCP | val under Sol, med före, efter och skillnad |
+| Dagsljus: VSC per fasadpunkt | `vsc` (CSV) | % | bara 3D-fasad | vektorlager "Fasadpunkter (VSC)" i 2D |
+| Dagsljus: horisontprofil | `horisont` | grader | bara MCP | inte ett kartlager (en profil per cell) |
+| Dagsljus: kontroller | `trunkering`, `standardhojd` | flagga | bara MCP | kontrollager under Sol (klasser, utan skillnad) |
+| Ekologi: strömtäthet | `stromtathet` | | ja | oförändrad |
+| Ekologi: känslighet för motstånd | `kansighet` | | bara MCP | val under Ekologi, med skillnad (efter minus före) |
+| Luft: vindkomfort, vindfara, förstärkning | `komfortklass`, `faraklass`, `forstarkning` | klass, gånger | bara MCP | skalor och val finns; steg 4 har ingen Luft-flik, så de syns när en luftvy kopplas in |
+| Luft: halt, MKN | `arsmedel`, `mkn` | µg/m³ | bara MCP | `arsmedel`: skala finns (som ovan); `mkn` är JSON och inget kartlager |
+| Buller (Nord2000) | | dB | | ingen lösare i `karna` än: inget att visa; läggs till när buller är en analyslösare |
+
+Skalor: `max_djup` i vattenklasser, soltimmar och himmelsandel i cividis, hastighet, tid, strömtäthet och luft i egna skalor som ändrar ljushet åt ett håll,
+heltalsklasser en färg per klass, skillnad blå (minskning) och röd (ökning). Skillnad för roller som frågan inte jämför själv är efter minus före av de visade
+lagren (märks i texten); kontrollager får ingen skillnad.

@@ -16,7 +16,7 @@ import { markhojdAvlasning } from "./markhojd.ts";
 import { monteraOsmKryss } from "./osmval.ts";
 import type { AvlasningSvar, LagerPost, ResultatSvar } from "../fragor-typer.ts";
 import { hamtaBifurkationer, hamtaProjektInfo, hamtaSvfIntervall, hamtaVattenIntervall, type BifurkationsPunktPost, type ProjektInfo } from "../karta/kartapi.ts";
-import { Kartmotor, type RasterLager, type VyByggnad } from "../karta/kartmotor.ts";
+import { Kartmotor, type AnalysVektor, type RasterLager, type VyByggnad } from "../karta/kartmotor.ts";
 import { LagerLista } from "../karta/lager.ts";
 import { OVERFALL_LAGER_ID, overfallLager, ritadeOverfall } from "../karta/overfall.ts";
 import { PlanDok } from "../karta/plandok.ts";
@@ -30,6 +30,7 @@ import { formatera, formateraHogst } from "../tal.ts";
 import type { ProjektSvar, ProjektVy } from "../types.ts";
 import { meterPerPxFranZoom, zoomFranMeterPerPx } from "../vy3d/koord.ts";
 import { flodeAdress } from "./adress.ts";
+import { forvaldNyckel, lagerVal, valText, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type LagerVal, type VektorSlag, type VektorSvar } from "./analyslager.ts";
 import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
@@ -64,6 +65,8 @@ export function teckenHtml(l: LagerPost, rubrik: string): string {
   } else if (tf.typ === "kontinuerlig") {
     band = `<span class="flode-band" style="background:linear-gradient(90deg,${tf.stopp.join(",")})"></span>
       <span class="flode-bandtext"><span>${f(tf.min)}</span><span>${f(tf.max)}${enhet}</span></span>`;
+  } else if (tf.typ === "kategorier") {
+    band = `<span class="flode-klasser">${tf.kategorier.map((k) => `<span><i style="background:${k.farg}"></i>${formateraHogst(k.varde, 0)}${k.etikett ? ` (${esc(k.etikett)})` : ""}</span>`).join("")}</span>`;
   } else {
     band = `<span class="flode-klasser">${tf.klasser.map((k) => `<span><i style="background:${k.farg}"></i>från ${f(k.fran)}${enhet}</span>`).join("")}</span>`;
   }
@@ -79,6 +82,13 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   let amne: Amne = "vatten";
   let kalla: Kalla = "projekt";
   let vy: ProjektVy | null = null;
+  /** Vyn som valts ur listan; `vy` är samma vy med lagren för den roll som valts i "Visa". */
+  let vyBas: ProjektVy | null = null;
+  let valtNyckel: string | null = null;
+  const vektorPa = new Set<VektorSlag>();
+  const vektorCache = new Map<string, VektorSvar>();
+  let vektorFel: string | null = null;
+  let vektorSeq = 0;
   let r: ResultatSvar | undefined;
   let mark: MarkSvar | null = null;
   let ekologi: EkologiSvar | null = null;
@@ -157,7 +167,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const fasad = lagerLista.hamta("3d:fasad");
     const fasadTand = lage === "3d" && Boolean(fasad?.synlig) && !fasad?.ejTillgangligt;
     const tecken = el("rs-tecken");
-    tecken.hidden = (!tl || !vy) && !fasadTand;
+    const vektorHtml = lage === "3d" ? [] : aktivaVektorer().map((v) => vektorTeckenHtml(v));
+    tecken.hidden = (!tl || !vy) && !fasadTand && vektorHtml.length === 0;
     let html = "";
     if (tl && vy) {
       const namn = lage === "skillnad" ? `Skillnad i ${tl.etikett.toLowerCase()}` : tl.etikett;
@@ -165,7 +176,64 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       html = teckenHtml(tl, namn) + takKryss;
     }
     if (fasadTand) html += fasadForklaringHtml("skillnad", Boolean(skill));
+    html += vektorHtml.map((x) => `<div class="flode-vektortecken">${x}</div>`).join("");
     tecken.innerHTML = html;
+  };
+
+  // ---------- Vektorlager (sänkor, flödesvägar, fasadpunkter) ----------
+  const vektorNyckel = (slag: VektorSlag): string | null => {
+    const sc = r && vy ? vektorScenario(r.lager, vy, lage) : null;
+    return sc && vy ? `${vy.korning_id}|${sc}|${slag}` : null;
+  };
+  const tillgangligaVektorer = (): VektorSlag[] => (r ? vektorVal(amne, r.antaganden.analyser).map((x) => x.slag) : []);
+  /** De tända vektorlagren som finns hämtade för läget som visas. */
+  const aktivaVektorer = (): VektorSvar[] =>
+    tillgangligaVektorer()
+      .filter((s) => vektorPa.has(s))
+      .map((s) => vektorCache.get(vektorNyckel(s) ?? ""))
+      .filter((x): x is VektorSvar => Boolean(x));
+  const sattVektorer = (): void => {
+    const alla = lage === "3d" ? [] : aktivaVektorer().map(vektorTillKarta);
+    const ut: AnalysVektor | null = alla.length === 0 ? null : { fc: { type: "FeatureCollection", features: alla.flatMap((x) => x.fc.features) }, etiketter: alla.flatMap((x) => x.etiketter) };
+    a?.settAnalysVektor(ut);
+    b?.settAnalysVektor(null);
+  };
+  /** Hämtar de tända vektorlagren för läget som visas (en gång per körning, scenario och slag) och ritar om. */
+  const laddaVektorer = async (): Promise<void> => {
+    const nr = ++vektorSeq;
+    vektorFel = null;
+    const behov = tillgangligaVektorer().filter((s) => vektorPa.has(s));
+    await Promise.all(
+      behov.map(async (slag) => {
+        const nyckel = vektorNyckel(slag);
+        if (!nyckel || vektorCache.has(nyckel) || !vy) return;
+        const [kid, sc] = nyckel.split("|") as [string, string];
+        try {
+          vektorCache.set(nyckel, await lasJson<VektorSvar>(vektorUrl(kid, sc, slag)));
+        } catch (e) {
+          vektorFel = `Lagret gick inte att hämta: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }),
+    );
+    if (nr !== vektorSeq || avslutad) return;
+    sattVektorer();
+    ritaTecken();
+    uppdateraVisaText();
+  };
+  const rollerNu = (): LagerVal[] => (vyBas && r ? lagerVal(r.lager, vyBas, amne) : []);
+  const tillampaVal = (): ProjektVy | null => (vyBas ? vyMedVal(vyBas, rollerNu().find((x) => x.nyckel === valtNyckel) ?? null) : null);
+  const visaText = (): string => {
+    const v = rollerNu().find((x) => x.nyckel === (valtNyckel ?? (vyBas ? forvaldNyckel(rollerNu(), vyBas) : null)));
+    return [v && vyBas ? valText(v, lage, Boolean(vyBas.lage_idag)) : "", vektorFel ?? ""].filter(Boolean).join(" ");
+  };
+  const uppdateraVisaText = (): void => {
+    const t2 = rot.querySelector("#rs-visa-text");
+    if (t2) t2.textContent = visaText();
+  };
+  const visaBlock = (): string => {
+    if (!r || !vyBas) return "";
+    const roller = rollerNu();
+    return visaHtml(roller, valtNyckel ?? forvaldNyckel(roller, vyBas), vektorVal(amne, r.antaganden.analyser), vektorPa, visaText());
   };
 
   const synkaKarta = (): void => {
@@ -182,7 +250,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const byggStil = bas.byggnadStil();
     // Med värden på tak tonas byggnadsfotavtrycken ned så att värdena syns.
     const bStil = { synlig: byggStil.synlig, opacitet: medVarden ? byggStil.opacitet * 0.25 : byggStil.opacitet };
-    const notis = lage !== "3d" && !visaTak && visad?.tak_maskat ? "Ljusgrå yta: tak, inte mark" : null;
+    const saknarSkillnad = lage === "skillnad" && !skill && Boolean(fore) && !vy?.lage_idag;
+    const notis = saknarSkillnad ? "Ingen skillnad för det här lagret: välj Före eller Efter" : lage !== "3d" && !visaTak && visad?.tak_maskat ? "Ljusgrå yta: tak, inte mark" : null;
     a.settByggnadStil(bStil);
     a.settNotis(notis);
     a.settOverfall(overfall);
@@ -207,9 +276,12 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       b.avsluta();
       b = null;
     }
+    sattVektorer();
     ritaTecken();
     uppdateraAvlasning(null);
+    uppdateraVisaText();
     vy3d?.uppdatera?.();
+    if (vektorPa.size > 0) void laddaVektorer();
   };
   const baslager = (): RasterLager[] => basLagerListan;
   let basLagerListan: RasterLager[] = [];
@@ -435,7 +507,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     ].filter(Boolean);
     const kallVal = kallKnappar.length > 1 ? `<div class="flode-segment liten" role="group" aria-label="Vilket resultat">${kallKnappar.join("")}</div>` : "";
     if (kalla === "lage") {
-      inne.innerHTML = `${kallVal}${vyer.length > 1 ? `<div class="flode-chips liten" role="group" aria-label="Analys">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.mattnamn)}</button>`).join("")}</div>` : ""}
+      inne.innerHTML = `${kallVal}${visaBlock()}${vyer.length > 1 ? `<div class="flode-chips liten" role="group" aria-label="Analys">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.mattnamn)}</button>`).join("")}</div>` : ""}
         <h1 class="flode-h" id="rs-rubrik">Läget idag: ${esc(AMNESNAMN[amne].toLowerCase())}</h1>
         <p class="flode-dampad" id="rs-lagenot">Projektets befintliga läge, beräknat utan ritat förslag. Det finns ingen jämförelse före och efter, så inga skillnader visas. Håll markören över kartan för värdet i en cell. Rita ett förslag i <a href="${flodeAdress(projekt, "forslag")}">steg 2</a> och kör det i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a> för att se vad det ändrar.</p>
         <p class="flode-liten flode-dampad">Alla tal kommer ur körningen ${esc(vy.korning_id)}. Rapporten bygger på en jämförelse före och efter och kan inte skapas på enbart läget idag.</p>`;
@@ -448,7 +520,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       ? `<div class="flode-chips liten" role="group" aria-label="Förändring">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.efter_namn)}</button>`).join("")}</div>`
       : "";
     inne.innerHTML = `
-      ${kallVal}${kallNot}${vyVal}${natverkVal}
+      ${kallVal}${kallNot}${vyVal}${natverkVal}${visaBlock()}
       ${kroppHtml({
         slutsats: slutsats(amne, u),
         tal,
@@ -463,6 +535,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   // ---------- Laddning ----------
   const valjVy = async (ny: ProjektVy | null): Promise<void> => {
     const nr = ++seq;
+    if (ny?.id !== vyBas?.id) valtNyckel = null;
+    vyBas = ny;
     vy = ny;
     r = undefined;
     mark = null;
@@ -497,6 +571,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         }
         if (nr !== seq || avslutad) return;
         r = res;
+        vy = tillampaVal() ?? ny;
         mark = m;
         ekologi = eko;
         ekologiFel = ekoFel;
@@ -518,6 +593,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
 
   const valjAmne = async (ny: Amne): Promise<void> => {
     amne = ny;
+    valtNyckel = null;
     if (vyerFor(kalla).length === 0) kalla = kalla === "projekt" ? (t.ritVyer.some((v) => v.avsnitt === ny) ? "ritat" : t.lageVyer.some((v) => v.avsnitt === ny) ? "lage" : "projekt") : t.ritVyer.some((v) => v.avsnitt === ny) && kalla !== "ritat" ? "ritat" : t.lageVyer.some((v) => v.avsnitt === ny) && kalla !== "lage" ? "lage" : "projekt";
     const onskad = onskadVy ? vyerFor(kalla).find((v) => v.id === onskadVy) : undefined;
     onskadVy = null;
@@ -543,6 +619,21 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   });
   lyssna(rot, "change", (h) => {
     const s = h.target as HTMLSelectElement;
+    if (s.dataset.vektor) {
+      const slag = s.dataset.vektor as VektorSlag;
+      if ((s as unknown as HTMLInputElement).checked) vektorPa.add(slag);
+      else vektorPa.delete(slag);
+      sattVektorer();
+      ritaTecken();
+      void laddaVektorer();
+      return;
+    }
+    if (s.id === "rs-visa-val") {
+      valtNyckel = s.value;
+      vy = tillampaVal();
+      synkaKarta();
+      return;
+    }
     if (s.id === "rs-tak") {
       visaTak = (s as unknown as HTMLInputElement).checked;
       synkaKarta();

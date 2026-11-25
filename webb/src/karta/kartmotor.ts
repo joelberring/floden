@@ -109,12 +109,17 @@ const BYGGNADER = "byggnader";
 const RUTOR = "rutor";
 const RIT = "rit";
 const OVERFALL = "overfall";
+const ANALYS = "analys";
 const SKARV = "skarv";
 // Lagerordning ovanför rasterlagren, nerifrån.
 const OVERLAGER = [
   "byggnader-fyll",
   "byggnader-kant",
   "rutor-linje",
+  "analys-yta-fyll",
+  "analys-yta-kant",
+  "analys-linje",
+  "analys-punkt",
   "overfall-punkter",
   "skarv-yta-fyll",
   "skarv-yta-linje",
@@ -147,6 +152,12 @@ export const HALL_MS = 450;
 /** Hur långt fingret får röra sig under hållningen innan det räknas som panorering (px). */
 export const HALL_TOLERANS_PX = 10;
 
+/** Analysernas vektorlager (sänkor, flödesvägar, fasadpunkter): färdiga figurer i WGS 84 med `farg`, `bredd` och `beskrivning` som egenskaper, och etiketter att lägga ut. */
+export interface AnalysVektor {
+  fc: GeoJSON.FeatureCollection;
+  etiketter: Array<{ lng: number; lat: number; text: string }>;
+}
+
 export class Kartmotor {
   readonly karta: maplibregl.Map;
   private lager: RasterLager[] = [];
@@ -159,6 +170,9 @@ export class Kartmotor {
   private rit: RitVy = TOM_RITVY;
   private overfall: OverfallPunkt[] = [];
   private overfallPopup: maplibregl.Popup | null = null;
+  private analys: AnalysVektor | null = null;
+  private analysPopup: maplibregl.Popup | null = null;
+  private analysMarkorer: maplibregl.Marker[] = [];
   private skarv: SkarvFigurer | null = null;
   private skarvForaldrad = false;
   private skarvMarkorer: maplibregl.Marker[] = [];
@@ -218,6 +232,7 @@ export class Kartmotor {
     this.karta.on("load", () => {
       this.byggOverlager();
       this.kopplaOverfall();
+      this.kopplaAnalys();
       this.klar = true;
       for (const f of this.vantande.splice(0)) f();
       this.synkaRaster();
@@ -320,6 +335,8 @@ export class Kartmotor {
     window.removeEventListener("blur", this.slappLyssnare);
     this.karta.remove();
     this.overfallPopup?.remove();
+    this.analysPopup?.remove();
+    for (const m of this.analysMarkorer) m.remove();
     this.skarvPopup?.remove();
     for (const m of this.skarvMarkorer) m.remove();
     this.notisEl.remove();
@@ -404,7 +421,7 @@ export class Kartmotor {
   private byggOverlager(): void {
     const k = this.karta;
     const grov = arGrovPekare(); // pekskärm: större handtag
-    for (const s of [BYGGNADER, RUTOR, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
+    for (const s of [BYGGNADER, RUTOR, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -426,6 +443,10 @@ export class Kartmotor {
       },
     });
     k.addLayer({ id: "rutor-linje", type: "line", source: RUTOR, paint: { "line-color": "#111111", "line-opacity": 0.5, "line-width": 1, "line-dasharray": [4, 3] } });
+    k.addLayer({ id: "analys-yta-fyll", type: "fill", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["get", "farg"], "fill-opacity": 0.5 } });
+    k.addLayer({ id: "analys-yta-kant", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["get", "farg"], "line-width": 2 } });
+    k.addLayer({ id: "analys-linje", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "farg"], "line-width": ["get", "bredd"], "line-opacity": 0.9 } });
+    k.addLayer({ id: "analys-punkt", type: "circle", source: ANALYS, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 4, "circle-color": ["get", "farg"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
     k.addLayer({
       id: "overfall-punkter",
       type: "circle",
@@ -524,6 +545,42 @@ export class Kartmotor {
       k.setPaintProperty("rit-hus-fyll", "fill-opacity", ["case", ["get", "vald"], 0.4 * stil.opacitet, 0.28 * stil.opacitet]);
       k.setPaintProperty("rit-hus-kant", "line-opacity", stil.opacitet);
     });
+  }
+
+  /** Analysernas vektorlager (sänkor, flödesvägar, VSC-punkter) eller null för inga. Figurerna är färdigfärgade; etiketterna läggs som HTML-markörer. */
+  settAnalysVektor(v: AnalysVektor | null): void {
+    this.analys = v;
+    this.nar(() => this.synkaOverlager());
+  }
+
+  /** Hovring och klick på en analysfigur visar dess värden (egenskapen `beskrivning`). */
+  private kopplaAnalys(): void {
+    const k = this.karta;
+    const lager = ["analys-yta-fyll", "analys-linje", "analys-punkt"];
+    const visa = (e: maplibregl.MapLayerMouseEvent): void => {
+      const text = e.features?.[0]?.properties?.beskrivning;
+      if (typeof text !== "string") return;
+      const ruta = document.createElement("div");
+      ruta.textContent = text;
+      this.analysPopup?.remove();
+      this.analysPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 8, className: "overfall-popup" }).setLngLat(e.lngLat).setDOMContent(ruta).addTo(k);
+    };
+    for (const id of lager) {
+      k.on("mousemove", id, visa);
+      k.on("click", id, visa);
+      k.on("mouseleave", id, () => this.analysPopup?.remove());
+    }
+  }
+
+  private synkaAnalys(): void {
+    this.satt(ANALYS, (this.analys?.fc ?? TOM) as Fc);
+    for (const m of this.analysMarkorer.splice(0)) m.remove();
+    for (const e of this.analys?.etiketter ?? []) {
+      const el = document.createElement("div");
+      el.className = "analys-etikett";
+      el.textContent = e.text;
+      this.analysMarkorer.push(new maplibregl.Marker({ element: el }).setLngLat([e.lng, e.lat]).addTo(this.karta));
+    }
   }
 
   /** Överfallspunkterna (SWEREF-meter, ur bifurkationsanalysen) som eget lager. */
@@ -643,6 +700,7 @@ export class Kartmotor {
       })),
     });
     this.satt(OVERFALL, overfallTillGeoJson(this.overfall));
+    this.synkaAnalys();
     this.synkaSkarv();
     const r = this.rit;
     this.satt(`${RIT}-hus`, {

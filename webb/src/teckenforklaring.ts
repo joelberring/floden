@@ -29,6 +29,11 @@ export function skalaHtml(l: LagerPost): string {
       )
       .join("")}</ul>`;
   }
+  if (tf.typ === "kategorier") {
+    return `<ul class="klass-lista">${tf.kategorier
+      .map((k) => `<li><span class="ruta" style="background:${k.farg}"></span><span class="mono">${TAL.format(k.varde)}${k.etikett ? ` (${esc(k.etikett)})` : ""}</span></li>`)
+      .join("")}</ul>`;
+  }
   return `<div class="skala-rad"><span class="mono">−${TAL.format(tf.max)}</span>
       <span class="skala-band" style="background:linear-gradient(to right, ${tf.farg_minskning}, #f5f5f5, ${tf.farg_okning})"></span>
       <span class="mono">+${TAL.format(tf.max)}${enhet}</span></div>
