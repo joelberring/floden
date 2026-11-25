@@ -2,6 +2,17 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-25 – Nord2000 grupp N: markbegränsad cirkelstråle, spridningskoherens och bis-övergångshöjd (grenen `nord2000-underkanda`) (agent)
+Gjort (grenen `nord2000-underkanda`; strikt metodgrundade ändringar ur AV 1106/07 ekv. 292 & 5.22, AV 1851/00 avsnitt 7 och AV 1849/00 4.4.2; inga konstanter anpassade, inga RL 18-18-facitvärden i git, `nord2000_konform` fortsatt `False`, `BESLUT.md` och `KB1/v1` orörda):
+- **Delmodell 10 & sammansättning (`src/buller/nord2000/delmodell10.py`, `karna.py`, `sammansattning.py`, `delmodell3.py`):** Ny `MarkbegransadStrale` ovanpå `delmodell8.cirkelstrale_ur_atmosfar` ($z_{\text{ray}} \ge z_{\text{mark}}$) samt vidarebefordran av `koherens_spridningszon` ($F_s$) till delmodell 3–6.
+- **Delmodell 3 (`overgangshojd="bis"`):** Rättade enbandskrasch vid refraktion/fluktuation (nu hel frekvensvektor cachad per $(h''_S, h''_R)$) och satte `"bis"` som nytt förval (dokumenterat i `docs/buller/tolkningar.md` och `docs/buller/logg/P-S6.md`).
+- **Analytiska enhetstester (`tests/buller/nord2000/test_{delmodell10,delmodell3,sammansattning}.py`):** 5 nya oberoende analytiska tester.
+Mätt:
+- **`pytest tests/buller/ -q`:** **1 067 passed, 38 skipped**. **`ruff check src/buller tests/buller`:** **0 fel**. **`mypy src/buller`:** **0 fel** (83 filer).
+- **Grupp N rak väg lokalt (62/62 RL 18-18-fall):** **43 godkända** (+2 nya: `N18R101`, `N18R104`, 0 regressioner bland tidigare 41 godkända), **15 ska utredas** (`N18R122` förbättrad från underkänd till ska utredas), **4 underkända** (`N18R052`, `062`, `102`, `103` — utredda öppna metodfrågor i `docs/buller/logg/P-S6.md`).
+Öppet: (1) `N18K1–K8` och `N18S1–S4` kunde inte köras om lokalt då `xlrd` saknades i `.venv` — bör regressionstestas när `xlrd` finns. (2) De 4 kvarvarande underkända medvinds-/dubbeldalsfallen (`N18R052`, `062`, `102`, `103`) och väderklasstabellen för årsmedel (`N18A1–A4`) återstår.
+Nästa: Regressionstesta `N18K1–K8`/`N18S1–S4` med `xlrd` och utred dal-i-medvind/dubbeldal-i-motvind vidare enligt `docs/buller/logg/P-S6.md`.
+
 ## 2026-11-25 – Parallell CI-matris, Cargo-cache och paketgränstester (grenen `ci-paket-snabbhet`) (agent)
 Gjort (grenen `ci-paket-snabbhet`; ingen domänkod rörd, `BESLUT.md` och kontrakt orörda):
 - **CI-uppsnabbning (`.github/workflows/ci.yml`, `pyproject.toml`):** Delade upp det tidigare 22–34 min enkeltrådade jobbet i snabbt separat `lint-och-typer` (`ruff` + `mypy` + `floden --help`), cachat `bygg-rust` (`Swatinem/rust-cache@v2`, delas som artifact till `vatten-och-rust`) och 6 balanserade parallella testjobb (`webb`, `kommuner`, `rapport-och-mcp`, `domaner`, `vatten-och-rust`, `karna-och-ovrigt`) med `pytest-xdist==3.6.1` (`-n auto --dist loadfile`). Lade till `concurrency` (`cancel-in-progress` på PR, aldrig på `main`), `push` enbart på `main` + `pull_request` på PR:er (eliminerar dubbelkörningar), `cache: "npm"` i `webb-klient`, samt behöll gate-jobbet `kvalitet-och-tester` för befintligt branch-skydd och `avbildning.yml`.
