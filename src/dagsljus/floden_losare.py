@@ -29,11 +29,13 @@ from numpy.typing import NDArray
 from dagsljus.horisont import (
     horisont_mipmap,
     horisont_riktning_ruta,
+    horisont_riktning_ruta_pa_enhet,
     riktningar_rad,
 )
 from dagsljus.matt import SoltimmarAckumulator, halvplansriktningar, vsc_fran_halvplansprofil
 from dagsljus.ruta import Mosaik, RutaFel, bygg_mosaik, fonster_koordinater, mitt_3011
 from dagsljus.solposition import dygnsfonster_utc, lat_lon_fran_3011, solposition
+from gemensamt.gpu import ar_gpu_backend, berakningsplats, hamta_backend, till_enhet
 from karna.analyslosare import Analyslosare, LosarFel, LosarKontext, LosarUtdata
 from karna.paverkan import dagsljus_paverkansradie_m
 
@@ -44,6 +46,7 @@ _GEMENSAMMA = {
     "cellstorlek_m",
     "omsampling",
     "vegetation",
+    "enhet",
 }
 STANDARD_K = 64
 """Standard för azimutriktningar (horisont, SVF, VSC). Soltimmar har högre standard, se nedan."""
@@ -81,6 +84,9 @@ def _gemensamma(p: Mapping[str, Any], standard_k: int = STANDARD_K) -> dict[str,
     veg = p.get("vegetation", False)
     if not isinstance(veg, bool):
         raise LosarFel(f"vegetation måste vara true/false, fick {veg!r}.")
+    enhet = p.get("enhet", "cpu")
+    if enhet not in ("cpu", "cuda", "auto"):
+        raise LosarFel(f"enhet måste vara 'cpu', 'cuda' eller 'auto', fick {enhet!r}.")
     return {
         "azimutriktningar": _heltal(p, "azimutriktningar", standard_k, minst=8),
         "hojd_max_m": _tal(p, "hojd_max_m", 60.0, over=0.0),
@@ -88,6 +94,7 @@ def _gemensamma(p: Mapping[str, Any], standard_k: int = STANDARD_K) -> dict[str,
         "cellstorlek_m": _tal(p, "cellstorlek_m", 1.0, over=0.0),
         "omsampling": oms,
         "vegetation": veg,
+        "enhet": enhet,
     }
 
 
@@ -158,6 +165,7 @@ class _Pass:
 
     trunk: NDArray[np.int32]
     standard_riktningar: NDArray[np.int32] | None
+    berakningsplats: str = "cpu_f32"
 
 
 def _horisontpass(
@@ -179,6 +187,17 @@ def _horisontpass(
     hoppas inaktiva riktningar över utan att anropa `horisont_riktning_ruta`."""
     antal = int(k.parametrar["azimutriktningar"])
     radie = _radie_m(k.parametrar)
+    enhet = str(k.parametrar.get("enhet", "cpu"))
+    xp, enhet_namn = hamta_backend(enhet)
+    pa_gpu = ar_gpu_backend(xp)
+    z_xp = till_enhet(m.falt.z_m, xp, dtype=np.float32) if pa_gpu else None
+    z0_xp = (
+        till_enhet(m.falt_utan_standard.z_m, xp, dtype=np.float32)
+        if pa_gpu and m.falt_utan_standard is not None
+        else None
+    )
+    plats = berakningsplats(enhet_namn, np.float32)
+
     r0, r1, c0, c1 = m.fonster
     trunk = np.zeros((r1 - r0, c1 - c0), dtype=np.int32)
     std = None if m.falt_utan_standard is None else np.zeros_like(trunk)
@@ -190,18 +209,28 @@ def _horisontpass(
                 for g in hoppa_over_utan_standard or []:
                     g(i)
             continue
-        h, tr = horisont_riktning_ruta(m.falt, float(phi), radie, fonster=m.fonster)
+        if pa_gpu:
+            h, tr = horisont_riktning_ruta_pa_enhet(
+                m.falt, z_xp, float(phi), radie, fonster=m.fonster, xp=xp
+            )
+        else:
+            h, tr = horisont_riktning_ruta(m.falt, float(phi), radie, fonster=m.fonster)
         trunk += tr
         for f in mottagare:
             f(i, float(phi), h)
         if m.falt_utan_standard is not None and std is not None:
-            h0, _ = horisont_riktning_ruta(
-                m.falt_utan_standard, float(phi), radie, fonster=m.fonster
-            )
+            if pa_gpu:
+                h0, _ = horisont_riktning_ruta_pa_enhet(
+                    m.falt_utan_standard, z0_xp, float(phi), radie, fonster=m.fonster, xp=xp
+                )
+            else:
+                h0, _ = horisont_riktning_ruta(
+                    m.falt_utan_standard, float(phi), radie, fonster=m.fonster
+                )
             std += h0 != h
             for f in mottagare_utan_standard or []:
                 f(i, float(phi), h0)
-    return _Pass(trunk, std)
+    return _Pass(trunk, std, plats)
 
 
 def _skriv_raster(sokvag: Path, a: NDArray[Any], m: Mosaik) -> None:
@@ -321,6 +350,7 @@ class Horisont(_DagsljusLosare):
                 "celler": int(trunk.size),
                 "azimutriktningar": antal,
                 "celler_standardhojd": n_std,
+                "berakningsplats": pas.berakningsplats,
             },
             varningar=tuple(
                 _gemensamma_varningar(kontext, m) + _trunk_varning(trunk, antal) + std_var
@@ -364,6 +394,7 @@ class SvfMark(_DagsljusLosare):
                 "svf_min": float(svf.min()),
                 "celler": int(svf.size),
                 "celler_standardhojd": n_std,
+                "berakningsplats": pas.berakningsplats,
             },
             varningar=tuple(
                 _gemensamma_varningar(kontext, m) + _trunk_varning(trunk, antal) + std_var
@@ -454,6 +485,7 @@ class SoltimmarMark(_DagsljusLosare):
                 "lat_grader": lat,
                 "lon_grader": lon,
                 "celler_standardhojd": n_std,
+                "berakningsplats": pas.berakningsplats,
             },
             varningar=tuple(var),
         )
