@@ -653,6 +653,71 @@ class TestSpridningszon(unittest.TestCase):
         # Vid 10 kHz ger 70 m skog tydlig dämpning jämfört med fri gräsmark.
         self.assertLess(float(med.overforing_db[-1]), float(utan.overforing_db[-1]) - 5.0)
 
+    def test_markbegransad_strale_klipper_under_mark(self) -> None:
+        """AV 1851/00 avsnitt 7: uppåtbrytande stråle som dyker under marken får z_ray = z_mark."""
+        from buller.nord2000.delmodell8 import Cirkelstrale as Delmodell8Cirkelstrale
+        from buller.nord2000.delmodell10 import MarkbegransadStrale
+
+        # Stark uppåtbrytning (ξ_ray < 0) mellan z = 0,5 m och z = 1,5 m på 200 m dyker under z = 0.
+        obegransad = Delmodell8Cirkelstrale(0.0, 0.5, 200.0, 1.5, -1.0e-3)
+        self.assertLess(obegransad.punkt(100.0).z_m, 0.0)
+        mark_x = np.array([0.0, 200.0], dtype=np.float64)
+        mark_z = np.array([0.0, 0.0], dtype=np.float64)
+        begransad = MarkbegransadStrale(obegransad, mark_x, mark_z)
+        p_mitt = begransad.punkt(100.0)
+        p_raw = obegransad.punkt(100.0)
+        self.assertEqual(p_mitt.z_m, 0.0)
+        self.assertEqual(p_mitt.r1_m, p_raw.r1_m)
+        self.assertEqual(p_mitt.r2_m, p_raw.r2_m)
+        # Ändpunkterna ovanför markytan påverkas inte.
+        self.assertAlmostEqual(begransad.punkt(0.0).z_m, 0.5, places=12)
+        self.assertAlmostEqual(begransad.punkt(200.0).z_m, 1.5, places=12)
+        with self.assertRaises(BullerFel):
+            MarkbegransadStrale(obegransad, np.array([0.0]), np.array([0.0]))
+
+    def test_karna_med_spridningszon_anvander_raycurvature(self) -> None:
+        """AV 1106/07 ekv. (292): kärnan använder RayCurvature + HeightOfCircularRay i medvind."""
+        from buller.nord2000.delmodell8 import cirkelstrale_ur_atmosfar
+        from buller.nord2000.delmodell10 import MarkbegransadStrale
+        from buller.nord2000.karna import Nord2000Karna
+        from buller.nord2000.refraktion import atmosfar_ur_vader
+        from buller.typer import Terrangprofil, Vader
+
+        # Lång sned sträcka (400 m) med låg källa (0,01 m) och 10 m hög skog i medvind:
+        # CalcEqSSP(0,01; 1,5) gav tidigare alltför stark krökning (strålen gick över kronorna),
+        # medan RayCurvature (ekv. 292) håller strålen inne i skogen.
+        prof = Terrangprofil(
+            x_m=np.array([0.0, 400.0]),
+            z_m=np.array([0.0, 0.0]),
+            flodesresistivitet_kNsm4=np.array([200.0]),
+            rahet_m=np.array([0.0]),
+            kalla_hojd_m=0.01,
+            mottagare_hojd_m=1.5,
+        )
+        vader = Vader(
+            temperatur_c=15.0,
+            relativ_fuktighet_procent=70.0,
+            vind_m_s=3.0,
+            zu_m=10.0,
+            z0_m=0.05,
+            dt_dz_k_m=0.0,
+            std_vind_m_s=0.5,
+            std_dt_dz_k_m=0.0,
+            cv2=0.12,
+            ct2=0.008,
+        )
+        skog = zon(40.0, 320.0, 10.0, 0.075, 10.0, 0.1, 0.15)
+        karna = Nord2000Karna()
+        res = karna.berakna(prof, vader, spridningszon=skog)
+        atm = atmosfar_ur_vader(vader)
+        cirkel = cirkelstrale_ur_atmosfar(0.0, 0.01, 400.0, 1.5, atm)
+        referens = spridningszon(
+            self.f, MarkbegransadStrale(cirkel, prof.x_m, prof.z_m), skog, atm.c_m_s
+        )
+        assert res.spridningszon_db is not None
+        np.testing.assert_allclose(res.spridningszon_db, referens.dampning_db, rtol=0, atol=1e-12)
+        self.assertAlmostEqual(float(res.spridningszon_db[-1]), -15.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

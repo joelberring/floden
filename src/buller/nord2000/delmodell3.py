@@ -71,9 +71,9 @@ RELATIV_TOLERANS = 1.0e-9
 
 Segmenttyp = Literal["konkavt", "konvext", "övergång"]
 Fresnelzonsregel = Literal["klippt", "oklippt"]
-# Höjderna i delmodell 1 för den konkava delen av ett övergångssegment (ekv. 140): "prim" är
-# h′_S, h′_R som AV 1106/07 är tryckt (förval), "bis" ersätter en höjd under h″ med h″
-# (AV 1849/00 avsnitt 4.4.2). Se tolkning 9 i loggen P-3 och utfallet i loggen P-S2.
+# Höjderna i delmodell 1 för den konkava delen av ett övergångssegment (ekv. 140): "bis"
+# ersätter en höjd under h″ med h″ (AV 1849/00 avsnitt 4.4.2; förval sedan P-S6), "prim" är
+# h′_S, h′_R som AV 1106/07 är tryckt. Se P-3 tolkning 9 och P-S6 i `docs/buller/tolkningar.md`.
 Overgangshojd = Literal["prim", "bis"]
 
 KONKAVT: Segmenttyp = "konkavt"
@@ -732,7 +732,8 @@ def delmodell3(
     ct2_form: Ct2Form = "kvadrat",
     skuggzon: Skuggzonslasning | None = None,
     uppskjut_fel: bool = False,
-    overgangshojd: Overgangshojd = "prim",
+    overgangshojd: Overgangshojd = "bis",
+    koherens_spridningszon: Flyttal | None = None,
 ) -> Delmodell3Resultat:
     """Delmodell 3 med alla delresultat, AV 1106/07 avsnitt 5.12, ekv. (134)–(156).
 
@@ -768,6 +769,7 @@ def delmodell3(
         rahet = float(geo.rahet_m[i])
         v = segmentvariabler_for(geo, i)
         konkav_effekt: Flyttal | None = None  # ekv. (140), räknas bara om något band behöver den
+        bis_effekt: dict[tuple[float, float], Flyttal] = {}
         kilar: dict[bool, EkvivalentKil] = {}
         krokta_kilar: dict[bool, Kil] = {}
         konvex_geometri: Segmentvariabler | None = None
@@ -795,43 +797,68 @@ def delmodell3(
                         v.d_m, reflex, v.d1_m, v.d2_m, f_lambda, fresnelzon
                     )  # ekv. (134) med ekv. (346)–(350)
                 if w_konkav > 0.0:
-                    if konkav_effekt is None:
-                        if luft is not None:
-                            konkav_effekt = markeffekt_plan_mark_db(
-                                frekvenser_hz, v.d_m, v.h_s_m, v.h_r_m, sigma, rahet, luft
-                            )
-                        else:
-                            konkav_effekt = markeffekt_plan_mark_db(
-                                frekvenser_hz,
-                                v.d_m,
-                                v.h_s_m,
-                                v.h_r_m,
-                                sigma,
-                                rahet,
-                                atmosfar,
-                                uppat,
-                                ct2_form,
-                                skuggzon,
-                            )  # ekv. (140)
-                    dl_konkav = float(konkav_effekt[b])
                     if overgangshojd == "bis" and r < 1.0:
                         # AV 1849/00 avsnitt 4.4.2: h′ ersätts med h″ när h′ < h″.
+                        # Hela frekvensvektorn ges till delmodell 1 eftersom PhaseDiffFreq
+                        # (vid refraktion/fluktuationer) kräver samtliga band.
                         h_s_bis = max(v.h_s_m, min(geo.h_s_m, klass.h_s_fz_m))
                         h_r_bis = max(v.h_r_m, min(geo.h_r_m, klass.h_r_fz_m))
-                        dl_konkav = float(
-                            markeffekt_plan_mark_db(
-                                frekvenser_hz[b : b + 1],
-                                v.d_m,
-                                h_s_bis,
-                                h_r_bis,
-                                sigma,
-                                rahet,
-                                atmosfar if luft is None else luft,
-                                uppat,
-                                ct2_form,
-                                skuggzon,
-                            )[0]
-                        )
+                        nyckel = (h_s_bis, h_r_bis)
+                        if nyckel not in bis_effekt:
+                            if luft is not None:
+                                bis_effekt[nyckel] = markeffekt_plan_mark_db(
+                                    frekvenser_hz,
+                                    v.d_m,
+                                    h_s_bis,
+                                    h_r_bis,
+                                    sigma,
+                                    rahet,
+                                    luft,
+                                    koherens_spridningszon=koherens_spridningszon,
+                                )
+                            else:
+                                bis_effekt[nyckel] = markeffekt_plan_mark_db(
+                                    frekvenser_hz,
+                                    v.d_m,
+                                    h_s_bis,
+                                    h_r_bis,
+                                    sigma,
+                                    rahet,
+                                    atmosfar,
+                                    uppat,
+                                    ct2_form,
+                                    skuggzon,
+                                    koherens_spridningszon=koherens_spridningszon,
+                                )
+                        dl_konkav = float(bis_effekt[nyckel][b])
+                    else:
+                        if konkav_effekt is None:
+                            if luft is not None:
+                                konkav_effekt = markeffekt_plan_mark_db(
+                                    frekvenser_hz,
+                                    v.d_m,
+                                    v.h_s_m,
+                                    v.h_r_m,
+                                    sigma,
+                                    rahet,
+                                    luft,
+                                    koherens_spridningszon=koherens_spridningszon,
+                                )
+                            else:
+                                konkav_effekt = markeffekt_plan_mark_db(
+                                    frekvenser_hz,
+                                    v.d_m,
+                                    v.h_s_m,
+                                    v.h_r_m,
+                                    sigma,
+                                    rahet,
+                                    atmosfar,
+                                    uppat,
+                                    ct2_form,
+                                    skuggzon,
+                                    koherens_spridningszon=koherens_spridningszon,
+                                )  # ekv. (140)
+                        dl_konkav = float(konkav_effekt[b])
 
             w_konvex, dl_konvex = 0.0, 0.0
             if r < 1.0:

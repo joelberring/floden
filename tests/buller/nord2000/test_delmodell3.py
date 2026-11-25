@@ -779,7 +779,7 @@ class TestTackning(unittest.TestCase):
         self.assertTrue(all(f is None for f in resultat.fel))
 
     def test_overgangshojd_bis_ror_bara_overgangssegment(self) -> None:
-        prim = delmodell3(self.f, self.geo, STILLA)
+        prim = delmodell3(self.f, self.geo, STILLA, overgangshojd="prim")
         bis = delmodell3(self.f, self.geo, STILLA, overgangshojd="bis")
         np.testing.assert_array_equal(prim.vikt, bis.vikt)
         for i in range(prim.vikt.shape[0]):
@@ -791,6 +791,56 @@ class TestTackning(unittest.TestCase):
                     )
         with self.assertRaises(BullerFel):
             delmodell3(self.f, self.geo, STILLA, overgangshojd="annan")  # type: ignore[arg-type]
+
+    def test_overgangshojd_bis_med_refraktion_och_fluktuation(self) -> None:
+        """AV 1849/00 4.4.2 (bis) ska fungera med refraktion och fluktuationer utan bandfel."""
+        # Profil med ett övergångssegment (h'_S ≈ 0,14 m < h_S = 0,30 m vid [3,8; 26,8]).
+        dubbel = terranggeometri(
+            _profil(
+                [0.0, 3.8, 26.8, 46.8, 56.8, 76.8, 96.8],
+                [0.0, 0.0, -1.0, 0.0, 0.0, -2.0, 0.0],
+                200.0,
+                0.30,
+                1.5,
+            )
+        )
+        for atmosfar in (
+            self._atmosfar(s_a=0.1),
+            self._atmosfar(a=0.4, s_a=0.1),
+            self._atmosfar(a=-0.4, s_a=0.1),
+        ):
+            prim = delmodell3(self.f, dubbel, atmosfar, overgangshojd="prim", uppskjut_fel=True)
+            bis = delmodell3(self.f, dubbel, atmosfar, overgangshojd="bis", uppskjut_fel=True)
+            self.assertTrue(bool(np.all(np.isfinite(bis.markeffekt_db))), bis.fel)
+            np.testing.assert_array_equal(prim.vikt, bis.vikt)
+            har_overgang = False
+            for i in range(bis.vikt.shape[0]):
+                for b in range(self.f.shape[0]):
+                    r = min(bis.h_s_rel[i, b], bis.h_r_rel[i, b])
+                    if r in (0.0, 1.0):
+                        self.assertEqual(
+                            prim.markeffekt_segment_db[i, b], bis.markeffekt_segment_db[i, b]
+                        )
+                    elif bis.vikt[i, b] > 0.0:
+                        har_overgang = True
+            self.assertTrue(har_overgang)
+
+    def test_koherens_spridningszon_propagera_genom_delmodell3(self) -> None:
+        """F_s (AV 1106/07 ekv. 288) går in i delmodell 1 för konkava segment i delmodell 3."""
+        f_s = np.full(self.f.shape[0], 0.25, dtype=np.float64)
+        # Plan mark delad i segment: ΔL₃(F_s) ska vara lika med ΔL₁(F_s).
+        plan = terranggeometri(_profil([0.0, 30.0, 100.0], [0.0, 0.0, 0.0], 200.0, 0.3, 1.5))
+        dm3 = delmodell3(self.f, plan, TURBULENT, koherens_spridningszon=f_s)
+        dm1 = markeffekt_plan_mark_db(
+            self.f, 100.0, 0.3, 1.5, 200.0, 0.0, TURBULENT, koherens_spridningszon=f_s
+        )
+        np.testing.assert_allclose(dm3.markeffekt_db, dm1, rtol=0, atol=1e-9)
+        # Dalprofil: F_s < 1 ska ändra ΔL₃ jämfört med F_s = 1.
+        dal_utan = delmodell3(self.f, self.geo, TURBULENT).markeffekt_db
+        dal_med = delmodell3(
+            self.f, self.geo, TURBULENT, koherens_spridningszon=f_s
+        ).markeffekt_db
+        self.assertGreater(float(np.max(np.abs(dal_med - dal_utan))), 0.5)
 
     def test_atmosfar_utan_refraktion_ar_homogen(self) -> None:
         a = delmodell3(self.f, self.geo, self._atmosfar()).markeffekt_db
