@@ -41,8 +41,8 @@ Uppdaterad 2026-11-25. Floden är en öppen modell som räknar skyfall, dagsljus
 
 **Testat**
 
-- Testsvit grupp A (A1 till A13, syntetiska fall med känt svar) och Environment Agency-fallen EA1, EA2 och EA8A samt Hunters analytiska fall D1 (källa: [`docs/VALIDERING.md`](https://github.com/joelberring/floden/blob/main/docs/VALIDERING.md))
-- Hela facittestsviten för alla ämnen (`floden testsvit`), godkända fall: 17 av 17 (källa: [`STATUS.md`](https://github.com/joelberring/floden/blob/main/STATUS.md))
+- Testsvit grupp A (A1 till A13 och A5b, syntetiska fall med känt svar) och Environment Agency-fallen EA1, EA2 och EA8A samt Hunters analytiska fall D1 (källa: [`docs/VALIDERING.md`](https://github.com/joelberring/floden/blob/main/docs/VALIDERING.md))
+- Hela facittestsviten för alla ämnen (`floden testsvit`), godkända fall: 18 av 18 (källa: [`STATUS.md`](https://github.com/joelberring/floden/blob/main/STATUS.md))
 
 **Begränsningar**
 

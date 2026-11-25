@@ -41,14 +41,14 @@ begransningar = [
   "Det snabba grafspåret förutsätter omedelbart överfall och plan vattenyta i varje sänka; felindikatorn flaggar där 2D behövs.",
 ]
 [[amne.testat]]
-text = "Testsvit grupp A (A1 till A13, syntetiska fall med känt svar) och Environment Agency-fallen EA1, EA2 och EA8A samt Hunters analytiska fall D1"
+text = "Testsvit grupp A (A1 till A13 och A5b, syntetiska fall med känt svar) och Environment Agency-fallen EA1, EA2 och EA8A samt Hunters analytiska fall D1"
 kalla = "docs/VALIDERING.md"
 [[amne.testat]]
 text = "Hela facittestsviten för alla ämnen (`floden testsvit`), godkända fall"
-godkanda = 17
-av = 17
+godkanda = 18
+av = 18
 kalla = "STATUS.md"
-belagg = "`floden testsvit` **17/17**"
+belagg = "**18/18 godkända**"
 
 [[amne]]
 id = "dagsljus"
