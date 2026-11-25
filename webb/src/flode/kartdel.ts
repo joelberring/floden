@@ -186,6 +186,7 @@ export function byggnaderMedForslag(info: ProjektInfo, dok: PlanDok | null): VyB
 export function skapaKarta(yta: HTMLElement, info: ProjektInfo): Kartmotor {
   const m = new Kartmotor(yta);
   m.settRutor([]);
+  m.settProjektPolygon(info.avgransning_polygon_3011 ?? null);
   m.anpassa(info.utbredning);
   return m;
 }

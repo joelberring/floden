@@ -1,34 +1,46 @@
 /*
  * Flodens tema – designtoken som CSS-variabler.
- * Sobert: vitt, svart (#111111), hårfina linjer, raka hörn. Färg används bara i kartdata.
- * Andra moduler (luft, buller, dagsljus) återanvänder variablerna i stället för egna färger.
+ * Varsam nordisk palett inspirerad av framsidesmålningen: varm linnebotten, djup skogsbläck,
+ * gran/mossa som lugn accent, bäck-salvia, solockra och terrakotta. Alla textkombinationer
+ * uppfyller WCAG AA (>= 4,5:1).
  * Inga externa typsnittsanrop (uppfyller löftet om att inget skickas till tredje part).
  */
 
 :root {
   /* Grund */
-  --f-bakgrund: #ffffff;
-  --f-yta-dampad: #f2f2f2;
-  --f-text: #111111;
-  --f-text-sekundar: #333333;
-  --f-text-dampad: #6b6b6b; /* 5,3:1 mot vitt */
-  --f-text-inaktiv: #767676; /* 4,5:1 mot vitt */
-  --f-linje: #d9d9d9;
-  --f-linje-stark: #111111;
-  --f-linje-svag: #ededed;
-  --f-karta-bas: #efefef;
+  --f-bakgrund: #f7f5ee;
+  --f-yta: #fcfbf7;
+  --f-yta-dampad: #ece9de;
+  --f-text: #1d241c;
+  --f-text-sekundar: #3b4538;
+  --f-text-dampad: #5b6557; /* 5,5:1 mot #f7f5ee, 4,9:1 mot #ece9de */
+  --f-text-inaktiv: #656e61; /* 4,7:1 mot #f7f5ee */
+  --f-linje: #d6d2c4;
+  --f-linje-stark: #1d241c;
+  --f-linje-svag: #e6e2d6;
+  --f-karta-bas: #eae6da;
 
-  /* Kartdata (endast här finns färg) */
-  --f-vatten-1: #c9d9ea; /* 0,1–0,2 m */
-  --f-vatten-2: #7fa3c8; /* 0,2–0,3 m */
-  --f-vatten-3: #4f7daa; /* 0,3–0,5 m */
-  --f-vatten-4: #2b5d8c; /* > 0,5 m */
-  --f-buller: #b4462b;
-  --f-buller-ljus: #d9895f;
-  --f-skugga: #bdbdbd;
-  --f-djupare: #d9895f;
-  --f-grundare: #9db7d2;
-  --f-varning: #b4462b;
+  /* Varsamma accenter ur målningen */
+  --f-accent: #2f4a2c; /* djup nordisk gran/mossa: 8,8:1 mot #f7f5ee */
+  --f-accent-hover: #243a22;
+  --f-accent-yta: #e3ece4;
+  --f-salvia: #6f9e84;
+  --f-ockra: #bfa942;
+
+  /* Kartdata (harmoniserade med rapportfigurerna) */
+  --f-vatten-1: #dcebe6; /* 0,1–0,2 m */
+  --f-vatten-2: #8fb9ac; /* 0,2–0,3 m */
+  --f-vatten-3: #4a7d8c; /* 0,3–0,5 m */
+  --f-vatten-4: #234b66; /* > 0,5 m */
+  --f-ekologi-ljus: #9cb88a;
+  --f-ekologi: #3e6334;
+  --f-sol: #d9cf6a;
+  --f-buller: #8c3b2b;
+  --f-buller-ljus: #b86a4b;
+  --f-skugga: #b8b5aa;
+  --f-djupare: #b86a4b;
+  --f-grundare: #8fb9ac;
+  --f-varning: #9e432c; /* 6,6:1 mot #f7f5ee */
 
   /* Typografi */
   --f-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -37,15 +49,15 @@
   --f-etikett-storlek: 11px;
   --f-etikett-sparr: 0.12em;
 
-  /* Mått */
+  /* Mått (stramare marginaler och sidhuvud; 44 px klickytor behålls) */
   --f-sidbredd: 1344px;
-  --f-marginal: 48px;
-  --f-huvud-hojd: 72px;
+  --f-marginal: 32px;
+  --f-huvud-hojd: 56px;
   --f-mal-yta: 44px; /* minsta klickyta */
 }
 
 @media (max-width: 720px) {
   :root {
-    --f-marginal: 20px;
+    --f-marginal: 16px;
   }
 }

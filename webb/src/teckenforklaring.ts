@@ -1,5 +1,6 @@
 /* Teckenförklaring för ett rasterlager (färgskala eller klasser) i klarspråk. */
-import type { LagerPost } from "./fragor-typer";
+import type { LagerPost } from "./fragor-typer.ts";
+import { osakerhetNotisText } from "./kartforklaring.ts";
 import { talFormat } from "./tal.ts";
 
 const TAL = talFormat(2);
@@ -12,40 +13,63 @@ function esc(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
+export interface TeckenforklaringVal {
+  /** Visa tydlig notis om att osäkerhetsintervall avser läget före. */
+  osakerhetFore?: boolean;
+  /** Egen liten notis under skalan (ersätter standardnotisen om satt). */
+  notis?: string;
+}
+
+/** Rubrik med enhet när enheten inte redan ingår i rubriktexten. */
+export function rubrikMedEnhet(rubrik: string, enhet: string): string {
+  const ren = rubrik.trim();
+  const e = enhet.trim();
+  if (!e || ren.includes(e)) return ren;
+  return `${ren} (${e})`;
+}
+
 /** Färgskalan för lagret: gradient, färgklasser eller blå/röd skillnadsskala. */
 export function skalaHtml(l: LagerPost): string {
   const tf = l.teckenforklaring;
   const enhet = l.enhet ? ` ${esc(l.enhet)}` : "";
   if (tf.typ === "kontinuerlig") {
-    return `<div class="skala-rad"><span class="mono">${TAL.format(tf.min)}</span>
+    return `<div class="skala-rad"><span class="mono">${TAL.format(tf.min)}${enhet}</span>
       <span class="skala-band" style="background:linear-gradient(to right, ${tf.stopp.join(",")})"></span>
       <span class="mono">${TAL.format(tf.max)}${enhet}</span></div>`;
   }
   if (tf.typ === "klasser") {
     return `<ul class="klass-lista">${tf.klasser
-      .map(
-        (k) =>
-          `<li><span class="ruta" style="background:${k.farg}"></span><span class="mono">från ${TAL.format(k.fran)}${enhet}</span></li>`,
-      )
+      .map((k) => {
+        const text = k.etikett
+          ? `${esc(k.etikett)}${l.enhet && !k.etikett.includes(l.enhet) ? enhet : ""}`
+          : `från ${TAL.format(k.fran)}${enhet}`;
+        return `<li><span class="ruta" style="background:${k.farg}"></span><span class="mono">${text}</span></li>`;
+      })
       .join("")}</ul>`;
   }
   if (tf.typ === "kategorier") {
     return `<ul class="klass-lista">${tf.kategorier
-      .map((k) => `<li><span class="ruta" style="background:${k.farg}"></span><span class="mono">${TAL.format(k.varde)}${k.etikett ? ` (${esc(k.etikett)})` : ""}</span></li>`)
+      .map((k) => {
+        const etikett = k.etikett ? ` · ${esc(k.etikett)}` : enhet;
+        return `<li><span class="ruta" style="background:${k.farg}"></span><span class="mono">${TAL.format(k.varde)}${etikett}</span></li>`;
+      })
       .join("")}</ul>`;
   }
-  return `<div class="skala-rad"><span class="mono">−${TAL.format(tf.max)}</span>
-      <span class="skala-band" style="background:linear-gradient(to right, ${tf.farg_minskning}, #f5f5f5, ${tf.farg_okning})"></span>
+  return `<div class="skala-rad"><span class="mono">−${TAL.format(tf.max)}${enhet}</span>
+      <span class="skala-band" style="background:linear-gradient(to right, ${tf.farg_minskning}, #f7f5ee, ${tf.farg_okning})"></span>
       <span class="mono">+${TAL.format(tf.max)}${enhet}</span></div>
       <p class="dampad liten-text">Blå: minskning, röd: ökning (efter minus före). Ofärgat: ändringen är högst ${TAL.format(tf.troskel)}${enhet}.</p>`;
 }
 
-/** Teckenförklaring med rubrik. Tekniska uppgifter (filer, nedsampling) hör till teknisk information. */
-export function teckenforklaringHtml(l: LagerPost, rubrik: string = l.namn): string {
+/** Teckenförklaring med tydlig rubrik, färgrutor, enheter och valfri notis om osäkerhetsintervall. */
+export function teckenforklaringHtml(l: LagerPost, rubrik: string = l.namn, val: TeckenforklaringVal = {}): string {
+  const titel = rubrikMedEnhet(rubrik || l.etikett || l.namn, l.enhet);
+  const notis = val.notis ?? osakerhetNotisText(Boolean(val.osakerhetFore));
   return `
     <div class="teckenforklaring">
-      <h3 class="etikett-liten">${esc(rubrik)}</h3>
+      <h3 class="etikett-liten">${esc(titel)}</h3>
       ${skalaHtml(l)}
+      ${notis ? `<p class="tecken-notis">${esc(notis)}</p>` : ""}
     </div>`;
 }
 

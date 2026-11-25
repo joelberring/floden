@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { LagerPost } from "../fragor-typer.ts";
 import type { ProjektVy } from "../types.ts";
 import {
-  amneForDoman, djupFarg, flodesvagBeskrivning, forvaldNyckel, gransPos, gransVarde, GRANSER, lagerVal, tillrinningSkala, flodesBredd, PALETTER, sankaBeskrivning, skalFarg, valText, varFarg, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type VektorSvar,
+  amneForDoman, djupFarg, flodesvagBeskrivning, forvaldNyckel, gransPos, gransVarde, GRANSER, lagerVal, tillrinningSkala, flodesBredd, PALETTER, rannstenBeskrivning, rannstenSkala, rollEtikett, sankaBeskrivning, skalFarg, valText, varFarg, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type VektorSvar,
 } from "./analyslager.ts";
 
 const lp = (id: string, analys: string, roll: string, scenario: string, typ: LagerPost["typ"], extra: Partial<LagerPost> = {}): LagerPost =>
@@ -206,4 +206,48 @@ test("fasadpunkter färgas efter VSC, saknat värde blir grått, och delvisa lag
   assert.deepEqual(k.fc.features.map((f) => f.properties?.farg), ["#00204d", "#ffea46", "#9e9e9e"]);
   assert.match(String(k.fc.features[2]?.properties?.beskrivning), /VSC saknas \(avskuren\)/);
   assert.match(vektorTeckenHtml(svar), /De 20\s?000 största av 30\s?000 visas/);
+});
+
+test("ankomsttid (tid_till_0_1m.tif) och 1D-rännstenar har svenska etiketter, enheter och vektorstöd", () => {
+  assert.deepEqual(rollEtikett("ankomsttid", "ankomsttid", ""), {
+    etikett: "Ankomsttid (tid till 0,1 m)",
+    enhet: "min",
+  });
+  assert.deepEqual(rollEtikett("rannsten_flode", "", ""), {
+    etikett: "Rännstenar (1D-flöde)",
+    enhet: "m³/s",
+  });
+  const ankomstLager: LagerPost[] = [
+    lp("vatten.fore.max_djup", "skyfall", "max_djup", "fore", "bas", { doman: "vatten", etikett: "Största vattendjup", enhet: "m", primar: true }),
+    lp("vatten.fore.ankomsttid", "skyfall", "ankomsttid", "fore", "bas", { doman: "vatten", etikett: "ankomsttid", enhet: "" }),
+  ];
+  const roller = lagerVal(ankomstLager, { fore_lager: "vatten.fore.max_djup", efter_lager: null }, "vatten");
+  const ank = roller.find((r) => r.roll === "ankomsttid");
+  assert.equal(ank?.etikett, "Ankomsttid (tid till 0,1 m)");
+  assert.equal(ank?.enhet, "min");
+
+  assert.deepEqual(vektorVal("vatten", [{ losare: "vatten.2d" }]).map((x) => x.slag), ["rannsten_flode"]);
+  assert.deepEqual(vektorVal("vatten", [{ losare: "vatten.dynamik" }, { losare: "vatten.hybrid" }]).map((x) => x.slag), ["sankor", "flodesvagar", "rannsten_flode"]);
+
+  const rannstenSvar: VektorSvar = {
+    slag: "rannsten_flode",
+    scenario: "fore",
+    korning_id: "k2",
+    meta: { antal_totalt: 2, visade: 2 },
+    features: [
+      { geometry: { type: "LineString", coordinates: [[151000, 6580000], [151020, 6580000]] }, properties: { flode_m3_s: 0.015, djup_m: 0.08, langd_m: 20 } },
+      { geometry: { type: "LineString", coordinates: [[151020, 6580000], [151040, 6580000]] }, properties: { flode_m3_s: 0.125, djup_m: 0.16, langd_m: 20 } },
+    ],
+  };
+  assert.deepEqual(rannstenSkala(rannstenSvar), { lo: 0.015, hi: 0.125 });
+  const k = vektorTillKarta(rannstenSvar);
+  assert.equal(k.fc.features.length, 2);
+  assert.ok(Number(k.fc.features[1]?.properties?.bredd) > Number(k.fc.features[0]?.properties?.bredd));
+  const beskriv = rannstenBeskrivning({ flode_m3_s: 0.125, djup_m: 0.16, langd_m: 20 });
+  assert.equal(beskriv, "Rännsten (1D): toppflöde 0,125 m³/s, djup 0,16 m, längd 20 m.");
+  assert.doesNotMatch(beskriv, /\d\.\d/);
+  const html = vektorTeckenHtml(rannstenSvar);
+  assert.match(html, /Rännstenar \(1D\): toppflöde \(m³\/s\)/);
+  assert.match(html, /0,015/);
+  assert.match(html, /0,125 m³\/s/);
 });

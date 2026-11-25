@@ -75,13 +75,13 @@
 .plan-rad {
   display: flex;
   flex-wrap: wrap;
-  gap: 32px 56px;
+  gap: 20px 36px;
   align-items: flex-start;
-  padding: 24px 0;
+  padding: 16px 0;
 }
 .plan-tal {
   display: flex;
-  gap: 32px;
+  gap: 24px;
 }
 .tal-kort {
   display: flex;
@@ -89,7 +89,7 @@
   gap: 4px;
 }
 .stor-tal {
-  font-size: 44px;
+  font-size: 38px;
   line-height: 1;
   letter-spacing: -0.03em;
 }
@@ -102,7 +102,7 @@
   display: block;
   width: 100%;
   border: 1px solid var(--f-linje-stark);
-  background: #fff;
+  background: var(--f-yta);
 }
 .plan-ruta {
   stroke: #111;
@@ -295,9 +295,18 @@ progress::-moz-progress-bar {
 }
 .teckenforklaring {
   display: grid;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--f-linje-stark);
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--f-yta);
+  border: 1px solid var(--f-linje);
+  border-top: 2px solid var(--f-accent);
+}
+.tecken-notis {
+  margin: 2px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--f-linje-svag);
+  font-size: 12px;
+  color: var(--f-text-dampad);
 }
 .skala-rad {
   display: grid;
@@ -324,6 +333,7 @@ progress::-moz-progress-bar {
 .klass-lista .ruta {
   width: 18px;
   height: 12px;
+  flex: none;
   border: 1px solid var(--f-linje-stark);
 }
 .fil-lista {

@@ -55,44 +55,44 @@
 
 /* ---------- Startsidan ---------- */
 .halsning {
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   font-size: 15px;
   color: var(--f-text-dampad);
 }
 .hjalte {
-  padding-top: 72px;
-  padding-bottom: 64px;
+  padding-top: 40px;
+  padding-bottom: 36px;
   align-items: end;
 }
 .hjalte-rubrik {
-  font-size: clamp(40px, 5.6vw, 84px);
+  font-size: clamp(36px, 5vw, 72px);
 }
 .steg-lista {
   list-style: none;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0 48px;
+  gap: 0 32px;
   margin: 0;
-  padding: 8px 0 56px;
+  padding: 4px 0 36px;
 }
 .steg {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   align-content: start;
-  padding-top: 20px;
+  padding-top: 14px;
   border-top: 1px solid var(--f-linje);
-  margin-top: 16px;
+  margin-top: 12px;
 }
 .steg-nr {
   font-family: var(--f-font-rubrik);
-  font-size: 40px;
+  font-size: 32px;
   line-height: 1;
-  color: var(--f-text);
+  color: var(--f-accent);
 }
 .steg h3 {
   margin: 0;
   font-family: var(--f-font-rubrik);
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 600;
   color: var(--f-text);
 }
@@ -101,10 +101,10 @@
   color: var(--f-text-sekundar);
 }
 .modul-kort h3 {
-  font-size: 28px;
+  font-size: 24px;
 }
 .modul-kort {
-  padding-bottom: 32px;
+  padding-bottom: 22px;
 }
 .modul-status {
   text-transform: none;
@@ -372,12 +372,12 @@
 
 /* ---------- Avstånd och tabeller ---------- */
 .innehall {
-  gap: 36px;
-  padding-top: 40px;
+  gap: 24px;
+  padding-top: 24px;
 }
 .jamfor-tabell thead th {
-  font-size: 15px;
-  padding: 14px 16px;
+  font-size: 14px;
+  padding: 10px 14px;
 }
 .jamfor-tabell thead th.hoger,
 .jamfor-tabell td.hoger {
@@ -414,10 +414,10 @@
 
 /* Kommandorutan på sidan Nycklar (MCP-token): bryts i stället för att ge sidled. */
 .kodruta {
-  margin: 0.5rem 0 1rem;
-  padding: 0.75rem 1rem;
-  background: #f4f4f1;
-  border: 1px solid #d8d8d2;
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.65rem 0.85rem;
+  background: var(--f-yta-dampad);
+  border: 1px solid var(--f-linje);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   font-size: 0.85rem;

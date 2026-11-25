@@ -20,7 +20,8 @@ import { Kartmotor, type AnalysVektor, type RasterLager, type VyByggnad } from "
 import { LagerLista } from "../karta/lager.ts";
 import { OVERFALL_LAGER_ID, overfallLager, ritadeOverfall } from "../karta/overfall.ts";
 import { PlanDok } from "../karta/plandok.ts";
-import { LAGEN, lasKartan, type Lage } from "../kartforklaring.ts";
+import { LAGEN, lasKartan, osakerhetNotisText, type Lage } from "../kartforklaring.ts";
+import { rubrikMedEnhet } from "../teckenforklaring.ts";
 import { fasadForklaringHtml, skapa3dVy, VY3D_ID } from "../kartsida3d.ts";
 import { esc } from "../sidor.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
@@ -33,6 +34,7 @@ import { flodeAdress } from "./adress.ts";
 import { GRANSER, gransVarde, sankaKortHtml, sankaUrl, type SankaSvar, forvaldNyckel, lagerVal, valText, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type LagerVal, type VektorSlag, type VektorSvar } from "./analyslager.ts";
 import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
+import { harLuftKorningar, LUFT_AMNE, LUFT_FLIK_NAMN, luftFlikKnappHtml, luftLagerVal, luftNyckeltal, luftPanelHtml } from "./luftflik.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
 import { antagandeRader, intervallForklaring, jamforelse, kallRad, nyckeltal, regnText, resultatEtikett, slutsats, type Amne, type EkologiSvar, type Marksiffror, type Underlag } from "./nyckeltal.ts";
 import { osakerhetTal, overfallRader, type OsakerhetSvar } from "./osakerhet.ts";
@@ -47,30 +49,42 @@ interface MarkSvar {
 }
 
 type Kalla = "ritat" | "projekt" | "lage";
+type ResultatAmne = Amne | typeof LUFT_AMNE;
 
-const AMNEN_ORDNING: Amne[] = ["vatten", "dagsljus", "ekologi"];
-const AMNESNAMN: Record<Amne, string> = { vatten: "Skyfall", dagsljus: "Sol", ekologi: "Ekologi" };
+const AMNEN_ORDNING: ResultatAmne[] = ["vatten", "dagsljus", "ekologi", "luft"];
+const AMNESNAMN: Record<ResultatAmne, string> = { vatten: "Skyfall", dagsljus: "Sol", ekologi: "Ekologi", luft: LUFT_FLIK_NAMN };
 
 const lagerPost = (r: ResultatSvar | undefined, id: string | null): LagerPost | null => (id && r ? (r.lager.find((l) => l.id === id) ?? null) : null);
 
-/** Teckenförklaring som i skissen: rubrik, band och ändpunkter. */
-export function teckenHtml(l: LagerPost, rubrik: string): string {
+/** Teckenförklaring som i skissen: tydlig rubrik med enhet, färgrutor/band och valfri osäkerhetsnotis. */
+export function teckenHtml(l: LagerPost, rubrik: string, osakerhetFore = false): string {
   const tf = l.teckenforklaring;
   const f = (v: number): string => formateraHogst(v, 2);
   const enhet = l.enhet ? ` ${esc(l.enhet)}` : "";
+  const titel = rubrikMedEnhet(rubrik || l.etikett || l.namn, l.enhet);
   let band = "";
   if (tf.typ === "divergerande") {
-    band = `<span class="flode-band" style="background:linear-gradient(90deg,${tf.farg_minskning},#f6f5f0,${tf.farg_okning})"></span>
+    band = `<span class="flode-band" style="background:linear-gradient(90deg,${tf.farg_minskning},#f7f5ee,${tf.farg_okning})"></span>
       <span class="flode-bandtext"><span>−${f(tf.max)}${enhet}</span><span>0</span><span>+${f(tf.max)}${enhet}</span></span>`;
   } else if (tf.typ === "kontinuerlig") {
     band = `<span class="flode-band" style="background:linear-gradient(90deg,${tf.stopp.join(",")})"></span>
-      <span class="flode-bandtext"><span>${f(tf.min)}</span><span>${f(tf.max)}${enhet}</span></span>`;
+      <span class="flode-bandtext"><span>${f(tf.min)}${enhet}</span><span>${f(tf.max)}${enhet}</span></span>`;
   } else if (tf.typ === "kategorier") {
-    band = `<span class="flode-klasser">${tf.kategorier.map((k) => `<span><i style="background:${k.farg}"></i>${formateraHogst(k.varde, 0)}${k.etikett ? ` (${esc(k.etikett)})` : ""}</span>`).join("")}</span>`;
+    band = `<span class="flode-klasser">${tf.kategorier
+      .map((k) => `<span><i style="background:${k.farg}"></i>${formateraHogst(k.varde, 0)}${k.etikett ? ` · ${esc(k.etikett)}` : enhet}</span>`)
+      .join("")}</span>`;
   } else {
-    band = `<span class="flode-klasser">${tf.klasser.map((k) => `<span><i style="background:${k.farg}"></i>från ${f(k.fran)}${enhet}</span>`).join("")}</span>`;
+    band = `<span class="flode-klasser">${tf.klasser
+      .map((k) => {
+        const text = k.etikett
+          ? `${esc(k.etikett)}${l.enhet && !k.etikett.includes(l.enhet) ? enhet : ""}`
+          : `från ${f(k.fran)}${enhet}`;
+        return `<span><i style="background:${k.farg}"></i>${text}</span>`;
+      })
+      .join("")}</span>`;
   }
-  return `<span class="flode-kort-rubrik">${esc(rubrik)}</span>${band}`;
+  const notis = osakerhetNotisText(osakerhetFore);
+  return `<span class="flode-kort-rubrik">${esc(titel)}</span>${band}${notis ? `<span class="flode-tecken-notis">${esc(notis)}</span>` : ""}`;
 }
 
 export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
@@ -79,7 +93,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   const ac = new AbortController();
   let projektSvar: ProjektSvar | null = null;
   let info: ProjektInfo | null = null;
-  let amne: Amne = "vatten";
+  let amne: ResultatAmne = "vatten";
   let kalla: Kalla = "projekt";
   let vy: ProjektVy | null = null;
   /** Vyn som valts ur listan; `vy` är samma vy med lagren för den roll som valts i "Visa". */
@@ -136,6 +150,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
           <button type="button" role="tab" data-amne="vatten" aria-selected="true">Skyfall</button>
           <button type="button" role="tab" data-amne="dagsljus" aria-selected="false">Sol</button>
           <button type="button" role="tab" data-amne="ekologi" aria-selected="false">Ekologi</button>
+          ${luftFlikKnappHtml(false, false)}
         </div>
         <div id="rs-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar resultatet …</p></div>
         ${extraAnalyserHtml()}
@@ -176,7 +191,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     if (tl && vy) {
       const namn = lage === "skillnad" ? `Skillnad i ${tl.etikett.toLowerCase()}` : tl.etikett;
       const takKryss = lage !== "3d" && tl.tak_maskat ? `<label class="flode-kryss"><input type="checkbox" id="rs-tak" ${visaTak ? "checked" : ""}/> Visa värden även på tak</label>` : "";
-      html = teckenHtml(tl, namn) + takKryss;
+      const osakFore = amne !== "luft" && osakPa.has(amne);
+      html = teckenHtml(tl, namn, osakFore) + takKryss;
     }
     if (fasadTand) html += fasadForklaringHtml("skillnad", Boolean(skill));
     html += vektorHtml.map((x) => `<div class="flode-vektortecken">${x}</div>`).join("");
@@ -223,7 +239,10 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     ritaTecken();
     uppdateraVisaText();
   };
-  const rollerNu = (): LagerVal[] => (vyBas && r ? lagerVal(r.lager, vyBas, amne) : []);
+  const rollerNu = (): LagerVal[] => {
+    if (!vyBas || !r) return [];
+    return amne === LUFT_AMNE ? luftLagerVal(r.lager, vyBas) : lagerVal(r.lager, vyBas, amne);
+  };
   const tillampaVal = (): ProjektVy | null => (vyBas ? vyMedVal(vyBas, rollerNu().find((x) => x.nyckel === valtNyckel) ?? null) : null);
   const visaText = (): string => {
     const v = rollerNu().find((x) => x.nyckel === (valtNyckel ?? (vyBas ? forvaldNyckel(rollerNu(), vyBas) : null)));
@@ -259,6 +278,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     a.settNotis(notis);
     a.settOverfall(overfall);
     a.settOverfallStil(overfallStil());
+    const poly = r?.projekt_avgransning?.polygon_3011 ?? info.avgransning_polygon_3011 ?? null;
+    a.settProjektPolygon(poly);
     a.settByggnader(byggnader(lage === "svep" ? fore : visad));
     el("rs-b").hidden = !delat;
     el("rs-svep-rad").hidden = !delat;
@@ -272,6 +293,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       b.settByggnadStil(bStil);
       b.settOverfall(overfall);
       b.settOverfallStil(overfallStil());
+      b.settProjektPolygon(poly);
       b.onMarkor = planeraAvlasning;
       b.settByggnader(byggnader(efter));
       el("rs-b").style.clipPath = `inset(0 0 0 ${Math.round(svep * 1000) / 10}%)`;
@@ -362,18 +384,21 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     return { synlig: amne === "vatten" && osakPa.has("vatten") && Boolean(l?.synlig), opacitet: l?.opacitet ?? 1 };
   };
 
-  const osakerhetVisning = (): OsakerhetVisning => ({
-    pa: osakPa.has(amne),
-    laddar: osakLaddar,
-    tal: osakerhetTal(amne, osak),
-    rader: amne === "vatten" ? overfallRader(osak.bifurkation) : [],
-    fel: osak.fel,
-    overfallLager: amne === "vatten" && osak.bifurkation ? { synlig: Boolean(kartLager.hamta(OVERFALL_LAGER_ID)?.synlig), antal: overfall.length } : null,
-  });
+  const osakerhetVisning = (): OsakerhetVisning => {
+    const a2: Amne = amne === LUFT_AMNE ? "ekologi" : amne;
+    return {
+      pa: amne !== LUFT_AMNE && osakPa.has(a2),
+      laddar: osakLaddar,
+      tal: osakerhetTal(a2, osak),
+      rader: amne === "vatten" ? overfallRader(osak.bifurkation) : [],
+      fel: osak.fel,
+      overfallLager: amne === "vatten" && osak.bifurkation ? { synlig: Boolean(kartLager.hamta(OVERFALL_LAGER_ID)?.synlig), antal: overfall.length } : null,
+    };
+  };
 
   /** Hämtar intervallen och överfallen för ämnet. Allt räknas på servern; här sätts bara svaren in. */
-  const laddaOsakerhet = async (ny: Amne): Promise<void> => {
-    if (ny === "ekologi") return;
+  const laddaOsakerhet = async (ny: ResultatAmne): Promise<void> => {
+    if (ny === "ekologi" || ny === LUFT_AMNE) return;
     osakPa.add(ny);
     osak.fel = [];
     const behovs = ny === "vatten" ? !osak.vatten || !osak.bifurkation : !osak.svf;
@@ -491,8 +516,16 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     }, 90);
   };
 
+  const synkaLuftFlik = (): boolean => {
+    const harLuft = harLuftKorningar([...(projektSvar?.vyer ?? []), ...t.ritVyer, ...t.lageVyer]);
+    const knapp = rot.querySelector<HTMLButtonElement>(`[data-amne="${LUFT_AMNE}"]`);
+    if (knapp) knapp.hidden = !harLuft;
+    return harLuft;
+  };
+
   const ritaPanel = (): void => {
     if (avslutad) return;
+    synkaLuftFlik();
     const inne = el("rs-innehall");
     const harRitat = t.ritVyer.length > 0;
     const harLage = t.lageVyer.length > 0;
@@ -510,6 +543,30 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         : `<h1 class="flode-h" id="rs-rubrik">Inget resultat än</h1><p class="flode-dampad">${AMNESNAMN[amne]} är inte beräknat för ${kalla === "ritat" ? "ditt förslag" : kalla === "lage" ? "läget idag" : "projektet"}. Välj frågor och kör beräkningarna i <a href="${flodeAdress(projekt, "fragor")}">steg 3</a>.</p>`;
       return;
     }
+    const kallKnappar = [
+      harRitat ? `<button type="button" data-kalla="ritat" aria-pressed="${kalla === "ritat"}">Ditt förslag</button>` : "",
+      harLage ? `<button type="button" data-kalla="lage" aria-pressed="${kalla === "lage"}">Läget idag</button>` : "",
+      (projektSvar?.vyer?.length ?? 0) > 0 ? `<button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button>` : "",
+    ].filter(Boolean);
+    const kallVal = kallKnappar.length > 1 ? `<div class="flode-segment liten" role="group" aria-label="Vilket resultat">${kallKnappar.join("")}</div>` : "";
+    if (amne === LUFT_AMNE) {
+      const foreScen = lagerPost(r, vy.fore_lager)?.scenario;
+      const efterScen = lagerPost(r, vy.efter_lager)?.scenario;
+      const vyVal =
+        vyer.length > 1
+          ? `<div class="flode-chips liten" role="group" aria-label="Förändring">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(kalla === "lage" ? v.mattnamn : v.efter_namn)}</button>`).join("")}</div>`
+          : "";
+      inne.innerHTML = `
+        ${kallVal}${vyVal}${visaBlock()}
+        ${luftPanelHtml({
+          korningId: vy.korning_id,
+          roller: rollerNu(),
+          tal: luftNyckeltal(r.tabeller, foreScen, efterScen),
+          las: lasKartan(vy, lage, info?.paahittat !== false),
+          lageIdag: kalla === "lage",
+        })}`;
+      return;
+    }
     const u = underlag();
     const tal = nyckeltal(amne, u);
     const jfr = jamforelse(amne, u);
@@ -522,12 +579,6 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const ekoKalla = amne === "ekologi" ? [resultatEtikett(ekologi), kallRad(ekologi), ...antagandeRader(ekologi), intervallForklaring(ekologi)].filter(Boolean) : [];
     const ekoVarning = amne === "ekologi" ? [...(ekologi?.varningar ?? []), ...(ekologiFel ? [`Ekologisvaret gick inte att hämta: ${ekologiFel}`] : [])] : [];
     const raderRegn = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ingress ?? "", ...ekoVarning, `Alla tal kommer ur körningen ${vy.korning_id}.`].filter(Boolean).join(" ");
-    const kallKnappar = [
-      harRitat ? `<button type="button" data-kalla="ritat" aria-pressed="${kalla === "ritat"}">Ditt förslag</button>` : "",
-      harLage ? `<button type="button" data-kalla="lage" aria-pressed="${kalla === "lage"}">Läget idag</button>` : "",
-      (projektSvar?.vyer?.length ?? 0) > 0 ? `<button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button>` : "",
-    ].filter(Boolean);
-    const kallVal = kallKnappar.length > 1 ? `<div class="flode-segment liten" role="group" aria-label="Vilket resultat">${kallKnappar.join("")}</div>` : "";
     if (kalla === "lage") {
       inne.innerHTML = `${kallVal}${visaBlock()}${vyer.length > 1 ? `<div class="flode-chips liten" role="group" aria-label="Analys">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.mattnamn)}</button>`).join("")}</div>` : ""}
         <h1 class="flode-h" id="rs-rubrik">Läget idag: ${esc(AMNESNAMN[amne].toLowerCase())}</h1>
@@ -568,7 +619,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       try {
         const res = cache.get(ny.korning_id) ?? (await hamtaResultat(ny.korning_id));
         cache.set(ny.korning_id, res);
-        const m = amne === "ekologi" || kalla === "lage" ? null : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
+        const m = amne === "ekologi" || amne === LUFT_AMNE || kalla === "lage" ? null : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
         let eko: EkologiSvar | null = null;
         let ekoFel: string | null = null;
         if (amne === "ekologi" && kalla !== "lage") {
@@ -613,7 +664,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     }
   };
 
-  const valjAmne = async (ny: Amne): Promise<void> => {
+  const valjAmne = async (ny: ResultatAmne): Promise<void> => {
     amne = ny;
     valtNyckel = null;
     if (vyerFor(kalla).length === 0) kalla = kalla === "projekt" ? (t.ritVyer.some((v) => v.avsnitt === ny) ? "ritat" : t.lageVyer.some((v) => v.avsnitt === ny) ? "lage" : "projekt") : t.ritVyer.some((v) => v.avsnitt === ny) && kalla !== "ritat" ? "ritat" : t.lageVyer.some((v) => v.avsnitt === ny) && kalla !== "lage" ? "lage" : "projekt";
@@ -626,13 +677,13 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     const m = (h.target as Element).closest<HTMLElement>("[data-lage],[data-amne],[data-kalla],[data-vy],#rs-osakerhet");
     if (!m) return;
     if (m.id === "rs-osakerhet") {
-      if (osakPa.has(amne)) {
+      if (amne !== LUFT_AMNE && osakPa.has(amne)) {
         osakPa.delete(amne);
         ritaPanel();
         synkaKarta();
       } else void laddaOsakerhet(amne);
     } else if (m.dataset.lage) stallLage(m.dataset.lage as Lage);
-    else if (m.dataset.amne) void valjAmne(m.dataset.amne as Amne);
+    else if (m.dataset.amne) void valjAmne(m.dataset.amne as ResultatAmne);
     else if (m.dataset.kalla) {
       kalla = m.dataset.kalla as Kalla;
       if (kalla === "lage" && lage !== "fore") stallLage("fore");
@@ -697,8 +748,9 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   rot.querySelector("#rs-flikar")?.addEventListener("keydown", (h) => {
     const k = (h as KeyboardEvent).key;
     if (k === "ArrowRight" || k === "ArrowLeft") {
-      const n = AMNEN_ORDNING.length;
-      const nasta = AMNEN_ORDNING[(AMNEN_ORDNING.indexOf(amne) + (k === "ArrowRight" ? 1 : n - 1)) % n] ?? amne;
+      const synliga = synkaLuftFlik() ? AMNEN_ORDNING : AMNEN_ORDNING.filter((x) => x !== LUFT_AMNE);
+      const n = synliga.length;
+      const nasta = synliga[(synliga.indexOf(amne) + (k === "ArrowRight" ? 1 : n - 1)) % n] ?? amne;
       void valjAmne(nasta).then(() => rot.querySelector<HTMLElement>(`[data-amne="${amne}"]`)?.focus());
     }
   });
@@ -761,13 +813,14 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     kalla = vyAvLank ? "projekt" : t.korning?.lage && t.lageVyer.length > 0 ? "lage" : t.ritVyer.length > 0 ? "ritat" : t.lageVyer.length > 0 ? "lage" : "projekt";
     if (kalla === "lage") lage = "fore";
     if (vyAvLank) {
-      amne = vyAvLank.avsnitt as Amne;
+      amne = vyAvLank.avsnitt as ResultatAmne;
       onskadVy = vyAvLank.id;
     }
     if (!vyAvLank && vyerFor(kalla).length === 0) {
       const forsta = kalla === "ritat" ? t.ritVyer[0]?.avsnitt : kalla === "lage" ? t.lageVyer[0]?.avsnitt : undefined;
-      amne = forsta === "dagsljus" || forsta === "ekologi" ? forsta : "vatten";
+      amne = forsta === "dagsljus" || forsta === "ekologi" || forsta === LUFT_AMNE ? forsta : "vatten";
     }
+    synkaLuftFlik();
     await valjAmne(amne);
     window.requestAnimationFrame(() => a?.matOm());
   })();
