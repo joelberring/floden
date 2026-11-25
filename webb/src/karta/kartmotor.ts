@@ -114,6 +114,8 @@ const OVERFALL = "overfall";
 const ANALYS = "analys";
 const SKARV = "skarv";
 const MAT = "mat";
+const SEKTION = "sektion";
+const SEKTION_MARKOR = "sektion-markor";
 // Lagerordning ovanför rasterlagren, nerifrån.
 const OVERLAGER = [
   "byggnader-fyll",
@@ -148,6 +150,10 @@ const OVERLAGER = [
   "mat-linje-skugga",
   "mat-linje",
   "mat-punkter",
+  "sektion-linje-skugga",
+  "sektion-linje",
+  "sektion-punkter",
+  "sektion-markor",
 ];
 
 /** Pekskärm (grov pekare): större handtag och hållning för att flytta. */
@@ -193,6 +199,8 @@ export class Kartmotor {
   private etikettEl: HTMLElement;
   private mat: MatLinjeVy | null = null;
   private matEtikettEl: HTMLElement;
+  private sektionLinje: Array<[number, number]> | null = null;
+  private sektionMarkor: [number, number] | null = null;
   private slut = false;
 
   /** Anropas med markörens SWEREF-koordinat (E, N), eller null när markören lämnar vyn. */
@@ -456,7 +464,7 @@ export class Kartmotor {
   private byggOverlager(): void {
     const k = this.karta;
     const grov = arGrovPekare(); // pekskärm: större handtag
-    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`, MAT]) {
+    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`, MAT, SEKTION, SEKTION_MARKOR]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -556,6 +564,10 @@ export class Kartmotor {
     k.addLayer({ id: "mat-linje-skugga", type: "line", source: MAT, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#ffffff", "line-width": 5, "line-opacity": 0.95 } });
     k.addLayer({ id: "mat-linje", type: "line", source: MAT, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#111111", "line-width": 2.5 } });
     k.addLayer({ id: "mat-punkter", type: "circle", source: MAT, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": grov ? 8 : 5, "circle-color": "#111111", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } });
+    k.addLayer({ id: "sektion-linje-skugga", type: "line", source: SEKTION, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#ffffff", "line-width": 5.5, "line-opacity": 0.95 } });
+    k.addLayer({ id: "sektion-linje", type: "line", source: SEKTION, filter: ["==", ["geometry-type"], "LineString"], paint: { "line-color": "#111111", "line-width": 2.5, "line-dasharray": [4, 2] } });
+    k.addLayer({ id: "sektion-punkter", type: "circle", source: SEKTION, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": grov ? 8 : 5, "circle-color": "#111111", "circle-stroke-color": "#ffffff", "circle-stroke-width": 2 } });
+    k.addLayer({ id: "sektion-markor", type: "circle", source: SEKTION_MARKOR, paint: { "circle-radius": grov ? 9 : 6.5, "circle-color": "#ffffff", "circle-stroke-color": "#111111", "circle-stroke-width": 2.5 } });
   }
 
   private satt(id: string, data: Fc): void {
@@ -767,6 +779,49 @@ export class Kartmotor {
     this.matEtikettEl.hidden = false;
   }
 
+  /** Ritar sektionslinjen (EPSG:3011) ovanpå alla andra lager, eller null för att rensa. */
+  settSektionLinje(punkter: Array<[number, number]> | null): void {
+    this.sektionLinje = punkter && punkter.length > 0 ? punkter.map(([x, y]) => [x, y]) : null;
+    this.nar(() => this.synkaSektion());
+  }
+
+  /** Ritar en synkad cirkelmarkör längs sektionen vid hovring i profil-SVG:n, eller null. */
+  settSektionMarkor(punkt: [number, number] | null): void {
+    this.sektionMarkor = punkt ? [punkt[0], punkt[1]] : null;
+    this.nar(() => this.synkaSektionMarkor());
+  }
+
+  private synkaSektion(): void {
+    if (!this.klar || this.slut) return;
+    const pts = this.sektionLinje;
+    if (!pts || pts.length === 0) {
+      this.satt(SEKTION, TOM);
+      return;
+    }
+    const coords = pts.map(ll);
+    const features: Fc["features"] = [];
+    if (coords.length >= 2) {
+      features.push({ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } });
+    }
+    for (const c of coords) {
+      features.push({ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: c } });
+    }
+    this.satt(SEKTION, { type: "FeatureCollection", features });
+  }
+
+  private synkaSektionMarkor(): void {
+    if (!this.klar || this.slut) return;
+    const p = this.sektionMarkor;
+    if (!p) {
+      this.satt(SEKTION_MARKOR, TOM);
+      return;
+    }
+    this.satt(SEKTION_MARKOR, {
+      type: "FeatureCollection",
+      features: [{ type: "Feature", properties: {}, geometry: { type: "Point", coordinates: ll(p) } }],
+    });
+  }
+
   private synkaOverlager(): void {
     if (!this.klar || this.slut) return;
     this.satt(BYGGNADER, {
@@ -849,6 +904,8 @@ export class Kartmotor {
     this.satt(`${RIT}-fast`, punkter(r.fast ? [r.fast.at] : []));
     this.satt(`${RIT}-punkter`, punkter(r.utkast));
     this.synkaMat();
+    this.synkaSektion();
+    this.synkaSektionMarkor();
   }
 
   // ------------------------------------------------------------------ DOM-lager

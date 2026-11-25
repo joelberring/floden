@@ -5,6 +5,8 @@ import type { K9Andring } from "./plandok";
 import type { RitLager, RitlagerDok, RollInfo } from "./ritlager";
 import type { AtgardSvar, Skarvar } from "./skarv";
 import type { WmsSvar } from "./wms";
+import type { SektionSvar } from "../flode/sektion";
+import type { TidsserieSvar } from "../flode/tidsspelare";
 
 export type { Utbredning };
 
@@ -12,12 +14,32 @@ const BAS = "/api/kartverktyg";
 const post = <T>(url: string, kropp: unknown): Promise<T> =>
   lasJson<T>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kropp) });
 
-/** Regnparametrar i `POST .../plan` och `POST .../kor` (spår 1: exakt backend-kontrakt). */
+/** Regnparametrar i `POST .../plan` och `POST .../kor` (spår 1 + Våg 2: exakt backend-kontrakt). */
 export interface RegnParam {
   aterkomsttid_ar?: number | null;
   varaktighet_min?: number | null;
   klimatfaktor?: number | null;
   regn_mm?: number | null;
+  berakningstyp?: "statisk" | "dynamisk" | null;
+  regntyp?: "cds" | "block" | null;
+}
+
+/** Solparametrar i `POST .../plan` och `POST .../kor` (Våg 2: exakt backend-kontrakt). */
+export interface SolParam {
+  datum_iso?: string | null;
+  start_timme?: number | null;
+  slut_timme?: number | null;
+  sammanhangande?: boolean | null;
+  inkludera_vsc?: boolean | null;
+}
+
+/** Begäran till `POST /api/kartverktyg/<projekt>/sektion` (`floden-sektion/v1`). */
+export interface SektionBegaran {
+  punkter: Array<[number, number]>;
+  korning_id?: string | null;
+  fore_lager?: string | null;
+  efter_lager?: string | null;
+  steg_m?: number | null;
 }
 
 /** Projektets förvalda regn ur `GET /api/kartverktyg/<projekt>` (`info.regn_forval`). */
@@ -132,18 +154,20 @@ export const bytScenarioNamn = (p: string, slug: string, namn: string): Promise<
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/byt-namn`, { namn });
 export const taBortScenario = (p: string, slug: string): Promise<{ borttaget: boolean }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/ta-bort`, {});
-/** `avtappning_mm_h` null = lösarens standard 0 mm/h (ledningsnätet antas fullt). `regn` null = projektets förval. */
+/** `avtappning_mm_h` null = lösarens standard 0 mm/h (ledningsnätet antas fullt). `regn` / `sol` null = projektets förval. */
 export const planeraScenario = (
   p: string,
   slug: string,
   analyser: string[],
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
+  sol: SolParam | null = null,
 ): Promise<{ slug: string; fragor: PlanPost[] }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/plan`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
+    ...(sol ? { sol } : {}),
   });
 export const korScenario = (
   p: string,
@@ -151,11 +175,13 @@ export const korScenario = (
   analyser: string[],
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
+  sol: SolParam | null = null,
 ): Promise<{ slug: string; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/kor`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
+    ...(sol ? { sol } : {}),
   });
 export const scenarioStatus = (p: string, slug: string): Promise<{ slug: string; korningar: KorningPost[] }> =>
   lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/status`);
@@ -170,25 +196,35 @@ export const planeraLageIdag = (
   analyser: string[],
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
+  sol: SolParam | null = null,
 ): Promise<LagePlan> =>
   post(`${BAS}/${encodeURIComponent(p)}/lage-idag/plan`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
+    ...(sol ? { sol } : {}),
   });
 export const korLageIdag = (
   p: string,
   analyser: string[],
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
+  sol: SolParam | null = null,
 ): Promise<{ lage: "idag"; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
   post(`${BAS}/${encodeURIComponent(p)}/lage-idag/kor`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
+    ...(sol ? { sol } : {}),
   });
 export const lageIdagStatus = (p: string): Promise<{ lage: "idag"; korningar: KorningPost[] }> =>
   lasJson(`${BAS}/${encodeURIComponent(p)}/lage-idag/status`);
+/** Hämtar höjd-, byggnads- och vattenprofil längs en sektion i EPSG:3011 (`floden-sektion/v1`). */
+export const hamtaSektion = (p: string, begaran: SektionBegaran): Promise<SektionSvar> =>
+  post(`${BAS}/${encodeURIComponent(p)}/sektion`, begaran);
+/** Hämtar dynamisk tidsserie och hydrograf för en skyfallskörning (`floden-tidsserie/v1`). */
+export const hamtaTidsserie = (korningId: string, scenario: string): Promise<TidsserieSvar> =>
+  lasJson(`/api/korningar/${encodeURIComponent(korningId)}/tidsserie?scenario=${encodeURIComponent(scenario)}`);
 export const lasWmsLager = (url: string): Promise<WmsSvar> => post(`${BAS}/wms/lager`, { url });
 
 export interface BifurkationsPunktPost {

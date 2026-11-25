@@ -528,6 +528,386 @@
   cursor: pointer;
 }
 
+/* ---------- Grundkarteväljare på kartan ---------- */
+.ar-grundkarta[hidden] {
+  display: none;
+}
+.gk-valjare {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 0;
+}
+.gk-knappar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.gk-knapp {
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--f-text-sekundar, #333333);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.gk-knapp:hover {
+  background: var(--f-yta-dampad, #f4f4f4);
+  color: var(--f-text, #111111);
+}
+.gk-knapp.aktiv,
+.gk-knapp[aria-pressed="true"] {
+  background: var(--f-accent, #111111);
+  color: var(--f-bakgrund, #ffffff);
+}
+.gk-opacitet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  border-top: 1px solid var(--f-linje, #d9d9d9);
+  font-size: 11px;
+  color: var(--f-text-dampad, #595959);
+  font-variant-numeric: tabular-nums;
+}
+.gk-opacitet input[type="range"] {
+  width: 96px;
+  accent-color: var(--f-accent, #111111);
+}
+
+/* ---------- Gemensam bottendock: Sektion & Tidsspelare ---------- */
+.ar-botten-dock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  background: var(--f-yta, #ffffff);
+  border-top: 1px solid var(--f-linje-stark, #111111);
+  color: var(--f-text, #111111);
+}
+.ar-botten-dock[hidden] {
+  display: none;
+}
+.ar-karta.har-botten .ar-tecken {
+  bottom: 244px !important;
+}
+.ar-karta.har-botten .ar-skalstock {
+  bottom: 244px;
+}
+.ar-karta.har-botten .ar-avlasning {
+  bottom: 290px !important;
+}
+.ar-karta.har-botten .ar-hjalp {
+  bottom: 244px !important;
+}
+.ar-dock-flikar {
+  display: flex;
+  gap: 2px;
+  padding: 4px 10px 0;
+  background: var(--f-yta-dampad, #f4f4f4);
+  border-bottom: 1px solid var(--f-linje, #d9d9d9);
+}
+.ar-dock-flikar button {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--f-text-dampad, #595959);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ar-dock-flikar button[aria-selected="true"] {
+  background: var(--f-yta, #ffffff);
+  border-color: var(--f-linje, #d9d9d9);
+  color: var(--f-text, #111111);
+}
+
+/* Sektionspanel */
+.ar-sektion-panel {
+  padding: 6px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-sektion-huvud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+.ar-sektion-samman {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ar-sektion-knappar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.ar-sektion-knappar button {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  border-radius: 0;
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ar-sektion-knappar button:hover {
+  border-color: var(--f-linje-stark, #111111);
+  background: var(--f-yta-dampad, #f4f4f4);
+}
+.ar-sektion-avl {
+  font-family: var(--f-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--f-text-sekundar, #333333);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ar-sektion-svg svg {
+  display: block;
+  width: 100%;
+  height: 156px;
+  cursor: crosshair;
+}
+
+/* Tidsspelare & hydrograf */
+.tid-spelare {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 0 !important;
+}
+.tid-kontroller {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tid-knapp {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  border-radius: 0;
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tid-knapp:hover {
+  border-color: var(--f-linje-stark, #111111);
+}
+.tid-knapp[aria-pressed="true"] {
+  background: var(--f-accent, #111111);
+  border-color: var(--f-accent, #111111);
+  color: var(--f-bakgrund, #ffffff);
+}
+.tid-slider {
+  flex: 1 1 120px;
+  accent-color: var(--f-accent, #111111);
+}
+.tid-status {
+  font-family: var(--f-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--f-text-sekundar, #333333);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.tid-hydrograf {
+  cursor: ew-resize;
+  user-select: none;
+}
+
+/* ---------- Dockad 3D-förhandsvisning i Redigera förslag ---------- */
+.ar-redigera-3d {
+  position: absolute;
+  right: 12px;
+  top: 104px;
+  width: 300px;
+  height: 220px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  background: var(--f-yta, #ffffff);
+  border: 1px solid var(--f-linje-stark, #111111);
+}
+.ar-redigera-3d[hidden] {
+  display: none;
+}
+.ar-redigera-3d-huvud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--f-linje, #d9d9d9);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ar-redigera-3d-huvud button {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--f-text, #111111);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ar-redigera-3d-huvud button:hover {
+  background: var(--f-yta-dampad, #f4f4f4);
+}
+.ar-redigera-3d-yta {
+  flex: 1 1 auto;
+  position: relative;
+  min-height: 0;
+}
+
+/* ---------- O-Tid-kartverktyg: Fri yta, Riv byggnad, Linjekontext, Markvolym ---------- */
+.ar-friyta-roller {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--f-linje, #d9d9d9);
+}
+.ar-friyta-roller[hidden] {
+  display: none;
+}
+.ar-friyta-roller button {
+  height: 26px;
+  padding: 0 3px;
+  font-size: 11px;
+  text-align: center;
+}
+.ar-hus-atgarder {
+  margin-top: 8px;
+}
+.ar-hus-atgarder[hidden] {
+  display: none;
+}
+.ar-hus-atgarder button {
+  width: 100%;
+  border-radius: 0;
+}
+.ar-linje-kontext {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.ar-linje-kontext[hidden] {
+  display: none;
+}
+.ar-linje-kontext button {
+  height: 28px;
+  padding: 0 4px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  border-radius: 0;
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ar-linje-kontext button:hover {
+  border-color: var(--f-linje-stark, #111111);
+}
+.ar-linje-kontext button[aria-pressed="true"] {
+  background: var(--f-accent, #111111);
+  border-color: var(--f-accent, #111111);
+  color: var(--f-bakgrund, #ffffff);
+}
+.ar-markvolym {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--f-yta-dampad, #f4f4f4);
+  border: 1px solid var(--f-linje, #d9d9d9);
+  font-variant-numeric: tabular-nums;
+}
+.ar-markvolym[hidden] {
+  display: none;
+}
+
+/* ---------- Regntyp, Solinställningar, Ekologi dPC-tabell & Buller-notis ---------- */
+.ar-regn-typ button {
+  border-radius: 0;
+}
+.ar-regn-notis {
+  margin: 0;
+}
+.ar-solval {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--f-yta-dampad, #f4f4f4);
+  border: 1px solid var(--f-linje, #d9d9d9);
+}
+.ar-solval .flode-segment button {
+  border-radius: 0;
+}
+.ar-sol-kryss {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-dpc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--f-linje, #d9d9d9);
+}
+.ar-dpc-tabell {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ar-dpc-tabell th,
+.ar-dpc-tabell td {
+  padding: 4px 5px;
+  text-align: right;
+}
+.ar-dpc-tabell th:first-child,
+.ar-dpc-tabell td:first-child {
+  text-align: left;
+}
+.ar-buller-notis {
+  margin: 6px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--f-linje, #d9d9d9);
+}
+
 /* ---------- Mobil ---------- */
 @media (max-width: 860px) {
   .ar-vaxel {

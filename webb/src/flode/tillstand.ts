@@ -9,6 +9,7 @@ import type { ProjektInfo } from "../karta/kartapi.ts";
 import type { RitlagerDok } from "../karta/ritlager.ts";
 import type { ProjektVy } from "../types.ts";
 import { lasRegnVal, STANDARD_REGNVAL, type RegnVal } from "./regnval.ts";
+import { lasSolVal, STANDARD_SOLVAL, type SolVal } from "./solval.ts";
 
 export type Skede = "skiss" | "planunderlag";
 export const MOTTAGARE: ReadonlyArray<{ id: string; namn: string }> = [
@@ -57,6 +58,8 @@ export interface FlodeTillstand {
   avtappning: number | null;
   /** Vald regninställning (Standard, 10-årsregn, 100-årsregn, Extremregn eller Eget). */
   regn: RegnVal;
+  /** Vald solinställning (datum, brukstid, sammanhängande soltimmar, VSC). */
+  sol: SolVal;
   /** Regn+avtappningssignatur för senaste klara körning av läget idag respektive förslag. */
   lageRegnSignatur: string | null;
   ritRegnSignatur: string | null;
@@ -77,6 +80,7 @@ interface Sparat {
   bestallning: Bestallning;
   avtappning?: number | null;
   regn?: RegnVal;
+  sol?: SolVal;
 }
 
 export const FORVAL_BESTALLNING: Bestallning = {
@@ -99,6 +103,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
     bestallning: { ...FORVAL_BESTALLNING },
     avtappning: null,
     regn: { ...STANDARD_REGNVAL },
+    sol: { ...STANDARD_SOLVAL },
     lageRegnSignatur: null,
     ritRegnSignatur: null,
     korning: null,
@@ -114,6 +119,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
       t.bestallning = { ...FORVAL_BESTALLNING, ...s.bestallning };
       t.avtappning = typeof s.avtappning === "number" && Number.isFinite(s.avtappning) && s.avtappning >= 0 ? s.avtappning : null;
       t.regn = lasRegnVal(s.regn);
+      t.sol = lasSolVal(s.sol);
     }
   } catch {
     /* Går det inte att läsa börjar man om; inget går förlorat på servern. */
@@ -131,6 +137,7 @@ export function sparaTillstand(t: FlodeTillstand): void {
       bestallning: t.bestallning,
       avtappning: t.avtappning,
       regn: t.regn,
+      sol: t.sol,
     };
     sessionStorage.setItem(NYCKEL + t.projekt, JSON.stringify(s));
   } catch {
