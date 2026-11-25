@@ -5,8 +5,11 @@ Webben räknar inget nytt här. Rastren är resultatfiler från lösare eller k�
 Bilden ligger i SWEREF 99 18 00 (EPSG:3011), samma rutnät som rastret, med nordkant överst.
 Klienten ritar den direkt i SWEREF-koordinater.
 
-Färgskalor: `sekventiell` (cividis-lik, färgblindsäker), `vatten` (klasser med temats
-vattenfärger, djup i meter) och `skillnad` (blå = minskning, röd = ökning, 0 genomskinlig).
+Färgskalor: `vatten` (klasser med temats vattenfärger, djup i meter), `skillnad` (blå = minskning,
+röd = ökning, 0 genomskinlig), `klass` (heltalsklasser, en färg per klass) och de kontinuerliga
+`PALETTER`: `sekventiell` (cividis-lik, färgblindsäker; soltimmar och himmelsandel), `hastighet`,
+`tid`, `stromtathet` (ekologins flaskhalsar) och `luft` (halter och vindförstärkning). Vilken skala
+en roll får står i `ROLLER` (en plats för etikett, enhet och skala).
 """
 
 from __future__ import annotations
@@ -38,6 +41,17 @@ _SEKVENTIELL: tuple[str, ...] = (
     "#cbba69",
     "#ffea46",
 )
+PALETTER: dict[str, tuple[str, ...]] = {
+    "sekventiell": _SEKVENTIELL,
+    "hastighet": ("#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"),
+    "tid": ("#ffffcc", "#fed976", "#fd8d3c", "#bd0026", "#4d004b"),
+    "stromtathet": ("#000004", "#51127c", "#b73779", "#fc8961", "#fcfdbf"),
+    "luft": ("#0d0887", "#7e03a8", "#cc4678", "#f89441", "#f0f921"),
+}
+"""Kontinuerliga färgskalor (mörkt till ljust, utom `tid` där ljust är kort tid). Valda så att
+skalan går att läsa även utan färgseende (ljushet ändras monotont)."""
+_KLASSFARGER: tuple[str, ...] = ("#2e7d32", "#9ccc65", "#fdd835", "#fb8c00", "#c62828")
+MAX_KLASSER = 9
 _VATTEN_KLASSER: tuple[tuple[float, str], ...] = (
     (0.02, "#e4edf6"),
     (0.1, "#c9d9ea"),
@@ -71,10 +85,35 @@ ETIKETTER: dict[str, tuple[str, str]] = {
     "stromtathet": ("Strömtäthet (flaskhalsar)", ""),
     "kansighet": ("Känslighet för motstånd", ""),
     "lutning": ("Lutning", "grader"),
+    "komfortklass": ("Vindkomfort (klass)", "klass"),
+    "faraklass": ("Vindfara (klass)", "klass"),
+    "forstarkning": ("Vindförstärkning på gånghöjd", "gånger"),
+    "arsmedel": ("Årsmedelhalt", "µg/m³"),
+    "hastighet": ("Vattnets hastighet", "m/s"),
+    "ankomsttid": ("Tid till vattnet kommer", "min"),
     "trunkering": ("Kontroll: avskuren horisont", ""),
     "standardhojd": ("Kontroll: byggnad utan känd höjd", ""),
     "slutsanka": ("Kontroll: slutet område, vattnet har ingen väg ut", ""),
 }
+
+SKALA_FOR_ROLL: dict[str, str] = {
+    "max_djup": "vatten",
+    "hastighet": "hastighet",
+    "ankomsttid": "tid",
+    "stromtathet": "stromtathet",
+    "kansighet": "stromtathet",
+    "arsmedel": "luft",
+    "forstarkning": "luft",
+    "komfortklass": "klass",
+    "faraklass": "klass",
+    "trunkering": "klass",
+    "standardhojd": "klass",
+    "slutsanka": "klass",
+}
+"""Roller som inte ska ha den förvalda sekventiella skalan (soltimmar, himmelsandel, lutning)."""
+
+KONTROLLROLLER = frozenset({"trunkering", "standardhojd", "slutsanka"})
+"""Kontrollager: de visar var ett resultat är osäkert, inte ett mått."""
 
 
 class LagerFel(Exception):
@@ -111,12 +150,19 @@ def etikett_och_enhet(roll: str) -> tuple[str, str]:
     return roll.replace("_", " ").capitalize(), ""
 
 
-def farg_for_roll(roll: str, *, skillnad: bool = False) -> str:
+def farg_for_roll(
+    roll: str, *, skillnad: bool = False, lo: float | None = None, hi: float | None = None
+) -> str:
+    """Färgskalans namn för rollen; en klassroll med många värden får en kontinuerlig skala."""
     if skillnad:
         return "skillnad"
-    if roll == "max_djup":
-        return "vatten"
-    return "sekventiell"
+    farg = SKALA_FOR_ROLL.get(roll, "sekventiell")
+    if farg == "klass" and lo is not None and hi is not None:
+        try:
+            klass_farger(lo, hi)
+        except LagerFel:
+            return "sekventiell"
+    return farg
 
 
 def sammanfoga(filer: Sequence[Path]) -> Mosaik:
@@ -192,8 +238,10 @@ def _nedsampla(raster: NDArray[np.float32]) -> tuple[NDArray[np.float32], int]:
     return (raster[::faktor, ::faktor], faktor) if faktor > 1 else (raster, 1)
 
 
-def _sekventiell(v: NDArray[np.float32], lo: float, hi: float) -> NDArray[np.uint8]:
-    stopp = np.stack([_hex(h) for h in _SEKVENTIELL])
+def _sekventiell(
+    v: NDArray[np.float32], lo: float, hi: float, palett: Sequence[str] = _SEKVENTIELL
+) -> NDArray[np.uint8]:
+    stopp = np.stack([_hex(h) for h in palett])
     norm = np.zeros(v.shape, dtype=np.float64) if hi <= lo else (v - lo) / (hi - lo)
     t = np.clip(np.nan_to_num(norm, nan=0.0), 0.0, 1.0) * (len(stopp) - 1)
     i0 = np.minimum(t.astype(int), len(stopp) - 2)
@@ -207,6 +255,28 @@ def _vatten(v: NDArray[np.float32]) -> tuple[NDArray[np.uint8], NDArray[np.bool_
     synlig = np.isfinite(v) & (v >= _VATTEN_KLASSER[0][0])
     for gräns, hexfarg in _VATTEN_KLASSER:
         rgb[np.isfinite(v) & (v >= gräns)] = _hex(hexfarg).astype(np.uint8)
+    return rgb, synlig
+
+
+def klass_farger(lo: float, hi: float) -> list[tuple[int, str]]:
+    """(klassvärde, färg) för heltalsklasserna lo..hi (högst `MAX_KLASSER`), grönt till rött."""
+    f0, f1 = round(lo), round(hi)
+    if not (math.isfinite(lo) and math.isfinite(hi)) or f1 < f0 or f1 - f0 + 1 > MAX_KLASSER:
+        raise LagerFel(f"Klasserna {lo}..{hi} går inte att färglägga som klasser.")
+    n = f1 - f0 + 1
+    steg = len(_KLASSFARGER) - 1
+    return [(f0 + i, _KLASSFARGER[round(i * steg / (n - 1)) if n > 1 else 0]) for i in range(n)]
+
+
+def _klass(
+    v: NDArray[np.float32], lo: float, hi: float
+) -> tuple[NDArray[np.uint8], NDArray[np.bool_]]:
+    rgb = np.zeros((*v.shape, 3), dtype=np.uint8)
+    ok = np.isfinite(v)
+    rund = np.rint(np.nan_to_num(v, nan=-1e9))
+    for varde, hexfarg in klass_farger(lo, hi):
+        rgb[ok & (rund == varde)] = _hex(hexfarg).astype(np.uint8)
+    synlig = ok & (rund >= round(lo)) & (rund <= round(hi))
     return rgb, synlig
 
 
@@ -274,8 +344,10 @@ def rita_bild(
         rgb, synlig = _vatten(v)
     elif farg == "skillnad":
         rgb, synlig = _skillnad(v, hi, troskel)
-    elif farg == "sekventiell":
-        rgb = _sekventiell(v, lo, hi)
+    elif farg == "klass":
+        rgb, synlig = _klass(v, lo, hi)
+    elif farg in PALETTER:
+        rgb = _sekventiell(v, lo, hi, PALETTER[farg])
         synlig = ok
     else:
         raise LagerFel(f"Okänd färgskala '{farg}'.")
@@ -374,4 +446,35 @@ def teckenforklaring(farg: str, lo: float, hi: float, troskel: float = 0.0) -> d
             "farg_minskning": _SKILLNAD_MINSKNING,
             "farg_okning": _SKILLNAD_OKNING,
         }
-    return {"typ": "kontinuerlig", "min": lo, "max": hi, "stopp": list(_SEKVENTIELL)}
+    if farg == "klass":
+        n = len(klass_farger(lo, hi))
+        return {
+            "typ": "kategorier",
+            "kategorier": [
+                {
+                    "varde": v,
+                    "farg": f,
+                    "etikett": "lägst" if i == 0 else "högst" if i == n - 1 else "",
+                }
+                for i, (v, f) in enumerate(klass_farger(lo, hi))
+            ],
+        }
+    if farg not in PALETTER:
+        raise LagerFel(f"Okänd färgskala '{farg}'.")
+    return {"typ": "kontinuerlig", "min": lo, "max": hi, "stopp": list(PALETTER[farg])}
+
+
+def skillnad_mosaik(fore: Mosaik, efter: Mosaik) -> Mosaik | None:
+    """Efter minus före, cell för cell, när lagren ligger på samma rutnät (annars None).
+
+    Används för roller som frågan inte jämför själv. Ingen ny beräkning: samma celler som visas
+    i före och efter, där ett värde som saknas i någon av dem ger ett värde som saknas."""
+    if fore.raster.shape != efter.raster.shape or fore.utbredning != efter.utbredning:
+        return None
+    if abs(fore.pixelstorlek_m - efter.pixelstorlek_m) > 1e-9:
+        return None
+    return Mosaik(
+        np.asarray(efter.raster - fore.raster, dtype=np.float32),
+        efter.utbredning,
+        efter.pixelstorlek_m,
+    )

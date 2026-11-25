@@ -31,6 +31,10 @@ export function fargFor(tf: Teckenforklaring, v: number): Rgba {
     if (farg === null || !forsta || v < forsta.fran) return [0, 0, 0, 0];
     return [...hexTillRgb(farg), 255] as Rgba;
   }
+  if (tf.typ === "kategorier") {
+    const k = tf.kategorier.find((x) => x.varde === Math.round(v));
+    return k ? ([...hexTillRgb(k.farg), 255] as Rgba) : [0, 0, 0, 0];
+  }
   if (!(Math.abs(v) > tf.troskel)) return [0, 0, 0, 0];
   const mag = tf.max > 0 ? Math.min(1, Math.abs(v) / tf.max) : 0;
   const m = mag * 0.75 + 0.25;

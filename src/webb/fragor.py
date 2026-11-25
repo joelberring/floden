@@ -44,10 +44,12 @@ from karna.korplan import Plan, kor_utredning, planera
 from karna.resultatcache import CacheFel, ResultatCache
 from karna.rutscenario import ScenarioFel, materialisera_scenario
 from karna.utredning import FragaFel, KorbarFraga, las_fraga
+from webb import analysvektor
 from webb.fel import FlodenWebbFel
 from webb.felforklaring import forklara_fel
 from webb.moduler import losarinfo, visningsnamn
 from webb.resultatlager import (
+    KONTROLLROLLER,
     MASKADE_ROLLER,
     LagerFel,
     Mosaik,
@@ -55,6 +57,7 @@ from webb.resultatlager import (
     farg_for_roll,
     rita_bild,
     sammanfoga,
+    skillnad_mosaik,
     tak_mask,
     takkalla_for_roll,
     teckenforklaring,
@@ -64,7 +67,7 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
-LAGER_VERSION = 5
+LAGER_VERSION = 6
 
 
 _SCENARIOTEXT = {"fore": "före", "hojd": "höjd"}
@@ -647,6 +650,11 @@ class FragaTjanst:
         for j in s["jobb"]:
             grupper[(j["analys"], j["scenario"])].append(j)
 
+        # Ämnet är lösarens namnrymd (`dagsljus.svf_mark` -> dagsljus), som lösarnas `doman`.
+        doman_for: dict[str, str] = {}
+        for j in s["jobb"]:
+            doman_for.setdefault(j["analys"], str(j["losare"]).split(".", 1)[0])
+
         poster: list[dict[str, Any]] = []  # lager före rendering
         for (analys, sid), jobb in grupper.items():
             roller = self._roller(k, jobb[0])
@@ -698,6 +706,40 @@ class FragaTjanst:
                 mosaiker[p["id"]] = sammanfoga(p["filer"])
             except (LagerFel, OSError, ValueError) as exc:
                 varningar.append(f"Lagret {p['id']} kunde inte visas: {exc}")
+        # Roller som frågan inte jämför får ändå en skillnad (efter minus före, cell för cell),
+        # så att varje roll går att se som före, efter och skillnad.
+        jamforda = {(p["analys"], p["roll"], p["scenario"]) for p in poster if p["skillnad"]}
+        basposter = {
+            (p["analys"], p["roll"]): p for p in poster if p["typ"] == "bas" and not p["skillnad"]
+        }
+        for p in [q for q in poster if q["typ"] == "scenario" and not q["skillnad"]]:
+            bas = basposter.get((p["analys"], p["roll"]))
+            if bas is None or (p["analys"], p["roll"], p["scenario"]) in jamforda:
+                continue
+            if p["roll"] in KONTROLLROLLER or bas["id"] not in mosaiker or p["id"] not in mosaiker:
+                continue
+            diff = skillnad_mosaik(mosaiker[bas["id"]], mosaiker[p["id"]])
+            if diff is None:
+                continue
+            nytt_id = f"skillnad.{p['analys']}.{p['roll']}.{p['scenario']}"
+            mosaiker[nytt_id] = diff
+            poster.append(
+                {
+                    "id": nytt_id,
+                    "analys": p["analys"],
+                    "scenario": p["scenario"],
+                    "roll": p["roll"],
+                    "typ": "skillnad",
+                    "primar": False,
+                    "filer": [],
+                    "ruta_ider": [],
+                    "skillnad": True,
+                    "troskel": 1e-6,
+                    "fore": bas["scenario"],
+                    "efter": p["scenario"],
+                    "harledd": True,
+                }
+            )
         # Gemensam skala per (analys, roll) så att bas och scenario går att jämföra.
         skalor: dict[tuple[str, str], tuple[float, float]] = {}
         for nyckel in {(p["analys"], p["roll"]) for p in poster if not p["skillnad"]}:
@@ -717,7 +759,6 @@ class FragaTjanst:
             if m is None:
                 continue
             etikett, enhet = etikett_och_enhet(p["roll"])
-            farg = farg_for_roll(p["roll"], skillnad=p["skillnad"])
             if p["skillnad"]:
                 lo, hi = varde_intervall([m.raster])
                 lo, hi = 0.0, max(abs(lo), abs(hi))
@@ -725,6 +766,7 @@ class FragaTjanst:
             else:
                 lo, hi = skalor[(p["analys"], p["roll"])]
                 namn = f"{etikett} · {_scen(p['scenario'])}"
+            farg = farg_for_roll(p["roll"], skillnad=p["skillnad"], lo=lo, hi=hi)
             # Byggnadernas tak är inte mark: maskas i markrastren (soltimmar, SVF, djup). Skillnaden
             # maskar fotavtrycket i före och efter, så att ett nytt hus inte syns som ändrad mark.
             tak: Any = None
@@ -782,6 +824,9 @@ class FragaTjanst:
                     "roll": p["roll"],
                     "typ": p["typ"],
                     "primar": p["primar"],
+                    "doman": doman_for.get(p["analys"], ""),
+                    "kontroll": p["roll"] in KONTROLLROLLER,
+                    "harledd": bool(p.get("harledd")),
                     "enhet": enhet,
                     "farg": farg,
                     "skala": {"min": lo, "max": hi},
@@ -818,6 +863,89 @@ class FragaTjanst:
         if not fil.is_file():
             raise FlodenWebbFel(f"Okänt lager '{lager_id}'.", status_kod=404)
         return fil.read_bytes()
+
+    def vektor(self, korning_id: str, scenario: str, slag: str) -> dict[str, Any]:
+        """Vektordata ur körningen för kartan: `sankor`, `flodesvagar` (ur sänkgrafen) eller `vsc`.
+
+        Sänkgrafen byggs om för scenariots K1-ruta med samma markmodell och samma antaganden
+        (takvatten, persistens) som lösaren fick, ur jobbets `run.json`; samma kod, inget nytt tal.
+        Svaret sparas bredvid lagren och kräver samma behörighet som körningens övriga resultat."""
+        k = self._hamta(korning_id)
+        _kontrollera_id(scenario, "scenario")
+        if slag not in analysvektor.SLAG:
+            raise FlodenWebbFel(f"Okänt vektorlager '{slag}'.", status_kod=404)
+        s = self._sammanstallning(k)
+        if scenario not in s["scenarier"]:
+            raise FlodenWebbFel(f"Okänt scenario '{scenario}'.", status_kod=404)
+        cachefil = k.mapp / "webb" / f"vektor.{scenario}.{slag}.json"
+        with self._lock:
+            if cachefil.is_file():
+                cachad: dict[str, Any] = json.loads(cachefil.read_text(encoding="utf-8"))
+                return cachad
+        if slag == "vsc":
+            fil = next(
+                (
+                    self._jobbmapp(k, j) / "vsc.csv"
+                    for j in s["jobb"]
+                    if j["scenario"] == scenario and "vsc" in self._roller(k, j)
+                ),
+                None,
+            )
+            if fil is None or not fil.is_file():
+                raise FlodenWebbFel("Körningen har inga fasadpunkter med VSC.", status_kod=404)
+            ut = analysvektor.vsc_geojson(fil)
+        else:
+            ut = self._sankgraf_vektor(k, s, scenario, slag)
+        ut = {"slag": slag, "scenario": scenario, "korning_id": korning_id, **ut}
+        with self._lock:
+            cachefil.parent.mkdir(parents=True, exist_ok=True)
+            cachefil.write_text(json.dumps(ut, ensure_ascii=False) + "\n", encoding="utf-8")
+        return ut
+
+    def _sankgraf_vektor(
+        self, k: Korning, s: dict[str, Any], scenario: str, slag: str
+    ) -> dict[str, Any]:
+        from sankgraf.fyllning import kor_statisk_k1_mapp
+
+        jobb = next(
+            (
+                j
+                for j in s["jobb"]
+                if j["scenario"] == scenario
+                and str(j["losare"]) in ("vatten.statisk_fyllning", "vatten.dynamik")
+            ),
+            None,
+        )
+        if jobb is None:
+            raise FlodenWebbFel(
+                "Körningen har ingen vattenberäkning för scenariot, så det finns ingen sänkgraf.",
+                status_kod=404,
+            )
+        rutor, varning = self._scenariorutor(k, s)
+        mappar = list((rutor or {}).get(scenario, {}).values())
+        if len(mappar) != 1:
+            raise FlodenWebbFel(
+                varning or "Sänkor och flödesvägar visas bara för scenarier med en K1-ruta.",
+                status_kod=409,
+            )
+        par = json.loads((self._jobbmapp(k, jobb) / "run.json").read_text(encoding="utf-8"))[
+            "parametrar"
+        ]
+        try:
+            graf, _ = kor_statisk_k1_mapp(
+                mappar[0],
+                regn_m=0.0,
+                persistens_faktor=par.get("persistens_faktor"),
+                takvatten=bool(par.get("takvatten", True)),
+                takvatten_andel_ledning=float(par.get("takvatten_andel_ledning", 0.0)),
+            )
+        except Exception as exc:  # ett tydligt fel i stället för ett tyst tomt lager
+            raise FlodenWebbFel(f"Sänkgrafen kunde inte byggas: {exc}", status_kod=409) from exc
+        return (
+            analysvektor.sankor_geojson(graf)
+            if slag == "sankor"
+            else analysvektor.flodesvagar_geojson(graf)
+        )
 
     # Byggnader, antaganden och avläsning --------------------------------------------------
 

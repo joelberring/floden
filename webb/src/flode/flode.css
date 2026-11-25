@@ -472,3 +472,10 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
   .kartmotor, .kartmotor canvas { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .flode-zoom button { min-width: 44px; min-height: 44px; }
 }
+
+/* Visa: väljare för analyslager och vektorlager (steg 4) */
+.flode-visa { display: grid; gap: 6px; margin: 8px 0; padding: 8px 10px; background: #f6f5f0; border-radius: 8px; }
+.flode-visa select { max-width: 100%; margin-left: 6px; font: inherit; font-size: 13px; min-height: 32px; }
+.flode-visa p { margin: 0; }
+.flode-vektortecken { display: grid; gap: 4px; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e3e1d8; }
+.flode-vektortecken i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 2px; vertical-align: middle; }
