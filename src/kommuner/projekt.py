@@ -281,11 +281,16 @@ def skapa_projekt(
     if klippt.is_file():  # geografin byggdes ur kommunens höjdmodell (filpaket)
         from kommuner.hojdmodell import Hojdmodell
         from kommuner.k1_filpaket import bygg_omrade_filpaket
+        from kommuner.vattenytor import las_strandlinjer_fil
 
+        sfil = radata / "kommun" / "strandlinjer.gpkg"
+        vk = kommun.filpaket.baskarta.vatten if kommun.filpaket and kommun.filpaket.baskarta else None
         bygg_omrade_filpaket(
             omr, k1_v, hojdmodell=Hojdmodell([klippt], epsg_antagen=3011), hojd_paket=[],
             byggnader_fil=bygg_fil if bygg_fil.is_file() else None,
             upplosning_m=kommun.lantmateriet.upplosning_m, en_ruta=True, skriv=skriv,
+            strandlinjer=las_strandlinjer_fil(sfil) if vk is not None and sfil.is_file() else (),
+            vatten_marginal_m=vk.marginal_m if vk else 0.2, vatten_max_avstand_m=vk.max_avstand_m if vk else 2.0,
         )  # fmt: skip
     else:
         bygg_omrade(

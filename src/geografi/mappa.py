@@ -268,6 +268,7 @@ def mappa_geografi(
         by = kommun.byggnader
         bygg_fil: Path | None = None
         bygg: Any = None
+        vatten_info: dict[str, Any] | None = None
 
         def _wfs_byggnader(ra: Path = ra, wfs_bbox: tuple[float, float, float, float] = wfs_bbox, by: Any = by) -> Path:
             lager = byggnadslager or by.lager
@@ -373,6 +374,24 @@ def mappa_geografi(
                     bygg_fil = _wfs_byggnader()
                 elif kalla_bygg == "lantmateriet":
                     bygg_fil = _lm_byggnader()
+                strandlinjer: list[Any] = []
+                vk = fk.baskarta.vatten if fk.baskarta is not None else None
+                if vk is not None:
+                    from kommuner.vattenytor import las_strandlinjer, skriv_strandlinjer
+
+                    if not bpaket:
+                        bpaket = hamta_baskarta(kommun, cache, hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv)
+                    try:
+                        strandlinjer, vv = las_strandlinjer(
+                            [q.fil for q in bpaket], vk, bbox_publicering=tuple(m + s * 50.0 for m, s in zip(wfs_bbox, (-1, -1, 1, 1), strict=True)),  # type: ignore[arg-type]
+                            epsg_publicering=fk.baskarta.epsg,  # type: ignore[union-attr]
+                        )
+                    except KommunKallaFel as exc:
+                        raise SkapaFel(f"Baskartans strandlinjer kunde inte läsas: {exc}") from exc
+                    varningar.extend(x for x in vv if x not in varningar)
+                    skriv(f"Strandlinjer: {len(strandlinjer)} ur baskartan.")
+                    if strandlinjer:
+                        skriv_strandlinjer(strandlinjer, ra / "kommun" / "strandlinjer.gpkg")
                 klippt = ra / "hojd" / "hojdmodell_klippt.tif"
                 varningar.extend(x for x in skriv_klippt_hojd(hoj, extent, kommun.lantmateriet.upplosning_m, klippt) if x not in varningar)
                 (ra / "filpaket").mkdir(parents=True, exist_ok=True)
@@ -391,7 +410,13 @@ def mappa_geografi(
                 bygg = bygg_omrade_filpaket(
                     omr, k1, hojdmodell=Hojdmodell([klippt], epsg_antagen=3011), hojd_paket=hpaket,
                     byggnader_fil=bygg_fil, byggnader_paket=bpaket,
-                    upplosning_m=kommun.lantmateriet.upplosning_m, skriv=skriv,
+                    upplosning_m=kommun.lantmateriet.upplosning_m, skriv=skriv, strandlinjer=strandlinjer,
+                    vatten_marginal_m=vk.marginal_m if vk else 0.2, vatten_max_avstand_m=vk.max_avstand_m if vk else 2.0,
+                )  # fmt: skip
+                vatten_info = (
+                    {"m2": round(bygg.vatten_m2, 1), "niva_m_rh2000": list(bygg.vatten_niva_m) if bygg.vatten_niva_m else None,
+                     "strandlinjer": len(strandlinjer), "marginal_m": vk.marginal_m, "max_avstand_m": vk.max_avstand_m}
+                    if vk is not None else None
                 )  # fmt: skip
             except KommunKallaFel as exc:
                 if klient is None:
@@ -543,6 +568,7 @@ def mappa_geografi(
         "forberakningar": {
             "terrang_karna": terr,
             "tillrinning": {k: tr[k] for k in ("cell_m", "celler", "yta_m2", "krav_buffert_m", "nar_kanten")},
+            **({"vattenytor": vatten_info} if vatten_info else {}),
             "sankgraf": "inte förberäknad: byggs och cachas av kärnan (K22) vid första körningen",
         },
         "kallor": {
