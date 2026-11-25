@@ -8,10 +8,12 @@ from typing import Any
 
 from webb.api import FlodenApiApp
 
+_REPO_ROT = Path(__file__).resolve().parents[2]
+
 
 def _skapa_app(tmp_path: Path) -> FlodenApiApp:
     return FlodenApiApp(
-        testsvit_rot=Path("testsvit"),
+        testsvit_rot=_REPO_ROT / "testsvit",
         konfig_fil=tmp_path / "saknas.toml",
         cachemapp=tmp_path / "cache",
         korningsmapp=tmp_path / "korningar",

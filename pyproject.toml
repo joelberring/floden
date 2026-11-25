@@ -69,6 +69,7 @@ dev = [
     "PyJWT[crypto]==2.15.0",
     "mcp==2.3.0",
     "pytest==8.3.4",
+    "pytest-xdist==3.6.1",
     "ruff==0.8.4",
     "mypy==1.14.1",
 ]
@@ -132,4 +133,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["slow: långsamt test, körs med FLODEN_LANGSAMMA_TESTER=1"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]

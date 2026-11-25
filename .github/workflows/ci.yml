@@ -2,11 +2,26 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  OMP_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  MKL_NUM_THREADS: "1"
+  NUMEXPR_NUM_THREADS: "1"
+  FLODEN_TIDSFAKTOR: "3"
+
 jobs:
-  kvalitet-och-tester:
+  lint-och-typer:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,17 +33,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: "pip"
+          cache-dependency-path: pyproject.toml
 
       - name: Installera paket och utvecklingsverktyg
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-
-      - name: Bygg lasclip (LAZ, lyft från O-Tid)
-        run: cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml
-
-      - name: Bygg tvad_karna (2D-lösaren i Rust)
-        run: cargo build --release --locked --manifest-path rust/tvad_karna/Cargo.toml
 
       - name: Lint med ruff
         run: ruff check --output-format=github src tests testsvit
@@ -48,14 +58,168 @@ jobs:
           sys.exit(p.returncode)
           '
 
-      - name: Enhetstester med pytest
-        run: pytest
-
       - name: Verifiera CLI
         run: floden --help
 
+  bygg-rust:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Hämta kod
+        uses: actions/checkout@v4
+
+      - name: Cacha Cargo-artefakter
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            tools/lasclip
+            rust/tvad_karna
+
+      - name: Bygg lasclip (LAZ, lyft från O-Tid)
+        run: cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml
+
+      - name: Bygg tvad_karna (2D-lösaren i Rust)
+        run: cargo build --release --locked --manifest-path rust/tvad_karna/Cargo.toml
+
+      - name: Ladda upp Rust-binärer till testjobb
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-binarer
+          retention-days: 1
+          path: |
+            tools/lasclip/target/release/lasclip
+            rust/tvad_karna/target/release/tvad_karna
+
+  tester-utan-rust:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - namn: webb
+            workers: auto
+            args: tests/webb
+          - namn: kommuner
+            workers: auto
+            args: tests/kommuner
+          - namn: rapport-och-mcp
+            workers: auto
+            args: tests/rapport tests/floden_mcp
+          - namn: buller
+            workers: auto
+            args: tests/buller
+          # 2 workers ger luftens 1e5-prestandatester god marginal utan CPU-trängsel.
+          - namn: luft-dagsljus-ekologi
+            workers: "2"
+            args: tests/luft tests/dagsljus tests/ekologi tests/demovarld tests/rutt tests/benchmark
+          # Fångar tests/karna, tests/gemensamt, tests/konto, rotfiler samt alla framtida kataloger (t.ex. tests/e2e).
+          - namn: karna-och-ovrigt
+            workers: auto
+            args: >-
+              tests
+              --ignore=tests/webb
+              --ignore=tests/kommuner
+              --ignore=tests/rapport
+              --ignore=tests/floden_mcp
+              --ignore=tests/buller
+              --ignore=tests/dagsljus
+              --ignore=tests/luft
+              --ignore=tests/ekologi
+              --ignore=tests/demovarld
+              --ignore=tests/rutt
+              --ignore=tests/benchmark
+              --ignore=tests/tvad
+              --ignore=tests/sankgraf
+              --ignore=tests/vatten
+              --ignore=tests/dynamik
+              --ignore=tests/lapp
+              --ignore=tests/mark_forluster
+              --ignore=tests/markmodell
+              --ignore=tests/data_inlasning
+              --ignore=tests/lantmateriet
+              --ignore=tests/testsvit
+
+    steps:
+      - name: Hämta kod
+        uses: actions/checkout@v4
+
+      - name: Installera Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Installera paket och utvecklingsverktyg
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Enhetstester (${{ matrix.namn }})
+        run: python -m pytest -n ${{ matrix.workers }} --dist loadfile ${{ matrix.args }}
+
+  vatten-och-rust:
+    runs-on: ubuntu-latest
+    needs: [bygg-rust]
+
+    steps:
+      - name: Hämta kod
+        uses: actions/checkout@v4
+
+      - name: Hämta byggda Rust-binärer
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-binarer
+          path: .
+
+      - name: Gör Rust-binärer körbara
+        run: chmod +x tools/lasclip/target/release/lasclip rust/tvad_karna/target/release/tvad_karna
+
+      - name: Installera Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Installera paket och utvecklingsverktyg
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Enhetstester (vatten, mark, data och testsvit)
+        run: >-
+          python -m pytest -n 2 --dist loadfile
+          tests/tvad
+          tests/sankgraf
+          tests/vatten
+          tests/dynamik
+          tests/lapp
+          tests/mark_forluster
+          tests/markmodell
+          tests/data_inlasning
+          tests/lantmateriet
+          tests/testsvit
+
       - name: Kör testsvit grupp A
         run: floden testsvit --grupp A
+
+  # Sammanfattande statusjobb med samma id som tidigare för smidigt branch-skydd.
+  kvalitet-och-tester:
+    runs-on: ubuntu-latest
+    needs: [lint-och-typer, bygg-rust, tester-utan-rust, vatten-och-rust]
+    if: always()
+
+    steps:
+      - name: Kontrollera att alla Python- och Rust-jobb lyckades
+        run: |
+          if [ "${{ needs.lint-och-typer.result }}" != "success" ] || \
+             [ "${{ needs.bygg-rust.result }}" != "success" ] || \
+             [ "${{ needs.tester-utan-rust.result }}" != "success" ] || \
+             [ "${{ needs.vatten-och-rust.result }}" != "success" ]; then
+            echo "Ett eller flera CI-jobb misslyckades." >&2
+            exit 1
+          fi
 
   webb-klient:
     runs-on: ubuntu-latest
@@ -71,6 +235,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "24"
+          cache: "npm"
+          cache-dependency-path: webb/package-lock.json
 
       - name: Installera npm-paket (exakt enligt package-lock.json)
         run: npm ci --no-audit --no-fund
