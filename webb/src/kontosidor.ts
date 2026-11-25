@@ -5,6 +5,7 @@
  */
 import {
   aterkallaMcpToken,
+  aterkallaOauthAnslutning,
   bjudIn,
   bjudInOrganisation,
   bytOrganisationsnamn,
@@ -13,9 +14,8 @@ import {
   hamtaAdminProjekt,
   hamtaAdminProjektDetalj,
   hamtaMcpTokens,
-  hamtaOauthAnslutningar,
-  aterkallaOauthAnslutning,
   hamtaNycklar,
+  hamtaOauthAnslutningar,
   sattOrganisationsRoll,
   sattPrimarAi,
   sattProjektDelning,
@@ -28,16 +28,10 @@ import {
   taBortProjektRoll,
 } from "./api";
 import { kontoLage } from "./konto";
-import { felText, mcpKonfig, sidaAdministration, sidaNycklar } from "./kontosidor-html";
-import type { McpAvsnitt, McpKlient } from "./kontosidor-html";
-import type { NycklarSvar, NyMcpToken } from "./types";
+import { felText, sidaAdministration, sidaNycklar, skapaNycklarStyrning } from "./kontosidor-html";
+import type { McpKlient } from "./kontosidor-html";
 
 export async function visaNycklar(vy: HTMLElement): Promise<void> {
-  // Tillstånd för MCP-avsnittet. En ny token (med klartexten) finns bara i minnet tills sidan ritas
-  // om av något annat än skapandet; den lagras aldrig i webbläsaren och hämtas aldrig från servern.
-  let mcp: McpAvsnitt = { svar: null, ny: null, fel: null, klient: "antigravity" };
-  let nycklar: NycklarSvar | null = null;
-  let nyckelFel: string | null = null;
   const visaMeddelande = (text: string): void => {
     const m = vy.querySelector<HTMLElement>("[data-meddelande]");
     if (m) {
@@ -45,53 +39,35 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
       m.hidden = false;
     }
   };
-  const rita = (meddelande = ""): void => {
-    vy.innerHTML = sidaNycklar(nycklar, nyckelFel, mcp);
-    if (meddelande) visaMeddelande(meddelande);
-  };
   if (kontoLage().lage === "av") {
-    nycklar = null;
-    rita();
+    vy.innerHTML = sidaNycklar(null);
     return;
   }
-  rita();
-  const laddaMcp = async (ny: NyMcpToken | null = null): Promise<void> => {
-    const klient = mcp.klient ?? "antigravity";
-    try {
-      mcp = { svar: await hamtaMcpTokens(), ny, fel: null, klient };
-    } catch (e) {
-      mcp = { svar: null, ny: null, fel: felText(e), klient };
-    }
-    try {
-      mcp = { ...mcp, appar: (await hamtaOauthAnslutningar()).anslutningar };
-    } catch {
-      mcp = { ...mcp, appar: [] };
-    }
-  };
-  const ladda = async (meddelande = "", ny: NyMcpToken | null = null): Promise<void> => {
-    try {
-      nycklar = await hamtaNycklar();
-      nyckelFel = null;
-    } catch (e) {
-      nycklar = null;
-      nyckelFel = felText(e);
-    }
-    await laddaMcp(ny);
-    rita(meddelande);
-  };
+  const styrning = skapaNycklarStyrning(
+    {
+      hamtaNycklar,
+      sparaNyckel,
+      taBortNyckel,
+      sattPrimarAi,
+      hamtaMcpTokens,
+      skapaMcpToken,
+      aterkallaMcpToken,
+      hamtaOauthAnslutningar,
+      aterkallaOauthAnslutning,
+    },
+    (html, meddelande) => {
+      vy.innerHTML = html;
+      if (meddelande) visaMeddelande(meddelande);
+    },
+    visaMeddelande,
+  );
+  vy.innerHTML = styrning.html();
   vy.onsubmit = (h: SubmitEvent): void => {
     const form = h.target instanceof HTMLFormElement ? h.target : null;
     if (form?.hasAttribute("data-mcp-token-form")) {
       h.preventDefault();
       const namn = (form.elements.namedItem("namn") as HTMLInputElement).value;
-      void skapaMcpToken(namn).then(
-        // Svaret med token ritas direkt; allt annat (lista, status) hämtas på nytt från servern.
-        (ny) => ladda("", ny),
-        (e: unknown) => {
-          mcp = { ...mcp, fel: felText(e) };
-          rita();
-        },
-      );
+      void styrning.skapaToken(namn);
       return;
     }
     const typ = form?.dataset.nyckelform;
@@ -102,11 +78,7 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
       if (el instanceof HTMLInputElement && el.type === "radio" && !el.checked) continue;
       if ((el instanceof HTMLInputElement || el instanceof HTMLSelectElement) && el.name) varden[el.name] = el.value;
     }
-    void sparaNyckel(typ, varden).then(
-      // Hela sidan ritas om från serverns status: de ifyllda fälten försvinner med den gamla DOM:en.
-      () => ladda("Nyckeln är sparad."),
-      (e: unknown) => visaMeddelande(felText(e)),
-    );
+    void styrning.spara(typ, varden);
   };
   vy.onclick = (h: MouseEvent): void => {
     const mal = h.target instanceof Element ? h.target : null;
@@ -116,13 +88,7 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
       const id = app.getAttribute("data-aterkalla-app") ?? "";
       const namn = app.getAttribute("data-aterkalla-namn") ?? "";
       if (!window.confirm(`Ta bort tillgången för "${namn}"? Appen slutar fungera direkt.`)) return;
-      void aterkallaOauthAnslutning(id).then(
-        () => ladda("Tillgången är borttagen."),
-        (e: unknown) => {
-          mcp = { ...mcp, fel: felText(e) };
-          rita();
-        },
-      );
+      void styrning.aterkallaApp(id);
       return;
     }
     const aterkalla = mal?.closest("[data-aterkalla-mcp]");
@@ -131,21 +97,16 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
       const id = aterkalla.getAttribute("data-aterkalla-mcp") ?? "";
       const namn = aterkalla.getAttribute("data-aterkalla-namn") ?? "";
       if (!window.confirm(`Återkalla tokenen "${namn}"? Verktyg som använder den slutar fungera direkt.`)) return;
-      void aterkallaMcpToken(id).then(
-        () => ladda("Tokenen är återkallad."),
-        (e: unknown) => {
-          mcp = { ...mcp, fel: felText(e) };
-          rita();
-        },
-      );
+      void styrning.aterkallaToken(id);
       return;
     }
-    if (mal?.closest("[data-kopiera-mcp]")) {
+    const kopiera = mal?.closest("[data-kopiera-mcp]");
+    if (kopiera) {
       h.preventDefault();
-      if (mcp.svar && mcp.ny) {
-        void navigator.clipboard?.writeText(
-          mcpKonfig(mcp.svar.mcp_url, mcp.ny.token, mcp.klient ?? "antigravity"),
-        );
+      const text = styrning.kopierbarKonfig();
+      if (text) {
+        void navigator.clipboard?.writeText(text);
+        kopiera.textContent = "Kopierad";
       }
       return;
     }
@@ -153,10 +114,7 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
     if (klientKnapp) {
       h.preventDefault();
       const k = klientKnapp.getAttribute("data-mcp-klient") as McpKlient | null;
-      if (k) {
-        mcp = { ...mcp, klient: k };
-        rita();
-      }
+      if (k) styrning.valjMcpKlient(k);
       return;
     }
     const knapp = mal?.closest("[data-ta-bort-nyckel]") ?? null;
@@ -164,24 +122,15 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
     if (!typ) return;
     h.preventDefault();
     if (!window.confirm("Ta bort den sparade nyckeln?")) return;
-    void taBortNyckel(typ).then(
-      () => ladda("Nyckeln är borttagen."),
-      (e: unknown) => {
-        nyckelFel = felText(e);
-        rita();
-      },
-    );
+    void styrning.taBort(typ);
   };
   vy.onchange = (h: Event): void => {
     const el = h.target instanceof HTMLInputElement ? h.target : null;
     const primar = el?.dataset.primarAi;
     if (!el || !primar || !el.checked) return;
-    void sattPrimarAi(primar).then(
-      () => ladda("Primär AI-leverantör är uppdaterad."),
-      (e: unknown) => visaMeddelande(felText(e)),
-    );
+    void styrning.valjPrimarAi(primar);
   };
-  await ladda();
+  await styrning.ladda();
 }
 
 export async function visaAdministration(vy: HTMLElement): Promise<void> {
