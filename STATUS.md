@@ -2,6 +2,16 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-25 – Parallell CI-matris, Cargo-cache och paketgränstester (grenen `ci-paket-snabbhet`) (agent)
+Gjort (grenen `ci-paket-snabbhet`; ingen domänkod rörd, `BESLUT.md` och kontrakt orörda):
+- **CI-uppsnabbning (`.github/workflows/ci.yml`, `pyproject.toml`):** Delade upp det tidigare 22–34 min enkeltrådade jobbet i snabbt separat `lint-och-typer` (`ruff` + `mypy` + `floden --help`), cachat `bygg-rust` (`Swatinem/rust-cache@v2`, delas som artifact till `vatten-och-rust`) och 6 balanserade parallella testjobb (`webb`, `kommuner`, `rapport-och-mcp`, `domaner`, `vatten-och-rust`, `karna-och-ovrigt`) med `pytest-xdist==3.6.1` (`-n auto --dist loadfile`). Lade till `concurrency` (`cancel-in-progress` på PR, aldrig på `main`), `push` enbart på `main` + `pull_request` på PR:er (eliminerar dubbelkörningar), `cache: "npm"` i `webb-klient`, samt behöll gate-jobbet `kvalitet-och-tester` för befintligt branch-skydd och `avbildning.yml`.
+- **Paketgränser (`tests/gemensamt/test_paketgranser.py`):** AST-baserade gränstester som låser MIT-gränsen för `src/luft/` (endast `gemensamt`), domänisolering mellan de 5 beräkningsdomänerna, `mark_forluster` (0 ut-beroenden) och CLI-toppnoden `floden` (0 in-beroenden).
+Mätt:
+- Exakt matrispartition verifierad mot `pytest --collect-only`: **2 997 / 2 997 tester** (0 saknade, 0 dubletter; nya mappar som `tests/e2e` fångas automatiskt av `karna-och-ovrigt`).
+- `pytest tests/gemensamt/test_paketgranser.py`: **5 passed**. `ruff check src tests testsvit`: **0 fel**. `mypy --platform linux src`: **0 fel** (377 filer).
+Öppet: Fas 2 i paketarkitekturen (lyfta `testsvit.k1_io` → `gemensamt.k1_io`, bryta `karna.geometri`/`scenario`-cykeln samt dela `scope="session"`-demofixture för `webb`/`rapport`/`floden_mcp` för att nå ~2–3 min CI-tid).
+Nästa: Mät faktisk GitHub Actions-tid på PR:en efter merge och ta Fas 2 vid nästa arkitekturpass.
+
 ## 2026-11-25 – Hetzner Object Storage (S3) och 3-lagers automatisk rensning (Steg 1–4, grenen `hetzner-object-storage`) (agent)
 Gjort (grenen `hetzner-object-storage`; `BESLUT.md` och kontraktsversioner orörda, inga nycklar i git, valfritt `boto3`-beroende under `[project.optional-dependencies] s3`):
 - **Steg 1 – S3-adapter och konfiguration (`src/gemensamt/objektlagring.py`, `pyproject.toml`, `tests/gemensamt/test_objektlagring.py`):** `ObjektLagring` med `LokalLagring` (standard lokalt/i CI) och `S3Lagring` (Hetzner Object Storage / R2 via valfritt `boto3`), `finns`, SHA-256-/storleksverifierad `ladda_upp_fil`, atomär `ladda_ner_fil`, `lista_prefix`, `radera_prefix`, `presigned_url` samt konfiginläsning från `[lagring]` + `FLODEN_S3_*`.
