@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
 from pathlib import Path
@@ -318,15 +319,21 @@ class Dynamik(Analyslosare):
 
     namn: ClassVar[str] = "vatten.dynamik"
     doman: ClassVar[str] = "vatten"
-    version: ClassVar[str] = "2"
-    """v2: exporterar även `tid_till_0_1m.tif` och `tid_till_0_2m.tif` (COG med NaN)."""
+    version: ClassVar[str] = "3"
+    """v3: exporterar även lättviktig `tidsserie.json` (floden-tidsserie/v1) och `tidssteg.npz`."""
     beskrivning: ClassVar[str] = (
         "Exakt händelsestyrd fyllning–överfall i sänkgrafen för ett regnförlopp (regn_tid_s + "
-        "regn_mm_h, eller IDF-regn), med takvatten, avtappning (mm/h, per område) och ankomsttider "
-        "till 0,1 m och 0,2 m."
+        "regn_mm_h, eller IDF-regn), med takvatten, avtappning (mm/h, per område), ankomsttider "
+        "till 0,1 m och 0,2 m samt tidsserie och tidssteg."
     )
     valfria_indataroller: ClassVar[tuple[str, ...]] = ("avtappning_omraden",)
-    utdataroller: ClassVar[tuple[str, ...]] = ("max_djup", "tid_till_0_1m", "tid_till_0_2m")
+    utdataroller: ClassVar[tuple[str, ...]] = (
+        "max_djup",
+        "tid_till_0_1m",
+        "tid_till_0_2m",
+        "tidsserie",
+        "tidssteg",
+    )
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
         okanda = sorted(set(parametrar) - _DYNAMIK_PARAMETRAR)
@@ -359,6 +366,13 @@ class Dynamik(Analyslosare):
             raise LosarFel(f"{self.namn}: regn_tid_s och regn_mm_h måste vara lika långa (>= 2).")
         ut["regn_tid_s"] = [_tal({"t": t}, "t", minst=0.0) for t in tider]
         ut["regn_mm_h"] = [_tal({"i": i}, "i", minst=0.0) for i in mm_h]
+        if "regntyp" in parametrar:
+            typ = parametrar["regntyp"]
+            if typ not in ("block", "cds"):
+                raise LosarFel(
+                    f"Parametern 'regntyp' måste vara 'block' eller 'cds', fick {typ!r}."
+                )
+            ut["regntyp"] = typ
         return ut
 
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
@@ -385,8 +399,15 @@ class Dynamik(Analyslosare):
             except RegnFel as exc:
                 raise LosarFel(f"{self.namn}: {exc}") from exc
             tider, mm_h = list(serie.tid_s), list(serie.intensitet_mm_h)
+            regntyp = str(p["regntyp"])
+            varaktighet_min = float(p["varaktighet_min"])
         else:
             tider, mm_h = list(p["regn_tid_s"]), list(p["regn_mm_h"])
+            if "regntyp" in p:
+                regntyp = str(p["regntyp"])
+            else:
+                regntyp = "block" if (max(mm_h) - min(mm_h)) <= 1e-9 else "anpassad"
+            varaktighet_min = float(tider[-1] - tider[0]) / 60.0
         _, geo = las_geotiff(ruta.mapp / "mark.tif")
         # Avtappningen i dynamiken behöver ingen varaktighet; den gäller hela förloppet.
         p_avt = dict(p)
@@ -432,14 +453,28 @@ class Dynamik(Analyslosare):
             epsg=geo.epsg,
             nodata=float("nan"),
         )
+        total_regn_mm = _skriv_dynamik_tidsserie_och_tidssteg(
+            kontext.utmapp,
+            graf,
+            res,
+            tider,
+            mm_h,
+            slut_tid_s=p.get("slut_tid_s"),
+            regntyp=regntyp,
+            varaktighet_min=varaktighet_min,
+            losare=self.namn,
+        )
         return LosarUtdata(
             filer={
                 "max_djup": "max_djup.tif",
                 "tid_till_0_1m": "tid_till_0_1m.tif",
                 "tid_till_0_2m": "tid_till_0_2m.tif",
+                "tidsserie": "tidsserie.json",
+                "tidssteg": "tidssteg.npz",
             },
             matvarden={
                 "max_djup_m": float(np.nanmax(res.max_djup_m)),
+                "regn_mm": float(total_regn_mm),
                 "in_m3": float(res.in_m3),
                 "lagrat_m3": float(res.lagrat_m3),
                 "ut_m3": float(res.ut_m3),
@@ -454,6 +489,217 @@ class Dynamik(Analyslosare):
                 *takvatten_varningar(graf.takvatten),
             ),
         )
+
+
+_TIDSSERIE_KONTRAKT = "floden-tidsserie/v1"
+_TIDSSERIE_BAS_PUNKTER = 41
+_TIDSSTEG_BAS_ANTAL = 12
+_TIDSSTEG_MAX_PX = 1024
+
+
+def _skriv_dynamik_tidsserie_och_tidssteg(
+    utmapp: Path,
+    graf: Any,
+    res: Any,
+    tider: list[float],
+    mm_h: list[float],
+    *,
+    slut_tid_s: float | None,
+    regntyp: str,
+    varaktighet_min: float,
+    losare: str,
+) -> float:
+    """Skriver `tidsserie.json` (floden-tidsserie/v1) och kvantiserad `tidssteg.npz` (uint16 mm).
+
+    All beräkning är deterministisk och vektoriserad (inga pixelloopar). Returnerar totalt
+    regndjup i mm.
+    """
+    from dynamik.nodmodell import berakna_doman_areor, skapa_regn_intervall
+    from sankgraf.typer import MARKSLAG_BYGGNAD
+
+    raw_iv, total_regn_m = skapa_regn_intervall(tider, mm_h, slut_tid_s=slut_tid_s)
+    total_regn_mm = float(total_regn_m) * 1000.0
+    t_start = float(res.tider_s[0]) if res.tider_s else float(tider[0])
+    t_slut = (
+        float(res.tider_s[-1])
+        if res.tider_s
+        else (float(slut_tid_s) if slut_tid_s is not None else float(tider[-1]))
+    )
+
+    # 1. Välj 25–60 samplade tidpunkter över [t_start, t_slut] inkl. regntopp
+    regn_topp_s: float | None = None
+    if raw_iv:
+        topp_iv = max(
+            raw_iv, key=lambda iv: max(iv.intensitet_start_mm_h, iv.intensitet_slut_mm_h)
+        )
+        if topp_iv.ar_konstant:
+            regn_topp_s = 0.5 * (topp_iv.t_start_s + topp_iv.t_slut_s)
+        elif topp_iv.intensitet_start_mm_h >= topp_iv.intensitet_slut_mm_h:
+            regn_topp_s = topp_iv.t_start_s
+        else:
+            regn_topp_s = topp_iv.t_slut_s
+
+    if t_slut > t_start:
+        bas_t = [float(x) for x in np.linspace(t_start, t_slut, _TIDSSERIE_BAS_PUNKTER)]
+        if (
+            regn_topp_s is not None
+            and t_start <= regn_topp_s <= t_slut
+            and all(abs(regn_topp_s - x) > 1e-6 for x in bas_t)
+        ):
+            bas_t.append(regn_topp_s)
+            bas_t.sort()
+    else:
+        bas_t = [t_start]
+    samp_t = np.asarray(bas_t, dtype=np.float64)
+
+    def _regn_vid(t_val: float) -> tuple[float, float]:
+        """Returnerar `(intensitet_mm_h, kumulativt_regn_mm)` exakt ur `raw_iv`."""
+        kum_m = 0.0
+        intens = 0.0
+        hittad = False
+        for iv in raw_iv:
+            if t_val >= iv.t_slut_s:
+                kum_m += iv.regn_m
+                continue
+            if t_val <= iv.t_start_s:
+                if not hittad and abs(t_val - iv.t_start_s) <= 1e-12:
+                    intens = iv.intensitet_start_mm_h
+                    hittad = True
+                break
+            dt = iv.dt_s
+            andel = (t_val - iv.t_start_s) / dt if dt > 0.0 else 0.0
+            i_t = iv.intensitet_start_mm_h + andel * (
+                iv.intensitet_slut_mm_h - iv.intensitet_start_mm_h
+            )
+            kum_m += (0.5 * (iv.intensitet_start_mm_h + i_t) / 1000.0 / 3600.0) * (
+                t_val - iv.t_start_s
+            )
+            intens = i_t
+            hittad = True
+            break
+        if not hittad and raw_iv:
+            if abs(t_val - raw_iv[-1].t_slut_s) <= 1e-9:
+                intens = raw_iv[-1].intensitet_slut_mm_h
+            elif t_val < raw_iv[0].t_start_s:
+                intens = 0.0
+        return float(intens), float(kum_m) * 1000.0
+
+    # 2. Vektoriserad nod-nivåmatris w_lov[sample_idx, nod_id]
+    z64 = np.asarray(graf.mark_z, dtype=np.float64)
+    h, b = z64.shape
+    aktiv = (graf.markslag != MARKSLAG_BYGGNAD) & np.isfinite(z64)
+    ct = graf.cell_till_nod
+    har_nod = aktiv & (ct >= 0)
+    ct_valid = ct[har_nod]
+    z_valid = z64[har_nod]
+    cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
+    total_aktiv_area_m2, _, _ = berakna_doman_areor(graf)
+
+    har_noder = bool(graf.noder) and bool(res.tider_s) and bool(har_nod.any())
+    w_lov: np.ndarray[Any, Any] | None = None
+    if har_noder:
+        res_t = np.asarray(res.tider_s, dtype=np.float64)
+        max_nid = max(graf.noder)
+        w_lov = np.full((len(samp_t), max_nid + 1), -np.inf, dtype=np.float64)
+        for lov in graf.lovnoder():
+            serie = res.noder.get(lov.nod_id)
+            if serie is not None and serie.niva_rh2000:
+                w_lov[:, lov.nod_id] = np.interp(
+                    samp_t, res_t, np.asarray(serie.niva_rh2000, dtype=np.float64)
+                )
+
+    punkter: list[dict[str, Any]] = []
+    for i, t_val in enumerate(bas_t):
+        i_mm_h, kum_mm = _regn_vid(t_val)
+        if har_noder and w_lov is not None:
+            djup = np.maximum(0.0, w_lov[i, ct_valid] - z_valid)
+            max_djup_m = float(djup.max()) if djup.size else 0.0
+            vat_01 = float(np.count_nonzero(djup >= 0.10)) * cell_area_m2
+            vat_03 = float(np.count_nonzero(djup >= 0.30)) * cell_area_m2
+            volym_m3 = float(djup.sum()) * cell_area_m2
+        else:
+            max_djup_m = 0.0
+            vat_01 = 0.0
+            vat_03 = 0.0
+            volym_m3 = 0.0
+        in_kum_m3 = total_aktiv_area_m2 * (kum_mm / 1000.0)
+        utflode_kum_m3 = max(0.0, in_kum_m3 - volym_m3)
+        punkter.append(
+            {
+                "tid_min": round(t_val / 60.0, 4),
+                "regn_mm_h": round(i_mm_h, 4),
+                "kumulativt_regn_mm": round(kum_mm, 4),
+                "max_djup_m": round(max_djup_m, 4),
+                "vat_yta_01m_m2": round(vat_01, 2),
+                "vat_yta_03m_m2": round(vat_03, 2),
+                "volym_m3": round(volym_m3, 3),
+                "utflode_kum_m3": round(utflode_kum_m3, 3),
+                "max_hastighet_m_s": None,
+            }
+        )
+
+    # Topp-tidpunkt: punkt med störst lagrad volym (därefter maxdjup, därefter regnintensitet)
+    topp_idx = max(
+        range(len(punkter)),
+        key=lambda i: (
+            punkter[i]["volym_m3"],
+            punkter[i]["max_djup_m"],
+            punkter[i]["regn_mm_h"],
+        ),
+    )
+    topp_tid_min = float(punkter[topp_idx]["tid_min"])
+
+    # 3. Välj 12–16 tidssteg för tidssteg.npz (alltid inkl. t=0, topp_tid_min och slut_tid_min)
+    n_p = len(bas_t)
+    if n_p <= 16:
+        steg_idx = list(range(n_p))
+    else:
+        valda = {int(x) for x in np.rint(np.linspace(0, n_p - 1, _TIDSSTEG_BAS_ANTAL))}
+        valda.update((0, topp_idx, n_p - 1))
+        if regn_topp_s is not None and len(valda) < 16:
+            regn_idx = min(range(n_p), key=lambda i: abs(bas_t[i] - regn_topp_s))
+            valda.add(regn_idx)
+        steg_idx = sorted(valda)
+
+    tidssteg_tid_min = [float(punkter[i]["tid_min"]) for i in steg_idx]
+    tidssteg_tider_s = np.asarray([bas_t[i] for i in steg_idx], dtype=np.float64)
+
+    # 4. Bygg kvantiserad uint16-stack (millimeter), nedsamplad endast om max(H, W) > 1024
+    faktor = max(1, math.ceil(max(h, b) / _TIDSSTEG_MAX_PX))
+    h_ut = (h + faktor - 1) // faktor
+    b_ut = (b + faktor - 1) // faktor
+    stack_u16 = np.zeros((len(steg_idx), h_ut, b_ut), dtype=np.uint16)
+    for k, idx in enumerate(steg_idx):
+        djup_2d = np.zeros((h, b), dtype=np.float32)
+        if har_noder and w_lov is not None:
+            djup_2d[har_nod] = np.maximum(0.0, w_lov[idx, ct_valid] - z_valid).astype(np.float32)
+        if faktor > 1:
+            djup_2d = djup_2d[::faktor, ::faktor]
+        stack_u16[k] = np.clip(np.rint(djup_2d * 1000.0), 0.0, 65535.0).astype(np.uint16)
+
+    np.savez_compressed(
+        utmapp / "tidssteg.npz",
+        djup_mm=stack_u16,
+        tider_s=tidssteg_tider_s,
+        nedsampling=np.int32(faktor),
+    )
+
+    tidsserie_data = {
+        "kontrakt": _TIDSSERIE_KONTRAKT,
+        "losare": losare,
+        "regntyp": regntyp,
+        "varaktighet_min": round(float(varaktighet_min), 4),
+        "slut_tid_min": round(t_slut / 60.0, 4),
+        "total_regn_mm": round(total_regn_mm, 4),
+        "topp_tid_min": topp_tid_min,
+        "tidssteg_tid_min": tidssteg_tid_min,
+        "punkter": punkter,
+    }
+    (utmapp / "tidsserie.json").write_text(
+        json.dumps(tidsserie_data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return total_regn_mm
 
 
 class Lutning(Analyslosare):

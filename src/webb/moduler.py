@@ -52,6 +52,7 @@ LOSARNAMN: dict[str, str] = {
     "dagsljus.soltimmar_mark": "Soltimmar på mark",
     "dagsljus.vsc_fasad": "Dagsljus på fasad",
     "vatten.statisk_fyllning": "Maxdjup vid skyfall",
+    "vatten.dynamik": "Skyfall i tid (dynamisk)",
     "luft.vindkomfort": "Vindkomfort",
     "ekologi.konnektivitet": "Ekologisk konnektivitet",
 }
