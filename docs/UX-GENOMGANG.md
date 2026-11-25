@@ -279,7 +279,7 @@ grenen `alla-analyser-visuellt`. "Bara MCP" betyder att det fanns i körningens 
 | Skyfall, statisk fyllning och dynamik | `max_djup` | m | ja | oförändrad (klasser i blått) |
 | Marklutning (`geometri.lutning`) | `lutning` | grader | bara MCP | val under Skyfall, sekventiell skala |
 | Sänkgrafen: sänkor med kapacitet | (graf, ingen roll) | m³, m, m² | nej (steg 2: skarvfynd) | vektorlager "Sänkor med volym": yta vid fullt, djupklass, etikett med m³ |
-| Sänkgrafen: flödesvägar, tillrinning | (graf) | m, %, min | nej | vektorlager "Flödesvägar" färgade efter gångtid; avrinningsområdet står i sänkans text |
+| Avrinningsnätet: flödesvägar, tillrinning | (graf, markmodell) | m², m | nej | vektorlager "Flödesvägar": dendritiskt träd (sänkfyllning, D8, tillrinning inkl. takvatten, Strahler-ordning), bredd och färg efter log(tillrinning), reglaget Minsta tillrinning (100 till 10 000 m², förval 500); sänkor som fylls ihop visas som en, klick ger vattenytans mått |
 | Bifurkation (K36) | känsliga överfall | m, m³ | ja ("Visa osäkerhet") | oförändrad |
 | Intervall vatten (K40), SVF (K41) | spann | m, andel | ja, som tal `[min; max]` | oförändrad; inget kartlager (svaret är tal per projekt, inget raster) |
 | Skarvkontroll (K49) | fynd | m | ja, i steg 2 | oförändrad |

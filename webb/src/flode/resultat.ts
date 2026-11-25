@@ -30,7 +30,7 @@ import { formatera, formateraHogst } from "../tal.ts";
 import type { ProjektSvar, ProjektVy } from "../types.ts";
 import { meterPerPxFranZoom, zoomFranMeterPerPx } from "../vy3d/koord.ts";
 import { flodeAdress } from "./adress.ts";
-import { forvaldNyckel, lagerVal, valText, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type LagerVal, type VektorSlag, type VektorSvar } from "./analyslager.ts";
+import { GRANSER, gransVarde, sankaKortHtml, sankaUrl, type SankaSvar, forvaldNyckel, lagerVal, valText, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type LagerVal, type VektorSlag, type VektorSvar } from "./analyslager.ts";
 import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import { BasLager, skapaKarta } from "./kartdel.ts";
 import { arPagaende, vidKorning } from "./korning.ts";
@@ -89,6 +89,9 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   const vektorCache = new Map<string, VektorSvar>();
   let vektorFel: string | null = null;
   let vektorSeq = 0;
+  const vektorGrans: Partial<Record<VektorSlag, number>> = {};
+  let sankaHtml: string | null = null;
+  let sankaSeq = 0;
   let r: ResultatSvar | undefined;
   let mark: MarkSvar | null = null;
   let ekologi: EkologiSvar | null = null;
@@ -183,7 +186,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   // ---------- Vektorlager (sänkor, flödesvägar, fasadpunkter) ----------
   const vektorNyckel = (slag: VektorSlag): string | null => {
     const sc = r && vy ? vektorScenario(r.lager, vy, lage) : null;
-    return sc && vy ? `${vy.korning_id}|${sc}|${slag}` : null;
+    return sc && vy ? `${vy.korning_id}|${sc}|${slag}|${vektorGrans[slag] ?? ""}` : null;
   };
   const tillgangligaVektorer = (): VektorSlag[] => (r ? vektorVal(amne, r.antaganden.analyser).map((x) => x.slag) : []);
   /** De tända vektorlagren som finns hämtade för läget som visas. */
@@ -209,7 +212,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         if (!nyckel || vektorCache.has(nyckel) || !vy) return;
         const [kid, sc] = nyckel.split("|") as [string, string];
         try {
-          vektorCache.set(nyckel, await lasJson<VektorSvar>(vektorUrl(kid, sc, slag)));
+          vektorCache.set(nyckel, await lasJson<VektorSvar>(vektorUrl(kid, sc, slag, vektorGrans[slag] ?? null)));
         } catch (e) {
           vektorFel = `Lagret gick inte att hämta: ${e instanceof Error ? e.message : String(e)}`;
         }
@@ -233,7 +236,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   const visaBlock = (): string => {
     if (!r || !vyBas) return "";
     const roller = rollerNu();
-    return visaHtml(roller, valtNyckel ?? forvaldNyckel(roller, vyBas), vektorVal(amne, r.antaganden.analyser), vektorPa, visaText());
+    return visaHtml(roller, valtNyckel ?? forvaldNyckel(roller, vyBas), vektorVal(amne, r.antaganden.analyser), vektorPa, visaText(), vektorGrans);
   };
 
   const synkaKarta = (): void => {
@@ -441,9 +444,28 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         delar.push(`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`);
       }
     }
+    if (sankaHtml && lage !== "3d" && vektorPa.has("sankor")) delar.push(sankaHtml);
     if (hojdText && lage !== "3d") delar.push(`<span class="flode-dampad" id="rs-hojd">${esc(hojdText)}</span>`);
     ruta.hidden = delar.length === 0;
     ruta.innerHTML = delar.join("");
+  };
+
+  /** Klick på kartan med sänkorna tända: mått för hela den sammanhängande vattenytan (före, efter, skillnad). */
+  const visaSanka = (e: number, n: number): void => {
+    if (!vy || lage === "3d" || !vektorPa.has("sankor")) return;
+    const nr = ++sankaSeq;
+    lasJson<SankaSvar>(sankaUrl(vy.korning_id, e, n, vektorScenario(r?.lager ?? [], vy, lage))).then(
+      (svar) => {
+        if (nr !== sankaSeq || avslutad) return;
+        sankaHtml = sankaKortHtml(svar);
+        ritaAvlasning();
+      },
+      () => {
+        if (nr !== sankaSeq || avslutad) return;
+        sankaHtml = null;
+        ritaAvlasning();
+      },
+    );
   };
 
   const planeraAvlasning = (e: number | null, n: number | null): void => {
@@ -617,12 +639,36 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
       void valjVy(vyerFor(kalla)[0] ?? null);
     } else if (m.dataset.vy) void valjVy(vyerFor(kalla).find((v) => v.id === m.dataset.vy) ?? null);
   });
+  lyssna(rot, "input", (h) => {
+    const s = h.target as HTMLInputElement;
+    const slag = s.dataset.grans as VektorSlag | undefined;
+    const g = slag ? GRANSER[slag] : undefined;
+    if (slag && g) {
+      const ut = rot.querySelector(`[data-grans-ut="${slag}"]`);
+      if (ut) ut.textContent = `${formateraHogst(gransVarde(g, Number(s.value)), 1)} ${g.enhet}`;
+    }
+  });
   lyssna(rot, "change", (h) => {
     const s = h.target as HTMLSelectElement;
+    if (s.dataset.grans) {
+      const slag = s.dataset.grans as VektorSlag;
+      const g = GRANSER[slag];
+      if (g) {
+        vektorGrans[slag] = gransVarde(g, Number(s.value));
+        void laddaVektorer();
+      }
+      return;
+    }
     if (s.dataset.vektor) {
       const slag = s.dataset.vektor as VektorSlag;
       if ((s as unknown as HTMLInputElement).checked) vektorPa.add(slag);
       else vektorPa.delete(slag);
+      const rad = rot.querySelector<HTMLElement>(`[data-grans-rad="${slag}"]`);
+      if (rad) rad.hidden = !vektorPa.has(slag);
+      if (slag === "sankor" && !vektorPa.has(slag)) {
+        sankaHtml = null;
+        ritaAvlasning();
+      }
       sattVektorer();
       ritaTecken();
       void laddaVektorer();
@@ -693,6 +739,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     a = skapaKarta(el("rs-a"), info);
     a.onVyAndrad = () => b && a && b.settVy(a.hamtaVy());
     a.onMarkor = planeraAvlasning;
+    a.onKlickPunkt = visaSanka;
     bas = new BasLager(a, info, kartLager);
     bas.registrera(projekt);
     // OpenStreetMap-bakgrunden (samma val som i steg 2, sparat per projekt).

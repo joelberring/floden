@@ -20,6 +20,7 @@ import csv
 import hashlib
 import importlib
 import json
+import math
 import re
 import secrets
 import shutil
@@ -91,6 +92,13 @@ def _kontrollera_id(varde: str, vad: str) -> str:
     if not _ID.match(varde) or ".." in varde:
         raise FlodenWebbFel(f"Ogiltigt {vad}: {varde!r}.", status_kod=400)
     return varde
+
+
+from sankgraf.avrinningsnat import STANDARD_MIN_YTA_M2  # noqa: E402
+
+VAT_YTA_M = 0.02
+"""Vattenyta: celler med större djup än så här (2 cm)."""
+_SANKMATT = ("max_djup_m", "medel_djup_m", "vat_yta_m2", "volym_m3")
 
 
 @dataclass
@@ -864,20 +872,43 @@ class FragaTjanst:
             raise FlodenWebbFel(f"Okänt lager '{lager_id}'.", status_kod=404)
         return fil.read_bytes()
 
-    def vektor(self, korning_id: str, scenario: str, slag: str) -> dict[str, Any]:
+    def vektor(
+        self,
+        korning_id: str,
+        scenario: str,
+        slag: str,
+        *,
+        min_yta_m2: float | None = None,
+        min_volym_m3: float | None = None,
+        min_djup_m: float | None = None,
+    ) -> dict[str, Any]:
         """Vektordata ur körningen för kartan: `sankor`, `flodesvagar` (ur sänkgrafen) eller `vsc`.
 
         Sänkgrafen byggs om för scenariots K1-ruta med samma markmodell och samma antaganden
         (takvatten, persistens) som lösaren fick, ur jobbets `run.json`; samma kod, inget nytt tal.
-        Svaret sparas bredvid lagren och kräver samma behörighet som körningens övriga resultat."""
+        Svaret sparas bredvid lagren och kräver samma behörighet som körningens övriga resultat.
+
+        `flodesvagar` är avrinningsnätet (`sankgraf.avrinningsnat`); `min_yta_m2` är minsta
+        tillrinning för ett stråk (förval 500). `sankor` slår ihop sänkor som fylls ihop;
+        `min_volym_m3` (förval 1) och `min_djup_m` (förval 0,05) döljer småsänkor."""
         k = self._hamta(korning_id)
+        yta = STANDARD_MIN_YTA_M2 if min_yta_m2 is None else float(min_yta_m2)
+        vol = 1.0 if min_volym_m3 is None else float(min_volym_m3)
+        djup = 0.05 if min_djup_m is None else float(min_djup_m)
+        for namn, v in (("min_yta_m2", yta), ("min_volym_m3", vol), ("min_djup_m", djup)):
+            if not (math.isfinite(v) and 0.0 <= v <= 1e7) or (namn == "min_yta_m2" and v <= 0.0):
+                raise FlodenWebbFel(f"Parametern {namn} har ett ogiltigt värde.", status_kod=400)
         _kontrollera_id(scenario, "scenario")
         if slag not in analysvektor.SLAG:
             raise FlodenWebbFel(f"Okänt vektorlager '{slag}'.", status_kod=404)
         s = self._sammanstallning(k)
         if scenario not in s["scenarier"]:
             raise FlodenWebbFel(f"Okänt scenario '{scenario}'.", status_kod=404)
-        cachefil = k.mapp / "webb" / f"vektor.{scenario}.{slag}.json"
+        suffix = {
+            "flodesvagar": f".v2.{yta:g}",
+            "sankor": f".v2.{vol:g}.{djup:g}",
+        }.get(slag, "")
+        cachefil = k.mapp / "webb" / f"vektor.{scenario}.{slag}{suffix}.json"
         with self._lock:
             if cachefil.is_file():
                 cachad: dict[str, Any] = json.loads(cachefil.read_text(encoding="utf-8"))
@@ -895,7 +926,7 @@ class FragaTjanst:
                 raise FlodenWebbFel("Körningen har inga fasadpunkter med VSC.", status_kod=404)
             ut = analysvektor.vsc_geojson(fil)
         else:
-            ut = self._sankgraf_vektor(k, s, scenario, slag)
+            ut = self._sankgraf_vektor(k, s, scenario, slag, yta, vol, djup)
         ut = {"slag": slag, "scenario": scenario, "korning_id": korning_id, **ut}
         with self._lock:
             cachefil.parent.mkdir(parents=True, exist_ok=True)
@@ -903,7 +934,14 @@ class FragaTjanst:
         return ut
 
     def _sankgraf_vektor(
-        self, k: Korning, s: dict[str, Any], scenario: str, slag: str
+        self,
+        k: Korning,
+        s: dict[str, Any],
+        scenario: str,
+        slag: str,
+        min_yta_m2: float,
+        min_volym_m3: float,
+        min_djup_m: float,
     ) -> dict[str, Any]:
         from sankgraf.fyllning import kor_statisk_k1_mapp
 
@@ -942,9 +980,9 @@ class FragaTjanst:
         except Exception as exc:  # ett tydligt fel i stället för ett tyst tomt lager
             raise FlodenWebbFel(f"Sänkgrafen kunde inte byggas: {exc}", status_kod=409) from exc
         return (
-            analysvektor.sankor_geojson(graf)
+            analysvektor.sankor_geojson(graf, min_volym_m3=min_volym_m3, min_djup_m=min_djup_m)
             if slag == "sankor"
-            else analysvektor.flodesvagar_geojson(graf)
+            else analysvektor.flodesvagar_geojson(graf, min_yta_m2)
         )
 
     # Byggnader, antaganden och avläsning --------------------------------------------------
@@ -1163,6 +1201,61 @@ class FragaTjanst:
         ordning = {"bas": 0, "scenario": 1, "skillnad": 2}
         rader.sort(key=lambda x: (ordning[x["typ"]], x["lager_id"]))
         return {"e": e, "n": n, "analys": valt["analys"], "roll": valt["roll"], "varden": rader}
+
+    def sanka(
+        self, korning_id: str, e: float, n: float, scenario: str | None = None
+    ) -> dict[str, Any]:
+        """Den sammanhängande vattenytan i (e, n) ur körningens största vattendjup (`max_djup`).
+
+        Vattenyta = celler med djup över 2 cm som hänger ihop (4-grannar) med cellen i punkten.
+        Ger per läge (före, efter) största och medeldjup, våt yta (m²) och volym (summa djup
+        gånger cellyta, m³), och skillnaden efter minus före. Läser bara de ritade lagren."""
+        from scipy import ndimage
+
+        k = self._hamta(korning_id)
+        if scenario is not None:
+            _kontrollera_id(scenario, "scenario")
+        lager = [
+            la
+            for la in self.resultat(korning_id)["lager"]
+            if la["roll"] == "max_djup" and la["typ"] in ("bas", "scenario")
+        ]
+        if not lager:
+            raise FlodenWebbFel("Körningen har inget lager med största vattendjup.", status_kod=404)
+        lager.sort(key=lambda la: (la["typ"] != "bas", la["id"]))
+        rader: list[dict[str, Any]] = []
+        for la in lager:
+            u, px = la["utbredning"], float(la["pixelstorlek_m"])
+            kol, rad = int((e - u["x_min"]) // px), int((u["y_max"] - n) // px)
+            rad_ut: dict[str, Any] = {
+                "lager_id": la["id"],
+                "scenario": la["scenario"],
+                "typ": la["typ"],
+                "vatt": False,
+            }
+            arr = np.load(k.mapp / "webb" / f"{la['id']}.npy", mmap_mode="r")
+            if 0 <= rad < arr.shape[0] and 0 <= kol < arr.shape[1]:
+                d = np.nan_to_num(np.asarray(arr, dtype=np.float64), nan=0.0)
+                if d[rad, kol] > VAT_YTA_M:
+                    etik, _ = ndimage.label(d > VAT_YTA_M)
+                    yta = etik == etik[rad, kol]
+                    dj = d[yta]
+                    rad_ut.update(
+                        vatt=True,
+                        max_djup_m=float(dj.max()),
+                        medel_djup_m=float(dj.mean()),
+                        vat_yta_m2=float(dj.size * px * px),
+                        volym_m3=float(dj.sum() * px * px),
+                    )
+            rader.append(rad_ut)
+        fore = next((r for r in rader if r["typ"] == "bas"), None)
+        efter = next((r for r in rader if r["typ"] == "scenario"), None)
+        skillnad: dict[str, float] | None = None
+        if fore and efter:
+            f = {m: fore.get(m, 0.0) for m in _SANKMATT}
+            g = {m: efter.get(m, 0.0) for m in _SANKMATT}
+            skillnad = {m: g[m] - f[m] for m in _SANKMATT}
+        return {"e": e, "n": n, "grans_m": VAT_YTA_M, "lagen": rader, "skillnad": skillnad}
 
     def _cellkalla(
         self, k: Korning, la: dict[str, Any], e: float, n: float
