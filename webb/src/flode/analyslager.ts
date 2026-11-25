@@ -88,6 +88,31 @@ export interface LagerVal {
   harledd: boolean;
 }
 
+/** Kända roller med svensk etikett, enhet och kort förklaring (kompletterar serverns metadata). */
+export const ROLL_ETIKETTER: Record<string, { etikett: string; enhet: string; hjalp: string; fil?: string }> = {
+  ankomsttid: {
+    etikett: "Ankomsttid (tid till 0,1 m)",
+    enhet: "min",
+    fil: "tid_till_0_1m.tif",
+    hjalp: "Tid från regnstart tills vattendjupet når 0,1 m (tid_till_0_1m.tif).",
+  },
+  rannsten_flode: {
+    etikett: "Rännstenar (1D-flöde)",
+    enhet: "m³/s",
+    fil: "rannsten_flode.geojson",
+    hjalp: "Beräknat 1D-flöde längs kantsten och rännstenar.",
+  },
+};
+
+/** Etikett och enhet för en roll, med reserv från kända svenska etiketter om servern utelämnat texten. */
+export function rollEtikett(roll: string, etikett?: string, enhet?: string): { etikett: string; enhet: string } {
+  const k = ROLL_ETIKETTER[roll];
+  return {
+    etikett: etikett && etikett !== roll ? etikett : (k?.etikett ?? etikett ?? roll),
+    enhet: enhet || k?.enhet || "",
+  };
+}
+
 const lagerNyckel = (l: Pick<LagerPost, "analys" | "roll">): string => `${l.analys}|${l.roll}`;
 
 /**
@@ -112,12 +137,13 @@ export function lagerVal(lager: readonly LagerPost[], vy: Pick<ProjektVy, "fore_
     const efter = efterScen && efterScen !== foreScen ? (g.find((l) => l.typ !== "skillnad" && l.scenario === efterScen) ?? null) : null;
     const skillnad = g.find((l) => l.typ === "skillnad" && l.fore === foreScen && l.efter === efterScen) ?? null;
     if (!fore && !efter) continue;
+    const info = rollEtikett(forste.roll, forste.etikett, forste.enhet);
     ut.push({
       nyckel,
       analys: forste.analys,
       roll: forste.roll,
-      etikett: forste.etikett,
-      enhet: forste.enhet,
+      etikett: info.etikett,
+      enhet: info.enhet,
       kontroll: Boolean(forste.kontroll),
       fore: fore?.id ?? null,
       efter: efter?.id ?? null,
@@ -170,7 +196,7 @@ export function visaHtml(roller: readonly LagerVal[], vald: string | null, vekto
 
 // ---------------------------------------------------------------------------------- vektorlager
 
-export type VektorSlag = "sankor" | "flodesvagar" | "vsc";
+export type VektorSlag = "sankor" | "flodesvagar" | "rannsten_flode" | "vsc";
 
 /** Reglage som sållar bort smått: minsta tillrinning (m²) för flödesvägar, minsta volym (m³) för sänkor. Logaritmiska. */
 export interface Grans {
@@ -205,13 +231,19 @@ export interface VektorVal {
 const VEKTORER: Record<VektorSlag, VektorVal> = {
   sankor: { slag: "sankor", namn: "Sänkor med volym", hjalp: "Sänkornas yta när de är fulla, med kapacitet i kubikmeter och djup vid fullt. Sänkor som fylls ihop visas som en." },
   flodesvagar: { slag: "flodesvagar", namn: "Flödesvägar", hjalp: "Avrinningsnätet: små rännilar som går ihop till större stråk nedströms. Bredd och färg visar tillrinningen (m²) och hovring ger ordning (Strahler)." },
+  rannsten_flode: { slag: "rannsten_flode", namn: "Rännstenar (1D-flöde)", hjalp: "1D-flöde längs kantsten och rännstenar (m³/s). Färg och bredd visar toppflödet längs varje sträcka." },
   vsc: { slag: "vsc", namn: "Fasadpunkter (VSC)", hjalp: "Dagsljus på fasaden (vertikal himmelskomponent, VSC) i procent per punkt." },
 };
 
 /** Vektorlagren som finns för ämnet, ur lösarna körningen använde. */
 export function vektorVal(amne: VisaAmne, analyser: readonly Pick<AnalysAntagande, "losare">[]): VektorVal[] {
   const har = (l: string): boolean => analyser.some((a) => a.losare === l);
-  if (amne === "vatten" && (har("vatten.statisk_fyllning") || har("vatten.dynamik"))) return [VEKTORER.sankor, VEKTORER.flodesvagar];
+  if (amne === "vatten") {
+    const ut: VektorVal[] = [];
+    if (har("vatten.statisk_fyllning") || har("vatten.dynamik")) ut.push(VEKTORER.sankor, VEKTORER.flodesvagar);
+    if (har("vatten.2d") || har("vatten.hybrid") || har("vatten.rannsten")) ut.push(VEKTORER.rannsten_flode);
+    return ut;
+  }
   if (amne === "dagsljus" && har("dagsljus.vsc_fasad")) return [VEKTORER.vsc];
   return [];
 }
@@ -271,11 +303,39 @@ export function fasadBeskrivning(p: Record<string, unknown>): string {
   return `Fasadpunkt på ${formatera(tal(p.z_m) ?? 0, 1)} m höjd: ${v === null ? "VSC saknas" : `VSC ${formatera(v, 1)} %`}${status}.`;
 }
 
+const rannstenFlode = (p: Record<string, unknown>): number | null =>
+  tal(p.flode_m3_s) ?? tal(p.max_flode_m3_s) ?? tal(p.q_max_m3_s);
+
+/** Skala för 1D-rännstenarnas toppflöde (m³/s): lägsta och högsta i svaret. */
+export function rannstenSkala(svar: Pick<VektorSvar, "features">): { lo: number; hi: number } {
+  const q = svar.features.map((f) => rannstenFlode(f.properties)).filter((x): x is number => x !== null && x >= 0);
+  return q.length === 0 ? { lo: 0, hi: 0 } : { lo: Math.min(...q), hi: Math.max(...q) };
+}
+
+/** Linjebredd (px) för en 1D-rännsten efter flödet. */
+export function rannstenBredd(q: number, lo: number, hi: number): number {
+  const andel = hi > lo ? Math.min(1, Math.max(0, (q - lo) / (hi - lo))) : 0.5;
+  return 1.8 + 4.2 * andel;
+}
+
+export function rannstenBeskrivning(p: Record<string, unknown>): string {
+  const q = rannstenFlode(p);
+  const djup = tal(p.djup_m) ?? tal(p.max_djup_m);
+  const langd = tal(p.langd_m);
+  const delar: string[] = [
+    q === null ? "Rännsten (1D): flöde saknas" : `Rännsten (1D): toppflöde ${formatera(q, 3)} m³/s`,
+  ];
+  if (djup !== null) delar.push(`djup ${formatera(djup, 2)} m`);
+  if (langd !== null) delar.push(`längd ${formatera(langd, 0)} m`);
+  return `${delar.join(", ")}.`;
+}
+
 /** Serverns vektorsvar (SWEREF-meter) som färdiga figurer för kartan (WGS 84) med färg, bredd och text. */
 export function vektorTillKarta(svar: VektorSvar): AnalysVektor {
   const features: GeoJSON.Feature[] = [];
   const etiketter: AnalysVektor["etiketter"] = [];
   const ts = svar.slag === "flodesvagar" ? tillrinningSkala(svar) : { lo: 1, hi: 1 };
+  const rs = svar.slag === "rannsten_flode" ? rannstenSkala(svar) : { lo: 0, hi: 0 };
   for (const f of svar.features) {
     const p = f.properties;
     if (svar.slag === "sankor" && f.geometry.type === "MultiPolygon") {
@@ -285,6 +345,10 @@ export function vektorTillKarta(svar: VektorSvar): AnalysVektor {
       const yta = tal(p.tillrinning_m2) ?? ts.lo;
       const farg = varFarg(PALETTER.tillrinning as readonly string[], logAndel(yta, ts.lo, ts.hi), 0, 1);
       features.push({ type: "Feature", properties: { farg, bredd: flodesBredd(yta, ts.lo, ts.hi), beskrivning: flodesvagBeskrivning(p) }, geometry: { type: "LineString", coordinates: ring(f.geometry.coordinates) } });
+    } else if (svar.slag === "rannsten_flode" && f.geometry.type === "LineString") {
+      const q = rannstenFlode(p) ?? rs.lo;
+      const farg = varFarg(PALETTER.tillrinning as readonly string[], q, rs.lo, rs.hi);
+      features.push({ type: "Feature", properties: { farg, bredd: rannstenBredd(q, rs.lo, rs.hi), beskrivning: rannstenBeskrivning(p) }, geometry: { type: "LineString", coordinates: ring(f.geometry.coordinates) } });
     } else if (svar.slag === "vsc" && f.geometry.type === "Point") {
       const v = tal(p.vsc_procent);
       const farg = v === null ? INGEN_FARG : varFarg(PALETTER.sekventiell as readonly string[], v, VSC_SKALA.lo, VSC_SKALA.hi);
@@ -319,6 +383,10 @@ export function vektorTeckenHtml(svar: VektorSvar): string {
   if (svar.slag === "flodesvagar") {
     const { lo, hi } = tillrinningSkala(svar);
     return `<span class="flode-kort-rubrik">Flödesvägar: tillrinning (m²)</span><span class="flode-band" style="background:linear-gradient(90deg,${(PALETTER.tillrinning as readonly string[]).join(",")})"></span><span class="flode-bandtext"><span>${formatera(lo, 0)}</span><span>${formatera(hi, 0)} m²</span></span><span class="flode-liten flode-dampad">Bredd och färg följer tillrinningen (logaritmisk).</span>`;
+  }
+  if (svar.slag === "rannsten_flode") {
+    const { lo, hi } = rannstenSkala(svar);
+    return `<span class="flode-kort-rubrik">Rännstenar (1D): toppflöde (m³/s)</span><span class="flode-band" style="background:linear-gradient(90deg,${(PALETTER.tillrinning as readonly string[]).join(",")})"></span><span class="flode-bandtext"><span>${formatera(lo, 3)}</span><span>${formatera(hi, 3)} m³/s</span></span><span class="flode-liten flode-dampad">1D-flöde längs kantsten och rännstenar.</span>${delvis}`;
   }
   return `<span class="flode-kort-rubrik">Fasadpunkter: VSC</span><span class="flode-band" style="background:linear-gradient(90deg,${(PALETTER.sekventiell as readonly string[]).join(",")})"></span><span class="flode-bandtext"><span>${formatera(VSC_SKALA.lo, 0)}</span><span>${formatera(VSC_SKALA.hi, 0)} %</span></span><span class="flode-liten flode-dampad"><i style="background:${INGEN_FARG}"></i> grå: VSC saknas</span>${delvis}`;
 }

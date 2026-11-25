@@ -12,7 +12,7 @@
   position: absolute;
   z-index: 2;
   pointer-events: none;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(252, 251, 247, 0.94);
   color: var(--f-text);
   font: 11px var(--f-font-mono);
   padding: 4px 8px;
@@ -221,4 +221,4 @@
 .rl-ny input[type="text"] { flex: 1 1 8em; min-width: 6em; }
 
 /* Etikett med volym på en sänka (analyslager, steg 4) */
-.analys-etikett { padding: 1px 5px; border-radius: 4px; background: rgba(255, 255, 255, 0.85); color: #0b2b4a; font-size: 11px; font-weight: 600; white-space: nowrap; pointer-events: none; }
+.analys-etikett { padding: 1px 5px; border-radius: 4px; background: rgba(252, 251, 247, 0.9); color: var(--f-vatten-4, #234b66); border: 1px solid rgba(35, 75, 102, 0.25); font-size: 11px; font-weight: 600; white-space: nowrap; pointer-events: none; }

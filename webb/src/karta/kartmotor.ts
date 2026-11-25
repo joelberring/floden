@@ -107,6 +107,7 @@ export function bildHorn(u: Utbredning): [[number, number], [number, number], [n
 
 const BYGGNADER = "byggnader";
 const RUTOR = "rutor";
+const PROJEKT_POLYGON = "projekt-polygon";
 const RIT = "rit";
 const OVERFALL = "overfall";
 const ANALYS = "analys";
@@ -120,6 +121,8 @@ const OVERLAGER = [
   "analys-yta-kant",
   "analys-linje",
   "analys-punkt",
+  "projekt-polygon-fyll",
+  "projekt-polygon-kant",
   "overfall-punkter",
   "skarv-yta-fyll",
   "skarv-yta-linje",
@@ -167,6 +170,7 @@ export class Kartmotor {
   private vantande: Array<() => void> = [];
   private byggnader: VyByggnad[] = [];
   private rutor: Utbredning[] = [];
+  private projektPolygon: GeoJSON.Polygon | null = null;
   private rit: RitVy = TOM_RITVY;
   private overfall: OverfallPunkt[] = [];
   private overfallPopup: maplibregl.Popup | null = null;
@@ -198,7 +202,7 @@ export class Kartmotor {
       style: {
         version: 8,
         sources: {},
-        layers: [{ id: "bakgrund", type: "background", paint: { "background-color": "#ececec" } }],
+        layers: [{ id: "bakgrund", type: "background", paint: { "background-color": "#eae6da" } }],
       },
       center: startVy ? [startVy.lng, startVy.lat] : [18.0, 59.33],
       zoom: startVy?.zoom ?? 15,
@@ -427,7 +431,7 @@ export class Kartmotor {
   private byggOverlager(): void {
     const k = this.karta;
     const grov = arGrovPekare(); // pekskärm: större handtag
-    for (const s of [BYGGNADER, RUTOR, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
+    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -453,6 +457,8 @@ export class Kartmotor {
     k.addLayer({ id: "analys-yta-kant", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["get", "farg"], "line-width": 2 } });
     k.addLayer({ id: "analys-linje", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "farg"], "line-width": ["get", "bredd"], "line-opacity": 0.9 } });
     k.addLayer({ id: "analys-punkt", type: "circle", source: ANALYS, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 4, "circle-color": ["get", "farg"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
+    k.addLayer({ id: "projekt-polygon-fyll", type: "fill", source: PROJEKT_POLYGON, paint: { "fill-color": "#2f4a2c", "fill-opacity": 0.04 } });
+    k.addLayer({ id: "projekt-polygon-kant", type: "line", source: PROJEKT_POLYGON, paint: { "line-color": "#2f4a2c", "line-width": 2.5, "line-opacity": 0.95 } });
     k.addLayer({
       id: "overfall-punkter",
       type: "circle",
@@ -681,6 +687,12 @@ export class Kartmotor {
     this.nar(() => this.synkaOverlager());
   }
 
+  /** Projektets avgränsningspolygon (SWEREF 99 18 00) som tydlig skogsgrön kontur i steg 2 och 4. */
+  settProjektPolygon(polygon: GeoJSON.Polygon | null): void {
+    this.projektPolygon = polygon;
+    this.nar(() => this.synkaOverlager());
+  }
+
   settRit(r: RitVy): void {
     this.rit = r;
     this.nar(() => this.synkaOverlager());
@@ -705,6 +717,24 @@ export class Kartmotor {
         geometry: { type: "Polygon", coordinates: [llRing([[u.x_min, u.y_min], [u.x_max, u.y_min], [u.x_max, u.y_max], [u.x_min, u.y_max]])] },
       })),
     });
+    this.satt(
+      PROJEKT_POLYGON,
+      this.projektPolygon && this.projektPolygon.coordinates.length > 0
+        ? {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                properties: {},
+                geometry: {
+                  type: "Polygon",
+                  coordinates: this.projektPolygon.coordinates.map((ring) => ring.map((pt) => ll([pt[0] as number, pt[1] as number]))),
+                },
+              },
+            ],
+          }
+        : TOM,
+    );
     this.satt(OVERFALL, overfallTillGeoJson(this.overfall));
     this.synkaAnalys();
     this.synkaSkarv();

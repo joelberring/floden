@@ -112,12 +112,12 @@ export function visaNyttProjekt(rot: HTMLElement): Avslutbar {
       if (!k.getSource(id)) k.addSource(id, { type: "geojson", data: TOM });
       if (!k.getLayer(`${id}-${typ}`)) k.addLayer({ id: `${id}-${typ}`, type: typ, source: id, paint } as never);
     };
-    lagg("np-gransen", "line", { "line-color": "#6b6e63", "line-width": 1.5, "line-dasharray": [3, 2] });
-    lagg("np-karna", "fill", { "fill-color": "#4c8a3f", "fill-opacity": 0.14 });
-    lagg("np-karna", "line", { "line-color": "#3b7a30", "line-width": 2 });
-    lagg("np-avgr", "fill", { "fill-color": "#1a1a1a", "fill-opacity": 0.1 });
-    lagg("np-avgr", "line", { "line-color": "#1a1a1a", "line-width": 2.5 });
-    lagg("np-utkast", "line", { "line-color": "#1a1a1a", "line-width": 2, "line-dasharray": [2, 1.5] });
+    lagg("np-gransen", "line", { "line-color": "#5b6557", "line-width": 1.5, "line-dasharray": [3, 2] });
+    lagg("np-karna", "fill", { "fill-color": "#6f9e84", "fill-opacity": 0.14 });
+    lagg("np-karna", "line", { "line-color": "#3e6334", "line-width": 2 });
+    lagg("np-avgr", "fill", { "fill-color": "#2f4a2c", "fill-opacity": 0.1 });
+    lagg("np-avgr", "line", { "line-color": "#2f4a2c", "line-width": 2.5 });
+    lagg("np-utkast", "line", { "line-color": "#2f4a2c", "line-width": 2, "line-dasharray": [2, 1.5] });
     synkaKarta();
   };
   const synkaOsm = (): void => {
