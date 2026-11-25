@@ -31,6 +31,7 @@ import type {
   RuttBegaran,
   RuttSvar,
 } from "./types";
+import type { MarkhojdSvar } from "./flode/markhojd.ts";
 import { csrfHuvud, settKontoLage } from "./konto";
 import { ApiFel, OinloggadFel } from "./apifel";
 
@@ -234,6 +235,12 @@ export function hamtaAvlasning(
 ): Promise<AvlasningSvar> {
   const q = `lager=${encodeURIComponent(lagerId)}&e=${e.toFixed(2)}&n=${n.toFixed(2)}`;
   return lasJson<AvlasningSvar>(`${API_BAS}/korningar/${encodeURIComponent(korningId)}/avlasning?${q}`);
+}
+
+/** Markhöjden (m RH 2000) i en punkt ur projektets markmodell, för avläsning under pekaren. */
+export function hamtaMarkhojd(projekt: string, e: number, n: number): Promise<MarkhojdSvar> {
+  const q = `e=${Math.round(e * 100) / 100}&n=${Math.round(n * 100) / 100}`;
+  return lasJson<MarkhojdSvar>(`${API_BAS}/kartverktyg/${encodeURIComponent(projekt)}/hojd?${q}`);
 }
 
 /* ---------- Nycklar (/konto/nycklar): bara kontots egna, aldrig utläsbara ---------- */

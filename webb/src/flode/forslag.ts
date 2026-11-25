@@ -39,7 +39,10 @@ import { flodeAdress } from "./adress.ts";
 import { tolkaFil } from "./filimport.ts";
 import { projektKallaText } from "./projektkalla.ts";
 import { monteraUnderlagForm, taBortUnderlag } from "./underlag.ts";
-import { forslagInfoHtml, type HusUppgift } from "./forslagtext.ts";
+import { forslagInfoHtml, sparStatus, type HusUppgift } from "./forslagtext.ts";
+import { hamtaMarkhojd } from "../api.ts";
+import { markhojdAvlasning } from "./markhojd.ts";
+import { monteraOsmKryss } from "./osmval.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { forslagKropp, FORVALD_TAKFORM, skapaDokFor, sparaTillstand, takformFran, TAKFORMER, tillstandFor } from "./tillstand.ts";
@@ -118,6 +121,9 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
   let meddelande: Meddelande | null = null;
   let sparFel: string | null = null;
   let sparat = "";
+  let sparar = false;
+  let sparTid: string | null = null;
+  let tvingaVidare = false; // andra trycket på "Välj frågor" efter att sparandet misslyckats går vidare ändå
   let kontrollTimer: number | null = null;
   let ritaBegard = 0;
   // Skarvar (R5): senaste kontrollens fynd, åtgärdsförslaget och dess tillstånd.
@@ -177,6 +183,8 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           <div class="flode-3d-huvud"><strong>3D-förhandsvisning</strong><span class="flode-liten flode-dampad">Uppdateras när du ritar. Visning, inte beräkning.</span><button type="button" id="fs-3d-stang" aria-label="Stäng 3D-förhandsvisningen">Stäng</button></div>
           <div class="flode-3d-yta" id="fs-3d-yta"></div>
         </section>
+        <div class="flode-kartkort flode-osm" id="fs-osm"></div>
+        <div class="flode-kartkort flode-kartkort-hoger flode-avlasning" id="fs-markhojd" role="status" hidden></div>
         <div class="flode-kartkort flode-hjalp" id="fs-hjalp" role="status"></div>
         <div class="flode-kartkort flode-kartkort-hoger" id="fs-laddar">Hämtar kartan …</div>
       </section>
@@ -187,6 +195,10 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         </div>
         <div class="flode-falt"><label for="fs-namn">Namn</label>
           <input id="fs-namn" type="text" maxlength="80" placeholder="Mitt förslag" autocomplete="off" /></div>
+        <div class="flode-sparrad">
+          <button type="button" class="flode-knapp" id="fs-spara" aria-describedby="fs-sparstatus">Spara förslag</button>
+          <p class="flode-liten flode-dampad flode-sparstatus" id="fs-sparstatus" role="status" aria-live="polite"></p>
+        </div>
         <div class="flode-tva">
           <div class="flode-falt"><label for="fs-hojd">Höjd (m)</label>
             <input id="fs-hojd" type="text" inputmode="decimal" aria-describedby="fs-hojd-hjalp" disabled /></div>
@@ -261,6 +273,18 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
     if (dok.lager.length === 0) dok.sattLager(info.ritlager?.lager ?? []);
     monteraRitlagerpanel(el("fs-ritlager"), dok, info.ritlager?.roller ?? [], { andrad: () => planeraRitning() });
     monteraUnderlagForm(el("fs-underlag"), projekt, bas, ac.signal);
+    monteraOsmKryss(el("fs-osm"), lagerLista, synkaLager, ac.signal);
+    // Markhöjden under pekaren, ur projektets markmodell (som värdena i steg 4).
+    const hojdKort = el("fs-markhojd");
+    const hojd = markhojdAvlasning(
+      (e, n) => hamtaMarkhojd(projekt, e, n),
+      (text) => {
+        hojdKort.hidden = text === null;
+        hojdKort.textContent = text ?? "";
+      },
+    );
+    motor.onMarkor = (e, n) => hojd.ror(e, n);
+    avbryt.push(() => hojd.avsluta());
     void bas.ladda(projekt).then(synkaLager);
     const verktyg = new Ritverktyg(
       dok,
@@ -520,6 +544,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
           : `Befintlig byggnad${riven ? ", riven" : ""}. Taktyp kan bara anges för nya hus.`;
       }
       el("fs-info").innerHTML = infoHtml();
+      ritaSparStatus();
       ritaSkarv();
       uppdateraFigurPanel();
     };
@@ -724,6 +749,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       sparaTillstand(t);
       planeraKontroll();
     });
+    namnFalt.addEventListener("input", () => ritaSparStatus());
 
     const infoHtml = (): string => {
       const val = verktyg.val;
@@ -781,6 +807,7 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         skarvar = null;
       }
       if (avslutad) return;
+      ritaSparStatus();
       if (kontroll?.giltig) {
         // Sparandet går i en kö så att två ändringar i följd inte skapar två förslag.
         sparKo = sparKo.then(() => spara(forslagKropp(dok, t.takform)));
@@ -793,6 +820,8 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
       const namn = (namnFalt.value.trim() || "Mitt förslag").trim();
       const nyckel = JSON.stringify(kropp) + namn;
       if (nyckel === sparat) return;
+      sparar = true;
+      ritaSparStatus();
       try {
         const gammal = t.scenario;
         let d = await sparaScenario(projekt, gammal ? gammal.namn : namn, kropp, gammal?.slug);
@@ -801,12 +830,82 @@ export function visaForslag(rot: HTMLElement, projekt: string): Avslutbar {
         t.namn = namnFalt.value.trim();
         sparat = nyckel;
         sparFel = null;
+        sparTid = klockslag(new Date());
         sparaTillstand(t);
         void lasSparade();
       } catch (e) {
         sparFel = e instanceof Error ? e.message : String(e);
       }
+      sparar = false;
+      ritaSparStatus();
     };
+    const klockslag = (d: Date): string => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    /** Sparstatusen bredvid knappen: sparat (när och som vad), osparade ändringar, fel eller att förslaget har fel. */
+    const nyckelNu = (): string => JSON.stringify(forslagKropp(dok, t.takform)) + (namnFalt.value.trim() || "Mitt förslag");
+    function ritaSparStatus(): void {
+      const st = sparStatus({
+        antal: dok.tillAndringar().length + dok.figurer.size,
+        likaSomSparat: nyckelNu() === sparat,
+        sparatNamn: t.scenario?.namn ?? null,
+        tid: sparTid,
+        giltig: kontroll ? kontroll.giltig : null,
+        kontrollFel,
+        sparFel,
+        sparar,
+      });
+      const rad = el("fs-sparstatus");
+      rad.textContent = st.text;
+      rad.className = `flode-liten flode-sparstatus ${st.typ === "fel" || st.typ === "ogiltigt" || st.typ === "sparat" ? st.typ : "flode-dampad"}`;
+      rad.setAttribute("role", st.typ === "fel" ? "alert" : "status");
+      el<HTMLButtonElement>("fs-spara").disabled = sparar;
+      if (st.typ === "sparat" || st.typ === "tomt") {
+        // Allt är sparat: "Välj frågor" är en vanlig länk igen.
+        tvingaVidare = false;
+        el("fs-vidare").textContent = "Välj frågor";
+      }
+    }
+    /** Kontrollerar och sparar nu (utan att vänta på pausen efter senaste ändringen). Ger sant när allt som ritats är sparat. */
+    const sparaNu = async (): Promise<boolean> => {
+      if (kontrollTimer !== null) window.clearTimeout(kontrollTimer);
+      kontrollTimer = null;
+      if (dok.tom()) {
+        ritaSparStatus();
+        return true; // inget ritat: inget att förlora
+      }
+      if (!namnFalt.value.trim()) {
+        namnFalt.value = "Mitt förslag";
+        t.namn = "Mitt förslag";
+        sparaTillstand(t);
+      }
+      sparFel = null;
+      await sparKo;
+      await kontrolleraOchSpara();
+      return !sparFel && kontroll?.giltig === true && nyckelNu() === sparat;
+    };
+    el("fs-spara").addEventListener("click", () => {
+      void sparaNu().then((ok) => {
+        if (avslutad) return;
+        meddelande = ok && !dok.tom() ? { typ: "info", text: `Förslaget är sparat som ${t.scenario?.namn ?? ""}.` } : null;
+        visaHjalp();
+      });
+    });
+    // "Välj frågor" sparar först; går det inte syns varför, och ett andra tryck går vidare ändå.
+    el("fs-vidare").addEventListener("click", (h) => {
+      if (tvingaVidare || dok.tom() || (nyckelNu() === sparat && kontroll?.giltig !== false)) return;
+      h.preventDefault();
+      const lank = el<HTMLAnchorElement>("fs-vidare");
+      void sparaNu().then((ok) => {
+        if (avslutad) return;
+        if (ok) {
+          window.location.hash = new URL(lank.href, window.location.href).hash;
+          return;
+        }
+        tvingaVidare = true;
+        lank.textContent = "Gå vidare utan att spara";
+        ritaSparStatus();
+        el("fs-spara").focus();
+      });
+    });
     // --- Sparade förslag: öppna, byt namn, ta bort, nytt tomt (filer på den här datorn) ---
     let scenarier: ScenarioPost[] = [];
     let listFel: string | null = null;

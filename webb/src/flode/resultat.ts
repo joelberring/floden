@@ -10,7 +10,10 @@
  * "Känsliga överfall" på kartan. Värdet under markören läses ur rasterfilen på servern, och
  * "Visa värden även på tak" och "Så läser du kartan" kommer från den gamla kartsidan.
  */
-import { hamtaAvlasning, hamtaProjekt, hamtaResultat, lasJson } from "../api.ts";
+import { hamtaAvlasning, hamtaMarkhojd, hamtaProjekt, hamtaResultat, lasJson } from "../api.ts";
+import { ApiFel } from "../apifel.ts";
+import { markhojdAvlasning } from "./markhojd.ts";
+import { monteraOsmKryss } from "./osmval.ts";
 import type { AvlasningSvar, LagerPost, ResultatSvar } from "../fragor-typer.ts";
 import { hamtaBifurkationer, hamtaProjektInfo, hamtaSvfIntervall, hamtaVattenIntervall, type BifurkationsPunktPost, type ProjektInfo } from "../karta/kartapi.ts";
 import { Kartmotor, type RasterLager, type VyByggnad } from "../karta/kartmotor.ts";
@@ -113,6 +116,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
         </div>
         <div class="flode-kartkort flode-forklaring" id="rs-tecken" hidden></div>
         <div class="flode-kartkort flode-kartkort-hoger flode-avlasning" id="rs-avl" role="status" hidden></div>
+        <div class="flode-kartkort flode-osm" id="rs-osm" hidden></div>
       </section>
       <aside class="flode-panel" aria-label="Resultat">
         <div role="tablist" aria-label="Ämne" class="flode-flikar" id="rs-flikar">
@@ -329,34 +333,49 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   };
 
   // ---------- Värden under markören ----------
+  // Markhöjden under pekaren (ur projektets markmodell) visas i samma kort som resultatvärdena.
+  let hojdText: string | null = null;
+  let senasteAvl: AvlasningSvar | null = null;
+  const markhojd = markhojdAvlasning(
+    (e, n) => hamtaMarkhojd(projekt, e, n),
+    (text) => {
+      hojdText = text;
+      ritaAvlasning();
+    },
+  );
   const uppdateraAvlasning = (svar: AvlasningSvar | null): void => {
+    senasteAvl = svar;
+    ritaAvlasning();
+  };
+  const ritaAvlasning = (): void => {
     const ruta = el("rs-avl");
-    if (!svar || !vy || lage === "3d" || svar.varden.every((x) => !x.inom)) {
-      ruta.hidden = true;
-      ruta.innerHTML = "";
-      return;
+    const svar = senasteAvl;
+    const delar: string[] = [];
+    if (svar && vy && lage !== "3d" && !svar.varden.every((x) => !x.inom)) {
+      const rader: Array<[string, string | null]> = vy.lage_idag
+        ? [["Läget idag", vy.fore_lager]]
+        : [
+            ["Före", vy.fore_lager],
+            [`Efter: ${vy.efter_namn.toLowerCase()}`, vy.efter_lager],
+            ["Skillnad", vy.skillnad_lager],
+          ];
+      for (const [namn, id] of rader) {
+        const x = svar.varden.find((v) => v.lager_id === id && v.inom);
+        if (!x) continue;
+        let text: string;
+        if (x.tak && !visaTak) text = "tak, inte mark";
+        else if (x.varde === null) text = "inget värde";
+        else text = `${x.typ === "skillnad" && x.varde > 0 ? "+" : ""}${formatera(x.varde, 2)}${x.enhet ? ` ${x.enhet}` : ""}${x.tak ? " (tak)" : ""}`;
+        delar.push(`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`);
+      }
     }
-    const rader: Array<[string, string | null]> = vy.lage_idag
-      ? [["Läget idag", vy.fore_lager]]
-      : [
-          ["Före", vy.fore_lager],
-          [`Efter: ${vy.efter_namn.toLowerCase()}`, vy.efter_lager],
-          ["Skillnad", vy.skillnad_lager],
-        ];
-    const delar = rader.flatMap(([namn, id]) => {
-      const x = svar.varden.find((v) => v.lager_id === id && v.inom);
-      if (!x) return [];
-      let text: string;
-      if (x.tak && !visaTak) text = "tak, inte mark";
-      else if (x.varde === null) text = "inget värde";
-      else text = `${x.typ === "skillnad" && x.varde > 0 ? "+" : ""}${formatera(x.varde, 2)}${x.enhet ? ` ${x.enhet}` : ""}${x.tak ? " (tak)" : ""}`;
-      return [`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`];
-    });
+    if (hojdText && lage !== "3d") delar.push(`<span class="flode-dampad" id="rs-hojd">${esc(hojdText)}</span>`);
     ruta.hidden = delar.length === 0;
     ruta.innerHTML = delar.join("");
   };
 
   const planeraAvlasning = (e: number | null, n: number | null): void => {
+    markhojd.ror(e, n);
     if (avlTimer !== null) window.clearTimeout(avlTimer);
     avlTimer = null;
     const v = vy;
@@ -565,7 +584,15 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
 
   const klar = (async () => {
     try {
-      [projektSvar, info] = await Promise.all([hamtaProjekt(projekt), hamtaProjektInfo(projekt)]);
+      // Projektets färdiga exempel (`/api/projekt/<id>`) finns bara för demokvarteret: ett projekt i en geografi svarar 404
+      // där och har bara sina egna körningar. Det är inget fel; då visas inga "Projektets exempel".
+      [projektSvar, info] = await Promise.all([
+        hamtaProjekt(projekt).catch((e: unknown) => {
+          if (e instanceof ApiFel && e.status === 404) return null;
+          throw e;
+        }),
+        hamtaProjektInfo(projekt),
+      ]);
     } catch (e) {
       el("rs-innehall").innerHTML = `<h1 class="flode-h" id="rs-rubrik">Resultatet</h1>${felBeskedHtml(sidFel(e, "Resultatet", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/resultat`), esc)}`;
       kopplaLaddaOm(el("rs-innehall"));
@@ -577,6 +604,12 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     a.onMarkor = planeraAvlasning;
     bas = new BasLager(a, info, kartLager);
     bas.registrera(projekt);
+    // OpenStreetMap-bakgrunden (samma val som i steg 2, sparat per projekt).
+    monteraOsmKryss(el("rs-osm"), kartLager, () => {
+      if (!bas) return;
+      basLagerListan = bas.lagerListan();
+      synkaKarta();
+    }, ac.signal);
     // BasLager äger bakgrundsbilderna; resultatlagret läggs ovanpå i synkaKarta.
     const orig = bas;
     void orig.ladda(projekt).then(() => {
@@ -605,6 +638,7 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     klar,
     avsluta: () => {
       avslutad = true;
+      markhojd.avsluta();
       ac.abort();
       avlyssna();
       vy3d?.avmontera();

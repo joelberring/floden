@@ -19,7 +19,16 @@ import type { Pekare } from "./ritverktyg";
 
 export type RasterKalla =
   | { slag: "bild"; url: string; utbredning: Utbredning; skarpa?: boolean }
-  | { slag: "kakel"; mall: string; kalla: string; storlek?: number };
+  | {
+      slag: "kakel";
+      mall: string;
+      kalla: string;
+      storlek?: number;
+      /** Högsta zoom som plattorna finns på (kartan förstorar därutöver). */
+      maxzoom?: number;
+      /** Inget hämtas när lagret är släckt: källan och lagret tas bort ur kartan i stället för att bara döljas (OSM:s regler). */
+      endastSynlig?: boolean;
+    };
 
 export interface RasterLager {
   id: string;
@@ -194,7 +203,7 @@ export class Kartmotor {
     if ((window as unknown as { __FLODEN_PROV__?: boolean }).__FLODEN_PROV__) {
       (window as unknown as { __floden_kartmotor?: Kartmotor }).__floden_kartmotor = this;
     }
-    this.karta.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
+    this.byttKallor([]);
     this.karta.addControl(new maplibregl.ScaleControl({ unit: "metric", maxWidth: 110 }), "bottom-left");
     this.notisEl = document.createElement("div");
     this.notisEl.className = "kartnotis";
@@ -333,7 +342,8 @@ export class Kartmotor {
   private synkaRaster(): void {
     if (!this.klar || this.slut) return;
     const k = this.karta;
-    const onskade = new Set(this.lager.map((l) => l.id));
+    const behovs = (l: RasterLager): boolean => l.synlig || !(l.kalla.slag === "kakel" && l.kalla.endastSynlig);
+    const onskade = new Set(this.lager.filter(behovs).map((l) => l.id));
     for (const id of [...this.rasterId]) {
       if (onskade.has(id)) continue;
       if (k.getLayer(`r-${id}`)) k.removeLayer(`r-${id}`);
@@ -341,7 +351,7 @@ export class Kartmotor {
       this.rasterId.delete(id);
       this.signatur.delete(id);
     }
-    for (const l of this.lager) {
+    for (const l of this.lager.filter(behovs)) {
       const sid = `r-${l.id}`;
       const kalla = l.kalla;
       const befintlig = k.getSource(sid);
@@ -357,7 +367,7 @@ export class Kartmotor {
           void Promise.resolve((befintlig as maplibregl.ImageSource).updateImage({ url: kalla.url, coordinates: coords })).catch(() => undefined);
         }
       } else if (!befintlig) {
-        k.addSource(sid, { type: "raster", tiles: [kalla.mall], tileSize: kalla.storlek ?? 256, attribution: kalla.kalla });
+        k.addSource(sid, { type: "raster", tiles: [kalla.mall], tileSize: kalla.storlek ?? 256, ...(kalla.maxzoom ? { maxzoom: kalla.maxzoom } : {}) });
       }
       if (!k.getLayer(sid)) {
         k.addLayer({ id: sid, type: "raster", source: sid, paint: {} }, OVERLAGER[0]);
@@ -367,8 +377,26 @@ export class Kartmotor {
       k.setPaintProperty(sid, "raster-resampling", kalla.slag === "bild" && kalla.skarpa ? "nearest" : "linear");
       this.rasterId.add(l.id);
     }
+    // Källor (attribution) för de kakellager som syns: synliga hela tiden, inte hopfällda; försvinner när lagret släcks.
+    this.byttKallor(this.lager.filter((l) => l.synlig && l.kalla.slag === "kakel" && l.kalla.kalla !== "").map((l) => (l.kalla as { kalla: string }).kalla));
     // Ordning: första lagret längst ner (precis över bakgrunden), sedan uppåt.
-    for (const l of this.lager) k.moveLayer(`r-${l.id}`, OVERLAGER[0]);
+    for (const l of this.lager.filter(behovs)) k.moveLayer(`r-${l.id}`, OVERLAGER[0]);
+  }
+
+  private kallControl: maplibregl.AttributionControl | null = null;
+  private kallor: string | null = null;
+
+  /**
+   * Källhänvisningen i kartans hörn. Skrivs ut öppen (inte hopfälld) eftersom OpenStreetMaps villkor kräver en synlig
+   * attribution, och byts ut när de synliga underlagen ändras (MapLibre uppdaterar annars inte texten när en källa tas bort).
+   */
+  private byttKallor(texter: string[]): void {
+    const nyckel = JSON.stringify(texter);
+    if (nyckel === this.kallor) return;
+    this.kallor = nyckel;
+    if (this.kallControl) this.karta.removeControl(this.kallControl);
+    this.kallControl = new maplibregl.AttributionControl({ compact: false, customAttribution: texter });
+    this.karta.addControl(this.kallControl, "bottom-right");
   }
 
   // ------------------------------------------------------------------ vektorlager

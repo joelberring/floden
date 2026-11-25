@@ -4,6 +4,7 @@
  * besked i förväg: ligger avgränsningen inom giltig kärna, delvis utanför (varning) eller utanför yttre gräns (fel).
  */
 import { formatera, formateraHogst } from "../tal.ts";
+import { swerefTillWgs84 } from "../sweref.ts";
 import type { GeografiPost, Rektangel3011, SkapaProjektBegaran } from "../types.ts";
 
 export interface Pkt {
@@ -241,4 +242,24 @@ export function arealText(r: Rektangel3011, polygon?: GeoJSON.Polygon | null): s
   const a = avgransningsYta(r, polygon);
   const t = a >= 1e6 ? `${formateraHogst(a / 1e6, 2)} km²` : `${formatera(a, 0)} m²`;
   return `${formatera(r[2] - r[0], 0)} × ${formatera(r[3] - r[1], 0)} m, ${polygon ? "polygonens yta " : ""}${t}`;
+}
+
+/** Mittmeridianen i SWEREF 99 18 00 (EPSG:3011), grader öst. */
+export const MITTMERIDIAN_GRADER = 18;
+
+/**
+ * Hur mycket rutnätet lutar mot kartans norr mitt i geografin (meridiankonvergensen, ungefär (längd − 18°) × sin(bredd)).
+ * `null` när lutningen är under en halv grad (då syns den inte).
+ */
+export function rutnatsVridning(gransen: Rektangel3011): { lng: number; lat: number; grader: number } | null {
+  const [lng, lat] = swerefTillWgs84((gransen[0] + gransen[2]) / 2, (gransen[1] + gransen[3]) / 2);
+  const grader = (lng - MITTMERIDIAN_GRADER) * Math.sin((lat * Math.PI) / 180);
+  return Math.abs(grader) < 0.5 ? null : { lng, lat, grader };
+}
+
+/** En rad om varför rutorna ser vridna ut på en nordupp-karta långt från mittmeridianen, eller null. */
+export function vridningText(gransen: Rektangel3011): string | null {
+  const v = rutnatsVridning(gransen);
+  if (!v) return null;
+  return `Rutorna ser vridna ut: kartan är nordupp, men rutnätet följer SWEREF 99 18 00 vars mittmeridian ligger vid ${formatera(MITTMERIDIAN_GRADER, 0)}° ö, och här (${formatera(v.lng, 1)}° ö) lutar det cirka ${formatera(Math.abs(v.grader), 1)}°.`;
 }

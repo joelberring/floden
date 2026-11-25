@@ -8,9 +8,10 @@
 import { hamtaBildMedUtbredning, type ProjektInfo } from "../karta/kartapi.ts";
 import { Kartmotor, type RasterLager, type VyByggnad } from "../karta/kartmotor.ts";
 import { LagerLista } from "../karta/lager.ts";
+import { OSM_ID } from "../karta/osm.ts";
 import type { PlanDok } from "../karta/plandok.ts";
 import { lasUnderlag, type Underlag } from "../karta/wms.ts";
-import { BYGGNADER_ID, ORTO_ID, PLAN_ID, rasterAv, SKUGGNING_ID, VEGETATION_ID } from "./rasterlager.ts";
+import { BYGGNADER_ID, HOJDKURVOR_ID, MARKHOJD_ID, ORTO_ID, PLAN_ID, rasterAv, SKUGGNING_ID, VEGETATION_ID } from "./rasterlager.ts";
 
 export class BasLager {
   private readonly urler: string[] = [];
@@ -47,14 +48,30 @@ export class BasLager {
       ejTillgangligt: orto.finns ? undefined : "Inget ortofoto finns lokalt. Det hämtas med floden data lantmateriet (se README).",
       visning: "2d",
     });
-    l.registrera({ id: SKUGGNING_ID, grupp: "geometri", namn: "Terräng (skuggning)", synlig: true, opacitet: 0.9, hjalp: "Skuggad terrängmodell ur projektets höjddata.", visning: "2d" });
+    l.registrera({ id: SKUGGNING_ID, grupp: "geometri", namn: "Terräng (skuggning)", synlig: true, opacitet: 0.9, hjalp: "Skuggad terrängmodell ur projektets höjddata (höjden är överdriven där marken är nästan plan).", visning: "2d" });
+    l.registrera({ id: HOJDKURVOR_ID, grupp: "geometri", namn: "Höjdkurvor", synlig: true, opacitet: 1, hjalp: "Höjdkurvor ur projektets markmodell (marken utan byggnader).", visning: "2d" });
+    l.registrera({ id: MARKHOJD_ID, grupp: "geometri", namn: "Markhöjd (färg)", synlig: false, opacitet: 0.6, hjalp: "Markhöjden i färg, grönt lågt och brunt högt (m RH 2000).", visning: "2d" });
     l.registrera({ id: VEGETATION_ID, grupp: "geometri", namn: "Vegetation", synlig: false, opacitet: 0.9, hjalp: "Växtlighetens höjd ur projektets data.", visning: "2d" });
     l.registrera({ id: BYGGNADER_ID, grupp: "geometri", namn: "Byggnader", synlig: true, opacitet: 1, hjalp: "Byggnaderna: fotavtryck i kartan, volymer i 3D." });
     l.registrera({ id: PLAN_ID, grupp: "planforslag", namn: "Aktuellt förslag", synlig: true, opacitet: 1, hjalp: "Det du ritar just nu." });
     for (const u of lasUnderlag(this.projekt)) this.registreraUnderlag(u);
+    // OpenStreetMap ligger längst ner bland underlagen. Förvalt tänt bara i ett projekt i en geografi, som saknar ortofoto;
+    // demokvarteret är påhittat och ligger inte på en riktig plats.
+    l.registrera({
+      id: OSM_ID,
+      grupp: "underlag",
+      namn: "OpenStreetMap (bakgrund)",
+      synlig: this.info.slag === "geografi" && !orto.finns,
+      opacitet: 1,
+      hjalp: "Bakgrundskarta från openstreetmap.org, © OpenStreetMap-bidragsgivare. Hämtas från OpenStreetMaps server när lagret är tänt.",
+      visning: "2d",
+      data: { osm: true },
+    });
   }
 
   registreraUnderlag(u: Underlag): void {
+    const id = `u:${u.id}`;
+    const ny = !this.lager.hamta(id);
     this.lager.registrera({
       id: `u:${u.id}`,
       grupp: "underlag",
@@ -65,25 +82,37 @@ export class BasLager {
       kanTasBort: true,
       data: { underlag: u },
     });
+    // Ett nytt underlag läggs ovanför OpenStreetMap, inte under (då syntes det inte).
+    if (ny && this.lager.hamta(OSM_ID)) this.lager.flyttaTill(id, OSM_ID);
   }
 
   /** Hämtar skuggning, vegetation och ortofoto (om det finns) som bilder med utbredning. */
   async ladda(projekt: string): Promise<void> {
     this.registrera(projekt);
-    const jobb: Array<[string, string, string]> = [[SKUGGNING_ID, this.skuggningsUrl(), "Terräng (skuggning)"]];
+    const jobb: Array<[string, string, string]> = [
+      [SKUGGNING_ID, this.skuggningsUrl(), "Terräng (skuggning)"],
+      [HOJDKURVOR_ID, this.geometriUrl("hojdkurvor"), "Höjdkurvor"],
+    ];
     if (this.info.ortofoto.finns) jobb.unshift([ORTO_ID, this.info.ortofoto.png, "Ortofoto"]);
     await Promise.all([...jobb.map(([id, url, namn]) => this.hamta(id, url, namn)), this.hamtaVegetation()]);
     this.synka();
   }
 
   private skuggningsUrl(): string {
-    return `/api/kartverktyg/${encodeURIComponent(this.projekt)}/geometri/skuggning.png`;
+    return this.geometriUrl("skuggning");
   }
 
-  /** Vegetationen hämtas först när lagret tänds. */
+  private geometriUrl(vilket: string): string {
+    return `/api/kartverktyg/${encodeURIComponent(this.projekt)}/geometri/${vilket}.png`;
+  }
+
+  /** Vegetationen och markhöjden i färg hämtas först när lagret tänds. */
   private async hamtaVegetation(): Promise<void> {
-    if (!this.lager.hamta(VEGETATION_ID)?.synlig) return;
-    await this.hamta(VEGETATION_ID, `/api/kartverktyg/${encodeURIComponent(this.projekt)}/geometri/vegetation.png`, "Vegetation");
+    const lata: Array<[string, string, string]> = [
+      [VEGETATION_ID, this.geometriUrl("vegetation"), "Vegetation"],
+      [MARKHOJD_ID, this.geometriUrl("markhojd"), "Markhöjd (färg)"],
+    ];
+    await Promise.all(lata.filter(([id]) => this.lager.hamta(id)?.synlig).map(([id, url, namn]) => this.hamta(id, url, namn)));
   }
 
   private async hamta(id: string, url: string, namn: string): Promise<void> {
@@ -132,7 +161,8 @@ export class BasLager {
 
   synka = (): void => {
     if (this.avslutad) return;
-    if (this.registrerad && this.lager.hamta(VEGETATION_ID)?.synlig && !this.hamtade.has(VEGETATION_ID)) {
+    const lataTand = [VEGETATION_ID, MARKHOJD_ID].some((id) => this.lager.hamta(id)?.synlig && !this.hamtade.has(id));
+    if (this.registrerad && lataTand) {
       void this.hamtaVegetation().then(() => this.synka());
     }
     this.motor.settLager(this.lagerListan());

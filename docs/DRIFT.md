@@ -89,6 +89,8 @@ vid start); `--ingen-mcp` stänger den uttryckligen. Skyddet mot DNS rebinding s
 Caddy (`deploy/Caddyfile`) skickar `/mcp` utan komprimering och utan buffring (`flush_interval -1`), så att SSE-strömmarna når klienten
 direkt; resten av sajten är som förut. Caddyfilen är kontrollerad med `caddy validate` (Caddy 2.10).
 
+**Content-Security-Policy och OpenStreetMap-bakgrunden.** `deploy/Caddyfile` tillåter `https://tile.openstreetmap.org` för `img-src` och `connect-src` (MapLibre hämtar plattorna med `fetch`), och `blob:` och `data:` för `connect-src` (kartbilder som webben själv hämtat från servern och arbetsbänkens tomma bild; de blockerades förut av `default-src 'self'`). Ingen annan extern adress är tillåten. Klientfilerna och Caddy ger `Referrer-Policy: strict-origin-when-cross-origin` (förut `same-origin` från appen): OpenStreetMaps plattservrar kräver en Referer, och bara sidans ursprung skickas, aldrig sökvägen. Ändringen gäller först när Caddyfilen hämtats på servern och Caddy laddats om (se ovan).
+
 **Det här gör Joel på servern** (`/srv/floden` är inte en git-klon, så filerna hämtas med `curl`; först när ändringen är mergad till `main`
 och avbildningen byggts efter grön CI):
 

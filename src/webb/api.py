@@ -2575,6 +2575,15 @@ class FlodenApiApp:
             png, extra = kv.geometri_png(projekt, rest[1].removesuffix(".png"))
             status, huvud, ut = _binart_svar(200, png, "image/png")
             return status, {**huvud, **extra}, ut
+        if verb == "GET" and rest == ["hojd"]:
+            # Markhöjden under pekaren (steg 2 och 4): samma behörighet som övriga projektdata.
+            def _tal(namn: str) -> float:
+                try:
+                    return float((query.get(namn) or [""])[0])
+                except ValueError:
+                    return float("nan")
+
+            return _json_svar(200, kv.markhojd(projekt, _tal("e"), _tal("n")))
         if verb == "POST" and rest == ["validera"]:
             return _json_svar(200, kv.validera(projekt, json_kropp()))
         if verb == "POST" and rest == ["skarvatgard"]:
@@ -3171,7 +3180,7 @@ class FlodenApiApp:
             ("Content-Length", str(len(innehall))),
             ("Cache-Control", "no-cache"),
             ("X-Content-Type-Options", "nosniff"),
-            ("Referrer-Policy", "same-origin"),
+            ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ]
         return 200, rubriker, b"" if bara_huvud else innehall
 
