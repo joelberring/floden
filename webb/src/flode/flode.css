@@ -359,6 +359,15 @@ body[data-sida="flode"] a:hover { color: #000; }
 .mat-mer[open] summary { margin-bottom: 8px; }
 .mat-mer { display: flex; flex-direction: column; gap: 8px; }
 @media (max-width: 600px) { .mat-sida { padding: 16px; } .mat-metod { padding: 12px; } }
+/* Om Floden (#/om) */
+.om-sida { max-width: 1040px; }
+.om-sida .tabell-ruta { overflow-x: auto; }
+.om-sida .om-tabell { min-width: 560px; font-size: 13px; line-height: 1.5; }
+.om-sida .om-tabell th, .om-sida .om-tabell td { padding: 8px 10px; text-align: left; vertical-align: top; }
+.om-sida .om-lista { display: flex; flex-direction: column; gap: 4px; }
+.om-sida .om-lista code, .om-sida .mat-text code { font-size: 12px; overflow-wrap: anywhere; }
+.om-ej-matt { padding: 12px 14px; background: #f6f5f0; border-radius: 6px; border-left: 3px solid var(--fl-mute); }
+.om-berakningar { margin-top: 24px; }
 
 /* Nytt projekt (#/nytt) och Skapa rapport (steg 5) */
 .flode-nytt .flode-panel { flex: 0 0 380px; }

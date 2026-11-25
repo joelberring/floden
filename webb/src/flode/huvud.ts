@@ -1,9 +1,9 @@
 /*
  * Det enda sidhuvudet i webbappen: 56 px, "Floden / <projekt eller sida>", stegraden (bara i ett
  * projekt) och kontoknappen. Alla vyer använder det: flödets steg, projektlistan och sidorna
- * utanför flödet (Frågekatalog, Om beräkningarna, Matematik, Nycklar, Administration, Förvaltning,
+ * utanför flödet (Frågekatalog, Om Floden, Matematik, Nycklar, Administration, Förvaltning,
  * WebGPU-provet). Kontomenyn har Nycklar (inloggade), Administration (admin), Förvaltning (med
- * kontodata) och länkar till Frågekatalog, Om beräkningarna och Matematik och forskning.
+ * kontodata) och länkar till Frågekatalog, Om Floden och Matematik och forskning.
  */
 import { adminTillaten, forvaltningSynlig, kontoLage } from "../konto.ts";
 import { esc } from "../sidor.ts";
@@ -26,7 +26,7 @@ export type SkalSida = "fragor" | "om" | "matematik" | "nycklar" | "administrati
 
 export const SKALSIDOR: Record<SkalSida, string> = {
   fragor: "Frågekatalog",
-  om: "Om beräkningarna",
+  om: "Om Floden",
   matematik: "Matematik och forskning",
   nycklar: "Nycklar",
   administration: "Administration",

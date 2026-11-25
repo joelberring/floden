@@ -39,7 +39,7 @@ export function tolkaHash(hash: string): Rutt {
 export const SIDTITLAR: Record<RuttSida, string> = {
   start: "Floden – se hur ett nytt hus påverkar sol och skyfall",
   fragor: "Frågekatalog – Floden",
-  om: "Om beräkningarna – Floden",
+  om: "Om Floden – Floden",
   matematik: "Matematik och forskning – Floden",
   forvaltning: "Förvaltning – Floden",
   nycklar: "Nycklar – Floden",

@@ -64,7 +64,8 @@ export function sidaInloggning(inloggningsHref: string): string {
 
 /* ---------- Om beräkningarna ---------- */
 
-export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[]): string {
+/** Avsnitten om modulerna och kontrollen av beräkningarna (ligger under Om Floden, `om/sida.ts`). */
+export function omBerakningarSektioner(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[]): string {
   const kort = moduler
     .map((m) => {
       const losare = (m.losare ?? [])
@@ -97,10 +98,6 @@ export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[
     )
     .join("");
   return `
-    <div class="sidbredd innehall">
-      <h1 class="sidrubrik stor">Om beräkningarna</h1>
-      <p class="ingress om-ingress">Floden beräknar, språkmodeller gissar inte: varje tal i appen kommer ur en beräkning med känt underlag, och samma indata ger samma resultat.</p>
-
       <section>
         <div class="sektionsrad linje-under-stark">${etikett("Vad som finns")}</div>
         ${kort || '<p class="dampad tom">Modullistan gick inte att hämta. Ladda om sidan; kvarstår felet, kontakta den som driftar Floden.</p>'}
@@ -114,9 +111,18 @@ export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[
             ? `<details class="teknisk"><summary>${kontrollfall.length} kontrollfall</summary><ul class="kontroll-lista">${rader}</ul></details>`
             : ""
         }
-      </section>
+      </section>`;
+}
+
+export function sidaOm(moduler: ModulInfo[], kontrollfall: OmradeSammanfattning[]): string {
+  return `
+    <div class="sidbredd innehall">
+      <h1 class="sidrubrik stor">Om beräkningarna</h1>
+      <p class="ingress om-ingress">Floden beräknar, språkmodeller gissar inte: varje tal i appen kommer ur en beräkning med känt underlag, och samma indata ger samma resultat.</p>
+      ${omBerakningarSektioner(moduler, kontrollfall)}
     </div>`;
 }
+
 
 /* ---------- Förvaltning (bara med inloggning och kontodata) ---------- */
 

@@ -25,7 +25,8 @@ import { ritaFlodeHuvud, type SkalSida } from "./flode/huvud";
 import { visaMatematik } from "./matematik/sida";
 import { avslutaProv, visaProvWebgpu } from "./prov/webgpuProv";
 import { visaAdministration, visaNycklar } from "./kontosidor";
-import { sidaForvaltning, sidaInloggning, sidaOm } from "./sidor";
+import { kopplaOm, sidaOmFloden } from "./om/sida";
+import { sidaForvaltning, sidaInloggning } from "./sidor";
 import { omdirigering, SIDTITLAR, tolkaHash, type RuttSida } from "./rutter";
 import type { ModulInfo, OmradeSammanfattning } from "./types";
 
@@ -171,7 +172,8 @@ export function startaRouter(krokar: RouterKrokar): void {
         void visaAdministration(vySida);
         break;
       case "om":
-        vySida.innerHTML = sidaOm(moduler, omraden);
+        vySida.innerHTML = sidaOmFloden(moduler, omraden);
+        kopplaOm(vySida);
         break;
       case "forvaltning":
         vySida.innerHTML = kontoLage().lage === "okand" ? "" : sidaForvaltning();
@@ -206,7 +208,7 @@ export function startaRouter(krokar: RouterKrokar): void {
 
   window.addEventListener("hashchange", rita);
   rita();
-  // Om beräkningarna ritas om när moduler och områden har kommit.
+  // Om Floden ritas om när moduler och områden har kommit.
   void data.then(() => {
     if (tolkaHash(window.location.hash).sida === "om" && !tolkaFlodeAdress(window.location.hash)) rita();
   });
