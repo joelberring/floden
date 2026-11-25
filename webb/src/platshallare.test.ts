@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { lasKartan, lasKartanText, LAGEN } from "./kartforklaring.ts";
 import { settKontoLage } from "./konto.ts";
 import { flodeHuvudHtml, SKALSIDOR, type SkalSida } from "./flode/huvud.ts";
+import { sidaOmFloden } from "./om/sida.ts";
 import { sidaForvaltning, sidaOm } from "./sidor.ts";
 import type { ModulInfo, OmradeSammanfattning, ProjektVy } from "./types.ts";
 
@@ -27,6 +28,8 @@ function alla(): Record<string, string> {
   const ut: Record<string, string> = {
     om: sidaOm(moduler, kontrollfall),
     omTom: sidaOm([], []),
+    omFloden: sidaOmFloden(moduler, kontrollfall),
+    omFlodenTom: sidaOmFloden([], []),
     forvaltning: sidaForvaltning(),
     karta: [...LAGEN.map(([l]) => lasKartan(vy, l)), lasKartanText(null, true)].join(" "),
   };
@@ -66,7 +69,7 @@ function menyLankar(html: string): string[] {
 
 test("ett skal: samma sidhuvud och meny på alla sidor, med samma punkter", () => {
   settKontoLage({ lage: "av" });
-  const forvantat = ["Frågekatalog #/fragor", "Om beräkningarna #/om", "Matematik och forskning #/matematik"];
+  const forvantat = ["Frågekatalog #/fragor", "Om Floden #/om", "Matematik och forskning #/matematik"];
   const huvuden = [flodeHuvudHtml(null, null), flodeHuvudHtml("demokvarteret", "resultat"), ...(Object.keys(SKALSIDOR) as SkalSida[]).map((s) => flodeHuvudHtml(null, null, s))];
   for (const h of huvuden) {
     assert.deepEqual(menyLankar(h), forvantat);
@@ -86,5 +89,5 @@ test("stegraden finns bara i ett projekt; på övriga sidor markeras sidan i men
     assert.doesNotMatch(h, /flode-stegrad/, s);
     assert.match(h, new RegExp(`/ ${SKALSIDOR[s]}</span>`), s);
   }
-  assert.match(flodeHuvudHtml(null, null, "om"), /href="#\/om" aria-current="page">Om beräkningarna</);
+  assert.match(flodeHuvudHtml(null, null, "om"), /href="#\/om" aria-current="page">Om Floden</);
 });

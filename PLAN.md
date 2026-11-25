@@ -232,6 +232,15 @@ Design: `docs/design/RITVERKTYG.md` (Joels önskan 2026-11-24: generellt kartver
 | R7 Pekskärm | Håll för att flytta, fingerräckvidd, stora handtag, egna tangentbindningar | S–M | R3 | klar 2026-11-24 (prövad i Chromium med beröringsemulering, `tools/ritverktyg_prov.py`; ej prövad på en riktig telefon) |
 | R8 Geografiprojekt i webben | Nytt projekt med OSM-bakgrund och sammanfattade varningar; markmodellen (skuggning, höjdkurvor, markhöjd) och OSM som lager i steg 2 och 4; markhöjd under pekaren; "Spara förslag" med status; prov mot syntetiskt geografiprojekt | S–M | R7 | klar 2026-11-25 (prövat i Chromium mot påhittad geografi; OSM-plattor ersatta av påhittade bilder i provet, riktiga OSM nåddes inte; ej prövat mot Göteborgs riktiga data) |
 
+## Om Floden och jämförelseprov (2026-11-25)
+
+Joels önskan 2026-11-25: programmet ska säga vad det kan nu, vad planen är och hur det står sig mot kommersiella verktyg. Sidan `#/om` ("Om Floden") och `docs/OM-FLODEN.md` genereras ur `data/om/floden.toml` (`tools/generera_om.py`). Jämförelsen skiljer mellan det som är uppmätt i Floden, det som tillverkarna själva har publicerat (med länk) och det som inte är mätt. Det finns ingen jämförande mätning av samma fall i Floden och i ett annat verktyg, och sidan anger därför ingen faktor mot någon produkt.
+
+| Uppdrag | Beskrivning | Beroenden | Status |
+| --- | --- | --- | --- |
+| U7 Om Floden | Sidan `#/om` byggd ut (vad Floden kan nu per ämne med metodstatus och testat, arbetsflödet, planen, uppmätta tal med källa, offentliga uppgifter om andra verktyg med länk, det som inte är mätt, vad andra har som Floden saknar); `docs/OM-FLODEN.md` och `webb/src/om/data.generated.ts` genereras; test att filerna är i takt, att varje belägg står i sin källa och att körtiderna stämmer mot `docs/benchmark/` | U3 | klar (PR öppen) |
+| J1 Jämförelseprov | **Förslag, görs inte utan Joels besked.** Samma fall i Floden och i ett referensverktyg per ämne, på samma maskin: skyfall (Environment Agency Test 8A och Hunter D1 mot ett 2D-referensverktyg som Joel har licens till, till exempel TUFLOW, MIKE 21 eller InfoWorks ICM), dagsljus (SVF, soltimmar och VSC i ett gaturum mot Radiance, som är öppet), ekologi (samma landskap mot Circuitscape och Conefor, som är öppna), buller (grupp N-fallen mot SoundPLAN eller CadnaA). Mäts: körtid (median efter uppvärmning, samma maskin och trådantal), avvikelse mot referensverktyget och mot facit, inställningar och versioner redovisas. Resultat i `docs/benchmark/jamforelse/`; först därefter får `#/om` visa en faktor, och bara för det fall som är mätt. Kräver licens eller konto hos tredje part och är därför ett beslut för Joel (AGENTS.md, stoppvillkor: kostnad och extern part) | S6, T09b, B4 (för buller) | förslag (Joel bekräftar) |
+
 ## Sist – OAuth för Claude-appen (parkerat 2026-11-23, Joels beslut)
 
 Claude-appen ansluter i dag med en personlig MCP-token som begärandehuvud (`authorization: Bearer fl_mcp_…`,

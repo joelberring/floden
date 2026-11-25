@@ -5,6 +5,7 @@ import { flodeHuvudHtml, type SkalSida } from "./flode/huvud.ts";
 import { rollRad } from "./flode/projektlogik.ts";
 import { adminOrganisationHtml, adminProjektHtml, mcpKommando, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
 import type { McpAvsnitt } from "./kontosidor-html.ts";
+import { sidaOmFloden } from "./om/sida.ts";
 import { sidaOm } from "./sidor.ts";
 import type { AdminOrganisationDetalj, AdminProjektDetalj, ModulInfo, NycklarSvar, OmradeSammanfattning } from "./types.ts";
 
@@ -52,6 +53,7 @@ test("arbetsbänken finns varken i menyn eller på sidan Om beräkningarna", () 
     }
     assert.doesNotMatch(sidaOm(moduler, kontrollfall), /arbetsb/i);
     assert.match(text(sidaOm(moduler, kontrollfall)), /Enkel sänka/); // kontrollfallen står kvar som text
+    assert.doesNotMatch(sidaOmFloden(moduler, kontrollfall), /arbetsb/i);
   }
   settKontoLage({ lage: "av" });
 });

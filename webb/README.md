@@ -77,10 +77,10 @@ Ett skal: **samma sidhuvud på alla sidor** (`flode/huvud.ts`: "Floden / <projek
 | `#/nytt` | Nytt projekt (hör till steg 1) |
 | `#/p/<projekt>/forslag`, `/fragor`, `/resultat`, `/rapport` | Flödets steg 2 till 5 (kod i `webb/src/flode/`, stilen i `flode.css`; se *Flödet* nedan) |
 | `#/fragor` | Frågekatalogen (se ovan) |
-| `#/om` | Om beräkningarna: modulerna och *Kontroll av beräkningarna* (A1–A9) |
+| `#/om` | Om Floden (`om/sida.ts`): vad Floden kan nu per ämne med metodstatus och testat, arbetsflödet, planen och jämförelsen med andra verktyg (se *Om Floden* nedan), därunder modulerna och *Kontroll av beräkningarna* (A1–A9) |
 | `#/matematik` | Matematik och forskning |
 | `#/nycklar`, `#/administration` | Nycklar (inloggade) och Administration (admin) |
-| `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om beräkningarna* |
+| `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om Floden* (kontrollfallen) |
 | `#/forvaltning` | Visas bara när inloggning är på och kontoservern har data för kontot |
 | `#/prov/webgpu` | Prov av WebGPU-skuggarna mot serverns facit (`GET /api/prov/webgpu/fall`); ingen länk i menyn, bara superadmin med inloggning, öppen lokalt. Skissläge (f32). Se `docs/WEBGPU-ARKITEKTUR.md` 5 |
 
@@ -120,7 +120,7 @@ Ritlogik, scenario-API:erna, 3D-vyn och svepet är de befintliga. Små tillägg 
 - Kartstilen ligger i `src/karta/karta.css` (ersätter `kartverktyg.css`).
 
 Fel visas med en handling (`flode/felhandling.ts`: inloggning, behörighet, nätverk, server; ren logik med tester). Steg 3 har en fast handlingsrad (`flode/korlage.ts`); utan ritat förslag pekar den till steg 2 och till projektets befintliga resultat, och har knappen "Räkna läget idag" bredvid "Rita ett förslag" (U5a): den kör projektets befintliga läge utan förslag (`korLageIdag` i `karta/kartapi.ts`, `startaLageIdag` i `flode/korning.ts`) och visar uppskattad tid ur planen (`uppskattadTidText`). Resultatet visas i steg 4 under källan "Läget idag" med bara vyn Före (ingen skillnad, inga nyckeltal); rapporten kräver före och efter.
-Om beräkningarna, Matematik och forskning och Frågekatalogen nås via kontomenyn.
+Om Floden, Matematik och forskning och Frågekatalogen nås via kontomenyn.
 
 **Webbläsarprov av ritverktygen** (R1-R7): `python tools/ritverktyg_prov.py` (Playwright och Chrome; kräver `floden demo`, `floden webb --port 8795` och byggd webb). Riktiga musklick, tangenter och beröring; skärmbilder i `docs/bilder/ritverktyg/`; resultat och fynd i `docs/design/RITVERKTYG.md` avsnitt 11. Pekskärm (R7): håll fingret stilla mot en markerad figur för att flytta den; Klar, Backa en punkt och Avbryt ersätter Enter, Backsteg och Esc.
 
@@ -132,3 +132,16 @@ Prov mot ett påhittat geografiprojekt: `python tools/geografi_prov_server.py --
 Under ämnesflikarna i steg 4 listar väljaren **Visa** varje roll körningen har (`flode/analyslager.ts`: `lagerVal`), med före, efter och skillnad för den förändring som visas; kontrollager (avskuren horisont, byggnad utan känd höjd) ligger i en egen grupp och har ingen skillnad. Skillnad för roller som frågan inte jämför själv är efter minus före (`harledd`, `skillnad_mosaik` på servern). Skalor och teckenförklaring kommer ur serverns lager (`resultatlager.py`, `PALETTER`; samma färger i `analyslager.ts`, ett test jämför). Värdet under pekaren följer vald roll (`/api/korningar/<id>/avlasning`).
 Vektorlager (kryssrutor): **Sänkor med volym** och **Flödesvägar** (avrinningsnät ur markmodellen, `src/sankgraf/avrinningsnat.py`; `?min_yta_m2=` styr minsta tillrinning, förval 500; sänkor tar `?min_volym_m3=` och `?min_djup_m=`; `GET /api/korningar/<id>/sanka?e=&n=&scenario=` ger den sammanhängande vattenytans mått) för skyfall, **Fasadpunkter (VSC)** för sol, via `GET /api/korningar/<id>/vektor/<scenario>/<sankor|flodesvagar|vsc>` (GeoJSON i EPSG:3011, samma behörighet som körningens övriga resultat, `src/webb/analysvektor.py`). Kartmotorn ritar dem som `analys-*`-lager (`settAnalysVektor`) med text vid hovring och etiketter med volym. Alla tal via `tal.ts`.
 Prov: `python tools/analyser_prov.py [--geo http://127.0.0.1:8796]` (kräver `floden demo`, `floden webb --port 8795`, byggd webb; skärmbilder i `docs/bilder/analyser/`).
+
+## Om Floden (`#/om`)
+
+Sidan säger vad Floden kan nu (per ämne: skyfall, dagsljus och sol, ekologi, luft, buller; metodstatus, testat, begränsningar; arbetsflödet), vad planen är (5 till 10 punkter ur `PLAN.md`) och hur Floden förhåller sig till andra verktyg. Innehållet genereras, så att det hålls aktuellt:
+
+```
+data/om/floden.toml  ->  python tools/generera_om.py  ->  docs/OM-FLODEN.md
+                                                      ->  webb/src/om/data.generated.ts  ->  webb/src/om/sida.ts
+```
+
+`tools/generera_om.py --kontrollera` ger felkod 1 om filerna glidit isär. Metodstatus kommer ur metodregistret (`data/mcp/metodstatus.toml`), aldrig ur datafilen. Alla tal visas via `tal.ts` (talen står som fält i datafilen, inte i löptexten); `om` ingår i kontrollen av att ingen kod formaterar tal själv (`tal.test.ts`).
+
+Jämförelsen har tre skilda delar. **A. Uppmätt i Floden** (Floden mot Floden: WebGPU mot CPU, hybrid mot full 2D, lokal mot full omräkning, körtider), där varje tal har källa i repot och `tests/gemensamt/test_om_floden.py` kontrollerar körtider och GPU-tider mot `docs/benchmark/*.json` och att beläggstexterna står i sina källfiler. **B. Offentliga uppgifter om andra verktyg** (SCALGO Live, MIKE 21 FM, InfoWorks ICM, ClimateStudio, Accelerad, Honeybee-radiance, SoundPLAN, CadnaA, Circuitscape, Linkage Mapper, Conefor): bara det som står på tillverkarens eller projektets egna sidor, med länk och hämtdatum; licens, pris och körtid anges bara om de är publicerade, annars står att de inte fanns på sidorna som lästes. **C. Det som inte är mätt**: det finns ingen jämförande mätning av samma fall i Floden och i något annat verktyg, och sidan anger ingen faktor mot någon produkt. Generatorn avvisar orden "snabbare än", "fortare än", "bättre än" och "effektivare än" utanför B och C. Ett jämförelseprov är föreslaget i `PLAN.md` (J1). Datafilen och de hämtade uppgifterna ska uppdateras för hand; kör om `tools/generera_om.py` efteråt.
