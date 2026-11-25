@@ -183,3 +183,105 @@ def test_cli_forberakna_torrkor_och_kor(tmp_path: Path, monkeypatch: pytest.Monk
         ]
     )
     assert rc3 == 2
+
+
+def test_k1_rutkorare_vatten2d_och_dagsljus_end_to_end(tmp_path: Path) -> None:
+    """Verifierar full K1 -> vatten2d + dagsljus genom `floden forberakna --k1-rot`."""
+    import numpy as np
+
+    from testsvit.k1_io import skriv_geotiff
+
+    # 1×1-område (100×100 m) -> exakt en ruta mm_150000_6580000
+    omrade_fil = tmp_path / "liten.geojson"
+    omrade_fil.write_text(
+        json.dumps(
+            {
+                "type": "Polygon",
+                "coordinates": [
+                    [
+                        [150010.0, 6580010.0],
+                        [150090.0, 6580010.0],
+                        [150090.0, 6580090.0],
+                        [150010.0, 6580090.0],
+                        [150010.0, 6580010.0],
+                    ]
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    k1_rot = tmp_path / "k1_rutor"
+    ruta_mapp = k1_rot / "mm_150000_6580000"
+    yy, xx = np.mgrid[0:20, 0:20]
+    mark_z = (10.0 + 0.02 * ((yy - 9.5) ** 2 + (xx - 9.5) ** 2)).astype(np.float32)
+    mark_z[2:5, 2:5] = 20.0  # byggnad för dagsljus-SVF < 1
+    osak = np.full((20, 20), 0.05, dtype=np.float32)
+    slag = np.full((20, 20), 4, dtype=np.uint8)
+    slag[2:5, 2:5] = 9
+    skriv_geotiff(ruta_mapp / "mark.tif", mark_z, x_min=150000.0, y_max=6580100.0, pixelstorlek=5.0)
+    skriv_geotiff(
+        ruta_mapp / "osakerhet.tif", osak, x_min=150000.0, y_max=6580100.0, pixelstorlek=5.0
+    )
+    skriv_geotiff(
+        ruta_mapp / "markslag.tif", slag, x_min=150000.0, y_max=6580100.0, pixelstorlek=5.0
+    )
+
+    utdata = tmp_path / "batch_ut"
+    rc = floden_main(
+        [
+            "forberakna",
+            "--omrade",
+            str(omrade_fil),
+            "--k1-rot",
+            str(k1_rot),
+            "--moduler",
+            "vatten2d,dagsljus",
+            "--enhet",
+            "cpu",
+            "--rutstorlek-m",
+            "100",
+            "--overlapp-m",
+            "0",
+            "--upplosning-m",
+            "5",
+            "--utdata",
+            str(utdata),
+        ]
+    )
+    assert rc == 0
+    rut_ut = utdata / "mm_150000_6580000"
+    assert (rut_ut / "vatten2d" / "max_djup.tif").is_file()
+    assert (rut_ut / "dagsljus" / "svf.tif").is_file()
+    manifest = las_manifest(rut_ut / "run.json")
+    assert manifest.matvarden["vatten2d_max_djup_m"] > 0.0
+    assert manifest.matvarden["vatten2d_volymfel_rel"] < 1e-3
+    assert 0.5 < manifest.matvarden["dagsljus_svf_medel"] < 1.0
+
+    # Andra körningen ska hoppa över rutan (100 % cache-träff)
+    rc2 = floden_main(
+        [
+            "forberakna",
+            "--omrade",
+            str(omrade_fil),
+            "--k1-rot",
+            str(k1_rot),
+            "--moduler",
+            "vatten2d,dagsljus",
+            "--enhet",
+            "cpu",
+            "--rutstorlek-m",
+            "100",
+            "--overlapp-m",
+            "0",
+            "--upplosning-m",
+            "5",
+            "--utdata",
+            str(utdata),
+        ]
+    )
+    assert rc2 == 0
+    status_json = json.loads((utdata / "batch_status.json").read_text(encoding="utf-8"))
+    assert status_json["hoppade"] == ["mm_150000_6580000"]
+    assert status_json["klara"] == []
+

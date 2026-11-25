@@ -1826,6 +1826,12 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Antal arbetare för CPU-fas (standard: 1).",
     )
     forberakna_parser.add_argument(
+        "--k1-rot",
+        type=Path,
+        default=None,
+        help="Valfri rotmapp med förberedda K1-rutor (<k1-rot>/mm_<E>_<N>/) för vatten2d/dagsljus.",
+    )
+    forberakna_parser.add_argument(
         "--torrkor",
         action="store_true",
         help="Lista rutor som täcker området utan att starta beräkning.",
@@ -1954,6 +1960,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             generera_rutor_for_omrade,
             kontrollera_dataskydd,
             kor_batch_rutor,
+            skapa_k1_rutkorare,
         )
 
         try:
@@ -1982,7 +1989,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 max_arbetare=args.max_arbetare,
                 indata_filer=(args.omrade,),
             )
-            status = kor_batch_rutor(rutor, konfig)
+            rutkorare = skapa_k1_rutkorare(args.k1_rot) if args.k1_rot is not None else None
+            status = kor_batch_rutor(rutor, konfig, rutkorare=rutkorare)
         except BatchFel as exc:
             print(f"Fel vid förberäkning: {exc}", file=sys.stderr)
             return 2

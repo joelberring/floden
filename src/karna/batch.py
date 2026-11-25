@@ -332,6 +332,98 @@ def _standard_rutkorare(
     )
 
 
+def skapa_k1_rutkorare(
+    k1_rot: str | Path,
+    *,
+    regn_tid_s: Sequence[float] = (0.0, 600.0),
+    regn_mm_h: Sequence[float] = (60.0, 60.0),
+    slut_tid_s: float | None = None,
+    azimutriktningar: int = 36,
+    dagsljus_radie_m: float = 100.0,
+) -> RutKorare:
+    """Skapar en rutkörare som kör riktiga K1->vatten2d och K1->dagsljus per ruta.
+
+    För varje ruta `mm_<E>_<N>` förväntas en K1-katalog `<k1_rot>/<ruta.namn>/` med
+    `mark.tif`, `osakerhet.tif` och `markslag.tif` (samt valfria `brytlinjer.gpkg` /
+    `oppningar.gpkg`). Saknad K1-mapp ger tydligt `BatchFel`.
+    """
+    rot = Path(k1_rot)
+
+    def _kor(ruta: Ruta, arbetsmapp: Path, konfig: BatchKonfig, plats: str) -> RutUtdata:
+        from dagsljus.horisont import Hojdfalt, horisont_ruta_iter
+        from testsvit.k1_io import skriv_geotiff
+        from tvad.lokal_troghet import kor_2d_lokal_troghet, skriv_tvad_resultat_k6
+        from vatten.blaytor import BlaytorFel, k1_filer, las_k1
+
+        k1_mapp = rot / ruta.namn
+        if not k1_mapp.is_dir():
+            raise BatchFel(f"K1-rutkatalog saknas för {ruta.namn}: {k1_mapp}")
+        try:
+            k1 = las_k1(k1_filer(k1_mapp))
+        except BlaytorFel as exc:
+            raise BatchFel(f"Kunde inte läsa K1-ruta {ruta.namn}: {exc}") from exc
+
+        ut_poster: list[FilPost] = []
+        matvarden: dict[str, Any] = {"berakningsplats": plats}
+
+        if "vatten2d" in konfig.moduler:
+            v_mapp = arbetsmapp / "vatten2d"
+            res_2d = kor_2d_lokal_troghet(
+                k1.mark_z,
+                k1.markslag,
+                k1.geo,
+                regn_tid_s,
+                regn_mm_h,
+                slut_tid_s=slut_tid_s,
+                brytlinjer=k1.brytlinjer,
+                enhet=konfig.enhet,
+                precision=konfig.precision,
+            )
+            filer_k6 = skriv_tvad_resultat_k6(res_2d, k1.geo, v_mapp)
+            for roll, p in sorted(filer_k6.items()):
+                rel = str(p.relative_to(arbetsmapp))
+                ut_poster.append(FilPost(roll=f"vatten2d_{roll}", fil=rel, sha256=sha256_fil(p)))
+            matvarden["vatten2d_max_djup_m"] = float(np.nanmax(res_2d.max_djup_m))
+            matvarden["vatten2d_volymfel_rel"] = float(res_2d.volymfel_rel)
+            matvarden["vatten2d_berakningsplats"] = res_2d.berakningsplats
+
+        if "dagsljus" in konfig.moduler:
+            d_mapp = arbetsmapp / "dagsljus"
+            d_mapp.mkdir(parents=True, exist_ok=True)
+            falt = Hojdfalt(
+                z_m=np.asarray(k1.mark_z, dtype=np.float64),
+                cell_m=float(k1.geo.pixelstorlek_x),
+                x_min_m=float(k1.geo.x_min),
+                y_max_m=float(k1.geo.y_max),
+            )
+            summa = np.zeros(k1.mark_z.shape, dtype=np.float64)
+            for _k, _phi, h_rad, _tr in horisont_ruta_iter(
+                falt, azimutriktningar, dagsljus_radie_m, enhet=konfig.enhet
+            ):
+                summa += np.sin(h_rad.astype(np.float64)) ** 2
+            svf = (1.0 - summa / azimutriktningar).astype(np.float32)
+            svf_fil = skriv_geotiff(
+                d_mapp / "svf.tif",
+                svf,
+                x_min=float(k1.geo.x_min),
+                y_max=float(k1.geo.y_max),
+                pixelstorlek=float(k1.geo.pixelstorlek_x),
+            )
+            ut_poster.append(
+                FilPost(
+                    roll="dagsljus_svf",
+                    fil=str(svf_fil.relative_to(arbetsmapp)),
+                    sha256=sha256_fil(svf_fil),
+                )
+            )
+            matvarden["dagsljus_svf_medel"] = float(svf.mean())
+            matvarden["dagsljus_svf_min"] = float(svf.min())
+
+        return RutUtdata(utdata_filer=tuple(ut_poster), matvarden=matvarden)
+
+    return _kor
+
+
 def _ersatt_katalog_atomiskt(tmp_mapp: Path, mal_mapp: Path) -> None:
     """Flyttar `tmp_mapp` till `mal_mapp` så `mal_mapp` aldrig hamnar i halvfärdigt skick."""
     gammal: Path | None = None

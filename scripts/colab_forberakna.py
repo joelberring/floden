@@ -32,6 +32,7 @@ from karna.batch import (
     generera_rutor_for_omrade,
     kontrollera_dataskydd,
     kor_batch_rutor,
+    skapa_k1_rutkorare,
 )
 
 
@@ -70,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
         default=25.0,
         help="Överlapp i meter (standard: 25).",
     )
+    parser.add_argument(
+        "--k1-rot",
+        type=Path,
+        default=None,
+        help="Valfri rotmapp med förberedda K1-rutor (<k1-rot>/mm_<E>_<N>/).",
+    )
     args = parser.parse_args(argv)
 
     # Colab tillåter aldrig icke-öppen data.
@@ -102,7 +109,8 @@ def main(argv: list[str] | None = None) -> int:
         overlapp_m=args.overlapp_m,
         indata_filer=(args.omrade,),
     )
-    status = kor_batch_rutor(rutor, konfig)
+    rutkorare = skapa_k1_rutkorare(args.k1_rot) if args.k1_rot is not None else None
+    status = kor_batch_rutor(rutor, konfig, rutkorare=rutkorare)
     print(
         f"Klart ({status.berakningsplats}): {len(status.klara)} nya, "
         f"{len(status.hoppade)} hoppade (cache), {len(status.felade)} felade "
