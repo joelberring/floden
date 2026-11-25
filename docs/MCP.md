@@ -68,6 +68,37 @@ claude mcp add floden -- floden mcp --rot /sökväg/till/floden
 Kör kommandot i en terminal där `floden` finns (virtuella miljön aktiv), eller ange full
 sökväg till `floden`. `claude mcp list` visar om den startar.
 
+### Antigravity (AGY)
+
+Lägg till Floden i `~/.gemini/config/mcp_config.json` (Streamable HTTP mot servern med en personlig MCP-token från *Nycklar > MCP-token*):
+
+```json
+{
+  "mcpServers": {
+    "floden": {
+      "url": "https://floden.berring.se/mcp",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      }
+    }
+  }
+}
+```
+
+Alternativt lokalt över stdio (utan token, bara lokala öppna projekt/demo):
+
+```json
+{
+  "mcpServers": {
+    "floden-lokal": {
+      "command": "/sökväg/till/floden/.venv/bin/floden",
+      "args": ["mcp", "--rot", "/sökväg/till/floden"],
+      "env": { "FLODEN_MCP_MODELL": "antigravity" }
+    }
+  }
+}
+```
+
 ### Codex (CLI)
 
 I `~/.codex/config.toml`:
