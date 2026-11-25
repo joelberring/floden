@@ -29,10 +29,12 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
+
+from gemensamt.gpu import ar_gpu_backend, hamta_backend, synkronisera, till_enhet, till_numpy
 
 Falt = NDArray[np.float64]
 
@@ -268,6 +270,83 @@ def horisont_referens(
     )
 
 
+def _trunkering_ruta(
+    falt: Hojdfalt,
+    phi_rad: float,
+    rmax_c: float,
+    r_a: int,
+    r_b: int,
+    c_a: int,
+    c_b: int,
+) -> NDArray[np.bool_]:
+    """Analytisk trunkeringsmask för cellmittpunkter i fönstret `(r_a:r_b, c_a:c_b)`."""
+    ex, ey = (float(a[0]) for a in _komponenter(np.array([phi_rad])))
+    ox_1d = np.arange(c_a, c_b, dtype=np.float64) + 0.5
+    oy_1d = np.arange(r_a, r_b, dtype=np.float64) + 0.5
+    if ex > 0.0:
+        tr_x = (falt.bredd - ox_1d) / ex < rmax_c
+    elif ex < 0.0:
+        tr_x = ox_1d / (-ex) < rmax_c
+    else:
+        tr_x = np.zeros(c_b - c_a, dtype=np.bool_)
+    if ey > 0.0:
+        tr_y = (falt.hojd - oy_1d) / ey < rmax_c
+    elif ey < 0.0:
+        tr_y = oy_1d / (-ey) < rmax_c
+    else:
+        tr_y = np.zeros(r_b - r_a, dtype=np.bool_)
+    return np.asarray(tr_y[:, None] | tr_x[None, :], dtype=np.bool_)
+
+
+def horisont_riktning_ruta_pa_enhet(
+    falt: Hojdfalt,
+    z_xp: Any,
+    phi_rad: float,
+    max_avstand_m: float,
+    *,
+    fonster: tuple[int, int, int, int] | None = None,
+    dtyp: type[np.float32] | type[np.float64] = np.float32,
+    xp: Any,
+) -> tuple[NDArray[np.float32], NDArray[np.bool_]]:
+    """Beräknar horisontvinkel för en riktning med `z_xp` redan uppladdat i GPU-minne.
+
+    Undviker att flytta höjdfältet mellan CPU och GPU per riktning. Alla skivoperationer
+    köas på GPU utan blockvisa CPU-synkroniseringar.
+    """
+    _validera_avstand(max_avstand_m)
+    ny, nx = falt.z_m.shape
+    r_a, r_b, c_a, c_b = fonster if fonster is not None else (0, ny, 0, nx)
+    if not (0 <= r_a < r_b <= ny and 0 <= c_a < c_b <= nx):
+        raise HorisontFel(f"Ogiltigt fönster {fonster} för fält {ny}x{nx}.")
+    rmax_c = max_avstand_m / falt.cell_m
+    dj, di, t = stralsekvens(phi_rad, rmax_c)
+    w = (1.0 / (t * falt.cell_m)).astype(dtyp)
+    dj_l = dj.tolist()
+    di_l = di.tolist()
+    w_l = w.tolist()
+
+    zb = z_xp[r_a:r_b, c_a:c_b]
+    best = xp.zeros((r_b - r_a, c_b - c_a), dtype=dtyp)
+    for k in range(len(dj_l)):
+        wk = dtyp(w_l[k])
+        djk, dik = dj_l[k], di_l[k]
+        a0 = r_a if -dik < r_a else -dik
+        a1 = r_b if ny - dik > r_b else ny - dik
+        q0 = c_a if -djk < c_a else -djk
+        q1 = c_b if nx - djk > c_b else nx - djk
+        if a0 >= a1 or q0 >= q1:
+            continue
+        tgt = (slice(a0 - r_a, a1 - r_a), slice(q0 - c_a, q1 - c_a))
+        v = (z_xp[a0 + dik : a1 + dik, q0 + djk : q1 + djk] - zb[tgt]) * wk
+        best[tgt] = xp.maximum(best[tgt], v)
+
+    h_xp = xp.arctan(best).astype(np.float32)
+    synkronisera(xp)
+    h = np.asarray(till_numpy(h_xp), dtype=np.float32)
+    trunk = _trunkering_ruta(falt, phi_rad, rmax_c, r_a, r_b, c_a, c_b)
+    return h, trunk
+
+
 def horisont_riktning_ruta(
     falt: Hojdfalt,
     phi_rad: float,
@@ -276,6 +355,7 @@ def horisont_riktning_ruta(
     fonster: tuple[int, int, int, int] | None = None,
     radblock: int = 64,
     dtyp: type[np.float32] | type[np.float64] = np.float32,
+    enhet: str = "cpu",
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_]]:
     """Horisontvinkel (rad) och trunkeringsflagga för cellmittpunkter i en riktning.
 
@@ -283,8 +363,23 @@ def horisont_riktning_ruta(
     fältet); utan fönster beräknas alla. Cellmittpunkten är punktens läge och z0 = höjden i den
     egna cellen (yta ovanpå marken eller taket). Resultatet är identiskt med
     `horisont_referens` i cellmittpunkterna (testat) inom flyttalsprecisionen för `dtyp`.
+
+    `enhet` kan vara `"cpu"` (standard), `"cuda"` eller `"auto"` (använder CuPy om CUDA finns).
     """
     _validera_avstand(max_avstand_m)
+    if enhet != "cpu":
+        xp, _ = hamta_backend(enhet)
+        if ar_gpu_backend(xp):
+            z_xp = till_enhet(falt.z_m, xp, dtype=dtyp)
+            return horisont_riktning_ruta_pa_enhet(
+                falt,
+                z_xp,
+                phi_rad,
+                max_avstand_m,
+                fonster=fonster,
+                dtyp=dtyp,
+                xp=xp,
+            )
     z = falt.z_m.astype(dtyp)
     ny, nx = z.shape
     r_a, r_b, c_a, c_b = fonster if fonster is not None else (0, ny, 0, nx)
@@ -325,22 +420,7 @@ def horisont_riktning_ruta(
             np.multiply(v, wk, out=v)
             np.maximum(bb[tgt], v, out=bb[tgt])
     h = np.arctan(best).astype(np.float32)
-    ex, ey = (float(a[0]) for a in _komponenter(np.array([phi_rad])))
-    ox_1d = np.arange(c_a, c_b, dtype=np.float64) + 0.5
-    oy_1d = np.arange(r_a, r_b, dtype=np.float64) + 0.5
-    if ex > 0.0:
-        tr_x = (falt.bredd - ox_1d) / ex < rmax_c
-    elif ex < 0.0:
-        tr_x = ox_1d / (-ex) < rmax_c
-    else:
-        tr_x = np.zeros(c_b - c_a, dtype=np.bool_)
-    if ey > 0.0:
-        tr_y = (falt.hojd - oy_1d) / ey < rmax_c
-    elif ey < 0.0:
-        tr_y = oy_1d / (-ey) < rmax_c
-    else:
-        tr_y = np.zeros(r_b - r_a, dtype=np.bool_)
-    trunk = np.asarray(tr_y[:, None] | tr_x[None, :], dtype=np.bool_)
+    trunk = _trunkering_ruta(falt, phi_rad, rmax_c, r_a, r_b, c_a, c_b)
     return h, trunk
 
 
@@ -411,9 +491,30 @@ def uppdatera_horisont_inkrementellt(
 
 
 def horisont_ruta_iter(
-    falt: Hojdfalt, antal_riktningar: int, max_avstand_m: float, **kw: object
+    falt: Hojdfalt,
+    antal_riktningar: int,
+    max_avstand_m: float,
+    *,
+    enhet: str = "cpu",
+    **kw: object,
 ) -> Iterator[tuple[int, float, NDArray[np.float32], NDArray[np.bool_]]]:
-    """Genererar `(k, phi_k, h_rad, trunkerad)` för alla riktningar (minnessnålt)."""
+    """Genererar `(k, phi_k, h_rad, trunkerad)` för alla riktningar (minnessnålt).
+
+    Vid GPU-körning (`enhet="cuda"` eller `"auto"` med CUDA) laddas höjdfältet upp till
+    GPU-minne en gång och återanvänds för alla riktningar.
+    """
+    if enhet != "cpu":
+        xp, _ = hamta_backend(enhet)
+        if ar_gpu_backend(xp):
+            dtyp: Any = kw.get("dtyp", np.float32)
+            fonster: Any = kw.get("fonster")
+            z_xp = till_enhet(falt.z_m, xp, dtype=dtyp)
+            for k, phi in enumerate(riktningar_rad(antal_riktningar)):
+                h, trunk = horisont_riktning_ruta_pa_enhet(
+                    falt, z_xp, float(phi), max_avstand_m, fonster=fonster, dtyp=dtyp, xp=xp
+                )
+                yield k, float(phi), h, trunk
+            return
     for k, phi in enumerate(riktningar_rad(antal_riktningar)):
         h, trunk = horisont_riktning_ruta(falt, float(phi), max_avstand_m, **kw)  # type: ignore[arg-type]
         yield k, float(phi), h, trunk
