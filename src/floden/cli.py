@@ -1762,6 +1762,75 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Bara --server asgi: högsta antal samtidiga tunga beräkningar (standard 4).",
     )
 
+    forberakna_parser = subparsers.add_parser(
+        "forberakna",
+        help="Förberäkna ett större område rutvis med återupptagning och valfri GPU.",
+    )
+    forberakna_parser.add_argument(
+        "--omrade",
+        type=Path,
+        required=True,
+        help="Områdespolygon (.geojson, .json eller .gpkg).",
+    )
+    forberakna_parser.add_argument(
+        "--moduler",
+        default="vatten2d,dagsljus",
+        help="Kommaseparerade moduler att köra (standard: vatten2d,dagsljus).",
+    )
+    forberakna_parser.add_argument(
+        "--enhet",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="Beräkningsenhet (standard: auto).",
+    )
+    forberakna_parser.add_argument(
+        "--precision",
+        choices=("f64", "f32"),
+        default="f64",
+        help="Flyttalsprecision för GPU/vatten2d (standard: f64).",
+    )
+    forberakna_parser.add_argument(
+        "--utdata",
+        type=Path,
+        required=True,
+        help="Utdatamapp för rutcache och batch_status.json.",
+    )
+    forberakna_parser.add_argument(
+        "--dataklass",
+        choices=("oppen", "intern", "skyddad"),
+        default="oppen",
+        help="Dataklass (standard: oppen; icke-öppen vägras i moln-/Colab-miljö).",
+    )
+    forberakna_parser.add_argument(
+        "--rutstorlek-m",
+        type=float,
+        default=500.0,
+        help="Inre rutstorlek i meter (standard: 500).",
+    )
+    forberakna_parser.add_argument(
+        "--overlapp-m",
+        type=float,
+        default=25.0,
+        help="Överlapp per sida i meter (standard: 25).",
+    )
+    forberakna_parser.add_argument(
+        "--upplosning-m",
+        type=float,
+        default=1.0,
+        help="Rasterupplösning i meter (standard: 1.0).",
+    )
+    forberakna_parser.add_argument(
+        "--max-arbetare",
+        type=int,
+        default=1,
+        help="Antal arbetare för CPU-fas (standard: 1).",
+    )
+    forberakna_parser.add_argument(
+        "--torrkor",
+        action="store_true",
+        help="Lista rutor som täcker området utan att starta beräkning.",
+    )
+
     return parser
 
 
@@ -1878,6 +1947,51 @@ def main(argv: Sequence[str] | None = None) -> int:
         from floden_mcp.cli import kor as kor_mcp
 
         return kor_mcp(args)
+    if args.kommando == "forberakna":
+        from karna.batch import (
+            BatchFel,
+            BatchKonfig,
+            generera_rutor_for_omrade,
+            kontrollera_dataskydd,
+            kor_batch_rutor,
+        )
+
+        try:
+            kontrollera_dataskydd(args.dataklass)
+            rutor = generera_rutor_for_omrade(
+                args.omrade,
+                rutstorlek_m=args.rutstorlek_m,
+                overlapp_m=args.overlapp_m,
+                upplosning_m=args.upplosning_m,
+            )
+            if args.torrkor:
+                print(f"Totalt {len(rutor)} rutor för {args.omrade}:")
+                for r in rutor:
+                    print(f"  {r.namn}")
+                return 0
+            moduler = tuple(m.strip() for m in args.moduler.split(",") if m.strip())
+            konfig = BatchKonfig(
+                moduler=moduler,
+                utdata_rot=args.utdata,
+                enhet=args.enhet,
+                precision=args.precision,
+                dataklass=args.dataklass,
+                rutstorlek_m=args.rutstorlek_m,
+                overlapp_m=args.overlapp_m,
+                upplosning_m=args.upplosning_m,
+                max_arbetare=args.max_arbetare,
+                indata_filer=(args.omrade,),
+            )
+            status = kor_batch_rutor(rutor, konfig)
+        except BatchFel as exc:
+            print(f"Fel vid förberäkning: {exc}", file=sys.stderr)
+            return 2
+        print(
+            f"Förberäkning klar ({status.berakningsplats}): {len(status.klara)} beräknade, "
+            f"{len(status.hoppade)} återanvända ur cache, {len(status.felade)} felade "
+            f"({status.total_tid_s:.2f} s)."
+        )
+        return 0 if not status.felade else 1
     if args.kommando == "webb":
         from webb.api import skapa_http_server
         from webb.klientbygge import KlientByggeFel, sakerstall_klient
