@@ -338,6 +338,8 @@ export interface ResultatSvar {
   projekt_avgransning?: ProjektAvgransning | null;
   antaganden: Antaganden;
   datatabeller: DataTabellRef[];
+  /** Additivt: scenarier som har dynamisk tidsserie (`/api/korningar/<id>/tidsserie?scenario=<sid>`). */
+  tidsserie_scenarier?: string[];
 }
 
 export interface TabellForhandsvisning {

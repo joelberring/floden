@@ -6,6 +6,7 @@ import { korLageIdag, korScenario, lageIdagStatus, scenarioStatus } from "../kar
 import { formatera } from "../tal.ts";
 import type { ProjektVy } from "../types.ts";
 import { regnSignatur, tillRegnParam } from "./regnval.ts";
+import { tillSolParam } from "./solval.ts";
 import type { FlodeTillstand } from "./tillstand.ts";
 
 type Lyssnare = () => void;
@@ -41,7 +42,7 @@ export async function startaKorning(t: FlodeTillstand, analyser: string[]): Prom
   t.ritVyer = [];
   signalera();
   try {
-    await korScenario(t.projekt, sc.slug, analyser, t.avtappning, tillRegnParam(t.regn));
+    await korScenario(t.projekt, sc.slug, analyser, t.avtappning, tillRegnParam(t.regn), tillSolParam(t.sol));
   } catch (e) {
     t.korning = { slug: sc.slug, text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs };
     signalera();
@@ -61,7 +62,7 @@ export async function startaLageIdag(t: FlodeTillstand, analyser: string[]): Pro
   t.lageVyer = [];
   signalera();
   try {
-    await korLageIdag(t.projekt, analyser, t.avtappning, tillRegnParam(t.regn));
+    await korLageIdag(t.projekt, analyser, t.avtappning, tillRegnParam(t.regn), tillSolParam(t.sol));
   } catch (e) {
     t.korning = { slug: "", text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs, lage: true };
     signalera();

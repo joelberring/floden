@@ -12,6 +12,8 @@ export type { RegnForval, RegnParam };
 
 export type RegnForvalId = "standard" | "10ar" | "100ar" | "extrem" | "eget";
 export type EgetRegnLage = "idf" | "mm";
+export type Berakningstyp = "statisk" | "dynamisk";
+export type RegnTyp = "cds" | "block";
 
 export interface RegnVal {
   forval: RegnForvalId;
@@ -20,6 +22,8 @@ export interface RegnVal {
   varaktighet_min: number | null;
   klimatfaktor: number | null;
   regn_mm: number | null;
+  berakningstyp: Berakningstyp;
+  regntyp: RegnTyp;
 }
 
 export const STANDARD_REGNVAL: RegnVal = {
@@ -29,7 +33,19 @@ export const STANDARD_REGNVAL: RegnVal = {
   varaktighet_min: 60,
   klimatfaktor: 1.25,
   regn_mm: 100,
+  berakningstyp: "statisk",
+  regntyp: "cds",
 };
+
+/** Sant när regnvalet anger total regnmängd i mm direkt (CDS kräver återkomsttid). */
+export function arDirektMm(val: RegnVal): boolean {
+  return val.forval === "extrem" || (val.forval === "eget" && val.egetLage === "mm");
+}
+
+/** Effektiv regntyp för valt regnval: direkt mm använder alltid blockregn. */
+export function effektivRegntyp(val: RegnVal): RegnTyp {
+  return arDirektMm(val) ? "block" : val.regntyp;
+}
 
 export interface RegnSnabbval {
   id: RegnForvalId;
@@ -107,24 +123,39 @@ export function valideraRegnVal(val: RegnVal): string | null {
   return null;
 }
 
-/** Omvandlar regnvalet till JSON-kroppen `regn` för servern (`null` = projektets standard). */
+/** Omvandlar regnvalet till JSON-kroppen `regn` för servern (`null` = projektets standard och statisk). */
 export function tillRegnParam(val: RegnVal): RegnParam | null {
-  if (val.forval === "standard") return null;
+  const dyn = val.berakningstyp === "dynamisk";
+  const rtyp = effektivRegntyp(val);
+  if (val.forval === "standard") {
+    return dyn ? { berakningstyp: "dynamisk", regntyp: rtyp } : null;
+  }
   const snabb = REGN_SNABBVAL.find((x) => x.id === val.forval);
-  if (snabb?.param) return { ...snabb.param };
+  if (snabb?.param) {
+    return { ...snabb.param, berakningstyp: val.berakningstyp, regntyp: rtyp };
+  }
   if (val.egetLage === "mm") {
-    return val.regn_mm !== null && Number.isFinite(val.regn_mm) ? { regn_mm: val.regn_mm } : null;
+    return val.regn_mm !== null && Number.isFinite(val.regn_mm)
+      ? { regn_mm: val.regn_mm, berakningstyp: val.berakningstyp, regntyp: "block" }
+      : null;
   }
   return {
     aterkomsttid_ar: val.aterkomsttid_ar,
     varaktighet_min: val.varaktighet_min,
     klimatfaktor: val.klimatfaktor,
+    berakningstyp: val.berakningstyp,
+    regntyp: rtyp,
   };
 }
 
-/** Deterministisk signatur för valt regn och avtappning (för att veta om resultat stämmer med inställningen). */
+/** Deterministisk signatur för valt regn, beräkningstyp, regntyp och avtappning. */
 export function regnSignatur(val: RegnVal, avtappning: number | null): string {
-  return JSON.stringify({ regn: tillRegnParam(val), avtappning: avtappning ?? null });
+  return JSON.stringify({
+    regn: tillRegnParam(val),
+    berakningstyp: val.berakningstyp,
+    regntyp: effektivRegntyp(val),
+    avtappning: avtappning ?? null,
+  });
 }
 
 /**
@@ -162,8 +193,9 @@ export function valdRegnText(val: RegnVal, forval: RegnForval | null | undefined
   } else {
     bas = regnEtikett(tillRegnParam(val)) ?? "Eget regn";
   }
+  const dyn = val.berakningstyp === "dynamisk" ? ` · dynamisk (${effektivRegntyp(val) === "cds" ? "CDS" : "block"})` : "";
   const avt = avtappning !== null && avtappning > 0 ? ` · avtappning ${formatera(avtappning, 1)} mm/h` : "";
-  return `${bas}${avt}`;
+  return `${bas}${dyn}${avt}`;
 }
 
 /** Ren HTML för regnväljaren i sidopanelen. */
@@ -179,6 +211,23 @@ export function regnValHtml(
       `<button type="button" data-regn-forval="${s.id}" aria-pressed="${val.forval === s.id}" title="${esc(s.beskrivning)}">${esc(s.namn)}</button>`,
   ).join("");
   const numStr = (n: number | null, dec = 2): string => (n === null || !Number.isFinite(n) ? "" : formateraHogst(n, dec));
+  const direktMm = arDirektMm(val);
+  const rtyp = effektivRegntyp(val);
+  const dynamikDel = `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Beräkningstyp">
+      <button type="button" data-regn-berakningstyp="statisk" aria-pressed="${val.berakningstyp === "statisk"}">Maxdjup (statisk)</button>
+      <button type="button" data-regn-berakningstyp="dynamisk" aria-pressed="${val.berakningstyp === "dynamisk"}">Flöde i tid (dynamisk)</button>
+    </div>${
+      val.berakningstyp === "dynamisk"
+        ? `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Regntyp">
+            <button type="button" data-regn-regntyp="cds" aria-pressed="${rtyp === "cds"}"${direktMm ? ' disabled title="CDS-regn kräver återkomsttid"' : ""}>CDS-regn (topp)</button>
+            <button type="button" data-regn-regntyp="block" aria-pressed="${rtyp === "block"}">Blockregn (jämnt)</button>
+          </div>${
+            direktMm
+              ? `<p class="flode-liten flode-dampad ar-regn-notis">CDS-regn kräver återkomsttid; blockregn används för direkt regnmängd (mm).</p>`
+              : ""
+          }`
+        : ""
+    }`;
   const egetDel =
     val.forval === "eget"
       ? `<div class="ar-regn-eget">
@@ -214,6 +263,7 @@ export function regnValHtml(
       <span class="ar-regn-sammanfattning flode-liten flode-dampad">${esc(valdRegnText(val, forval, avtappning))}</span>
     </div>
     <div class="flode-chips liten ar-regn-chips" role="group" aria-label="Snabbval för regn">${knappar}</div>
+    ${dynamikDel}
     ${egetDel}
     ${felHtml}
   </section>`;
@@ -225,6 +275,8 @@ export function lasRegnVal(ra: unknown): RegnVal {
   const o = ra as Record<string, unknown>;
   const forval = o.forval === "10ar" || o.forval === "100ar" || o.forval === "extrem" || o.forval === "eget" ? o.forval : "standard";
   const egetLage: EgetRegnLage = o.egetLage === "mm" ? "mm" : "idf";
+  const berakningstyp: Berakningstyp = o.berakningstyp === "dynamisk" ? "dynamisk" : "statisk";
+  const regntyp: RegnTyp = o.regntyp === "block" ? "block" : "cds";
   const num = (v: unknown, def: number | null): number | null => (typeof v === "number" && Number.isFinite(v) ? v : def);
   return {
     forval,
@@ -233,5 +285,7 @@ export function lasRegnVal(ra: unknown): RegnVal {
     varaktighet_min: num(o.varaktighet_min, STANDARD_REGNVAL.varaktighet_min),
     klimatfaktor: num(o.klimatfaktor, STANDARD_REGNVAL.klimatfaktor),
     regn_mm: num(o.regn_mm, STANDARD_REGNVAL.regn_mm),
+    berakningstyp,
+    regntyp,
   };
 }
