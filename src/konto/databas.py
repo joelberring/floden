@@ -254,10 +254,15 @@ ALTER TABLE projekt ADD COLUMN organisation_synlig INTEGER NOT NULL DEFAULT 0
 ALTER TABLE projekt ADD COLUMN skapad_av TEXT;
 """
 
-# Version 7: projektrollen `agare` (projektets ägare: ändrar namn, medlemmar och synlighet,
+# Version 7: kontots val av primär AI-leverantör (t.ex. 'anthropic', 'gemini', 'openai').
+SCHEMA_V7 = """
+ALTER TABLE konto ADD COLUMN primar_ai TEXT;
+"""
+
+# Version 8: projektrollen `agare` (projektets ägare: ändrar namn, medlemmar och synlighet,
 # arkiverar och raderar) och `arkiverad` (tid, NULL = aktivt projekt). SQLite kan inte ändra en
 # CHECK, så de två tabellerna byggs om med samma kolumner; raderna kopieras oförändrade.
-SCHEMA_V7 = """
+SCHEMA_V8 = """
 CREATE TABLE projektbehorighet_ny (
   konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
   projekt_id TEXT NOT NULL REFERENCES projekt (id) ON DELETE CASCADE,
@@ -292,7 +297,9 @@ CREATE INDEX projektinbjudan_epost ON projektinbjudan (epost);
 ALTER TABLE projekt ADD COLUMN arkiverad INTEGER;
 """
 
-MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7)
+MIGRERINGAR = (
+    SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8,
+)
 
 
 class Databas:

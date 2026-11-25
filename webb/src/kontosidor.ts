@@ -17,6 +17,7 @@ import {
   aterkallaOauthAnslutning,
   hamtaNycklar,
   sattOrganisationsRoll,
+  sattPrimarAi,
   sattProjektDelning,
   sattProjektRoll,
   skapaMcpToken,
@@ -27,14 +28,14 @@ import {
   taBortProjektRoll,
 } from "./api";
 import { kontoLage } from "./konto";
-import { felText, mcpKommando, sidaAdministration, sidaNycklar } from "./kontosidor-html";
-import type { McpAvsnitt } from "./kontosidor-html";
+import { felText, mcpKonfig, sidaAdministration, sidaNycklar } from "./kontosidor-html";
+import type { McpAvsnitt, McpKlient } from "./kontosidor-html";
 import type { NycklarSvar, NyMcpToken } from "./types";
 
 export async function visaNycklar(vy: HTMLElement): Promise<void> {
   // Tillstånd för MCP-avsnittet. En ny token (med klartexten) finns bara i minnet tills sidan ritas
   // om av något annat än skapandet; den lagras aldrig i webbläsaren och hämtas aldrig från servern.
-  let mcp: McpAvsnitt = { svar: null, ny: null, fel: null };
+  let mcp: McpAvsnitt = { svar: null, ny: null, fel: null, klient: "antigravity" };
   let nycklar: NycklarSvar | null = null;
   let nyckelFel: string | null = null;
   const visaMeddelande = (text: string): void => {
@@ -55,10 +56,11 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
   }
   rita();
   const laddaMcp = async (ny: NyMcpToken | null = null): Promise<void> => {
+    const klient = mcp.klient ?? "antigravity";
     try {
-      mcp = { svar: await hamtaMcpTokens(), ny, fel: null };
+      mcp = { svar: await hamtaMcpTokens(), ny, fel: null, klient };
     } catch (e) {
-      mcp = { svar: null, ny: null, fel: felText(e) };
+      mcp = { svar: null, ny: null, fel: felText(e), klient };
     }
     try {
       mcp = { ...mcp, appar: (await hamtaOauthAnslutningar()).anslutningar };
@@ -140,7 +142,21 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
     }
     if (mal?.closest("[data-kopiera-mcp]")) {
       h.preventDefault();
-      if (mcp.svar && mcp.ny) void navigator.clipboard?.writeText(mcpKommando(mcp.svar.mcp_url, mcp.ny.token));
+      if (mcp.svar && mcp.ny) {
+        void navigator.clipboard?.writeText(
+          mcpKonfig(mcp.svar.mcp_url, mcp.ny.token, mcp.klient ?? "antigravity"),
+        );
+      }
+      return;
+    }
+    const klientKnapp = mal?.closest("[data-mcp-klient]");
+    if (klientKnapp) {
+      h.preventDefault();
+      const k = klientKnapp.getAttribute("data-mcp-klient") as McpKlient | null;
+      if (k) {
+        mcp = { ...mcp, klient: k };
+        rita();
+      }
       return;
     }
     const knapp = mal?.closest("[data-ta-bort-nyckel]") ?? null;
@@ -154,6 +170,15 @@ export async function visaNycklar(vy: HTMLElement): Promise<void> {
         nyckelFel = felText(e);
         rita();
       },
+    );
+  };
+  vy.onchange = (h: Event): void => {
+    const el = h.target instanceof HTMLInputElement ? h.target : null;
+    const primar = el?.dataset.primarAi;
+    if (!el || !primar || !el.checked) return;
+    void sattPrimarAi(primar).then(
+      () => ladda("Primär AI-leverantör är uppdaterad."),
+      (e: unknown) => visaMeddelande(felText(e)),
     );
   };
   await ladda();

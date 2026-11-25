@@ -265,6 +265,14 @@ export function taBortNyckel(typ: string): Promise<{ status: string }> {
   return lasJson<{ status: string }>(`/konto/nycklar/${encodeURIComponent(typ)}`, { method: "DELETE" });
 }
 
+export function sattPrimarAi(typ: string | null): Promise<{ status: string; primar_ai: string | null }> {
+  return lasJson<{ status: string; primar_ai: string | null }>("/konto/nycklar/primar-ai", {
+    method: "PUT",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ typ }),
+  });
+}
+
 /* ---------- MCP-token (/konto/mcp-token): visas en gång vid skapandet ---------- */
 
 export function hamtaMcpTokens(): Promise<McpTokenSvar> {

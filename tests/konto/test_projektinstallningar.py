@@ -215,7 +215,7 @@ def test_migrering_till_v7_behaller_roller_och_ger_agare(tmp_path: Path) -> None
     c.close()
     db = Databas(sokvag)
     with db.transaktion() as c2:
-        assert c2.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert c2.execute("PRAGMA user_version").fetchone()[0] == 8
         assert c2.execute("SELECT roll FROM projektbehorighet").fetchone()[0] == "utredare"
         assert c2.execute("SELECT arkiverad FROM projekt").fetchone()[0] is None
         c2.execute("UPDATE projektbehorighet SET roll = 'agare'")

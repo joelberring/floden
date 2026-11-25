@@ -2,6 +2,15 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-25 – Flera AI-API-nycklar, primär AI-väljare och MCP-klientväljare (grenen `nycklar-ai-och-mcp`) (agent)
+Gjort (grenen `nycklar-ai-och-mcp`; additiva API-/databasändringar, `BESLUT.md` orörd):
+- **Backend (`src/konto/databas.py` `SCHEMA_V7`, `src/konto/nycklar.py`, `src/konto/kontoapi.py`):** Lade till `gemini` (Google Gemini) och `openai` bredvid `anthropic` i `NYCKELTYPER` (med `kategori: "ai"` vs `"data"`), kolumnen `konto.primar_ai` samt ändpunkten `PUT /konto/nycklar/primar-ai`. Första sparade AI-nyckeln blir automatiskt primär; vid borttagning faller `primar_ai` tillbaka till nästa sparade AI-nyckel.
+- **Webbklient (`webb/src/types.ts`, `webb/src/api.ts`, `webb/src/kontosidor-html.ts`, `webb/src/kontosidor.ts`):** Ny sektion **Aktiv AI-leverantör** på `#/nycklar` för att med ett klick välja primär leverantör bland sparade nycklar, samt **MCP-klientväljare** (**Antigravity**, **Claude Code**, **Codex**, **HTTP / API**) under *MCP-token* med färdiga kopieringsblock och stöd för flera samtidiga tokens.
+- **Dokumentation (`docs/MCP.md`):** Lade till anslutningsguide för Antigravity (`~/.gemini/config/mcp_config.json`, Streamable HTTP och lokal stdio).
+Mätt: `pytest tests/konto/`: **166 passed** (nytt test `test_flera_ai_leverantorer_och_val_av_primar_ai`). `node --test webb/src/kontosidor.test.ts`: **18 passed** (nytt test för `mcpKonfig` och `primar_ai`). `ruff check` (5 filer) och `mypy` (3 filer): **0 fel**.
+Öppet: Serverns framtida egna AI-körningar (när sådana kopplas in) läser kontots primära nyckel via `forrad.primar_ai(konto_id)` + `forrad.las(konto_id, typ)`.
+Nästa: Uppdatera servern när PR:en är inne i `main`, skapa en MCP-token för Antigravity på `#/nycklar` och klistra in JSON-blocket i `~/.gemini/config/mcp_config.json`.
+
 ## 2026-11-25 – Vattenytor ur baskartans strandlinjer (grenen `goteborg-vattenytor`) (agent)
 Gjort (inga kontraktsändringar, `BESLUT.md` orörd, bara öppna data/CC0):
 - `[filpaket.baskarta.vatten]` (valfritt, strikt validerat i `src/kommuner/konfig.py`: `lager_monster`, `objekt_falt`, `objekt_monster`, `marginal_m` (0,2), `max_avstand_m` (2,0)); aktiverat i `data/kommuner/goteborg.toml` (`hydrografi_l`, `typ` Strandlinje).
@@ -751,7 +760,7 @@ Tester: `tests/sankgraf/test_avrinningsnat.py` (V-dal, Y-sammanflöde, tre nivå
 ## 2026-11-25 – Projektinställningar: arkivera, radera och medlemmar (agent projinst)
 
 Gjort: Joels fråga "går det att radera gamla projekt, ändra synlighet och vilka som får se?". Ny sida `#/p/<projekt>/installningar` (länk "Inställningar" i sidhuvudet i projektet och "Projektinställningar" på projektlistans kartkort): byta namn, synlighet för organisationen (samma regel som Administrations växel), medlemmar med roll, inbjudan (läsare, utredare, ägare), ändra roll, ta bort medlem, återkalla inbjudan, arkivera/återställa och radera permanent (skriv projektets namn). Projektlistan har "Visa arkiverade".
-- Konto: projektrollen `agare` och `projekt.arkiverad` (schemaversion 7, tabellerna byggdes om). Ägare = roll `agare` eller skaparen som utredare; projektet har alltid en ägare. Medlemmar/namn: ägare, organisationsadmin/ägare i organisationen, superadmin. Arkivera/radera: ägare och superadmin. Läsare ser bara. Synligheten följer det gamla beslutet (utredare, ägare, skaparen), inte organisationens admin.
+- Konto: projektrollen `agare` och `projekt.arkiverad` (schemaversion 8; version 7 är primar_ai från #118, tabellerna byggdes om). Ägare = roll `agare` eller skaparen som utredare; projektet har alltid en ägare. Medlemmar/namn: ägare, organisationsadmin/ägare i organisationen, superadmin. Arkivera/radera: ägare och superadmin. Läsare ser bara. Synligheten följer det gamla beslutet (utredare, ägare, skaparen), inte organisationens admin.
 - Radera (`src/webb/projektinstallningar.py`): projektmappen, projektets körningar, rapporter och beställningar, registerpost, roller och inbjudningar; geografin, cacher och andra projekt rörs inte. Demokvarteret nekas, pågående körning ger 409. `projekt-raderat` loggas utan personuppgifter.
 - API additivt (DATAKONTRAKT K48, KONTO.md avsnitt 11). Alla tal i webben via tal.ts.
 Mätt: se PR (pytest tests/konto och tests/webb, npm test, typkontroll, build, ruff, mypy).

@@ -690,6 +690,7 @@ export interface NyckelProdukt {
 export interface NyckelStatus {
   typ: string;
   namn: string;
+  kategori?: "data" | "ai";
   beskrivning: string;
   falt: NyckelFaltInfo[];
   sparad: number | null;
@@ -706,6 +707,9 @@ export interface NycklarSvar {
   orsak: string | null;
   text: string | null;
   typer: NyckelStatus[];
+  /** Kontots aktiva/primära AI-leverantör (t.ex. "anthropic", "gemini", "openai"), eller null. */
+  primar_ai?: string | null;
+  ai_leverantorer?: string[];
 }
 
 /** En personlig MCP-token som lista: aldrig själva token, bara namn, datum och fyra sista tecken. */
