@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -62,7 +63,7 @@ class TestSammanfoga(unittest.TestCase):
 
 
 class TestRita(unittest.TestCase):
-    def _bild(self, png: bytes) -> np.ndarray:
+    def _bild(self, png: bytes) -> np.ndarray[Any, Any]:
         return np.asarray(Image.open(BytesIO(png)).convert("RGBA"))
 
     def test_nan_ar_genomskinligt_och_skalan_ar_gemensam(self) -> None:
@@ -75,11 +76,13 @@ class TestRita(unittest.TestCase):
         self.assertEqual(tuple(bild[1, 0, :3]), (0xFF, 0xEA, 0x46))  # högsta
 
     def test_vatten_klassas_efter_djup(self) -> None:
-        v = np.array([[0.0, 0.05, 0.15, 0.6]], dtype=np.float32)
-        bild = self._bild(rita_png(v, "vatten", lo=0.0, hi=0.6)[0])
-        self.assertEqual(list(bild[0, :, 3]), [0, 255, 255, 255])
-        self.assertEqual(tuple(bild[0, 3, :3]), (0x2B, 0x5D, 0x8C))
-        self.assertEqual(tuple(bild[0, 2, :3]), (0xC9, 0xD9, 0xEA))
+        v = np.array([[0.0, 0.05, 0.15, 0.6, 1.2]], dtype=np.float32)
+        bild = self._bild(rita_png(v, "vatten", lo=0.0, hi=1.2)[0])
+        self.assertEqual(list(bild[0, :, 3]), [0, 255, 255, 255, 255])
+        self.assertEqual(tuple(bild[0, 1, :3]), (0xCF, 0xE8, 0xFF))
+        self.assertEqual(tuple(bild[0, 2, :3]), (0x7E, 0xC4, 0xF8))
+        self.assertEqual(tuple(bild[0, 3, :3]), (0x18, 0x2B, 0x7A))
+        self.assertEqual(tuple(bild[0, 4, :3]), (0x3B, 0x13, 0x63))
 
     def test_skillnad_transparent_under_troskeln_och_blatt_for_minskning(self) -> None:
         v = np.array([[0.0, 0.05, -2.0, 2.0]], dtype=np.float32)

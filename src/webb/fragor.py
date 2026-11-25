@@ -68,7 +68,7 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
-LAGER_VERSION = 6
+LAGER_VERSION = 7
 
 
 _SCENARIOTEXT = {"fore": "före", "hojd": "höjd"}

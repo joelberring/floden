@@ -122,6 +122,16 @@ _STANDARDJAMFORELSE = {
 """Lösare -> (utdata, tröskel) för jämförelsen före/efter när mallen saknar jämförelser (som `skriv_fragor`)."""
 
 _LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
+_LOSARE_MED_REGN = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
+_REGN_NYCKLAR = frozenset({"aterkomsttid_ar", "varaktighet_min", "klimatfaktor", "regn_mm"})
+_IDF_NYCKLAR_ATT_RENSA = (
+    "idf",
+    "aterkomsttid_ar",
+    "klimatfaktor",
+    "regntyp",
+    "idf_kalla",
+    "idf_klimatfaktor",
+)
 
 
 def _avtappning(v: Any) -> float | None:
@@ -133,6 +143,144 @@ def _avtappning(v: Any) -> float | None:
     if float(v) < 0.0:
         raise _fel("Avtappningen får inte vara negativ.", 400)
     return float(v)
+
+
+def _regn(v: Any) -> dict[str, float] | None:
+    """Validerar valfria regnparametrar ur kartverktyget, eller None (mallens förval gäller).
+
+    Strikt validering utan tysta fel (HTTP 400 vid ogiltiga typer, okända fält, motstridiga
+    kombinationer eller värden utanför intervallen):
+    - `regn_mm` i `(0, 500]`
+    - `aterkomsttid_ar` i `[1, 10000]`
+    - `varaktighet_min` i `[5, 2880]`
+    - `klimatfaktor` i `[0.5, 3.0]`
+    """
+    if v is None:
+        return None
+    if not isinstance(v, Mapping):
+        raise _fel("Regninställningen måste vara ett JSON-objekt.", 400)
+    okanda = sorted(str(k) for k in v if k not in _REGN_NYCKLAR)
+    if okanda:
+        raise _fel(f"Okända regnparametrar: {', '.join(okanda)}.", 400)
+    granser: dict[str, tuple[float, float, bool, str]] = {
+        "regn_mm": (0.0, 500.0, True, "mm"),
+        "aterkomsttid_ar": (1.0, 10000.0, False, "år"),
+        "varaktighet_min": (5.0, 2880.0, False, "min"),
+        "klimatfaktor": (0.5, 3.0, False, ""),
+    }
+    ut: dict[str, float] = {}
+    for nyckel, (lo, hi, strikt_lo, enhet) in granser.items():
+        raa = v.get(nyckel)
+        if raa is None:
+            continue
+        if isinstance(raa, bool) or not isinstance(raa, int | float) or not math.isfinite(float(raa)):
+            raise _fel(f"Regnparametern '{nyckel}' måste vara ett ändligt tal, fick {raa!r}.", 400)
+        val = float(raa)
+        under = val <= lo if strikt_lo else val < lo
+        if under or val > hi:
+            parentes = f"({lo:g}, {hi:g}]" if strikt_lo else f"[{lo:g}, {hi:g}]"
+            enhet_txt = f" {enhet}" if enhet else ""
+            raise _fel(
+                f"Regnparametern '{nyckel}' måste ligga i {parentes}{enhet_txt}, fick {val:g}.",
+                400,
+            )
+        ut[nyckel] = val
+    if not ut:
+        return None
+    if "regn_mm" in ut and ("aterkomsttid_ar" in ut or "klimatfaktor" in ut):
+        raise _fel(
+            "Ange antingen 'regn_mm' eller IDF-parametrar ('aterkomsttid_ar'/'klimatfaktor'), inte båda.",
+            400,
+        )
+    return ut
+
+
+def _tillampa_regn(
+    losare: str,
+    parametrar: dict[str, Any],
+    regn: Mapping[str, float] | None,
+    *,
+    avtappning_mm_h: float | None = None,
+) -> None:
+    """Skriver in validerade regnparametrar på en skyfallslösare (`vatten.statisk_fyllning` eller `vatten.dynamik`).
+
+    Vid `regn is None` ändras ingenting (100 % oförändrat beteende).
+    """
+    if regn is None or losare not in _LOSARE_MED_REGN:
+        return
+    if "regn_mm" in regn:
+        for nyckel in _IDF_NYCKLAR_ATT_RENSA:
+            parametrar.pop(nyckel, None)
+        if losare == "vatten.dynamik":
+            raw_var = regn.get("varaktighet_min")
+            if raw_var is not None:
+                var_min = float(raw_var)
+            else:
+                mall_var = parametrar.get("varaktighet_min")
+                var_min = (
+                    float(mall_var)
+                    if isinstance(mall_var, int | float) and not isinstance(mall_var, bool) and float(mall_var) > 0.0
+                    else 60.0
+                )
+            parametrar.pop("varaktighet_min", None)
+            parametrar.pop("regn_mm", None)
+            d_s = var_min * 60.0
+            intens = float(regn["regn_mm"]) / (var_min / 60.0)
+            parametrar["regn_tid_s"] = [0.0, d_s]
+            parametrar["regn_mm_h"] = [intens, intens]
+            return
+        parametrar["regn_mm"] = float(regn["regn_mm"])
+        if "varaktighet_min" in regn:
+            parametrar["varaktighet_min"] = float(regn["varaktighet_min"])
+        else:
+            avt_par = parametrar.get("avtappning_mm_h")
+            har_avt = (avtappning_mm_h is not None and avtappning_mm_h > 0.0) or (
+                isinstance(avt_par, int | float) and not isinstance(avt_par, bool) and float(avt_par) > 0.0
+            )
+            if not har_avt:
+                parametrar.pop("varaktighet_min", None)
+        return
+
+    # IDF-parametrar (aterkomsttid_ar, varaktighet_min, klimatfaktor).
+    if "idf" in parametrar:
+        parametrar.pop("regn_mm", None)
+        parametrar.pop("regn_tid_s", None)
+        parametrar.pop("regn_mm_h", None)
+        parametrar.pop("idf_klimatfaktor", None)
+        for nyckel in ("aterkomsttid_ar", "varaktighet_min", "klimatfaktor"):
+            if nyckel in regn:
+                parametrar[nyckel] = float(regn[nyckel])
+        return
+
+    # Mall utan registrerad IDF-källa (t.ex. kommunprojekt med enbart `regn_mm`).
+    if "aterkomsttid_ar" not in regn and "klimatfaktor" not in regn:
+        if "varaktighet_min" in regn and losare == "vatten.statisk_fyllning":
+            parametrar["varaktighet_min"] = float(regn["varaktighet_min"])
+        return
+    if "aterkomsttid_ar" not in regn:
+        raise _fel(
+            "Projektets skyfallsmall saknar IDF-källa; ange 'aterkomsttid_ar' eller direkt 'regn_mm'.",
+            400,
+        )
+    from gemensamt.regn import RegnFel, generera_blockregn
+
+    var_min = float(regn.get("varaktighet_min", 60.0))
+    kf = float(regn.get("klimatfaktor", 1.0))
+    try:
+        serie = generera_blockregn(
+            float(regn["aterkomsttid_ar"]),
+            klimatfaktor=kf,
+            varaktighet_min=var_min,
+        )
+    except RegnFel as exc:
+        raise _fel(f"Ogiltiga regnparametrar: {exc}", 400) from exc
+    if losare == "vatten.dynamik":
+        parametrar.pop("regn_mm", None)
+        parametrar["regn_tid_s"] = list(serie.tid_s)
+        parametrar["regn_mm_h"] = list(serie.intensitet_mm_h)
+    else:
+        parametrar["regn_mm"] = round(float(serie.total_djup_mm), 3)
+        parametrar["varaktighet_min"] = var_min
 
 
 def slug(namn: str) -> str:
@@ -412,6 +560,61 @@ class KartverktygTjanst:
                 )
         return ut
 
+    @staticmethod
+    def _regn_forval(mallar: Mapping[str, Mall]) -> dict[str, Any] | None:
+        """Projektets förvalda regnparametrar ur skyfallsmallen, eller `None` om projektet saknar skyfallsmall."""
+        mall = mallar.get("vatten")
+        if mall is None:
+            return None
+        analys = next((a for a in mall.fraga.analyser if a.losare in _LOSARE_MED_REGN), None)
+        if analys is None:
+            return None
+        p = analys.parametrar
+
+        def _tal_eller_none(nyckel: str) -> float | None:
+            v = p.get(nyckel)
+            if isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(float(v)):
+                return None
+            return float(v)
+
+        idf_id = p.get("idf") if isinstance(p.get("idf"), str) else None
+        aterkomsttid = _tal_eller_none("aterkomsttid_ar")
+        varaktighet = _tal_eller_none("varaktighet_min")
+        klimatfaktor = _tal_eller_none("klimatfaktor")
+        if klimatfaktor is None:
+            klimatfaktor = _tal_eller_none("idf_klimatfaktor")
+        regn_mm = _tal_eller_none("regn_mm")
+        kalla: str | None = idf_id or (p.get("idf_kalla") if isinstance(p.get("idf_kalla"), str) else None)
+
+        if idf_id is not None and aterkomsttid is not None:
+            from gemensamt.regn import RegnFel, hamta_idf_kalla, skapa_regn_fran_idf_kalla
+
+            try:
+                idf_kalla = hamta_idf_kalla(idf_id)
+                eff_kf = klimatfaktor if klimatfaktor is not None else float(idf_kalla.standard_klimatfaktor)
+                eff_var = varaktighet if varaktighet is not None else 60.0
+                typ = str(p.get("regntyp", "block"))
+                serie = skapa_regn_fran_idf_kalla(
+                    idf_id,
+                    aterkomsttid,
+                    klimatfaktor=eff_kf,
+                    typ=typ,
+                    varaktighet_min=eff_var,
+                )
+                klimatfaktor = eff_kf
+                varaktighet = eff_var
+                regn_mm = float(serie.total_djup_mm)
+            except RegnFel:
+                pass
+
+        return {
+            "aterkomsttid_ar": aterkomsttid,
+            "varaktighet_min": varaktighet,
+            "klimatfaktor": klimatfaktor,
+            "regn_mm": regn_mm,
+            "kalla": kalla,
+        }
+
     def projektinfo(self, projekt: str) -> dict[str, Any]:
         kalla = self.kalla(projekt)
         mallar = dict(kalla.mallar)
@@ -459,6 +662,7 @@ class KartverktygTjanst:
             "brytlinjer": brytl[:MAX_BRYTLINJER],
             "brytlinjer_trunkerade": len(brytl) > MAX_BRYTLINJER,
             "analyser": self._analyser(mallar),
+            "regn_forval": self._regn_forval(mallar),
             "scenarier": self.lista_scenarier(projekt)["scenarier"],
             "ortofoto": self.ortofoto_info(projekt),
             # Additivt (R2, K50): förvalda ritlager och rollerna (vad ett objekt blir i beräkningen).
@@ -951,6 +1155,7 @@ class KartverktygTjanst:
         *,
         prefix: str = "rita",
         parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
+        regn: Mapping[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster.
 
@@ -990,7 +1195,7 @@ class KartverktygTjanst:
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
-                avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over,
+                avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn,
             )
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             ref = self._ref_for(fil)
@@ -1043,6 +1248,7 @@ class KartverktygTjanst:
         *,
         avtappning_mm_h: float | None = None,
         parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
+        regn: Mapping[str, float] | None = None,
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
         valda = [a for a in m.fraga.analyser if a.id in analyser]
@@ -1058,6 +1264,7 @@ class KartverktygTjanst:
                 post["parametrar"] = {**post["parametrar"], **parametrar_over[a.id]}
             if avtappning_mm_h is not None and a.losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
+            _tillampa_regn(a.losare, post["parametrar"], regn, avtappning_mm_h=avtappning_mm_h)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
             if a.beror_pa:
@@ -1117,10 +1324,15 @@ class KartverktygTjanst:
         namn_slug: str,
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
+        regn: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Planen för att räkna före och efter: vad som räknas om, radie och uppskattad tid."""
         poster = self._skriv_fragor(
-            projekt, namn_slug, valda, avtappning_mm_h=_avtappning(avtappning_mm_h)
+            projekt,
+            namn_slug,
+            valda,
+            avtappning_mm_h=_avtappning(avtappning_mm_h),
+            regn=_regn(regn),
         )
         return {"slug": namn_slug, "fragor": self._planposter(poster)}
 
@@ -1161,11 +1373,17 @@ class KartverktygTjanst:
         namn_slug: str,
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
+        regn: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Startar körningen. `avtappning_mm_h` (valfri) gäller vattnets analyser i körningen;
-        utan den gäller standard 0 mm/h (ledningsnätet antas fullt)."""
+        utan den gäller standard 0 mm/h (ledningsnätet antas fullt). `regn` (valfri) styr
+        regnparametrarna för skyfallslösarna; utan den gäller projektmallens förval."""
         poster = self._skriv_fragor(
-            projekt, namn_slug, valda, avtappning_mm_h=_avtappning(avtappning_mm_h)
+            projekt,
+            namn_slug,
+            valda,
+            avtappning_mm_h=_avtappning(avtappning_mm_h),
+            regn=_regn(regn),
         )
         d = self._las(projekt, namn_slug)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
@@ -1205,6 +1423,7 @@ class KartverktygTjanst:
         fraga_id: str,
         analyser: Sequence[str],
         avtappning_mm_h: float | None,
+        regn: Mapping[str, float] | None = None,
     ) -> dict[str, Any]:
         """K20 för läget idag: ett enda scenario (`fore`, projektets befintliga läge), inga jämförelser."""
         bas = self._rel(fil, m.bas)
@@ -1218,6 +1437,7 @@ class KartverktygTjanst:
             }
             if avtappning_mm_h is not None and a.losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
+            _tillampa_regn(a.losare, post["parametrar"], regn, avtappning_mm_h=avtappning_mm_h)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
             if a.beror_pa:
@@ -1235,7 +1455,11 @@ class KartverktygTjanst:
         }
 
     def _skriv_lage_fragor(
-        self, projekt: str, valda: Sequence[str], avtappning_mm_h: float | None = None
+        self,
+        projekt: str,
+        valda: Sequence[str],
+        avtappning_mm_h: float | None = None,
+        regn: Mapping[str, float] | None = None,
     ) -> list[dict[str, Any]]:
         """Skriver en K20 per mall (bara `fore`) för de valda analyserna. Returnerar poster som `_skriv_fragor`."""
         kalla = self.kalla(projekt)
@@ -1255,7 +1479,7 @@ class KartverktygTjanst:
         for kort, analyser in urval.items():
             fraga_id = f"{LAGE_IDAG_PREFIX}{proj}-{kort}"
             fil = fragedir / f"{fraga_id}.json"
-            innehall = self._lage_k20(mallar[kort], fil, fraga_id, analyser, avtappning_mm_h)
+            innehall = self._lage_k20(mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn)
             fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
             poster.append(
                 {"mall": kort, "ref": self._ref_for(fil), "fraga_id": fraga_id, "analyser": analyser}
@@ -1267,9 +1491,10 @@ class KartverktygTjanst:
         projekt: str,
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
+        regn: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Planen för läget idag (bara `fore`): jobb, vad som finns i cachen och uppskattad tid."""
-        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h))
+        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h), _regn(regn))
         fragor = self._planposter(poster)
         tider = [f["uppskattad_tid_s"] for f in fragor]
         return {
@@ -1285,11 +1510,12 @@ class KartverktygTjanst:
         projekt: str,
         valda: Sequence[str],
         avtappning_mm_h: float | None = None,
+        regn: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Startar körningen av läget idag och sparar den som projektets egen (`projekt_id` på körningen,
         och `<projekt>/lage-idag.json` pekar ut den senaste per mall). Samma körkö, samma cache och
         samma roll (utredare) som övriga körningar; en pågående körning av samma fråga återanvänds."""
-        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h))
+        poster = self._skriv_lage_fragor(projekt, valda, _avtappning(avtappning_mm_h), _regn(regn))
         d = self._las_lage(projekt)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
         ut: list[dict[str, Any]] = []

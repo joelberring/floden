@@ -53,12 +53,21 @@ skalan går att läsa även utan färgseende (ljushet ändras monotont)."""
 _KLASSFARGER: tuple[str, ...] = ("#2e7d32", "#9ccc65", "#fdd835", "#fb8c00", "#c62828")
 MAX_KLASSER = 9
 _VATTEN_KLASSER: tuple[tuple[float, str], ...] = (
-    (0.02, "#e4edf6"),
-    (0.1, "#c9d9ea"),
-    (0.2, "#7fa3c8"),
-    (0.3, "#4f7daa"),
-    (0.5, "#2b5d8c"),
+    (0.02, "#cfe8ff"),
+    (0.1, "#7ec4f8"),
+    (0.2, "#2f8be6"),
+    (0.3, "#1a52b8"),
+    (0.5, "#182b7a"),
+    (1.0, "#3b1363"),
 )
+_VATTEN_ETIKETTER: dict[float, str] = {
+    0.02: "0,02–0,10 m · ytavrinning",
+    0.1: "0,10–0,20 m · märkbart vatten",
+    0.2: "0,20–0,30 m · svårframkomligt",
+    0.3: "0,30–0,50 m · ofarbart / risk",
+    0.5: "0,50–1,00 m · allvarligt djup",
+    1.0: "> 1,00 m · mycket djupt",
+}
 _SKILLNAD_MINSKNING = "#2b5d8c"
 _SKILLNAD_OKNING = "#b4462b"
 
@@ -435,7 +444,10 @@ def teckenforklaring(farg: str, lo: float, hi: float, troskel: float = 0.0) -> d
     if farg == "vatten":
         return {
             "typ": "klasser",
-            "klasser": [{"fran": g, "farg": f, "etikett": f"≥ {g:g}"} for g, f in _VATTEN_KLASSER],
+            "klasser": [
+                {"fran": g, "farg": f, "etikett": _VATTEN_ETIKETTER[g]}
+                for g, f in _VATTEN_KLASSER
+            ],
         }
     if farg == "skillnad":
         return {
