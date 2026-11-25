@@ -54,6 +54,7 @@ from webb.resultatlager import (
     MASKADE_ROLLER,
     LagerFel,
     Mosaik,
+    Utbredning,
     etikett_och_enhet,
     farg_for_roll,
     rita_bild,
@@ -607,7 +608,206 @@ class FragaTjanst:
             ),
             "antaganden": self._antaganden(k, s),
             "datatabeller": self._datatabeller(k, s),
+            "tidsserie_scenarier": self._tidsserie_scenarier(k, s),
         }
+
+    def _tidsserie_scenarier(self, k: Korning, s: dict[str, Any]) -> list[str]:
+        """Sorterad lista av scenario-id i körningen som har `tidsserie.json`."""
+        scenarier = {
+            str(j["scenario"])
+            for j in s.get("jobb", [])
+            if (self._jobbmapp(k, j) / "tidsserie.json").is_file()
+        }
+        return sorted(scenarier)
+
+    def _tidsserie_jobb(
+        self, k: Korning, s: dict[str, Any], scenario: str | None, filnamn: str
+    ) -> tuple[str, list[dict[str, Any]]]:
+        tillgangliga = self._tidsserie_scenarier(k, s)
+        if not tillgangliga:
+            raise FlodenWebbFel("Körningen har ingen dynamisk tidsserie.", status_kod=404)
+        if scenario is None or scenario == "":
+            sid = tillgangliga[0]
+        else:
+            sid = _kontrollera_id(scenario, "scenario")
+        jobb = [
+            j
+            for j in s.get("jobb", [])
+            if str(j["scenario"]) == sid and (self._jobbmapp(k, j) / filnamn).is_file()
+        ]
+        if not jobb:
+            raise FlodenWebbFel(
+                f"Scenario '{sid}' saknar dynamisk tidsserie i körningen.", status_kod=404
+            )
+        return sid, jobb
+
+    def _utbredning_for_jobb(self, k: Korning, jobb: list[dict[str, Any]]) -> dict[str, float]:
+        x_mins: list[float] = []
+        y_mins: list[float] = []
+        x_maxs: list[float] = []
+        y_maxs: list[float] = []
+        for j in jobb:
+            tif = self._jobbmapp(k, j) / "max_djup.tif"
+            if not tif.is_file():
+                continue
+            with rasterio.open(tif) as ds:
+                b = ds.bounds
+                x_mins.append(float(b.left))
+                y_mins.append(float(b.bottom))
+                x_maxs.append(float(b.right))
+                y_maxs.append(float(b.top))
+        if not x_mins:
+            raise FlodenWebbFel("Kunde inte läsa utbredning för tidsserien.", status_kod=500)
+        return {
+            "x_min": min(x_mins),
+            "y_min": min(y_mins),
+            "x_max": max(x_maxs),
+            "y_max": max(y_maxs),
+        }
+
+    def tidsserie(self, korning_id: str, scenario: str | None = None) -> dict[str, Any]:
+        """Returnerar `tidsserie.json` kompletterad med `utbredning` och `tidssteg`-länkar."""
+        k = self._hamta(korning_id)
+        s = self._sammanstallning(k)
+        sid, jobb = self._tidsserie_jobb(k, s, scenario, "tidsserie.json")
+        try:
+            delar = [
+                json.loads((self._jobbmapp(k, j) / "tidsserie.json").read_text(encoding="utf-8"))
+                for j in jobb
+            ]
+        except (OSError, ValueError) as exc:
+            raise FlodenWebbFel(f"Tidsserien kunde inte läsas: {exc}", status_kod=500) from exc
+        data: dict[str, Any] = dict(delar[0])
+        if len(delar) > 1:
+            # Flerrutskörning: aggregera ytor, volymer och maxdjup per samplad tidpunkt.
+            bas_punkter = [dict(p) for p in data.get("punkter", [])]
+            for extra in delar[1:]:
+                extra_punkter = extra.get("punkter", [])
+                for p0, p1 in zip(bas_punkter, extra_punkter, strict=False):
+                    p0["max_djup_m"] = round(
+                        max(float(p0["max_djup_m"]), float(p1["max_djup_m"])), 4
+                    )
+                    p0["vat_yta_01m_m2"] = round(
+                        float(p0["vat_yta_01m_m2"]) + float(p1["vat_yta_01m_m2"]), 2
+                    )
+                    p0["vat_yta_03m_m2"] = round(
+                        float(p0["vat_yta_03m_m2"]) + float(p1["vat_yta_03m_m2"]), 2
+                    )
+                    p0["volym_m3"] = round(float(p0["volym_m3"]) + float(p1["volym_m3"]), 3)
+                    p0["utflode_kum_m3"] = round(
+                        float(p0["utflode_kum_m3"]) + float(p1["utflode_kum_m3"]), 3
+                    )
+            data["punkter"] = bas_punkter
+        utbredning = self._utbredning_for_jobb(k, jobb)
+        tidssteg = [
+            {
+                "index": i,
+                "tid_min": float(t_min),
+                "png_url": f"/api/korningar/{korning_id}/tidssteg/{sid}/{i}.png",
+            }
+            for i, t_min in enumerate(data.get("tidssteg_tid_min", []))
+        ]
+        return {
+            **data,
+            "scenario": sid,
+            "utbredning": utbredning,
+            "tidssteg": tidssteg,
+        }
+
+    def tidssteg_png(self, korning_id: str, scenario: str, index: int) -> bytes:
+        """Renderar ett tidssteg ur `tidssteg.npz` som transparent vatten-PNG och cachar på disk."""
+        k = self._hamta(korning_id)
+        sid = _kontrollera_id(scenario, "scenario")
+        if index < 0:
+            raise FlodenWebbFel(f"Ogiltigt tidsstegsindex: {index}.", status_kod=400)
+        cachefil = k.mapp / "webb" / "tidssteg" / f"{sid}_{index}.png"
+        with self._lock:
+            if cachefil.is_file():
+                return cachefil.read_bytes()
+        s = self._sammanstallning(k)
+        _, jobb = self._tidsserie_jobb(k, s, sid, "tidssteg.npz")
+        delar: list[tuple[np.ndarray[Any, Any], float, float, float]] = []
+        px: float | None = None
+        for j in jobb:
+            jmapp = self._jobbmapp(k, j)
+            try:
+                with np.load(jmapp / "tidssteg.npz") as npz:
+                    stack = npz["djup_mm"]
+                    if index >= int(stack.shape[0]):
+                        max_idx = int(stack.shape[0]) - 1
+                        raise FlodenWebbFel(
+                            f"Tidsstegsindex {index} ligger utanför [0, {max_idx}].",
+                            status_kod=404,
+                        )
+                    djup_m = np.asarray(stack[index], dtype=np.float32) / 1000.0
+                    faktor = int(npz["nedsampling"]) if "nedsampling" in npz else 1
+                with rasterio.open(jmapp / "max_djup.tif") as ds:
+                    b = ds.bounds
+                    cell = float(ds.transform.a) * max(1, faktor)
+                    x_min, y_max = float(b.left), float(b.top)
+            except FlodenWebbFel:
+                raise
+            except (OSError, ValueError, KeyError, rasterio.errors.RasterioError) as exc:
+                raise FlodenWebbFel(f"Tidssteget kunde inte läsas: {exc}", status_kod=500) from exc
+            if px is None:
+                px = cell
+            elif abs(px - cell) > 1e-6:
+                raise FlodenWebbFel("Tidsstegen har olika upplösning mellan rutor.", status_kod=500)
+            delar.append((djup_m, x_min, y_max, cell))
+        assert px is not None
+        if len(delar) == 1:
+            arr, x0, y1, _ = delar[0]
+            h, b_px = arr.shape
+            utbredning = Utbredning(x0, y1 - h * px, x0 + b_px * px, y1)
+            mosaik = Mosaik(arr, utbredning, px)
+        else:
+            x0 = min(x for _, x, _, _ in delar)
+            y1 = max(y for _, _, y, _ in delar)
+            x1 = max(x + a.shape[1] * px for a, x, _, _ in delar)
+            y0 = min(y - a.shape[0] * px for a, _, y, _ in delar)
+            bredd = round((x1 - x0) / px)
+            hojd = round((y1 - y0) / px)
+            ut = np.full((hojd, bredd), np.nan, dtype=np.float32)
+            djupast = np.full((hojd, bredd), -np.inf, dtype=np.float32)
+            for arr, x, y, _ in delar:
+                c0i = round((x - x0) / px)
+                r0i = round((y1 - y) / px)
+                h, b_px = arr.shape
+                rr = np.arange(h, dtype=np.float32)
+                cc = np.arange(b_px, dtype=np.float32)
+                avst = np.minimum(
+                    np.minimum(rr[:, None] + 0.5, h - rr[:, None] - 0.5),
+                    np.minimum(cc[None, :] + 0.5, b_px - cc[None, :] - 0.5),
+                )
+                fonster = (slice(r0i, r0i + h), slice(c0i, c0i + b_px))
+                battre = avst > djupast[fonster]
+                ut[fonster] = np.where(battre, arr, ut[fonster])
+                djupast[fonster] = np.where(battre, avst, djupast[fonster])
+            mosaik = Mosaik(ut, Utbredning(x0, y0, x1, y1), px)
+
+        tak: Any = None
+        rutor_per_scenario, _ = self._scenariorutor(k, s)
+        if rutor_per_scenario is not None:
+            mappar = list(rutor_per_scenario.get(sid, {}).values())
+            if mappar:
+                try:
+                    tak = tak_mask(mosaik, mappar, takkalla_for_roll("max_djup"))
+                except (LagerFel, OSError, ValueError):
+                    tak = None
+        har_tak = tak is not None and bool(tak.any())
+        bild = rita_bild(
+            mosaik.raster,
+            "vatten",
+            lo=0.0,
+            hi=1.0,
+            dold=tak if har_tak else None,
+        )
+        with self._lock:
+            cachefil.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cachefil.with_suffix(".png.tmp")
+            tmp.write_bytes(bild.png)
+            tmp.replace(cachefil)
+        return bild.png
 
     @staticmethod
     def _markera_projektbyggnader(

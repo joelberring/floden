@@ -44,7 +44,13 @@ def test_dynamik_exporterar_ankomsttider_som_cog_med_nan(tmp_path: Path) -> None
     ruta_mapp = _skapa_sank_ruta(tmp_path / "k1")
     los = hamta_losare("vatten.dynamik")
     assert isinstance(los, Dynamik)
-    assert los.utdataroller == ("max_djup", "tid_till_0_1m", "tid_till_0_2m")
+    assert los.utdataroller == (
+        "max_djup",
+        "tid_till_0_1m",
+        "tid_till_0_2m",
+        "tidsserie",
+        "tidssteg",
+    )
 
     tider = [0.0, 600.0]
     mm_h = [120.0, 120.0]  # 20 mm över hela 900 m² -> räcker gott till > 0.25 m i skålens mitt
@@ -107,10 +113,16 @@ def test_dynamik_exporterar_ankomsttider_som_cog_med_nan(tmp_path: Path) -> None
     # Kontrollera run.json och utdata.json
     nyckel = res.sammanstallning["jobb"][0]["nyckel"]
     utdata = las_jobbutdata(cache, nyckel)
-    assert set(utdata["filer"]) == {"max_djup", "tid_till_0_1m", "tid_till_0_2m"}
+    assert set(utdata["filer"]) == {
+        "max_djup",
+        "tid_till_0_1m",
+        "tid_till_0_2m",
+        "tidsserie",
+        "tidssteg",
+    }
     run = json.loads((ut_mapp / "run.json").read_text(encoding="utf-8"))
     ut_roller = {u["roll"] for u in run["utdata"]}
-    assert {"max_djup", "tid_till_0_1m", "tid_till_0_2m"} <= ut_roller
+    assert {"max_djup", "tid_till_0_1m", "tid_till_0_2m", "tidsserie", "tidssteg"} <= ut_roller
 
 
 def test_bakatkompatibilitet_for_gamla_korningar_utan_ankomsttider(tmp_path: Path) -> None:

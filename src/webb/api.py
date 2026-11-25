@@ -2683,6 +2683,20 @@ class FlodenApiApp:
             return _json_svar(200, self.fragor.korning_status(delar[0]))
         if verb == "GET" and len(delar) == 2 and delar[1] == "resultat":
             return _json_svar(200, self.fragor.resultat(delar[0]))
+        if verb == "GET" and len(delar) == 2 and delar[1] == "tidsserie":
+            scenario = query.get("scenario", [""])[0] or None
+            return _json_svar(200, self.fragor.tidsserie(delar[0], scenario))
+        if (
+            verb == "GET"
+            and len(delar) == 4
+            and delar[1] == "tidssteg"
+            and delar[3].endswith(".png")
+        ):
+            raw_idx = delar[3].removesuffix(".png")
+            if not raw_idx.isdigit():
+                raise FlodenWebbFel(f"Ogiltigt tidsstegsindex: {raw_idx!r}.", status_kod=400)
+            png = self.fragor.tidssteg_png(delar[0], delar[2], int(raw_idx))
+            return _binart_svar(200, png, "image/png")
         if verb == "GET" and len(delar) == 2 and delar[1] == "marksiffror":
             return _json_svar(
                 200, self.projekt.marksiffror_for(delar[0], query.get("lager", [""])[0])
