@@ -120,6 +120,9 @@ select {
   font-size: 14px;
   cursor: pointer;
 }
+.knapp:hover:not(:disabled) {
+  background: var(--f-yta-dampad);
+}
 .knapp + .knapp {
   margin-left: -1px;
 }
@@ -128,7 +131,7 @@ select {
   border-color: var(--f-accent);
   color: var(--f-yta);
 }
-.knapp-svart:hover {
+.knapp-svart:hover:not(:disabled) {
   color: var(--f-yta);
   background: var(--f-accent-hover);
 }
@@ -1287,10 +1290,339 @@ details.panel-sektion > summary h2 {
   background: var(--f-text-inaktiv);
 }
 .rapport-status.ok::before {
-  background: #2e7d32;
+  background: var(--f-text);
 }
 .rapport-status.fel::before {
   background: var(--f-varning);
+}
+
+/* ---------- Nycklar (#/nycklar): kompakt, tät svartvit tabell- och formulärlayout ---------- */
+.innehall.nycklar-sida {
+  gap: 20px;
+  padding-top: 20px;
+  padding-bottom: 36px;
+}
+.nycklar-huvud {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nycklar-huvud .sidrubrik {
+  font-size: clamp(26px, 3.2vw, 36px);
+}
+.nycklar-ingress {
+  margin: 0;
+  max-width: 72ch;
+  font-size: 14px;
+  line-height: 1.45;
+  color: var(--f-text-sekundar);
+}
+.nyckel-avsnitt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nyckel-avsnitt .sektionsrad {
+  padding: 6px 0;
+}
+.nyckel-ingress {
+  margin: 0;
+  max-width: 78ch;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--f-text-sekundar);
+}
+.nyckel-status {
+  font-size: 12px;
+  color: var(--f-text-dampad);
+  font-variant-numeric: tabular-nums;
+}
+.nyckel-notis {
+  margin: 2px 0;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+/* Samlad AI-nyckelsektion (Claude, Google Gemini, OpenAI) */
+.ai-nyckel-lista {
+  display: flex;
+  flex-direction: column;
+}
+.ai-nyckel-rad {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.5fr);
+  gap: 8px 16px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--f-linje);
+}
+.ai-nyckel-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ai-primar-val {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+}
+.ai-primar-val input[type="radio"] {
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  accent-color: var(--f-text);
+}
+.ai-primar-val input[type="radio"]:disabled {
+  cursor: not-allowed;
+}
+.ai-primar-marke {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--f-linje-stark);
+  background: var(--f-text);
+  color: var(--f-yta);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+.ai-nyckel-status {
+  padding-left: 23px;
+  font-size: 12px;
+  color: var(--f-text-dampad);
+  font-variant-numeric: tabular-nums;
+}
+.ai-nyckel-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+.ai-nyckel-form .kontroll-kompakt {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.ai-nyckel-knappar {
+  display: inline-flex;
+  flex: none;
+}
+
+.kontroll-kompakt {
+  min-height: 36px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.knapp-kompakt {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+/* Kompakt formulär för Lantmäteriet m.fl. */
+.nyckel-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 2px 0 0;
+}
+.nyckel-falt-rutnat {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px 14px;
+  max-width: 720px;
+}
+.nyckel-falt {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--f-text-sekundar);
+}
+.val-grupp-kompakt {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+  font-size: 13px;
+}
+.val-grupp-kompakt legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--f-text-dampad);
+}
+.val-rad {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.val-rad input[type="radio"] {
+  margin: 0;
+  accent-color: var(--f-text);
+}
+
+/* Hopfällbar Geotorget-produkttabell */
+.nyckel-detaljer {
+  margin-top: 4px;
+  border-top: 1px solid var(--f-linje);
+  padding-top: 6px;
+  font-size: 13px;
+}
+.nyckel-detaljer > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--f-text);
+}
+.nyckel-detaljer > summary::-webkit-details-marker {
+  display: none;
+}
+.nyckel-detaljer > summary::before {
+  content: "+";
+  display: inline-block;
+  width: 14px;
+  font-family: var(--f-font-mono);
+}
+.nyckel-detaljer[open] > summary::before {
+  content: "−";
+}
+.nyckel-detaljer-inre {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 0 4px;
+}
+
+/* Kompakt MCP-sektion */
+.mcp-rad {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.mcp-segment {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--f-linje-stark);
+}
+.mcp-segment-knapp {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-right: 1px solid var(--f-linje);
+  background: var(--f-yta);
+  color: var(--f-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.mcp-segment-knapp:last-child {
+  border-right: none;
+}
+.mcp-segment-knapp:hover {
+  background: var(--f-yta-dampad);
+}
+.mcp-segment-knapp.aktiv {
+  background: var(--f-text);
+  color: var(--f-yta);
+  font-weight: 500;
+}
+.mcp-beskrivning {
+  font-size: 13px;
+  color: var(--f-text-dampad);
+}
+.mcp-kodblock {
+  display: flex;
+  align-items: stretch;
+  background: var(--f-yta-dampad);
+  border: 1px solid var(--f-linje);
+}
+.mcp-kodblock .kodruta {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+}
+.mcp-kopiera {
+  flex: none;
+  border: 0;
+  border-left: 1px solid var(--f-linje);
+  background: var(--f-yta);
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mcp-kopiera:hover {
+  background: var(--f-text);
+  color: var(--f-yta);
+}
+.mcp-skapa-rad {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+}
+.mcp-skapa-rad .kontroll-kompakt {
+  flex: 1 1 240px;
+  max-width: 440px;
+}
+
+/* Tät datatabell på kontosidan */
+.data-tabell.kompakt {
+  min-width: 460px;
+}
+.data-tabell.kompakt thead th {
+  padding: 8px 10px;
+}
+.data-tabell.kompakt td {
+  padding: 7px 10px;
+  font-size: 13px;
+  vertical-align: middle;
+}
+.data-tabell.kompakt th:first-child,
+.data-tabell.kompakt td:first-child {
+  padding-left: 0;
+}
+.data-tabell.kompakt .knapp-kompakt {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .ai-nyckel-rad {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .kontroll-kompakt,
+  .knapp-kompakt,
+  .mcp-segment-knapp,
+  .mcp-kopiera {
+    min-height: var(--f-mal-yta);
+    height: auto;
+  }
 }
 
 /* ---------- Inloggningssidan (utloggad på servern): målningen över hela fönstret ---------- */

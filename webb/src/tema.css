@@ -1,33 +1,31 @@
 /*
  * Flodens tema – designtoken som CSS-variabler.
- * Varsam nordisk palett inspirerad av framsidesmålningen: varm linnebotten, djup skogsbläck,
- * gran/mossa som lugn accent, bäck-salvia, solockra och terrakotta. Alla textkombinationer
- * uppfyller WCAG AA (>= 4,5:1).
+ * Stramt svartvitt arkitektutseende: vitt (#ffffff), svart (#111111), neutrala gråtoner,
+ * hårfina linjer och raka hörn (border-radius: 0). Färg används bara i kartdata samt diskret
+ * varningsröd vid fel. Alla textkombinationer uppfyller WCAG AA (>= 4,5:1).
  * Inga externa typsnittsanrop (uppfyller löftet om att inget skickas till tredje part).
  */
 
 :root {
-  /* Grund */
-  --f-bakgrund: #f7f5ee;
-  --f-yta: #fcfbf7;
-  --f-yta-dampad: #ece9de;
-  --f-text: #1d241c;
-  --f-text-sekundar: #3b4538;
-  --f-text-dampad: #5b6557; /* 5,5:1 mot #f7f5ee, 4,9:1 mot #ece9de */
-  --f-text-inaktiv: #656e61; /* 4,7:1 mot #f7f5ee */
-  --f-linje: #d6d2c4;
-  --f-linje-stark: #1d241c;
-  --f-linje-svag: #e6e2d6;
-  --f-karta-bas: #eae6da;
+  /* Grund (svartvitt UI-krom) */
+  --f-bakgrund: #ffffff;
+  --f-yta: #ffffff;
+  --f-yta-dampad: #f4f4f4;
+  --f-text: #111111;
+  --f-text-sekundar: #333333;
+  --f-text-dampad: #595959; /* 7,0:1 mot #ffffff, 6,3:1 mot #f4f4f4 */
+  --f-text-inaktiv: #707070; /* 5,0:1 mot #ffffff, 4,5:1 mot #f4f4f4 */
+  --f-linje: #d9d9d9;
+  --f-linje-stark: #111111;
+  --f-linje-svag: #ededed;
+  --f-karta-bas: #efefef;
 
-  /* Varsamma accenter ur målningen */
-  --f-accent: #2f4a2c; /* djup nordisk gran/mossa: 8,8:1 mot #f7f5ee */
-  --f-accent-hover: #243a22;
-  --f-accent-yta: #e3ece4;
-  --f-salvia: #6f9e84;
-  --f-ockra: #bfa942;
+  /* UI-accent (svart/grå – färg hör bara hemma i kartdata) */
+  --f-accent: #111111;
+  --f-accent-hover: #2b2b2b;
+  --f-accent-yta: #f2f2f2;
 
-  /* Kartdata (harmoniserade med rapportfigurerna) */
+  /* Kartdata (endast här finns färg) */
   --f-vatten-1: #dcebe6; /* 0,1–0,2 m */
   --f-vatten-2: #8fb9ac; /* 0,2–0,3 m */
   --f-vatten-3: #4a7d8c; /* 0,3–0,5 m */
@@ -37,10 +35,10 @@
   --f-sol: #d9cf6a;
   --f-buller: #8c3b2b;
   --f-buller-ljus: #b86a4b;
-  --f-skugga: #b8b5aa;
+  --f-skugga: #bdbdbd;
   --f-djupare: #b86a4b;
   --f-grundare: #8fb9ac;
-  --f-varning: #9e432c; /* 6,6:1 mot #f7f5ee */
+  --f-varning: #b42318; /* 5,9:1 mot #ffffff, 5,3:1 mot #f4f4f4 */
 
   /* Typografi */
   --f-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;

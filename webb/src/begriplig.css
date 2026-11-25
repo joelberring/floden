@@ -414,11 +414,13 @@
 
 /* Kommandorutan på sidan Nycklar (MCP-token): bryts i stället för att ge sidled. */
 .kodruta {
-  margin: 0.5rem 0 0.75rem;
-  padding: 0.65rem 0.85rem;
+  margin: 0.4rem 0 0.6rem;
+  padding: 0.55rem 0.75rem;
   background: var(--f-yta-dampad);
   border: 1px solid var(--f-linje);
+  font-family: var(--f-font-mono);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
   font-size: 0.85rem;
+  line-height: 1.45;
 }
