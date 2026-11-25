@@ -13,6 +13,7 @@ from markmodell.rutnat import Ruta
 
 STANDARDHOJDER_M: dict[str, float] = {
     "kantsten": 0.12,
+    "sankt_kantsten": 0.02,
     "mur": 1.0,
     "stodmur": 1.5,
     "staket": 0.15,
@@ -22,6 +23,8 @@ STANDARDHOJDER_M: dict[str, float] = {
 # Alias med svenskt tecken från docs/DATAKONTRAKT.md mappas deterministiskt till kanonisk nyckel.
 _TYP_ALIAS: dict[str, str] = {
     "kantsten": "kantsten",
+    "sankt_kantsten": "sankt_kantsten",
+    "sänkt_kantsten": "sankt_kantsten",
     "mur": "mur",
     "stodmur": "stodmur",
     "stödmur": "stodmur",
@@ -49,11 +52,20 @@ def normalisera_brytlinjetyp(typ: str) -> str:
 
 @dataclass(frozen=True)
 class Brytlinje:
-    """En brytlinje som påverkar vattenflöden längs kantsten, mur eller bankkant."""
+    """En brytlinje som påverkar vattenflöden längs kantsten, mur eller bankkant.
+
+    Valfria 3D-fält (`z_kron_rh2000`, `z_botten_rh2000`, `tvarfall`, `kalla`, `osakerhet_m`)
+    är bakåtkompatibla tillägg till K1 `brytlinjer.gpkg`.
+    """
 
     typ: str
     hojd_m: float
     punkter: tuple[tuple[float, float], ...]
+    z_kron_rh2000: tuple[float, ...] | None = None
+    z_botten_rh2000: tuple[float, ...] | None = None
+    tvarfall: float | None = None
+    kalla: str = "okand"
+    osakerhet_m: float | None = None
 
     def __post_init__(self) -> None:
         kanonisk_typ = normalisera_brytlinjetyp(self.typ)
@@ -72,6 +84,29 @@ class Brytlinje:
                 raise BrytlinjeFel(f"Ogiltig koordinat i brytlinje: {p!r}")
             rensade.append((e, n))
         object.__setattr__(self, "punkter", tuple(rensade))
+
+        for falt_namn in ("z_kron_rh2000", "z_botten_rh2000"):
+            z_seq = getattr(self, falt_namn)
+            if z_seq is not None:
+                if len(z_seq) != len(rensade):
+                    raise BrytlinjeFel(
+                        f"{falt_namn} måste ha samma längd som punkter "
+                        f"({len(z_seq)} != {len(rensade)})."
+                    )
+                z_ren = tuple(float(z) for z in z_seq)
+                if not all(math.isfinite(z) for z in z_ren):
+                    raise BrytlinjeFel(f"{falt_namn} innehåller icke-ändliga värden.")
+                object.__setattr__(self, falt_namn, z_ren)
+        if self.tvarfall is not None:
+            tf = float(self.tvarfall)
+            if not math.isfinite(tf) or tf < 0.0:
+                raise BrytlinjeFel(f"Ogiltigt tvärfall: {self.tvarfall}")
+            object.__setattr__(self, "tvarfall", tf)
+        if self.osakerhet_m is not None:
+            osak = float(self.osakerhet_m)
+            if not math.isfinite(osak) or osak < 0.0:
+                raise BrytlinjeFel(f"Ogiltig osäkerhet: {self.osakerhet_m}")
+            object.__setattr__(self, "osakerhet_m", osak)
 
 
 @dataclass(frozen=True)
@@ -212,7 +247,16 @@ def fast_losa_andar(
             nya_punkter_per_linje[linje_idx][p_idx] = mal
 
     resultat = [
-        Brytlinje(typ=linje.typ, hojd_m=linje.hojd_m, punkter=tuple(nya_p))
+        Brytlinje(
+            typ=linje.typ,
+            hojd_m=linje.hojd_m,
+            punkter=tuple(nya_p),
+            z_kron_rh2000=linje.z_kron_rh2000,
+            z_botten_rh2000=linje.z_botten_rh2000,
+            tvarfall=linje.tvarfall,
+            kalla=linje.kalla,
+            osakerhet_m=linje.osakerhet_m,
+        )
         for linje, nya_p in zip(linjer, nya_punkter_per_linje, strict=True)
     ]
     losa_efter = _rakna_losa_andar(resultat)
