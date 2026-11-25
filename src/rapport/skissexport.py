@@ -60,7 +60,8 @@ _UTSTICK_MM = 30.0
 _HEL_MM = 210.0 - _MARGINAL_V_MM - _MARGINAL_H_MM  # 160 mm
 _BREDD_MM = _HEL_MM - _UTSTICK_MM  # 130 mm, textspalten
 _RUBRIKFARG = "000000"
-_FIGUR_MM = 116.0
+_FIGUR_MM = 126.0
+_FIGUR_MAX_HOJD_MM = 175.0
 
 
 class ExportStoppad(Exception):
@@ -838,7 +839,10 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         elif isinstance(b, Figur):
             fil = Path(rapportmapp) / b.fil
             img = Image(str(fil))
-            skala = (_FIGUR_MM * mm) / img.imageWidth
+            skala = min(
+                (_FIGUR_MM * mm) / img.imageWidth,
+                (_FIGUR_MAX_HOJD_MM * mm) / img.imageHeight,
+            )
             img.drawWidth = img.imageWidth * skala
             img.drawHeight = img.imageHeight * skala
             img.hAlign = "LEFT"
