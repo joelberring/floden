@@ -2,6 +2,13 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-25 – Vattenytor ur baskartans strandlinjer (grenen `goteborg-vattenytor`) (agent)
+Gjort (inga kontraktsändringar, `BESLUT.md` orörd, bara öppna data/CC0):
+- `[filpaket.baskarta.vatten]` (valfritt, strikt validerat i `src/kommuner/konfig.py`: `lager_monster`, `objekt_falt`, `objekt_monster`, `marginal_m` (0,2), `max_avstand_m` (2,0)); aktiverat i `data/kommuner/goteborg.toml` (`hydrografi_l`, `typ` Strandlinje).
+- `src/kommuner/vattenytor.py`: läser strandlinjer med z, varje cell får närmaste förtätade strandpunkts nivå, celler minst marginalen under nivån är kandidater, och bara 4-sammanhängande kandidatytor med en cell nära en strandlinje blir vatten (flood fill från stranden). Markhöjd = nivån, markslag 8 (via `markslag_grund`), `k1_filpaket.py`, `geografi/mappa.py` (strandlinjer sparas som `radata/kommun/strandlinjer.gpkg`) och `kommuner/projekt.py` (skyfallsrutan får samma vattenytor).
+- Varning i manifestet: "N m² vattenyta ur strandlinjer, nivå X–Y m RH 2000" + anmärkning att lösaren saknar fast randvillkor för vattennivå/utlopp (plan yta + markslag 8). `forberakningar.vattenytor` i manifestet.
+Mätt: `tests/kommuner/test_vattenytor.py` (syntetisk kanal botten -5, strand +1: kanalen plan på +1,0 med markslag 8, land orört, landssänka -2 som inte når strandlinje fylls inte, config-validering). `pytest tests/kommuner`: 83 passed; ruff och mypy: 0 fel. Befintligt test justerat: baskartan hämtas nu även vid `--byggnader-kalla lantmateriet` (för strandlinjerna).
+Öppet: nivån är närmaste strandlinjes z per cell (inte ett medel per vattenyta), så varierande z längs strandlinjerna (Haga: 0–2,6 m) kan ge steg i ytan: kontrollera mot riktig data. Ej provkört mot riktiga baskartan (ingen nätåtkomst här). Göteborg måste mappas om som ny version.
 ## 2026-11-25 – 3D-baskarta, täta kantstenar och 1D-rännstenslänk (Steg 1–4, grenen `baskarta-3d-kantsten`) (agent)
 Gjort (grenen `baskarta-3d-kantsten`; inga K1/K2-kontraktsbrott, `BESLUT.md` orörd, ingen icke-öppen baskarta incheckad):
 - **Steg 1 – 3D-baskarta och DEM-sammanslagning (`src/markmodell/baskarta_3d.py`, `src/markmodell/brytlinjer.py`, `src/markmodell/k1_skrivare.py`, `src/testsvit/k1_io.py`, `tests/markmodell/test_baskarta_3d.py`):** Inläsning av `LineStringZ`/`MultiLineStringZ` (`kantsten`, `sankt_kantsten`, `mur`, `stodmur`, `gata_mittlinje`, `rannsten_botten`) i valfri SWEREF 99-zon → EPSG:3011 / RH 2000; bakåtkompatibla 3D-kolumner (`z_kron_rh2000`, `z_botten_rh2000`, `tvarfall`, `kalla`, `osakerhet_m`) i `brytlinjer.gpkg`; 2D-linjer utan Z markeras explicit med `kalla="typvarde"` och `osakerhet_m=0,10 m`; medel- och maxskillnad mot DEM loggas i `run.json`.

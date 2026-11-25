@@ -191,7 +191,7 @@ def test_byggnader_ur_lantmateriet_med_kommunens_hojdmodell(lm: FalskLm, tmp_pat
     lm.vektor_features = [_lm_byggnad_feature(lm)]
     res = mappa(v, byggnader_kalla="lantmateriet", filhamtare=v["fh"])
     assert res.nytt
-    assert v["fh"].anrop == [HOJD_URL]  # baskartan hämtades inte
+    assert v["fh"].anrop == [HOJD_URL, BASK_URL]  # baskartan hämtas bara för strandlinjerna (vatten), inte för byggnader
     assert lm.antal("POST", "/stac-vektor") >= 1 and lm.antal("POST", "/stac-hojd") == 0  # ingen laser
     d, _ = las_manifest(v["rot"] / "geo", "goteborg-test@v1")
     assert d["parametrar"]["hojdkalla"] == "filpaket" and d["parametrar"]["byggnadskalla"] == "lantmateriet"

@@ -81,6 +81,18 @@ objekt_monster = "(?i)^tak"
 licens = "CC0-1.0"
 licens_anmarkning = "Göteborgs Stads öppna baskarta (CC0), filpaket baskarta_shp_v2.zip. Takkonturernas höjd (z, RH 2000) är byggnadens takhöjd; kontrollera mot data.goteborg.se."
 
+# Vattenytor ur strandlinjer (valfritt): höjdmodellen innehåller bottnen i kanaler (Rosenlundskanalen ned till
+# -7 m RH 2000), vilket skyfallet fyller som en grop. Lagret hydrografi_l (PolylineZ) har typ Strandlinje med z =
+# vattenytans nivå. Celler som ligger minst marginal_m under närmaste strandlinjes nivå och som via en
+# sammanhängande yta når en strandlinje (högst max_avstand_m bort) sätts till den nivån, med markslag vatten (8).
+# En sänka på land som inte når någon strandlinje berörs inte. Se docs/DRIFT.md.
+[filpaket.baskarta.vatten]
+lager_monster = "(?i)^hydrografi_l$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^strandlinje"
+marginal_m = 0.2
+max_avstand_m = 2.0
+
 [filpaket.hojdmodell]
 urlar = []
 # OVERIFIERAD gissning (efter mönstret för ortofoto): sidan listar .zip-paketen. Stämmer den inte, ange

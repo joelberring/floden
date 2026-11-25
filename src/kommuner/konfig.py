@@ -95,6 +95,19 @@ class HojdKonfig:
 
 
 @dataclass(frozen=True)
+class VattenKonfig:
+    """Vattenytor ur baskartans strandlinjer (`[filpaket.baskarta.vatten]`): kommunens höjdmodell innehåller
+    ofta bottnen i kanaler och sjöar, så celler under strandlinjens nivå som når strandlinjen sätts till
+    vattennivån (plan yta, markslag vatten)."""
+
+    lager_monster: str      # lagernamn (uttryck), t.ex. "(?i)^hydrografi_l$"
+    objekt_falt: str        # attribut som väljer strandlinjer, t.ex. "typ"
+    objekt_monster: str     # uttryck mot objekt_falt, t.ex. "(?i)^strandlinje"
+    marginal_m: float = 0.2      # cellen ska ligga minst så här mycket under strandlinjens nivå
+    max_avstand_m: float = 2.0   # cellen (frön) ska ligga högst så här långt från en strandlinje
+
+
+@dataclass(frozen=True)
 class PaketKalla:
     """Ett eller flera ZIP-paket på kommunens öppna datasida."""
 
@@ -106,6 +119,7 @@ class PaketKalla:
     licens_anmarkning: str
     objekt_falt: str = ""   # bara baskartan (GeoPackage/Shapefile): attribut som väljer objekt, t.ex. "typ"
     objekt_monster: str = ""  # uttryck mot objekt_falt, t.ex. "(?i)^tak"; tomt = alla objekt i lagret
+    vatten: VattenKonfig | None = None  # bara baskartan: strandlinjer som vattenytor (valfritt)
 
 
 @dataclass(frozen=True)
@@ -372,7 +386,10 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
                 raise KommunKonfigFel(f"{var} ska vara en tabell.")
             _stram(
                 t, var,
-                ("urlar", "index_url", "epsg", "lager_monster", "licens", "licens_anmarkning", "objekt_falt", "objekt_monster"),
+                (
+                    "urlar", "index_url", "epsg", "lager_monster", "licens", "licens_anmarkning", "objekt_falt",
+                    "objekt_monster", *(("vatten",) if med_lager else ()),
+                ),
             )  # fmt: skip
             urlar = _textlista(t, "urlar", var)
             index_url = _text(t, "index_url", var, tom_ok=True)
@@ -393,11 +410,29 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
                     re.compile(objekt_monster)
                 except re.error as exc:
                     raise KommunKonfigFel(f"{var}: 'objekt_monster' är inte ett giltigt uttryck: {exc}") from exc
+            vatten: VattenKonfig | None = None
+            if med_lager and t.get("vatten") is not None:
+                vt = t["vatten"]
+                vvar = f"{var}.vatten"
+                if not isinstance(vt, Mapping):
+                    raise KommunKonfigFel(f"{vvar} ska vara en tabell.")
+                _stram(vt, vvar, ("lager_monster", "objekt_falt", "objekt_monster", "marginal_m", "max_avstand_m"))
+                vm = {k: _text(vt, k, vvar) for k in ("lager_monster", "objekt_falt", "objekt_monster")}
+                for k in ("lager_monster", "objekt_monster"):
+                    try:
+                        re.compile(vm[k])
+                    except re.error as exc:
+                        raise KommunKonfigFel(f"{vvar}: '{k}' är inte ett giltigt uttryck: {exc}") from exc
+                vatten = VattenKonfig(
+                    **vm,
+                    marginal_m=_tal(vt, "marginal_m", vvar) if "marginal_m" in vt else 0.2,
+                    max_avstand_m=_tal(vt, "max_avstand_m", vvar, minst=0.1) if "max_avstand_m" in vt else 2.0,
+                )  # fmt: skip
             return PaketKalla(
                 urlar=urlar, index_url=index_url, epsg=int(_tal(t, "epsg", var, minst=1.0)),
                 lager_monster=monster_p, licens=_text(t, "licens", var),
                 licens_anmarkning=_text(t, "licens_anmarkning", var),
-                objekt_falt=objekt_falt, objekt_monster=objekt_monster,
+                objekt_falt=objekt_falt, objekt_monster=objekt_monster, vatten=vatten,
             )  # fmt: skip
 
         filpaket = FilpaketKonfig(

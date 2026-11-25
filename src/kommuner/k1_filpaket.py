@@ -14,11 +14,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
 from gemensamt.hash import sha256_fil
 from kommuner.filpaket import Filpaket
 from kommuner.hojdmodell import Hojdmodell
+from kommuner.vattenytor import Linje, vattenytor_i_ruta
 from lantmateriet.omrade import Omrade, rutor_for_omrade
 from markmodell.byggnadskallor import las_byggnadskalla
+from markmodell.hinder_oppningar import HARDGJORT, VATTEN
 from markmodell.pipeline import PipelineFel, bygg_markmodell_ruta
 from markmodell.recept import KallPost
 from markmodell.rutnat import Ruta
@@ -29,6 +33,8 @@ class FilpaketByggResultat:
     ut: Path
     rutor: list[str] = field(default_factory=list)
     varningar: list[str] = field(default_factory=list)
+    vatten_m2: float = 0.0
+    vatten_niva_m: tuple[float, float] | None = None
 
 
 def bygg_omrade_filpaket(
@@ -43,6 +49,9 @@ def bygg_omrade_filpaket(
     ruta_storlek_m: float = 500.0,
     en_ruta: bool = False,
     skriv: Callable[[str], None] = print,
+    strandlinjer: Sequence[Linje] = (),
+    vatten_marginal_m: float = 0.2,
+    vatten_max_avstand_m: float = 2.0,
 ) -> FilpaketByggResultat:
     res = FilpaketByggResultat(ut=ut)
     kandidater = []
@@ -84,6 +93,24 @@ def bygg_omrade_filpaket(
             res.varningar.append(f"{ruta.namn}: {exc}")
             continue
         res.varningar.extend(v)
+        slag_grund = None
+        if strandlinjer:
+            vmask, vniva = vattenytor_i_ruta(
+                z, ruta, strandlinjer, marginal_m=vatten_marginal_m, max_avstand_m=vatten_max_avstand_m
+            )
+            if vmask.any():
+                z = np.array(z, dtype=np.float32, copy=True)
+                z[vmask] = vniva[vmask]
+                slag_grund = np.where(vmask, VATTEN, HARDGJORT).astype(np.uint8)
+                # Bara rutans inre yta räknas (överlappet ingår i grannen).
+                o = int(round(ruta.overlapp_m / ruta.upplosning_m))
+                inre = vmask[o : vmask.shape[0] - o, o : vmask.shape[1] - o] if o else vmask
+                inre_niva = vniva[o : vniva.shape[0] - o, o : vniva.shape[1] - o] if o else vniva
+                res.vatten_m2 += float(inre.sum()) * ruta.upplosning_m**2
+                if inre.any():
+                    lo, hi = float(np.nanmin(inre_niva[inre])), float(np.nanmax(inre_niva[inre]))
+                    a, b = res.vatten_niva_m or (lo, hi)
+                    res.vatten_niva_m = (min(a, lo), max(b, hi))
         kallor = [
             KallPost("omrade", omrade.fil.name, omrade.sha256),
             *(KallPost("hojdmodell_filpaket", p.namn, p.sha256) for p in hojd_paket),
@@ -96,11 +123,22 @@ def bygg_omrade_filpaket(
         ]
         rr = bygg_markmodell_ruta(
             ruta, ut, grund_z=z, byggnadskandidater=ruta_kand,
-            byggnadshojd_fran_laser=False, extra_kallor=kallor,
+            byggnadshojd_fran_laser=False, extra_kallor=kallor, markslag_grund=slag_grund,
         )  # fmt: skip
         res.varningar.extend(f"{ruta.namn}: {w}" for w in rr.varningar)
         skriv(f"{ruta.namn}: {len(ruta_kand)} byggnader")
         res.rutor.append(ruta.namn)
+    if strandlinjer:
+        if res.vatten_niva_m is not None:
+            lo, hi = res.vatten_niva_m
+            res.varningar.append(
+                f"{res.vatten_m2:.0f} m² vattenyta ur strandlinjer, nivå {lo:.1f}–{hi:.1f} m RH 2000. Ytan är plan "
+                "(nivå = närmaste strandlinjes z) med markslag vatten; lösaren har inget fast randvillkor för "
+                "vattennivå eller utlopp, så regn på ytan stannar på ytan."
+            )
+        else:
+            res.varningar.append("Strandlinjer lästes men inga celler under strandnivån nådde en strandlinje: inga vattenytor.")
+        skriv(res.varningar[-1])
     if not res.rutor:
         raise PipelineFel("Inga rutor byggdes: täcker höjdmodellen området? Se varningarna.")
     return res
