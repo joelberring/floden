@@ -8,6 +8,7 @@ Gjort (grenen `baskarta-3d-kantsten`; inga K1/K2-kontraktsbrott, `BESLUT.md` or�
 - **Steg 2 – Täta 3D-kantbarriärer (`src/sankgraf/hierarki.py`, `tests/tvad/test_kantbarriar_sned.py`):** `_berakna_kantbarriarer` interpolerar exakt 3D-krönhöjd längs `LineStringZ` och spärrar båda angränsande dualkanterna vid hörnsnitt genom cellcentrum (noll diagonalt läckage vid 20° och 45°).
 - **Steg 3 – 1D-rännstenslänk på 3D-vektorlinje (`src/tvad/rannsten_1d.py`, `tests/tvad/test_rannsten_1d.py`):** Massbevarande kopplad 1D/2D-lösare med triangulär rännstensgeometri, sann vektorlängd `ds_m`, bredkrönat överfall över 3D-krönhöjd `z_kron_m` (sänkt vid infarter) samt export av släta 3D-vektorlinjer (`rannsten_flode.geojson` / `.gpkg`).
 - **Steg 4 – Testsvit A5b och dokumentation (`testsvit/A5b_sned_gata_3d/`, `src/testsvit/korare.py`, `docs/VALIDERING.md`):** Lade till testfall **A5b (Snedställd gata med 3D-kantsten)** i testsviten och dokumenterade i `docs/VALIDERING.md`.
+- **Inkoppling i `vatten.2d` (`src/sankgraf/typer.py`, `src/vatten/losare_2d.py`, `tests/vatten/test_losare_2d_rannsten.py`):** `las_brytlinjer_fran_gpkg` läser nu 3D `LineStringZ` och valfria 3D-kolumner, och `vatten.2d` aktiverar 1D-rännstenslänken automatiskt (`rannsten_1d="auto"`) när en K1-ruta har 3D-kantstenar och exporterar `rannsten_flode.geojson`.
 Mätt:
 - **`floden testsvit`:** **18/18 godkända** (A0–A13 inkl. A5, A5b, A6 + EA1/EA2/EA8A).
 - **A5** (0,024 s): rännsten `0,033 m`, gård `0,0000 m`, volymfel `0,0000 %`. **A6** (0,038 s): 12 utflödesceller vid infart, volymfel `0,0000 %`.
@@ -17,8 +18,8 @@ Mätt:
   - `45°`: gångtid `70,64 s` (**+4,25 %**), maxdjup 1D `0,0574 m` (**-3,53 %**), infartsandel `35,31 %` (**+1,82 %**), volymfel `1,0e-15` (`1,19 s` körtid).
   - Läckage över 12 cm kantsten i A5b och `test_kantbarriar_sned.py` (20° och 45°): **`0,0000 m³`**.
 - **Körtid och provområde (20°-gatan):** Kopplad 1D/2D-körning tog `0,97 s` (maxdjup gångbana/fasad `0,0938 m` via infarten, `0,0000 m³` över 12 cm kantsten).
-- **`pytest tests/markmodell/ tests/tvad/`:** **129 passed, 5 skipped** (36,6 s). **`ruff check`** (10 filer) och **`mypy`** (7 filer): **0 fel**.
-Öppet: 1D-rännstenslänken körs idag via `tvad.rannsten_1d.kor_kopplad_1d_2d` och A5b i testsviten; automatisk aktivering i `vatten.losare_2d` när 3D-kantstenar finns i en K1-ruta samt visning av `rannsten_flode.geojson` i webbklientens steg 4 är naturliga nästa steg.
+- **`pytest tests/markmodell/ tests/tvad/ tests/vatten/`:** **147 passed, 5 skipped**. **`ruff check`** och **`mypy`**: **0 fel**.
+Öppet: Visning av `rannsten_flode.geojson` som eget vektorlager i webbklientens steg 4 samt lokal provkörning mot riktig kommunal 3D-baskarta (via `config.local.toml`, utanför git) återstår.
 Nästa: Prova `markmodell.baskarta_3d` lokalt mot en riktig kommunal 3D-baskarta (via `config.local.toml`, utanför git) och koppla `rannsten_flode.geojson` till webbklientens lagerlista.
 
 ## 2026-11-24 – R2 – Ritverktyg: generell lagermodell (K50) (agent)

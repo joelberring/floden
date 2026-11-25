@@ -42,6 +42,11 @@ from sankgraf.hierarki import _applicera_oppningar
 from sankgraf.takvatten import TAKVATTEN_AV_ANTAGANDE, bygg_takvatten
 from tvad.kalltermer import Avtappning, Infiltration2D, Kalltermer
 from tvad.lokal_troghet import kor_2d_lokal_troghet, skriv_tvad_resultat_k6
+from tvad.rannsten_1d import (
+    diskretisera_rannsten_1d,
+    exportera_rannsten_flode_geojson,
+    kor_kopplad_1d_2d,
+)
 from vatten.blaytor import BlaytorFel, las_k1
 from vatten.losare import _BASER, K1_ROLLER, MODUL, _tak
 from vatten.scenario_lapp import scenario_till_lapp
@@ -51,6 +56,7 @@ _PARAMETRAR = {
     "regn_id", "regn_tid_s", "regn_mm_h", "slut_tid_s", "subgrid_faktor", "ignorera_typer",
     "avtappning_mm_h", "brunnar_igensatta_andel", "infiltration",
     "avtappning_omraden", "takvatten", "takvatten_andel_ledning",
+    "rannsten_1d", "rannsten_korbana_sida",
 }
 
 
@@ -131,6 +137,52 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         brytlinjer=brytlinjer,
     )
     skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar={"losare": "vatten.2d"})
+
+    # Valfri 1D-rännstenslänk längs 3D-kantstenar (`rannsten_1d="auto"` aktiveras automatiskt
+    # när K1 brytlinjer.gpkg innehåller 3D-kantstenar med `z_kron_rh2000`).
+    rannsten_lage = p.get("rannsten_1d", "auto")
+    kantstenar_3d = [
+        b
+        for b in brytlinjer
+        if b.typ in ("kantsten", "sankt_kantsten") and b.z_kron_rh2000 is not None
+    ]
+    kor_1d = bool(
+        (rannsten_lage is True and any(b.typ in ("kantsten", "sankt_kantsten") for b in brytlinjer))
+        or (rannsten_lage == "auto" and kantstenar_3d)
+    )
+    rannsten_info: dict[str, Any] = {"rannsten_1d_aktiv": False}
+    if kor_1d:
+        lank_linjer = kantstenar_3d or [
+            b for b in brytlinjer if b.typ in ("kantsten", "sankt_kantsten")
+        ]
+        lank = diskretisera_rannsten_1d(
+            lank_linjer,
+            mark_z,
+            markslag,
+            k1.geo,
+            korbana_sida=str(p.get("rannsten_korbana_sida", "vanster")),
+        )
+        res_1d = kor_kopplad_1d_2d(
+            mark_z,
+            markslag,
+            k1.geo,
+            tider,
+            mm_h,
+            lank,
+            brytlinjer=brytlinjer,
+            slut_tid_s=p.get("slut_tid_s"),
+        )
+        gj_fil = exportera_rannsten_flode_geojson(res_1d, ut / "rannsten_flode.geojson")
+        rannsten_info = {
+            "rannsten_1d_aktiv": True,
+            "rannsten_1d_fil": gj_fil.name,
+            "rannsten_1d_segment": lank.antal,
+            "rannsten_1d_max_djup_m": float(np.max(res_1d.max_djup_1d_m)),
+            "rannsten_1d_overfall_sankt_m3": res_1d.overfall_sankt_m3,
+            "rannsten_1d_overfall_hog_m3": res_1d.overfall_hog_m3,
+            "rannsten_1d_volymfel_rel": res_1d.volymfel_rel,
+        }
+
     return {
         "max_djup_m": float(np.nanmax(res.max_djup_m)),
         "max_hastighet_m_s": float(np.nanmax(res.max_hastighet_m_s)),
@@ -147,6 +199,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         "andrade_celler": andrade,
         "sanktermer": termer.beskrivning(),
         **avt_info,
+        **rannsten_info,
         **(
             takvatten.sammanfattning()
             if takvatten is not None
