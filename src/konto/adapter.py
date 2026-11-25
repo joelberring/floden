@@ -288,13 +288,13 @@ class KontoAdapter:
             return self.oauth.verifiera(token)
         return None
 
-    def projekt_for_konto(self, konto_id: str) -> list[dict[str, Any]]:
+    def projekt_for_konto(self, konto_id: str, arkiverade: bool = False) -> list[dict[str, Any]]:
         """Registrets projekt där kontot har rätt (id, namn, roll, kalla), med samma regel som
         `har_roll` (`Register.effektiv_projektroll`): uttrycklig roll eller organisationsroll.
         Demokvarteret ingår inte här: det följer `demoprojekt_roll` (se `demoroll`)."""
         if self.register is None:
             return []
-        return self.register.projekt_med_effektiv_roll(konto_id)
+        return self.register.projekt_med_effektiv_roll(konto_id, arkiverade)
 
     def demoroll(self) -> str | None:
         """Rollen varje inloggat konto har på demoprojektet, eller None när den är `av`."""
@@ -353,7 +353,7 @@ class KontoAdapter:
             if delar[1] == "nycklar":
                 return kontoapi.hantera_nycklar(self, req, delar[2:])
             if delar[1] == "projekt":
-                return kontoapi.hantera_projekt_delning(self, req, delar[2:])
+                return kontoapi.hantera_projekt(self, req, delar[2:])
             if delar[1] == "mcp-token":
                 return kontoapi.hantera_mcp_token(self, req, delar[2:])
             if delar[1] == "oauth":

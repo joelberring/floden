@@ -125,6 +125,7 @@ from webb.kartverktyg import LAGE_IDAG_PREFIX, KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
 from webb.projekt import ProjektTjanst
+from webb.projektinstallningar import ProjektInstallningarTjanst
 from webb.projektskapa import ProjektSkapaTjanst
 from webb.prov import PREFIX as PROV_PREFIX
 from webb.prov import prov_svar
@@ -672,6 +673,7 @@ class FlodenApiApp:
         self.geomapp = _abs(geomapp or STANDARD_GEOROT)
         self.projektmapp = _abs(projektmapp or STANDARD_PROJEKTMAPP)
         self._projektskapa: ProjektSkapaTjanst | None = None
+        self._projektinst: ProjektInstallningarTjanst | None = None
         self._rapportjobb: RapportJobbTjanst | None = None
         self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
         self._kartverktyg: KartverktygTjanst | None = None
@@ -731,6 +733,14 @@ class FlodenApiApp:
                     self, geomapp=self.geomapp, projektmapp=self.projektmapp
                 )
             return self._projektskapa
+
+    @property
+    def projekt_installningar(self) -> ProjektInstallningarTjanst:
+        """Byta namn på och radera ett projekt (`/api/projekt/<id>/namn` och `/radera`)."""
+        with self._lock:
+            if self._projektinst is None:
+                self._projektinst = ProjektInstallningarTjanst(self)
+            return self._projektinst
 
     @property
     def rapportjobb(self) -> RapportJobbTjanst:
@@ -2792,7 +2802,9 @@ class FlodenApiApp:
             ]
         }
 
-    def projekt_lista_for(self, konto_id: str | None) -> dict[str, Any]:
+    def projekt_lista_for(
+        self, konto_id: str | None, arkiverade: bool = False
+    ) -> dict[str, Any]:
         """Projekten ett konto har tillgång till (`GET /api/projekt` och MCP `projekt_lista`).
 
         Inloggning av (lokalt): demokvarteret om det är byggt, som förut. Inloggning på:
@@ -2807,9 +2819,11 @@ class FlodenApiApp:
             return {"projekt": []}
         demo_roll = self.konto.demoroll()
         ut: list[dict[str, Any]] = (
-            [{**p, "roll": demo_roll, "finns": True} for p in demo] if demo_roll else []
+            [{**p, "roll": demo_roll, "finns": True} for p in demo]
+            if demo_roll and not arkiverade
+            else []
         )
-        for p in self.konto.projekt_for_konto(konto_id):
+        for p in self.konto.projekt_for_konto(konto_id, arkiverade):
             ut.append(
                 {
                     "id": p["id"],
@@ -2820,13 +2834,14 @@ class FlodenApiApp:
                     "roll": p["roll"],
                     "kalla": p["kalla"],
                     "organisation_synlig": p["organisation_synlig"],
+                    "arkiverad": p["arkiverad"],
                     "finns": False,
                 }
             )
         return {"projekt": ut}
 
     def _projekt_svar_for_konto(
-        self, sokvag: str, konto_id: str
+        self, sokvag: str, konto_id: str, arkiverade: bool = False
     ) -> tuple[int, list[tuple[str, str]], bytes] | None:
         """`GET /api/projekt` (kontots projekt) och `GET /api/projekt/<id>` för ett projekt ur
         registret. Demokvarteret och allt annat lämnas åt `hantera_forfragan` (None)."""
@@ -2834,9 +2849,12 @@ class FlodenApiApp:
         if delar[:2] != ["api", "projekt"] or len(delar) > 3:
             return None
         if len(delar) == 2:
-            svar = self.projekt_lista_for(konto_id)
+            svar = self.projekt_lista_for(konto_id, arkiverade)
         else:
-            lista = self.projekt_lista_for(konto_id)["projekt"]
+            lista = [
+                *self.projekt_lista_for(konto_id)["projekt"],
+                *self.projekt_lista_for(konto_id, True)["projekt"],
+            ]
             rad = next((p for p in lista if p["id"] == delar[2]), None)
             if rad is None or rad.get("finns"):
                 return None
@@ -3024,6 +3042,14 @@ class FlodenApiApp:
             statisk = self._statisk(req.sokvag, verb == "HEAD")
             if statisk is not None:
                 return statisk
+        inst = _projektinstallning_krav(verb, req.sokvag) if self.konto.aktiv else None
+        if inst is not None:
+            # Rätten prövas av registret (ägare, organisationsadmin, superadmin).
+            kontroll = self.konto.kraver_inloggning(req)
+            if not kontroll.tillaten or kontroll.inloggad is None:
+                assert kontroll.svar is not None
+                return kontroll.svar
+            return self._hantera_projektinstallning(inst, kontroll.inloggad.konto_id, las_kropp)
         projekt_krav = _projekt_krav(verb, req.sokvag) if self.konto.aktiv else None
         if projekt_krav is not None:
             kontroll = self.konto.kraver_projektbehorighet(
@@ -3048,7 +3074,11 @@ class FlodenApiApp:
         if nytt is not None:
             return nytt
         if verb == "GET" and self.konto.aktiv and kontroll.inloggad is not None:
-            eget = self._projekt_svar_for_konto(req.sokvag, kontroll.inloggad.konto_id)
+            eget = self._projekt_svar_for_konto(
+                req.sokvag,
+                kontroll.inloggad.konto_id,
+                "1" in req.query.get("arkiverade", []),
+            )
             if eget is not None:
                 return eget
         try:
@@ -3122,6 +3152,29 @@ class FlodenApiApp:
         if self.konto.aktiv:
             ut = [(k, v) for k, v in ut if not k.lower().startswith("access-control-")]
         return status, ut, kropp
+
+    def _hantera_projektinstallning(
+        self, inst: tuple[str, str], konto_id: str, las_kropp: Callable[[], bytes]
+    ) -> tuple[int, list[tuple[str, str]], bytes]:
+        """`PUT /api/projekt/<id>/namn` och `POST /api/projekt/<id>/radera`."""
+        projekt_id, atgard = inst
+        try:
+            try:
+                payload = json.loads(las_kropp().decode("utf-8") or "null")
+            except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+                raise FlodenWebbFel("Kroppen ska vara JSON.", status_kod=400) from exc
+            if not isinstance(payload, Mapping):
+                raise FlodenWebbFel("Kroppen ska vara ett JSON-objekt.", status_kod=400)
+            tjanst = self.projekt_installningar
+            svar = (
+                tjanst.byt_namn(konto_id, projekt_id, payload)
+                if atgard == "namn"
+                else tjanst.radera(konto_id, projekt_id, payload)
+            )
+            return _utan_cors(_json_svar(200, svar))
+        except FlodenWebbFel as exc:
+            svar_fel = {"fel": str(exc), "status": exc.status_kod}
+            return _utan_cors(_json_svar(exc.status_kod, svar_fel))
 
     def _hantera_skapa_projekt(
         self, verb: str, sokvag: str, kontroll: Any, las_kropp: Callable[[], bytes]
@@ -3224,6 +3277,18 @@ def _utan_cors(
     status, headers, kropp = svar
     ut = [(k, v) for k, v in headers.items() if not k.lower().startswith("access-control-")]
     return status, ut, kropp
+
+
+def _projektinstallning_krav(verb: str, sokvag: str) -> tuple[str, str] | None:
+    """`(projekt_id, "namn"/"radera")` för `PUT .../namn` och `POST .../radera`."""
+    delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d]
+    if (
+        len(delar) == 4
+        and delar[:2] == ["api", "projekt"]
+        and (verb, delar[3]) in (("PUT", "namn"), ("POST", "radera"))
+    ):
+        return delar[2], delar[3]
+    return None
 
 
 def _projekt_krav(verb: str, sokvag: str) -> tuple[str, str] | None:

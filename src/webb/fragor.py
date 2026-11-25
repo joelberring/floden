@@ -411,6 +411,18 @@ class FragaTjanst:
                     self._skriv_status(k)
                 self._korningar[k.korning_id] = k
 
+    def korningar_for_projekt(self, projekt_id: str) -> list[Korning]:
+        """Alla körningar (på disk och i minnet) vars `korning.json` har projektets id."""
+        self._lasta_korningar()
+        with self._lock:
+            return [k for k in self._korningar.values() if k.projekt_id == projekt_id]
+
+    def glom_korningar(self, korning_ids: list[str]) -> None:
+        """Tar körningarna ur minnet (filerna har tagits bort av anroparen)."""
+        with self._lock:
+            for kid in korning_ids:
+                self._korningar.pop(kid, None)
+
     def starta_korning(self, ref: str, projekt_id: str | None = None) -> dict[str, Any]:
         fil, fraga = self._las(ref)
         self._lasta_korningar()

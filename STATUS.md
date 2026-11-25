@@ -747,3 +747,13 @@ Tester: `tests/sankgraf/test_avrinningsnat.py` (V-dal, Y-sammanflöde, tre nivå
 
 - På servern stod projektlistan kvar på "Hämtar projekten ..." efter uppdateringen. Konsolen visade att den gamla Caddyfilen (utan `connect-src`) stoppade kartans `data:`-hämtningar, och listan väntade på kartan och på varje projekts detaljer och miniatyr.
 - Listan ritas nu direkt när `/api/projekt`-svaret kommer; status och miniatyr fylls i efter hand per projekt, och ett fel i kartan visas som en rad i kartkortet i stället för att hålla kvar listan.
+
+## 2026-11-25 – Projektinställningar: arkivera, radera och medlemmar (agent projinst)
+
+Gjort: Joels fråga "går det att radera gamla projekt, ändra synlighet och vilka som får se?". Ny sida `#/p/<projekt>/installningar` (länk "Inställningar" i sidhuvudet i projektet och "Projektinställningar" på projektlistans kartkort): byta namn, synlighet för organisationen (samma regel som Administrations växel), medlemmar med roll, inbjudan (läsare, utredare, ägare), ändra roll, ta bort medlem, återkalla inbjudan, arkivera/återställa och radera permanent (skriv projektets namn). Projektlistan har "Visa arkiverade".
+- Konto: projektrollen `agare` och `projekt.arkiverad` (schemaversion 7, tabellerna byggdes om). Ägare = roll `agare` eller skaparen som utredare; projektet har alltid en ägare. Medlemmar/namn: ägare, organisationsadmin/ägare i organisationen, superadmin. Arkivera/radera: ägare och superadmin. Läsare ser bara. Synligheten följer det gamla beslutet (utredare, ägare, skaparen), inte organisationens admin.
+- Radera (`src/webb/projektinstallningar.py`): projektmappen, projektets körningar, rapporter och beställningar, registerpost, roller och inbjudningar; geografin, cacher och andra projekt rörs inte. Demokvarteret nekas, pågående körning ger 409. `projekt-raderat` loggas utan personuppgifter.
+- API additivt (DATAKONTRAKT K48, KONTO.md avsnitt 11). Alla tal i webben via tal.ts.
+Mätt: se PR (pytest tests/konto och tests/webb, npm test, typkontroll, build, ruff, mypy).
+Öppet: arkiverade projekt blockerar inga skrivningar (bara dolda); inbjuden ägare får `agare` vid inloggning (provad bara med falsk IdP); ingen gallring.
+Nästa: Joel bestämmer om organisationsadmin ska få arkivera/radera projekt utan ägare (i dag bara superadmin).

@@ -21,6 +21,10 @@ export interface FlodeRutt {
   projekt: string | null;
   /** Sant på `#/nytt`: vyn där ett nytt projekt skapas (hör till steg 1). */
   nytt?: true;
+  /** Sant på `#/p/<projekt>/installningar`: projektets inställningar (nås från projektet och från projektlistan). */
+  installningar?: true;
+  /** Sant på `#/?arkiverade=1`: projektlistan visar de arkiverade projekten. */
+  arkiverade?: true;
 }
 
 export const NYTT_PROJEKT_ADRESS = "#/nytt";
@@ -30,9 +34,11 @@ const PROJEKTSTEG: ReadonlySet<string> = new Set(["forslag", "fragor", "resultat
 /** `#/` och `#/p/<projekt>[/<steg>]` → rutt; annat (t.ex. `#/om`) → null. */
 export function tolkaFlodeAdress(hash: string): FlodeRutt | null {
   const utan = hash.replace(/^#/, "");
-  const [sokvag = ""] = utan.split("?", 1);
+  const [sokvag = "", fraga = ""] = utan.split("?", 2);
   const delar = sokvag.split("/").filter((d) => d.length > 0);
-  if (delar.length === 0) return { steg: "projekt", projekt: null };
+  if (delar.length === 0) {
+    return new URLSearchParams(fraga).get("arkiverade") === "1" ? { steg: "projekt", projekt: null, arkiverade: true } : { steg: "projekt", projekt: null };
+  }
   if (delar.length === 1 && delar[0] === "nytt") return { steg: "projekt", projekt: null, nytt: true };
   if (delar[0] !== "p" || !delar[1]) return null;
   let projekt: string;
@@ -43,6 +49,7 @@ export function tolkaFlodeAdress(hash: string): FlodeRutt | null {
   }
   const steg = delar[2];
   if (steg === undefined) return { steg: "forslag", projekt };
+  if (steg === "installningar" && delar.length === 3) return { steg: "forslag", projekt, installningar: true };
   if (!PROJEKTSTEG.has(steg) || delar.length > 3) return null;
   return { steg: steg as Steg, projekt };
 }
@@ -51,6 +58,11 @@ export function tolkaFlodeAdress(hash: string): FlodeRutt | null {
 export function flodeAdress(projekt: string | null, steg: Steg): string {
   if (steg === "projekt" || projekt === null) return "#/";
   return `#/p/${encodeURIComponent(projekt)}/${steg}`;
+}
+
+/** Adressen till projektets inställningar. */
+export function installningarAdress(projekt: string): string {
+  return `#/p/${encodeURIComponent(projekt)}/installningar`;
 }
 
 /** Stegraden: riktiga länkar, `aria-current="page"` på aktivt steg. */

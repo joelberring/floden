@@ -7,7 +7,7 @@
  */
 import { adminTillaten, forvaltningSynlig, kontoLage } from "../konto.ts";
 import { esc } from "../sidor.ts";
-import { stegradHtml, type Steg } from "./adress.ts";
+import { installningarAdress, stegradHtml, type Steg } from "./adress.ts";
 
 let avlyssnaUtanfor: (() => void) | null = null;
 const namnCache = new Map<string, string>();
@@ -75,6 +75,7 @@ export function flodeHuvudHtml(projekt: string | null, aktivt: Steg | null, sida
     <div class="flode-huvud">
       <a class="flode-ordmarke" href="#/">Floden${namn ? ` <span class="flode-ordmarke-projekt">/ ${esc(namn)}</span>` : ""}</a>
       ${projekt ? stegradHtml(projekt, aktivt) : ""}
+      ${projekt ? `<a class="flode-steg flode-installningar${aktivt === null && !sida ? " aktivt" : ""}" href="${installningarAdress(projekt)}"${aktivt === null && !sida ? ' aria-current="page"' : ""}>Inställningar</a>` : ""}
       ${kontoMenyHtml(sida)}
     </div>`;
 }

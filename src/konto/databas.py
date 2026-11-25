@@ -254,7 +254,45 @@ ALTER TABLE projekt ADD COLUMN organisation_synlig INTEGER NOT NULL DEFAULT 0
 ALTER TABLE projekt ADD COLUMN skapad_av TEXT;
 """
 
-MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6)
+# Version 7: projektrollen `agare` (projektets ägare: ändrar namn, medlemmar och synlighet,
+# arkiverar och raderar) och `arkiverad` (tid, NULL = aktivt projekt). SQLite kan inte ändra en
+# CHECK, så de två tabellerna byggs om med samma kolumner; raderna kopieras oförändrade.
+SCHEMA_V7 = """
+CREATE TABLE projektbehorighet_ny (
+  konto_id TEXT NOT NULL REFERENCES konto (id) ON DELETE CASCADE,
+  projekt_id TEXT NOT NULL REFERENCES projekt (id) ON DELETE CASCADE,
+  roll TEXT NOT NULL CHECK (roll IN ('lasare', 'utredare', 'agare')),
+  kalla TEXT NOT NULL CHECK (kalla IN ('inbjudan', 'manuell')),
+  beviljad_av TEXT,
+  skapad INTEGER NOT NULL,
+  PRIMARY KEY (konto_id, projekt_id)
+);
+INSERT INTO projektbehorighet_ny (konto_id, projekt_id, roll, kalla, beviljad_av, skapad)
+  SELECT konto_id, projekt_id, roll, kalla, beviljad_av, skapad FROM projektbehorighet;
+DROP TABLE projektbehorighet;
+ALTER TABLE projektbehorighet_ny RENAME TO projektbehorighet;
+CREATE TABLE projektinbjudan_ny (
+  id TEXT PRIMARY KEY,
+  projekt_id TEXT NOT NULL REFERENCES projekt (id) ON DELETE CASCADE,
+  epost TEXT NOT NULL,
+  roll TEXT NOT NULL CHECK (roll IN ('lasare', 'utredare', 'agare')),
+  skapad_av TEXT NOT NULL,
+  skapad INTEGER NOT NULL,
+  giltig_till INTEGER NOT NULL,
+  anvand_av TEXT,
+  anvand_tid INTEGER
+);
+INSERT INTO projektinbjudan_ny (id, projekt_id, epost, roll, skapad_av, skapad, giltig_till,
+    anvand_av, anvand_tid)
+  SELECT id, projekt_id, epost, roll, skapad_av, skapad, giltig_till, anvand_av, anvand_tid
+  FROM projektinbjudan;
+DROP TABLE projektinbjudan;
+ALTER TABLE projektinbjudan_ny RENAME TO projektinbjudan;
+CREATE INDEX projektinbjudan_epost ON projektinbjudan (epost);
+ALTER TABLE projekt ADD COLUMN arkiverad INTEGER;
+"""
+
+MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7)
 
 
 class Databas:

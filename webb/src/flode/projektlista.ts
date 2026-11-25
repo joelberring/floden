@@ -9,10 +9,11 @@ import { esc, formatera } from "../sidor.ts";
 import type { ProjektSvar } from "../types.ts";
 import { kontoLage, vidKontoandring } from "../konto.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
-import { flodeAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
+import { flodeAdress, installningarAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import { sattProjektNamn } from "./huvud.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
 import { nyttProjektHtml, radHandling, rollRad } from "./projektlogik.ts";
+import { arkiveradeLankHtml } from "./projektinstallningar-logik.ts";
 
 interface Rad {
   id: string;
@@ -40,7 +41,7 @@ export interface Avslutbar {
   klar: Promise<void>;
 }
 
-export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslutbar {
+export function visaProjektlista(rot: HTMLElement, valtId: string | null, arkiverade = false): Avslutbar {
   let avslutad = false;
   let karta: Kartmotor | null = null;
   let bas: BasLager | null = null;
@@ -49,10 +50,11 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
     <div class="flode-sida">
       <section class="flode-lista" aria-labelledby="projekt-rubrik">
         <div class="flode-listhuvud">
-          <h1 id="projekt-rubrik" class="flode-h">Projekt</h1>
+          <h1 id="projekt-rubrik" class="flode-h">${arkiverade ? "Arkiverade projekt" : "Projekt"}</h1>
           <div id="nytt-projekt-plats"></div>
         </div>
         <div id="projekt-rader" class="flode-rader" aria-live="polite"><p class="flode-dampad">Hämtar projekten …</p></div>
+        ${kontoLage().lage === "av" ? "" : arkiveradeLankHtml(arkiverade, "#/")}
       </section>
       <section class="flode-karta" aria-label="Karta över valt projekt">
         <div class="flode-karta-yta" id="projekt-karta"></div>
@@ -92,13 +94,14 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
     const u = info.utbredning;
     kort.hidden = false;
     kort.innerHTML = `<strong>${esc(r.namn)}</strong><span class="flode-dampad">${esc(formatera(u.x_max - u.x_min, 0))} × ${esc(formatera(u.y_max - u.y_min, 0))} m · SWEREF 99 18 00</span>
-      <a class="flode-knapp svart liten" id="projekt-oppna" href="${flodeAdress(r.id, "forslag")}">Öppna projektet</a>`;
+      <a class="flode-knapp svart liten" id="projekt-oppna" href="${flodeAdress(r.id, "forslag")}">Öppna projektet</a>
+      <a class="flode-knapp liten" id="projekt-installningar" href="${installningarAdress(r.id)}">Projektinställningar</a>`;
   };
 
   const klar = (async () => {
     let lista: Rad[] = [];
     try {
-      const s = await hamtaProjektLista();
+      const s = await hamtaProjektLista(arkiverade);
       // Listan ritas direkt; status och miniatyr fylls i efter hand, så att ett långsamt eller trasigt projekt
       // (stor geografi, bakgrundskarta som inte laddas) aldrig håller kvar "Hämtar projekten ...".
       lista = s.projekt.map((p): Rad => {
@@ -136,6 +139,10 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
     };
     if (avslutad) return;
     if (lista.length === 0) {
+      if (arkiverade) {
+        rader.innerHTML = `<p class="flode-dampad">Det finns inga arkiverade projekt.</p>`;
+        return;
+      }
       rader.innerHTML = `<p class="flode-dampad">Det finns inga projekt än. Demokvarteret byggs med <code>floden demo</code>; ladda sedan om sidan.</p>`;
       return;
     }

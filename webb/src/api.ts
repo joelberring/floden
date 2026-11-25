@@ -13,7 +13,9 @@ import type {
   OauthSvar,
   NycklarSvar,
   OmradenSvar,
+  ProjektInstallningar,
   ProjektListaSvar,
+  RaderaSvar,
   ProjektSvar,
   OmradeLagerSvar,
   RapportBegaran,
@@ -137,8 +139,8 @@ export function hamtaModuler(): Promise<ModulerSvar> {
   return lasJson<ModulerSvar>(`${API_BAS}/moduler`);
 }
 
-export function hamtaProjektLista(): Promise<ProjektListaSvar> {
-  return lasJson<ProjektListaSvar>(`${API_BAS}/projekt`);
+export function hamtaProjektLista(arkiverade = false): Promise<ProjektListaSvar> {
+  return lasJson<ProjektListaSvar>(`${API_BAS}/projekt${arkiverade ? "?arkiverade=1" : ""}`);
 }
 
 export function hamtaGeografier(): Promise<GeografierSvar> {
@@ -377,4 +379,44 @@ export function bytOrganisationsnamn(orgId: string, namn: string): Promise<{ sta
     headers: JSON_HUVUD,
     body: JSON.stringify({ namn }),
   });
+}
+
+/* ---------- Projektinställningar ---------- */
+
+const projektUrl = (id: string, del: string): string => `/konto/projekt/${encodeURIComponent(id)}/${del}`;
+
+export function hamtaProjektInstallningar(id: string): Promise<ProjektInstallningar> {
+  return lasJson<ProjektInstallningar>(projektUrl(id, "installningar"));
+}
+
+export function bytProjektNamn(id: string, namn: string): Promise<{ status: string; namn: string }> {
+  return lasJson(`${API_BAS}/projekt/${encodeURIComponent(id)}/namn`, { method: "PUT", headers: JSON_HUVUD, body: JSON.stringify({ namn }) });
+}
+
+export function arkiveraProjekt(id: string, arkiverad: boolean): Promise<{ status: string }> {
+  return lasJson(projektUrl(id, "arkiv"), { method: "PUT", headers: JSON_HUVUD, body: JSON.stringify({ arkiverad }) });
+}
+
+export function raderaProjekt(id: string, bekraftaNamn: string): Promise<RaderaSvar> {
+  return lasJson<RaderaSvar>(`${API_BAS}/projekt/${encodeURIComponent(id)}/radera`, {
+    method: "POST",
+    headers: JSON_HUVUD,
+    body: JSON.stringify({ bekrafta_namn: bekraftaNamn }),
+  });
+}
+
+export function bjudInTillProjekt(id: string, epost: string, roll: string): Promise<{ status: string }> {
+  return lasJson(projektUrl(id, "inbjudningar"), { method: "POST", headers: JSON_HUVUD, body: JSON.stringify({ epost, roll }) });
+}
+
+export function aterkallaProjektInbjudan(id: string, inbjudan: string): Promise<{ status: string }> {
+  return lasJson(`${projektUrl(id, "inbjudningar")}/${encodeURIComponent(inbjudan)}`, { method: "DELETE" });
+}
+
+export function andraMedlemsRoll(id: string, konto: string, roll: string): Promise<{ status: string }> {
+  return lasJson(`${projektUrl(id, "medlemmar")}/${encodeURIComponent(konto)}`, { method: "PUT", headers: JSON_HUVUD, body: JSON.stringify({ roll }) });
+}
+
+export function taBortMedlem(id: string, konto: string): Promise<{ status: string }> {
+  return lasJson(`${projektUrl(id, "medlemmar")}/${encodeURIComponent(konto)}`, { method: "DELETE" });
 }

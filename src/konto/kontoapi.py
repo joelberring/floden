@@ -36,10 +36,18 @@ avgörs i `Register`, se `docs/KONTO.md` avsnitt 5 och 11):
 - `PUT    /konto/admin/organisationer/<id>/medlemmar/<konto>` `{"roll"}` ändrar rollen
 - `DELETE /konto/admin/organisationer/<id>/medlemmar/<konto>` tar bort medlemskapet
 
-Delning av ett projekt med organisationen (inloggad; vem som får avgörs i `Register`):
+Projektinställningar (`/konto/projekt/<id>/...`, inloggad; vem som får avgörs i `Register`):
 
-- `PUT    /konto/projekt/<id>/delning`   `{"organisation_synlig": true|false}`: projektets utredare
-  och skaparen; 403 för alla andra (även organisationens ägare och admin, och superadmin)
+- `GET    .../installningar`   underlaget till sidan (404 utan rätt att se projektet)
+- `PUT    .../delning`   `{"organisation_synlig": true|false}`: projektets utredare, ägare och
+  skaparen; 403 för alla andra (även organisationens ägare och admin, och superadmin)
+- `PUT    .../arkiv`   `{"arkiverad": true|false}`: projektets ägare och superadmin
+- `POST   .../inbjudningar` `{"epost", "roll"}` (lasare, utredare, agare) och
+  `DELETE .../inbjudningar/<id>`
+- `PUT    .../medlemmar/<konto>` `{"roll"}` och `DELETE .../medlemmar/<konto>`
+  (inbjudningar och medlemmar: projektets ägare, organisationsadmin och ägare i organisationen,
+  superadmin)
+Namnbyte och radering rör filer och finns i webb-API:t (`PUT .../namn`, `POST .../radera`).
 
 Svaren har aldrig en nyckel, och felen nämner fält men aldrig värden.
 """
@@ -185,35 +193,92 @@ def hantera_mcp_token(adapter: KontoAdapter, req: Forfragan, delar: list[str]) -
 # ------------------------------------------------------------------------------- admin
 
 
-def hantera_projekt_delning(adapter: KontoAdapter, req: Forfragan, delar: list[str]) -> Svar:
-    """`delar` är sökvägen efter `/konto/projekt`: `[<id>, "delning"]`."""
+_FEL_DELNING = "Bara projektets utredare, ägare och skaparen ändrar delningen"
+_FEL_INGEN_RATT = "Du har inte rätt att göra det här i projektet"
+
+
+def hantera_projekt(adapter: KontoAdapter, req: Forfragan, delar: list[str]) -> Svar:
+    """`delar` är sökvägen efter `/konto/projekt`: `[<id>, <del>, ...]`. Se modulens text för
+    ändpunkterna. Vem som får vad avgörs i `Register`; en okänd id och saknad rätt ger samma 403
+    vid ändring (och 404 vid läsning), så att id:n inte går att pröva fram."""
     konto_id, nekad = _inloggad(adapter, req)
     if konto_id is None:
         assert nekad is not None  # noqa: S101
         return nekad
     register = adapter.register
     assert register is not None  # noqa: S101
-    if len(delar) != 2 or delar[1] != "delning" or not _id_ok(delar[0]):
+    if len(delar) < 2 or not _id_ok(delar[0]):
         return _fel(404, "okand", "Okänd ändpunkt")
-    if req.metod != "PUT":
-        return _metod_ej_tillaten()
+    pid, del_, resten = delar[0], delar[1], delar[2:]
+    metod = req.metod
     try:
-        synlig = _json_kropp(req).get("organisation_synlig")
-        if not isinstance(synlig, bool):
-            return _fel(400, "ogiltigt", "organisation_synlig måste vara true eller false")
-        register.satt_organisation_synlig(konto_id, delar[0], synlig)
+        if del_ == "delning" and not resten:
+            if metod != "PUT":
+                return _metod_ej_tillaten()
+            synlig = _json_kropp(req).get("organisation_synlig")
+            if not isinstance(synlig, bool):
+                return _fel(400, "ogiltigt", "organisation_synlig måste vara true eller false")
+            try:
+                register.satt_organisation_synlig(konto_id, pid, synlig)
+            except (BehorighetFel, RegisterFel):
+                return _fel(403, "ingen-behorighet", _FEL_DELNING)
+            return _json(200, {"status": "delning-andrad", "organisation_synlig": synlig})
+        if del_ == "installningar" and not resten:
+            if metod != "GET":
+                return _metod_ej_tillaten()
+            try:
+                return _json(200, register.projektinstallningar(konto_id, pid))
+            except (BehorighetFel, RegisterFel):
+                return _fel(404, "okand", "Okänt projekt")
+        if del_ == "arkiv" and not resten:
+            if metod != "PUT":
+                return _metod_ej_tillaten()
+            arkiverad = _json_kropp(req).get("arkiverad")
+            if not isinstance(arkiverad, bool):
+                return _fel(400, "ogiltigt", "arkiverad måste vara true eller false")
+            register.satt_arkiverad(konto_id, pid, arkiverad)
+            return _json(200, {"status": "arkiverat" if arkiverad else "aterstallt"})
+        if del_ == "inbjudningar":
+            if len(resten) == 0 and metod == "POST":
+                kropp = _json_kropp(req)
+                epost, roll = kropp.get("epost"), kropp.get("roll", "lasare")
+                if not isinstance(epost, str) or not isinstance(roll, str):
+                    return _fel(400, "ogiltigt", "epost och roll måste vara text")
+                inbjudan_id = register.bjud_in(konto_id, pid, epost, roll)
+                return _json(201, {"status": "inbjuden", "id": inbjudan_id, "roll": roll})
+            if len(resten) == 1 and _id_ok(resten[0]) and metod == "DELETE":
+                register.aterkalla_inbjudan(konto_id, pid, resten[0])
+                return _json(200, {"status": "inbjudan-borttagen", "id": resten[0]})
+            return (
+                _metod_ej_tillaten() if len(resten) <= 1 else _fel(404, "okand", "Okänd ändpunkt")
+            )
+        if del_ == "medlemmar" and len(resten) == 1:
+            kid = resten[0]
+            if not _id_ok(kid):
+                return _fel(404, "okand", "Okänt konto")
+            if metod == "PUT":
+                roll = _json_kropp(req).get("roll")
+                if not isinstance(roll, str) or roll not in PROJEKTROLLER:
+                    return _fel(400, "ogiltigt", "roll måste vara lasare, utredare eller agare")
+                register.projekt_medlemmar(konto_id, pid)  # behörighet och projekt före kontot
+                if register.konto(kid) is None:
+                    return _fel(404, "okand", "Okänt konto")
+                register.ge_projektroll(konto_id, kid, pid, roll)
+                return _json(200, {"status": "roll-satt", "konto_id": kid, "roll": roll})
+            if metod == "DELETE":
+                register.aterkalla_projektroll(konto_id, kid, pid)
+                return _json(200, {"status": "roll-borttagen", "konto_id": kid})
+            return _metod_ej_tillaten()
     except _Avvisad as exc:
         return exc.svar
     except BehorighetFel:
-        # Samma svar för ett okänt projekt som för saknad rätt (id:n ska inte kunna provas fram).
-        return _fel(
-            403, "ingen-behorighet", "Bara projektets utredare och skaparen ändrar delningen"
-        )
-    except RegisterFel:
-        return _fel(
-            403, "ingen-behorighet", "Bara projektets utredare och skaparen ändrar delningen"
-        )
-    return _json(200, {"status": "delning-andrad", "organisation_synlig": synlig})
+        return _fel(403, "ingen-behorighet", _FEL_INGEN_RATT)
+    except RegisterFel as exc:
+        text = str(exc)
+        if text == "Okänt projekt":
+            return _fel(403, "ingen-behorighet", _FEL_INGEN_RATT)
+        return _fel(404 if text in _OKANDA else 400, "ogiltigt", text)
+    return _fel(404, "okand", "Okänd ändpunkt")
 
 
 def _id_ok(*varden: str) -> bool:
@@ -288,7 +353,7 @@ def _admin(adapter: KontoAdapter, req: Forfragan, delar: list[str], utforare: st
                 kropp = _json_kropp(req)
                 roll = kropp.get("roll")
                 if not isinstance(roll, str) or roll not in PROJEKTROLLER:
-                    return _fel(400, "ogiltigt", "roll måste vara lasare eller utredare")
+                    return _fel(400, "ogiltigt", "roll måste vara lasare, utredare eller agare")
                 register.projekt_medlemmar(utforare, pid)  # behörighet och projekt före kontot
                 if register.konto(kid) is None:
                     return _fel(404, "okand", "Okänt konto")
@@ -385,4 +450,4 @@ def _admin_organisation(
     return _fel(404, "okand", "Okänd ändpunkt")
 
 
-__all__ = ["hantera_admin", "hantera_projekt_delning", "hantera_mcp_token", "hantera_nycklar"]
+__all__ = ["hantera_admin", "hantera_projekt", "hantera_mcp_token", "hantera_nycklar"]
