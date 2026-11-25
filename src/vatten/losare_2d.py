@@ -57,6 +57,7 @@ _PARAMETRAR = {
     "avtappning_mm_h", "brunnar_igensatta_andel", "infiltration",
     "avtappning_omraden", "takvatten", "takvatten_andel_ledning",
     "rannsten_1d", "rannsten_korbana_sida",
+    "enhet", "precision",
 }
 
 
@@ -132,9 +133,11 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         mark_z, markslag, k1.geo, tider, mm_h,
         slut_tid_s=p.get("slut_tid_s"),
         subgrid_faktor=int(p.get("subgrid_faktor", 1)),
-        kalltermer=termer,
+        kalltermer=termer if (avtappning is not None or infiltration is not None) else None,
         takvatten=takvatten,
         brytlinjer=brytlinjer,
+        enhet=str(p.get("enhet", "cpu")),
+        precision=p.get("precision", "f64"),
     )
     skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar={"losare": "vatten.2d"})
 
@@ -196,6 +199,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         "volymfel_rel": res.volymfel_rel,
         "antal_tidssteg": res.antal_tidssteg,
         "kortid_s": res.kortid_s,
+        "berakningsplats": res.berakningsplats,
         "andrade_celler": andrade,
         "sanktermer": termer.beskrivning(),
         **avt_info,

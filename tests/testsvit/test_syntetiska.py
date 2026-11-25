@@ -229,15 +229,16 @@ class TestSyntetiskaFall(unittest.TestCase):
             self.assertIs(specs[fid].takvatten, varde)
         self.assertIsNone(specs["A1"].takvatten)
 
-    def test_kor_testsvit_grupp_a_passerar_alla_fjorton(self) -> None:
+    def test_kor_testsvit_grupp_a_passerar_alla_femton(self) -> None:
         resultat, tabell = kor_testsvit(rot=TESTSVIT_ROT, grupp="A")
-        self.assertEqual(len(resultat), 14)
+        self.assertEqual(len(resultat), 15)
         self.assertTrue(all(r.godkand for r in resultat), tabell)
         ids = [r.fall.id for r in resultat]
         self.assertEqual(
             ids,
             [
-                "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9", "A10", "A11", "A12",
+                "A0", "A1", "A2", "A3", "A4", "A5", "A5b", "A6", "A7", "A8", "A9", "A10", "A11",
+                "A12",
                 "A13",
             ],
         )

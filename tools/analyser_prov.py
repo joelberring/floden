@@ -68,8 +68,10 @@ def demo(s: Page, url: str) -> None:
     ok("sänkorna har etiketter med volym i m³", s.locator(".analys-etikett").count() > 0 and re.fullmatch(r"[\d  ,]+ m³", s.locator(".analys-etikett").first.inner_text().strip()) is not None, s.locator(".analys-etikett").first.inner_text() if s.locator(".analys-etikett").count() else "inga")
     s.screenshot(path=str(UT / "02-skyfall-sankor.png"))
     s.check('#rs-visa [data-vektor="flodesvagar"]')
-    ok("flödesvägarna ritas som linjer med gångtid i teckenförklaringen", vanta(s, lambda: "Flödesvägar: gångtid" in s.inner_text("#rs-tecken")) and vanta(s, lambda: kartfigurer(s, "analys-linje") > 0))
+    ok("flödesvägarna ritas som avrinningsnät med tillrinning i teckenförklaringen", vanta(s, lambda: "Flödesvägar: tillrinning (m²)" in s.inner_text("#rs-tecken")) and vanta(s, lambda: kartfigurer(s, "analys-linje") > 0))
     s.screenshot(path=str(UT / "03-skyfall-sankor-flodesvagar.png"))
+    ok("reglaget Minsta tillrinning finns", s.locator('#rs-visa [data-grans="flodesvagar"]').is_visible())
+    s.screenshot(path=str(UT / "flodesvagar-avrinningsnat.png"))
     # Före/Efter: vektorerna byter scenario
     s.click('[data-lage="efter"]')
     s.wait_for_timeout(2500)

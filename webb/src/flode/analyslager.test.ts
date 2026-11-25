@@ -4,7 +4,7 @@ import { test } from "node:test";
 import type { LagerPost } from "../fragor-typer.ts";
 import type { ProjektVy } from "../types.ts";
 import {
-  amneForDoman, djupFarg, flodesvagBeskrivning, forvaldNyckel, gangtidSkala, lagerVal, PALETTER, sankaBeskrivning, skalFarg, valText, varFarg, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type VektorSvar,
+  amneForDoman, djupFarg, flodesvagBeskrivning, forvaldNyckel, gransPos, gransVarde, GRANSER, lagerVal, tillrinningSkala, flodesBredd, PALETTER, sankaBeskrivning, skalFarg, valText, varFarg, vektorScenario, vektorTeckenHtml, vektorTillKarta, vektorUrl, vektorVal, visaHtml, vyMedVal, type VektorSvar,
 } from "./analyslager.ts";
 
 const lp = (id: string, analys: string, roll: string, scenario: string, typ: LagerPost["typ"], extra: Partial<LagerPost> = {}): LagerPost =>
@@ -160,25 +160,37 @@ test("beskrivningarna använder decimalkomma, enheter och flaggar slutna område
   assert.match(t, /rymmer 3,4 m³/);
   assert.match(t, /Slutet område: vattnet har ingen väg ut\./);
   assert.doesNotMatch(t, /\d\.\d/);
-  assert.equal(flodesvagBeskrivning({ flodesvag_id: 9, langd_m: 448, lutning: 0.0034, gangtid_s: 951 }), "Flödesväg 9: längd 448 m, lutning 0,3 %, gångtid 15,9 min.");
+  assert.match(flodesvagBeskrivning({ tillrinning_m2: 1234, ordning: 3, langd_m: 448, lutning: 0.0034 }), /^Flödesväg: tillrinning 1\s234 m², Strahler-ordning 3, längd 448 m, lutning 0,3 %\.$/);
 });
 
-test("flödesvägar färgas efter gångtid, teckenförklaringen visar skalan i minuter", () => {
+test("flödesvägar färgas och breddas efter logaritmen av tillrinningen, och teckenförklaringen säger det", () => {
   const svar: VektorSvar = {
     slag: "flodesvagar", scenario: "efter", korning_id: "k", meta: { antal_totalt: 2, visade: 2 },
     features: [
-      { geometry: { type: "LineString", coordinates: [[151000, 6580000], [151010, 6580000]] }, properties: { flodesvag_id: 1, langd_m: 10, lutning: 0.01, gangtid_s: 60 } },
-      { geometry: { type: "LineString", coordinates: [[151000, 6580010], [151010, 6580010]] }, properties: { flodesvag_id: 2, langd_m: 10, lutning: 0.01, gangtid_s: 600 } },
+      { geometry: { type: "LineString", coordinates: [[151000, 6580000], [151010, 6580000]] }, properties: { flodesvag_id: 1, tillrinning_m2: 500, ordning: 1, langd_m: 10, lutning: 0.01 } },
+      { geometry: { type: "LineString", coordinates: [[151000, 6580010], [151010, 6580010]] }, properties: { flodesvag_id: 2, tillrinning_m2: 50000, ordning: 3, langd_m: 10, lutning: 0.01 } },
     ],
   };
-  assert.deepEqual(gangtidSkala(svar), { lo: 1, hi: 10 });
+  assert.deepEqual(tillrinningSkala(svar), { lo: 500, hi: 50000 });
   const k = vektorTillKarta(svar);
-  assert.equal(k.fc.features[0]?.properties?.farg, "#ffffcc");
-  assert.equal(k.fc.features[1]?.properties?.farg, "#4d004b");
-  assert.equal(k.etiketter.length, 0);
+  assert.equal(k.fc.features[0]?.properties?.farg, "#c6dbef");
+  assert.equal(k.fc.features[1]?.properties?.farg, "#08306b");
+  assert.equal(k.fc.features[0]?.properties?.bredd, flodesBredd(500, 500, 50000));
+  assert.ok(Number(k.fc.features[1]?.properties?.bredd) > Number(k.fc.features[0]?.properties?.bredd));
+  assert.match(String(k.fc.features[1]?.properties?.beskrivning), /Strahler-ordning 3/);
   const html = vektorTeckenHtml(svar);
-  assert.match(html, /<span>1,0<\/span><span>10,0 min<\/span>/);
-  assert.doesNotMatch(html, /största av/);
+  assert.match(html, /Flödesvägar: tillrinning \(m²\)/);
+  assert.doesNotMatch(html, /största av|gångtid/);
+});
+
+test("reglagen för minsta tillrinning och volym är logaritmiska och går att läsa av", () => {
+  const g = GRANSER.flodesvagar;
+  assert.ok(g);
+  assert.equal(gransVarde(g, 0), 100);
+  assert.equal(gransVarde(g, 100), 10000);
+  assert.equal(gransVarde(g, 50), 1000);
+  assert.equal(gransPos(g, 500), Math.round(100 * Math.log(5) / Math.log(100)));
+  assert.match(visaHtml([], null, [{ slag: "flodesvagar", namn: "Flödesvägar", hjalp: "" }], new Set(["flodesvagar"]), ""), /data-grans="flodesvagar"/);
 });
 
 test("fasadpunkter färgas efter VSC, saknat värde blir grått, och delvisa lager säger det", () => {

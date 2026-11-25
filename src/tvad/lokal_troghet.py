@@ -17,11 +17,20 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
+from gemensamt.gpu import (
+    BackendNamn,
+    ar_gpu_backend,
+    berakningsplats,
+    hamta_backend,
+    synkronisera,
+    till_enhet,
+    till_numpy,
+)
 from gemensamt.hash import sha256_fil
 from gemensamt.manifest import FilPost, skapa_manifest, skriv_manifest
 from sankgraf.flodesvagar import MANNING_N_PER_MARKSLAG
@@ -86,6 +95,8 @@ class TvadResultat:
     """Diagnostik (Python-lösaren): största u_max · dt / dx över alla tidssteg, med den u_max
     (m/s) som tidssteget valdes med. CFL-steget garanterar att värdet är högst `cfl`.
     0,0 = inte mätt (Rust-kärnan, SFINCS-import, hybrid)."""
+    berakningsplats: str = "cpu_f64"
+    """K0-etikett för beräkningsbackend och precision (`cpu_f64`, `cuda_f64`, `cuda_f32`)."""
 
     def volymbalans(self) -> dict[str, float | bool]:
         """Regn på hela rutan (mark + tak) mot lagrat, utflöde, infiltration, avtappning och
@@ -578,6 +589,333 @@ class _SubgridAnkomstSparare:
             )
 
 
+def _utjamna_x_xp(qx: Any, u_giltig: Any, theta: float, xp: Any, dtyp: Any) -> Any:
+    if theta >= 1.0 or qx.shape[1] < 2:
+        return qx
+    w = dtyp(0.5 * (1.0 - theta))
+    th = dtyp(theta)
+    q_v = xp.empty_like(qx)
+    q_v[:, 0] = qx[:, 0]
+    q_v[:, 1:] = xp.where(u_giltig[:, :-1], qx[:, :-1], qx[:, 1:])
+    q_h = xp.empty_like(qx)
+    q_h[:, -1] = qx[:, -1]
+    q_h[:, :-1] = xp.where(u_giltig[:, 1:], qx[:, 1:], qx[:, :-1])
+    return th * qx + w * (q_v + q_h)
+
+
+def _utjamna_y_xp(qy: Any, v_giltig: Any, theta: float, xp: Any, dtyp: Any) -> Any:
+    if theta >= 1.0 or qy.shape[0] < 2:
+        return qy
+    w = dtyp(0.5 * (1.0 - theta))
+    th = dtyp(theta)
+    q_n = xp.empty_like(qy)
+    q_n[0, :] = qy[0, :]
+    q_n[1:, :] = xp.where(v_giltig[:-1, :], qy[:-1, :], qy[1:, :])
+    q_s = xp.empty_like(qy)
+    q_s[-1, :] = qy[-1, :]
+    q_s[:-1, :] = xp.where(v_giltig[1:, :], qy[1:, :], qy[:-1, :])
+    return th * qy + w * (q_n + q_s)
+
+
+def _bates_flode_xp(
+    q_tr: Any,
+    h_flode: Any,
+    lutning: Any,
+    manning_n: Any,
+    dt: float,
+    min_djup_m: float,
+    xp: Any,
+    dtyp: Any,
+) -> Any:
+    g = dtyp(GRAVITATION_M_S2)
+    dt_t = dtyp(dt)
+    froude = dtyp(FROUDE_MAX)
+    vat = h_flode > dtyp(min_djup_m)
+    hv = xp.where(vat, h_flode, dtyp(1.0))
+    q_rhs = q_tr - g * hv * dt_t * lutning
+    h_73 = (hv * hv) * xp.cbrt(hv)
+    c_frikt = g * dt_t * (manning_n * manning_n) / h_73
+    q_ny = (dtyp(2.0) * q_rhs) / (
+        dtyp(1.0) + xp.sqrt(dtyp(1.0) + dtyp(4.0) * c_frikt * xp.abs(q_rhs))
+    )
+    q_max = froude * hv * xp.sqrt(g * hv)
+    return xp.where(vat, xp.clip(q_ny, -q_max, q_max), dtyp(0.0))
+
+
+def _rand_q_xp(
+    h_kant: Any,
+    manning_kant: Any,
+    mask: Any,
+    lutning: Any,
+    bredd_andel: Any,
+    min_djup_m: float,
+    xp: Any,
+    dtyp: Any,
+) -> Any:
+    akt = mask & (h_kant > dtyp(min_djup_m))
+    ha = xp.where(akt, h_kant, dtyp(1.0))
+    na = xp.where(akt, manning_kant, dtyp(1.0))
+    q_man = (dtyp(1.0) / na) * xp.power(ha, dtyp(5.0 / 3.0)) * xp.sqrt(lutning)
+    q_krit = ha * xp.sqrt(dtyp(GRAVITATION_M_S2) * ha)
+    return xp.where(akt, bredd_andel * xp.minimum(q_man, q_krit), dtyp(0.0))
+
+
+def _kor_lokal_troghet_xp(
+    *,
+    xp: Any,
+    enhet_namn: BackendNamn,
+    dtyp: type[np.float64] | type[np.float32],
+    z_bed_np: NDArray[np.float64],
+    aktiv_np: NDArray[np.bool_],
+    aktiv_area_np: NDArray[np.float64],
+    regn_area_np: NDArray[np.float64],
+    manning_np: NDArray[np.float64],
+    manning_u_np: NDArray[np.float64],
+    manning_v_np: NDArray[np.float64],
+    u_giltig_np: NDArray[np.bool_],
+    v_giltig_np: NDArray[np.bool_],
+    z_kant_u_np: NDArray[np.float64],
+    z_kant_v_np: NDArray[np.float64],
+    rand_konfig: RandUtflodeKonfig,
+    dx: float,
+    dy: float,
+    tider: Sequence[float],
+    intens_m_s: Sequence[float],
+    t_start: float,
+    t_slut: float,
+    cfl: float,
+    min_djup_m: float,
+    dt_max_s: float,
+    theta: float,
+    total_doman_area: float,
+    total_aktiv_area: float,
+    total_regn_area: float,
+    takvatten_pa: bool,
+    tak_m2: float,
+    tak_ut_m2: float,
+    tak_ledning_m2: float,
+    t_klocka_0: float,
+) -> TvadResultat:
+    """Tät 2D lokal-tröghetsloop på valfri array-backend (`cupy` eller `numpy`)."""
+    hojd, bredd = z_bed_np.shape
+    z_bed = till_enhet(z_bed_np, xp, dtype=dtyp)
+    aktiv = till_enhet(aktiv_np, xp, dtype=np.bool_)
+    regn_area = till_enhet(regn_area_np, xp, dtype=dtyp)
+    manning = till_enhet(manning_np, xp, dtype=dtyp)
+    manning_u = till_enhet(manning_u_np, xp, dtype=dtyp)
+    manning_v = till_enhet(manning_v_np, xp, dtype=dtyp)
+    u_giltig = till_enhet(u_giltig_np, xp, dtype=np.bool_)
+    v_giltig = till_enhet(v_giltig_np, xp, dtype=np.bool_)
+    z_kant_u = till_enhet(z_kant_u_np, xp, dtype=dtyp)
+    z_kant_v = till_enhet(z_kant_v_np, xp, dtype=dtyp)
+    safe_area = till_enhet(np.where(aktiv_np, aktiv_area_np, 1.0), xp, dtype=dtyp)
+
+    vast_mask = till_enhet(rand_konfig.vast_mask, xp, dtype=np.bool_)
+    vast_lut = till_enhet(rand_konfig.vast_lutning, xp, dtype=dtyp)
+    vast_ba = till_enhet(rand_konfig.vast_bredd_andel, xp, dtype=dtyp)
+    ost_mask = till_enhet(rand_konfig.ost_mask, xp, dtype=np.bool_)
+    ost_lut = till_enhet(rand_konfig.ost_lutning, xp, dtype=dtyp)
+    ost_ba = till_enhet(rand_konfig.ost_bredd_andel, xp, dtype=dtyp)
+    norr_mask = till_enhet(rand_konfig.norr_mask, xp, dtype=np.bool_)
+    norr_lut = till_enhet(rand_konfig.norr_lutning, xp, dtype=dtyp)
+    norr_ba = till_enhet(rand_konfig.norr_bredd_andel, xp, dtype=dtyp)
+    soder_mask = till_enhet(rand_konfig.soder_mask, xp, dtype=np.bool_)
+    soder_lut = till_enhet(rand_konfig.soder_lutning, xp, dtype=dtyp)
+    soder_ba = till_enhet(rand_konfig.soder_bredd_andel, xp, dtype=dtyp)
+
+    volym = xp.zeros((hojd, bredd), dtype=dtyp)
+    h_eff = xp.zeros((hojd, bredd), dtype=dtyp)
+    zs = z_bed.copy()
+    qx = xp.zeros((hojd, max(0, bredd - 1)), dtype=dtyp)
+    qy = xp.zeros((max(0, hojd - 1), bredd), dtype=dtyp)
+    max_djup = xp.zeros((hojd, bredd), dtype=dtyp)
+    max_hast = xp.zeros((hojd, bredd), dtype=dtyp)
+    max_fara = xp.zeros((hojd, bredd), dtype=dtyp)
+    tid_01 = xp.full((hojd, bredd), np.nan, dtype=np.float32)
+    tid_02 = xp.full((hojd, bredd), np.nan, dtype=np.float32)
+    ut_vol = xp.zeros((hojd, bredd), dtype=dtyp)
+    q_cell_x = xp.zeros((hojd, bredd), dtype=dtyp)
+    q_cell_y = xp.zeros((hojd, bredd), dtype=dtyp)
+
+    noll = dtyp(0.0)
+    halv = dtyp(0.5)
+    inv_dx = dtyp(1.0 / dx)
+    inv_dy = dtyp(1.0 / dy)
+    min_dx = min(dx, dy)
+    in_m3 = 0.0
+    ut_m3 = 0.0
+    regn_summa_m = 0.0
+    antal_steg = 0
+    t_nu = t_start
+    u_max = 0.0
+    courant_hast_max = 0.0
+
+    while t_nu < t_slut - 1e-12:
+        h_max = float(till_numpy(xp.max(h_eff))) if h_eff.size > 0 else 0.0
+        vaghast = math.sqrt(GRAVITATION_M_S2 * max(h_max, min_djup_m)) + u_max
+        dt_cfl = cfl * min_dx / vaghast
+        nasta_t = nasta_regnbrytpunkt(t_nu, tider, t_slut)
+        dt = min(dt_cfl, dt_max_s, nasta_t - t_nu)
+        if dt < _DT_MIN_S and (t_slut - t_nu) > _DT_MIN_S:
+            dt = min(_DT_MIN_S, nasta_t - t_nu)
+        if dt <= 0.0:
+            break
+        courant_hast_max = max(courant_hast_max, u_max * dt / min_dx)
+
+        regn_m = integrera_regn_m(t_nu, t_nu + dt, tider, intens_m_s)
+        regn_summa_m += regn_m
+        if regn_m > 0.0 and total_regn_area > 0.0:
+            volym = volym + regn_area * dtyp(regn_m)
+            in_m3 += total_regn_area * regn_m
+            ut_m3 += tak_ut_m2 * regn_m
+            h_eff = xp.where(aktiv, volym / safe_area, noll)
+            zs = z_bed + h_eff
+
+        if bredd > 1:
+            h_u = xp.where(
+                u_giltig,
+                xp.maximum(noll, xp.maximum(zs[:, :-1], zs[:, 1:]) - z_kant_u),
+                noll,
+            )
+            sx = (zs[:, 1:] - zs[:, :-1]) * inv_dx
+            qx_bar = _utjamna_x_xp(qx, u_giltig, theta, xp, dtyp)
+            qx = _bates_flode_xp(qx_bar, h_u, sx, manning_u, dt, min_djup_m, xp, dtyp)
+
+        if hojd > 1:
+            h_v = xp.where(
+                v_giltig,
+                xp.maximum(noll, xp.maximum(zs[:-1, :], zs[1:, :]) - z_kant_v),
+                noll,
+            )
+            sy = (zs[1:, :] - zs[:-1, :]) * inv_dy
+            qy_bar = _utjamna_y_xp(qy, v_giltig, theta, xp, dtyp)
+            qy = _bates_flode_xp(qy_bar, h_v, sy, manning_v, dt, min_djup_m, xp, dtyp)
+
+        q_vast = _rand_q_xp(
+            h_eff[:, 0], manning[:, 0], vast_mask, vast_lut, vast_ba, min_djup_m, xp, dtyp
+        )
+        q_ost = _rand_q_xp(
+            h_eff[:, -1], manning[:, -1], ost_mask, ost_lut, ost_ba, min_djup_m, xp, dtyp
+        )
+        q_norr = _rand_q_xp(
+            h_eff[0, :], manning[0, :], norr_mask, norr_lut, norr_ba, min_djup_m, xp, dtyp
+        )
+        q_soder = _rand_q_xp(
+            h_eff[-1, :], manning[-1, :], soder_mask, soder_lut, soder_ba, min_djup_m, xp, dtyp
+        )
+
+        dydt = dtyp(dy * dt)
+        dxdt = dtyp(dx * dt)
+        ut_vol[...] = noll
+        if bredd > 1:
+            ut_vol[:, :-1] += xp.maximum(noll, qx) * dydt
+            ut_vol[:, 1:] += xp.maximum(noll, -qx) * dydt
+        if hojd > 1:
+            ut_vol[:-1, :] += xp.maximum(noll, qy) * dxdt
+            ut_vol[1:, :] += xp.maximum(noll, -qy) * dxdt
+        ut_vol[:, 0] += q_vast * dydt
+        ut_vol[:, -1] += q_ost * dydt
+        ut_vol[0, :] += q_norr * dxdt
+        ut_vol[-1, :] += q_soder * dxdt
+
+        over_ut = ut_vol > volym
+        skala = xp.where(over_ut, volym / xp.where(over_ut, ut_vol, dtyp(1.0)), dtyp(1.0))
+        if bredd > 1:
+            qx = xp.where(qx >= noll, qx * skala[:, :-1], qx * skala[:, 1:])
+        if hojd > 1:
+            qy = xp.where(qy >= noll, qy * skala[:-1, :], qy * skala[1:, :])
+        q_vast = q_vast * skala[:, 0]
+        q_ost = q_ost * skala[:, -1]
+        q_norr = q_norr * skala[0, :]
+        q_soder = q_soder * skala[-1, :]
+
+        if bredd > 1:
+            dv_x = qx * dydt
+            volym[:, :-1] -= dv_x
+            volym[:, 1:] += dv_x
+        if hojd > 1:
+            dv_y = qy * dxdt
+            volym[:-1, :] -= dv_y
+            volym[1:, :] += dv_y
+        dv_vast = q_vast * dydt
+        dv_ost = q_ost * dydt
+        dv_norr = q_norr * dxdt
+        dv_soder = q_soder * dxdt
+        volym[:, 0] -= dv_vast
+        volym[:, -1] -= dv_ost
+        volym[0, :] -= dv_norr
+        volym[-1, :] -= dv_soder
+        ut_steg = xp.sum(dv_vast) + xp.sum(dv_ost) + xp.sum(dv_norr) + xp.sum(dv_soder)
+        ut_m3 += float(till_numpy(ut_steg))
+
+        volym = xp.where(aktiv, xp.maximum(volym, noll), noll)
+
+        h_fore = h_eff
+        h_eff = xp.where(aktiv, volym / safe_area, noll)
+        zs = z_bed + h_eff
+
+        t_nu += dt
+        antal_steg += 1
+
+        max_djup = xp.maximum(max_djup, h_eff)
+
+        q_cell_x[...] = noll
+        if bredd > 1:
+            q_cell_x[:, :-1] += halv * qx
+            q_cell_x[:, 1:] += halv * qx
+        q_cell_x[:, 0] -= halv * q_vast
+        q_cell_x[:, -1] += halv * q_ost
+
+        q_cell_y[...] = noll
+        if hojd > 1:
+            q_cell_y[:-1, :] += halv * qy
+            q_cell_y[1:, :] += halv * qy
+        q_cell_y[0, :] -= halv * q_norr
+        q_cell_y[-1, :] += halv * q_soder
+
+        q_mag = xp.hypot(q_cell_x, q_cell_y)
+        h_vel = xp.maximum(h_fore, h_eff)
+        vat_nu = aktiv & (h_vel > dtyp(min_djup_m))
+        hast = xp.where(vat_nu, q_mag / xp.where(vat_nu, h_vel, dtyp(1.0)), noll)
+        u_max = float(till_numpy(xp.max(hast))) if hast.size > 0 else 0.0
+        max_hast = xp.maximum(max_hast, hast)
+        max_fara = xp.maximum(max_fara, xp.where(vat_nu, q_mag, noll))
+
+        t_f32 = np.float32(t_nu)
+        tid_01 = xp.where(aktiv & xp.isnan(tid_01) & (h_eff >= dtyp(0.1)), t_f32, tid_01)
+        tid_02 = xp.where(aktiv & xp.isnan(tid_02) & (h_eff >= dtyp(0.2)), t_f32, tid_02)
+
+    synkronisera(xp)
+    lagrat_m3 = float(till_numpy(xp.sum(volym)))
+    volymfel_rel = abs(in_m3 - ut_m3 - lagrat_m3) / in_m3 if in_m3 > 0.0 else 0.0
+    aktiv_andel = total_aktiv_area / total_doman_area if total_doman_area > 0.0 else 0.0
+    kortid_s = time.perf_counter() - t_klocka_0
+
+    return TvadResultat(
+        max_djup_m=np.asarray(till_numpy(max_djup), dtype=np.float32),
+        max_hastighet_m_s=np.asarray(till_numpy(max_hast), dtype=np.float32),
+        fara_m2_s=np.asarray(till_numpy(max_fara), dtype=np.float32),
+        tid_till_0_1m_s=np.asarray(till_numpy(tid_01), dtype=np.float32),
+        tid_till_0_2m_s=np.asarray(till_numpy(tid_02), dtype=np.float32),
+        slut_djup_m=np.asarray(till_numpy(h_eff), dtype=np.float32),
+        in_m3=in_m3,
+        lagrat_m3=lagrat_m3,
+        ut_m3=ut_m3,
+        volymfel_rel=volymfel_rel,
+        antal_tidssteg=antal_steg,
+        kortid_s=kortid_s,
+        niva="full2d",
+        aktiv_cell_andel=aktiv_andel,
+        regn_mark_m3=total_aktiv_area * regn_summa_m,
+        regn_tak_m3=tak_m2 * regn_summa_m,
+        takvatten=takvatten_pa,
+        takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
+        takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
+        courant_hast_max=courant_hast_max,
+        berakningsplats=berakningsplats(enhet_namn, dtyp),
+    )
+
+
 def kor_2d_lokal_troghet(
     mark_z: NDArray[np.float32],
     markslag: NDArray[np.uint8],
@@ -598,6 +936,8 @@ def kor_2d_lokal_troghet(
     kalltermer: Kalltermer | None = None,
     takvatten: TakvattenFordelning | None = None,
     brytlinjer: Sequence[BrytlinjePost] = (),
+    enhet: str = "cpu",
+    precision: Literal["f64", "f32"] = "f64",
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -647,6 +987,11 @@ def kor_2d_lokal_troghet(
         raise TvadFel(f"dt_max_s måste vara > 0, fick {dt_max_s}.")
     if not math.isfinite(theta) or theta <= 0.0 or theta > 1.0:
         raise TvadFel(f"theta måste ligga i (0, 1], fick {theta}.")
+    if precision not in ("f64", "f32"):
+        raise TvadFel(f"precision måste vara 'f64' eller 'f32', fick {precision!r}.")
+
+    xp, enhet_namn = hamta_backend(enhet)
+    dtyp_val: type[np.float64] | type[np.float32] = np.float32 if precision == "f32" else np.float64
 
     tider, intens_m_s, t_start, t_slut = validera_regnserie(
         regn_tid_s, regn_intensitet_mm_h, slut_tid_s
@@ -718,6 +1063,50 @@ def kor_2d_lokal_troghet(
     rand_konfig = berakna_rand_utflode_konfig(
         z_bed, aktiv, dx, dy, oppna_rander=oppna_rander, subgrid=subgrid
     )
+
+    if ar_gpu_backend(xp) or precision == "f32":
+        if subgrid is not None or kalltermer is not None:
+            if enhet == "cuda":
+                raise TvadFel(
+                    "GPU-vägen i kor_2d_lokal_troghet stöder inte subgrid_faktor > 1 eller "
+                    "kalltermer ännu; använd enhet='cpu' eller enhet='auto'."
+                )
+        else:
+            return _kor_lokal_troghet_xp(
+                xp=xp,
+                enhet_namn=enhet_namn,
+                dtyp=dtyp_val,
+                z_bed_np=z_bed,
+                aktiv_np=aktiv,
+                aktiv_area_np=aktiv_area,
+                regn_area_np=regn_area,
+                manning_np=manning,
+                manning_u_np=manning_u,
+                manning_v_np=manning_v,
+                u_giltig_np=u_giltig,
+                v_giltig_np=v_giltig,
+                z_kant_u_np=z_kant_fin_u,
+                z_kant_v_np=z_kant_fin_v,
+                rand_konfig=rand_konfig,
+                dx=dx,
+                dy=dy,
+                tider=tider,
+                intens_m_s=intens_m_s,
+                t_start=t_start,
+                t_slut=t_slut,
+                cfl=cfl,
+                min_djup_m=min_djup_m,
+                dt_max_s=dt_max_s,
+                theta=theta,
+                total_doman_area=total_doman_area,
+                total_aktiv_area=total_aktiv_area,
+                total_regn_area=total_regn_area,
+                takvatten_pa=takvatten is not None,
+                tak_m2=tak_m2,
+                tak_ut_m2=tak_ut_m2,
+                tak_ledning_m2=tak_ledning_m2,
+                t_klocka_0=t_klocka_0,
+            )
 
     volym = np.zeros((hojd, bredd), dtype=np.float64)
     h_eff = np.zeros((hojd, bredd), dtype=np.float64)
@@ -1149,6 +1538,7 @@ def skriv_tvad_resultat_k6(
         "kontrakt_ut": KONTRAKT_K6,
         "niva": resultat.niva,
         "epsg": geo.epsg,
+        "berakningsplats": resultat.berakningsplats,
     }
     if resultat.sanktermer is not None:
         param_dict["sanktermer"] = resultat.sanktermer
