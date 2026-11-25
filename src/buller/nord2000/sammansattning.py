@@ -86,7 +86,7 @@ class Sammansattningsval:
     skuggzonsvikter: Skuggzonsvikter = "ovre_band"
     skuggzon: Skuggzonslasning = field(default_factory=Skuggzonslasning)
     fresnelzon_delmodell3: Fresnelzonsregel = "klippt"  # P-3 tolkning 1
-    overgangshojd: Overgangshojd = "prim"  # ekv. 140 för övergångssegment, P-3 tolkning 9
+    overgangshojd: Overgangshojd = "bis"  # ekv. 140 för övergångssegment, AV 1849/00 4.4.2 (P-S6)
     viktregel: d4.Viktregel = "av1849"  # ekv. 187, 220, 269
     vinkelregel: d6.Vinkelregel = "avsnitt_5_7_3"  # delmodell 6, ekv. 227–228
     # Räkna delmodell 3 och r_flat även för plan mark (för prövning; se PLAN_TOLERANS_M).
@@ -389,6 +389,7 @@ def terrangeffekt(
                     skuggzon=val.skuggzon,
                     uppskjut_fel=True,
                     overgangshojd=val.overgangshojd,
+                    koherens_spridningszon=koherens_spridningszon,
                 )
             except BullerFel as fel:
                 raise _med_namn("Delmodell 3 (icke-plan terräng)", fel) from fel
@@ -435,6 +436,7 @@ def terrangeffekt(
                     uppat=val.uppat,
                     ct2_form=val.ct2_form,
                     skuggzon=val.skuggzon,
+                    koherens_spridningszon=koherens_spridningszon,
                 )
                 x_s, z_s, x_r, z_r = _kalla_mottagare_delmodell7(geo, resultat4.stralar, atmosfar)
                 dl71 = d7.turbulensspridning_en_kant_db(
@@ -469,6 +471,7 @@ def terrangeffekt(
                     uppat=val.uppat,
                     ct2_form=val.ct2_form,
                     skuggzon=val.skuggzon,
+                    koherens_spridningszon=koherens_spridningszon,
                 )
                 f5 = resultat5.stralar.form
                 dl72 = d7.turbulensspridning_tva_kanter_db(
@@ -509,6 +512,7 @@ def terrangeffekt(
                     uppat=val.uppat,
                     ct2_form=val.ct2_form,
                     skuggzon=val.skuggzon,
+                    koherens_spridningszon=koherens_spridningszon,
                 )
                 dl72_6 = d7.turbulensspridning_tva_kanter_db(
                     frekvenser_hz,

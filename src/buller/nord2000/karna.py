@@ -32,10 +32,15 @@ from buller.nord2000.delmodell2 import Fresnelzonsval, Skuggzonsvikter
 from buller.nord2000.delmodell3 import Fresnelzonsregel, Overgangshojd
 from buller.nord2000.delmodell4 import Viktregel
 from buller.nord2000.delmodell6 import Vinkelregel
-from buller.nord2000.delmodell10 import CirkelStrale, RatStrale, Spridningszon, Stralbana
+from buller.nord2000.delmodell10 import (
+    MarkbegransadStrale,
+    RatStrale,
+    Spridningszon,
+    Stralbana,
+)
 from buller.nord2000.frekvenser import mittfrekvenser_hz
 from buller.nord2000.luftabsorption import luftabsorption_db, rentonsdampning_db_per_m
-from buller.nord2000.refraktion import atmosfar_ur_vader, calc_eq_ssp
+from buller.nord2000.refraktion import atmosfar_ur_vader
 from buller.nord2000.refraktion_mark import Skuggzonslasning
 from buller.nord2000.sammansattning import (
     Profilgeometri,
@@ -217,7 +222,7 @@ class Nord2000Karna:
         viktregel: Viktregel = "av1849",
         vinkelregel: Vinkelregel = "avsnitt_5_7_3",
         fresnelzon_delmodell3: Fresnelzonsregel = "klippt",
-        overgangshojd: Overgangshojd = "prim",
+        overgangshojd: Overgangshojd = "bis",
     ) -> None:
         if overgangshojd not in ("prim", "bis"):
             raise BullerFel(
@@ -329,8 +334,12 @@ class Nord2000Karna:
         if spridningszon is not None:
             strale: Stralbana
             if atmosfar.har_refraktion:
-                eq_ssp = calc_eq_ssp(geo.h_s_m, geo.h_r_m, atmosfar)
-                strale = CirkelStrale(geo.x_s_m, geo.z_s_m, geo.x_r_m, geo.z_r_m, eq_ssp.xi_per_m)
+                # AV 1106/07 ekv. (292): RayCurvature + HeightOfCircularRay, nedåt begränsad av
+                # markytan vid uppåtbrytning enligt AV 1851/00 avsnitt 7.
+                cirkel = delmodell8.cirkelstrale_ur_atmosfar(
+                    geo.x_s_m, geo.z_s_m, geo.x_r_m, geo.z_r_m, atmosfar
+                )
+                strale = MarkbegransadStrale(cirkel, geo.x_m, geo.z_m)
             else:
                 strale = RatStrale(geo.x_s_m, geo.z_s_m, geo.x_r_m, geo.z_r_m)
             sz_res = delmodell10.spridningszon(frekvenser, strale, spridningszon, atmosfar.c_m_s)

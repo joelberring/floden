@@ -308,3 +308,23 @@ class TestSkuggzonISkarmmodellerna(unittest.TestCase):
         self.assertEqual(resultat[0], resultat[1])
         self.assertEqual(resultat[0], resultat[2])
         self.assertTrue(any(v is not None and v < 0.0 for v in resultat[0]))
+
+    def test_koherens_spridningszon_vidarebefordras_till_delmodell3_och_4(self) -> None:
+        """AV 1106/07 5.22: F_s ska föras in även i delmodell 3 (dal) och delmodell 4 (skärm)."""
+        f_s = np.full(F.shape[0], 0.2, dtype=np.float64)
+        atm = atmosfar_ur_vader(Vader(**TURBULENS))
+        dal = _profil([0.0, 20.0, 50.0, 80.0, 100.0], [0.0, -3.0, -4.0, -3.0, 0.0], [200.0] * 4)
+        dal_utan = terrangeffekt(F, dal, atm)
+        dal_med = terrangeffekt(F, dal, atm, koherens_spridningszon=f_s)
+        assert dal_utan.delmodell3_db is not None and dal_med.delmodell3_db is not None
+        self.assertGreater(
+            float(np.max(np.abs(dal_med.delmodell3_db - dal_utan.delmodell3_db))), 0.5
+        )
+
+        skarm = _tunn_skarm(3.0, sigma=200.0)
+        skarm_utan = terrangeffekt(F, skarm, atm)
+        skarm_med = terrangeffekt(F, skarm, atm, koherens_spridningszon=f_s)
+        assert skarm_utan.delmodell4_db is not None and skarm_med.delmodell4_db is not None
+        self.assertGreater(
+            float(np.max(np.abs(skarm_med.delmodell4_db - skarm_utan.delmodell4_db))), 0.1
+        )

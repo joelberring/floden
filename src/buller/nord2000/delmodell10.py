@@ -513,6 +513,41 @@ class CirkelStrale:
         return Stralpunkt(z_m=z_ray, r1_m=r1, r2_m=r2)
 
 
+@dataclass(frozen=True)
+class MarkbegransadStrale:
+    """Strålbana begränsad nedåt av markytan (AV 1851/00 avsnitt 7).
+
+    Vid stark uppåtbrytning (ξ_ray < 0) kan HeightOfCircularRay (ekv. 292) ge strålhöjder
+    under markytan. Enligt AV 1851/00 avsnitt 7 sätts strålens höjd över mark då till 0,
+    alltså z_ray(x) = max(z_ray(x), z_mark(x)).
+    """
+
+    strale: Stralbana
+    mark_x_m: Flyttal
+    mark_z_m: Flyttal
+
+    def __post_init__(self) -> None:
+        if self.mark_x_m.ndim != 1 or self.mark_x_m.shape != self.mark_z_m.shape:
+            raise BullerFel("Markprofilen ska bestå av två lika långa 1D-vektorer (x, z).")
+        if self.mark_x_m.shape[0] < 2:
+            raise BullerFel("Markprofilen ska ha minst två punkter.")
+
+    @property
+    def x_start_m(self) -> float:
+        return self.strale.x_start_m
+
+    @property
+    def x_slut_m(self) -> float:
+        return self.strale.x_slut_m
+
+    def punkt(self, x_m: float) -> Stralpunkt:
+        p = self.strale.punkt(x_m)
+        z_mark = float(np.interp(x_m, self.mark_x_m, self.mark_z_m))
+        if p.z_m < z_mark:
+            return Stralpunkt(z_m=z_mark, r1_m=p.r1_m, r2_m=p.r2_m)
+        return p
+
+
 # --------------------------------------------------------------------------------------------
 # Sträckan i zonen och begränsad höjd (ekv. 292–294)
 # --------------------------------------------------------------------------------------------
