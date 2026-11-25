@@ -236,7 +236,7 @@ def test_soltimmar_fasad_analytiska_vaderstreck_och_motstaende_vagg() -> None:
 def test_k21_losare_utokade_solstudier_kor_och_registreras(tmp_path: Path) -> None:
     for namn in (
         "dagsljus.soltimmar_mark",
-        "dagsljus.sammanhangande_soltimmar_mark",
+        "dagsljus.soltimmar_sammanhangande",
         "dagsljus.skuggmask_vid_klockslag",
         "dagsljus.soltimmar_fasad",
     ):

@@ -551,7 +551,7 @@ class SoltimmarMark(_DagsljusLosare):
 
 
 class SammanhangandeSoltimmarMark(_DagsljusLosare):
-    namn: ClassVar[str] = "dagsljus.sammanhangande_soltimmar_mark"
+    namn: ClassVar[str] = "dagsljus.soltimmar_sammanhangande"
     beskrivning: ClassVar[str] = (
         "Längsta sammanhängande solperiod (h) per dygn/tidsfönster för markceller."
     )
