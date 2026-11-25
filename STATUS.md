@@ -692,3 +692,8 @@ Gjort: Inventering i `docs/UX-GENOMGANG.md` ("Analyser i kartan"). Servern: fär
 Mätt: `npm test` 369 av 369, typkontroll och build rena, ruff och mypy rena, `tests/webb/test_analyslager.py` 17 tester, webbläsarprov `tools/analyser_prov.py` (demokvarteret och syntetiskt geografiprojekt) skärmbilder i `docs/bilder/analyser/`.
 Öppet: dynamikens hastighet och ankomsttid finns inte i modellen (bara max_djup; tid till överfall per sänka skrivs inte). Luft har skalor men ingen flik i steg 4. Buller har ingen lösare. K40/K41 är tal, inte kartlager.
 Nästa: luftflik när en luftvy finns; ev. lösarversion som skriver t_overfall per sänka.
+
+## 2026-11-25 morgon – projektlistan fastnade (samordnaren)
+
+- På servern stod projektlistan kvar på "Hämtar projekten ..." efter uppdateringen. Konsolen visade att den gamla Caddyfilen (utan `connect-src`) stoppade kartans `data:`-hämtningar, och listan väntade på kartan och på varje projekts detaljer och miniatyr.
+- Listan ritas nu direkt när `/api/projekt`-svaret kommer; status och miniatyr fylls i efter hand per projekt, och ett fel i kartan visas som en rad i kartkortet i stället för att hålla kvar listan.

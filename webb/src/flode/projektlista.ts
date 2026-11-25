@@ -99,32 +99,41 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
     let lista: Rad[] = [];
     try {
       const s = await hamtaProjektLista();
-      lista = await Promise.all(
-        s.projekt.map(async (p): Promise<Rad> => {
-          sattProjektNamn(p.id, p.namn);
-          let detalj: ProjektSvar | null = null;
-          let miniatyr: string | null = null;
-          try {
-            detalj = await hamtaProjekt(p.id);
-          } catch {
-            detalj = null;
-          }
-          try {
-            const b = await hamtaBildMedUtbredning(`/api/kartverktyg/${encodeURIComponent(p.id)}/geometri/skuggning.png`);
-            miniatyr = b.url;
-            urler.push(b.url);
-          } catch {
-            miniatyr = null;
-          }
-          return { id: p.id, namn: p.namn, undertitel: p.undertitel, paahittat: p.paahittat, roll: rollRad(p), detalj, miniatyr };
-        }),
-      );
+      // Listan ritas direkt; status och miniatyr fylls i efter hand, så att ett långsamt eller trasigt projekt
+      // (stor geografi, bakgrundskarta som inte laddas) aldrig håller kvar "Hämtar projekten ...".
+      lista = s.projekt.map((p): Rad => {
+        sattProjektNamn(p.id, p.namn);
+        return { id: p.id, namn: p.namn, undertitel: p.undertitel, paahittat: p.paahittat, roll: rollRad(p), detalj: null, miniatyr: null };
+      });
     } catch (e) {
       if (avslutad) return;
       rader.innerHTML = felBeskedHtml(sidFel(e, "Projekten", kontoLage(), "/#/"), esc);
       kopplaLaddaOm(rader);
       return;
     }
+    const fyllIDetaljer = (ritaOm: () => void): void => {
+      for (const r of lista) {
+        void (async () => {
+          try {
+            r.detalj = await hamtaProjekt(r.id);
+          } catch {
+            r.detalj = null;
+          }
+          try {
+            const b = await hamtaBildMedUtbredning(`/api/kartverktyg/${encodeURIComponent(r.id)}/geometri/skuggning.png`);
+            if (avslutad) {
+              URL.revokeObjectURL(b.url);
+              return;
+            }
+            r.miniatyr = b.url;
+            urler.push(b.url);
+          } catch {
+            r.miniatyr = null;
+          }
+          if (!avslutad) ritaOm();
+        })();
+      }
+    };
     if (avslutad) return;
     if (lista.length === 0) {
       rader.innerHTML = `<p class="flode-dampad">Det finns inga projekt än. Demokvarteret byggs med <code>floden demo</code>; ladda sedan om sidan.</p>`;
@@ -149,6 +158,7 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
         .join("");
     };
     ritaRader();
+    fyllIDetaljer(ritaRader);
     // Första klicket på ett annat projekt väljer det och visar det på kartan; på det valda öppnas Förslag (raden säger vilket).
     rader.addEventListener("click", (h) => {
       const a = (h.target as Element).closest<HTMLAnchorElement>("a[data-projekt]");
@@ -158,7 +168,13 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null): Avslu
       ritaRader();
       void visaKarta(val);
     });
-    await visaKarta(val);
+    try {
+      await visaKarta(val);
+    } catch (e) {
+      // Kartan får aldrig ta listan med sig (t.ex. CSP som stoppar kartans bilder).
+      kort.hidden = false;
+      kort.innerHTML = `<span class="flode-fel" role="alert">Kartan kunde inte visas: ${esc(e instanceof Error ? e.message : String(e))}</span>`;
+    }
   })();
 
   return {
