@@ -116,6 +116,16 @@ def hantera_nycklar(adapter: KontoAdapter, req: Forfragan, delar: list[str]) -> 
         if len(delar) != 1:
             return _fel(404, "okand", "Okänd ändpunkt")
         typ = delar[0]
+        if typ == "primar-ai":
+            if req.metod != "PUT":
+                return _metod_ej_tillaten()
+            kropp = _json_kropp(req)
+            vald_typ = kropp.get("typ")
+            if vald_typ is not None and not isinstance(vald_typ, str):
+                return _fel(400, "ogiltigt", "Fältet typ måste vara text eller null")
+            ny_primar = forrad.satt_primar_ai(konto_id, vald_typ)
+            logg.info("primar ai andrad konto=%s typ=%s", konto_id, ny_primar or "ingen")
+            return _json(200, {"status": "sparad", "primar_ai": ny_primar})
         forrad.typ(typ)  # 404 för en okänd typ, före allt annat
         if req.metod == "GET":
             return _json(200, {**forrad.status(konto_id, typ), "paslagen": forrad.paslagen})

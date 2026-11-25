@@ -3,7 +3,15 @@ import { test } from "node:test";
 import { adminTillaten, arbetsbankTillaten, settKontoLage, tolkaKontoSvar } from "./konto.ts";
 import { flodeHuvudHtml, type SkalSida } from "./flode/huvud.ts";
 import { rollRad } from "./flode/projektlogik.ts";
-import { adminOrganisationHtml, adminProjektHtml, mcpKommando, nyckelStatusText, sidaAdministration, sidaNycklar } from "./kontosidor-html.ts";
+import {
+  adminOrganisationHtml,
+  adminProjektHtml,
+  mcpKommando,
+  mcpKonfig,
+  nyckelStatusText,
+  sidaAdministration,
+  sidaNycklar,
+} from "./kontosidor-html.ts";
 import type { McpAvsnitt } from "./kontosidor-html.ts";
 import { sidaOmFloden } from "./om/sida.ts";
 import { sidaOm } from "./sidor.ts";
@@ -218,6 +226,62 @@ test("Anslutna appar: adressen till Claude-appen, namn maskeras och ta bort finn
   assert.match(text(tom), /Inga anslutna appar/);
   const hamtar = sidaNycklar(nycklar(true), null, mcpSvar(0));
   assert.match(hamtar, /data-anslutna-appar/);
+  settKontoLage({ lage: "av" });
+});
+
+test("MCP-klientväljare och aktiv/primär AI-leverantör på sidan Nycklar", () => {
+  settKontoLage(anvandare());
+  const hemlig = "fl_mcp_" + "B".repeat(43);
+  const agy = mcpKonfig(MCP_URL, hemlig, "antigravity");
+  assert.match(agy, /"mcpServers"/);
+  assert.match(agy, new RegExp(`"Authorization": "Bearer ${hemlig}"`));
+  assert.match(mcpKonfig(MCP_URL, hemlig, "codex"), /\[mcp_servers\.floden\]/);
+  assert.match(mcpKonfig(MCP_URL, hemlig, "http"), /Authorization: Bearer /);
+
+  const aiNycklar: NycklarSvar = {
+    paslagen: true,
+    orsak: null,
+    text: null,
+    primar_ai: "gemini",
+    ai_leverantorer: ["anthropic", "gemini", "openai"],
+    typer: [
+      {
+        typ: "anthropic",
+        namn: "Anthropic (Claude)",
+        kategori: "ai",
+        beskrivning: "Claude",
+        falt: [{ id: "nyckel", namn: "API-nyckel", krav: true, val: [] }],
+        sparad: 1800000000,
+        sparad_datum: "2027-01-15",
+        slutar_pa: "1111",
+      },
+      {
+        typ: "gemini",
+        namn: "Google Gemini",
+        kategori: "ai",
+        beskrivning: "Gemini",
+        falt: [{ id: "nyckel", namn: "API-nyckel", krav: true, val: [] }],
+        sparad: 1800000000,
+        sparad_datum: "2027-01-15",
+        slutar_pa: "2222",
+      },
+      {
+        typ: "openai",
+        namn: "OpenAI",
+        kategori: "ai",
+        beskrivning: "OpenAI",
+        falt: [{ id: "nyckel", namn: "API-nyckel", krav: true, val: [] }],
+        sparad: null,
+        sparad_datum: null,
+        slutar_pa: null,
+      },
+    ],
+  };
+  const sida = sidaNycklar(aiNycklar, null, { ...mcpSvar(1), klient: "antigravity" });
+  assert.match(sida, /data-primar-ai="gemini" checked/);
+  assert.match(sida, /data-primar-ai="openai" disabled/);
+  assert.match(sida, /data-mcp-klient="antigravity" aria-pressed="true"/);
+  assert.match(sida, /mcp_config\.json/);
   settKontoLage({ lage: "av" });
 });
 

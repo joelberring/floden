@@ -109,13 +109,73 @@ function nyckelFormular(n: NyckelStatus): string {
     </section>`;
 }
 
+/* ---------- Primär AI-leverantör ---------- */
+
+/** Sektion för att välja vilken sparad AI-API-nyckel som ska vara aktiv/primär. */
+export function primarAiAvsnitt(svar: NycklarSvar): string {
+  const aiTyper = svar.typer.filter((t) => t.kategori === "ai");
+  if (aiTyper.length === 0) return "";
+  const sparade = aiTyper.filter((t) => t.sparad !== null);
+  const primar = svar.primar_ai ?? null;
+  if (sparade.length === 0) {
+    return `<section class="nyckel-avsnitt" data-primar-ai-avsnitt>
+      <div class="sektionsrad linje-under-stark">${etikett("Aktiv AI-leverantör")}</div>
+      <p class="avsnitt-ingress">Du kan spara nycklar för flera AI-leverantörer (Claude, Google Gemini, OpenAI) nedan och välja vilken som ska vara primär.</p>
+      <p class="dampad">Ingen AI-nyckel sparad än.</p>
+    </section>`;
+  }
+  const knappar = aiTyper
+    .map((t) => {
+      const arSparad = t.sparad !== null;
+      const arPrimar = arSparad && primar === t.typ;
+      const status = arPrimar ? " (primär)" : arSparad ? " (sparad)" : " (ej sparad)";
+      return `<label class="val-rad"><input type="radio" name="primar_ai" value="${esc(t.typ)}" data-primar-ai="${esc(t.typ)}"${arPrimar ? " checked" : ""}${arSparad ? "" : " disabled"} /> ${esc(t.namn)}<span class="dampad">${esc(status)}</span></label>`;
+    })
+    .join("");
+  return `<section class="nyckel-avsnitt" data-primar-ai-avsnitt>
+      <div class="sektionsrad linje-under-stark">${etikett("Aktiv AI-leverantör")}</div>
+      <p class="avsnitt-ingress">Välj vilken av dina sparade AI-nycklar som ska vara primär.</p>
+      <fieldset class="falt-rad val-grupp" data-primar-ai-grupp>
+        <legend>Primär leverantör</legend>
+        ${knappar}
+      </fieldset>
+    </section>`;
+}
+
 /* ---------- MCP-token ---------- */
+
+export type McpKlient = "antigravity" | "claude-code" | "codex" | "http";
+
+export const MCP_KLIENTER: ReadonlyArray<{ id: McpKlient; namn: string; beskrivning: string }> = [
+  {
+    id: "antigravity",
+    namn: "Antigravity",
+    beskrivning: "Lägg till i ~/.gemini/config/mcp_config.json:",
+  },
+  {
+    id: "claude-code",
+    namn: "Claude Code",
+    beskrivning: "Kör kommandot i terminalen:",
+  },
+  {
+    id: "codex",
+    namn: "Codex",
+    beskrivning: "Lägg till i ~/.codex/config.toml:",
+  },
+  {
+    id: "http",
+    namn: "HTTP / API",
+    beskrivning: "Anropa Streamable HTTP direkt med Bearer-huvud:",
+  },
+];
 
 /** Vad avsnittet MCP-token ritas av: listan, en nyss skapad token (visas en enda gång) och ett fel. */
 export interface McpAvsnitt {
   svar: McpTokenSvar | null;
   ny: NyMcpToken | null;
   fel: string | null;
+  /** Vald klient i kopieringsrutan (standard: "claude-code"). */
+  klient?: McpKlient;
   /** Appar kontot godkänt via OAuth (Claude-appen); utelämnad eller null medan de hämtas. */
   appar?: OauthAnslutning[] | null;
 }
@@ -125,15 +185,49 @@ export function mcpKommando(mcpUrl: string, token: string | null): string {
   return `claude mcp add --transport http floden ${mcpUrl} --header "Authorization: Bearer ${token ?? "<token>"}"`;
 }
 
+/** Konfigurationsblock eller kommando för vald MCP-klient. */
+export function mcpKonfig(mcpUrl: string, token: string | null, klient: McpKlient = "claude-code"): string {
+  const t = token ?? "<token>";
+  if (klient === "antigravity") {
+    return JSON.stringify(
+      {
+        mcpServers: {
+          floden: {
+            url: mcpUrl,
+            headers: {
+              Authorization: `Bearer ${t}`,
+            },
+          },
+        },
+      },
+      null,
+      2,
+    );
+  }
+  if (klient === "codex") {
+    return `[mcp_servers.floden]\nurl = "${mcpUrl}"\nhttp_headers = { Authorization = "Bearer ${t}" }`;
+  }
+  if (klient === "http") {
+    return `URL: ${mcpUrl}\nAuthorization: Bearer ${t}`;
+  }
+  return mcpKommando(mcpUrl, token);
+}
+
 export function mcpTokenAvsnitt(a: McpAvsnitt): string {
   const huvud = `<div class="sektionsrad linje-under-stark">${etikett("MCP-token")}</div>
-      <p class="avsnitt-ingress">Med en personlig token kan Claude Code (eller ett annat verktyg) styra Floden som dig, via MCP. Du ser bara dina egna projekt, och tokenen gäller bara <code>/mcp</code>. Tokenen visas en enda gång, direkt efter att du skapat den; sedan finns bara namn, datum och de fyra sista tecknen kvar.</p>`;
+      <p class="avsnitt-ingress">Med personliga token kan flera AI-verktyg samtidigt (Antigravity, Claude Code, Codex eller eget API-skript) styra Floden som dig via MCP. Skapa gärna en token per verktyg eller dator så du kan återkalla dem var för sig. Tokenen visas en enda gång, direkt efter att du skapat den.</p>`;
   if (a.fel) return `<section class="nyckel-avsnitt" data-mcp-token>${huvud}<p class="hjalp-ruta" role="alert">${esc(a.fel)}</p></section>`;
   if (!a.svar) return `<section class="nyckel-avsnitt" data-mcp-token>${huvud}<p class="dampad">Hämtar …</p></section>`;
   const svar = a.svar;
-  const kommando = mcpKommando(svar.mcp_url, a.ny?.token ?? null);
+  const valdKlient: McpKlient = a.klient ?? "claude-code";
+  const klientInfo = MCP_KLIENTER.find((k) => k.id === valdKlient) ?? MCP_KLIENTER[1]!;
+  const kommando = mcpKonfig(svar.mcp_url, a.ny?.token ?? null, valdKlient);
+  const klientKnappar = MCP_KLIENTER.map(
+    (k) =>
+      `<button type="button" class="knapp knapp-liten${k.id === valdKlient ? " knapp-svart" : ""}" data-mcp-klient="${esc(k.id)}" aria-pressed="${k.id === valdKlient ? "true" : "false"}">${esc(k.namn)}</button>`,
+  ).join("");
   const nyttMeddelande = a.ny
-    ? `<p class="hjalp-ruta" role="status" data-ny-mcp-token>Token <strong>${esc(a.ny.namn)}</strong> är skapad. Kopiera kommandot nu: tokenen visas inte igen.</p>`
+    ? `<p class="hjalp-ruta" role="status" data-ny-mcp-token>Token <strong>${esc(a.ny.namn)}</strong> är skapad. Kopiera konfigurationen nu: tokenen visas inte igen.</p>`
     : "";
   const rader = svar.tokens
     .map(
@@ -151,16 +245,17 @@ export function mcpTokenAvsnitt(a: McpAvsnitt): string {
   const formular = full
     ? `<p class="hjalp-ruta" role="note">Du har ${svar.max} token, det högsta antalet. Återkalla en för att skapa en ny.</p>`
     : `<form data-mcp-token-form class="knapp-par" autocomplete="off">
-        <label class="falt-rad" for="mcp-token-namn">Namn (t.ex. vilken dator)
+        <label class="falt-rad" for="mcp-token-namn">Namn (t.ex. Antigravity Mac eller Claude Code)
           <input id="mcp-token-namn" class="kontroll" type="text" name="namn" maxlength="60" required autocomplete="off" /></label>
         <button type="submit" class="knapp knapp-svart">Skapa token</button>
       </form>`;
   return `<section class="nyckel-avsnitt" data-mcp-token>
       ${huvud}
       ${nyttMeddelande}
-      <p class="avsnitt-ingress">Lägg till Floden i Claude Code med kommandot${a.ny ? "" : " (fyll i token du skapar nedan)"}:</p>
+      <div class="knapp-par" role="group" aria-label="Välj MCP-klient" data-mcp-klient-valjare>${klientKnappar}</div>
+      <p class="avsnitt-ingress">${esc(klientInfo.beskrivning)}${a.ny ? "" : " (fyll i token du skapar nedan)"}</p>
       <pre class="kodruta"><code data-mcp-kommando>${esc(kommando)}</code></pre>
-      ${a.ny ? `<div class="knapp-par"><button type="button" class="knapp" data-kopiera-mcp>Kopiera kommandot</button></div>` : ""}
+      ${a.ny ? `<div class="knapp-par"><button type="button" class="knapp" data-kopiera-mcp>Kopiera</button></div>` : ""}
       ${tabell}
       ${formular}
     </section>`;
@@ -202,7 +297,7 @@ export function sidaNycklar(
   } else if (!svar.paslagen) {
     innehall = `<p class="hjalp-ruta" role="note">${esc(svar.text ?? "Nyckelhanteringen är inte påslagen på servern.")}</p>`;
   } else {
-    innehall = `<p class="hjalp-ruta" role="status" data-meddelande hidden></p>${svar.typer.map(nyckelFormular).join("")}`;
+    innehall = `<p class="hjalp-ruta" role="status" data-meddelande hidden></p>${primarAiAvsnitt(svar)}${svar.typer.map(nyckelFormular).join("")}`;
   }
   return `
     <div class="sidbredd innehall">

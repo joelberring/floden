@@ -254,7 +254,12 @@ ALTER TABLE projekt ADD COLUMN organisation_synlig INTEGER NOT NULL DEFAULT 0
 ALTER TABLE projekt ADD COLUMN skapad_av TEXT;
 """
 
-MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6)
+# Version 7: kontots val av primär AI-leverantör (t.ex. 'anthropic', 'gemini', 'openai').
+SCHEMA_V7 = """
+ALTER TABLE konto ADD COLUMN primar_ai TEXT;
+"""
+
+MIGRERINGAR = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7)
 
 
 class Databas:
