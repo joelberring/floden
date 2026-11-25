@@ -87,7 +87,7 @@ def test_admin_ser_sina_projekt_och_superadmin_alla(miljo: Miljo) -> None:
     assert status == 200 and {p["id"] for p in svar["projekt"]} == {v.p1, v.p2}
     # Detalj: medlemmar och inbjudningar (användaren använde sin inbjudan vid inloggningen).
     status, svar = anrop(v.admin1, "GET", f"/konto/admin/projekt/{v.p1}")
-    assert status == 200 and svar["roller"] == ["lasare", "utredare"]
+    assert status == 200 and svar["roller"] == ["lasare", "utredare", "agare"]
     assert [(m["epost"], m["roll"], m["sparrad"]) for m in svar["medlemmar"]] == [
         ("anvandare@example.test", "lasare", False)
     ]

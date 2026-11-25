@@ -79,6 +79,7 @@ Ett skal: **samma sidhuvud på alla sidor** (`flode/huvud.ts`: "Floden / <projek
 | `#/fragor` | Frågekatalogen (se ovan) |
 | `#/om` | Om Floden (`om/sida.ts`): vad Floden kan nu per ämne med metodstatus och testat, arbetsflödet, planen och jämförelsen med andra verktyg (se *Om Floden* nedan), därunder modulerna och *Kontroll av beräkningarna* (A1–A9) |
 | `#/matematik` | Matematik och forskning |
+| `#/p/<projekt>/installningar` | Projektinställningar (länk i sidhuvudet i projektet och på projektlistans kartkort): namn, synlighet för organisationen, medlemmar och inbjudningar (läsare, utredare, ägare), arkivera och radera (skriv projektets namn). `#/?arkiverade=1` är projektlistan med de arkiverade ("Visa arkiverade"). Logik och HTML i `flode/projektinstallningar-logik.ts`, vy i `flode/projektinstallningar.ts` |
 | `#/nycklar`, `#/administration` | Nycklar (inloggade) och Administration (admin) |
 | `#/arbetsbank/<id>` | Kontrollfallens äldre arbetsbänk (MapLibre), nåbar bara från *Om Floden* (kontrollfallen) |
 | `#/forvaltning` | Visas bara när inloggning är på och kontoservern har data för kontot |

@@ -30,7 +30,7 @@ from konto.databas import Databas
 
 logg = logging.getLogger("konto")
 
-PROJEKTROLLER = ("lasare", "utredare")  # stigande behörighet
+PROJEKTROLLER = ("lasare", "utredare", "agare")  # stigande behörighet; agare = projektets ägare
 ORGROLLER = ("medlem", "ledare", "organisationsadmin", "agare")  # stigande behörighet
 ORGROLL_TILL_PROJEKTROLL = {
     "ledare": "lasare",
@@ -491,6 +491,215 @@ class Register:
         """Superadmin, organisationsadmin eller ägare i organisationen."""
         return self._utforarens_niva(c, utforare, organisation_id) >= _NIVA_ORGADMIN
 
+    # --- projektets ägare och inställningar ------------------------------------------------
+
+    def _ar_agare(self, c: sqlite3.Connection, konto_id: str, projekt_id: str) -> bool:
+        """Är kontot (inte spärrat) projektets ägare? Ägare är den med den uttryckliga rollen
+        `agare`, och skaparen så länge skaparen är utredare i projektet (så att projekt som
+        skapades före rollen har en ägare)."""
+        return konto_id in self._agare_ids(c, projekt_id)
+
+    @staticmethod
+    def _agare_ids(c: sqlite3.Connection, projekt_id: str) -> set[str]:
+        rader = c.execute(
+            "SELECT b.konto_id FROM projektbehorighet b"
+            " JOIN projekt p ON p.id = b.projekt_id JOIN konto k ON k.id = b.konto_id"
+            " WHERE b.projekt_id = ? AND k.sparrad IS NULL"
+            " AND (b.roll = 'agare' OR (b.roll = 'utredare' AND b.konto_id = p.skapad_av))",
+            (projekt_id,),
+        ).fetchall()
+        return {str(r["konto_id"]) for r in rader}
+
+    def _far_andra_projekt(
+        self, c: sqlite3.Connection, utforare: str, projekt_id: str, organisation_id: str
+    ) -> bool:
+        """Får utföraren ändra projektets namn, medlemmar och inbjudningar? Projektets ägare,
+        organisationsadmin eller ägare i projektets organisation, och superadmin."""
+        return self._far_administrera(c, utforare, organisation_id) or self._ar_agare(
+            c, utforare, projekt_id
+        )
+
+    def _skydda_sista_projektagaren(
+        self, c: sqlite3.Connection, konto_id: str, projekt_id: str
+    ) -> None:
+        """En projektägare kan inte lämna projektet utan ägare: den sista tas inte bort och sänks
+        inte av en ägare (administratörer får, så att ett övergivet projekt kan tas över)."""
+        agare = self._agare_ids(c, projekt_id)
+        if agare == {konto_id}:
+            raise RegisterFel("Projektet måste ha en ägare: utse en ny ägare först")
+
+    def ar_projektagare(self, konto_id: str, projekt_id: str) -> bool:
+        with self.db.lasning() as c:
+            return self._ar_agare(c, konto_id, projekt_id)
+
+    def _projektrad(self, c: sqlite3.Connection, projekt_id: str) -> sqlite3.Row:
+        rad = c.execute(
+            "SELECT p.id, p.namn, p.organisation_id, p.organisation_synlig, p.arkiverad,"
+            " p.skapad, o.namn AS organisation FROM projekt p"
+            " JOIN organisation o ON o.id = p.organisation_id WHERE p.id = ?",
+            (projekt_id,),
+        ).fetchone()
+        if rad is None:
+            raise RegisterFel("Okänt projekt")
+        return rad  # type: ignore[no-any-return]
+
+    def _far_arkivera(self, c: sqlite3.Connection, utforare: str, projekt_id: str) -> bool:
+        """Arkivera, återställa och radera: projektets ägare och superadmin (inte en
+        organisationsadmin som inte är ägare i projektet)."""
+        rad = c.execute(
+            "SELECT superadmin, sparrad FROM konto WHERE id = ?", (utforare,)
+        ).fetchone()
+        if rad is None or rad["sparrad"] is not None:
+            return False
+        return bool(rad["superadmin"]) or self._ar_agare(c, utforare, projekt_id)
+
+    def projektinstallningar(self, konto_id: str, projekt_id: str) -> dict[str, Any]:
+        """Underlaget till sidan Projektinställningar. Den får läsas av den som har en roll i
+        projektet (också ur organisationsrollen) och av den som får ändra det; alla andra får
+        `RegisterFel("Okänt projekt")`, så att ett id inte går att pröva fram.
+
+        `far_andra`: namn, medlemmar och inbjudningar (e-postadresser och inbjudningar visas bara
+        för dem). `far_andra_delning`: som i `kan_andra_delning`. `far_arkivera_radera`: ägare och
+        superadmin."""
+        with self.db.lasning() as c:
+            rad = self._projektrad(c, projekt_id)
+            konto = c.execute(
+                "SELECT superadmin, sparrad FROM konto WHERE id = ?", (konto_id,)
+            ).fetchone()
+            if konto is None or konto["sparrad"] is not None:
+                raise RegisterFel("Okänt projekt")
+            far_andra = self._far_andra_projekt(c, konto_id, projekt_id, rad["organisation_id"])
+            far_arkivera = self._far_arkivera(c, konto_id, projekt_id)
+            agare = self._agare_ids(c, projekt_id)
+            medlemmar = c.execute(
+                "SELECT k.id AS konto_id, k.namn, k.epost, b.roll, b.kalla,"
+                " k.sparrad IS NOT NULL AS sparrad FROM projektbehorighet b"
+                " JOIN konto k ON k.id = b.konto_id WHERE b.projekt_id = ?"
+                " ORDER BY k.namn, k.id",
+                (projekt_id,),
+            ).fetchall()
+        effektiv = self.effektiv_projektroll(konto_id, projekt_id)
+        if not (effektiv.roll or far_andra or far_arkivera):
+            raise RegisterFel("Okänt projekt")
+        ut_medlemmar = [
+            {
+                "konto_id": m["konto_id"],
+                "namn": m["namn"],
+                "roll": m["roll"],
+                "ar_agare": m["konto_id"] in agare,
+                "ar_du": m["konto_id"] == konto_id,
+                "sparrad": bool(m["sparrad"]),
+                **({"epost": m["epost"], "kalla": m["kalla"]} if far_andra else {}),
+            }
+            for m in medlemmar
+        ]
+        return {
+            "projekt": {
+                "id": rad["id"],
+                "namn": rad["namn"],
+                "organisation_id": rad["organisation_id"],
+                "organisation": rad["organisation"],
+                "organisation_synlig": bool(rad["organisation_synlig"]),
+                "arkiverad": rad["arkiverad"] is not None,
+                "skapad": rad["skapad"],
+            },
+            "din_roll": effektiv.roll,
+            "din_roll_kalla": effektiv.kalla,
+            "ar_agare": konto_id in agare,
+            "far_andra": far_andra,
+            "far_andra_delning": self.kan_andra_delning(konto_id, projekt_id),
+            "far_arkivera_radera": far_arkivera,
+            "roller": list(PROJEKTROLLER),
+            "medlemmar": ut_medlemmar,
+            "inbjudningar": self.projekt_inbjudningar(konto_id, projekt_id) if far_andra else [],
+        }
+
+    def byt_projektnamn(self, utforare: str, projekt_id: str, namn: str) -> str:
+        """Byter projektets namn i registret (id, projektmapp och körningar är oförändrade).
+        Projektets ägare, organisationsadmin och ägare i organisationen, och superadmin. Namnet
+        ska vara unikt i organisationen. Ger det nya (trimmade) namnet."""
+        namn = namn.strip()
+        with self.db.transaktion() as c:
+            rad = self._projektrad(c, projekt_id)
+            if not self._far_andra_projekt(c, utforare, projekt_id, rad["organisation_id"]):
+                raise BehorighetFel("Kräver organisationsadmin eller projektets ägare")
+            if not namn or len(namn) > 120 or any(ord(t) < 32 for t in namn):
+                raise RegisterFel("Projektnamnet ska vara 1 till 120 tecken utan styrtecken")
+            if c.execute(
+                "SELECT 1 FROM projekt WHERE organisation_id = ? AND namn = ? AND id != ?",
+                (rad["organisation_id"], namn, projekt_id),
+            ).fetchone():
+                raise RegisterFel("Ett projekt med det namnet finns redan i organisationen")
+            c.execute("UPDATE projekt SET namn = ? WHERE id = ?", (namn, projekt_id))
+            self.notera(c, "projekt-namn-andrat", utforare, f"projekt={projekt_id}")
+        return namn
+
+    def satt_arkiverad(self, utforare: str, projekt_id: str, arkiverad: bool) -> None:
+        """Arkiverar projektet (det döljs i projektlistan) eller återställer det. Roller, data och
+        körningar rörs inte. Projektets ägare och superadmin."""
+        with self.db.transaktion() as c:
+            self._projektrad(c, projekt_id)
+            if not self._far_arkivera(c, utforare, projekt_id):
+                raise BehorighetFel("Bara projektets ägare och superadmin arkiverar projektet")
+            c.execute(
+                "UPDATE projekt SET arkiverad = ? WHERE id = ?",
+                (self.nu() if arkiverad else None, projekt_id),
+            )
+            self.notera(
+                c,
+                "projekt-arkiverat" if arkiverad else "projekt-aterstallt",
+                utforare,
+                f"projekt={projekt_id}",
+            )
+
+    def kontrollera_radera(self, utforare: str, projekt_id: str, bekrafta_namn: str) -> str:
+        """Prövar att utföraren får radera projektet och har skrivit dess namn rätt. Ger namnet.
+        `BehorighetFel` om utföraren inte är projektets ägare eller superadmin, `RegisterFel` för
+        okänt projekt eller fel bekräftelse."""
+        with self.db.lasning() as c:
+            rad = self._projektrad(c, projekt_id)
+            if not self._far_arkivera(c, utforare, projekt_id):
+                raise BehorighetFel("Bara projektets ägare och superadmin raderar projektet")
+        if bekrafta_namn.strip() != rad["namn"]:
+            raise RegisterFel("Skriv projektets namn exakt för att bekräfta raderingen")
+        return str(rad["namn"])
+
+    def radera_projekt(self, utforare: str, projekt_id: str) -> dict[str, int]:
+        """Tar bort projektet ur registret: posten, projektrollerna och inbjudningarna (ON DELETE
+        CASCADE). Händelsen `projekt-raderat` har bara konto-id, projekt-id och organisations-id;
+        inget namn och ingen e-postadress. Filerna tas bort av `webb.projektinstallningar`."""
+        with self.db.transaktion() as c:
+            rad = self._projektrad(c, projekt_id)
+            if not self._far_arkivera(c, utforare, projekt_id):
+                raise BehorighetFel("Bara projektets ägare och superadmin raderar projektet")
+            roller = c.execute(
+                "SELECT COUNT(*) FROM projektbehorighet WHERE projekt_id = ?", (projekt_id,)
+            ).fetchone()[0]
+            inbjudningar = c.execute(
+                "SELECT COUNT(*) FROM projektinbjudan WHERE projekt_id = ?", (projekt_id,)
+            ).fetchone()[0]
+            c.execute("DELETE FROM projekt WHERE id = ?", (projekt_id,))
+            self.notera(
+                c,
+                "projekt-raderat",
+                utforare,
+                f"projekt={projekt_id} organisation={rad['organisation_id']}"
+                f" roller={roller} inbjudningar={inbjudningar}",
+            )
+        return {"roller": int(roller), "inbjudningar": int(inbjudningar)}
+
+    def aterkalla_inbjudan(self, utforare: str, projekt_id: str, inbjudan_id: str) -> None:
+        """Tar bort en öppen inbjudan till projektet."""
+        with self.db.transaktion() as c:
+            self._projekt_for_admin(c, utforare, projekt_id)
+            gjord = c.execute(
+                "DELETE FROM projektinbjudan WHERE id = ? AND projekt_id = ? AND anvand_av IS NULL",
+                (inbjudan_id, projekt_id),
+            ).rowcount
+            if not gjord:
+                raise RegisterFel("Okänd inbjudan")
+            self.notera(c, "inbjudan-aterkallad", utforare, f"inbjudan={inbjudan_id}")
+
     def projektroll(self, konto_id: str, projekt_id: str) -> str | None:
         """Kontots uttryckliga roll i projektet (tabellen `projektbehorighet`), annars None.
         Organisationsrollerna ingår inte här: se `effektiv_projektroll`."""
@@ -546,10 +755,13 @@ class Register:
     def har_projektroll(self, konto_id: str, projekt_id: str, minst: str = "lasare") -> bool:
         return self.effektiv_projektroll(konto_id, projekt_id).raeckar(minst)
 
-    def projekt_med_effektiv_roll(self, konto_id: str) -> list[dict[str, Any]]:
+    def projekt_med_effektiv_roll(
+        self, konto_id: str, arkiverade: bool = False
+    ) -> list[dict[str, Any]]:
         """Registrets projekt kontot har rätt i, med den effektiva rollen (samma regel som
         `effektiv_projektroll`): id, namn, roll, kalla (`projekt` eller `organisation`) och
-        `organisation_synlig` (projektet är delat med organisationen)."""
+        `organisation_synlig` (projektet är delat med organisationen) och `arkiverad`. Arkiverade
+        projekt ingår bara med `arkiverade=True` (då är det de enda som ingår)."""
         with self.db.lasning() as c:
             if (
                 c.execute(
@@ -559,7 +771,7 @@ class Register:
             ):
                 return []
             rader = c.execute(
-                "SELECT p.id, p.namn, p.organisation_id, p.organisation_synlig,"
+                "SELECT p.id, p.namn, p.organisation_id, p.organisation_synlig, p.arkiverad,"
                 " b.roll AS projektroll FROM projekt p"
                 " LEFT JOIN projektbehorighet b ON b.projekt_id = p.id AND b.konto_id = ?",
                 (konto_id,),
@@ -574,6 +786,8 @@ class Register:
                     orgroller[m["organisation_id"]] = ger
         ut: list[dict[str, Any]] = []
         for r in sorted(rader, key=lambda x: (x["namn"], x["id"])):
+            if (r["arkiverad"] is not None) != arkiverade:
+                continue
             uttrycklig = r["projektroll"]
             fran_org = orgroller.get(r["organisation_id"]) if r["organisation_synlig"] else None
             delad = bool(r["organisation_synlig"])
@@ -592,6 +806,7 @@ class Register:
                     "roll": roll,
                     "kalla": kalla,
                     "organisation_synlig": delad,
+                    "arkiverad": r["arkiverad"] is not None,
                 }
             )
         return ut
@@ -607,11 +822,11 @@ class Register:
                 raise RegisterFel("Okänt projekt")
             utredare = c.execute(
                 "SELECT 1 FROM projektbehorighet WHERE konto_id = ? AND projekt_id = ?"
-                " AND roll = 'utredare'",
+                " AND roll IN ('utredare', 'agare')",
                 (utforare, projekt_id),
             ).fetchone()
             if konto["sparrad"] is not None or not (utredare or rad["skapad_av"] == utforare):
-                raise BehorighetFel("Bara projektets utredare och skaparen ändrar delningen")
+                raise BehorighetFel("Bara projektets utredare, ägare och skaparen ändrar delningen")
             c.execute(
                 "UPDATE projekt SET organisation_synlig = ? WHERE id = ?",
                 (int(synlig), projekt_id),
@@ -629,7 +844,7 @@ class Register:
             rad = c.execute(
                 "SELECT p.skapad_av, k.sparrad,"
                 " EXISTS (SELECT 1 FROM projektbehorighet b WHERE b.konto_id = k.id"
-                "  AND b.projekt_id = p.id AND b.roll = 'utredare') AS utredare"
+                "  AND b.projekt_id = p.id AND b.roll IN ('utredare', 'agare')) AS utredare"
                 " FROM projekt p, konto k WHERE p.id = ? AND k.id = ?",
                 (projekt_id, konto_id),
             ).fetchone()
@@ -657,10 +872,17 @@ class Register:
             ).fetchone()
             if not org:
                 raise RegisterFel("Okänt projekt")
-            if not self._far_administrera(c, utforare, org["organisation_id"]):
-                raise BehorighetFel("Kräver organisationsadmin")
-            if konto_id == utforare:
+            if not self._far_andra_projekt(c, utforare, projekt_id, org["organisation_id"]):
+                raise BehorighetFel("Kräver organisationsadmin eller projektets ägare")
+            if konto_id == utforare and not self._ar_agare(c, utforare, projekt_id):
                 self._sjalvtilldelning(c, utforare, projekt_id, bool(org["organisation_synlig"]))
+            skapare = c.execute("SELECT skapad_av FROM projekt WHERE id = ?", (projekt_id,))
+            forblir_agare = roll == "agare" or (
+                roll == "utredare" and konto_id == skapare.fetchone()["skapad_av"]
+            )
+            admin = self._far_administrera(c, utforare, org["organisation_id"])
+            if not forblir_agare and not admin:
+                self._skydda_sista_projektagaren(c, konto_id, projekt_id)
             c.execute(
                 "INSERT INTO projektbehorighet (konto_id, projekt_id, roll, kalla, beviljad_av,"
                 " skapad) VALUES (?, ?, ?, 'manuell', ?, ?)"
@@ -691,8 +913,12 @@ class Register:
             org = c.execute(
                 "SELECT organisation_id FROM projekt WHERE id = ?", (projekt_id,)
             ).fetchone()
-            if not org or not self._far_administrera(c, utforare, org["organisation_id"]):
-                raise BehorighetFel("Kräver organisationsadmin")
+            if not org or not self._far_andra_projekt(
+                c, utforare, projekt_id, org["organisation_id"]
+            ):
+                raise BehorighetFel("Kräver organisationsadmin eller projektets ägare")
+            if not self._far_administrera(c, utforare, org["organisation_id"]):
+                self._skydda_sista_projektagaren(c, konto_id, projekt_id)
             c.execute(
                 "DELETE FROM projektbehorighet WHERE konto_id = ? AND projekt_id = ?",
                 (konto_id, projekt_id),
@@ -719,10 +945,14 @@ class Register:
             ).fetchone()
             if not org:
                 raise RegisterFel("Okänt projekt")
-            if not self._far_administrera(c, utforare, org["organisation_id"]):
-                raise BehorighetFel("Kräver organisationsadmin")
+            if not self._far_andra_projekt(c, utforare, projekt_id, org["organisation_id"]):
+                raise BehorighetFel("Kräver organisationsadmin eller projektets ägare")
             egen = c.execute("SELECT epost FROM konto WHERE id = ?", (utforare,)).fetchone()
-            if egen is not None and egen["epost"] == ren:
+            if (
+                egen is not None
+                and egen["epost"] == ren
+                and not self._ar_agare(c, utforare, projekt_id)
+            ):
                 self._sjalvtilldelning(c, utforare, projekt_id, bool(org["organisation_synlig"]))
             c.execute(
                 "INSERT INTO projektinbjudan (id, projekt_id, epost, roll, skapad_av, skapad,"
@@ -767,8 +997,8 @@ class Register:
         ).fetchone()
         if not org:
             raise RegisterFel("Okänt projekt")
-        if not self._far_administrera(c, utforare, org["organisation_id"]):
-            raise BehorighetFel("Kräver organisationsadmin")
+        if not self._far_andra_projekt(c, utforare, projekt_id, org["organisation_id"]):
+            raise BehorighetFel("Kräver organisationsadmin eller projektets ägare")
         return str(org["organisation_id"])
 
     def admin_projekt(self, utforare: str) -> list[dict[str, object]]:
@@ -778,7 +1008,7 @@ class Register:
         with self.db.lasning() as c:
             rader = c.execute(
                 "SELECT p.id, p.namn, p.organisation_id, o.namn AS organisation,"
-                " p.organisation_synlig,"
+                " p.organisation_synlig, p.arkiverad,"
                 " (SELECT COUNT(*) FROM projektbehorighet b"
                 "  WHERE b.projekt_id = p.id) AS medlemmar,"
                 " (SELECT COUNT(*) FROM projektinbjudan i WHERE i.projekt_id = p.id"
@@ -794,6 +1024,7 @@ class Register:
             {
                 **dict(r),
                 "organisation_synlig": bool(r["organisation_synlig"]),
+                "arkiverad": r["arkiverad"] is not None,
                 "kan_andra_delning": self.kan_andra_delning(utforare, r["id"]),
             }
             for r in rader

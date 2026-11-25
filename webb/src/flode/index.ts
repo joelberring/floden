@@ -10,6 +10,7 @@ import { visaForslag } from "./forslag.ts";
 import { visaFragor } from "./fragor.ts";
 import { visaNyttProjekt } from "./nyttprojekt.ts";
 import { ritaFlodeHuvud, sattProjektNamn, SKALSIDOR, type SkalSida } from "./huvud.ts";
+import { visaProjektInstallningar } from "./projektinstallningar.ts";
 import { visaProjektlista, type Avslutbar } from "./projektlista.ts";
 import { visaRapport } from "./rapport.ts";
 import { visaResultat } from "./resultat.ts";
@@ -35,7 +36,9 @@ export const STEGTITEL: Record<string, string> = {
 export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt): void {
   avslutaFlode();
   document.title = `${STEGTITEL[rutt.steg]} – Floden`;
-  ritaFlodeHuvud(huvud, rutt.projekt, rutt.steg);
+  const aktivtSteg = rutt.installningar ? null : rutt.steg;
+  if (rutt.installningar) document.title = "Projektinställningar – Floden";
+  ritaFlodeHuvud(huvud, rutt.projekt, aktivtSteg);
   const p = rutt.projekt;
   // Projektets namn i huvudet (id:t tills listan har kommit).
   if (p) {
@@ -44,14 +47,15 @@ export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt)
         const post = l.projekt.find((x) => x.id === p);
         if (post && aktiv) {
           sattProjektNamn(p, post.namn);
-          ritaFlodeHuvud(huvud, p, rutt.steg);
+          ritaFlodeHuvud(huvud, p, aktivtSteg);
         }
       })
       .catch(() => undefined);
   }
   let steg: Avslutbar;
   if (rutt.nytt) steg = visaNyttProjekt(rot);
-  else if (rutt.steg === "projekt" || p === null) steg = visaProjektlista(rot, null);
+  else if (rutt.installningar && p !== null) steg = visaProjektInstallningar(rot, p);
+  else if (rutt.steg === "projekt" || p === null) steg = visaProjektlista(rot, null, rutt.arkiverade === true);
   else if (rutt.steg === "forslag") steg = visaForslag(rot, p);
   else if (rutt.steg === "fragor") steg = visaFragor(rot, p);
   else if (rutt.steg === "resultat") steg = visaResultat(rot, p);
@@ -69,7 +73,7 @@ export function visaFlode(huvud: HTMLElement, rot: HTMLElement, rutt: FlodeRutt)
 }
 
 export function projektLaddat(huvud: HTMLElement, rutt: FlodeRutt): void {
-  ritaFlodeHuvud(huvud, rutt.projekt, rutt.steg);
+  ritaFlodeHuvud(huvud, rutt.projekt, rutt.installningar ? null : rutt.steg);
 }
 
 /**

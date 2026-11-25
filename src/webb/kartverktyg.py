@@ -208,6 +208,11 @@ class KartverktygTjanst:
         self._caps: dict[str, dict[str, Any]] = {}
         self._terrang: dict[str, tuple[Any, list[tuple[np.ndarray[Any, Any], Any]]]] = {}
 
+    def glom_projekt(self, projekt_id: str) -> None:
+        """Glömmer det som cachats i minnet för ett projekt som raderats."""
+        for cache in (self._kallor, self._byggnader, self._caps, self._terrang):
+            cache.pop(projekt_id, None)
+
     # ------------------------------------------------------------------ mallar och bas
 
     def _demo_refs(self) -> list[tuple[str, str]]:

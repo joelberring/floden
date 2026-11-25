@@ -655,6 +655,8 @@ export interface ProjektListaPost {
   organisation_synlig?: boolean;
   /** `projekt` (uttrycklig roll) eller `organisation` (rollen kommer av organisationsrollen). */
   kalla?: string;
+  /** Projekt ur kontoregistret: arkiverat (döljs i listan; syns med `?arkiverade=1`). */
+  arkiverad?: boolean;
 }
 
 export interface ProjektListaSvar {
@@ -915,4 +917,38 @@ export interface RapportJobb {
   lankar: { pdf: string; word: string } | null;
   fel: string | null;
   status_url: string;
+}
+
+/* ---------- Projektinställningar (/konto/projekt/<id>/installningar, /api/projekt/<id>/namn och /radera) ---------- */
+
+export interface InstallningarMedlem {
+  konto_id: string;
+  namn: string;
+  roll: string;
+  ar_agare: boolean;
+  ar_du: boolean;
+  sparrad: boolean;
+  /** Bara för den som får ändra medlemmar. */
+  epost?: string;
+}
+
+export interface ProjektInstallningar {
+  projekt: { id: string; namn: string; organisation_id: string; organisation: string; organisation_synlig: boolean; arkiverad: boolean; skapad: number };
+  din_roll: string | null;
+  din_roll_kalla: string;
+  ar_agare: boolean;
+  /** Namn, medlemmar och inbjudningar. */
+  far_andra: boolean;
+  far_andra_delning: boolean;
+  /** Arkivera, återställa och radera: projektets ägare och superadmin. */
+  far_arkivera_radera: boolean;
+  roller: string[];
+  medlemmar: InstallningarMedlem[];
+  inbjudningar: AdminInbjudan[];
+}
+
+export interface RaderaSvar {
+  status: string;
+  projekt_id: string;
+  borttaget: { projektmapp: number; korningar: number; rapporter: number; bestallningar: number; roller: number; inbjudningar: number };
 }

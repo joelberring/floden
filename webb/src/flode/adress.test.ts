@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { flodeAdress, nastaSteg, STEG, stegradHtml, tolkaFlodeAdress } from "./adress.ts";
+import { flodeAdress, installningarAdress, nastaSteg, STEG, stegradHtml, tolkaFlodeAdress } from "./adress.ts";
 
 test("#/ är projektlistan och #/p/<projekt> börjar på Förslag", () => {
   assert.deepEqual(tolkaFlodeAdress("#/"), { steg: "projekt", projekt: null });
@@ -54,4 +54,12 @@ test("nästa steg: Rapport är sista", () => {
   assert.equal(nastaSteg("projekt"), "forslag");
   assert.equal(nastaSteg("resultat"), "rapport");
   assert.equal(nastaSteg("rapport"), null);
+});
+
+test("projektets inställningar och arkiverade projekt har egna adresser", () => {
+  assert.deepEqual(tolkaFlodeAdress("#/p/demo/installningar"), { steg: "forslag", projekt: "demo", installningar: true });
+  assert.equal(tolkaFlodeAdress("#/p/demo/installningar/extra"), null);
+  assert.deepEqual(tolkaFlodeAdress("#/?arkiverade=1"), { steg: "projekt", projekt: null, arkiverade: true });
+  assert.deepEqual(tolkaFlodeAdress("#/?arkiverade=0"), { steg: "projekt", projekt: null });
+  assert.equal(installningarAdress("Å ä"), "#/p/%C3%85%20%C3%A4/installningar");
 });

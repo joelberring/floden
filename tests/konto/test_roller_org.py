@@ -623,7 +623,7 @@ def test_migrering_fran_gammal_databas_behaller_data_och_ger_nya_roller(tmp_path
     _gammal_databas(sokvag)
     db = Databas(sokvag)  # migrerar 4 -> 5
     with db.lasning() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == len(db_modul.MIGRERINGAR) == 7
+        assert c.execute("PRAGMA user_version").fetchone()[0] == len(db_modul.MIGRERINGAR) == 8
         rader = c.execute(
             "SELECT id, konto_id, organisation_id, forvaltning_id, roll, kalla, skapad,"
             " bekraftad_av"
@@ -677,7 +677,7 @@ def test_migrering_fran_gammal_databas_behaller_data_och_ger_nya_roller(tmp_path
     # Att öppna en redan migrerad databas ändrar ingenting.
     Databas(sokvag)
     with Databas(sokvag).lasning() as c:
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 8
         assert c.execute("SELECT COUNT(*) FROM medlemskap").fetchone()[0] == 4
 
 
