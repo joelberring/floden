@@ -201,9 +201,7 @@ def _las_k1_markmodell(indata: Path, *, takvatten_mapp: Path | None = None) -> _
     brytlinjer = tuple(las_brytlinjer_fran_gpkg(bryt_fil)) if bryt_fil.is_file() else ()
     opp_fil = indata / "oppningar.gpkg"
     oppningar = tuple(las_oppningar_fran_gpkg(opp_fil)) if opp_fil.is_file() else ()
-    graf = bygg_sankgraf(
-        mark_z, osak_z, markslag, geo, brytlinjer=brytlinjer, oppningar=oppningar
-    )
+    graf = bygg_sankgraf(mark_z, osak_z, markslag, geo, brytlinjer=brytlinjer, oppningar=oppningar)
     return _K1Markmodell(
         mark_z=mark_z,
         osakerhet_z=osak_z,
@@ -1295,12 +1293,8 @@ class FlodenApiApp:
             raise FlodenWebbFel(f"Dagsljusintervallfel: {exc}", status_kod=400) from exc
 
         mark_celler = ~bygg_mask
-        svf_min_medel = (
-            float(np.mean(svf_iv.svf_min[mark_celler])) if np.any(mark_celler) else 0.0
-        )
-        svf_max_medel = (
-            float(np.mean(svf_iv.svf_max[mark_celler])) if np.any(mark_celler) else 0.0
-        )
+        svf_min_medel = float(np.mean(svf_iv.svf_min[mark_celler])) if np.any(mark_celler) else 0.0
+        svf_max_medel = float(np.mean(svf_iv.svf_max[mark_celler])) if np.any(mark_celler) else 0.0
         return {
             "format": "floden-dagsljus-svf-intervall/v1",
             "omrade_id": omrade_id,
@@ -2387,9 +2381,7 @@ class FlodenApiApp:
             if antal_insatser_raw > 0 and kant_djup_per_t:
                 varsta_t = max(kant_djup_per_t)
                 stationer = {"station_0": "n_0_0"}
-                adresser = {
-                    f"adress_{nid}": nid for nid in sorted(vagnat.noder) if nid != "n_0_0"
-                }
+                adresser = {f"adress_{nid}": nid for nid in sorted(vagnat.noder) if nid != "n_0_0"}
                 valda = valj_kritisk_insats_k(
                     vagnat,
                     stationer,
@@ -2656,9 +2648,7 @@ class FlodenApiApp:
         if not rest:
             return _json_svar(200, v.info(projekt))
         if rest[0] == "terrang" and len(rest) == 4:
-            return buffert(
-                v.terrang_ruta(projekt, *(heltal(x, "Rutindex") for x in rest[1:]))
-            )
+            return buffert(v.terrang_ruta(projekt, *(heltal(x, "Rutindex") for x in rest[1:])))
         if rest[0] == "byggnader" and len(rest) == 1:
             return buffert(v.byggnader(projekt, q("korning"), q("scenario")))
         if rest[0] == "mark" and len(rest) == 6:
@@ -2699,8 +2689,39 @@ class FlodenApiApp:
             png = self.fragor.lager_png(delar[0], delar[2].removesuffix(".png"))
             return _binart_svar(200, png, "image/png")
         if verb == "GET" and len(delar) == 4 and delar[1] == "vektor":
+
+            def _tal(namn: str) -> float | None:
+                raa = query.get(namn, [""])[0]
+                if raa == "":
+                    return None
+                try:
+                    return float(raa)
+                except ValueError as exc:
+                    raise FlodenWebbFel(
+                        f"Parametern {namn} måste vara ett tal.", status_kod=400
+                    ) from exc
+
             return _json_svar(
-                200, self.fragor.vektor(delar[0], delar[2], delar[3].removesuffix(".json"))
+                200,
+                self.fragor.vektor(
+                    delar[0],
+                    delar[2],
+                    delar[3].removesuffix(".json"),
+                    min_yta_m2=_tal("min_yta_m2"),
+                    min_volym_m3=_tal("min_volym_m3"),
+                    min_djup_m=_tal("min_djup_m"),
+                ),
+            )
+        if verb == "GET" and len(delar) == 2 and delar[1] == "sanka":
+            try:
+                e = float(query.get("e", [""])[0])
+                n = float(query.get("n", [""])[0])
+            except ValueError as exc:
+                raise FlodenWebbFel("Parametrarna e och n måste vara tal.", status_kod=400) from exc
+            if not (math.isfinite(e) and math.isfinite(n)):
+                raise FlodenWebbFel("Parametrarna e och n måste vara ändliga.", status_kod=400)
+            return _json_svar(
+                200, self.fragor.sanka(delar[0], e, n, query.get("scenario", [""])[0] or None)
             )
         if verb == "GET" and len(delar) >= 3 and delar[1] == "fil":
             innehall, typ = self.fragor.fil(delar[0], "/".join(delar[2:]))
@@ -3337,9 +3358,7 @@ def skapa_http_server(
                     rubriker[kl] = f"{rubriker[kl]}{sep}{v}"
                 else:
                     rubriker[kl] = v
-            status, headers, kropp = app.hantera_http(
-                metod, self.path, rubriker, self._las_kropp
-            )
+            status, headers, kropp = app.hantera_http(metod, self.path, rubriker, self._las_kropp)
             self._skicka(status, headers, kropp, huvud=metod == "HEAD")
 
         def do_OPTIONS(self) -> None:  # noqa: N802

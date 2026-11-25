@@ -186,6 +186,8 @@ export class Kartmotor {
 
   /** Anropas med markörens SWEREF-koordinat (E, N), eller null när markören lämnar vyn. */
   onMarkor: ((e: number | null, n: number | null) => void) | null = null;
+  /** Klick på kartan (SWEREF-meter), utöver ritverktygen: används för vattenytans mått. */
+  onKlickPunkt: ((e: number, n: number) => void) | null = null;
   /** Anropas när användaren själv flyttat eller zoomat vyn. */
   onVyAndrad: (() => void) | null = null;
 
@@ -255,7 +257,11 @@ export class Kartmotor {
       this.onMarkor?.(null, null);
       this.lyssnare?.lamnar();
     });
-    this.karta.on("click", (e) => this.lyssnare?.klick(sweref(e), pekare(e)));
+    this.karta.on("click", (e) => {
+      this.lyssnare?.klick(sweref(e), pekare(e));
+      const p = sweref(e);
+      this.onKlickPunkt?.(p.x, p.y);
+    });
     this.karta.on("dblclick", (e) => this.lyssnare?.dubbelklick(sweref(e), pekare(e)));
     this.karta.on("mousedown", (e) => {
       if (!this.lyssnare) return;

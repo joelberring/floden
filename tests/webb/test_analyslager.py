@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 from tests.demovarld.test_demo import Demo
+from webb import analysvektor
 from webb.resultatlager import (
     _VATTEN_KLASSER,
     KONTROLLROLLER,
@@ -183,13 +184,56 @@ def test_vektor_sankor_ar_ytor_med_kapacitet_och_djup(demo: Demo) -> None:
     assert status2 == 200 and v2 == v
 
 
-def test_vektor_flodesvagar_har_langd_lutning_och_gangtid(demo: Demo) -> None:
+def test_vektor_flodesvagar_ar_avrinningsnat_med_tillrinning_och_ordning(demo: Demo) -> None:
     status, v = demo.get("/api/korningar/demo-vatten/vektor/efter/flodesvagar")
     assert status == 200, v
-    assert v["features"]
+    assert v["meta"]["min_yta_m2"] == 500.0 and v["meta"]["visade"] == v["meta"]["antal_totalt"]
     for f in v["features"]:
         assert f["geometry"]["type"] == "LineString" and len(f["geometry"]["coordinates"]) >= 2
-        assert set(f["properties"]) >= {"langd_m", "lutning", "gangtid_s", "nod_id"}
+        assert set(f["properties"]) >= {"tillrinning_m2", "ordning", "langd_m", "lutning"}
+        assert f["properties"]["tillrinning_m2"] >= 500.0 and f["properties"]["ordning"] >= 1
+    # Lägre tröskel ger minst lika många linjer; ogiltig tröskel ger 400.
+    _, lag = demo.get("/api/korningar/demo-vatten/vektor/efter/flodesvagar?min_yta_m2=50")
+    assert lag["meta"]["min_yta_m2"] == 50.0
+    assert len(lag["features"]) >= len(v["features"])
+    assert demo.get("/api/korningar/demo-vatten/vektor/efter/flodesvagar?min_yta_m2=-1")[0] == 400
+    assert demo.get("/api/korningar/demo-vatten/vektor/efter/flodesvagar?min_yta_m2=x")[0] == 400
+
+
+def test_vektor_sankor_doljer_smasankor_med_troskel(demo: Demo) -> None:
+    _, alla = demo.get("/api/korningar/demo-vatten/vektor/fore/sankor?min_volym_m3=0&min_djup_m=0")
+    _, stora = demo.get("/api/korningar/demo-vatten/vektor/fore/sankor?min_volym_m3=1000000")
+    assert stora["features"] == [] and stora["meta"]["dolda"] == alla["meta"]["antal_totalt"]
+    for f in alla["features"]:
+        assert f["properties"]["delsankor"] >= 1 and len(f["properties"]["overfall"]) == 2
+
+
+def test_sanka_mater_sammanhangande_vattenyta(demo: Demo) -> None:
+    _, res = demo.get("/api/korningar/demo-vatten/resultat")
+    fore = next(la for la in res["lager"] if la["id"] == "skyfall.fore.max_djup")
+    u = fore["utbredning"]
+    # Hitta en våt cell via avläsning av hela lagret på en grov rutnätsskanning.
+    hittad = None
+    px = fore["pixelstorlek_m"]
+    for i in range(0, int((u["x_max"] - u["x_min"]) / px), 3):
+        for j in range(0, int((u["y_max"] - u["y_min"]) / px), 3):
+            e, n = u["x_min"] + (i + 0.5) * px, u["y_max"] - (j + 0.5) * px
+            _, s = demo.get(f"/api/korningar/demo-vatten/avlasning?lager={fore['id']}&e={e}&n={n}")
+            val = next((x["varde"] for x in s["varden"] if x["typ"] == "bas"), None)
+            if val is not None and val > 0.05:
+                hittad = (e, n)
+                break
+        if hittad:
+            break
+    assert hittad is not None
+    status, m = demo.get(f"/api/korningar/demo-vatten/sanka?e={hittad[0]}&n={hittad[1]}")
+    assert status == 200, m
+    fr = next(x for x in m["lagen"] if x["typ"] == "bas")
+    assert fr["vatt"] and fr["max_djup_m"] >= fr["medel_djup_m"] > 0.02
+    assert fr["volym_m3"] == pytest.approx(fr["medel_djup_m"] * fr["vat_yta_m2"], rel=1e-6)
+    assert m["skillnad"] is not None
+    assert demo.get("/api/korningar/demo-vatten/sanka?e=x&n=1")[0] == 400
+    assert demo.get("/api/korningar/saknas/sanka?e=1&n=1")[0] in (404, 409)
 
 
 def test_vektor_vsc_ger_fasadpunkter_med_procent(demo: Demo) -> None:
@@ -235,3 +279,41 @@ def test_losarens_namnrymd_ar_dess_doman() -> None:
     from karna.analyslosare import lista_losare
 
     assert [(x.namn, x.doman) for x in lista_losare() if x.namn.split(".")[0] != x.doman] == []
+
+
+def _syntetisk_gard() -> Any:
+    """Gård med två gropar skilda av en låg tröskel, och en djup grop långt bort."""
+    from sankgraf.hierarki import bygg_sankgraf
+    from testsvit.k1_io import GeoTransformInfo
+
+    z = np.full((40, 80), 10.0, dtype=np.float32)
+    z[10:30, 5:15] = 9.7  # grop A
+    z[10:30, 17:27] = 9.75  # grop B
+    z[10:30, 15:17] = 9.9  # sadel mellan A och B (överfallet mellan dem)
+    z[12:28, 50:70] = 8.0  # djup grop C, långt från de andra, kantad av plan mark
+    geo = GeoTransformInfo(
+        bredd=80, hojd=40, x_min=0.0, y_max=40.0, pixelstorlek_x=1.0, pixelstorlek_y=1.0,
+        epsg=3011, dtype="float32",
+    )
+    return bygg_sankgraf(z, np.zeros_like(z), np.ones(z.shape, dtype=np.uint8), geo)
+
+
+def test_sankor_som_fylls_ihop_blir_en_sanka_med_gemensamt_overfall() -> None:
+    graf = _syntetisk_gard()
+    delad = analysvektor.sankor_geojson(graf, max_djup_m=0.15)
+    ihop = analysvektor.sankor_geojson(graf, max_djup_m=1.0)
+    assert ihop["meta"]["antal_totalt"] < delad["meta"]["antal_totalt"]
+    slagen = [f for f in ihop["features"] if f["properties"]["delsankor"] >= 2]
+    assert slagen, "gropen A och B ska slås ihop"
+    p = slagen[0]["properties"]
+    # Gemensam kapacitet är större än varje delsänkas och ytan täcker båda groparna.
+    assert p["yta_m2"] > 300 and p["kapacitet_m3"] > 0 and len(p["overfall"]) == 2
+    # Ytan som visas ligger under det gemensamma överfallet.
+    assert p["djup_m"] > 0
+
+
+def test_sankor_under_troskeln_doljs_men_raknas() -> None:
+    graf = _syntetisk_gard()
+    allt = analysvektor.sankor_geojson(graf)
+    dolt = analysvektor.sankor_geojson(graf, min_volym_m3=1e9)
+    assert dolt["features"] == [] and dolt["meta"]["dolda"] == allt["meta"]["antal_totalt"]

@@ -19,11 +19,13 @@ from rasterio import features
 from rasterio.transform import from_origin
 from shapely.geometry import mapping, shape
 
+from sankgraf.avrinningsnat import STANDARD_MIN_YTA_M2, avrinningsnat
 from sankgraf.typer import SankGraf
 
 MAX_SANKOR = 400
 """Högst så här många sänkor (de största) följer med; resten räknas i `antal_totalt`."""
-MAX_FLODESVAGAR = 1000
+SAMMANSLAGEN_MAX_DJUP_M = 1.0
+"""Sänkor som fylls ihop slås ihop till en enhet så länge den är högst så här djup vid fullt."""
 MAX_FASADPUNKTER = 20000
 SLAG = ("sankor", "flodesvagar", "vsc")
 
@@ -36,44 +38,88 @@ def _ring(r: Any) -> list[list[float]]:
     return [[_avrunda(x), _avrunda(y)] for x, y in r]
 
 
-def sankor_geojson(graf: SankGraf) -> dict[str, Any]:
-    """Sänkornas yta vid fullt (lövnoderna) som polygoner med kapacitet, djup och yta."""
+def sankenheter(graf: SankGraf, max_djup_m: float = SAMMANSLAGEN_MAX_DJUP_M) -> dict[int, int]:
+    """Sänkorna som visas som en enhet: `{löv-id: enhetens nod-id}`.
+
+    Sänkgrafen slår ihop sänkor vid överfallet (föräldern är de sammanflutna barnen). Från
+    rötterna och nedåt tas den översta noden vars djup vid fullt (överfall minus botten) är högst
+    `max_djup_m`: en innergård som fylls ihop till en vattenyta blir en sänka, medan
+    sammanslagningar som kräver högre vattenstånd (hela kvarter) hålls isär. Löv är alltid
+    enheter."""
     noder = graf.noder
-    lov = {nid: n for nid, n in noder.items() if n.ar_lov}
+    enhet_av_lov: dict[int, int] = {}
+    stack = [nid for nid, n in noder.items() if n.forald_id is None]
+    while stack:
+        nid = stack.pop()
+        n = noder[nid]
+        djup = n.overfall_rh2000 - n.botten_rh2000
+        if n.ar_lov or (math.isfinite(djup) and djup <= max_djup_m):
+            for lid in graf.lov_under_nod(nid):
+                enhet_av_lov[lid] = nid
+        else:
+            stack.extend(n.barn_id)
+    return enhet_av_lov
+
+
+def sankor_geojson(
+    graf: SankGraf,
+    *,
+    max_djup_m: float = SAMMANSLAGEN_MAX_DJUP_M,
+    min_volym_m3: float = 0.0,
+    min_djup_m: float = 0.0,
+) -> dict[str, Any]:
+    """Sänkornas yta vid fullt som polygoner med kapacitet, djup, yta och överfall.
+
+    Sänkor som fylls ihop slås ihop (`sankenheter`): ytan är cellerna under enhetens överfallsnivå,
+    kapaciteten dess volymkurva vid överfallet. Enheter under `min_volym_m3` eller `min_djup_m`
+    döljs (räknas i `antal_totalt`, `dolda`)."""
+    noder = graf.noder
+    enhet_av_lov = sankenheter(graf, max_djup_m)
     ct = graf.cell_till_nod
-    hog = int(max(lov, default=0)) + 1
+    hog = int(max(noder, default=0)) + 1
+    enhet_tab = np.full(hog, -1, dtype=np.int64)
     overfall = np.full(hog, -np.inf, dtype=np.float64)
-    for nid, n in lov.items():
-        overfall[nid] = n.overfall_rh2000
+    for lid, eid in enhet_av_lov.items():
+        enhet_tab[lid] = eid
+        overfall[lid] = noder[eid].overfall_rh2000
     giltig = (ct >= 0) & (ct < hog)
-    z_over = np.where(giltig, overfall[np.clip(ct, 0, hog - 1)], -np.inf)
-    fylld = giltig & (np.nan_to_num(graf.mark_z, nan=np.inf) <= z_over + 1e-6)
+    idx = np.clip(ct, 0, hog - 1)
+    enhet = np.where(giltig, enhet_tab[idx], -1)
+    z_over = np.where(giltig, overfall[idx], -np.inf)
+    fylld = (enhet >= 0) & (np.nan_to_num(graf.mark_z, nan=np.inf) <= z_over + 1e-6)
     geo = graf.geo
     t = from_origin(geo.x_min, geo.y_max, geo.pixelstorlek_x, geo.pixelstorlek_y)
-    arr = np.where(fylld, ct, 0).astype(np.int32)
+    arr = np.where(fylld, enhet, 0).astype(np.int32)
     per_nod: dict[int, list[Any]] = {}
     for geom, v in features.shapes(arr, mask=fylld, transform=t, connectivity=4):
         per_nod.setdefault(int(v), []).append(shape(geom))
     poster: list[dict[str, Any]] = []
+    dolda = 0
     for nid, delar in per_nod.items():
-        nod = lov[nid]
+        nod = noder[nid]
         yta = sum(d.area for d in delar)
+        djup = max(0.0, nod.overfall_rh2000 - nod.botten_rh2000)
+        if nod.max_volym_m3 < min_volym_m3 or djup < min_djup_m:
+            dolda += 1
+            continue
+        delsankor = len([lid for lid, e in enhet_av_lov.items() if e == nid])
         poster.append(
             {
                 "type": "Feature",
                 "id": f"sanka-{nid}",
                 "geometry": {
                     "type": "MultiPolygon",
-                    "coordinates": [
-                        [_ring(r) for r in mapping(d)["coordinates"]] for d in delar
-                    ],
+                    "coordinates": [[_ring(r) for r in mapping(d)["coordinates"]] for d in delar],
                 },
                 "properties": {
                     "nod_id": nid,
                     "kapacitet_m3": _avrunda(nod.max_volym_m3, 3),
-                    "djup_m": _avrunda(max(0.0, nod.overfall_rh2000 - nod.botten_rh2000), 3),
+                    "djup_m": _avrunda(djup, 3),
                     "yta_m2": _avrunda(yta, 1),
                     "avrinningsyta_m2": _avrunda(nod.avrinningsyta_m2, 1),
+                    "overfall_rh2000": _avrunda(nod.overfall_rh2000, 3),
+                    "overfall": [_avrunda(nod.overfall_x), _avrunda(nod.overfall_y)],
+                    "delsankor": delsankor,
                     "slutsanka": nod.typ != "sanka",
                     "mitt": [
                         _avrunda(delar[0].representative_point().x),
@@ -86,14 +132,22 @@ def sankor_geojson(graf: SankGraf) -> dict[str, Any]:
     return {
         "type": "FeatureCollection",
         "features": poster[:MAX_SANKOR],
-        "meta": {"antal_totalt": len(poster), "visade": min(len(poster), MAX_SANKOR)},
+        "meta": {
+            "antal_totalt": len(poster) + dolda,
+            "visade": min(len(poster), MAX_SANKOR),
+            "dolda": dolda,
+            "max_djup_m": max_djup_m,
+            "min_volym_m3": min_volym_m3,
+            "min_djup_m": min_djup_m,
+        },
     }
 
 
-def flodesvagar_geojson(graf: SankGraf) -> dict[str, Any]:
-    """Flödesvägarna som linjer med längd, lutning och gångtid (sänkgrafens egna värden)."""
-    vagar = [v for v in graf.flodesvagar if len(v.koordinater) >= 2]
-    vagar.sort(key=lambda v: (-v.langd_m, v.id))
+def flodesvagar_geojson(graf: SankGraf, min_yta_m2: float = STANDARD_MIN_YTA_M2) -> dict[str, Any]:
+    """Avrinningsnätet (`sankgraf.avrinningsnat`): linjer med tillrinning (m²) och Strahler-ordning.
+
+    Alla stråk över tröskeln följer med, störst sist (ritas överst)."""
+    vagar = avrinningsnat(graf, min_yta_m2)
     poster = [
         {
             "type": "Feature",
@@ -101,18 +155,18 @@ def flodesvagar_geojson(graf: SankGraf) -> dict[str, Any]:
             "geometry": {"type": "LineString", "coordinates": _ring(v.koordinater)},
             "properties": {
                 "flodesvag_id": int(v.id),
-                "nod_id": int(v.nod_id),
+                "tillrinning_m2": _avrunda(v.tillrinning_m2, 1),
+                "ordning": int(v.ordning),
                 "langd_m": _avrunda(v.langd_m, 1),
                 "lutning": _avrunda(v.lutning, 4),
-                "gangtid_s": _avrunda(v.gangtid_s, 1),
             },
         }
-        for v in vagar[:MAX_FLODESVAGAR]
+        for v in vagar
     ]
     return {
         "type": "FeatureCollection",
         "features": poster,
-        "meta": {"antal_totalt": len(vagar), "visade": len(poster)},
+        "meta": {"antal_totalt": len(poster), "visade": len(poster), "min_yta_m2": min_yta_m2},
     }
 
 
