@@ -32,7 +32,15 @@ from dagsljus.horisont import (
     horisont_riktning_ruta_pa_enhet,
     riktningar_rad,
 )
-from dagsljus.matt import SoltimmarAckumulator, halvplansriktningar, vsc_fran_halvplansprofil
+from dagsljus.matt import (
+    SolsynlighetAckumulator,
+    SoltimmarAckumulator,
+    halvplansriktningar,
+    sammanhangande_soltimmar_fran_synlighet,
+    solsynlighet_fasad,
+    tidsfonster_mask,
+    vsc_fran_halvplansprofil,
+)
 from dagsljus.ruta import Mosaik, RutaFel, bygg_mosaik, fonster_koordinater, mitt_3011
 from dagsljus.solposition import dygnsfonster_utc, lat_lon_fran_3011, solposition
 from gemensamt.gpu import ar_gpu_backend, berakningsplats, hamta_backend, till_enhet
@@ -402,34 +410,77 @@ class SvfMark(_DagsljusLosare):
         )
 
 
+def _validera_tidsfonster(parametrar: Mapping[str, Any]) -> tuple[float, float]:
+    start = _tal(parametrar, "start_timme", 0.0)
+    slut = _tal(parametrar, "slut_timme", 24.0)
+    if not (0.0 <= start < slut <= 24.0):
+        raise LosarFel(
+            f"Tidsfönstret måste uppfylla 0 <= start_timme < slut_timme <= 24, "
+            f"fick [{start}, {slut}]."
+        )
+    return start, slut
+
+
+def _validera_solparametrar(parametrar: Mapping[str, Any]) -> dict[str, Any]:
+    datum = parametrar.get("datum", ["2026-03-20"])
+    if (
+        not isinstance(datum, list | tuple)
+        or not datum
+        or not all(isinstance(d, str) for d in datum)
+    ):
+        raise LosarFel(f"datum måste vara en icke-tom lista av 'ÅÅÅÅ-MM-DD', fick {datum!r}.")
+    steg = _tal(parametrar, "steg_min", 10.0, over=0.0)
+    if abs(1440.0 / steg - round(1440.0 / steg)) > 1e-9:
+        raise LosarFel(f"1440 måste vara delbart med steg_min, fick {steg}.")
+    refr = parametrar.get("refraktion", False)
+    if not isinstance(refr, bool):
+        raise LosarFel(f"refraktion måste vara true/false, fick {refr!r}.")
+    start, slut = _validera_tidsfonster(parametrar)
+    return {
+        "datum": sorted(str(d) for d in datum),
+        "steg_min": steg,
+        "refraktion": refr,
+        "start_timme": start,
+        "slut_timme": slut,
+    }
+
+
+def _solpositioner_per_datum(
+    datum: list[str],
+    lat: float,
+    lon: float,
+    steg_min: float,
+    *,
+    refraktion: bool,
+    start_timme: float = 0.0,
+    slut_timme: float = 24.0,
+) -> list[tuple[NDArray[np.float64], NDArray[np.float64]]]:
+    from dagsljus.solposition import SolFel
+
+    mask = tidsfonster_mask(steg_min, start_timme, slut_timme)
+    ut: list[tuple[NDArray[np.float64], NDArray[np.float64]]] = []
+    try:
+        for d in datum:
+            tider = dygnsfonster_utc(d, lon, steg_min)[mask]
+            ut.append(solposition(tider, lat, lon, refraktion=refraktion))
+    except SolFel as exc:
+        raise LosarFel(str(exc)) from exc
+    return ut
+
+
 class SoltimmarMark(_DagsljusLosare):
     namn: ClassVar[str] = "dagsljus.soltimmar_mark"
     beskrivning: ClassVar[str] = "Soltimmar per dygn (medel över valda datum) för markceller."
     utdataroller: ClassVar[tuple[str, ...]] = ("soltimmar", "trunkering", "standardhojd")
-    _egna: ClassVar[set[str]] = {"datum", "steg_min", "refraktion"}
+    _egna: ClassVar[set[str]] = {"datum", "steg_min", "refraktion", "start_timme", "slut_timme"}
     _standard_k: ClassVar[int] = STANDARD_K_SOLTIMMAR
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
         ut = super().validera_parametrar(parametrar)
-        datum = parametrar.get("datum", ["2026-03-20"])
-        if (
-            not isinstance(datum, list | tuple)
-            or not datum
-            or not all(isinstance(d, str) for d in datum)
-        ):
-            raise LosarFel(f"datum måste vara en icke-tom lista av 'ÅÅÅÅ-MM-DD', fick {datum!r}.")
-        steg = _tal(parametrar, "steg_min", 10.0, over=0.0)
-        if abs(1440.0 / steg - round(1440.0 / steg)) > 1e-9:
-            raise LosarFel(f"1440 måste vara delbart med steg_min, fick {steg}.")
-        refr = parametrar.get("refraktion", False)
-        if not isinstance(refr, bool):
-            raise LosarFel(f"refraktion måste vara true/false, fick {refr!r}.")
-        ut.update({"datum": sorted(str(d) for d in datum), "steg_min": steg, "refraktion": refr})
+        ut.update(_validera_solparametrar(parametrar))
         return ut
 
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
-        from dagsljus.solposition import SolFel
-
         m = _mosaik(kontext)
         r0, r1, c0, c1 = m.fonster
         antal = int(kontext.parametrar["azimutriktningar"])
@@ -438,13 +489,19 @@ class SoltimmarMark(_DagsljusLosare):
         lat, lon = lat_lon_fran_3011(e, n)
         datum = list(kontext.parametrar["datum"])
         steg_min = float(kontext.parametrar["steg_min"])
-        try:
-            tider = np.concatenate([dygnsfonster_utc(d, lon, steg_min) for d in datum])
-            sol_h, sol_az = solposition(
-                tider, lat, lon, refraktion=bool(kontext.parametrar["refraktion"])
-            )
-        except SolFel as exc:
-            raise LosarFel(str(exc)) from exc
+        start_h = float(kontext.parametrar.get("start_timme", 0.0))
+        slut_h = float(kontext.parametrar.get("slut_timme", 24.0))
+        per_dag = _solpositioner_per_datum(
+            datum,
+            lat,
+            lon,
+            steg_min,
+            refraktion=bool(kontext.parametrar["refraktion"]),
+            start_timme=start_h,
+            slut_timme=slut_h,
+        )
+        sol_h = np.concatenate([h for h, _ in per_dag])
+        sol_az = np.concatenate([a for _, a in per_dag])
         form = (r1 - r0, c1 - c0)
         steg_h = steg_min / 60.0 / len(datum)
         ack = SoltimmarAckumulator(antal, sol_h, sol_az, steg_h, form)
@@ -482,6 +539,248 @@ class SoltimmarMark(_DagsljusLosare):
                 "soltimmar_min_h": float(timmar.min()),
                 "soltimmar_max_h": float(timmar.max()),
                 "datum": len(datum),
+                "start_timme": start_h,
+                "slut_timme": slut_h,
+                "lat_grader": lat,
+                "lon_grader": lon,
+                "celler_standardhojd": n_std,
+                "berakningsplats": pas.berakningsplats,
+            },
+            varningar=tuple(var),
+        )
+
+
+class SammanhangandeSoltimmarMark(_DagsljusLosare):
+    namn: ClassVar[str] = "dagsljus.soltimmar_sammanhangande"
+    beskrivning: ClassVar[str] = (
+        "Längsta sammanhängande solperiod (h) per dygn/tidsfönster för markceller."
+    )
+    utdataroller: ClassVar[tuple[str, ...]] = (
+        "sammanhangande_soltimmar",
+        "trunkering",
+        "standardhojd",
+    )
+    _egna: ClassVar[set[str]] = {"datum", "steg_min", "refraktion", "start_timme", "slut_timme"}
+    _standard_k: ClassVar[int] = STANDARD_K_SOLTIMMAR
+
+    def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
+        ut = super().validera_parametrar(parametrar)
+        ut.update(_validera_solparametrar(parametrar))
+        return ut
+
+    def kor(self, kontext: LosarKontext) -> LosarUtdata:
+        m = _mosaik(kontext)
+        r0, r1, c0, c1 = m.fonster
+        antal = int(kontext.parametrar["azimutriktningar"])
+        x_min, y_max = fonster_koordinater(m)
+        e, n = mitt_3011((x_min, y_max), (r1 - r0, c1 - c0), m.falt.cell_m)
+        lat, lon = lat_lon_fran_3011(e, n)
+        datum = list(kontext.parametrar["datum"])
+        steg_min = float(kontext.parametrar["steg_min"])
+        start_h = float(kontext.parametrar.get("start_timme", 0.0))
+        slut_h = float(kontext.parametrar.get("slut_timme", 24.0))
+        per_dag = _solpositioner_per_datum(
+            datum,
+            lat,
+            lon,
+            steg_min,
+            refraktion=bool(kontext.parametrar["refraktion"]),
+            start_timme=start_h,
+            slut_timme=slut_h,
+        )
+        dag_langder = [h.size for h, _ in per_dag]
+        sol_h = np.concatenate([h for h, _ in per_dag])
+        sol_az = np.concatenate([a for _, a in per_dag])
+        form = (r1 - r0, c1 - c0)
+        ack = SolsynlighetAckumulator(antal, sol_h, sol_az, form)
+        ack0 = SolsynlighetAckumulator(antal, sol_h, sol_az, form)
+        pas = _horisontpass(
+            kontext,
+            m,
+            [lambda i, _p, h: ack.mata(i, h)],
+            [lambda i, _p, h: ack0.mata(i, h)],
+            aktiva_riktningar=ack.aktiva_riktningar(),
+            hoppa_over=[lambda i: ack.mata(i, None)],
+            hoppa_over_utan_standard=[lambda i: ack0.mata(i, None)],
+        )
+        steg_h = steg_min / 60.0
+
+        def _medel_sammanhangande(syn: NDArray[np.bool_]) -> NDArray[np.float64]:
+            summa = np.zeros(form, dtype=np.float64)
+            pos = 0
+            for ln in dag_langder:
+                summa += sammanhangande_soltimmar_fran_synlighet(syn[pos : pos + ln], steg_h)
+                pos += ln
+            return summa / len(dag_langder)
+
+        samman = _medel_sammanhangande(ack.synlighet())
+        _skriv_raster(kontext.utmapp / "sammanhangande_soltimmar.tif", samman, m)
+        _skriv_raster(kontext.utmapp / "trunkering.tif", pas.trunk / antal, m)
+        flagga = (
+            None
+            if pas.standard_riktningar is None
+            else _medel_sammanhangande(ack0.synlighet()) != samman
+        )
+        n_std, std_var = _skriv_standardflagga(kontext, m, flagga, samman.shape)
+        var = _gemensamma_varningar(kontext, m) + _trunk_varning(pas.trunk, antal) + std_var
+        return LosarUtdata(
+            filer={
+                "sammanhangande_soltimmar": "sammanhangande_soltimmar.tif",
+                "trunkering": "trunkering.tif",
+                "standardhojd": "standardhojd.tif",
+            },
+            matvarden={
+                "sammanhangande_medel_h": float(samman.mean()),
+                "sammanhangande_min_h": float(samman.min()),
+                "sammanhangande_max_h": float(samman.max()),
+                "datum": len(datum),
+                "start_timme": start_h,
+                "slut_timme": slut_h,
+                "lat_grader": lat,
+                "lon_grader": lon,
+                "celler_standardhojd": n_std,
+                "berakningsplats": pas.berakningsplats,
+            },
+            varningar=tuple(var),
+        )
+
+
+class SkuggmaskKlockslag(_DagsljusLosare):
+    namn: ClassVar[str] = "dagsljus.skuggmask_vid_klockslag"
+    beskrivning: ClassVar[str] = (
+        "Skuggmask (uint8: 1 = sol, 0 = skugga) vid valda klockslag (t.ex. kl. 09, 12, 15, 18)."
+    )
+    utdataroller: ClassVar[tuple[str, ...]] = (
+        "skuggmask",
+        "skuggmask_meta",
+        "trunkering",
+        "standardhojd",
+    )
+    _egna: ClassVar[set[str]] = {"datum", "klockslag", "refraktion", "utc_offset_h"}
+    _standard_k: ClassVar[int] = STANDARD_K_SOLTIMMAR
+
+    def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
+        ut = super().validera_parametrar(parametrar)
+        datum = parametrar.get("datum", "2026-03-20")
+        if not isinstance(datum, str) or not datum.strip():
+            raise LosarFel(f"datum måste vara en sträng 'ÅÅÅÅ-MM-DD', fick {datum!r}.")
+        klockslag = parametrar.get("klockslag", [9.0, 12.0, 15.0, 18.0])
+        if (
+            not isinstance(klockslag, list | tuple)
+            or not klockslag
+            or any(
+                isinstance(t, bool)
+                or not isinstance(t, int | float)
+                or not (math.isfinite(float(t)) and 0.0 <= float(t) < 24.0)
+                for t in klockslag
+            )
+        ):
+            raise LosarFel(
+                f"klockslag måste vara en icke-tom lista av timmar i [0, 24), fick {klockslag!r}."
+            )
+        refr = parametrar.get("refraktion", False)
+        if not isinstance(refr, bool):
+            raise LosarFel(f"refraktion måste vara true/false, fick {refr!r}.")
+        utc_off = parametrar.get("utc_offset_h")
+        if utc_off is not None and (
+            isinstance(utc_off, bool)
+            or not isinstance(utc_off, int | float)
+            or not (-14.0 <= float(utc_off) <= 14.0)
+        ):
+            raise LosarFel(
+                f"utc_offset_h måste vara ett tal i [-14, 14] eller None, fick {utc_off!r}."
+            )
+        ut.update(
+            {
+                "datum": str(datum),
+                "klockslag": [float(t) for t in klockslag],
+                "refraktion": refr,
+                "utc_offset_h": None if utc_off is None else float(utc_off),
+            }
+        )
+        return ut
+
+    def kor(self, kontext: LosarKontext) -> LosarUtdata:
+        from dagsljus.solposition import SolFel
+
+        m = _mosaik(kontext)
+        r0, r1, c0, c1 = m.fonster
+        antal = int(kontext.parametrar["azimutriktningar"])
+        x_min, y_max = fonster_koordinater(m)
+        e, n = mitt_3011((x_min, y_max), (r1 - r0, c1 - c0), m.falt.cell_m)
+        lat, lon = lat_lon_fran_3011(e, n)
+        datum = str(kontext.parametrar["datum"])
+        klockslag = [float(t) for t in kontext.parametrar["klockslag"]]
+        utc_off = kontext.parametrar.get("utc_offset_h")
+        offset_h = lon / 15.0 if utc_off is None else float(utc_off)
+        try:
+            bas_s = np.datetime64(datum, "s").astype(np.int64)
+            tider = np.array(
+                [
+                    np.datetime64(0, "s")
+                    + np.timedelta64(int(round(bas_s + (t - offset_h) * 3600.0)), "s")
+                    for t in klockslag
+                ]
+            )
+            sol_h, sol_az = solposition(
+                tider, lat, lon, refraktion=bool(kontext.parametrar["refraktion"])
+            )
+        except (SolFel, ValueError) as exc:
+            raise LosarFel(str(exc)) from exc
+        form = (r1 - r0, c1 - c0)
+        ack = SolsynlighetAckumulator(antal, sol_h, sol_az, form)
+        ack0 = SolsynlighetAckumulator(antal, sol_h, sol_az, form)
+        pas = _horisontpass(
+            kontext,
+            m,
+            [lambda i, _p, h: ack.mata(i, h)],
+            [lambda i, _p, h: ack0.mata(i, h)],
+            aktiva_riktningar=ack.aktiva_riktningar(),
+            hoppa_over=[lambda i: ack.mata(i, None)],
+            hoppa_over_utan_standard=[lambda i: ack0.mata(i, None)],
+        )
+        mask = ack.synlighet().astype(np.uint8)
+        kontext.utmapp.mkdir(parents=True, exist_ok=True)
+        np.save(kontext.utmapp / "skuggmask.npy", mask)
+        (kontext.utmapp / "skuggmask.json").write_text(
+            json.dumps(
+                {
+                    "kontrakt": "dagsljus-skuggmask/v1",
+                    "varden": {"1": "sol", "0": "skugga"},
+                    "form": ["klockslag", "rad", "kolumn"],
+                    "datum": datum,
+                    "klockslag": klockslag,
+                    "utc_offset_h": offset_h,
+                    "tidsreferens": "lokal_medelsoltid" if utc_off is None else f"UTC{offset_h:+g}",
+                    "x_min_m": x_min,
+                    "y_max_m": y_max,
+                    "cellstorlek_m": m.falt.cell_m,
+                    "epsg": 3011,
+                },
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        _skriv_raster(kontext.utmapp / "trunkering.tif", pas.trunk / antal, m)
+        flagga = (
+            None
+            if pas.standard_riktningar is None
+            else np.any(ack0.synlighet().astype(np.uint8) != mask, axis=0)
+        )
+        n_std, std_var = _skriv_standardflagga(kontext, m, flagga, form)
+        var = _gemensamma_varningar(kontext, m) + _trunk_varning(pas.trunk, antal) + std_var
+        return LosarUtdata(
+            filer={
+                "skuggmask": "skuggmask.npy",
+                "skuggmask_meta": "skuggmask.json",
+                "trunkering": "trunkering.tif",
+                "standardhojd": "standardhojd.tif",
+            },
+            matvarden={
+                "solandel_medel": float(mask.mean()),
+                "antal_klockslag": len(klockslag),
                 "lat_grader": lat,
                 "lon_grader": lon,
                 "celler_standardhojd": n_std,
@@ -779,4 +1078,235 @@ class VscFasad(_DagsljusLosare):
         )
 
 
-LOSARE: list[Analyslosare] = [Horisont(), SoltimmarMark(), SvfMark(), VscFasad()]
+_SOL_FASAD_KOLUMNER = (
+    *_FASAD_KOLUMNER,
+    "soltimmar_h",
+    "sammanhangande_h",
+    "trunkerade_riktningar",
+    "status",
+    "standardhojd",
+    "byggnad_id",
+)
+
+
+@dataclass(frozen=True)
+class _SolFasadResultat:
+    soltimmar_h: NDArray[np.float64]
+    sammanhangande_h: NDArray[np.float64]
+    trunk_ant: NDArray[np.int64]
+    status: list[str]
+
+
+def _sol_fasad_pa_falt(
+    falt: Any,
+    x0: NDArray[np.float64],
+    y0: NDArray[np.float64],
+    z0: NDArray[np.float64],
+    az_n: NDArray[np.float64],
+    radie: float,
+    kf: int,
+    per_dag: list[tuple[NDArray[np.float64], NDArray[np.float64]]],
+    steg_h: float,
+) -> _SolFasadResultat:
+    from dagsljus.horisont import MaxPyramid
+
+    n = x0.size
+    sol_h_ut = np.full(n, np.nan, dtype=np.float64)
+    sam_h_ut = np.full(n, np.nan, dtype=np.float64)
+    trunk_ant = np.zeros(n, dtype=np.int64)
+    status = ["ok"] * n
+    if not n:
+        return _SolFasadResultat(sol_h_ut, sam_h_ut, trunk_ant, status)
+    ox, oy = falt.cellkoord(x0, y0)
+    inne = (ox >= 0) & (ox < falt.bredd) & (oy >= 0) & (oy < falt.hojd)
+    for i in np.nonzero(~inne)[0]:
+        status[int(i)] = "utanfor_data"
+    chunk = max(1, _VSC_CHUNK_STRALAR // kf)
+    ids = np.nonzero(inne)[0]
+    pyr = MaxPyramid.bygg(falt)
+    n_dagar = len(per_dag)
+    for a in range(0, ids.size, chunk):
+        s = ids[a : a + chunk]
+        phi = halvplansriktningar(az_n[s], kf)
+        res = horisont_mipmap(
+            falt,
+            np.repeat(x0[s], kf),
+            np.repeat(y0[s], kf),
+            np.repeat(z0[s], kf),
+            phi.ravel(),
+            radie,
+            pyramid=pyr,
+        )
+        h = res.h_rad.reshape(len(s), kf)
+        inuti = res.inuti_hinder.reshape(len(s), kf)[:, 0]
+        tr = res.trunkerad.reshape(len(s), kf).sum(axis=1)
+        tot_h = np.zeros(len(s), dtype=np.float64)
+        sam_h = np.zeros(len(s), dtype=np.float64)
+        for sh, saz in per_dag:
+            syn = solsynlighet_fasad(h, az_n[s], sh, saz)
+            tot_h += syn.sum(axis=0, dtype=np.int32) * steg_h
+            sam_h += sammanhangande_soltimmar_fran_synlighet(syn, steg_h)
+        tot_h /= n_dagar
+        sam_h /= n_dagar
+        for q, idx in enumerate(s):
+            trunk_ant[idx] = int(tr[q])
+            if inuti[q]:
+                status[int(idx)] = "inuti_hinder"
+            else:
+                sol_h_ut[idx] = float(tot_h[q])
+                sam_h_ut[idx] = float(sam_h[q])
+    return _SolFasadResultat(sol_h_ut, sam_h_ut, trunk_ant, status)
+
+
+class SoltimmarFasad(_DagsljusLosare):
+    namn: ClassVar[str] = "dagsljus.soltimmar_fasad"
+    beskrivning: ClassVar[str] = (
+        "Direkta soltimmar och längsta sammanhängande soltid på K11-fasadpunkter "
+        "(med fasadnormalens synfält + horisontprofil)."
+    )
+    valfria_indataroller: ClassVar[tuple[str, ...]] = ("fasadpunkter",)
+    utdataroller: ClassVar[tuple[str, ...]] = ("soltimmar_fasad",)
+    _egna: ClassVar[set[str]] = {
+        "datum",
+        "steg_min",
+        "refraktion",
+        "start_timme",
+        "slut_timme",
+        "halvplansriktningar",
+        "utanfor_m",
+        "fasad_steg_m",
+        "vaningshojd_m",
+        "hojd_over_golv_m",
+        "byggnader",
+    }
+    _standard_k: ClassVar[int] = STANDARD_K_SOLTIMMAR
+
+    def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
+        ut = super().validera_parametrar(parametrar)
+        ut.update(_validera_solparametrar(parametrar))
+        standard_k = max(4, int(ut["azimutriktningar"]) // 2)
+        ut["halvplansriktningar"] = _heltal(parametrar, "halvplansriktningar", standard_k, minst=4)
+        ut["utanfor_m"] = _tal(parametrar, "utanfor_m", 0.5 * float(ut["cellstorlek_m"]), over=0.0)
+        ut["fasad_steg_m"] = _tal(parametrar, "fasad_steg_m", 3.0, over=0.0)
+        ut["vaningshojd_m"] = _tal(parametrar, "vaningshojd_m", 3.0, over=0.0)
+        ut["hojd_over_golv_m"] = _tal(parametrar, "hojd_over_golv_m", 1.5, over=0.0)
+        urval = parametrar.get("byggnader", [])
+        if not isinstance(urval, list | tuple) or not all(isinstance(b, str) for b in urval):
+            raise LosarFel(f"byggnader måste vara en lista av byggnad_id (text), fick {urval!r}.")
+        ut["byggnader"] = sorted(set(urval))
+        return ut
+
+    def kor(self, kontext: LosarKontext) -> LosarUtdata:
+        m = _mosaik(kontext)
+        csv_fil = kontext.indata.get("fasadpunkter")
+        if csv_fil is not None:
+            if kontext.parametrar["byggnader"]:
+                raise LosarFel(
+                    "byggnader (urval av byggnad_id) gäller bara fasadpunkter ur K11; med en "
+                    "CSV-fil i indata styr filen vilka punkter som räknas."
+                )
+            punkter = [
+                {**p, "byggnad_id": "", "standard": False}
+                for p in las_fasadpunkter(csv_fil)
+                if _agd_av_ruta(kontext, p["x"], p["y"])
+            ]
+            kalla = "csv"
+        else:
+            punkter = _k11_punkter(kontext, m)
+            kalla = "k11"
+        r0, r1, c0, c1 = m.fonster
+        x_min, y_max = fonster_koordinater(m)
+        e, nn = mitt_3011((x_min, y_max), (r1 - r0, c1 - c0), m.falt.cell_m)
+        lat, lon = lat_lon_fran_3011(e, nn)
+        datum = list(kontext.parametrar["datum"])
+        steg_min = float(kontext.parametrar["steg_min"])
+        start_h = float(kontext.parametrar.get("start_timme", 0.0))
+        slut_h = float(kontext.parametrar.get("slut_timme", 24.0))
+        per_dag = _solpositioner_per_datum(
+            datum,
+            lat,
+            lon,
+            steg_min,
+            refraktion=bool(kontext.parametrar["refraktion"]),
+            start_timme=start_h,
+            slut_timme=slut_h,
+        )
+        radie = _radie_m(kontext.parametrar)
+        kf = int(kontext.parametrar["halvplansriktningar"])
+        ut_m = float(kontext.parametrar["utanfor_m"])
+        n = len(punkter)
+        az_n = np.radians([p["az"] for p in punkter])
+        cell_proj = (
+            0.5 * (1.0 + 1e-6) * m.falt.cell_m * (np.abs(np.sin(az_n)) + np.abs(np.cos(az_n)))
+        )
+        ut_eff = np.maximum(ut_m, cell_proj)
+        x0 = np.array([p["x"] for p in punkter]) + ut_eff * np.sin(az_n)
+        y0 = np.array([p["y"] for p in punkter]) + ut_eff * np.cos(az_n)
+        z0 = np.array([p["z"] for p in punkter])
+        steg_h = steg_min / 60.0
+        res = _sol_fasad_pa_falt(m.falt, x0, y0, z0, az_n, radie, kf, per_dag, steg_h)
+        std_flagga = np.array([bool(p["standard"]) for p in punkter], dtype=bool)
+        if m.falt_utan_standard is not None and n:
+            utan = _sol_fasad_pa_falt(
+                m.falt_utan_standard, x0, y0, z0, az_n, radie, kf, per_dag, steg_h
+            )
+            std_flagga |= (utan.soltimmar_h != res.soltimmar_h) & ~(
+                np.isnan(utan.soltimmar_h) & np.isnan(res.soltimmar_h)
+            )
+            std_flagga |= np.array(
+                [a != b for a, b in zip(utan.status, res.status, strict=True)]
+            )
+        kontext.utmapp.mkdir(parents=True, exist_ok=True)
+        with (kontext.utmapp / "soltimmar_fasad.csv").open("w", encoding="utf-8", newline="") as fh:
+            w = csv.writer(fh, lineterminator="\n")
+            w.writerow(_SOL_FASAD_KOLUMNER)
+            for i, p in enumerate(punkter):
+                w.writerow(
+                    [
+                        p["fasad_id"],
+                        repr(p["x"]),
+                        repr(p["y"]),
+                        repr(p["z"]),
+                        repr(p["az"]),
+                        "" if math.isnan(res.soltimmar_h[i]) else f"{res.soltimmar_h[i]:.4f}",
+                        ""
+                        if math.isnan(res.sammanhangande_h[i])
+                        else f"{res.sammanhangande_h[i]:.4f}",
+                        int(res.trunk_ant[i]),
+                        res.status[i],
+                        int(std_flagga[i]),
+                        p["byggnad_id"],
+                    ]
+                )
+        giltiga = res.soltimmar_h[np.isfinite(res.soltimmar_h)]
+        var = _gemensamma_varningar(kontext, m)
+        n_std = int(np.count_nonzero(std_flagga))
+        if m.standard_byggnader:
+            var += _standard_varning(m, n_std, n, "fasadpunkter")
+            var[-1] += " eller sitter på en sådan byggnad"
+        return LosarUtdata(
+            filer={"soltimmar_fasad": "soltimmar_fasad.csv"},
+            matvarden={
+                "fasadpunkter": n,
+                "fasadkalla": kalla,
+                "fasadpunkter_standardhojd": n_std,
+                "soltimmar_min_h": float(giltiga.min()) if giltiga.size else None,
+                "soltimmar_medel_h": float(giltiga.mean()) if giltiga.size else None,
+                "soltimmar_max_h": float(giltiga.max()) if giltiga.size else None,
+                "datum": len(datum),
+                "start_timme": start_h,
+                "slut_timme": slut_h,
+            },
+            varningar=tuple(var),
+        )
+
+
+LOSARE: list[Analyslosare] = [
+    Horisont(),
+    SoltimmarMark(),
+    SammanhangandeSoltimmarMark(),
+    SkuggmaskKlockslag(),
+    SvfMark(),
+    VscFasad(),
+    SoltimmarFasad(),
+]

@@ -32,6 +32,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final
 
+import numpy as np
+from numpy.typing import NDArray
+
 from ekologi.typer import ArtProfil, EkologiFel
 from gemensamt.hash import sha256_fil
 
@@ -55,6 +58,79 @@ METODSTATUS_TEXT: Final[str] = (
 )
 NMD_BYGGNAD: Final[int] = 51
 """NMD-klassen för byggnad; ritade hus (K9) läggs ovanpå som denna klass."""
+NMD_OPPEN_MARK_UTAN_VEG: Final[int] = 41
+"""NMD-klass för öppen mark utan vegetation (grus, berg)."""
+NMD_OPPEN_MARK_MED_VEG: Final[int] = 42
+"""NMD-klass för övrig öppen mark med vegetation (gräs/grönyta)."""
+NMD_EXPLOATERAD_MARK: Final[int] = 52
+"""NMD-klass för övrig exploaterad mark (hårdgjord yta)."""
+NMD_VATTEN: Final[int] = 61
+"""NMD-klass för sjö och vattendrag."""
+K1_BYGGNAD_KODER: Final[frozenset[int]] = frozenset({2, 3, 9})
+"""K1-markslagskoder som representerar byggnad/tak (2 = tak, 3 = grönt tak, 9 = byggnad)."""
+K1_TILL_NMD_EFTER_RIVNING: Final[dict[int, int]] = {
+    0: NMD_OPPEN_MARK_MED_VEG,
+    1: NMD_EXPLOATERAD_MARK,
+    4: NMD_OPPEN_MARK_MED_VEG,
+    5: NMD_OPPEN_MARK_MED_VEG,
+    6: NMD_OPPEN_MARK_UTAN_VEG,
+    7: NMD_OPPEN_MARK_UTAN_VEG,
+    8: NMD_VATTEN,
+}
+"""Ersättningsklass i NMD när en byggnad rivits i K1/K9 (`byggnad_bort`) per K1-markslag."""
+
+
+def rensa_rivna_hus_i_nmd(
+    klasser: NDArray[np.uint8],
+    x_min_m: float,
+    y_max_m: float,
+    cell_m: float,
+    k1_markslag: NDArray[np.uint8],
+    k1_x_min_m: float,
+    k1_y_max_m: float,
+    k1_cell_m: float,
+    *,
+    hus_kod: int = NMD_BYGGNAD,
+    standard_ersattning: int = NMD_OPPEN_MARK_MED_VEG,
+    k1_till_nmd: Mapping[int, int] = K1_TILL_NMD_EFTER_RIVNING,
+) -> tuple[NDArray[np.uint8], int]:
+    """Rensar bort rivna byggnader ur NMD (`hus_kod`, standard 51) inom K1-utbredningen.
+
+    Där NMD anger byggnad (`hus_kod`) men K1/K9 efter tillämpning inte längre har någon byggnad
+    (`k1_markslag` inte i `K1_BYGGNAD_KODER`) ersätts cellen av motsvarande NMD-klass för öppen
+    mark/grönyta enligt K1-markslaget (t.ex. K1 gräs -> NMD 42, grus/berg -> NMD 41, hårdgjort ->
+    NMD 52). Celler utanför K1-utbredningen (kontextbufferten) lämnas oförändrade.
+
+    Returnerar `(nya_klasser, antal_rensade_celler)`.
+    """
+    ut = np.asarray(klasser, dtype=np.uint8).copy()
+    ny, nx = ut.shape
+    e = x_min_m + (np.arange(nx) + 0.5) * cell_m
+    n = y_max_m - (np.arange(ny) + 0.5) * cell_m
+    kol = np.floor((e - k1_x_min_m) / k1_cell_m).astype(int)
+    rad = np.floor((k1_y_max_m - n) / k1_cell_m).astype(int)
+    ok_k = (kol >= 0) & (kol < k1_markslag.shape[1])
+    ok_r = (rad >= 0) & (rad < k1_markslag.shape[0])
+    if not (ok_k.any() and ok_r.any()):
+        return ut, 0
+    rr_idx = np.flatnonzero(ok_r)
+    kk_idx = np.flatnonzero(ok_k)
+    rr, kk = np.meshgrid(rr_idx, kk_idx, indexing="ij")
+    k1_sub = k1_markslag[rad[rr], kol[kk]]
+    ar_hus_i_k1 = np.isin(k1_sub, sorted(K1_BYGGNAD_KODER))
+    rivna_sub = (ut[rr, kk] == hus_kod) & ~ar_hus_i_k1
+    antal = int(np.count_nonzero(rivna_sub))
+    if antal == 0:
+        return ut, 0
+    lut = np.full(256, np.uint8(standard_ersattning), dtype=np.uint8)
+    for k1_kod, nmd_kod in k1_till_nmd.items():
+        if 0 <= k1_kod <= 255:
+            lut[k1_kod] = np.uint8(nmd_kod)
+    ersatt = lut[k1_sub]
+    sub = ut[rr, kk]
+    sub = np.where(rivna_sub, ersatt, sub).astype(np.uint8)
+    ut[rr, kk] = sub
+    return ut, antal
 
 
 @dataclass(frozen=True)
