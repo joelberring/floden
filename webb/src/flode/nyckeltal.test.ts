@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   antagandeRader,
+  dpcTabellRader,
+  flaskhalsPunkter,
   formateraBullerSkarmar,
   formateraMknIntervall,
   intervallForklaring,
@@ -126,4 +128,49 @@ test("MKN-intervall och bullerskärmar formateras utan egna beräkningar", () =>
   assert.deepEqual(tolkaTallista("10, 20.5; 30,2"), [10, 20.5, 30.2]);
   assert.equal(tolkaTallista("abc"), null);
   assert.deepEqual(tolkaSkarmkandidater("A: 1, 2\nB: 3, 4"), { A: [1, 2], B: [3, 4] });
+});
+
+test("ekologi: dpcTabellRader sorterar och formaterar dPC_efter och dpc_tabell", () => {
+  assert.deepEqual(dpcTabellRader(null), []);
+  const rader = dpcTabellRader(
+    {
+      dPC_efter: [
+        { flack_id: 2, area_m2: 4500, dPC_procent: 12.34, dPC_intra_procent: 8.1, dPC_flux_procent: 3.2, dPC_connector_procent: 1.04 },
+        { flack_id: 1, area_m2: 18500, dPC_procent: 55.5, dPC_intra_procent: 40.0, dPC_flux_procent: 10.5, dPC_connector_procent: 5.0 },
+      ],
+    },
+    1,
+  );
+  assert.equal(rader.length, 1);
+  assert.equal(rader[0]?.flack_id, "1");
+  assert.match(rader[0]?.area ?? "", /^1,85\s?ha$/);
+  assert.equal(rader[0]?.dpc_procent, "55,5 %");
+  assert.equal(rader[0]?.intra, "40,0 %");
+  assert.equal(rader[0]?.flux, "10,5 %");
+  assert.equal(rader[0]?.connector, "5,0 %");
+
+  const alt = dpcTabellRader({
+    dpc_tabell: [{ flack_id: 3, area_ha: 0.45, dpc_procent: 9.2, dpc_intra: 6.0, dpc_flux: 2.2, dpc_connector: 1.0 }],
+  });
+  assert.equal(alt.length, 1);
+  assert.match(alt[0]?.area ?? "", /^4\u202F500\s?m²$/);
+  assert.equal(alt[0]?.dpc_procent, "9,2 %");
+});
+
+test("ekologi: flaskhalsPunkter extraherar SWEREF-koordinater för efter och före", () => {
+  assert.deepEqual(flaskhalsPunkter(undefined), []);
+  const e = {
+    storsta_flaskhalsar: {
+      fore: [{ e_m: 150010, n_m: 6580020, stromtathet: 0.412 }],
+      efter: [{ e_m: 150050, n_m: 6580080, stromtathet: 0.789 }],
+    },
+  };
+  const efter = flaskhalsPunkter(e);
+  assert.equal(efter.length, 1);
+  assert.equal(efter[0]?.e_m, 150050);
+  assert.equal(efter[0]?.n_m, 6580080);
+  assert.equal(efter[0]?.stromtathet_text, "0,789");
+
+  const fore = flaskhalsPunkter(e, "fore");
+  assert.equal(fore[0]?.e_m, 150010);
 });
