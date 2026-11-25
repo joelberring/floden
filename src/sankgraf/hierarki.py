@@ -196,11 +196,15 @@ def _berakna_kantbarriarer(
     geo: GeoTransformInfo,
     brytlinjer: Sequence[BrytlinjePost],
 ) -> dict[tuple[int, int], float]:
-    """Mappar brytlinjer till höjda tröskelnivåer på korsade 4-grannekanter.
+    """Mappar 2D- och 3D-brytlinjer till täta tröskelnivåer på korsade 4-grannekanter.
 
-    En brytlinje som skär dualkanten mellan två aktiva grannceller `(u, v)` ger
-    kanten barriärhöjden `max(z_u, z_v) + hojd_m`, utan att förvränga cellernas
-    lagringsvolym eller läcka diagonalt.
+    En brytlinje som skär dualkanten mellan två aktiva grannceller `(u, v)` ger kanten:
+    - vid 3D-brytlinje (`z_kron_rh2000` satt): `max(z_u, z_v, z_linje(x_snitt, y_snitt))`,
+      linjärt interpolerad exakt längs `LineStringZ`;
+    - vid 2D-brytlinje: `max(z_u, z_v) + hojd_m`.
+
+    Vid exakta hörnsnitt genom cellcentrum spärras båda angränsande dualkanterna (tät
+    supercover-spärr) så att vatten aldrig kan läcka diagonalt vid 20° eller 45°.
     """
     barriarer: dict[tuple[int, int], float] = {}
     if not brytlinjer:
@@ -210,19 +214,25 @@ def _berakna_kantbarriarer(
     bredd = geo.bredd
     dx = float(geo.pixelstorlek_x)
     dy = float(geo.pixelstorlek_y)
+    tol = 1e-9
 
-    def _lagg_till_kant(u: int, v: int, hojd_m: float) -> None:
+    def _lagg_till_kant(u: int, v: int, hojd_m: float, z_kron_snitt: float | None) -> None:
         if not (aktiv_flat[u] and aktiv_flat[v]):
             return
         nyckel = (u, v) if u < v else (v, u)
-        kant_z = max(float(z_flat[u]), float(z_flat[v])) + hojd_m
+        bas_z = max(float(z_flat[u]), float(z_flat[v]))
+        kant_z = max(bas_z, z_kron_snitt) if z_kron_snitt is not None else bas_z + hojd_m
         tidigare = barriarer.get(nyckel)
         if tidigare is None or kant_z > tidigare:
             barriarer[nyckel] = kant_z
 
     for post in brytlinjer:
         hojd_m = float(post.hojd_m)
-        if hojd_m <= 0.0 or len(post.koordinater) < 2:
+        z_kron = post.z_kron_rh2000
+        har_3d = z_kron is not None and len(z_kron) == len(post.koordinater)
+        if not har_3d and hojd_m <= 0.0:
+            continue
+        if len(post.koordinater) < 2:
             continue
         for idx in range(len(post.koordinater) - 1):
             e0, n0 = post.koordinater[idx]
@@ -231,30 +241,65 @@ def _berakna_kantbarriarer(
             y0 = (geo.y_max - n0) / dy
             x1 = (e1 - geo.x_min) / dx
             y1 = (geo.y_max - n1) / dy
+            zk0 = float(z_kron[idx]) if (har_3d and z_kron is not None) else None
+            zk1 = float(z_kron[idx + 1]) if (har_3d and z_kron is not None) else None
 
-            # Vertikala dualkanter: (r, c) <-> (r + 1, c) vid x = c + 0.5, y in [r + 0.5, r + 1.5)
-            if x1 != x0:
-                c_min = max(0, math.floor(min(x0, x1) - 0.5))
-                c_max = min(bredd - 1, math.ceil(max(x0, x1) - 0.5))
+            def _z_vid(t_val: float, a: float | None = zk0, b: float | None = zk1) -> float | None:
+                if a is None or b is None:
+                    return None
+                return a + t_val * (b - a)
+
+            # Vertikala dualkanter: (r, c) <-> (r + 1, c) vid x = c + 0.5, y in [r + 0.5, r + 1.5]
+            if abs(x1 - x0) > 1e-12:
+                c_min = max(0, math.floor(min(x0, x1) - 0.5) - 1)
+                c_max = min(bredd - 1, math.ceil(max(x0, x1) - 0.5) + 1)
                 for c in range(c_min, c_max + 1):
                     t = ((c + 0.5) - x0) / (x1 - x0)
-                    if 0.0 <= t <= 1.0:
-                        y_hit = y0 + t * (y1 - y0)
-                        r = math.floor(y_hit - 0.5)
+                    if -tol <= t <= 1.0 + tol:
+                        t_kl = max(0.0, min(1.0, t))
+                        y_hit = y0 + t_kl * (y1 - y0)
+                        z_snitt = _z_vid(t_kl)
+                        r_f = y_hit - 0.5
+                        r = math.floor(r_f)
                         if 0 <= r < hojd - 1:
-                            _lagg_till_kant(r * bredd + c, (r + 1) * bredd + c, hojd_m)
+                            _lagg_till_kant(r * bredd + c, (r + 1) * bredd + c, hojd_m, z_snitt)
+                        # Om linjen passerar exakt genom cellcentrum (y_hit == r_int + 0.5):
+                        # spärra BÅDA vertikala dualkanterna kring r_int (noll diagonalt läckage).
+                        if abs(r_f - round(r_f)) <= tol:
+                            r_int = round(r_f)
+                            if 0 <= r_int - 1 < hojd - 1:
+                                _lagg_till_kant(
+                                    (r_int - 1) * bredd + c, r_int * bredd + c, hojd_m, z_snitt
+                                )
+                            if 0 <= r_int < hojd - 1:
+                                _lagg_till_kant(
+                                    r_int * bredd + c, (r_int + 1) * bredd + c, hojd_m, z_snitt
+                                )
 
-            # Horisontella dualkanter: (r, c) <-> (r, c + 1), y = r + 0.5, x in [c+0.5, c+1.5)
-            if y1 != y0:
-                r_min = max(0, math.floor(min(y0, y1) - 0.5))
-                r_max = min(hojd - 1, math.ceil(max(y0, y1) - 0.5))
+            # Horisontella dualkanter: (r, c) <-> (r, c + 1), y = r + 0.5, x in [c+0.5, c+1.5]
+            if abs(y1 - y0) > 1e-12:
+                r_min = max(0, math.floor(min(y0, y1) - 0.5) - 1)
+                r_max = min(hojd - 1, math.ceil(max(y0, y1) - 0.5) + 1)
                 for r in range(r_min, r_max + 1):
                     t = ((r + 0.5) - y0) / (y1 - y0)
-                    if 0.0 <= t <= 1.0:
-                        x_hit = x0 + t * (x1 - x0)
-                        c = math.floor(x_hit - 0.5)
+                    if -tol <= t <= 1.0 + tol:
+                        t_kl = max(0.0, min(1.0, t))
+                        x_hit = x0 + t_kl * (x1 - x0)
+                        z_snitt = _z_vid(t_kl)
+                        c_f = x_hit - 0.5
+                        c = math.floor(c_f)
                         if 0 <= c < bredd - 1:
-                            _lagg_till_kant(r * bredd + c, r * bredd + (c + 1), hojd_m)
+                            _lagg_till_kant(r * bredd + c, r * bredd + (c + 1), hojd_m, z_snitt)
+                        if abs(c_f - round(c_f)) <= tol:
+                            c_int = round(c_f)
+                            if 0 <= c_int - 1 < bredd - 1:
+                                _lagg_till_kant(
+                                    r * bredd + (c_int - 1), r * bredd + c_int, hojd_m, z_snitt
+                                )
+                            if 0 <= c_int < bredd - 1:
+                                _lagg_till_kant(
+                                    r * bredd + c_int, r * bredd + (c_int + 1), hojd_m, z_snitt
+                                )
 
     return barriarer
 

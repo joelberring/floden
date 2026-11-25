@@ -103,11 +103,20 @@ class GeoTransformInfo:
 
 @dataclass(frozen=True)
 class BrytlinjePost:
-    """En vektorpost i `brytlinjer.gpkg` (lager `brytlinjer`)."""
+    """En vektorpost i `brytlinjer.gpkg` (lager `brytlinjer`).
+
+    Valfria 3D-fält (`z_kron_rh2000`, `z_botten_rh2000`, `tvarfall`, `kalla`, `osakerhet_m`)
+    är bakåtkompatibla tillägg enligt K1.
+    """
 
     typ: str
     hojd_m: float
     koordinater: tuple[tuple[float, float], ...]
+    z_kron_rh2000: tuple[float, ...] | None = None
+    z_botten_rh2000: tuple[float, ...] | None = None
+    tvarfall: float | None = None
+    kalla: str | None = None
+    osakerhet_m: float | None = None
 
 
 @dataclass(frozen=True)

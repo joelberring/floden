@@ -1,0 +1,5 @@
+{
+  "max_rotationsavvikelse_rel": 0.05,
+  "max_volymfel_rel": 0.001,
+  "overfall_hog_m3": 0.0
+}

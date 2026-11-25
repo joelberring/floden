@@ -241,6 +241,24 @@ def _gpkg_linestring_blob(punkter: Sequence[tuple[float, float]]) -> bytes:
     return gp_header + bytes(wkb)
 
 
+def _gpkg_linestring_z_blob(
+    punkter: Sequence[tuple[float, float]],
+    z_varden: Sequence[float],
+) -> bytes:
+    """Kodar en 3D LineStringZ (ISO WKB 1002) som GeoPackageBinary (GP) enligt OGC GeoPackage."""
+    xs = [p[0] for p in punkter]
+    ys = [p[1] for p in punkter]
+    zs = [float(z) for z in z_varden]
+    # flags=0x05: little-endian (bit 0 = 1) + XYZ envelope (bits 1-3 = 2 -> 0x04)
+    envelope = struct.pack("<6d", min(xs), max(xs), min(ys), max(ys), min(zs), max(zs))
+    gp_header = struct.pack("<2sBBi", b"GP", 0, 0x05, EPSG_SWEREF99_1800) + envelope
+    # ISO WKB LineStringZ = 1002
+    wkb = bytearray(struct.pack("<BII", 1, 1002, len(punkter)))
+    for (x, y), z in zip(punkter, zs, strict=True):
+        wkb.extend(struct.pack("<3d", float(x), float(y), z))
+    return gp_header + bytes(wkb)
+
+
 def _initiera_gpkg_bas(conn: sqlite3.Connection) -> None:
     """Skapar GeoPackage-standardtabeller inklusive EPSG:3011 i `gpkg_spatial_ref_sys`."""
     conn.execute("PRAGMA application_id = 1196444487;")  # 'GPKG'
@@ -327,12 +345,17 @@ def skriv_brytlinjer_gpkg(
     linjer: Sequence[Brytlinje],
     ruta: Ruta,
 ) -> Path:
-    """Skriver `brytlinjer.gpkg` (lager `brytlinjer`, EPSG:3011) enligt K1."""
+    """Skriver `brytlinjer.gpkg` (lager `brytlinjer`, EPSG:3011) enligt K1.
+
+    Valfria 3D-kolumner (`z_kron_rh2000`, `z_botten_rh2000`, `tvarfall`, `kalla`,
+    `osakerhet_m`) skrivs bakåtkompatibelt; linjer med 3D-krönhöjd kodas som `LineStringZ`.
+    """
     mal = Path(sokvag)
     mal.parent.mkdir(parents=True, exist_ok=True)
     if mal.exists():
         mal.unlink()
 
+    har_3d = any(b.z_kron_rh2000 is not None for b in linjer)
     min_x, min_y, max_x, max_y = _berakna_bbox_linjer([b.punkter for b in linjer], ruta)
     conn = sqlite3.connect(str(mal))
     try:
@@ -343,7 +366,12 @@ def skriv_brytlinjer_gpkg(
                 fid INTEGER PRIMARY KEY AUTOINCREMENT,
                 geom BLOB,
                 typ TEXT NOT NULL,
-                hojd_m REAL NOT NULL
+                hojd_m REAL NOT NULL,
+                z_kron_rh2000 REAL,
+                z_botten_rh2000 REAL,
+                tvarfall REAL,
+                kalla TEXT,
+                osakerhet_m REAL
             );
             """
         )
@@ -360,15 +388,39 @@ def skriv_brytlinjer_gpkg(
             """
             INSERT INTO gpkg_geometry_columns
                 (table_name, column_name, geometry_type_name, srs_id, z, m)
-            VALUES ('brytlinjer', 'geom', 'LINESTRING', ?, 0, 0);
+            VALUES ('brytlinjer', 'geom', 'LINESTRING', ?, ?, 0);
             """,
-            (EPSG_SWEREF99_1800,),
+            (EPSG_SWEREF99_1800, 1 if har_3d else 0),
         )
         for b in linjer:
-            blob = _gpkg_linestring_blob(b.punkter)
+            if b.z_kron_rh2000 is not None:
+                blob = _gpkg_linestring_z_blob(b.punkter, b.z_kron_rh2000)
+                z_kron_medel: float | None = float(sum(b.z_kron_rh2000) / len(b.z_kron_rh2000))
+            else:
+                blob = _gpkg_linestring_blob(b.punkter)
+                z_kron_medel = None
+            z_botten_medel = (
+                float(sum(b.z_botten_rh2000) / len(b.z_botten_rh2000))
+                if b.z_botten_rh2000 is not None
+                else None
+            )
             conn.execute(
-                "INSERT INTO brytlinjer (geom, typ, hojd_m) VALUES (?, ?, ?)",
-                (blob, b.typ, float(b.hojd_m)),
+                """
+                INSERT INTO brytlinjer (
+                    geom, typ, hojd_m, z_kron_rh2000, z_botten_rh2000,
+                    tvarfall, kalla, osakerhet_m
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    blob,
+                    b.typ,
+                    float(b.hojd_m),
+                    z_kron_medel,
+                    z_botten_medel,
+                    b.tvarfall,
+                    b.kalla,
+                    b.osakerhet_m,
+                ),
             )
         conn.commit()
     finally:

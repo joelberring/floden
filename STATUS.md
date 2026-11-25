@@ -2,6 +2,25 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-25 – 3D-baskarta, täta kantstenar och 1D-rännstenslänk (Steg 1–4, grenen `baskarta-3d-kantsten`) (agent)
+Gjort (grenen `baskarta-3d-kantsten`; inga K1/K2-kontraktsbrott, `BESLUT.md` orörd, ingen icke-öppen baskarta incheckad):
+- **Steg 1 – 3D-baskarta och DEM-sammanslagning (`src/markmodell/baskarta_3d.py`, `src/markmodell/brytlinjer.py`, `src/markmodell/k1_skrivare.py`, `src/testsvit/k1_io.py`, `tests/markmodell/test_baskarta_3d.py`):** Inläsning av `LineStringZ`/`MultiLineStringZ` (`kantsten`, `sankt_kantsten`, `mur`, `stodmur`, `gata_mittlinje`, `rannsten_botten`) i valfri SWEREF 99-zon → EPSG:3011 / RH 2000; bakåtkompatibla 3D-kolumner (`z_kron_rh2000`, `z_botten_rh2000`, `tvarfall`, `kalla`, `osakerhet_m`) i `brytlinjer.gpkg`; 2D-linjer utan Z markeras explicit med `kalla="typvarde"` och `osakerhet_m=0,10 m`; medel- och maxskillnad mot DEM loggas i `run.json`.
+- **Steg 2 – Täta 3D-kantbarriärer (`src/sankgraf/hierarki.py`, `tests/tvad/test_kantbarriar_sned.py`):** `_berakna_kantbarriarer` interpolerar exakt 3D-krönhöjd längs `LineStringZ` och spärrar båda angränsande dualkanterna vid hörnsnitt genom cellcentrum (noll diagonalt läckage vid 20° och 45°).
+- **Steg 3 – 1D-rännstenslänk på 3D-vektorlinje (`src/tvad/rannsten_1d.py`, `tests/tvad/test_rannsten_1d.py`):** Massbevarande kopplad 1D/2D-lösare med triangulär rännstensgeometri, sann vektorlängd `ds_m`, bredkrönat överfall över 3D-krönhöjd `z_kron_m` (sänkt vid infarter) samt export av släta 3D-vektorlinjer (`rannsten_flode.geojson` / `.gpkg`).
+- **Steg 4 – Testsvit A5b och dokumentation (`testsvit/A5b_sned_gata_3d/`, `src/testsvit/korare.py`, `docs/VALIDERING.md`):** Lade till testfall **A5b (Snedställd gata med 3D-kantsten)** i testsviten och dokumenterade i `docs/VALIDERING.md`.
+- **Inkoppling i `vatten.2d` (`src/sankgraf/typer.py`, `src/vatten/losare_2d.py`, `tests/vatten/test_losare_2d_rannsten.py`):** `las_brytlinjer_fran_gpkg` läser nu 3D `LineStringZ` och valfria 3D-kolumner, och `vatten.2d` aktiverar 1D-rännstenslänken automatiskt (`rannsten_1d="auto"`) när en K1-ruta har 3D-kantstenar och exporterar `rannsten_flode.geojson`.
+Mätt:
+- **`floden testsvit`:** **18/18 godkända** (A0–A13 inkl. A5, A5b, A6 + EA1/EA2/EA8A).
+- **A5** (0,024 s): rännsten `0,033 m`, gård `0,0000 m`, volymfel `0,0000 %`. **A6** (0,038 s): 12 utflödesceller vid infart, volymfel `0,0000 %`.
+- **A5b (100 m lutande gata, 0,5 m-rutnät, 12 cm 3D-kantsten + 4 m sänkt infart `+0,02 m`):**
+  - `0°`: gångtid `67,76 s`, maxdjup 1D `0,0595 m`, infartsandel `34,68 %`, volymfel `5,9e-16` (`0,52 s` körtid).
+  - `20°`: gångtid `70,06 s` (**+3,39 %**), maxdjup 1D `0,0576 m` (**-3,19 %**), infartsandel `34,10 %` (**-1,67 %**), volymfel `0,0e+00` (`0,92 s` körtid).
+  - `45°`: gångtid `70,64 s` (**+4,25 %**), maxdjup 1D `0,0574 m` (**-3,53 %**), infartsandel `35,31 %` (**+1,82 %**), volymfel `1,0e-15` (`1,19 s` körtid).
+  - Läckage över 12 cm kantsten i A5b och `test_kantbarriar_sned.py` (20° och 45°): **`0,0000 m³`**.
+- **Körtid och provområde (20°-gatan):** Kopplad 1D/2D-körning tog `0,97 s` (maxdjup gångbana/fasad `0,0938 m` via infarten, `0,0000 m³` över 12 cm kantsten).
+- **`pytest tests/markmodell/ tests/tvad/ tests/vatten/`:** **147 passed, 5 skipped**. **`ruff check`** och **`mypy`**: **0 fel**.
+Öppet: Visning av `rannsten_flode.geojson` som eget vektorlager i webbklientens steg 4 samt lokal provkörning mot riktig kommunal 3D-baskarta (via `config.local.toml`, utanför git) återstår.
+Nästa: Prova `markmodell.baskarta_3d` lokalt mot en riktig kommunal 3D-baskarta (via `config.local.toml`, utanför git) och koppla `rannsten_flode.geojson` till webbklientens lagerlista.
 ## 2026-11-25 – GPU + batchkörning av hela områden (Steg 1–4, grenen `gpu-batch`) (agent)
 Gjort (grenen `gpu-batch`; `BESLUT.md` och kontraktsversioner i `docs/DATAKONTRAKT.md` orörda):
 - **Steg 1 – Gemensam GPU-backend (`src/gemensamt/gpu.py`, `tests/gemensamt/test_gpu.py`):** Valfritt `cupy`-beroende (`enhet="auto"` faller tillbaka till `numpy`, `enhet="cuda"` utan CUDA ger tydligt `GpuFel`), enhetsflytt, synkronisering, VRAM-koll och `berakningsplats` (`cpu_f64`, `cuda_f64`, `cuda_f32`).

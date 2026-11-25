@@ -15,6 +15,7 @@ Små terränger där svaret kan räknas för hand eller analytiskt.
 | A3 Två sänkor som slås ihop | Sammanslagning och gemensam nivå |
 | A4 Lutande plan | Flödesväg och gångtid |
 | A5 Gata med kantsten och rännsten | Att vatten stannar i rännstenen tills kantstenen överskrids |
+| A5b Snedställd gata med 3D-kantsten | Rotationsinvarians (0°, 20°, 45°) i gångtid, maxdjup och infartsandel (< 5 %) samt volymfel < 0,1 % för 1D-rännstenslänk kopplad till 2D |
 | A6 Sänkt kantsten vid infart | Att vatten lämnar gatan just där |
 | A7 Vägbank med och utan trumma | Falsk damm utan trumma |
 | A8 Port genom byggnad | Att vatten passerar porten |

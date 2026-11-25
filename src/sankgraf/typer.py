@@ -533,20 +533,84 @@ def avkoda_gp_wkb(blob: bytes | bytearray) -> tuple[tuple[float, float], ...]:
     raise SankGrafFel(f"Ostödd WKB-geometrityp: {geom_type} (bas {bas_typ}).")
 
 
+def avkoda_gp_wkb_z(
+    blob: bytes | bytearray,
+) -> tuple[tuple[tuple[float, float], ...], tuple[float, ...] | None]:
+    """Avkodar GeoPackageBinary Point/LineString (2D eller 3D Z) till `(punkter_2d, z_varden)`."""
+    data = bytes(blob)
+    if len(data) < 8 or data[:2] != b"GP":
+        raise SankGrafFel("Ogiltig GeoPackage-geometri (saknar GP-header).")
+    flags = data[3]
+    env_ind = (flags >> 1) & 0x07
+    env_bytes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}.get(env_ind)
+    if env_bytes is None:
+        raise SankGrafFel(f"Ogiltig GeoPackage-envelopeindikator: {env_ind}")
+    pos = 8 + env_bytes
+    if pos + 5 > len(data):
+        raise SankGrafFel("Trunkerad WKB-geometri.")
+    endian = "<" if data[pos] == 1 else ">"
+    geom_type = int(struct.unpack(f"{endian}I", data[pos + 1 : pos + 5])[0])
+    pos += 5
+    ewkb_z = bool(geom_type & 0x80000000)
+    ewkb_m = bool(geom_type & 0x40000000)
+    ewkb_srid = bool(geom_type & 0x20000000)
+    if ewkb_srid:
+        pos += 4
+    wkb_t = geom_type & 0x0FFFFFFF
+    iso_dim = wkb_t // 1000
+    bas_typ = wkb_t % 1000
+    har_z = ewkb_z or iso_dim in (1, 3)
+    har_m = ewkb_m or iso_dim in (2, 3)
+    dims = 2 + int(har_z) + int(har_m)
+    punkt_bytes = 8 * dims
+
+    if bas_typ == 1:
+        if pos + punkt_bytes > len(data):
+            raise SankGrafFel("Trunkerad WKB Point.")
+        vals = struct.unpack(f"{endian}{dims}d", data[pos : pos + punkt_bytes])
+        return ((float(vals[0]), float(vals[1])),), ((float(vals[2]),) if har_z else None)
+
+    if bas_typ == 2:
+        if pos + 4 > len(data):
+            raise SankGrafFel("Trunkerad WKB LineString-längd.")
+        n_punkter = int(struct.unpack(f"{endian}I", data[pos : pos + 4])[0])
+        pos += 4
+        if pos + n_punkter * punkt_bytes > len(data):
+            raise SankGrafFel("Trunkerad WKB LineString-koordinater.")
+        punkter: list[tuple[float, float]] = []
+        z_lista: list[float] = []
+        for _ in range(n_punkter):
+            vals = struct.unpack(f"{endian}{dims}d", data[pos : pos + punkt_bytes])
+            punkter.append((float(vals[0]), float(vals[1])))
+            if har_z:
+                z_lista.append(float(vals[2]))
+            pos += punkt_bytes
+        return tuple(punkter), (tuple(z_lista) if har_z else None)
+
+    raise SankGrafFel(f"Ostödd WKB-geometrityp: {geom_type} (bas {bas_typ}).")
+
+
 def las_brytlinjer_fran_gpkg(sokvag: str | Path) -> list[BrytlinjePost]:
-    """Läser `brytlinjer.gpkg` (lager `brytlinjer`) till en lista av `BrytlinjePost`."""
+    """Läser `brytlinjer.gpkg` inkl. valfria 3D-kolumner till `BrytlinjePost`."""
     _, rader = las_gpkg_tabell(sokvag, "brytlinjer")
     poster: list[BrytlinjePost] = []
     for rad in rader:
         geom = rad.get("geom")
         if not isinstance(geom, bytes | bytearray):
             raise SankGrafFel(f"Brytlinjepost saknar giltig geometri i {sokvag}.")
-        koord = avkoda_gp_wkb(geom)
+        koord, z_kron = avkoda_gp_wkb_z(geom)
+        tvarfall_raw = rad.get("tvarfall")
+        osak_raw = rad.get("osakerhet_m")
+        kalla_raw = rad.get("kalla")
         poster.append(
             BrytlinjePost(
                 typ=str(rad["typ"]),
                 hojd_m=float(rad["hojd_m"]),
                 koordinater=koord,
+                z_kron_rh2000=z_kron,
+                tvarfall=float(tvarfall_raw) if tvarfall_raw is not None else None,
+                kalla=str(kalla_raw) if kalla_raw is not None else None,
+                osakerhet_m=float(osak_raw) if osak_raw is not None else None,
             )
         )
     return poster
