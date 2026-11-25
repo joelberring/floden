@@ -112,11 +112,11 @@ class TestCliOchTestsvit(unittest.TestCase):
             ):
                 self.assertTrue((ut_mapp / filnamn).is_file(), f"Saknar {filnamn}")
 
-            from PIL import Image
+            from testsvit.k1_io import las_geotiff
 
-            with Image.open(ut_mapp / "mark.tif") as tiff_img:
-                self.assertEqual(tiff_img.format, "TIFF")
-                mark_arr = np.asarray(tiff_img, dtype=np.float32)
+            mark_raw, mark_geo = las_geotiff(ut_mapp / "mark.tif")
+            self.assertEqual(mark_geo.epsg, 3011)
+            mark_arr = np.asarray(mark_raw, dtype=np.float32)
             self.assertEqual(mark_arr.shape[0], data["form_rc"][0])
             self.assertEqual(mark_arr.shape[1], data["form_rc"][1])
             self.assertTrue(np.all(np.isfinite(mark_arr)))

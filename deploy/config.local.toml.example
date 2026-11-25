@@ -17,3 +17,15 @@ aktiv = true
 
 [konto.leverantorer.entra]
 aktiv = false
+
+# Objektlagring mot Hetzner Object Storage (nycklar läggs i .env som FLODEN_S3_*, aldrig här).
+# [lagring]
+# typ = "s3"                                    # "lokal" | "s3"
+# endpoint = "https://fsn1.your-objectstorage.com"
+# bucket = "floden-oppen-eu"
+# region = "fsn1"
+#
+# [lagring.lokal_cache]
+# mapp = "data/cache/s3_lru"
+# max_gb = 10.0
+# max_alder_dagar = 14

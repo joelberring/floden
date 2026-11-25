@@ -285,3 +285,63 @@ def test_k1_rutkorare_vatten2d_och_dagsljus_end_to_end(tmp_path: Path) -> None:
     assert status_json["hoppade"] == ["mm_150000_6580000"]
     assert status_json["klara"] == []
 
+
+def test_kor_batch_rutor_med_objektlagring_och_omedelbar_rensning(tmp_path: Path) -> None:
+    """Verifierar lager 1: temp-katalog -> verifierad S3/objektuppladdning -> direkt rensning."""
+    from gemensamt.objektlagring import LokalLagring, geografi_nyckel
+
+    omrade = _skriv_2x2_omrade_geojson(tmp_path / "omrade.geojson")
+    rutor = generera_rutor_for_omrade(omrade, rutstorlek_m=500.0, overlapp_m=25.0, upplosning_m=1.0)
+    lagring = LokalLagring(tmp_path / "objektlagring")
+    utdata = tmp_path / "status_rot"
+
+    konfig = BatchKonfig(
+        moduler=("vatten2d",),
+        utdata_rot=utdata,
+        enhet="cpu",
+        precision="f64",
+        dataklass="oppen",
+        kommun="goteborg",
+        lagring_typ="s3",
+        behall_radata=False,
+        indata_filer=(omrade,),
+    )
+
+    skapade_tmpmappar: list[Path] = []
+    anrop: list[str] = []
+
+    def korare(ruta: Ruta, arbetsmapp: Path, _k: BatchKonfig, plats: str) -> RutUtdata:
+        skapade_tmpmappar.append(arbetsmapp)
+        anrop.append(ruta.namn)
+        # Simulera temporär rå-LAZ + färdig COG-fil
+        (arbetsmapp / "radata.laz").write_bytes(b"RAW-LAZ-DATA")
+        utfil = arbetsmapp / "mark.tif"
+        utfil.write_bytes(b"COMPRESSED-COG")
+        return RutUtdata(
+            utdata_filer=(FilPost(roll="mark", fil="mark.tif", sha256=sha256_fil(utfil)),),
+            matvarden={"berakningsplats": plats},
+        )
+
+    status1 = kor_batch_rutor(rutor, konfig, rutkorare=korare, objektlagring=lagring)
+    assert len(status1.klara) == 4
+    assert len(status1.hoppade) == 0
+    assert len(status1.felade) == 0
+
+    # Alla färdiga filer + run.json finns i objektlagringen; rå-LAZ laddas inte upp
+    for r in rutor:
+        assert lagring.finns(geografi_nyckel("goteborg", r.namn, "run.json"))
+        assert lagring.finns(geografi_nyckel("goteborg", r.namn, "mark.tif"))
+        assert not lagring.finns(geografi_nyckel("goteborg", r.namn, "radata.laz"))
+
+    # Alla temporära rutkataloger ska vara raderade direkt efter klar ruta
+    assert len(skapade_tmpmappar) == 4
+    assert all(not m.exists() for m in skapade_tmpmappar)
+
+    # Andra körningen ska se run.json i objektlagringen och hoppa över alla 4 rutor
+    anrop.clear()
+    status2 = kor_batch_rutor(rutor, konfig, rutkorare=korare, objektlagring=lagring)
+    assert len(status2.hoppade) == 4
+    assert len(status2.klara) == 0
+    assert anrop == []
+
+
