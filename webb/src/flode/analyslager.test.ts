@@ -125,10 +125,13 @@ test("färgskalor: ändpunkter, mitt, klamring och klassgränser", () => {
   assert.equal(varFarg(tid, 5, 5, 5), "#ffffcc"); // lo = hi: hela skalan i en färg
   assert.equal(varFarg(tid, Number.NaN, 0, 1), "#ffffcc");
   assert.equal(djupFarg(0.01), null);
-  assert.equal(djupFarg(0.02), "#e4edf6");
-  assert.equal(djupFarg(0.29), "#7fa3c8");
-  assert.equal(djupFarg(0.5), "#2b5d8c");
-  assert.equal(djupFarg(3), "#2b5d8c");
+  assert.equal(djupFarg(0.02), "#cfe8ff");
+  assert.equal(djupFarg(0.15), "#7ec4f8");
+  assert.equal(djupFarg(0.29), "#2f8be6");
+  assert.equal(djupFarg(0.35), "#1a52b8");
+  assert.equal(djupFarg(0.5), "#182b7a");
+  assert.equal(djupFarg(1.0), "#3b1363");
+  assert.equal(djupFarg(3), "#3b1363");
 });
 
 const SANKOR: VektorSvar = {
@@ -146,13 +149,13 @@ test("sänkor blir ytor i WGS 84 med djupfärg och etikett med volym", () => {
   const k = vektorTillKarta(SANKOR);
   assert.equal(k.fc.features.length, 2);
   const f = k.fc.features[0] as GeoJSON.Feature<GeoJSON.MultiPolygon>;
-  assert.equal(f.properties?.farg, "#4f7daa");
+  assert.equal(f.properties?.farg, "#1a52b8");
   const [lng, lat] = (f.geometry.coordinates[0]?.[0]?.[0] ?? [0, 0]) as [number, number];
   assert.ok(lng > 17 && lng < 19 && lat > 59 && lat < 60, `${lng} ${lat}`);
   assert.deepEqual(k.etiketter.map((e) => e.text), ["120 m³", "3,4 m³"]);
   const liten = vektorTillKarta({ ...SANKOR, features: [{ ...(SANKOR.features[0] as VektorSvar["features"][number]), properties: { ...SANKOR.features[0]?.properties, kapacitet_m3: 0.4 } }] });
   assert.equal(liten.etiketter.length, 0); // under 1 m³: ingen etikett
-  assert.equal(k.fc.features[1]?.properties?.farg, "#e4edf6"); // djup under lägsta klass: ljusaste klassen, inte ingen figur
+  assert.equal(k.fc.features[1]?.properties?.farg, "#cfe8ff"); // djup under lägsta klass: ljusaste klassen, inte ingen figur
 });
 
 test("beskrivningarna använder decimalkomma, enheter och flaggar slutna områden", () => {

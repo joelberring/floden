@@ -2595,10 +2595,11 @@ class FlodenApiApp:
             kropp_l = json_kropp() if verb == "POST" else {}
             valda_l = [str(x) for x in kropp_l.get("analyser", [])]
             avt_l = kropp_l.get("avtappning_mm_h")
+            regn_l = kropp_l.get("regn")
             if verb == "POST" and rest == ["lage-idag", "plan"]:
-                return _json_svar(200, kv.planera_lage_idag(projekt, valda_l, avt_l))
+                return _json_svar(200, kv.planera_lage_idag(projekt, valda_l, avt_l, regn_l))
             if verb == "POST" and rest == ["lage-idag", "kor"]:
-                return _json_svar(202, kv.kor_lage_idag(projekt, valda_l, avt_l))
+                return _json_svar(202, kv.kor_lage_idag(projekt, valda_l, avt_l, regn_l))
             if verb == "GET" and rest == ["lage-idag", "status"]:
                 return _json_svar(200, kv.status_lage_idag(projekt))
             return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
@@ -2621,10 +2622,11 @@ class FlodenApiApp:
             kropp_d = json_kropp() if verb == "POST" else {}
             valda = [str(x) for x in kropp_d.get("analyser", [])]
             avt = kropp_d.get("avtappning_mm_h")
+            regn = kropp_d.get("regn")
             if verb == "POST" and tail == ["plan"]:
-                return _json_svar(200, kv.planera(projekt, namn, valda, avt))
+                return _json_svar(200, kv.planera(projekt, namn, valda, avt, regn))
             if verb == "POST" and tail == ["kor"]:
-                return _json_svar(202, kv.kor(projekt, namn, valda, avt))
+                return _json_svar(202, kv.kor(projekt, namn, valda, avt, regn))
             if verb == "GET" and tail == ["status"]:
                 return _json_svar(200, kv.status(projekt, namn))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})

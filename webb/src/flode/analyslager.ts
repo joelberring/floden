@@ -28,12 +28,13 @@ export const PALETTER: Record<string, readonly string[]> = {
 };
 
 /** Vattendjupets klasser (från djup i meter), samma som rastret. */
-export const VATTEN_KLASSER: ReadonlyArray<{ fran: number; farg: string }> = [
-  { fran: 0.02, farg: "#e4edf6" },
-  { fran: 0.1, farg: "#c9d9ea" },
-  { fran: 0.2, farg: "#7fa3c8" },
-  { fran: 0.3, farg: "#4f7daa" },
-  { fran: 0.5, farg: "#2b5d8c" },
+export const VATTEN_KLASSER: ReadonlyArray<{ fran: number; farg: string; etikett: string }> = [
+  { fran: 0.02, farg: "#cfe8ff", etikett: "0,02–0,10 m · ytavrinning" },
+  { fran: 0.1, farg: "#7ec4f8", etikett: "0,10–0,20 m · märkbart vatten" },
+  { fran: 0.2, farg: "#2f8be6", etikett: "0,20–0,30 m · svårframkomligt" },
+  { fran: 0.3, farg: "#1a52b8", etikett: "0,30–0,50 m · ofarbart / risk" },
+  { fran: 0.5, farg: "#182b7a", etikett: "0,50–1,00 m · allvarligt djup" },
+  { fran: 1.0, farg: "#3b1363", etikett: "> 1,00 m · mycket djupt" },
 ];
 
 const INGEN_FARG = "#9e9e9e";
