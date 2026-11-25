@@ -177,6 +177,36 @@ def _berakna_statiskt_maxdjupsfel(
         max_rannsten = float(np.max(res_regn.djup_m[16:44, :]))
         maxdjupsfel_m = max_syd
         detalj = f"T02: rännsten={max_rannsten:.3f} m, gård={max_syd:.4f} m"
+    elif fall_id == "A5b":
+        from tvad.rannsten_1d import kor_a5b_rotationsinvarians
+
+        ut = kor_a5b_rotationsinvarians((0.0, 20.0, 45.0))
+        r0, t0, h0, a0 = ut[0.0]
+        max_rel_t = 0.0
+        max_rel_h = 0.0
+        max_rel_a = 0.0
+        for vinkel in (0.0, 20.0, 45.0):
+            rv, tv, hv, av = ut[vinkel]
+            volymfel_rel = max(volymfel_rel, float(rv.volymfel_rel))
+            if rv.overfall_hog_m3 >= 1e-6:
+                raise TestsvitFel(
+                    f"A5b ({vinkel}°): läckage över 12 cm kantsten ({rv.overfall_hog_m3:.4f} m³)"
+                )
+            if vinkel != 0.0:
+                max_rel_t = max(max_rel_t, abs(tv - t0) / t0)
+                max_rel_h = max(max_rel_h, abs(hv - h0) / h0)
+                max_rel_a = max(max_rel_a, abs(av - a0) / a0)
+        if max(max_rel_t, max_rel_h, max_rel_a) >= 0.05:
+            raise TestsvitFel(
+                f"A5b rotationsavvikelse >= 5 % "
+                f"(dt={max_rel_t:.2%}, dh={max_rel_h:.2%}, da={max_rel_a:.2%})"
+            )
+        maxdjupsfel_m = max(abs(ut[20.0][2] - h0), abs(ut[45.0][2] - h0))
+        detalj = (
+            f"1D/2D 0°/20°/45°: t={t0:.1f}/{ut[20.0][1]:.1f}/{ut[45.0][1]:.1f} s "
+            f"(max {max_rel_t:.1%}), h={h0:.3f}/{ut[20.0][2]:.3f}/{ut[45.0][2]:.3f} m, "
+            f"infart={a0:.1%}/{ut[20.0][3]:.1%}/{ut[45.0][3]:.1%}"
+        )
     elif fall_id == "A6":
         res_over = statisk_fyllning(graf, 0.08)
         volymfel_rel = max(volymfel_rel, res_over.volymfel_rel)

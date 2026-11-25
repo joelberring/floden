@@ -1,0 +1,6 @@
+id = "A5b"
+namn = "Snedställd gata med 3D-kantsten"
+grupp = "A"
+typ = "syntetisk"
+beskrivning = "100 m lutande gata i 0°, 20° och 45° med 12 cm 3D-kantsten, 4 m sänkt infart och 1D-rännstenslänk."
+status = "redo"

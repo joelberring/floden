@@ -1,0 +1,43 @@
+{
+  "kontrakt": "K1/v1",
+  "ruta_id": "A5b_sned_gata_3d",
+  "epsg": 3011,
+  "hojdsystem": "RH 2000",
+  "upplosning_m": 0.25,
+  "kodversion": "T09a-syntetisk-v1",
+  "kallor": {
+    "brytlinjer": {
+      "fil": "brytlinjer.gpkg",
+      "sha256": "040dd5014225b617854d191227d06216097398953c19d7b7fc7f7d396e3b9680"
+    },
+    "mark": {
+      "fil": "mark.tif",
+      "sha256": "f7e1243d2e1e275d20b892023e923709f63270c19bcf06ae8064f4086ff2e281"
+    },
+    "markslag": {
+      "fil": "markslag.tif",
+      "sha256": "0dd4eb43b171eb4bf3ddc38fa809a63d60d02bee828574efc4c2d492ab3d0f2f"
+    },
+    "oppningar": {
+      "fil": "oppningar.gpkg",
+      "sha256": "431208a2653c59dc156dd7d82b1a3ad424930702e9b5b8a863a3bdd89270572c"
+    },
+    "osakerhet": {
+      "fil": "osakerhet.tif",
+      "sha256": "54451afc681cddc7d2ad5fd6165c60c673db24b28ed56db0b269c06c559e3304"
+    },
+    "regn": {
+      "fil": "regn.csv",
+      "sha256": "363ceb6bcee1ce57044ee8d2c7bb80a9e11048e034f61ba709dacd58013f46c9"
+    }
+  },
+  "parametrar": {
+    "vinklar_grader": [
+      0.0,
+      20.0,
+      45.0
+    ],
+    "kantsten_hojd_m": 0.12,
+    "infart_hojd_m": 0.02
+  }
+}

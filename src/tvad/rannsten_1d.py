@@ -827,3 +827,145 @@ def exportera_rannsten_flode_gpkg(
     finally:
         conn.close()
     return mal
+
+
+def bygg_a5b_sned_gata(
+    vinkel_grader: float,
+    *,
+    langd_m: float = 100.0,
+    korbana_bredd_m: float = 3.0,
+    gangbana_bredd_m: float = 4.0,
+    lutning_langs: float = 0.01,
+    tvarfall: float = 0.025,
+    kantsten_hojd_m: float = 0.12,
+    infart_s0_m: float = 60.0,
+    infart_s1_m: float = 64.0,
+    infart_hojd_m: float = 0.02,
+    cell_m: float = 0.5,
+) -> tuple[
+    NDArray[np.float32],
+    NDArray[np.uint8],
+    NDArray[np.bool_],
+    GeoTransformInfo,
+    list[BrytlinjePost],
+]:
+    """Bygger syntetisk 100 m lutande gata i godtycklig vinkel (0°/20°/45°) för A5b."""
+    theta = math.radians(vinkel_grader)
+    tx, ty = math.cos(theta), math.sin(theta)
+    nx_v, ny_v = -ty, tx
+
+    halv_s = 0.5 * langd_m + 10.0
+    halv_t = max(korbana_bredd_m, gangbana_bredd_m) + 10.0
+    span_x = abs(halv_s * tx) + abs(halv_t * ty)
+    span_y = abs(halv_s * ty) + abs(halv_t * tx)
+    bredd = int(math.ceil(2.0 * span_x / cell_m)) + 4
+    hojd = int(math.ceil(2.0 * span_y / cell_m)) + 4
+
+    cx, cy = 150100.0, 6580100.0
+    geo = GeoTransformInfo(
+        x_min=cx - 0.5 * bredd * cell_m,
+        y_max=cy + 0.5 * hojd * cell_m,
+        pixelstorlek_x=cell_m,
+        pixelstorlek_y=cell_m,
+        bredd=bredd,
+        hojd=hojd,
+        epsg=EPSG_SWEREF99_1800,
+        dtype="float32",
+    )
+    e_start = cx - 0.5 * langd_m * tx
+    n_start = cy - 0.5 * langd_m * ty
+
+    rr, cc = np.mgrid[0:hojd, 0:bredd]
+    ee = geo.x_min + (cc + 0.5) * cell_m
+    nn = geo.y_max - (rr + 0.5) * cell_m
+    s_coord = (ee - e_start) * tx + (nn - n_start) * ty
+    d_coord = (ee - e_start) * nx_v + (nn - n_start) * ny_v
+
+    markslag = np.full((hojd, bredd), MARKSLAG_BYGGNAD, dtype=np.uint8)
+    i_langd = (s_coord >= 0.0) & (s_coord <= langd_m)
+    pa_korbana = i_langd & (d_coord > 0.0) & (d_coord <= korbana_bredd_m)
+    pa_gangbana = i_langd & (d_coord <= 0.0) & (d_coord >= -gangbana_bredd_m)
+    markslag[pa_korbana] = 1
+    markslag[pa_gangbana] = 2
+
+    z_rannsten = 20.0 - lutning_langs * s_coord
+    mark_z = np.full((hojd, bredd), 25.0, dtype=np.float32)
+    mark_z[pa_korbana] = (z_rannsten[pa_korbana] + tvarfall * d_coord[pa_korbana]).astype(
+        np.float32
+    )
+    mark_z[pa_gangbana] = (z_rannsten[pa_gangbana] - 0.02 + 0.01 * d_coord[pa_gangbana]).astype(
+        np.float32
+    )
+    regn_mask = pa_korbana & (s_coord >= 2.0) & (s_coord <= 35.0)
+
+    def _pt(s_m: float) -> tuple[float, float]:
+        return (e_start + s_m * tx, n_start + s_m * ty)
+
+    def _zb(s_m: float) -> float:
+        return 20.0 - lutning_langs * s_m
+
+    brytlinjer = [
+        BrytlinjePost(
+            typ="kantsten",
+            hojd_m=kantsten_hojd_m,
+            koordinater=(_pt(0.0), _pt(infart_s0_m)),
+            z_kron_rh2000=(_zb(0.0) + kantsten_hojd_m, _zb(infart_s0_m) + kantsten_hojd_m),
+            z_botten_rh2000=(_zb(0.0), _zb(infart_s0_m)),
+            tvarfall=tvarfall,
+            kalla="baskarta_3d",
+        ),
+        BrytlinjePost(
+            typ="sankt_kantsten",
+            hojd_m=infart_hojd_m,
+            koordinater=(_pt(infart_s0_m), _pt(infart_s1_m)),
+            z_kron_rh2000=(_zb(infart_s0_m) + infart_hojd_m, _zb(infart_s1_m) + infart_hojd_m),
+            z_botten_rh2000=(_zb(infart_s0_m), _zb(infart_s1_m)),
+            tvarfall=tvarfall,
+            kalla="baskarta_3d",
+        ),
+        BrytlinjePost(
+            typ="kantsten",
+            hojd_m=kantsten_hojd_m,
+            koordinater=(_pt(infart_s1_m), _pt(langd_m)),
+            z_kron_rh2000=(_zb(infart_s1_m) + kantsten_hojd_m, _zb(langd_m) + kantsten_hojd_m),
+            z_botten_rh2000=(_zb(infart_s1_m), _zb(langd_m)),
+            tvarfall=tvarfall,
+            kalla="baskarta_3d",
+        ),
+    ]
+    return mark_z, markslag, regn_mask, geo, brytlinjer
+
+
+def kor_a5b_rotationsinvarians(
+    vinklar: Sequence[float] = (0.0, 20.0, 45.0),
+) -> dict[float, tuple[Kopplad1D2DResultat, float, float, float]]:
+    """Kör A5b för angivna vinklar; returnerar `{vinkel: (res, gangtid_s, maxdjup_m, andel)}`."""
+    utfall: dict[float, tuple[Kopplad1D2DResultat, float, float, float]] = {}
+    for vinkel in vinklar:
+        mark_z, markslag, regn_mask, geo, brytlinjer = bygg_a5b_sned_gata(vinkel)
+        lank = diskretisera_rannsten_1d(
+            brytlinjer, mark_z, markslag, geo, ds_mal_m=2.0, korbana_sida="vanster"
+        )
+        regn_area_m2 = float(np.count_nonzero(regn_mask)) * float(
+            geo.pixelstorlek_x * geo.pixelstorlek_y
+        )
+        intens_mm_h = (6.0 / regn_area_m2) * (3_600_000.0 / 90.0)
+        res = kor_kopplad_1d_2d(
+            mark_z,
+            markslag,
+            geo,
+            [0.0, 90.0],
+            [intens_mm_h, intens_mm_h],
+            lank,
+            brytlinjer=brytlinjer,
+            slut_tid_s=180.0,
+            oppna_rander=False,
+            regn_mask=regn_mask,
+            ankomst_tr_djup_m=0.02,
+        )
+        infart_idx = [i for i, s in enumerate(lank.segment) if s.ar_sankt]
+        gangtid_s = float(np.nanmin(res.ankomst_tid_1d_s[infart_idx]))
+        maxdjup_m = float(np.max(res.max_djup_1d_m))
+        infart_andel = res.overfall_sankt_m3 / max(res.total_regn_m3, 1e-12)
+        utfall[float(vinkel)] = (res, gangtid_s, maxdjup_m, infart_andel)
+    return utfall
