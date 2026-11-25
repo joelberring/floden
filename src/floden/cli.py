@@ -1836,6 +1836,30 @@ def bygg_parser() -> argparse.ArgumentParser:
         help="Valfri rotmapp med förberedda K1-rutor (<k1-rot>/mm_<E>_<N>/) för vatten2d/dagsljus.",
     )
     forberakna_parser.add_argument(
+        "--lagring",
+        choices=("lokal", "s3"),
+        default="lokal",
+        help="Mållagring för rutor: 'lokal' (standard) eller 's3' (Hetzner Object Storage).",
+    )
+    forberakna_parser.add_argument(
+        "--kommun",
+        type=str,
+        default="standard",
+        help="Kommunnamn i objektlagringsprefixet geografi/<kommun>/<ruta>/ (standard: standard).",
+    )
+    forberakna_parser.add_argument(
+        "--behall-radata",
+        action="store_true",
+        default=False,
+        help="Behåll temporär arbetskatalog efter uppladdning (för felsökning; standard: False).",
+    )
+    forberakna_parser.add_argument(
+        "--konfig",
+        type=Path,
+        default=Path("config.toml"),
+        help="Sökväg till config.toml för [lagring] vid --lagring s3 (standard: config.toml).",
+    )
+    forberakna_parser.add_argument(
         "--torrkor",
         action="store_true",
         help="Lista rutor som täcker området utan att starta beräkning.",
@@ -1995,10 +2019,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                 overlapp_m=args.overlapp_m,
                 upplosning_m=args.upplosning_m,
                 max_arbetare=args.max_arbetare,
+                kommun=args.kommun,
+                lagring_typ=args.lagring,
+                behall_radata=bool(args.behall_radata),
                 indata_filer=(args.omrade,),
             )
+            objektlagring = None
+            if args.lagring == "s3":
+                from gemensamt.konfig import KonfigFel, las_konfig
+                from gemensamt.objektlagring import (
+                    ObjektLagringFel,
+                    las_lagring_konfig,
+                    skapa_lagring,
+                )
+
+                try:
+                    app_konfig: dict[str, Any] = {}
+                    if args.konfig.is_file():
+                        lokal_k = args.konfig.parent / "config.local.toml"
+                        app_konfig = las_konfig(args.konfig, lokal_k if lokal_k.is_file() else None)
+                    lk = las_lagring_konfig(app_konfig)
+                    if lk.typ != "s3":
+                        from dataclasses import replace
+
+                        lk = replace(lk, typ="s3")
+                    objektlagring = skapa_lagring(lk)
+                except (KonfigFel, ObjektLagringFel) as exc:
+                    raise BatchFel(str(exc)) from exc
             rutkorare = skapa_k1_rutkorare(args.k1_rot) if args.k1_rot is not None else None
-            status = kor_batch_rutor(rutor, konfig, rutkorare=rutkorare)
+            status = kor_batch_rutor(
+                rutor, konfig, rutkorare=rutkorare, objektlagring=objektlagring
+            )
         except BatchFel as exc:
             print(f"Fel vid förberäkning: {exc}", file=sys.stderr)
             return 2

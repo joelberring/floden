@@ -195,34 +195,18 @@ def skriv_geotiff(
         raise K1SkrivFel(f"Rasterform {matris.shape} matchar inte {ruta.form_rc}.")
 
     if _HAR_RASTERIO:
-        import rasterio
-        from rasterio.transform import from_origin
+        from gemensamt.cog import skriv_komprimerad_cog
 
         e_min, _, _, n_max = ruta.yttre_bbox
-        transform = from_origin(e_min, n_max, ruta.upplosning_m, ruta.upplosning_m)
-        rader, kolumner = ruta.form_rc
-        block = min(256, rader, kolumner)
-        # rasterio kräver blockstorlek delbar med 16 när tiled=True
-        tiled = block >= 16 and (block % 16 == 0)
-        profil: dict[str, object] = {
-            "driver": "GTiff",
-            "height": rader,
-            "width": kolumner,
-            "count": 1,
-            "dtype": str(matris.dtype),
-            "crs": f"EPSG:{EPSG_SWEREF99_1800}",
-            "transform": transform,
-            "nodata": nodata,
-            "compress": "deflate",
-        }
-        if tiled:
-            profil["tiled"] = True
-            profil["blockxsize"] = 256 if kolumner >= 256 else 16 * (kolumner // 16)
-            profil["blockysize"] = 256 if rader >= 256 else 16 * (rader // 16)
-
-        with rasterio.open(mal, "w", **profil) as dst:
-            dst.write(matris, 1)
-        return mal
+        return skriv_komprimerad_cog(
+            mal,
+            matris,
+            x_min=e_min,
+            y_max=n_max,
+            pixelstorlek=ruta.upplosning_m,
+            epsg=EPSG_SWEREF99_1800,
+            nodata=nodata,
+        )
 
     return _skriv_geotiff_ren_python(mal, matris, ruta, nodata=nodata)
 

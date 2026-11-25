@@ -32,6 +32,8 @@ from gemensamt.gpu import berakningsplats, hamta_backend
 from gemensamt.hash import sha256_fil
 from gemensamt.koordinater import transformera
 from gemensamt.manifest import FilPost, ManifestFel, las_manifest, skapa_manifest, skriv_manifest
+from gemensamt.objektlagring import ObjektLagring, geografi_nyckel
+from gemensamt.rensning import temporar_rutkatalog
 from markmodell.rutnat import Ruta, skapa_rutnat
 
 DATAKLASSER: tuple[str, ...] = ("oppen", "intern", "skyddad")
@@ -65,6 +67,9 @@ class BatchKonfig:
     overlapp_m: float = 25.0
     upplosning_m: float = 1.0
     max_arbetare: int = 1
+    kommun: str = "standard"
+    lagring_typ: Literal["lokal", "s3"] = "lokal"
+    behall_radata: bool = False
     parametrar: Mapping[str, Any] = field(default_factory=dict)
     indata_filer: tuple[Path, ...] = ()
 
@@ -80,6 +85,8 @@ class BatchKonfig:
             raise BatchFel(f"Ogiltig dataklass {self.dataklass!r}; välj bland {DATAKLASSER}.")
         if self.precision not in ("f64", "f32"):
             raise BatchFel(f"Ogiltig precision {self.precision!r}; välj 'f64' eller 'f32'.")
+        if self.lagring_typ not in ("lokal", "s3"):
+            raise BatchFel(f"Ogiltig lagring_typ {self.lagring_typ!r}; välj 'lokal' eller 's3'.")
         if self.max_arbetare < 1:
             raise BatchFel(f"max_arbetare måste vara >= 1, fick {self.max_arbetare}.")
 
@@ -351,7 +358,7 @@ def skapa_k1_rutkorare(
 
     def _kor(ruta: Ruta, arbetsmapp: Path, konfig: BatchKonfig, plats: str) -> RutUtdata:
         from dagsljus.horisont import Hojdfalt, horisont_ruta_iter
-        from testsvit.k1_io import skriv_geotiff
+        from gemensamt.cog import skriv_komprimerad_cog
         from tvad.lokal_troghet import kor_2d_lokal_troghet, skriv_tvad_resultat_k6
         from vatten.blaytor import BlaytorFel, k1_filer, las_k1
 
@@ -402,7 +409,7 @@ def skapa_k1_rutkorare(
             ):
                 summa += np.sin(h_rad.astype(np.float64)) ** 2
             svf = (1.0 - summa / azimutriktningar).astype(np.float32)
-            svf_fil = skriv_geotiff(
+            svf_fil = skriv_komprimerad_cog(
                 d_mapp / "svf.tif",
                 svf,
                 x_min=float(k1.geo.x_min),
@@ -443,20 +450,54 @@ def _ersatt_katalog_atomiskt(tmp_mapp: Path, mal_mapp: Path) -> None:
             shutil.rmtree(gammal, ignore_errors=True)
 
 
+def _ladda_upp_ruta_till_objektlagring(
+    objektlagring: ObjektLagring,
+    kommun: str,
+    ruta_namn: str,
+    arbetsmapp: Path,
+    utdata_poster: Sequence[FilPost],
+) -> None:
+    """Laddar upp alla rutfiler verifierat med SHA-256 och avslutar med `run.json` sist."""
+    uppladdade_rel: set[str] = set()
+    for post in utdata_poster:
+        lokal_fil = arbetsmapp / post.fil
+        nyckel = geografi_nyckel(kommun, ruta_namn, post.fil)
+        objektlagring.ladda_upp_fil(lokal_fil, nyckel, sha256=post.sha256)
+        uppladdade_rel.add(post.fil)
+
+    recept_fil = arbetsmapp / "recept.json"
+    if recept_fil.is_file() and "recept.json" not in uppladdade_rel:
+        objektlagring.ladda_upp_fil(
+            recept_fil,
+            geografi_nyckel(kommun, ruta_namn, "recept.json"),
+            sha256=sha256_fil(recept_fil),
+        )
+
+    run_fil = arbetsmapp / "run.json"
+    objektlagring.ladda_upp_fil(
+        run_fil,
+        geografi_nyckel(kommun, ruta_namn, "run.json"),
+        sha256=sha256_fil(run_fil),
+    )
+
+
 def kor_batch_rutor(
     rutor: Sequence[Ruta],
     konfig: BatchKonfig,
     *,
     rutkorare: RutKorare | None = None,
+    objektlagring: ObjektLagring | None = None,
     miljo: Mapping[str, str] | None = None,
     avbryt_vid_fel: bool = False,
 ) -> BatchStatus:
     """Kör förberäkning över en sekvens av rutor med återupptagning och atomisk skrivning.
 
     - Kontrollerar alltid dataskyddsspärren (`kontrollera_dataskydd`) före start.
-    - Hoppar över rutor vars `run.json` redan matchar indata, parametrar och beräkningsplats.
-    - Skriver varje ruta till en temporär katalog och byter in den atomiskt först när hela
-      rutan och dess `run.json` (K0) är klara.
+    - Hoppar över rutor vars `run.json` redan finns i `objektlagring` (om angiven) eller lokalt
+      med matchande indata, parametrar och beräkningsplats.
+    - Vid `objektlagring`: kör rutan i en isolerad temporär katalog (`temporar_rutkatalog`),
+      laddar upp och verifierar alla färdiga filer + `run.json`, och raderar temporär rådata
+      direkt i `finally` (om inte `konfig.behall_radata=True`).
     - Uppdaterar `batch_status.json` atomiskt efter varje ruta.
     """
     kontrollera_dataskydd(konfig.dataklass, miljo=miljo)
@@ -504,6 +545,56 @@ def kor_batch_rutor(
         rutamapp = konfig.utdata_rot / ruta.namn
         nyckel = berakna_batch_nyckel(ruta, konfig, indata_poster, plats)
 
+        if objektlagring is not None:
+            if objektlagring.finns(geografi_nyckel(konfig.kommun, ruta.namn, "run.json")):
+                hoppade.append(ruta.namn)
+                _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
+                continue
+
+            t0 = time.monotonic()
+            try:
+                with temporar_rutkatalog(ruta.namn, behall=konfig.behall_radata) as tmp_mapp:
+                    ut = korare(ruta, tmp_mapp, konfig, plats)
+                    manifest = skapa_manifest(
+                        modul="forberakna",
+                        indata=indata_poster,
+                        parametrar={
+                            "ruta_id": ruta.namn,
+                            "kommun": konfig.kommun,
+                            "moduler": list(konfig.moduler),
+                            "enhet": konfig.enhet,
+                            "precision": konfig.precision,
+                            "berakningsplats": plats,
+                            "dataklass": konfig.dataklass,
+                            "batch_nyckel": nyckel,
+                            **dict(konfig.parametrar),
+                        },
+                        utdata=list(ut.utdata_filer),
+                        matvarden={
+                            "kortid_s": round(time.monotonic() - t0, 4),
+                            **dict(ut.matvarden),
+                        },
+                        varningar=list(ut.varningar),
+                    )
+                    skriv_manifest(manifest, tmp_mapp / "run.json")
+                    _ladda_upp_ruta_till_objektlagring(
+                        objektlagring,
+                        konfig.kommun,
+                        ruta.namn,
+                        tmp_mapp,
+                        ut.utdata_filer,
+                    )
+                tider_nyberaknade.append(time.monotonic() - t0)
+                klara.append(ruta.namn)
+            except Exception as exc:  # noqa: BLE001 - logga rutfelet och fortsätt om avbryt_vid_fel=False
+                felade[ruta.namn] = f"{type(exc).__name__}: {exc}"
+                _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
+                if avbryt_vid_fel:
+                    raise
+            else:
+                _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
+            continue
+
         if ruta_ar_klar(rutamapp, nyckel):
             hoppade.append(ruta.namn)
             _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
@@ -542,7 +633,8 @@ def kor_batch_rutor(
             tider_nyberaknade.append(time.monotonic() - t0)
             klara.append(ruta.namn)
         except Exception as exc:  # noqa: BLE001 - logga rutfelet och fortsätt om avbryt_vid_fel=False
-            shutil.rmtree(tmp_mapp, ignore_errors=True)
+            if not konfig.behall_radata:
+                shutil.rmtree(tmp_mapp, ignore_errors=True)
             felade[ruta.namn] = f"{type(exc).__name__}: {exc}"
             _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
             if avbryt_vid_fel:

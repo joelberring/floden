@@ -37,7 +37,7 @@ from sankgraf.flodesvagar import MANNING_N_PER_MARKSLAG
 from sankgraf.hierarki import _berakna_kantbarriarer
 from sankgraf.takvatten import TakvattenFordelning
 from sankgraf.typer import MARKSLAG_BYGGNAD
-from testsvit.k1_io import BrytlinjePost, GeoTransformInfo, skriv_geotiff
+from testsvit.k1_io import BrytlinjePost, GeoTransformInfo
 from tvad.kalltermer import Kalltermer, SanktermTillstand
 from tvad.subgrid import (
     SubgridTabell,
@@ -1516,6 +1516,8 @@ def skriv_tvad_resultat_k6(
     filer: dict[str, Path] = {}
     utdata_poster: list[FilPost] = []
 
+    from gemensamt.cog import skriv_komprimerad_cog
+
     for roll, filnamn, arr in (
         ("max_djup", "max_djup.tif", resultat.max_djup_m),
         ("max_hastighet", "max_hastighet.tif", resultat.max_hastighet_m_s),
@@ -1523,7 +1525,7 @@ def skriv_tvad_resultat_k6(
         ("tid_till_0_1m", "tid_till_0_1m.tif", resultat.tid_till_0_1m_s),
         ("tid_till_0_2m", "tid_till_0_2m.tif", resultat.tid_till_0_2m_s),
     ):
-        fil = skriv_geotiff(
+        fil = skriv_komprimerad_cog(
             mal / filnamn,
             np.asarray(arr, dtype=np.float32),
             x_min=geo.x_min,
