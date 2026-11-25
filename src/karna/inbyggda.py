@@ -318,13 +318,15 @@ class Dynamik(Analyslosare):
 
     namn: ClassVar[str] = "vatten.dynamik"
     doman: ClassVar[str] = "vatten"
-    version: ClassVar[str] = "1"
+    version: ClassVar[str] = "2"
+    """v2: exporterar även `tid_till_0_1m.tif` och `tid_till_0_2m.tif` (COG med NaN)."""
     beskrivning: ClassVar[str] = (
         "Exakt händelsestyrd fyllning–överfall i sänkgrafen för ett regnförlopp (regn_tid_s + "
-        "regn_mm_h, eller IDF-regn), med takvatten och avtappning (mm/h, per område)."
+        "regn_mm_h, eller IDF-regn), med takvatten, avtappning (mm/h, per område) och ankomsttider "
+        "till 0,1 m och 0,2 m."
     )
     valfria_indataroller: ClassVar[tuple[str, ...]] = ("avtappning_omraden",)
-    utdataroller: ClassVar[tuple[str, ...]] = ("max_djup",)
+    utdataroller: ClassVar[tuple[str, ...]] = ("max_djup", "tid_till_0_1m", "tid_till_0_2m")
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
         okanda = sorted(set(parametrar) - _DYNAMIK_PARAMETRAR)
@@ -406,12 +408,36 @@ class Dynamik(Analyslosare):
             )
         except DynamikFel as exc:
             raise LosarFel(f"{self.namn}: {exc}") from exc
+        from gemensamt.cog import skriv_komprimerad_cog
+
         skriv_geotiff(
             kontext.utmapp / "max_djup.tif", np.asarray(res.max_djup_m, dtype=np.float32),
             x_min=geo.x_min, y_max=geo.y_max, pixelstorlek=geo.pixelstorlek_x,
         )
+        skriv_komprimerad_cog(
+            kontext.utmapp / "tid_till_0_1m.tif",
+            np.asarray(res.tid_till_0_1m_s, dtype=np.float32),
+            x_min=geo.x_min,
+            y_max=geo.y_max,
+            pixelstorlek=geo.pixelstorlek_x,
+            epsg=geo.epsg,
+            nodata=float("nan"),
+        )
+        skriv_komprimerad_cog(
+            kontext.utmapp / "tid_till_0_2m.tif",
+            np.asarray(res.tid_till_0_2m_s, dtype=np.float32),
+            x_min=geo.x_min,
+            y_max=geo.y_max,
+            pixelstorlek=geo.pixelstorlek_x,
+            epsg=geo.epsg,
+            nodata=float("nan"),
+        )
         return LosarUtdata(
-            filer={"max_djup": "max_djup.tif"},
+            filer={
+                "max_djup": "max_djup.tif",
+                "tid_till_0_1m": "tid_till_0_1m.tif",
+                "tid_till_0_2m": "tid_till_0_2m.tif",
+            },
             matvarden={
                 "max_djup_m": float(np.nanmax(res.max_djup_m)),
                 "in_m3": float(res.in_m3),

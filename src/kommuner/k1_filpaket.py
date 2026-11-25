@@ -18,7 +18,11 @@ import numpy as np
 
 from gemensamt.hash import sha256_fil
 from kommuner.filpaket import Filpaket
-from kommuner.hojdmodell import Hojdmodell
+from kommuner.hojdmodell import (
+    NAN_VARNING_TROSKEL_ANDEL,
+    HojdLuckDiagnos,
+    Hojdmodell,
+)
 from kommuner.vattenytor import Linje, vattenytor_i_ruta
 from lantmateriet.omrade import Omrade, rutor_for_omrade
 from markmodell.byggnadskallor import las_byggnadskalla
@@ -35,6 +39,9 @@ class FilpaketByggResultat:
     varningar: list[str] = field(default_factory=list)
     vatten_m2: float = 0.0
     vatten_niva_m: tuple[float, float] | None = None
+    hojd_luckor: list[HojdLuckDiagnos] = field(default_factory=list)
+    hog_nan_flagga: bool = False
+    max_nan_andel: float = 0.0
 
 
 def bygg_omrade_filpaket(
@@ -52,6 +59,7 @@ def bygg_omrade_filpaket(
     strandlinjer: Sequence[Linje] = (),
     vatten_marginal_m: float = 0.2,
     vatten_max_avstand_m: float = 2.0,
+    nan_varning_andel: float = NAN_VARNING_TROSKEL_ANDEL,
 ) -> FilpaketByggResultat:
     res = FilpaketByggResultat(ut=ut)
     kandidater = []
@@ -88,10 +96,33 @@ def bygg_omrade_filpaket(
             )
         ]  # fmt: skip
         try:
-            z, v = hojdmodell.grund_z(ruta)
+            if hasattr(hojdmodell, "grund_z_med_diagnos"):
+                z, v, diagnos = hojdmodell.grund_z_med_diagnos(
+                    ruta, nan_varning_andel=nan_varning_andel
+                )
+            else:
+                z, v = hojdmodell.grund_z(ruta)
+                n_nan = int(np.count_nonzero(np.isnan(z)))
+                diagnos = HojdLuckDiagnos(
+                    ruta=ruta.namn,
+                    totalt_celler=int(z.size),
+                    nan_fore_celler=n_nan,
+                    nan_efter_celler=n_nan,
+                    utanfor_plattor_celler=n_nan,
+                    vattenyta_celler=0,
+                    stort_hal_celler=0,
+                    smahal_fyllda_celler=0,
+                    smahal_ej_fyllda_celler=0,
+                    max_hal_avstand_m=0.0,
+                    nan_troskel_andel=nan_varning_andel,
+                )
         except Exception as exc:
             res.varningar.append(f"{ruta.namn}: {exc}")
             continue
+        res.hojd_luckor.append(diagnos)
+        res.max_nan_andel = max(res.max_nan_andel, diagnos.nan_efter_andel)
+        if diagnos.over_troskel:
+            res.hog_nan_flagga = True
         res.varningar.extend(v)
         slag_grund = None
         if strandlinjer:
