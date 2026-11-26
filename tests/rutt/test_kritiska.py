@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -214,5 +215,6 @@ def test_celf_prestanda_400_noder_760_kanter() -> None:
     dt_s = time.perf_counter() - t0
 
     assert len(valda) == 5
-    assert dt_s < 0.05, f"CELF tog {dt_s:.4f} s (gräns 0.05 s)"
+    grans_s = 0.05 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    assert dt_s < grans_s, f"CELF tog {dt_s:.4f} s (gräns {grans_s:.3f} s)"
     assert all(valda[i].marginalvinst >= valda[i + 1].marginalvinst for i in range(4))

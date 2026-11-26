@@ -109,7 +109,10 @@ def test_prestanda_1e5_obekanta() -> None:
     assert c[vind.grid.luft].min() >= -1e-14 * c.max()
     assert y[vind.grid.luft].min() >= -1e-14 * y.max()
     if not LANGSAMMA:
-        assert tider["totalt_s"] < 20.0, "standardlösaren har blivit långsam"
+        grans_s = 20.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        assert tider["totalt_s"] < grans_s, (
+            f"standardlösaren har blivit långsam ({tider['totalt_s']:.2f} s >= {grans_s:.1f} s)"
+        )
 
 
 @pytest.mark.skipif(not LANGSAMMA, reason="långsam (≈ 30 s): sätt FLODEN_LANGSAMMA_TESTER=1")
@@ -144,4 +147,5 @@ def test_prestanda_tvd_1e5() -> None:
     assert mb < 1e-10
     assert op.positivitet >= -1e-12
     if not LANGSAMMA:
-        assert t2 - t0 < 20.0
+        grans_s = 20.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        assert t2 - t0 < grans_s, f"TVD tog {t2 - t0:.2f} s (gräns < {grans_s:.1f} s)"

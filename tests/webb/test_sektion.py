@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 from dataclasses import dataclass
 
@@ -339,4 +340,5 @@ def test_prestanda_300_punkter_under_50ms() -> None:
     )
     tid_ms = (time.perf_counter() - t0) * 1000.0
     assert svar["sammanfattning"]["antal_punkter"] == 300
-    assert tid_ms < 50.0, f"Sektionsberäkning tog {tid_ms:.1f} ms (budget < 50 ms)"
+    grans_ms = 50.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    assert tid_ms < grans_ms, f"Sektionsberäkning tog {tid_ms:.1f} ms (budget < {grans_ms:.0f} ms)"

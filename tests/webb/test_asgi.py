@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -60,6 +61,7 @@ class _SpyApiApp:
         self.fordrojning_s = fordrojning_s
         self.anrop: list[tuple[str, str, dict[str, str], bytes]] = []
         self.startad = threading.Event()
+        self.frigiven = threading.Event()
 
     def hantera_http(
         self,
@@ -72,7 +74,7 @@ class _SpyApiApp:
         self.anrop.append((metod, sokvag, dict(rubriker), kropp))
         if metod == "POST" and self.fordrojning_s > 0:
             self.startad.set()
-            time.sleep(self.fordrojning_s)
+            self.frigiven.wait(timeout=self.fordrojning_s)
         svar = json.dumps({"ok": True, "cookie": rubriker.get("cookie", "")}).encode("utf-8")
         return 200, [("Content-Type", "application/json; charset=utf-8")], svar
 
@@ -164,31 +166,37 @@ def test_asgi_http2_cookie_sammanslagning_och_query() -> None:
 
 
 def test_asgi_samtidighetsgrans_ger_503_men_blockerar_inte_get() -> None:
-    spy = _SpyApiApp(fordrojning_s=0.15)
+    tidsfaktor = float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    spy = _SpyApiApp(fordrojning_s=5.0 * tidsfaktor)
     asgi_app = FlodenAsgiApp(
         spy,  # type: ignore[arg-type]
         max_samtidiga_berakningar=1,
-        ko_timeout_s=0.02,
+        ko_timeout_s=0.05,
     )
 
     async def _kor() -> None:
         tung1 = asyncio.create_task(
             _anropa_asgi(asgi_app, "POST", "/api/kor", chunks=(b"{}",))
         )
-        while not spy.startad.is_set():
-            await asyncio.sleep(0.005)
+        deadline = time.monotonic() + 5.0 * tidsfaktor
+        try:
+            while not spy.startad.is_set():
+                assert time.monotonic() < deadline, "Tung POST startade inte i tid"
+                await asyncio.sleep(0.005)
 
-        # Samtidig GET ska inte blockeras av beräkningssemaforen
-        get_status, _, _ = await _anropa_asgi(asgi_app, "GET", "/api/halsa")
-        assert get_status == 200
+            # Samtidig GET ska inte blockeras av beräkningssemaforen
+            get_status, _, _ = await _anropa_asgi(asgi_app, "GET", "/api/halsa")
+            assert get_status == 200
 
-        # Andra samtidiga tunga POST ska avvisas med 503 + Retry-After
-        p2_status, p2_headers, p2_kropp = await _anropa_asgi(
-            asgi_app, "POST", "/api/kor", chunks=(b"{}",)
-        )
-        assert p2_status == 503
-        assert p2_headers["retry-after"] == "5"
-        assert json.loads(p2_kropp)["status_kod"] == 503
+            # Andra samtidiga tunga POST ska avvisas med 503 + Retry-After
+            p2_status, p2_headers, p2_kropp = await _anropa_asgi(
+                asgi_app, "POST", "/api/kor", chunks=(b"{}",)
+            )
+            assert p2_status == 503
+            assert p2_headers["retry-after"] == "5"
+            assert json.loads(p2_kropp)["status_kod"] == 503
+        finally:
+            spy.frigiven.set()
 
         p1_status, _, _ = await tung1
         assert p1_status == 200

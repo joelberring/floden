@@ -187,7 +187,10 @@ def test_s3_hamtning_lru_cache_traff_och_utbredning(tmp_path: Path) -> None:
     assert mapp2 == mapp1
     assert raknare.antal_ladda_ner == dl_fore
     assert raknare.antal_finns == finns_fore
-    assert latens_ms < 50.0  # normalt < 1 ms
+    grans_ms = 50.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    assert latens_ms < grans_ms, (
+        f"Lokal cache-träff tog {latens_ms:.1f} ms (gräns < {grans_ms:.0f} ms)"
+    )
     # mtime uppdaterad för LRU-ordning
     assert (mapp1 / "mark.tif").stat().st_mtime > gammal_ts + 1000.0
 

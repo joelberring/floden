@@ -5,7 +5,9 @@ En enda körning (litet läge, 2 m-celler) delas av alla tester i filen.
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import shutil
 import tempfile
 from collections.abc import Iterator
@@ -23,10 +25,94 @@ from gemensamt.manifest import KONTRAKT_K0, las_manifest
 from webb.api import FlodenApiApp, _skapa_fragetjanst
 
 REPO = Path(__file__).resolve().parents[2]
+_MALL_KLAR_FIL = ".floden_demo_mall_klar"
+_SESSIONS_MALL_ROT: Path | None = None
+
+
+def _sessions_mall_sokvag(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Delad sökväg per pytest-session (delas mellan xdist-workers via `basetemp.parent`)."""
+    bas = tmp_path_factory.getbasetemp()
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        bas = bas.parent
+    return bas / "floden_demo_mall"
+
+
+def _skriv_om_json_sokvagar(rot: Path, mall_str: str, mall_resolved: str) -> None:
+    """Skriver om absoluta mallsökvägar i klonade JSON-filer så klonen enbart pekar på `rot`."""
+    rot_str = str(rot)
+    rot_resolved = str(rot.resolve())
+    byten = [
+        (gammal, ny)
+        for gammal, ny in sorted(
+            {(mall_resolved, rot_resolved), (mall_str, rot_str)},
+            key=lambda par: len(par[0]),
+            reverse=True,
+        )
+        if gammal and gammal != ny
+    ]
+    if not byten:
+        return
+    for fil in rot.rglob("*.json"):
+        if not fil.is_file():
+            continue
+        text = fil.read_text(encoding="utf-8")
+        ny_text = text
+        for gammal, ny in byten:
+            if gammal in ny_text:
+                ny_text = ny_text.replace(gammal, ny)
+        if ny_text != text:
+            fil.write_text(ny_text, encoding="utf-8")
+
+
+def _hamta_eller_bygg_demo_mall(mall_rot: Path) -> Path:
+    """Bygger demomallen exakt en gång per pytest-/xdist-session under exklusivt fillås."""
+    klar_fil = mall_rot / _MALL_KLAR_FIL
+    if klar_fil.is_file():
+        return mall_rot
+    mall_rot.parent.mkdir(parents=True, exist_ok=True)
+    las_fil = mall_rot.parent / f"{mall_rot.name}.lock"
+    with las_fil.open("a+b") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            if klar_fil.is_file():
+                return mall_rot
+            if mall_rot.exists():
+                shutil.rmtree(mall_rot)
+            mall_rot.mkdir(parents=True, exist_ok=True)
+            try:
+                Demo(mall_rot, anvand_mall=False)
+                meta = json.dumps(
+                    {"mall": str(mall_rot), "mall_resolved": str(mall_rot.resolve())},
+                    sort_keys=True,
+                )
+                tmp_klar = mall_rot / f"{_MALL_KLAR_FIL}.{os.getpid()}.tmp"
+                tmp_klar.write_text(meta + "\n", encoding="utf-8")
+                os.replace(tmp_klar, klar_fil)
+            except BaseException:
+                shutil.rmtree(mall_rot, ignore_errors=True)
+                raise
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    return mall_rot
+
+
+def _klona_demo_mall(mall_rot: Path, rot: Path) -> None:
+    """Kopierar mallen med `shutil.copy2` (inga delade hårdlänkar -> 100 % modul-isolering)."""
+    meta = json.loads((mall_rot / _MALL_KLAR_FIL).read_text(encoding="utf-8"))
+    shutil.copytree(
+        mall_rot,
+        rot,
+        copy_function=shutil.copy2,
+        ignore=shutil.ignore_patterns(_MALL_KLAR_FIL),
+        dirs_exist_ok=True,
+    )
+    _skriv_om_json_sokvagar(rot, str(meta["mall"]), str(meta["mall_resolved"]))
 
 
 class Demo:
-    def __init__(self, rot: Path) -> None:
+    def __init__(
+        self, rot: Path, *, mall: Path | None = None, anvand_mall: bool = True
+    ) -> None:
         self.rot = rot
         self.varld = rot / "varld"
         self.fragor = rot / "fragor"
@@ -34,13 +120,21 @@ class Demo:
             REPO / "config.toml", [self.fragor], rot / "cache", rot / "korningar"
         )
         self.tjanst.demomapp = self.varld
-        self.forsta = kor_demo(
-            tjanst=self.tjanst,
-            varld_dir=self.varld,
-            fragedir=self.fragor,
-            lage=LITEN,
-            logg=lambda _t: None,
-        )
+        eff_mall = mall if mall is not None else (_SESSIONS_MALL_ROT if anvand_mall else None)
+        if anvand_mall and eff_mall is not None:
+            fardig_mall = _hamta_eller_bygg_demo_mall(eff_mall)
+            _klona_demo_mall(fardig_mall, rot)
+            self.forsta: dict[str, Any] = json.loads(
+                (self.varld / "demo.json").read_text(encoding="utf-8")
+            )
+        else:
+            self.forsta = kor_demo(
+                tjanst=self.tjanst,
+                varld_dir=self.varld,
+                fragedir=self.fragor,
+                lage=LITEN,
+                logg=lambda _t: None,
+            )
         self.app = FlodenApiApp(
             testsvit_rot=REPO / "testsvit",
             konfig_fil=REPO / "config.toml",
@@ -55,11 +149,24 @@ class Demo:
         return status, json.loads(kropp)
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _registrera_demo_mall(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """Registrerar delad sessionssökväg utan att bygga demon förrän något test begär den."""
+    global _SESSIONS_MALL_ROT
+    _SESSIONS_MALL_ROT = _sessions_mall_sokvag(tmp_path_factory)
+
+
+@pytest.fixture(scope="session")
+def demo_mall(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Delad, fillåst demomall som byggs en enda gång per pytest-/xdist-session."""
+    return _hamta_eller_bygg_demo_mall(_sessions_mall_sokvag(tmp_path_factory))
+
+
 @pytest.fixture(scope="module")
-def demo() -> Iterator[Demo]:
-    rot = Path(tempfile.mkdtemp())
+def demo(demo_mall: Path) -> Iterator[Demo]:
+    rot = Path(tempfile.mkdtemp(prefix="floden_demo_"))
     try:
-        yield Demo(rot)
+        yield Demo(rot, mall=demo_mall)
     finally:
         shutil.rmtree(rot, ignore_errors=True)
 
@@ -218,3 +325,44 @@ def test_plan_ger_nyckel_som_matchar_korningen(demo: Demo) -> None:
     plan = json.loads(kropp)
     _, k = demo.get("/api/korningar/demo-vatten")
     assert status == 200 and plan["plan_nyckel"] == k["plan_nyckel"]
+
+
+def test_sessionsmall_byggs_en_gang_och_ar_isolerad_mellan_kloner(
+    demo_mall: Path, tmp_path: Path
+) -> None:
+    """Delad demomall återanvänds utan ombyggnad och mutationer i en klon läcker inte."""
+    klar_fil = demo_mall / _MALL_KLAR_FIL
+    assert klar_fil.is_file()
+    vid_start = (demo_mall / "varld" / "varld.json").stat().st_mtime_ns
+    assert _hamta_eller_bygg_demo_mall(demo_mall) == demo_mall
+    assert (demo_mall / "varld" / "varld.json").stat().st_mtime_ns == vid_start
+
+    d1 = Demo(tmp_path / "klon_a", mall=demo_mall)
+    d2 = Demo(tmp_path / "klon_b", mall=demo_mall)
+
+    # Inga gamla mallsökvägar får finnas kvar i klonens JSON-manifest eller körningar.
+    mall_str = str(demo_mall)
+    mall_res = str(demo_mall.resolve())
+    for jf in d1.rot.rglob("*.json"):
+        if jf.is_file():
+            txt = jf.read_text(encoding="utf-8")
+            assert mall_str not in txt and mall_res not in txt, jf
+
+    # Muterar klon A i varld, fragor, korningar och cache -> varken mall eller klon B påverkas.
+    orig_demo_json = (demo_mall / "varld" / "demo.json").read_text(encoding="utf-8")
+    (d1.varld / "demo.json").write_text('{"muterad": true}\n', encoding="utf-8")
+    (d1.fragor / "extra_fraga.toml").write_text("# mutation i klon A\n", encoding="utf-8")
+    (d1.rot / "korningar" / "demo-vatten" / "korning.json").write_text("{}", encoding="utf-8")
+    (d1.rot / "cache" / "markor.txt").write_text("a", encoding="utf-8")
+
+    assert (demo_mall / "varld" / "demo.json").read_text(encoding="utf-8") == orig_demo_json
+    assert (d2.varld / "demo.json").read_text(encoding="utf-8") == orig_demo_json
+    assert not (demo_mall / "fragor" / "extra_fraga.toml").exists()
+    assert not (d2.fragor / "extra_fraga.toml").exists()
+    assert not (d2.rot / "cache" / "markor.txt").exists()
+    assert (d1.varld / "varld.json").stat().st_ino != (d2.varld / "varld.json").stat().st_ino
+
+    status, oversikt = d2.get("/api/demo")
+    assert status == 200 and oversikt["finns"] is True
+    status_r, res = d2.get("/api/korningar/demo-vatten/resultat")
+    assert status_r == 200 and len(res["lager"]) > 0

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -273,9 +274,10 @@ class TestForeEfterAlternativ(unittest.TestCase):
         self.assertEqual(sam_b.antal_nya_drabbade_entreer, 0)
         self.assertEqual(sam_b.antal_forsamrade_entreer, 0)
 
-        # Total körtid ska vara långt under acceptansgränsen 60 s
+        # Total körtid ska vara långt under acceptansgränsen 60 s (skalad med FLODEN_TIDSFAKTOR)
         total_tid_s = sam_a.kortid_s + sam_b.kortid_s
-        self.assertLess(total_tid_s, 60.0)
+        grans_s = 60.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        self.assertLess(total_tid_s, grans_s)
 
         # Jämförelsetabellen ska innehålla båda alternativen
         tabell = formatera_alternativ_tabell(jamforelse)
