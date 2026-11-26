@@ -36,6 +36,7 @@ import {
   type Kontroll,
   type ProjektInfo,
   type ScenarioPost,
+  type Utbredning,
 } from "../karta/kartapi.ts";
 import { arGrovPekare, Kartmotor, TOM_RITVY, type AnalysVektor, type RasterLager, type RitVy, type VyByggnad } from "../karta/kartmotor.ts";
 import { LagerLista } from "../karta/lager.ts";
@@ -136,10 +137,13 @@ import {
   type SektionSvar,
 } from "./sektion.ts";
 import {
+  formateraKlockslagUtc,
   solValHtml,
+  STANDARD_KLOCKSLAG_UTC,
   valideraSolVal,
   type SolBrukstid,
   type SolDatumForval,
+  type SolLage,
 } from "./solval.ts";
 import {
   hoppaTillTopp,
@@ -169,6 +173,23 @@ interface MarkSvar {
   troskel: number;
   siffror: Marksiffror | null;
 }
+
+interface EkologiLagerRef {
+  lager_id?: string;
+  png?: string;
+  utbredning?: Utbredning;
+}
+
+type EkologiMedLager = EkologiSvar & {
+  lager?: {
+    stromtathet_fore?: EkologiLagerRef | null;
+    stromtathet_efter?: EkologiLagerRef | null;
+    stromtathet_skillnad?: EkologiLagerRef | null;
+    kansighet_fore?: EkologiLagerRef | null;
+    kansighet_efter?: EkologiLagerRef | null;
+    kansighet_skillnad?: EkologiLagerRef | null;
+  };
+};
 
 type Kalla = "ritat" | "projekt" | "lage";
 type ResultatAmne = Amne | typeof LUFT_AMNE;
@@ -202,6 +223,9 @@ const ROLL_SNABBNAMN: Record<string, string> = {
   hastighet: "Hastighet",
   ankomsttid: "Ankomsttid",
   soltimmar: "Soltimmar",
+  skuggmask: "Skugga",
+  stromtathet: "Strömtäthet (flaskhalsar)",
+  kansighet: "Känslighet (åtgärdspotential)",
 };
 
 const lagerPost = (r: ResultatSvar | undefined, id: string | null): LagerPost | null => (id && r ? (r.lager.find((l) => l.id === id) ?? null) : null);
@@ -299,7 +323,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let valtNyckel: string | null = null;
   let r: ResultatSvar | undefined;
   let mark: MarkSvar | null = null;
-  let ekologi: EkologiSvar | null = null;
+  let ekologi: EkologiMedLager | null = null;
+  let ekoLagerVal: "stromtathet" | "kansighet" = "stromtathet";
   let ekologiFel: string | null = null;
   let natverkLista: Array<{ natverk_id: string; visningsnamn: string; korbar: boolean; lokalt: boolean }> = [];
   let valtNatverk: string | null = null;
@@ -1129,7 +1154,30 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       amne === "vatten" && tidsserie && tidTillstand.aktivtSteg !== null && lage !== "3d" && lage !== "skillnad"
         ? tidsserie.tidssteg[tidTillstand.aktivtSteg]?.png_url
         : undefined;
-    const ovan = lage === "3d" ? [] : rasterAv("res:visad", visad, true, rasterOpacitet, tidStegUrl);
+    let ekoOverrideUrl: string | undefined;
+    let ekoOverrideUtbredning: Utbredning | undefined;
+    if (amne === "ekologi" && ekoLagerVal === "kansighet" && ekologi?.lager && lage !== "3d" && lage !== "redigera") {
+      const ref =
+        lage === "nulage" || lage === "svep"
+          ? ekologi.lager.kansighet_fore
+          : lage === "efter"
+            ? ekologi.lager.kansighet_efter
+            : ekologi.lager.kansighet_skillnad;
+      if (ref?.lager_id) {
+        const hittad = lagerPost(r, ref.lager_id);
+        if (hittad) visad = hittad;
+      }
+      if (ref?.png && (!visad || visad.id !== ref.lager_id)) {
+        ekoOverrideUrl = ref.png;
+        ekoOverrideUtbredning = ref.utbredning;
+      }
+    }
+    const ovan: RasterLager[] =
+      lage === "3d"
+        ? []
+        : !visad && ekoOverrideUrl && ekoOverrideUtbredning
+          ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: ekoOverrideUrl, utbredning: ekoOverrideUtbredning, skarpa: true } }]
+          : rasterAv("res:visad", visad, true, rasterOpacitet, ekoOverrideUrl ?? tidStegUrl);
     bas.synka = () => a?.settLager([...basLagerListan, ...ovan]);
     bas.synka();
 
@@ -1402,6 +1450,27 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     return harLuft;
   };
 
+  const ekoLagerVaxelHtml = (): string => {
+    if (amne !== "ekologi" || !ekologi?.lager) return "";
+    const harKansighet = Boolean(
+      ekologi.lager.kansighet_fore || ekologi.lager.kansighet_efter || ekologi.lager.kansighet_skillnad,
+    );
+    if (!harKansighet) return "";
+    if (rollerNu().some((x) => x.roll === "kansighet")) return "";
+    return `<div class="ar-lagerblock" aria-label="Ekologilager">
+      <span class="ar-sektion-rubrik">Ekologilager</span>
+      <div class="flode-segment liten" role="group" aria-label="Välj ekologilager">
+        <button type="button" data-eko-lager="stromtathet" aria-pressed="${ekoLagerVal === "stromtathet"}">Strömtäthet (flaskhalsar)</button>
+        <button type="button" data-eko-lager="kansighet" aria-pressed="${ekoLagerVal === "kansighet"}">Känslighet (åtgärdspotential)</button>
+      </div>
+      <p class="flode-liten flode-dampad">${
+        ekoLagerVal === "kansighet"
+          ? "Förbättringspotential (känslighet ∂R/∂G): visar var åtgärder ger störst förbättring av konnektiviteten."
+          : "Strömtäthet (flaskhalsar): visar var spridningsflödet koncentreras i landskapet."
+      }</p>
+    </div>`;
+  };
+
   const dpcTabellHtml = (): string => {
     if (amne !== "ekologi" || !ekologi) return "";
     const rader = dpcTabellRader(ekologi, 5);
@@ -1447,7 +1516,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       (projektSvar?.vyer?.length ?? 0) > 0 ? `<button type="button" data-kalla="projekt" aria-pressed="${kalla === "projekt"}">Projektets exempel</button>` : "",
     ].filter(Boolean);
     const kallVal = kallKnappar.length > 1 ? `<div class="flode-segment liten" role="group" aria-label="Resultatkälla">${kallKnappar.join("")}</div>` : "";
-    const lagerBlock = snabbLagerHtml();
+    const lagerBlock = snabbLagerHtml() + ekoLagerVaxelHtml();
 
     if (amne === LUFT_AMNE) {
       const foreScen = lagerPost(r, vy.fore_lager)?.scenario;
@@ -1518,6 +1587,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     r = undefined;
     mark = null;
     ekologi = null;
+    ekoLagerVal = "stromtathet";
     ekologiFel = null;
     if (ny) {
       try {
@@ -1527,7 +1597,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           amne === "ekologi" || amne === LUFT_AMNE || kalla === "lage" || ny.lage_idag
             ? null
             : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
-        let eko: EkologiSvar | null = null;
+        let eko: EkologiMedLager | null = null;
         let ekoFel: string | null = null;
         if (amne === "ekologi" && kalla !== "lage") {
           const begaran: Record<string, unknown> = { omrade_id: projekt };
@@ -1539,7 +1609,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           }
           if (kalla === "ritat" && t.scenario) begaran.scenario = t.scenario.slug;
           try {
-            eko = await lasJson<EkologiSvar>("/api/analys/ekologi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(begaran) });
+            eko = await lasJson<EkologiMedLager>("/api/analys/ekologi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(begaran) });
           } catch (e) {
             ekoFel = e instanceof Error ? e.message : String(e);
           }
@@ -2191,7 +2261,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   lyssna(rot, "click", (h) => {
     const target = h.target as Element;
     const m = target.closest<HTMLElement>(
-      "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#ar-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara",
+      "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#ar-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara",
     );
     if (!m) return;
 
@@ -2280,6 +2350,24 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       regnFel = valideraRegnVal(t.regn);
       sparaTillstand(t);
       ritaRegnOchKor();
+      return;
+    }
+    if (m.dataset.solLage) {
+      const nyttLage = m.dataset.solLage as SolLage;
+      t.sol = {
+        ...t.sol,
+        klockslag_utc: nyttLage === "skuggmask" ? (t.sol.klockslag_utc ?? STANDARD_KLOCKSLAG_UTC) : null,
+      };
+      solFel = valideraSolVal(t.sol);
+      sparaTillstand(t);
+      ritaAnalysPanel();
+      ritaRegnOchKor();
+      return;
+    }
+    if (m.dataset.ekoLager) {
+      ekoLagerVal = m.dataset.ekoLager === "kansighet" ? "kansighet" : "stromtathet";
+      ritaAnalysPanel();
+      synkaKarta();
       return;
     }
     if (m.dataset.solDatum) {
@@ -2457,6 +2545,12 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
 
   lyssna(rot, "input", (h) => {
     const s = h.target as HTMLInputElement;
+    if (s.dataset.solKlockslag !== undefined) {
+      const ut = rot.querySelector<HTMLElement>("[data-sol-klockslag-ut]");
+      const v = Number(s.value);
+      if (ut && Number.isFinite(v)) ut.textContent = formateraKlockslagUtc(v);
+      return;
+    }
     if (s.dataset.grundkartaOpacitet !== undefined) {
       const nu = aktuellGrundkarta(kartLager);
       const op = Math.min(1, Math.max(0, Number(s.value) / 100));
@@ -2495,6 +2589,15 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
 
   lyssna(rot, "change", (h) => {
     const m = h.target as HTMLInputElement | HTMLSelectElement;
+    if (m.dataset.solKlockslag !== undefined) {
+      const v = Number(m.value);
+      t.sol = { ...t.sol, klockslag_utc: Number.isFinite(v) ? v : STANDARD_KLOCKSLAG_UTC };
+      solFel = valideraSolVal(t.sol);
+      if (!solFel) sparaTillstand(t);
+      ritaAnalysPanel();
+      ritaRegnOchKor();
+      return;
+    }
     if (m.dataset.solKryss) {
       const k = m.dataset.solKryss;
       const checked = (m as HTMLInputElement).checked;

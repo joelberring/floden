@@ -31,6 +31,7 @@ export interface SolParam {
   slut_timme?: number | null;
   sammanhangande?: boolean | null;
   inkludera_vsc?: boolean | null;
+  klockslag_utc?: number | null;
 }
 
 /** Begäran till `POST /api/kartverktyg/<projekt>/sektion` (`floden-sektion/v1`). */

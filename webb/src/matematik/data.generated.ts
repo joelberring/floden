@@ -114,7 +114,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/tree/main/testsvit/A1_enkel_sanka"
             }
           ],
-          "anmarkning": "Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1."
+          "anmarkning": "Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Dynamiska tidsserier/tidssteg (tidsspelare) samt CDS- och blockregn finns i webbflödet. Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1."
         },
         {
           "id": "vatten.tvad_hybrid",
@@ -182,7 +182,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/tvad/test_felindikator.py"
             }
           ],
-          "anmarkning": "Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3."
+          "anmarkning": "Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Rust-kärnan (`rust/tvad_karna`) väljs automatiskt i 2D-lösaren när den är byggd (auto-dispatch). Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3."
         },
         {
           "id": "vatten.bifurkation",
@@ -336,7 +336,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/dagsljus/test_losare.py"
             }
           ],
-          "anmarkning": "Fri plan ger VSC 39,6 % och SVF 1 (E1). Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew."
+          "anmarkning": "Fri plan ger VSC 39,6 % och SVF 1 (E1). Ögonblicksskugga vid valfritt klockslag (`klockslag_utc`) nås i Sol-fliken bredvid soltimmar. Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew."
         },
         {
           "id": "dagsljus.dozier_frew",
@@ -345,8 +345,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "h_i = max över j > i av atan((z_j − z_i) / d_ij), beräknad i O(N)"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -356,6 +356,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "src/webb/api.py (POST /api/analys/svf-intervall)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/osakerhet.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/osakerhet.ts"
             }
           ],
           "kontrakt": [
@@ -367,7 +371,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/dagsljus/test_modern_matte.py"
             }
           ],
-          "anmarkning": "Används bara för den 1D-horisontprofil som svf-intervall returnerar; huvudberäkningen av horisonten (ovan) använder den inte."
+          "anmarkning": "Används för den 1D-horisontprofil som svf-intervall returnerar vid \"Visa osäkerhet\" i Sol-fliken; huvudberäkningen av horisonten (ovan) använder den inte."
         },
         {
           "id": "dagsljus.svf_intervall",
@@ -501,8 +505,8 @@ export const MATEMATIK: MatematikData = {
           "formler": [
             "c_lo = c_bg + (e_lo/d_hi)·c_lokal,  c_hi = c_bg + (e_hi/d_lo)·c_lokal; dygn över 50 µg/m³ räknas i båda serierna"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -512,6 +516,10 @@ export const MATEMATIK: MatematikData = {
             {
               "text": "src/webb/api.py (POST /api/analys/luft-mkn)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/extranalyser.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/extranalyser.ts"
             }
           ],
           "kontrakt": [
@@ -527,7 +535,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/webb/test_analys_steg_b.py"
             }
           ],
-          "anmarkning": "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under \"Fler analyser\" med egna timvärden."
+          "anmarkning": "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i arbetsytan och Resultat under \"Fristående räknare\" med egna timvärden."
         }
       ]
     },
@@ -597,8 +605,8 @@ export const MATEMATIK: MatematikData = {
             "f(S) = Σ_i w_i·min(max(0, L_i − L_rikt), max_(s∈S) ΔL_(i,s));  f(S_CELF) ≥ (1 − 1/e)·f(S*), |S| ≤ k",
             "g_krit = −c₀·(√(2h_s) + √(2h_r))² / d²   (kritisk ljudhastighetsgradient för skuggzon)"
           ],
-          "flode": "api",
-          "flodeText": "Bara i API:t",
+          "flode": "flode",
+          "flodeText": "I användarflödet",
           "status": "skiss",
           "kod": [
             {
@@ -618,8 +626,12 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/src/ekologi/intervall.py"
             },
             {
-              "text": "src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/rutt)",
+              "text": "src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/analys/ekologi-atgarder, POST /api/rutt)",
               "href": "https://github.com/joelberring/floden/blob/main/src/webb/api.py"
+            },
+            {
+              "text": "webb/src/flode/extranalyser.ts",
+              "href": "https://github.com/joelberring/floden/blob/main/webb/src/flode/extranalyser.ts"
             }
           ],
           "kontrakt": [
@@ -644,7 +656,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/luft/test_kanslighet.py"
             }
           ],
-          "anmarkning": "Bara buller- och ruttvarianten nås via API (buller-skarmar, rutt med antal_insatser); luft- och ekologivarianten är fristående funktioner. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms."
+          "anmarkning": "Buller-, rutt- och ekologivarianterna nås via webb-API och \"Fristående räknare\" i webbklienten (`extranalyser.ts`); luftvarianten är ännu en fristående modul. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms."
         }
       ]
     },
@@ -695,7 +707,7 @@ export const MATEMATIK: MatematikData = {
               "href": "https://github.com/joelberring/floden/blob/main/tests/ekologi/test_losare_k21.py"
             }
           ],
-          "anmarkning": "Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md)."
+          "anmarkning": "Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md). Känslighetslagret (`kansighet.tif`, ∂R_eff/∂G) är nu exponerat bredvid strömtäthet (flaskhalsar) i Ekologi-fliken."
         },
         {
           "id": "ekologi.pc_eca",

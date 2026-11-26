@@ -66,16 +66,20 @@ test("statusmärkningen skiljer metodstatus och var metoden nås", () => {
   const html = sidaMatematik();
   assert.match(html, /Metodstatus: skiss/);
   assert.doesNotMatch(html, /Metodstatus: rapport/);
-  for (const t of ["I användarflödet", "Bara i API:t", "Fristående modul", "Kommandorad, MCP och testsvit"]) {
+  for (const t of ["I användarflödet", "Fristående modul", "Kommandorad, MCP och testsvit"]) {
     assert.ok(html.includes(t), t);
   }
-  // Märkningen följer koden: luft och buller är inte i flödet, ekologi är det.
+  // Märkningen följer koden: MKN-intervall och CELF har paneler i extranalyser.ts,
+  // medan 3D-lufttransport och Nord2000 är CLI/testsvit och adjungerad luft är fristående.
   const luft = MATEMATIK.doman.find((d) => d.id === "luft")?.metoder ?? [];
   const buller = MATEMATIK.doman.find((d) => d.id === "buller")?.metoder ?? [];
   const ekologi = MATEMATIK.doman.find((d) => d.id === "ekologi")?.metoder ?? [];
-  assert.ok([...luft, ...buller].every((m) => m.flode !== "flode"));
+  assert.equal(luft.find((m) => m.id === "luft.transport")?.flode, "cli");
+  assert.equal(luft.find((m) => m.id === "luft.mkn_intervall")?.flode, "flode");
+  assert.equal(buller.find((m) => m.id === "buller.nord2000")?.flode, "cli");
+  assert.equal(buller.find((m) => m.id === "buller.celf")?.flode, "flode");
   assert.ok(ekologi.some((m) => m.flode === "flode"));
-  assert.equal(MATEMATIK.doman.find((d) => d.id === "luft")?.metoder.find((m) => m.id === "luft.adjungerad")?.flode, "fristaende");
+  assert.equal(luft.find((m) => m.id === "luft.adjungerad")?.flode, "fristaende");
 });
 
 test("de öppna frågorna Q1–Q5 finns med underlag", () => {

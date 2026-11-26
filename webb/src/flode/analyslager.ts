@@ -103,6 +103,24 @@ export const ROLL_ETIKETTER: Record<string, { etikett: string; enhet: string; hj
     fil: "rannsten_flode.geojson",
     hjalp: "Beräknat 1D-flöde längs kantsten och rännstenar.",
   },
+  skuggmask: {
+    etikett: "Ögonblicksskugga",
+    enhet: "",
+    fil: "skuggmask.tif",
+    hjalp: "Binär skuggmask (skugga eller solbelyst mark) vid valt klockslag i UTC.",
+  },
+  stromtathet: {
+    etikett: "Strömtäthet (flaskhalsar)",
+    enhet: "",
+    fil: "stromtathet.tif",
+    hjalp: "Kretsteoretisk strömtäthet som pekar ut spridningsflaskhalsar i landskapet.",
+  },
+  kansighet: {
+    etikett: "Förbättringspotential (känslighet ∂R/∂G)",
+    enhet: "",
+    fil: "kansighet.tif",
+    hjalp: "Adjungerad känslighet ∂R_eff/∂G: visar var åtgärder ger störst förbättring av konnektiviteten.",
+  },
 };
 
 /** Etikett och enhet för en roll, med reserv från kända svenska etiketter om servern utelämnat texten. */

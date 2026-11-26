@@ -57,7 +57,7 @@ metodstatus = "vatten.dynamik"
 kod = ["src/dynamik/handelsestyrd.py", "src/dynamik/nodmodell.py", "src/dynamik/enhetssvar.py", "src/dynamik/tidsstegning.py"]
 kontrakt = ["K4", "K6", "K21 (lösaren vatten.dynamik)"]
 facit = ["tests/dynamik/test_a_fall_dynamik.py", "tests/dynamik/test_enhetssvar_och_ensemble.py", "testsvit/A1_enkel_sanka (A1–A3, A9–A13)"]
-anmarkning = "Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1."
+anmarkning = "Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Dynamiska tidsserier/tidssteg (tidsspelare) samt CDS- och blockregn finns i webbflödet. Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1."
 [[metod.formel]]
 latex = '\frac{\mathrm{d}V_u}{\mathrm{d}t} = r(t)\,A_{\text{eff}}(u) + \sum_{w \to u} Q_{w \to u}(t) - Q_{\text{avt}}(u)'
 text = "dV_u/dt = r(t)·A_eff(u) + Σ Q_(w→u)(t) − Q_avt(u)"
@@ -74,7 +74,7 @@ anvandarflode = "cli"
 kod = ["src/tvad/lokal_troghet.py", "src/tvad/hybrid.py", "src/tvad/subgrid.py", "src/tvad/felindikator.py", "src/vatten/losare_2d.py", "rust/tvad_karna"]
 kontrakt = ["K1", "K5", "K6", "K36 (felindikator i API-svaret)"]
 facit = ["testsvit EA1, EA2, EA8A (`floden testsvit`)", "testsvit grupp D (Hunter, `floden testsvit --grupp D`)", "tests/tvad/test_hastighet_facit.py", "tests/tvad/test_lokal_troghet_och_hybrid.py", "tests/tvad/test_felindikator.py"]
-anmarkning = "Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3."
+anmarkning = "Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Rust-kärnan (`rust/tvad_karna`) väljs automatiskt i 2D-lösaren när den är byggd (auto-dispatch). Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3."
 [[metod.formel]]
 latex = '\Delta t \le \mathrm{CFL}\cdot\frac{\Delta x}{\sqrt{g\,h_{\max}} + |u|_{\max}}, \qquad \mathrm{CFL} = 0{,}5'
 text = "Δt ≤ CFL·Δx / (√(g·h_max) + |u|_max), CFL = 0,5"
@@ -126,7 +126,7 @@ metodstatus_ocksa = ["dagsljus.soltimmar_mark", "dagsljus.svf_mark", "dagsljus.v
 kod = ["src/dagsljus/horisont.py", "src/dagsljus/matt.py", "src/dagsljus/solposition.py", "src/dagsljus/floden_losare.py", "src/dagsljus/ruta.py"]
 kontrakt = ["K1 (v2)", "K11", "K21 (lösarna dagsljus.*)"]
 facit = ["testsvit grupp E, E1–E7 (`floden testsvit --grupp E`)", "tests/dagsljus/test_horisont.py", "tests/dagsljus/test_matt.py", "tests/dagsljus/test_losare.py"]
-anmarkning = "Fri plan ger VSC 39,6 % och SVF 1 (E1). Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew."
+anmarkning = "Fri plan ger VSC 39,6 % och SVF 1 (E1). Ögonblicksskugga vid valfritt klockslag (`klockslag_utc`) nås i Sol-fliken bredvid soltimmar. Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew."
 [[metod.formel]]
 latex = 'h(\varphi) = \max\Bigl(0,\; \max_{c \in \text{stråle}(\varphi)} \arctan\frac{z_c - z_0}{s_c}\Bigr)'
 text = "h(φ) = max(0, max över celler c på strålen: atan((z_c − z₀) / s_c))"
@@ -142,11 +142,11 @@ id = "dagsljus.dozier_frew"
 doman = "dagsljus"
 namn = "Dozier–Frew: horisont i linjär tid"
 sammanfattning = "Exakt 1D-horisont längs en stråle med övre konvext hölje (monoton stack), O(N) oberoende av sökradien."
-anvandarflode = "api"
-kod = ["src/dagsljus/intervall.py (horisont_1d_konvext_holje)", "src/webb/api.py (POST /api/analys/svf-intervall)"]
+anvandarflode = "flode"
+kod = ["src/dagsljus/intervall.py (horisont_1d_konvext_holje)", "src/webb/api.py (POST /api/analys/svf-intervall)", "webb/src/flode/osakerhet.ts"]
 kontrakt = ["K41"]
 facit = ["tests/dagsljus/test_modern_matte.py (maxavvikelse < 1e-14 mot O(N²))"]
-anmarkning = "Används bara för den 1D-horisontprofil som svf-intervall returnerar; huvudberäkningen av horisonten (ovan) använder den inte."
+anmarkning = "Används för den 1D-horisontprofil som svf-intervall returnerar vid \"Visa osäkerhet\" i Sol-fliken; huvudberäkningen av horisonten (ovan) använder den inte."
 [[metod.formel]]
 latex = 'h_i = \max_{j > i} \arctan\frac{z_j - z_i}{d_{ij}} \quad \text{i } O(N) \text{ i stället för } O(N^2)'
 text = "h_i = max över j > i av atan((z_j − z_i) / d_ij), beräknad i O(N)"
@@ -202,11 +202,11 @@ id = "luft.mkn_intervall"
 doman = "luft"
 namn = "Monotona MKN-intervall"
 sammanfattning = "Halten är monoton i emission och antiton i deposition; två extremserier av en färdig timserie ger ett garanterat intervall för dygn över 50 µg/m³ (MKN: högst 35 dygn per år)."
-anvandarflode = "api"
-kod = ["src/luft/kanslighet.py (kor_monoton_mkn_intervall)", "src/webb/api.py (POST /api/analys/luft-mkn)"]
+anvandarflode = "flode"
+kod = ["src/luft/kanslighet.py (kor_monoton_mkn_intervall)", "src/webb/api.py (POST /api/analys/luft-mkn)", "webb/src/flode/extranalyser.ts"]
 kontrakt = ["K43"]
 facit = ["tests/luft/test_kanslighet.py (50 MKN-scenarier inneslutna)", "tests/webb/test_analys_steg_b.py"]
-anmarkning = "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under \"Fler analyser\" med egna timvärden."
+anmarkning = "Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i arbetsytan och Resultat under \"Fristående räknare\" med egna timvärden."
 [[metod.formel]]
 latex = 'c_{\text{lo}} = c_{\text{bg}} + \frac{e_{\text{lo}}}{d_{\text{hi}}}\,c_{\text{lokal}}, \qquad c_{\text{hi}} = c_{\text{bg}} + \frac{e_{\text{hi}}}{d_{\text{lo}}}\,c_{\text{lokal}}'
 text = "c_lo = c_bg + (e_lo/d_hi)·c_lokal,  c_hi = c_bg + (e_hi/d_lo)·c_lokal; dygn över 50 µg/m³ räknas i båda serierna"
@@ -232,11 +232,11 @@ id = "buller.celf"
 doman = "buller"
 namn = "CELF: submodulärt val av åtgärder"
 sammanfattning = "Girigt val av de k mest effektiva åtgärderna (bullerskärmar, kritiska gatuavsnitt, luft- och ekologiåtgärder) med lat utvärdering och garantin (1 − 1/e) mot optimum; skuggzonsdetektor för mottagare där Nord2000-dämpningen hoppar."
-anvandarflode = "api"
-kod = ["src/buller/optimering.py", "src/rutt/kritiska.py (valj_kritisk_insats_k)", "src/luft/kanslighet.py (valj_basta_luftatgarder_k)", "src/ekologi/intervall.py (valj_basta_ekologi_atgarder_k)", "src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/rutt)"]
+anvandarflode = "flode"
+kod = ["src/buller/optimering.py", "src/rutt/kritiska.py (valj_kritisk_insats_k)", "src/luft/kanslighet.py (valj_basta_luftatgarder_k)", "src/ekologi/intervall.py (valj_basta_ekologi_atgarder_k)", "src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/analys/ekologi-atgarder, POST /api/rutt)", "webb/src/flode/extranalyser.ts"]
 kontrakt = ["K42", "K8"]
 facit = ["tests/buller/test_optimering.py (matchar brute force, k = 3)", "tests/rutt/test_kritiska.py (brute force; 400 noder och 760 kanter under 0,05 s)", "tests/ekologi/test_facit_g.py (G6: CELF väljer ekodukt först)", "tests/luft/test_kanslighet.py"]
-anmarkning = "Bara buller- och ruttvarianten nås via API (buller-skarmar, rutt med antal_insatser); luft- och ekologivarianten är fristående funktioner. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms."
+anmarkning = "Buller-, rutt- och ekologivarianterna nås via webb-API och \"Fristående räknare\" i webbklienten (`extranalyser.ts`); luftvarianten är ännu en fristående modul. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms."
 [[metod.formel]]
 latex = 'f(S) = \sum_i w_i \min\bigl(\max(0, L_i - L_{\text{rikt}}),\, \max_{s \in S}\Delta L_{i,s}\bigr), \qquad f(S_{\text{CELF}}) \ge \bigl(1 - \tfrac1e\bigr) f(S^*), \; |S| \le k'
 text = "f(S) = Σ_i w_i·min(max(0, L_i − L_rikt), max_(s∈S) ΔL_(i,s));  f(S_CELF) ≥ (1 − 1/e)·f(S*), |S| ≤ k"
@@ -256,7 +256,7 @@ metodstatus = "ekologi.konnektivitet"
 kod = ["src/ekologi/krets.py", "src/ekologi/motstand.py", "src/ekologi/habitat.py", "src/karna/ekologi_losare.py"]
 kontrakt = ["K44", "K45"]
 facit = ["tests/ekologi/test_facit_g.py (G1–G3, G5)", "tests/ekologi/test_losare_k21.py (G7)"]
-anmarkning = "Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md)."
+anmarkning = "Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md). Känslighetslagret (`kansighet.tif`, ∂R_eff/∂G) är nu exponerat bredvid strömtäthet (flaskhalsar) i Ekologi-fliken."
 [[metod.formel]]
 latex = 'G_{uv} = \frac{2\,g_u g_v}{(g_u + g_v)\,\ell_{uv}}, \qquad g = 1/R, \qquad R_{\text{eff}} = 1/I_{\text{tot}}'
 text = "G_uv = 2·g_u·g_v / ((g_u + g_v)·ℓ_uv), g = 1/R;  R_eff = 1 / I_tot;  L_II symmetrisk positivt definit M-matris"

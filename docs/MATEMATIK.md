@@ -37,13 +37,13 @@ om en sökväg inte finns eller om en metod pekar på en saknad metodstatus. For
 | Vatten | Bifurkationsdetektor | `src/sankgraf/bifurkation.py`<br>`src/webb/api.py`<br>`webb/src/karta/overfall.ts`<br>`webb/src/flode/osakerhet.ts` | K34, K35, K36 | skiss | I användarflödet |
 | Vatten | Monoton intervallanalys för vatten | `src/dynamik/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K40, K34 | skiss | I användarflödet |
 | Dagsljus | Horisont, soltimmar, SVF och VSC | `src/dagsljus/horisont.py`<br>`src/dagsljus/matt.py`<br>`src/dagsljus/solposition.py`<br>`src/dagsljus/floden_losare.py`<br>`src/dagsljus/ruta.py` | K1 (v2), K11, K21 (lösarna dagsljus.*) | skiss | I användarflödet |
-| Dagsljus | Dozier–Frew: horisont i linjär tid | `src/dagsljus/intervall.py`<br>`src/webb/api.py` | K41 | skiss | Bara i API:t |
+| Dagsljus | Dozier–Frew: horisont i linjär tid | `src/dagsljus/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K41 | skiss | I användarflödet |
 | Dagsljus | Monotona SVF-intervall | `src/dagsljus/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/osakerhet.ts` | K41 | skiss | I användarflödet |
 | Luft | Vindfält och spridning som M-matris | `src/luft/transport.py`<br>`src/luft/snabbvind.py`<br>`src/luft/lbm.py`<br>`src/luft/vindkomfort.py`<br>`src/karna/luft_losare.py` | K21 (lösarna luft.halt, luft.vindkomfort) | skiss | Kommandorad, MCP och testsvit |
 | Luft | Adjungerad känslighet och åtgärdsval | `src/luft/kanslighet.py` | – | skiss | Fristående modul |
-| Luft | Monotona MKN-intervall | `src/luft/kanslighet.py`<br>`src/webb/api.py` | K43 | skiss | Bara i API:t |
+| Luft | Monotona MKN-intervall | `src/luft/kanslighet.py`<br>`src/webb/api.py`<br>`webb/src/flode/extranalyser.ts` | K43 | skiss | I användarflödet |
 | Buller | Nord2000 referenskärna | `src/buller/nord2000/`<br>`src/buller/operator/`<br>`src/buller/lagen/`<br>`src/buller/scen/`<br>`src/buller/banor/` | KB1, KB2, KB3, KB4 (docs/buller/KONTRAKT.md) | skiss | Kommandorad, MCP och testsvit |
-| Buller | CELF: submodulärt val av åtgärder | `src/buller/optimering.py`<br>`src/rutt/kritiska.py`<br>`src/luft/kanslighet.py`<br>`src/ekologi/intervall.py`<br>`src/webb/api.py` | K42, K8 | skiss | Bara i API:t |
+| Buller | CELF: submodulärt val av åtgärder | `src/buller/optimering.py`<br>`src/rutt/kritiska.py`<br>`src/luft/kanslighet.py`<br>`src/ekologi/intervall.py`<br>`src/webb/api.py`<br>`webb/src/flode/extranalyser.ts` | K42, K8 | skiss | I användarflödet |
 | Ekologi | Kretsteoretisk konnektivitet | `src/ekologi/krets.py`<br>`src/ekologi/motstand.py`<br>`src/ekologi/habitat.py`<br>`src/karna/ekologi_losare.py` | K44, K45 | skiss | I användarflödet |
 | Ekologi | PC, ECA och dPC | `src/ekologi/konnektivitet.py`<br>`src/ekologi/typer.py`<br>`src/webb/ekologi_analys.py` | K44, K45 | skiss | I användarflödet |
 | Ekologi | Monotona osäkerhetsintervall | `src/ekologi/intervall.py`<br>`src/karna/ekologi_losare.py` | K45 | skiss | I användarflödet |
@@ -78,7 +78,7 @@ $$ Q = C_d\,B\,\max(0, \Delta h)^{3/2} $$
 - **Kontrakt:** K4, K6, K21 (lösaren vatten.dynamik)
 - **Facittest:** tests/dynamik/test_a_fall_dynamik.py; tests/dynamik/test_enhetssvar_och_ensemble.py; testsvit/A1_enkel_sanka (A1–A3, A9–A13)
 - **Status:** skiss (metodstatus); i användarflödet
-- **Observera:** Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1.
+- **Observera:** Exakt bara i den kinematiska överfallsgränsen (omedelbart överfall). Dynamiska tidsserier/tidssteg (tidsspelare) samt CDS- och blockregn finns i webbflödet. Bredskronsöverfall Q = C_d·B·max(0, Δh)^(3/2) finns som tidsstegning (`overfall = skibord`) och ger en fördröjning på +1,1 % till +2,1 % i A2 och A3 (mätt 2026-11-20, docs/MATEMATIK.md): öppen fråga Q1.
 
 ### 2D lokal tröghet, subgrid och hybrid (`vatten.tvad_hybrid`)
 
@@ -94,7 +94,7 @@ $$ \mathrm{Fr} = \frac{u}{\sqrt{g\,h}} \quad \text{(Manning-normalflöde vid öv
 - **Kontrakt:** K1, K5, K6, K36 (felindikator i API-svaret)
 - **Facittest:** testsvit EA1, EA2, EA8A (`floden testsvit`); testsvit grupp D (Hunter, `floden testsvit --grupp D`); tests/tvad/test_hastighet_facit.py; tests/tvad/test_lokal_troghet_och_hybrid.py; tests/tvad/test_felindikator.py
 - **Status:** skiss (metodstatus); kommandorad, mcp och testsvit
-- **Observera:** Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3.
+- **Observera:** Körs med `floden kor --modell 2d|hybrid` och i testsviten; ingår inte i webbflödets lösare. Rust-kärnan (`rust/tvad_karna`) väljs automatiskt i 2D-lösaren när den är byggd (auto-dispatch). Hybridens uppsnabbning (12,9–20,0× vid subgrid = 4, volymfel < 2·10^-13) mättes 2026-11-20, före vattenkärnans rättelser 2026-11-23 (docs/BESLUT.md), och är inte omätt sedan dess. Hybridens fel under pågående överfall är öppen fråga Q3.
 
 ### Bifurkationsdetektor (`vatten.bifurkation`)
 
@@ -136,7 +136,7 @@ $$ \mathrm{VSC} = \frac{1}{N}\int_{-\pi/2}^{\pi/2} I\bigl(h(\varphi_n + \psi)\bi
 - **Kontrakt:** K1 (v2), K11, K21 (lösarna dagsljus.*)
 - **Facittest:** testsvit grupp E, E1–E7 (`floden testsvit --grupp E`); tests/dagsljus/test_horisont.py; tests/dagsljus/test_matt.py; tests/dagsljus/test_losare.py
 - **Status:** skiss (metodstatus); i användarflödet
-- **Observera:** Fri plan ger VSC 39,6 % och SVF 1 (E1). Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew.
+- **Observera:** Fri plan ger VSC 39,6 % och SVF 1 (E1). Ögonblicksskugga vid valfritt klockslag (`klockslag_utc`) nås i Sol-fliken bredvid soltimmar. Horisonten räknas med strålgenomgång över pelarceller (referens, riktningsruta och max-pyramid), inte med Dozier–Frew.
 
 ### Dozier–Frew: horisont i linjär tid (`dagsljus.dozier_frew`)
 
@@ -144,11 +144,11 @@ Exakt 1D-horisont längs en stråle med övre konvext hölje (monoton stack), O(
 
 $$ h_i = \max_{j > i} \arctan\frac{z_j - z_i}{d_{ij}} \quad \text{i } O(N) \text{ i stället för } O(N^2) $$
 
-- **Kod:** `src/dagsljus/intervall.py (horisont_1d_konvext_holje)`, `src/webb/api.py (POST /api/analys/svf-intervall)`
+- **Kod:** `src/dagsljus/intervall.py (horisont_1d_konvext_holje)`, `src/webb/api.py (POST /api/analys/svf-intervall)`, `webb/src/flode/osakerhet.ts`
 - **Kontrakt:** K41
 - **Facittest:** tests/dagsljus/test_modern_matte.py (maxavvikelse < 1e-14 mot O(N²))
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Används bara för den 1D-horisontprofil som svf-intervall returnerar; huvudberäkningen av horisonten (ovan) använder den inte.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Används för den 1D-horisontprofil som svf-intervall returnerar vid "Visa osäkerhet" i Sol-fliken; huvudberäkningen av horisonten (ovan) använder den inte.
 
 ### Monotona SVF-intervall (`dagsljus.svf_intervall`)
 
@@ -194,11 +194,11 @@ Halten är monoton i emission och antiton i deposition; två extremserier av en 
 
 $$ c_{\text{lo}} = c_{\text{bg}} + \frac{e_{\text{lo}}}{d_{\text{hi}}}\,c_{\text{lokal}}, \qquad c_{\text{hi}} = c_{\text{bg}} + \frac{e_{\text{hi}}}{d_{\text{lo}}}\,c_{\text{lokal}} $$
 
-- **Kod:** `src/luft/kanslighet.py (kor_monoton_mkn_intervall)`, `src/webb/api.py (POST /api/analys/luft-mkn)`
+- **Kod:** `src/luft/kanslighet.py (kor_monoton_mkn_intervall)`, `src/webb/api.py (POST /api/analys/luft-mkn)`, `webb/src/flode/extranalyser.ts`
 - **Kontrakt:** K43
 - **Facittest:** tests/luft/test_kanslighet.py (50 MKN-scenarier inneslutna); tests/webb/test_analys_steg_b.py
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i Resultat (steg 4) under "Fler analyser" med egna timvärden.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Skalar en given lokal timserie med emissionsfaktor/depositionsfaktor; det är ingen ny transportlösning. Nås i arbetsytan och Resultat under "Fristående räknare" med egna timvärden.
 
 ## 6. Buller
 
@@ -222,11 +222,11 @@ $$ f(S) = \sum_i w_i \min\bigl(\max(0, L_i - L_{\text{rikt}}),\, \max_{s \in S}\
 
 $$ g_{\text{krit}} = -\,c_0\,\frac{\bigl(\sqrt{2h_s} + \sqrt{2h_r}\bigr)^2}{d^2} $$
 
-- **Kod:** `src/buller/optimering.py`, `src/rutt/kritiska.py (valj_kritisk_insats_k)`, `src/luft/kanslighet.py (valj_basta_luftatgarder_k)`, `src/ekologi/intervall.py (valj_basta_ekologi_atgarder_k)`, `src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/rutt)`
+- **Kod:** `src/buller/optimering.py`, `src/rutt/kritiska.py (valj_kritisk_insats_k)`, `src/luft/kanslighet.py (valj_basta_luftatgarder_k)`, `src/ekologi/intervall.py (valj_basta_ekologi_atgarder_k)`, `src/webb/api.py (POST /api/analys/buller-skarmar, POST /api/analys/ekologi-atgarder, POST /api/rutt)`, `webb/src/flode/extranalyser.ts`
 - **Kontrakt:** K42, K8
 - **Facittest:** tests/buller/test_optimering.py (matchar brute force, k = 3); tests/rutt/test_kritiska.py (brute force; 400 noder och 760 kanter under 0,05 s); tests/ekologi/test_facit_g.py (G6: CELF väljer ekodukt först); tests/luft/test_kanslighet.py
-- **Status:** skiss (metodstatus); bara i api:t
-- **Observera:** Bara buller- och ruttvarianten nås via API (buller-skarmar, rutt med antal_insatser); luft- och ekologivarianten är fristående funktioner. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms.
+- **Status:** skiss (metodstatus); i användarflödet
+- **Observera:** Buller-, rutt- och ekologivarianterna nås via webb-API och "Fristående räknare" i webbklienten (`extranalyser.ts`); luftvarianten är ännu en fristående modul. Skuggzonsdetektorn är en geometrisk tumregel, inte en del av Nord2000-kärnan. 1,25 ms för 400 noder och 760 kanter vid k = 5 är en enstaka mätning ur STATUS 2026-11-22; testet kräver bara under 50 ms.
 
 ## 7. Ekologi
 
@@ -242,7 +242,7 @@ $$ \frac{\partial R_{\text{eff}}(P_i, P_j)}{\partial G_{uv}} = -\left(\frac{v_u 
 - **Kontrakt:** K44, K45
 - **Facittest:** tests/ekologi/test_facit_g.py (G1–G3, G5); tests/ekologi/test_losare_k21.py (G7)
 - **Status:** skiss (metodstatus); i användarflödet
-- **Observera:** Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md).
+- **Observera:** Skiss: artprofilernas parametrar saknar exakta källhänvisningar och markslagsöversättningen är egna val (docs/EKOLOGI.md). Känslighetslagret (`kansighet.tif`, ∂R_eff/∂G) är nu exponerat bredvid strömtäthet (flaskhalsar) i Ekologi-fliken.
 
 ### PC, ECA och dPC (`ekologi.pc_eca`)
 
