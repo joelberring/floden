@@ -26,6 +26,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+from gemensamt.hash import sha256_fil
 from gemensamt.lokal_cache import (
     las_lokal_cache_konfig,
     markera_cache_anvand,
@@ -33,6 +34,7 @@ from gemensamt.lokal_cache import (
 )
 from gemensamt.manifest import ManifestFel, las_manifest
 from gemensamt.objektlagring import (
+    LokalLagring,
     ObjektLagring,
     ObjektLagringFel,
     S3Lagring,
@@ -49,7 +51,10 @@ STANDARD_RUTFILER: tuple[str, ...] = (
 )
 STANDARD_RUTSTORLEK_M: float = 500.0
 STANDARD_NEGATIV_CACHE_TTL_S: float = 300.0
+STANDARD_FORBERAKNAT_DIR: Path = Path("data/forberaknat")
+FLODEN_FORBERAKNAT_DIR_ENV: str = "FLODEN_FORBERAKNAT_DIR"
 
+_TIFF_MAGI: tuple[bytes, ...] = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
 _RUT_ID_RE = re.compile(r"^mm_(-?\d+)_(-?\d+)$")
 _FORBJUDNA_DATAKLASS_SEGMENT: frozenset[str] = frozenset(
@@ -73,6 +78,8 @@ class DataskyddFel(ForberaknadLagerFel):
 
 
 def _validera_segment(varde: str, namn: str) -> str:
+    if not isinstance(varde, str) or "\x00" in varde:
+        raise ForberaknadLagerFel(f"Ogiltigt {namn}: {varde!r}.")
     ren = varde.strip()
     if not ren or "/" in ren or "\\" in ren or ".." in ren or not _SEGMENT_RE.match(ren):
         raise ForberaknadLagerFel(f"Ogiltigt {namn}: {varde!r}.")
@@ -80,13 +87,17 @@ def _validera_segment(varde: str, namn: str) -> str:
 
 
 def _validera_rel_fil(fil: str) -> str:
+    if not isinstance(fil, str) or "\x00" in fil:
+        raise ForberaknadLagerFel(f"Ogiltigt filnamn: {fil!r}.")
     if "\\" in fil:
         raise ForberaknadLagerFel(f"Ogiltigt filnamn (innehåller '\\'): {fil!r}.")
-    ren = fil.strip().lstrip("/")
+    ren = fil.strip()
     if not ren:
         raise ForberaknadLagerFel("Filnamn får inte vara tomt.")
+    if ren.startswith("/"):
+        raise ForberaknadLagerFel(f"Ogiltigt filnamn (absolut sökväg / path traversal): {fil!r}.")
     delar = [d for d in ren.split("/") if d]
-    if any(d in (".", "..") for d in delar):
+    if not delar or any(d in (".", "..") for d in delar):
         raise ForberaknadLagerFel(f"Ogiltigt filnamn (path traversal): {fil!r}.")
     return "/".join(delar)
 
@@ -107,11 +118,11 @@ def _kontrollera_nyckel_dataskydd(nyckel: str) -> None:
             )
 
 
-def _kontrollera_manifest_dataskydd(manifest_fil: Path, *, sammanhang: str) -> None:
-    """Kontrollerar att `run.json` inte anger `dataklass != "oppen"`."""
+def _kontrollera_manifest_dataskydd(manifest_fil: Path, *, sammanhang: str) -> dict[str, Any]:
+    """Kontrollerar att `run.json` är giltig JSON och inte anger `dataklass != "oppen"`."""
     try:
         raa = json.loads(manifest_fil.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ForberaknadLagerFel(f"Kunde inte läsa manifest för {sammanhang}: {exc}") from exc
 
     if not isinstance(raa, Mapping):
@@ -137,6 +148,177 @@ def _kontrollera_manifest_dataskydd(manifest_fil: Path, *, sammanhang: str) -> N
             las_manifest(manifest_fil)
         except ManifestFel as exc:
             raise ForberaknadLagerFel(f"Ogiltigt K0-manifest för {sammanhang}: {exc}") from exc
+    return dict(raa)
+
+
+def _forvantad_sha256(manifest: Mapping[str, Any] | None, filnamn: str) -> str | None:
+    """Returnerar förväntad SHA-256 ur `run.json` (`utdata`) om filen finns listad."""
+    if not isinstance(manifest, Mapping):
+        return None
+    utdata = manifest.get("utdata")
+    if not isinstance(utdata, list):
+        return None
+    for post in utdata:
+        if (
+            isinstance(post, Mapping)
+            and post.get("fil") == filnamn
+            and isinstance(post.get("sha256"), str)
+            and post["sha256"].strip()
+        ):
+            return str(post["sha256"]).strip().lower()
+    return None
+
+
+def validera_forberaknad_geotiff(fil: Path, *, las_data: bool = True) -> dict[str, Any]:
+    """Verifierar att en förberäknad GeoTIFF/ZSTD-COG går att öppna och avkoda utan fel.
+
+    Kastar `ForberaknadLagerFel` vid tom, trunkerad eller korrupt rasterfil.
+    """
+    try:
+        storlek = fil.stat().st_size
+    except OSError as exc:
+        raise ForberaknadLagerFel(f"Kunde inte läsa rasterfilen {fil.name}: {exc}") from exc
+    if storlek <= 0:
+        raise ForberaknadLagerFel(f"Korrupt eller tom GeoTIFF/COG-fil: {fil.name}.")
+
+    try:
+        import rasterio
+    except ImportError as exc:
+        raise ForberaknadLagerFel(
+            f"Kan inte verifiera GeoTIFF/COG ({fil.name}): 'rasterio' saknas."
+        ) from exc
+
+    try:
+        with rasterio.open(fil) as ds:
+            if ds.width <= 0 or ds.height <= 0 or ds.count < 1:
+                raise ForberaknadLagerFel(
+                    f"Ogiltiga dimensioner i GeoTIFF/COG {fil.name}: "
+                    f"{ds.width}x{ds.height} ({ds.count} band)."
+                )
+            if las_data:
+                ds.read(1)
+            return {
+                "bredd": int(ds.width),
+                "hojd": int(ds.height),
+                "band": int(ds.count),
+                "crs": str(ds.crs) if ds.crs is not None else None,
+            }
+    except ForberaknadLagerFel:
+        raise
+    except Exception as exc:  # noqa: BLE001 - RasterioIOError / GDAL-fel vid trasig ZSTD-ström
+        raise ForberaknadLagerFel(
+            f"Korrupt eller trunkerad GeoTIFF/COG ({fil.name}): {exc}"
+        ) from exc
+
+
+def _validera_lokal_sokvag_inom_rot(
+    rot: Path, rel_delar: Sequence[str], *, sammanhang: str
+) -> None:
+    """Kontrollerar att varken slutsökväg eller mellanliggande symlänkar lämnar `rot`."""
+    try:
+        rot_abs = rot.resolve()
+    except OSError as exc:
+        raise ForberaknadLagerFel(f"Kunde inte lösa lagringsroten för {sammanhang}: {exc}") from exc
+    if not rot_abs.is_dir():
+        return
+    aktuell = rot_abs
+    for seg in rel_delar:
+        aktuell = aktuell / seg
+        if aktuell.is_symlink():
+            try:
+                mal = aktuell.resolve()
+            except OSError as exc:
+                raise ForberaknadLagerFel(
+                    f"Säkerhetsfel: oläsbar symlänk i lagringen för {sammanhang}: {exc}"
+                ) from exc
+            if not mal.is_relative_to(rot_abs):
+                raise ForberaknadLagerFel(
+                    f"Säkerhetsfel: symlänk i lagringen pekar utanför roten ({sammanhang})."
+                )
+    if aktuell.exists() or aktuell.is_symlink():
+        try:
+            mal = aktuell.resolve()
+        except OSError as exc:
+            raise ForberaknadLagerFel(
+                f"Säkerhetsfel: ogiltig sökväg i lagringen för {sammanhang}: {exc}"
+            ) from exc
+        if not mal.is_relative_to(rot_abs):
+            raise ForberaknadLagerFel(
+                f"Säkerhetsfel: sökväg i lagringen pekar utanför roten ({sammanhang})."
+            )
+
+
+class _SaknadKatalogLagring(ObjektLagring):
+    """Lässkyddad lagring för en lokal förberäknad katalog som ännu inte finns på disk.
+
+    Skapar aldrig katalogen och returnerar rent tomt svar ('ej förberäknad').
+    """
+
+    def __init__(self, rot: Path) -> None:
+        self._rot = rot
+
+    @property
+    def rot(self) -> Path:
+        return self._rot
+
+    def finns(self, nyckel: str) -> bool:
+        del nyckel
+        return False
+
+    def ladda_upp_fil(
+        self,
+        lokal_fil: str | Path,
+        nyckel: str,
+        *,
+        sha256: str | None = None,
+    ) -> str:
+        del lokal_fil, nyckel, sha256
+        raise ObjektLagringFel(f"Lokal förberäknad katalog saknas: {self._rot}")
+
+    def ladda_ner_fil(self, nyckel: str, lokal_fil: str | Path) -> Path:
+        del lokal_fil
+        raise ObjektLagringFel(
+            f"Objektet {nyckel!r} saknas (lokal förberäknad katalog finns inte: {self._rot})."
+        )
+
+    def radera_prefix(self, prefix: str) -> int:
+        del prefix
+        return 0
+
+    def lista_prefix(self, prefix: str = "") -> list[str]:
+        del prefix
+        return []
+
+    def presigned_url(self, nyckel: str, giltig_s: int = 3600) -> str:
+        del giltig_s
+        raise ObjektLagringFel(
+            f"Objektet {nyckel!r} saknas (lokal förberäknad katalog finns inte: {self._rot})."
+        )
+
+
+def las_forberaknat_dir(
+    konfig: Mapping[str, Any] | None = None,
+    *,
+    miljo: Mapping[str, str] | None = None,
+    bas_rot: str | Path | None = None,
+) -> Path:
+    """Läser katalog för lokala förberäknade rutor (`FLODEN_FORBERAKNAT_DIR`/`data/forberaknat`)."""
+    env = os.environ if miljo is None else miljo
+    raw = env.get(FLODEN_FORBERAKNAT_DIR_ENV)
+    if raw is not None and raw.strip():
+        vald = Path(raw.strip()).expanduser()
+    else:
+        sektion = konfig.get("lagring", {}) if isinstance(konfig, Mapping) else {}
+        fran_konfig = (
+            sektion.get("forberaknat_dir") if isinstance(sektion, Mapping) else None
+        )
+        if isinstance(fran_konfig, str) and fran_konfig.strip():
+            vald = Path(fran_konfig.strip()).expanduser()
+        else:
+            vald = STANDARD_FORBERAKNAT_DIR
+    if bas_rot is not None and not vald.is_absolute():
+        vald = Path(bas_rot) / vald
+    return vald
 
 
 def tolka_rut_bbox_3011(
@@ -175,6 +357,7 @@ class ForberaknadKommunLager:
         max_alder_dagar: float | None = None,
         stada_vid_hamtning: bool = True,
         negativ_cache_ttl_s: float = STANDARD_NEGATIV_CACHE_TTL_S,
+        verifiera_geotiff: bool = False,
         konfig: Mapping[str, Any] | None = None,
         miljo: Mapping[str, str] | None = None,
         bas_rot: str | Path | None = None,
@@ -216,9 +399,55 @@ class ForberaknadKommunLager:
         self._max_alder_dagar = vald_max_alder
         self._stada_vid_hamtning = bool(stada_vid_hamtning)
         self._negativ_cache_ttl_s = float(negativ_cache_ttl_s)
+        self._verifiera_geotiff = bool(verifiera_geotiff)
         self._klocka: Callable[[], float] = time.monotonic if klocka is None else klocka
         self._lock = threading.RLock()
         self._saknade_nycklar: dict[str, float] = {}
+
+    @classmethod
+    def fran_lokal_katalog(
+        cls,
+        katalog: str | Path = STANDARD_FORBERAKNAT_DIR,
+        cache_rot: str | Path | None = None,
+        max_gb: float | None = None,
+        *,
+        max_alder_dagar: float | None = None,
+        stada_vid_hamtning: bool = True,
+        negativ_cache_ttl_s: float = STANDARD_NEGATIV_CACHE_TTL_S,
+        verifiera_geotiff: bool = False,
+        konfig: Mapping[str, Any] | None = None,
+        miljo: Mapping[str, str] | None = None,
+        bas_rot: str | Path | None = None,
+        klocka: Callable[[], float] | None = None,
+    ) -> ForberaknadKommunLager:
+        """Skapar `ForberaknadKommunLager` direkt mot en lokal katalog utan S3.
+
+        Om `katalog` saknas skapas den inte utan lagret returnerar rent 'ej förberäknad'
+        (tomma listor) utan krasch.
+        """
+        rot = Path(katalog).expanduser()
+        if bas_rot is not None and not rot.is_absolute():
+            rot = Path(bas_rot) / rot
+        if rot.exists() and not rot.is_dir():
+            raise ForberaknadLagerFel(
+                f"Lokal förberäknad sökväg är inte en katalog: {rot}."
+            )
+        lagring: ObjektLagring = (
+            LokalLagring(rot) if rot.is_dir() else _SaknadKatalogLagring(rot)
+        )
+        return cls(
+            lagring,
+            cache_rot=cache_rot,
+            max_gb=max_gb,
+            max_alder_dagar=max_alder_dagar,
+            stada_vid_hamtning=stada_vid_hamtning,
+            negativ_cache_ttl_s=negativ_cache_ttl_s,
+            verifiera_geotiff=verifiera_geotiff,
+            konfig=konfig,
+            miljo=miljo,
+            bas_rot=bas_rot,
+            klocka=klocka,
+        )
 
     @property
     def cache_rot(self) -> Path:
@@ -239,6 +468,19 @@ class ForberaknadKommunLager:
     @property
     def kalla_typ(self) -> Literal["s3", "lokal"]:
         return "s3" if isinstance(self._lagring, S3Lagring) else "lokal"
+
+    @property
+    def lokal_rot(self) -> Path | None:
+        if isinstance(self._lagring, LokalLagring | _SaknadKatalogLagring):
+            return self._lagring.rot
+        return None
+
+    @property
+    def ar_tillganglig(self) -> bool:
+        """True om lagringskällan finns tillgänglig (för lokal lagring att katalogen finns)."""
+        if isinstance(self._lagring, LokalLagring | _SaknadKatalogLagring):
+            return self._lagring.rot.is_dir()
+        return True
 
     def rensa_negativ_cache(self) -> None:
         """Tömmer alla negativcache-poster under lås."""
@@ -264,29 +506,118 @@ class ForberaknadKommunLager:
     def _rensa_saknad(self, nyckel: str) -> None:
         self._saknade_nycklar.pop(nyckel, None)
 
+    def _kontrollera_lagring_sokvag(self, nyckel: str) -> None:
+        if isinstance(self._lagring, LokalLagring):
+            _validera_lokal_sokvag_inom_rot(
+                self._lagring.rot, nyckel.split("/"), sammanhang=nyckel
+            )
+
+    def _kontrollera_cache_sokvag(self, rel_delar: Sequence[str], *, sammanhang: str) -> None:
+        if self._cache_rot.exists():
+            _validera_lokal_sokvag_inom_rot(self._cache_rot, rel_delar, sammanhang=sammanhang)
+
     def _rutamapp(self, kommun: str, rut_id: str) -> Path:
         return self._cache_rot / "geografi" / kommun / rut_id
 
-    def _ladda_ner_atomiskt(self, nyckel: str, mal: Path) -> Path:
-        """Laddar ner `nyckel` via temporärfil i målmappen följt av `os.replace`."""
+    def _validera_nedladdad_fil(
+        self,
+        tmp_path: Path,
+        filnamn: str,
+        *,
+        nyckel: str,
+        manifest: Mapping[str, Any] | None,
+        verifiera_geotiff: bool,
+    ) -> dict[str, Any] | None:
+        """Validerar manifest/metadata-JSON, ev. SHA-256 och GeoTIFF/ZSTD-COG före atomisk flytt."""
+        if filnamn == "run.json":
+            return _kontrollera_manifest_dataskydd(tmp_path, sammanhang=nyckel)
+
+        if filnamn.lower().endswith(".json"):
+            try:
+                meta = json.loads(tmp_path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ForberaknadLagerFel(
+                    f"Korrupt metadata-JSON för {nyckel}: {exc}"
+                ) from exc
+            if not isinstance(meta, Mapping):
+                raise ForberaknadLagerFel(
+                    f"Ogiltig metadata-JSON (ej JSON-objekt) för {nyckel}."
+                )
+
+        forvantad_sha = _forvantad_sha256(manifest, filnamn)
+        if forvantad_sha is not None:
+            faktisk_sha = sha256_fil(tmp_path).lower()
+            if faktisk_sha != forvantad_sha:
+                raise ForberaknadLagerFel(
+                    f"Korrupt eller trunkerad fil för {nyckel}: SHA-256 stämmer inte "
+                    f"(förväntade {forvantad_sha[:12]}…, fick {faktisk_sha[:12]}…)."
+                )
+
+        if filnamn.lower().endswith((".tif", ".tiff")):
+            try:
+                storlek = tmp_path.stat().st_size
+                with tmp_path.open("rb") as fh:
+                    magi = fh.read(4)
+            except OSError as exc:
+                raise ForberaknadLagerFel(f"Kunde inte läsa {nyckel}: {exc}") from exc
+            if storlek <= 0:
+                raise ForberaknadLagerFel(f"Tom eller trunkerad GeoTIFF/COG för {nyckel}.")
+            if verifiera_geotiff or self._verifiera_geotiff or magi in _TIFF_MAGI:
+                validera_forberaknad_geotiff(tmp_path, las_data=True)
+        return None
+
+    def _ladda_ner_atomiskt(
+        self,
+        nyckel: str,
+        mal: Path,
+        *,
+        filnamn: str | None = None,
+        manifest: Mapping[str, Any] | None = None,
+        verifiera_geotiff: bool = False,
+    ) -> tuple[Path, dict[str, Any] | None]:
+        """Laddar ner `nyckel` via temporärfil i målmappen följt av validering och `os.replace`."""
         _kontrollera_nyckel_dataskydd(nyckel)
+        self._kontrollera_lagring_sokvag(nyckel)
         mal.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            cache_abs = self._cache_rot.resolve()
+            mal_abs = mal.resolve()
+        except OSError as exc:
+            raise ForberaknadLagerFel(f"Ogiltig cachesökväg för {nyckel}: {exc}") from exc
+        if not mal_abs.is_relative_to(cache_abs) or mal.is_symlink():
+            raise ForberaknadLagerFel(
+                f"Säkerhetsfel: cachemål pekar utanför cacheroten ({nyckel})."
+            )
         fd, tmp_namn = tempfile.mkstemp(prefix=".floden_rut_", dir=str(mal.parent))
         tmp_path = Path(tmp_namn)
+        eff_fil = filnamn or mal.name
+        parsed_manifest: dict[str, Any] | None = None
         try:
             os.close(fd)
-            self._lagring.ladda_ner_fil(nyckel, tmp_path)
-            if mal.name == "run.json":
-                _kontrollera_manifest_dataskydd(tmp_path, sammanhang=nyckel)
+            try:
+                self._lagring.ladda_ner_fil(nyckel, tmp_path)
+            except ObjektLagringFel as exc:
+                raise ForberaknadLagerFel(
+                    f"Kunde inte hämta {nyckel} från lagringen: {exc}"
+                ) from exc
+            parsed_manifest = self._validera_nedladdad_fil(
+                tmp_path,
+                eff_fil,
+                nyckel=nyckel,
+                manifest=manifest,
+                verifiera_geotiff=verifiera_geotiff,
+            )
             os.replace(tmp_path, mal)
         except Exception:
             tmp_path.unlink(missing_ok=True)
             raise
         markera_cache_anvand(mal)
-        return mal
+        return mal, parsed_manifest
 
     def lista_kommuner(self) -> list[str]:
         """Returnerar sorterad lista över kommuner under `geografi/<kommun>/<rut_id>/...`."""
+        if isinstance(self._lagring, LokalLagring) and not self._lagring.rot.is_dir():
+            return []
         nycklar = self._lagring.lista_prefix("geografi/")
         kommuner: set[str] = set()
         for nyckel in nycklar:
@@ -301,6 +632,14 @@ class ForberaknadKommunLager:
         """Returnerar sorterad lista över rut-id under `geografi/<kommun>/<rut_id>/...`."""
         ren_kommun = _validera_segment(kommun, "kommun")
         _kontrollera_nyckel_dataskydd(f"geografi/{ren_kommun}")
+        if isinstance(self._lagring, LokalLagring):
+            if not self._lagring.rot.is_dir():
+                return []
+            _validera_lokal_sokvag_inom_rot(
+                self._lagring.rot,
+                ("geografi", ren_kommun),
+                sammanhang=f"geografi/{ren_kommun}",
+            )
         prefix = f"geografi/{ren_kommun}/"
         nycklar = self._lagring.lista_prefix(prefix)
         rutor: set[str] = set()
@@ -317,11 +656,14 @@ class ForberaknadKommunLager:
         kommun: str,
         rut_id: str,
         filer: Sequence[str] = STANDARD_RUTFILER,
+        *,
+        verifiera_geotiff: bool = False,
     ) -> Path:
         """Hämtar efterfrågade filer för en ruta till lokal cache (atomiskt + LRU-mtime).
 
         Om `run.json` och efterfrågade filer redan finns lokalt sker ingen ny S3-hämtning.
-        Avvisar alltid rutor med `dataklass != "oppen"`.
+        Avvisar alltid rutor med `dataklass != "oppen"`, path-traversal, symlänkar ut ur roten
+        samt trasig metadata-JSON eller trunkerad/korrupt GeoTIFF/COG.
         """
         ren_kommun = _validera_segment(kommun, "kommun")
         ren_ruta = _validera_segment(rut_id, "rut_id")
@@ -329,19 +671,30 @@ class ForberaknadKommunLager:
             raise ForberaknadLagerFel("Minst en fil måste anges vid hamta_ruta.")
 
         normaliserade = [_validera_rel_fil(f) for f in filer]
+        run_nyckel = geografi_nyckel(ren_kommun, ren_ruta, "run.json")
+        _kontrollera_nyckel_dataskydd(run_nyckel)
+        self._kontrollera_lagring_sokvag(run_nyckel)
         for filnamn in normaliserade:
-            _kontrollera_nyckel_dataskydd(geografi_nyckel(ren_kommun, ren_ruta, filnamn))
+            nyckel = geografi_nyckel(ren_kommun, ren_ruta, filnamn)
+            _kontrollera_nyckel_dataskydd(nyckel)
+            self._kontrollera_lagring_sokvag(nyckel)
 
+        self._kontrollera_cache_sokvag(
+            ("geografi", ren_kommun, ren_ruta), sammanhang=f"{ren_kommun}/{ren_ruta}"
+        )
         rutamapp = self._rutamapp(ren_kommun, ren_ruta)
         lokal_run = rutamapp / "run.json"
-        run_nyckel = geografi_nyckel(ren_kommun, ren_ruta, "run.json")
+        eff_verifiera = bool(verifiera_geotiff or self._verifiera_geotiff)
 
         with self._lock:
             nu_s = self._klocka()
+            manifest_data: dict[str, Any] | None = None
             # Snabb lokal cache-träff: om `run.json` finns lokalt och varje efterfrågad fil
             # antingen finns lokalt eller har giltig (ej utgången) negativcache -> 0 S3-anrop!
             if lokal_run.is_file():
-                _kontrollera_manifest_dataskydd(lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}")
+                manifest_data = _kontrollera_manifest_dataskydd(
+                    lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}"
+                )
                 saknas_lokalt = [
                     f
                     for f in normaliserade
@@ -351,14 +704,20 @@ class ForberaknadKommunLager:
                     )
                 ]
                 if not saknas_lokalt:
-                    lokala = [rutamapp / f for f in normaliserade if (rutamapp / f).is_file()]
+                    lokala = [
+                        (f, rutamapp / f) for f in normaliserade if (rutamapp / f).is_file()
+                    ]
                     if not lokala:
                         raise ForberaknadLagerFel(
                             f"Inga efterfrågade filer hittades i lagringen för "
                             f"{ren_kommun}/{ren_ruta} (sökte: {', '.join(normaliserade)})."
                         )
+                    if eff_verifiera:
+                        for f_namn, p in lokala:
+                            if f_namn.lower().endswith((".tif", ".tiff")):
+                                validera_forberaknad_geotiff(p, las_data=True)
                     markera_cache_anvand(lokal_run)
-                    for p in lokala:
+                    for _, p in lokala:
                         markera_cache_anvand(p)
                     return rutamapp
 
@@ -367,20 +726,26 @@ class ForberaknadKommunLager:
             run_saknas_nu = False
             if not lokal_run.is_file() and not self._ar_negativ_cachad(run_nyckel, nu_s):
                 if self._lagring.finns(run_nyckel):
-                    self._ladda_ner_atomiskt(run_nyckel, lokal_run)
+                    _, manifest_data = self._ladda_ner_atomiskt(
+                        run_nyckel, lokal_run, filnamn="run.json"
+                    )
                     self._rensa_saknad(run_nyckel)
                     hamtade_nagot = True
                 else:
                     self._markera_saknad(run_nyckel, self._klocka())
                     run_saknas_nu = True
-            elif lokal_run.is_file():
-                _kontrollera_manifest_dataskydd(lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}")
+            elif lokal_run.is_file() and manifest_data is None:
+                manifest_data = _kontrollera_manifest_dataskydd(
+                    lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}"
+                )
 
             hittade_filer = 0
             for filnamn in normaliserade:
                 mal = rutamapp / filnamn
                 nyckel = geografi_nyckel(ren_kommun, ren_ruta, filnamn)
                 if mal.is_file():
+                    if eff_verifiera and filnamn.lower().endswith((".tif", ".tiff")):
+                        validera_forberaknad_geotiff(mal, las_data=True)
                     markera_cache_anvand(mal)
                     self._rensa_saknad(nyckel)
                     hittade_filer += 1
@@ -390,7 +755,13 @@ class ForberaknadKommunLager:
                 ):
                     continue
                 if self._lagring.finns(nyckel):
-                    self._ladda_ner_atomiskt(nyckel, mal)
+                    self._ladda_ner_atomiskt(
+                        nyckel,
+                        mal,
+                        filnamn=filnamn,
+                        manifest=manifest_data,
+                        verifiera_geotiff=eff_verifiera,
+                    )
                     self._rensa_saknad(nyckel)
                     hamtade_nagot = True
                     hittade_filer += 1
@@ -410,6 +781,44 @@ class ForberaknadKommunLager:
                     max_alder_dagar=self._max_alder_dagar,
                 )
             return rutamapp
+
+    def las_raster(
+        self,
+        kommun: str,
+        rut_id: str,
+        filnamn: str = "mark.tif",
+    ) -> tuple[Any, dict[str, Any]]:
+        """Hämtar och läser en förberäknad GeoTIFF/ZSTD-COG med strikt validering.
+
+        Returnerar `(array, metadata)` och kastar alltid `ForberaknadLagerFel` vid korrupt fil.
+        """
+        ren_fil = _validera_rel_fil(filnamn)
+        mapp = self.hamta_ruta(kommun, rut_id, filer=(ren_fil,), verifiera_geotiff=True)
+        fil = mapp / ren_fil
+        try:
+            import rasterio
+
+            with rasterio.open(fil) as ds:
+                arr = ds.read(1)
+                meta = {
+                    "bredd": int(ds.width),
+                    "hojd": int(ds.height),
+                    "crs": str(ds.crs) if ds.crs is not None else None,
+                    "bounds": (
+                        float(ds.bounds.left),
+                        float(ds.bounds.bottom),
+                        float(ds.bounds.right),
+                        float(ds.bounds.top),
+                    ),
+                    "nodata": ds.nodata,
+                }
+            return arr, meta
+        except ForberaknadLagerFel:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise ForberaknadLagerFel(
+                f"Kunde inte läsa förberäknat raster {kommun}/{rut_id}/{ren_fil}: {exc}"
+            ) from exc
 
     def hitta_rutor_for_utbredning(
         self,
@@ -461,10 +870,16 @@ def forberaknad_lager_fran_miljo(
     bas_rot: str | Path | None = None,
     negativ_cache_ttl_s: float = STANDARD_NEGATIV_CACHE_TTL_S,
 ) -> ForberaknadKommunLager | None:
-    """Skapar `ForberaknadKommunLager` ur `FLODEN_S3_*` / `[lagring]`, eller `None` om S3 ej aktiv.
+    """Skapar `ForberaknadKommunLager` ur `FLODEN_S3_*`/[lagring] eller lokal katalog.
 
-    - Returnerar `None` direkt när S3 inte är konfigurerat (importerar aldrig `boto3`).
-    - Kastar `ObjektLagringFel` (inget tyst fel) om S3 är aktiverat men saknar nycklar/bucket/boto3.
+    - När `FLODEN_S3_TYP=s3` (eller `FLODEN_S3_BUCKET` + `FLODEN_S3_ENDPOINT` är satta utan
+      `FLODEN_S3_TYP`) används S3-lagring (100 % bakåtkompatibelt; kastar `ObjektLagringFel`
+      om nycklar/bucket/boto3 saknas).
+    - När `FLODEN_S3_TYP` inte är satt eller är `lokal` används lokal förberäknad katalog
+      (`FLODEN_FORBERAKNAT_DIR`, standard `data/forberaknat` upplöst mot `bas_rot`) via
+      `LokalLagring` om katalogen finns på disk (importerar aldrig `boto3`).
+    - Saknas katalogen returneras `None` rent ("ej förberäknad", aldrig krasch och ingen tom
+      katalog skapas).
     - Med `cache_rot=None` används `[lagring.lokal_cache] mapp` / `FLODEN_LOKAL_CACHE_MAPP`
       (upplöst mot `bas_rot` om angiven och sökvägen är relativ).
     """
@@ -476,17 +891,32 @@ def forberaknad_lager_fran_miljo(
         and lk.bucket is not None
         and lk.endpoint is not None
     )
-    if not s3_uttrycklig and not s3_implicit:
+    if s3_uttrycklig or s3_implicit:
+        if s3_implicit and lk.typ != "s3":
+            from dataclasses import replace
+
+            lk = replace(lk, typ="s3")
+
+        lagring = skapa_lagring(lk, miljo=env, klient=klient)
+        return ForberaknadKommunLager(
+            lagring,
+            cache_rot=cache_rot,
+            max_gb=max_gb,
+            negativ_cache_ttl_s=negativ_cache_ttl_s,
+            konfig=konfig,
+            miljo=env,
+            bas_rot=bas_rot,
+        )
+
+    lokal_katalog = las_forberaknat_dir(konfig, miljo=env, bas_rot=bas_rot)
+    if lokal_katalog.exists() and not lokal_katalog.is_dir():
+        raise ForberaknadLagerFel(
+            f"{FLODEN_FORBERAKNAT_DIR_ENV} pekar på en fil, inte en katalog: {lokal_katalog}."
+        )
+    if not lokal_katalog.is_dir():
         return None
-
-    if s3_implicit and lk.typ != "s3":
-        from dataclasses import replace
-
-        lk = replace(lk, typ="s3")
-
-    lagring = skapa_lagring(lk, miljo=env, klient=klient)
     return ForberaknadKommunLager(
-        lagring,
+        LokalLagring(lokal_katalog),
         cache_rot=cache_rot,
         max_gb=max_gb,
         negativ_cache_ttl_s=negativ_cache_ttl_s,
@@ -498,12 +928,16 @@ def forberaknad_lager_fran_miljo(
 
 __all__ = [
     "DataskyddFel",
+    "FLODEN_FORBERAKNAT_DIR_ENV",
     "ForberaknadKommunLager",
     "ForberaknadLagerFel",
     "ObjektLagringFel",
+    "STANDARD_FORBERAKNAT_DIR",
     "STANDARD_NEGATIV_CACHE_TTL_S",
     "STANDARD_RUTFILER",
     "STANDARD_RUTSTORLEK_M",
     "forberaknad_lager_fran_miljo",
+    "las_forberaknat_dir",
     "tolka_rut_bbox_3011",
+    "validera_forberaknad_geotiff",
 ]

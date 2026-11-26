@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import io
 import math
-from collections.abc import Sequence
+import os
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,7 +32,14 @@ from markmodell.hinder_oppningar import BYGGNAD, brann_in_byggnader
 from testsvit.k1_io import las_geotiff
 
 MAX_PX = 2048
-"""Längsta sida i förhandsvisningen. Större lager nedsamplas (närmaste cell); filen är full."""
+"""Standardvärde för längsta sida i översikts-PNG. Större lager nedskalas (block-max);
+rådata-GeoTIFF och pekaravläsning förblir alltid i full upplösning."""
+
+MIN_PNG_PIXLAR = 64
+"""Minsta tillåtna värde för `FLODEN_MAX_PNG_PIXLAR`."""
+
+FLODEN_MAX_PNG_PIXLAR_ENV = "FLODEN_MAX_PNG_PIXLAR"
+"""Miljövariabel som styr största bildsida (px) i översikts-PNG (standard 2048, heltal >= 64)."""
 
 _SEKVENTIELL: tuple[str, ...] = (
     "#00204d",
@@ -272,32 +280,163 @@ def varde_intervall(rastren: Sequence[NDArray[np.float32]]) -> tuple[float, floa
     return lo, hi
 
 
-def _hex(rgb: str) -> NDArray[np.float64]:
-    return np.array([int(rgb[i : i + 2], 16) for i in (1, 3, 5)], dtype=np.float64)
+def max_png_pixlar(env: Mapping[str, str] | None = None) -> int:
+    """Läser maxdimension (px) för översikts-PNG ur `FLODEN_MAX_PNG_PIXLAR` (standard 2048, >= 64).
+
+    Ogiltigt värde (icke-heltal eller < 64) ger `LagerFel` (inga tysta fel).
+    """
+    kalla = os.environ if env is None else env
+    raw = kalla.get(FLODEN_MAX_PNG_PIXLAR_ENV)
+    if raw is None or not raw.strip():
+        return MAX_PX
+    text = raw.strip()
+    try:
+        val = int(text)
+    except ValueError as exc:
+        raise LagerFel(
+            f"Ogiltigt värde i {FLODEN_MAX_PNG_PIXLAR_ENV}={raw!r}: "
+            f"ange ett heltal >= {MIN_PNG_PIXLAR}."
+        ) from exc
+    if val < MIN_PNG_PIXLAR:
+        raise LagerFel(
+            f"Ogiltigt värde i {FLODEN_MAX_PNG_PIXLAR_ENV}={raw!r}: "
+            f"måste vara ett heltal >= {MIN_PNG_PIXLAR}."
+        )
+    return val
 
 
-def _nedsampla(raster: NDArray[np.float32]) -> tuple[NDArray[np.float32], int]:
-    faktor = max(1, math.ceil(max(raster.shape) / MAX_PX))
-    return (raster[::faktor, ::faktor], faktor) if faktor > 1 else (raster, 1)
+def _validera_max_pixlar(max_pixlar: int | None) -> int:
+    if max_pixlar is None:
+        return max_png_pixlar()
+    if (
+        isinstance(max_pixlar, bool)
+        or not isinstance(max_pixlar, int)
+        or max_pixlar < MIN_PNG_PIXLAR
+    ):
+        raise LagerFel(
+            f"max_pixlar måste vara ett heltal >= {MIN_PNG_PIXLAR}, fick {max_pixlar!r}."
+        )
+    return max_pixlar
+
+
+def _mal_dimensioner(hojd: int, bredd: int, max_px: int) -> tuple[int, int]:
+    """Deterministiska måldimensioner med bibehållet bildförhållande: max == max_px, min >= 1."""
+    if hojd <= 0 or bredd <= 0:
+        raise LagerFel(f"Ogiltiga rasterdimensioner: {hojd}x{bredd}.")
+    if max(hojd, bredd) <= max_px:
+        return hojd, bredd
+    if hojd >= bredd:
+        ny_h = max_px
+        ny_b = min(bredd, max(1, round(bredd * max_px / hojd)))
+    else:
+        ny_b = max_px
+        ny_h = min(hojd, max(1, round(hojd * max_px / bredd)))
+    return ny_h, ny_b
+
+
+def _block_kanter(storlek: int, ny_storlek: int) -> NDArray[np.intp]:
+    """Heltalsexakta blockgränser som delar `[0, storlek)` i `ny_storlek` icke-tomma block."""
+    return ((np.arange(ny_storlek + 1, dtype=np.int64) * storlek) // ny_storlek).astype(np.intp)
+
+
+def _block_nedskala(
+    raster: NDArray[np.float32],
+    *,
+    ny_h: int,
+    ny_b: int,
+    dold: NDArray[np.bool_] | None = None,
+    lage: str = "max",
+) -> tuple[NDArray[np.float32], NDArray[np.intp], NDArray[np.intp]]:
+    """Nedskalar `raster` deterministiskt i radband med block-max (eller teckenbevarande max-|v|).
+
+    Bevarar smala översvämmade gator och lågpunkter utan att smeta värden mot 0, håller `NaN`/
+    `dold` transparenta och begränsar tillfälligt arbetsminne genom bandvis beräkning.
+    """
+    hojd, bredd = raster.shape
+    r_kanter = _block_kanter(hojd, ny_h)
+    c_kanter = _block_kanter(bredd, ny_b)
+    c_start = c_kanter[:-1]
+    ut = np.empty((ny_h, ny_b), dtype=np.float32)
+    steg_rader = 256
+    for i0 in range(0, ny_h, steg_rader):
+        i1 = min(ny_h, i0 + steg_rader)
+        r0 = int(r_kanter[i0])
+        r1 = int(r_kanter[i1])
+        del_r = np.array(raster[r0:r1, :], dtype=np.float32, copy=True)
+        if dold is not None:
+            del_r[dold[r0:r1, :]] = np.nan
+        giltig = np.isfinite(del_r)
+        lokala_r = r_kanter[i0:i1] - r0
+        if lage == "absmax":
+            max_in = np.where(giltig, del_r, np.float32(-np.inf))
+            rad_max = np.maximum.reduceat(max_in, lokala_r, axis=0)
+            b_max = np.maximum.reduceat(rad_max, c_start, axis=1)
+            del max_in, rad_max
+            min_in = np.where(giltig, del_r, np.float32(np.inf))
+            rad_min = np.minimum.reduceat(min_in, lokala_r, axis=0)
+            b_min = np.minimum.reduceat(rad_min, c_start, axis=1)
+            del min_in, rad_min
+            har_varde = np.isfinite(b_max)
+            val = np.where(np.abs(b_min) > np.abs(b_max), b_min, b_max)
+            val[~har_varde] = np.nan
+            ut[i0:i1, :] = val
+            del b_max, b_min, har_varde, val
+        else:
+            del_r[~giltig] = np.float32(-np.inf)
+            rad_max = np.maximum.reduceat(del_r, lokala_r, axis=0)
+            block = np.maximum.reduceat(rad_max, c_start, axis=1)
+            block[block == np.float32(-np.inf)] = np.nan
+            ut[i0:i1, :] = block
+            del rad_max, block
+        del del_r, giltig
+    return ut, r_kanter, c_kanter
+
+
+def _hex(rgb: str) -> NDArray[np.float32]:
+    return np.array([int(rgb[i : i + 2], 16) for i in (1, 3, 5)], dtype=np.float32)
+
+
+def _nedsampla(
+    raster: NDArray[np.float32], *, max_pixlar: int | None = None
+) -> tuple[NDArray[np.float32], int]:
+    max_px = _validera_max_pixlar(max_pixlar)
+    hojd, bredd = raster.shape
+    if max(hojd, bredd) <= max_px:
+        return raster, 1
+    faktor = max(1, math.ceil(max(hojd, bredd) / max_px))
+    ny_h, ny_b = _mal_dimensioner(hojd, bredd, max_px)
+    ned, _, _ = _block_nedskala(raster, ny_h=ny_h, ny_b=ny_b, lage="max")
+    return ned, faktor
 
 
 def _sekventiell(
     v: NDArray[np.float32], lo: float, hi: float, palett: Sequence[str] = _SEKVENTIELL
 ) -> NDArray[np.uint8]:
     stopp = np.stack([_hex(h) for h in palett])
-    norm = np.zeros(v.shape, dtype=np.float64) if hi <= lo else (v - lo) / (hi - lo)
-    t = np.clip(np.nan_to_num(norm, nan=0.0), 0.0, 1.0) * (len(stopp) - 1)
-    i0 = np.minimum(t.astype(int), len(stopp) - 2)
-    f = (t - i0)[..., None]
-    rgb = stopp[i0] * (1.0 - f) + stopp[i0 + 1] * f
-    return np.asarray(np.rint(rgb), dtype=np.uint8)
+    if hi <= lo:
+        norm = np.zeros(v.shape, dtype=np.float32)
+    else:
+        norm = (v - np.float32(lo)) / np.float32(hi - lo)
+    t = np.clip(np.nan_to_num(norm, nan=0.0), np.float32(0.0), np.float32(1.0)) * np.float32(
+        len(stopp) - 1
+    )
+    del norm
+    i0 = np.minimum(t.astype(np.intp), len(stopp) - 2)
+    f = (t - i0.astype(np.float32))[..., None]
+    del t
+    rgb = stopp[i0] * (np.float32(1.0) - f) + stopp[i0 + 1] * f
+    del i0, f
+    ut = np.asarray(np.rint(rgb), dtype=np.uint8)
+    del rgb
+    return ut
 
 
 def _vatten(v: NDArray[np.float32]) -> tuple[NDArray[np.uint8], NDArray[np.bool_]]:
     rgb = np.zeros((*v.shape, 3), dtype=np.uint8)
-    synlig = np.isfinite(v) & (v >= _VATTEN_KLASSER[0][0])
+    ok = np.isfinite(v)
+    synlig = ok & (v >= _VATTEN_KLASSER[0][0])
     for gräns, hexfarg in _VATTEN_KLASSER:
-        rgb[np.isfinite(v) & (v >= gräns)] = _hex(hexfarg).astype(np.uint8)
+        rgb[ok & (v >= gräns)] = _hex(hexfarg).astype(np.uint8)
     return rgb, synlig
 
 
@@ -329,12 +468,25 @@ def _skillnad(
     rgb = np.zeros((*v.shape, 3), dtype=np.uint8)
     ok = np.isfinite(v)
     synlig = ok & (np.abs(v) > troskel)
-    mag = np.clip(np.abs(np.nan_to_num(v)) / gransvarde, 0.0, 1.0) if gransvarde > 0 else 0.0 * v
-    vit = np.array([245.0, 245.0, 245.0])
+    mag = (
+        np.clip(
+            np.abs(np.nan_to_num(v)) / np.float32(gransvarde),
+            np.float32(0.0),
+            np.float32(1.0),
+        )
+        if gransvarde > 0
+        else np.zeros(v.shape, dtype=np.float32)
+    )
+    vit = np.array([245.0, 245.0, 245.0], dtype=np.float32)
     for tecken, hexfarg in ((v < 0, _SKILLNAD_MINSKNING), (v > 0, _SKILLNAD_OKNING)):
-        m = (np.asarray(mag, dtype=np.float64) * 0.75 + 0.25)[..., None]
-        farg = vit * (1.0 - m) + _hex(hexfarg) * m
-        rgb[ok & tecken] = np.rint(farg[ok & tecken]).astype(np.uint8)
+        mask = ok & tecken
+        if not mask.any():
+            continue
+        m = (mag[mask] * np.float32(0.75) + np.float32(0.25))[..., None]
+        farg = vit * (np.float32(1.0) - m) + _hex(hexfarg) * m
+        rgb[mask] = np.rint(farg).astype(np.uint8)
+        del m, farg
+    del mag
     return rgb, synlig
 
 
@@ -358,6 +510,7 @@ def rita_png(
     hi: float,
     troskel: float = 0.0,
     dold: NDArray[np.bool_] | None = None,
+    max_pixlar: int | None = None,
 ) -> tuple[bytes, int, int, int]:
     """Ritar rastret som transparent RGBA-PNG. Returnerar (png, bredd, hojd, nedsamplingsfaktor).
 
@@ -365,7 +518,9 @@ def rita_png(
     för `skillnad` är `hi` största absolutvärdet. Saknade värden är genomskinliga, och celler i
     `dold` (t.ex. byggnadernas tak, som inte är mark) likaså.
     """
-    b = rita_bild(raster, farg, lo=lo, hi=hi, troskel=troskel, dold=dold)
+    b = rita_bild(
+        raster, farg, lo=lo, hi=hi, troskel=troskel, dold=dold, max_pixlar=max_pixlar
+    )
     return b.png, b.bredd_px, b.hojd_px, b.faktor
 
 
@@ -377,11 +532,29 @@ def rita_bild(
     hi: float,
     troskel: float = 0.0,
     dold: NDArray[np.bool_] | None = None,
+    max_pixlar: int | None = None,
 ) -> Bild:
     """Som `rita_png` men även med de synliga cellernas utsträckning (för att zooma till dem)."""
+    if raster.ndim != 2:
+        raise LagerFel(f"Rastret måste vara 2D, fick form {raster.shape}.")
     if dold is not None and dold.shape != raster.shape:
         raise LagerFel(f"Masken {dold.shape} passar inte rastret {raster.shape}.")
-    v, faktor = _nedsampla(raster)
+    max_px = _validera_max_pixlar(max_pixlar)
+    hojd, bredd = raster.shape
+    nedskalad = max(hojd, bredd) > max_px
+    r_kanter: NDArray[np.intp] | None = None
+    c_kanter: NDArray[np.intp] | None = None
+    if nedskalad:
+        faktor = max(1, math.ceil(max(hojd, bredd) / max_px))
+        ny_h, ny_b = _mal_dimensioner(hojd, bredd, max_px)
+        lage = "absmax" if farg == "skillnad" else "max"
+        v, r_kanter, c_kanter = _block_nedskala(
+            raster, ny_h=ny_h, ny_b=ny_b, dold=dold, lage=lage
+        )
+    else:
+        faktor = 1
+        v = raster
+
     ok = np.isfinite(v)
     if farg == "vatten":
         rgb, synlig = _vatten(v)
@@ -394,22 +567,42 @@ def rita_bild(
         synlig = ok
     else:
         raise LagerFel(f"Okänd färgskala '{farg}'.")
-    if dold is not None:
-        d = dold[::faktor, ::faktor] if faktor > 1 else dold
-        synlig = synlig & ~d
-    rgba = np.zeros((*v.shape, 4), dtype=np.uint8)
-    rgba[..., :3] = rgb
-    rgba[..., 3] = np.where(synlig, 255, 0).astype(np.uint8)
-    buf = io.BytesIO()
-    Image.fromarray(rgba, mode="RGBA").save(buf, format="PNG", optimize=True)
+    if dold is not None and not nedskalad:
+        synlig = synlig & ~dold
+
+    bild_h, bild_b = int(v.shape[0]), int(v.shape[1])
     rader = np.flatnonzero(synlig.any(axis=1))
     kol = np.flatnonzero(synlig.any(axis=0))
-    bbox = (
-        None
-        if rader.size == 0
-        else (int(kol[0]), int(rader[0]), int(kol[-1]) + 1, int(rader[-1]) + 1)
-    )
-    return Bild(buf.getvalue(), int(v.shape[1]), int(v.shape[0]), faktor, bbox)
+    if rader.size == 0:
+        bbox: tuple[int, int, int, int] | None = None
+    elif nedskalad and r_kanter is not None and c_kanter is not None:
+        c0_src = int(c_kanter[int(kol[0])])
+        r0_src = int(r_kanter[int(rader[0])])
+        c1_src = int(c_kanter[int(kol[-1]) + 1])
+        r1_src = int(r_kanter[int(rader[-1]) + 1])
+        bbox = (
+            c0_src // faktor,
+            r0_src // faktor,
+            math.ceil(c1_src / faktor),
+            math.ceil(r1_src / faktor),
+        )
+    else:
+        bbox = (int(kol[0]), int(rader[0]), int(kol[-1]) + 1, int(rader[-1]) + 1)
+
+    rgba = np.empty((bild_h, bild_b, 4), dtype=np.uint8)
+    rgba[..., :3] = rgb
+    rgba[..., 3] = np.where(synlig, 255, 0).astype(np.uint8)
+    del rgb, synlig, ok
+    if nedskalad:
+        del v
+
+    buf = io.BytesIO()
+    with Image.fromarray(rgba, mode="RGBA") as img:
+        img.save(buf, format="PNG", optimize=True)
+    del rgba
+    png_bytes = buf.getvalue()
+    buf.close()
+    return Bild(png_bytes, bild_b, bild_h, faktor, bbox)
 
 
 def _fotavtryck(mapp: Path, geo: Any) -> NDArray[np.bool_]:

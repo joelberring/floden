@@ -516,6 +516,23 @@
 .ar-forberaknad {
   margin: 2px 0 0;
 }
+.ar-omfang {
+  margin: 2px 0 0;
+  font-variant-numeric: tabular-nums;
+}
+.ar-omfang-varning {
+  margin: 2px 0 0;
+  padding: 6px 8px;
+  background: var(--f-yta-dampad, #f4f4f4);
+  border: 1px solid var(--f-linje, #d9d9d9);
+  border-left: 3px solid var(--f-linje-stark, #111111);
+  color: var(--f-text, #111111);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.ar-omfang-varning.ar-omfang-over_tak {
+  border-left-color: var(--f-varning, #b42318);
+}
 .tecken-regn {
   margin: 0 0 6px;
   padding-bottom: 5px;
