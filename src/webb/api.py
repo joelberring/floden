@@ -41,6 +41,7 @@ from gemensamt.hash import sha256_bytes, sha256_fil
 from gemensamt.konfig import las_konfig
 from gemensamt.koordinater import EPSG_INTERN, HOJDSYSTEM
 from gemensamt.manifest import KONTRAKT_K0, FilPost, RunManifest, skapa_manifest
+from gemensamt.objektlagring import ObjektLagringFel
 from gemensamt.regn import (
     KONTRAKT_K4,
     STANDARD_ATERKOMSTTIDER_AR,
@@ -49,6 +50,11 @@ from gemensamt.regn import (
     RegnFel,
     lista_regnforval,
     skapa_regn_fran_spec,
+)
+from geografi.forberaknad_lager import (
+    ForberaknadKommunLager,
+    ForberaknadLagerFel,
+    forberaknad_lager_fran_miljo,
 )
 from geografi.modell import STANDARD_GEOROT
 from konto import Forfragan, KontoAdapter, KontoKonfig, las_konto_konfig
@@ -601,6 +607,7 @@ def _skapa_kartverktyg(
     tillat_loopback: bool,
     geomapp: Path | None = None,
     kraver_registerid: bool = False,
+    forberaknad_lager: ForberaknadKommunLager | None = None,
 ) -> KartverktygTjanst:
     """Kartverktyget: lokal mapp för scenarier och ritade frågor (inte i git) och datamappar."""
     rot = konfig_fil.resolve().parent
@@ -627,6 +634,7 @@ def _skapa_kartverktyg(
         tillat_loopback=tillat_loopback,
         geomapp=geomapp,
         kraver_registerid=kraver_registerid,
+        forberaknad_lager=forberaknad_lager,
     )
 
 
@@ -664,6 +672,7 @@ class FlodenApiApp:
         rapportmapp: str | Path | None = None,
         geomapp: str | Path | None = None,
         projektmapp: str | Path | None = None,
+        forberaknad_lager: ForberaknadKommunLager | None = None,
     ) -> None:
         self.rapportmapp = _rapportmapp(Path(konfig_fil), rapportmapp)
         _rot = Path(konfig_fil).resolve().parent
@@ -673,6 +682,8 @@ class FlodenApiApp:
 
         self.geomapp = _abs(geomapp or STANDARD_GEOROT)
         self.projektmapp = _abs(projektmapp or STANDARD_PROJEKTMAPP)
+        self._forberaknad_lager: ForberaknadKommunLager | None = forberaknad_lager
+        self._forberaknad_lager_inlast = forberaknad_lager is not None
         self._projektskapa: ProjektSkapaTjanst | None = None
         self._projektinst: ProjektInstallningarTjanst | None = None
         self._rapportjobb: RapportJobbTjanst | None = None
@@ -701,9 +712,43 @@ class FlodenApiApp:
             return self._fragor
 
     @property
+    def forberaknad_lager(self) -> ForberaknadKommunLager | None:
+        """Läs- och LRU-cache-klient för förberäknade kommunrutor i S3, eller None om ej aktiv."""
+        with self._lock:
+            if not self._forberaknad_lager_inlast:
+                rot = self.konfig_fil.resolve().parent
+                konfig_dict: Mapping[str, Any] | None = None
+                if self.konfig_fil.is_file():
+                    lokal = rot / "config.local.toml"
+                    konfig_dict = las_konfig(self.konfig_fil, lokal)
+                self._forberaknad_lager = forberaknad_lager_fran_miljo(
+                    rot / "data" / "cache" / "s3_lru",
+                    konfig=konfig_dict,
+                )
+                self._forberaknad_lager_inlast = True
+            return self._forberaknad_lager
+
+    def forberaknade_geografier(self) -> dict[str, Any]:
+        """Svar för `GET /api/geografi/forberaknade`: kommuner med förberäknade GPU-rutor."""
+        lager = self.forberaknad_lager
+        if lager is None:
+            return {"s3_aktiv": False, "kommuner": []}
+        try:
+            kommuner = [
+                {"kommun": kommun, "antal_rutor": len(lager.lista_rutor(kommun))}
+                for kommun in lager.lista_kommuner()
+            ]
+        except (ForberaknadLagerFel, ObjektLagringFel) as exc:
+            raise FlodenWebbFel(
+                f"Kunde inte läsa förberäknade geografier: {exc}", status_kod=502
+            ) from exc
+        return {"s3_aktiv": True, "kommuner": kommuner}
+
+    @property
     def kartverktyg(self) -> KartverktygTjanst:
         """Kartverktyget (rita planförslag). Skapas vid första användning."""
         fragor = self.fragor
+        forb = self.forberaknad_lager
         with self._lock:
             if self._kartverktyg is None:
                 self._kartverktyg = _skapa_kartverktyg(
@@ -712,6 +757,7 @@ class FlodenApiApp:
                     *self._kartkonfig,
                     geomapp=self.geomapp,
                     kraver_registerid=self.konto.aktiv,
+                    forberaknad_lager=forb,
                 )
             return self._kartverktyg
 
@@ -3074,6 +3120,9 @@ class FlodenApiApp:
 
             if verb == "GET" and ren_sokvag == "/api/moduler":
                 return _json_svar(200, lista_moduler(self._demo_moduler()))
+
+            if verb == "GET" and ren_sokvag == "/api/geografi/forberaknade":
+                return _json_svar(200, self.forberaknade_geografier())
 
             if ren_sokvag == "/api/projekt" or ren_sokvag.startswith("/api/projekt/"):
                 delar_p = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
