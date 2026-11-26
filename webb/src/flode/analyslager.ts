@@ -392,9 +392,13 @@ export const ETIKETTER_MAX = 12;
 export const ETIKETT_MIN_M3 = 1;
 
 /** Teckenförklaringen för ett vektorlager (samma klasser som raster-teckenförklaringen). */
-export function vektorTeckenHtml(svar: VektorSvar): string {
+export function vektorTeckenHtml(svar: VektorSvar, harDjupSkala = false): string {
   const delvis = svar.meta.visade + (svar.meta.dolda ?? 0) < svar.meta.antal_totalt ? `<span class="flode-liten flode-dampad">De ${formatera(svar.meta.visade, 0)} största av ${formatera(svar.meta.antal_totalt, 0)} visas.</span>` : "";
   if (svar.slag === "sankor") {
+    if (harDjupSkala) {
+      const doldaDel = (svar.meta.dolda ?? 0) > 0 ? ` · ${formatera(svar.meta.dolda ?? 0, 0)} små dolda` : "";
+      return `<span class="flode-liten flode-dampad">Sänkor: samma djupskala · etikett = volym (m³)${doldaDel}</span>${delvis}`;
+    }
     const klasser = VATTEN_KLASSER.map((k) => `<span><i style="background:${k.farg}"></i>från ${formateraHogst(k.fran, 2)} m</span>`).join("");
     const dolda = (svar.meta.dolda ?? 0) > 0 ? `<span class="flode-liten flode-dampad">${formatera(svar.meta.dolda ?? 0, 0)} små sänkor är dolda (reglaget Minsta volym). Klicka på en sänka för vattenytans mått.</span>` : "";
     return `<span class="flode-kort-rubrik">Sänkor: djup vid fullt, etikett = volym (m³)</span><span class="flode-klasser">${klasser}</span>${delvis}${dolda}`;

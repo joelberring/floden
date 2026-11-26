@@ -84,4 +84,18 @@ test("grundkartvalHtml döljer opacitetsslider i läge Ren och visar den i övri
   assert.match(ortoHtml, /data-grundkarta-opacitet/);
   assert.match(ortoHtml, /value="75"/);
   assert.match(ortoHtml, /75\u202F%/);
+  assert.match(ortoHtml, /data-grundkarta-vaxla aria-expanded="true"/);
+});
+
+test("grundkartvalHtml stöder hopfällt och utfällt läge", () => {
+  const hopfalldTerrang = grundkartvalHtml("skuggning", 0.6, ["ren", "osm", "skuggning"], false);
+  assert.match(hopfalldTerrang, /gk-hopfalld/);
+  assert.match(hopfalldTerrang, /data-grundkarta-vaxla aria-expanded="false"/);
+  assert.match(hopfalldTerrang, /Terräng · 60\u202F% ▾/);
+  assert.doesNotMatch(hopfalldTerrang, /data-grundkarta="skuggning"/);
+  assert.doesNotMatch(hopfalldTerrang, /data-grundkarta-opacitet/);
+
+  const hopfalldRen = grundkartvalHtml("ren", 1, ["ren", "osm"], false);
+  assert.match(hopfalldRen, /Ren karta ▾/);
+  assert.doesNotMatch(hopfalldRen, /%/);
 });

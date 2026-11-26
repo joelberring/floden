@@ -29,7 +29,9 @@ import {
   hamtaTidsserie,
   hamtaVattenIntervall,
   kontrolleraAndringar,
+  lageIdagStatus,
   listaScenarier,
+  scenarioStatus,
   sparaScenario,
   taBortScenario,
   type BifurkationsPunktPost,
@@ -157,10 +159,13 @@ import {
   type TidsspelareTillstand,
 } from "./tidsspelare.ts";
 import {
+  aterladdaSparadeVyer,
   forslagKropp,
   FORVALD_TAKFORM,
+  lasArbetsytaUiLage,
   lasAvtappning,
   skapaDokFor,
+  sparaArbetsytaUiLage,
   sparaTillstand,
   takformFran,
   TAKFORMER,
@@ -412,9 +417,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let figurNyckel = "";
   let faltFel: { nyckel: string; text: string } | null = null;
   let korAutoByt: "nulage" | "efter" | null = null;
+  const uiLage = lasArbetsytaUiLage();
+  let ritaGrundkarta = (): void => {};
 
   rot.innerHTML = `
-    <div class="flode-sida flode-fast ar-sida">
+    <div class="flode-sida flode-fast ar-sida${uiLage.panelDold ? " panel-dold" : ""}">
       <section class="flode-karta ar-karta" aria-label="Karta">
         <div class="flode-karta-yta" id="ar-a"></div>
         <div class="flode-karta-yta flode-b" id="ar-b" hidden></div>
@@ -500,8 +507,13 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         <div class="ar-tom-kort" id="ar-tom-kort" hidden></div>
         <div class="flode-kartkort flode-forklaring ar-tecken" id="ar-tecken" hidden></div>
         <div class="flode-kartkort ar-hjalp" id="ar-hjalp" role="status" hidden></div>
-        <div class="flode-kartkort flode-kartkort-hoger flode-avlasning ar-avlasning" id="ar-avl" role="status" hidden></div>
-        <div class="ar-skalstock" id="ar-skalstock" aria-live="off"></div>
+        <div class="ar-hoger-botten" id="ar-hoger-botten">
+          <div class="flode-kartkort ar-sanka-kort" id="ar-sanka" role="status" hidden></div>
+          <div class="flode-kartkort flode-avlasning ar-avlasning" id="ar-avl" role="status" hidden></div>
+          <div class="ar-notis" id="ar-notis" hidden></div>
+          <div class="ar-skalstock" id="ar-skalstock" aria-live="off"></div>
+        </div>
+        <button type="button" class="ar-panel-vaxla" id="ar-panel-vaxla" aria-expanded="${!uiLage.panelDold}" aria-label="${uiLage.panelDold ? "Visa sidopanel" : "Dölj sidopanel"}" title="${uiLage.panelDold ? "Visa sidopanel" : "Dölj sidopanel"}">${uiLage.panelDold ? "⟨" : "⟩"}</button>
         <div class="ar-botten-dock" id="ar-botten-dock" hidden></div>
         <div class="flode-kartkort flode-kartkort-hoger" id="ar-laddar">Hämtar kartan …</div>
       </section>
@@ -819,10 +831,20 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   };
 
   // ---------- Regn & körningsblock ----------
+  type ForberaknadBasInfo = { kalla?: string; kommun?: string; antal_rutor?: number };
+  const forberaknadBasRad = (): string => {
+    const fb = (info as (ProjektInfo & { forberaknad_bas?: ForberaknadBasInfo | null }) | null)?.forberaknad_bas;
+    if (!fb) return "";
+    const plats = fb.kommun || fb.kalla;
+    if (!plats) return "";
+    const rutor = typeof fb.antal_rutor === "number" && Number.isFinite(fb.antal_rutor) ? ` (${formatera(fb.antal_rutor, 0)} rutor)` : "";
+    return `<p class="flode-liten flode-dampad ar-forberaknad">Förberäknat underlag: ${esc(plats)}${esc(rutor)}</p>`;
+  };
+
   const ritaRegnOchKor = (): void => {
     el("ar-regn-plats").innerHTML = regnValHtml(t.regn, info?.regn_forval, t.avtappning, regnFel, avtappningFel);
     const pagar = arPagaende(t);
-    const harAndringar = !t.dok.tom() || Boolean(t.scenario);
+    const harRitatForslag = !t.dok.tom();
     const signNu = regnSignatur(t.regn, t.avtappning);
     const harNulageForRegn =
       (t.lageVyer.length > 0 && t.lageRegnSignatur === signNu) ||
@@ -832,13 +854,20 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const kanKora = !pagar && !ogiltigtRegn && forvaldaAnalyser().length > 0;
 
     let knappar = "";
-    if (harAndringar) {
-      knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
-      if (!harNulageForRegn) {
-        knappar += `<button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
+    if (harRitatForslag) {
+      if (lage === "nulage" && !harNulageForRegn) {
+        knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
+        knappar += `<button type="button" class="flode-knapp" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
+      } else {
+        knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
+        if (!harNulageForRegn) {
+          knappar += `<button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
+        }
       }
+    } else if (!harNulageForRegn) {
+      knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : "Beräkna nuläge"}</button>`;
     } else {
-      knappar = `<button type="button" class="flode-knapp${harNulageForRegn ? "" : " svart"}" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : harNulageForRegn ? "Räkna om nuläge" : "Beräkna nuläge"}</button>`;
+      knappar = `<button type="button" class="flode-knapp" id="ar-rita-forslag">Rita förslag</button><button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : "Räkna om nuläge"}</button>`;
     }
 
     const status = pagar
@@ -849,7 +878,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           ? `<p class="flode-liten flode-dampad">Valt regn skiljer sig från visat resultat (eller saknar beräkning).</p>`
           : "";
 
-    el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${status}`;
+    el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${status}${forberaknadBasRad()}`;
 
     // Tom-kort mitt på kartan när nuläget inte är beräknat än
     const tomKort = el("ar-tom-kort");
@@ -973,7 +1002,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     </div>`;
   };
 
-  // ---------- Teckenförklaring (alltid med 1-radig regnetikett) ----------
+  // ---------- Teckenförklaring (kompakt, minimerbar, alltid med 1-radig regnetikett) ----------
   const ritaTecken = (): void => {
     const tecken = el("ar-tecken");
     if (lage === "redigera" && !visaVattenUnder) {
@@ -987,9 +1016,19 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const tl = kl === "fore" || kl === "svep" ? fore : kl === "efter" ? efter : skill;
     const fasad = lager3dLista.hamta("3d:fasad");
     const fasadTand = lage === "3d" && Boolean(fasad?.synlig) && !fasad?.ejTillgangligt;
-    const vektorHtml = lage === "3d" ? [] : aktivaVektorer().map((v) => vektorTeckenHtml(v));
+    const harDjupSkala = Boolean(tl && vy && amne === "vatten" && tl.roll === "max_djup" && tl.typ !== "skillnad");
+    const vektorHtml = lage === "3d" ? [] : aktivaVektorer().map((v) => vektorTeckenHtml(v, harDjupSkala));
     const regnRad = korningRegnRad();
-    tecken.hidden = (!tl || !vy) && !fasadTand && vektorHtml.length === 0;
+    const tom = (!tl || !vy) && !fasadTand && vektorHtml.length === 0;
+    tecken.hidden = tom;
+    if (tom) return;
+
+    tecken.classList.toggle("ar-tecken-minimerad", uiLage.teckenMinimerad);
+    if (uiLage.teckenMinimerad) {
+      tecken.innerHTML = `<button type="button" class="ar-tecken-oppna" id="ar-tecken-vaxla" aria-expanded="false" aria-label="Visa teckenförklaring">Teckenförklaring ▸</button>`;
+      return;
+    }
+
     let html = "";
     if (regnRad && (tl || vektorHtml.length > 0)) {
       html += `<span class="ar-tecken-regn">${esc(regnRad)}</span>`;
@@ -1007,7 +1046,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     }
     if (fasadTand) html += fasadForklaringHtml("skillnad", Boolean(skill));
     html += vektorHtml.map((x) => `<div class="flode-vektortecken">${x}</div>`).join("");
-    tecken.innerHTML = html;
+    tecken.innerHTML = `<div class="ar-tecken-huvud"><span class="ar-tecken-titel">Teckenförklaring</span><button type="button" class="ar-min-knapp" id="ar-tecken-vaxla" aria-expanded="true" aria-label="Minimera teckenförklaring" title="Minimera teckenförklaring">−</button></div><div class="ar-tecken-kropp">${html}</div>`;
   };
 
   // ---------- Avläsning (vattendjup tydligt i cm + m, samt Mark RH 2000) ----------
@@ -1021,6 +1060,15 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   avbryt.push(() => markhojd.avsluta());
 
   const ritaAvlasning = (): void => {
+    const sankaEl = el("ar-sanka");
+    if (sankaHtml && lage !== "3d" && lage !== "redigera" && vektorPa.has("sankor")) {
+      sankaEl.innerHTML = `<button type="button" class="ar-kort-stang" id="ar-sanka-stang" aria-label="Stäng sänkainformation" title="Stäng">×</button>${sankaHtml}`;
+      sankaEl.hidden = false;
+    } else {
+      sankaEl.hidden = true;
+      sankaEl.innerHTML = "";
+    }
+
     const ruta = el("ar-avl");
     const delar: string[] = [];
     if (senasteAvl && vy && lage !== "3d" && !senasteAvl.varden.every((x) => !x.inom)) {
@@ -1046,7 +1094,6 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         delar.push(`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`);
       }
     }
-    if (sankaHtml && lage !== "3d" && lage !== "redigera" && vektorPa.has("sankor")) delar.push(sankaHtml);
     if (hojdText && lage !== "3d") delar.push(`<span class="flode-dampad" id="ar-hojd">${esc(hojdText)}</span>`);
     ruta.hidden = delar.length === 0;
     ruta.innerHTML = delar.join("");
@@ -1198,7 +1245,10 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         : lage !== "3d" && lage !== "redigera" && !visaTak && visad?.tak_maskat
           ? "Ljusgrå yta: tak, inte mark"
           : null;
-    a.settNotis(notis);
+    a.settNotis(null);
+    const notisEl = el("ar-notis");
+    notisEl.hidden = !notis;
+    notisEl.textContent = notis ?? "";
 
     // Visa vatten-under-reglaget i Redigera förslag när nulägesvatten finns
     const vattenUnderBar = el("ar-vattenunder");
@@ -2261,9 +2311,47 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   lyssna(rot, "click", (h) => {
     const target = h.target as Element;
     const m = target.closest<HTMLElement>(
-      "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#ar-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara",
+      "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#ar-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara",
     );
     if (!m) return;
+
+    if (m.id === "ar-tecken-vaxla") {
+      uiLage.teckenMinimerad = !uiLage.teckenMinimerad;
+      sparaArbetsytaUiLage(uiLage);
+      ritaTecken();
+      return;
+    }
+    if (m.dataset.grundkartaVaxla !== undefined) {
+      uiLage.grundkartaOppen = !uiLage.grundkartaOppen;
+      sparaArbetsytaUiLage(uiLage);
+      ritaGrundkarta();
+      return;
+    }
+    if (m.id === "ar-sanka-stang") {
+      sankaHtml = null;
+      ritaAvlasning();
+      return;
+    }
+    if (m.id === "ar-panel-vaxla") {
+      uiLage.panelDold = !uiLage.panelDold;
+      sparaArbetsytaUiLage(uiLage);
+      const sida = rot.querySelector<HTMLElement>(".ar-sida");
+      sida?.classList.toggle("panel-dold", uiLage.panelDold);
+      m.textContent = uiLage.panelDold ? "⟨" : "⟩";
+      m.setAttribute("aria-expanded", String(!uiLage.panelDold));
+      const etikett = uiLage.panelDold ? "Visa sidopanel" : "Dölj sidopanel";
+      m.setAttribute("aria-label", etikett);
+      m.title = etikett;
+      window.requestAnimationFrame(() => {
+        a?.matOm();
+        b?.matOm();
+      });
+      return;
+    }
+    if (m.id === "ar-rita-forslag") {
+      stallLage("redigera");
+      return;
+    }
 
     if (m.id === "ar-mat-knapp") {
       if (sektion.aktiv) sektion.avsluta();
@@ -2937,6 +3025,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           throw e;
         }),
         hamtaProjektInfo(projekt),
+        aterladdaSparadeVyer(t, { lageIdagStatus, scenarioStatus, listaScenarier }),
       ]);
     } catch (e) {
       el("ar-laddar").innerHTML = felBeskedHtml(sidFel(e, "Kartan", kontoLage(), `/#/p/${encodeURIComponent(projekt)}/karta`), esc);
@@ -2967,11 +3056,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
 
     bas = new BasLager(a, info, kartLager);
     bas.registrera(projekt);
-    const ritaGrundkarta = (): void => {
+    ritaGrundkarta = (): void => {
       const gkEl = el("ar-grundkarta");
       const nu = aktuellGrundkarta(kartLager);
       const tillgangliga = tillgangligaGrundkartor(kartLager);
-      gkEl.innerHTML = grundkartvalHtml(nu.val, nu.opacitet, tillgangliga);
+      gkEl.innerHTML = grundkartvalHtml(nu.val, nu.opacitet, tillgangliga, uiLage.grundkartaOppen);
       gkEl.hidden = false;
     };
     const synkaBas = (): void => {
