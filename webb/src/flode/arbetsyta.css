@@ -1431,6 +1431,91 @@
   padding-left: 16px;
 }
 
+/* ---------- Våg 8: CAD/BIM (U17) och Buller-skissflik (U13) i Steg 2 ---------- */
+.ar-buller-plats,
+.ar-cadbim-plats {
+  margin-top: 8px;
+}
+.ar-buller-panel,
+.ar-cadbim-panel {
+  border: 1px solid var(--f-linje, #e5e5e5);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+}
+.ar-buller-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 2px solid var(--f-text, #111111);
+  border-left-width: 5px;
+  background: var(--f-yta-dampad, #f4f4f4);
+  color: var(--f-text, #111111);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.ar-buller-banner strong {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.ar-buller-atgarder {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.ar-buller-diff {
+  padding-top: 6px;
+  border-top: 1px solid var(--f-linje, #e5e5e5);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-cadbim-sektion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ar-cadbim-sektion + .ar-cadbim-sektion {
+  padding-top: 8px;
+  border-top: 1px solid var(--f-linje, #e5e5e5);
+}
+.ar-cadbim-importrad button {
+  width: 100%;
+}
+.ar-cadbim-ursprung-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 6px;
+}
+.ar-cadbim-ursprung-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ar-cadbim-ursprung-grid input[type="text"] {
+  min-height: 32px;
+  font-variant-numeric: tabular-nums;
+}
+.ar-cadbim-export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+.ar-cadbim-export-lank {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  text-decoration: none;
+  font-size: 12px;
+}
+.ar-cadbim-export-lank span {
+  font-family: var(--f-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 @media (pointer: coarse) {
   .ar-zoomrad button,
   .ar-cad-lage button {

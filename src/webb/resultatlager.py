@@ -83,6 +83,7 @@ MASKADE_ROLLER = frozenset(
         "fara",
         "utci_c",
         "t_mrt_c",
+        "ekvivalent_ljudniva_dba",
     }
 )
 """Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
@@ -110,6 +111,7 @@ ETIKETTER: dict[str, tuple[str, str]] = {
     "skuggmask": ("Solläge vid klockslag", ""),
     "utci_c": ("Värmestress (UTCI)", "°C"),
     "t_mrt_c": ("Medelstrålningstemperatur (T_mrt)", "°C"),
+    "ekvivalent_ljudniva_dba": ("Ekvivalent ljudnivå", "dB(A)"),
     "max_djup": ("Största vattendjup", "m"),
     "fara": ("Fara (djup × hastighet)", "m²/s"),
     "rannsten_flode": ("Rännstenar (1D-flöde)", "m³/s"),
@@ -136,6 +138,7 @@ SKALA_FOR_ROLL: dict[str, str] = {
     "fara": "fara",
     "utci_c": "varme",
     "t_mrt_c": "varme",
+    "ekvivalent_ljudniva_dba": "fara",
     "ankomsttid": "tid",
     "tid_till_0_1m": "tid",
     "tid_till_0_2m": "tid",

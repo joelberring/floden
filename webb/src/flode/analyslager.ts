@@ -126,6 +126,11 @@ export const ROLL_ETIKETTER: Record<string, { etikett: string; enhet: string; hj
     enhet: "°C",
     hjalp: "6-riktnings medelstrålningstemperatur T_mrt (°C) enligt ISO 7726 / SOLWEIG (skiss).",
   },
+  ekvivalent_ljudniva_dba: {
+    etikett: "Ekvivalent ljudnivå",
+    enhet: "dB(A)",
+    hjalp: "Ekvivalent ljudnivå LAeq,24h i dB(A) från buller.nord2000 (SKISS — ej Nord2000-konform, formell rapport spärrad).",
+  },
   stromtathet: {
     etikett: "Strömtäthet (flaskhalsar)",
     enhet: "",

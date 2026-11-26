@@ -83,6 +83,17 @@ import {
 } from "./analyslager.ts";
 import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import {
+  bullerLagerTeckenHtml,
+  kopplaBullerPanel,
+  type BullerKontroller,
+  type BullerLagerRef,
+} from "./bullerflik.ts";
+import {
+  kopplaCadBimPanel,
+  laggInCadImportIDok,
+  type CadBimKontroller,
+} from "./cadbim.ts";
+import {
   kopplaGyfUtciPaneler,
   varmelagerTeckenHtml,
   type GyfUtciKontroller,
@@ -633,6 +644,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let ekoLagerVal: "stromtathet" | "kansighet" = "stromtathet";
   let ekologiFel: string | null = null;
   let aktivtVarmelager: VarmestressLagerRef | null = null;
+  let aktivtBullerlager: BullerLagerRef | null = null;
   let natverkLista: Array<{ natverk_id: string; visningsnamn: string; korbar: boolean; lokalt: boolean }> = [];
   let valtNatverk: string | null = null;
   let lage: ArbetsLage = initialtLage;
@@ -850,8 +862,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           </div>
           <div id="ar-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar underlag …</p></div>
           <div id="ar-gyf-utci-plats" class="ar-gyf-utci-plats"></div>
+          <div id="ar-buller-plats" class="ar-buller-plats"></div>
           ${extraAnalyserHtml()}
-          <p class="flode-liten flode-dampad ar-buller-notis">Bullerkartflik (Nord2000) inväntar slutförd akustisk validering (<code>nord2000_konform</code>).</p>
         </div>
 
         <div id="ar-redigera-del" class="flode-panelinnehall" hidden>
@@ -918,6 +930,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           </details>
         </div>
 
+        <div id="ar-cadbim-plats" class="ar-cadbim-plats"></div>
+
         ${ordlistaHtml()}
 
         <div class="flode-rad-slut">
@@ -929,13 +943,38 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
   kopplaExtraAnalyser(rot, ac.signal);
+  let bullerKontroller: BullerKontroller | null = null;
   const gyfUtciKontroller: GyfUtciKontroller = kopplaGyfUtciPaneler(el("ar-gyf-utci-plats"), {
     projekt,
     hamtaScenario: () => (kalla === "ritat" && t.scenario ? t.scenario.slug : null),
     hamtaLage: () => lage,
     onVarmelagerAndrat: (nytt) => {
+      if (nytt) bullerKontroller?.rensaBullerlager();
       aktivtVarmelager = nytt;
       synkaKarta();
+    },
+    signal: ac.signal,
+  });
+  bullerKontroller = kopplaBullerPanel(el("ar-buller-plats"), {
+    projekt,
+    hamtaScenario: () => (kalla === "ritat" && t.scenario ? t.scenario.slug : null),
+    hamtaLage: () => lage,
+    hamtaUtbredning: () => info?.utbredning ?? null,
+    onBullerlagerAndrat: (nytt) => {
+      if (nytt) gyfUtciKontroller.rensaVarmelager();
+      aktivtBullerlager = nytt;
+      synkaKarta();
+    },
+    signal: ac.signal,
+  });
+  const cadBimKontroller: CadBimKontroller = kopplaCadBimPanel(el("ar-cadbim-plats"), {
+    projekt,
+    hamtaScenario: () => (t.scenario ? t.scenario.slug : null),
+    onImporterat: (svar) => {
+      const utfall = laggInCadImportIDok(t.dok, svar, info?.ritlager?.roller ?? []);
+      planeraKontroll();
+      planeraRitning();
+      return utfall;
     },
     signal: ac.signal,
   });
@@ -1366,7 +1405,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const vektorHtml = lage === "3d" ? [] : aktivaVektorer().map((v) => vektorTeckenHtml(v, harDjupSkala));
     const regnRad = korningRegnRad();
     const harVarmelager = Boolean(aktivtVarmelager && lage !== "3d" && lage !== "redigera");
-    const tom = (!tl || !vy) && !fasadTand && !harVarmelager && vektorHtml.length === 0;
+    const harBullerlager = Boolean(aktivtBullerlager && lage !== "3d" && lage !== "redigera");
+    const tom = (!tl || !vy) && !fasadTand && !harVarmelager && !harBullerlager && vektorHtml.length === 0;
     tecken.hidden = tom;
     if (tom) return;
 
@@ -1377,7 +1417,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     }
 
     let html = "";
-    if (harVarmelager && aktivtVarmelager) {
+    if (harBullerlager && aktivtBullerlager) {
+      html += bullerLagerTeckenHtml(aktivtBullerlager);
+    } else if (harVarmelager && aktivtVarmelager) {
       html += varmelagerTeckenHtml(aktivtVarmelager);
     } else {
       if (regnRad && (tl || vektorHtml.length > 0)) {
@@ -1592,11 +1634,13 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const ovan: RasterLager[] =
       lage === "3d"
         ? []
-        : aktivtVarmelager && lage !== "redigera"
-          ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: aktivtVarmelager.png, utbredning: aktivtVarmelager.utbredning, skarpa: true } }]
-          : !visad && ekoOverrideUrl && ekoOverrideUtbredning
-            ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: ekoOverrideUrl, utbredning: ekoOverrideUtbredning, skarpa: true } }]
-            : rasterAv("res:visad", visad, true, rasterOpacitet, ekoOverrideUrl ?? tidStegUrl);
+        : aktivtBullerlager && lage !== "redigera"
+          ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: aktivtBullerlager.png, utbredning: aktivtBullerlager.utbredning, skarpa: true } }]
+          : aktivtVarmelager && lage !== "redigera"
+            ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: aktivtVarmelager.png, utbredning: aktivtVarmelager.utbredning, skarpa: true } }]
+            : !visad && ekoOverrideUrl && ekoOverrideUtbredning
+              ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: ekoOverrideUrl, utbredning: ekoOverrideUtbredning, skarpa: true } }]
+              : rasterAv("res:visad", visad, true, rasterOpacitet, ekoOverrideUrl ?? tidStegUrl);
     bas.synka = () => a?.settLager([...basLagerListan, ...ovan]);
     bas.synka();
 
@@ -1805,6 +1849,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     }
     void laddaTidsserie();
     gyfUtciKontroller.synkaVarmelager();
+    bullerKontroller?.synkaBullerlager();
     synkaKarta();
     if (lage === "redigera") planeraRitning();
     else ritaAnalysPanel();
@@ -2087,6 +2132,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     }
     void laddaTidsserie();
     gyfUtciKontroller.uppdateraKontext();
+    bullerKontroller?.uppdateraKontext();
+    cadBimKontroller.uppdateraKontext();
     ritaAnalysPanel();
     synkaKarta();
   };
@@ -2492,6 +2539,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       sparFel = null;
       sparTid = klockslag(new Date());
       sparaTillstand(t);
+      cadBimKontroller.uppdateraKontext();
       void lasSparade();
     } catch (e) {
       sparFel = e instanceof Error ? e.message : String(e);
@@ -2598,6 +2646,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     sparaTillstand(t);
     ritaSparade();
     ritaRegnOchKor();
+    bullerKontroller?.uppdateraKontext();
+    cadBimKontroller.uppdateraKontext();
   };
 
   // ---------- Körningar direkt från kartan ----------
