@@ -90,15 +90,23 @@ export function tillampaGrundkarta(
 
 /**
  * Kompakt segmenterad knapprad `[Ren | OSM | Orto | Terräng | Höjdkurvor]` + opacitetsslider (`0–100 %`)
- * när `val !== "ren"`. Stramt svartvitt via `var(--f-*)`-tokens.
+ * när `val !== "ren"`, samt hopfällbart läge (`oppen = false`) som en liten prydlig knapp.
+ * Stramt svartvitt via `var(--f-*)`-tokens.
  */
 export function grundkartvalHtml(
   val: GrundkartaVal,
   opacitet: number,
   tillgangliga: readonly GrundkartaVal[],
+  oppen = true,
 ): string {
   const klampad = Number.isFinite(opacitet) ? Math.min(1, Math.max(0, opacitet)) : 1;
   const procent = Math.round(klampad * 100);
+
+  if (!oppen) {
+    const sammanfattning = val === "ren" ? "Ren karta ▾" : `${ETIKETT[val]} · ${formatera(procent, 0)}\u202F% ▾`;
+    return `<div class="gk-valjare gk-hopfalld" role="group" aria-label="Grundkarta" style="background:var(--f-yta, #fff);color:var(--f-text, #111);border:1px solid var(--f-linje, #d8d8d8)"><button type="button" class="gk-oppna" data-grundkarta-vaxla aria-expanded="false" aria-label="Visa grundkarteväljare">${esc(sammanfattning)}</button></div>`;
+  }
+
   const tillatna = new Set(tillgangliga);
 
   const knappar = ORDNING.filter((k) => tillatna.has(k))
@@ -108,10 +116,12 @@ export function grundkartvalHtml(
     })
     .join("");
 
+  const minimera = `<button type="button" class="gk-minimera" data-grundkarta-vaxla aria-expanded="true" aria-label="Minimera grundkarteväljare" title="Minimera grundkarteväljare">−</button>`;
+
   const slider =
     val !== "ren"
       ? `<label class="gk-opacitet"><span>Opacitet</span><input type="range" data-grundkarta-opacitet min="0" max="100" step="5" value="${procent}" aria-label="Grundkartans opacitet" /><span class="gk-procent">${esc(formatera(procent, 0))}\u202F%</span></label>`
       : "";
 
-  return `<div class="gk-valjare" role="group" aria-label="Grundkarta" style="background:var(--f-yta, #fff);color:var(--f-text, #111);border:1px solid var(--f-linje, #d8d8d8)"><div class="gk-knappar">${knappar}</div>${slider}</div>`;
+  return `<div class="gk-valjare" role="group" aria-label="Grundkarta" style="background:var(--f-yta, #fff);color:var(--f-text, #111);border:1px solid var(--f-linje, #d8d8d8)"><div class="gk-knappar">${knappar}${minimera}</div>${slider}</div>`;
 }

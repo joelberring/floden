@@ -254,3 +254,23 @@ test("ankomsttid (tid_till_0_1m.tif) och 1D-rännstenar har svenska etiketter, e
   assert.match(html, /0,015/);
   assert.match(html, /0,125 m³\/s/);
 });
+
+test("vektorTeckenHtml för sänkor eliminerar duplicerade djuprutor när harDjupSkala är sant", () => {
+  const sankaSvar: VektorSvar = {
+    ...SANKOR,
+    meta: { antal_totalt: 20, visade: 8, dolda: 12 },
+  };
+  const full = vektorTeckenHtml(sankaSvar, false);
+  assert.match(full, /flode-klasser/);
+  assert.match(full, /från 0,02 m/);
+  assert.match(full, /från 1 m/);
+
+  const kompakt = vektorTeckenHtml(sankaSvar, true);
+  assert.doesNotMatch(kompakt, /flode-klasser/);
+  assert.doesNotMatch(kompakt, /från 0,02 m/);
+  assert.match(kompakt, /Sänkor: samma djupskala · etikett = volym \(m³\) · 12 små dolda/);
+
+  const kompaktUtanDolda = vektorTeckenHtml({ ...SANKOR, meta: { antal_totalt: 2, visade: 2, dolda: 0 } }, true);
+  assert.match(kompaktUtanDolda, /Sänkor: samma djupskala · etikett = volym \(m³\)/);
+  assert.doesNotMatch(kompaktUtanDolda, /små dolda/);
+});
