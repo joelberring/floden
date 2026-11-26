@@ -9,6 +9,9 @@ import pytest
 
 from gemensamt.hash import sha256_fil
 from gemensamt.objektlagring import (
+    STANDARD_CONNECT_TIMEOUT_S,
+    STANDARD_MAX_FORSOK,
+    STANDARD_READ_TIMEOUT_S,
     LagringKonfig,
     LokalLagring,
     ObjektLagringFel,
@@ -254,5 +257,181 @@ def test_las_lagring_konfig_och_miljovariabler(tmp_path: Path) -> None:
     # Standard utan konfiguration ger lokal lagring
     lk_lokal = las_lagring_konfig({}, miljo={})
     assert lk_lokal.typ == "lokal"
+    assert lk_lokal.connect_timeout_s == STANDARD_CONNECT_TIMEOUT_S
+    assert lk_lokal.read_timeout_s == STANDARD_READ_TIMEOUT_S
+    assert lk_lokal.max_forsok == STANDARD_MAX_FORSOK
     obj = skapa_lagring(LagringKonfig(typ="lokal", rot=tmp_path / "lokal"))
     assert isinstance(obj, LokalLagring)
+
+
+def test_s3_radera_prefix_kastar_vid_delfel_errors(tmp_path: Path) -> None:
+    """S3 `delete_objects` ger HTTP 200 vid delfel — `radera_prefix` får aldrig svälja Errors."""
+
+    class _DelfelS3Klient(MockS3Klient):
+        def __init__(self, *, returnera_tomma_errors: bool = False) -> None:
+            super().__init__()
+            self.returnera_tomma_errors = returnera_tomma_errors
+
+        def delete_objects(self, Bucket: str, Delete: dict[str, Any]) -> dict[str, Any]:
+            nycklar = [str(p["Key"]) for p in Delete.get("Objects", [])]
+            if self.returnera_tomma_errors:
+                for k in nycklar:
+                    self.objekt.pop((Bucket, k), None)
+                return {"Deleted": [{"Key": k} for k in nycklar], "Errors": []}
+            # Simulera partiellt S3-fel: första raderas, andra nekas (HTTP 200)
+            raderade = []
+            fel = []
+            for idx, k in enumerate(nycklar):
+                if idx == 0:
+                    self.objekt.pop((Bucket, k), None)
+                    raderade.append({"Key": k})
+                else:
+                    fel.append(
+                        {
+                            "Key": k,
+                            "Code": "AccessDenied",
+                            "Message": "Nekad radering",
+                        }
+                    )
+            return {"Deleted": raderade, "Errors": fel}
+
+    fil = tmp_path / "data.bin"
+    fil.write_bytes(b"TEST")
+
+    klient_fel = _DelfelS3Klient()
+    lagring_fel = S3Lagring(
+        endpoint_url="https://fsn1.your-objectstorage.com",
+        bucket="floden-oppen-eu",
+        access_key="ak",
+        secret_key="sk",
+        klient=klient_fel,
+    )
+    lagring_fel.ladda_upp_fil(fil, "tmp/radata/j1/a.bin")
+    lagring_fel.ladda_upp_fil(fil, "tmp/radata/j1/b.bin")
+
+    with pytest.raises(ObjektLagringFel, match=r"1 delfel.*tmp/radata/j1/b\.bin.*AccessDenied"):
+        lagring_fel.radera_prefix("tmp/radata/j1/")
+
+    # Tom Errors-lista ska godkännas normalt
+    klient_ok = _DelfelS3Klient(returnera_tomma_errors=True)
+    lagring_ok = S3Lagring(
+        endpoint_url="https://fsn1.your-objectstorage.com",
+        bucket="floden-oppen-eu",
+        access_key="ak",
+        secret_key="sk",
+        klient=klient_ok,
+    )
+    lagring_ok.ladda_upp_fil(fil, "tmp/radata/j2/a.bin")
+    lagring_ok.ladda_upp_fil(fil, "tmp/radata/j2/b.bin")
+    assert lagring_ok.radera_prefix("tmp/radata/j2/") == 2
+
+
+def test_s3_klient_skickar_botocore_config_med_andliga_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`S3Lagring` måste skicka `botocore.config.Config` med explicita timeouts och retries."""
+    import sys
+    import types
+
+    try:
+        from botocore.config import Config as BotocoreConfig
+    except ImportError:
+        # CI installerar `.[dev]` utan valfritt `boto3`/`botocore`: injicera tunn modulstubbe.
+        class _StubBotocoreConfig:
+            def __init__(
+                self,
+                *,
+                connect_timeout: float,
+                read_timeout: float,
+                retries: dict[str, Any],
+            ) -> None:
+                self.connect_timeout = connect_timeout
+                self.read_timeout = read_timeout
+                self.retries = retries
+
+        BotocoreConfig = _StubBotocoreConfig
+        botocore_mod = types.ModuleType("botocore")
+        botocore_cfg_mod = types.ModuleType("botocore.config")
+        botocore_cfg_mod.Config = BotocoreConfig  # type: ignore[attr-defined]
+        botocore_mod.config = botocore_cfg_mod  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "botocore", botocore_mod)
+        monkeypatch.setitem(sys.modules, "botocore.config", botocore_cfg_mod)
+
+    fanga: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+    mock_klient = MockS3Klient()
+
+    def _fake_client(*args: Any, **kwargs: Any) -> Any:
+        fanga.append((args, kwargs))
+        return mock_klient
+
+    boto3_stub = types.ModuleType("boto3")
+    boto3_stub.client = _fake_client  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "boto3", boto3_stub)
+
+    # 1. Standardvärden via direkt S3Lagring
+    lagring = S3Lagring(
+        endpoint_url="https://fsn1.your-objectstorage.com",
+        bucket="floden-oppen-eu",
+        access_key="ak",
+        secret_key="sk",
+    )
+    assert lagring.connect_timeout_s == STANDARD_CONNECT_TIMEOUT_S
+    assert lagring.read_timeout_s == STANDARD_READ_TIMEOUT_S
+    assert lagring.max_forsok == STANDARD_MAX_FORSOK
+    assert len(fanga) == 1
+    cfg = fanga[0][1]["config"]
+    assert isinstance(cfg, BotocoreConfig)
+    assert cfg.connect_timeout == STANDARD_CONNECT_TIMEOUT_S
+    assert cfg.read_timeout == STANDARD_READ_TIMEOUT_S
+    assert cfg.retries == {"max_attempts": STANDARD_MAX_FORSOK, "mode": "standard"}
+
+    # 2. Egna timeout/retry-värden via miljövariabler + skapa_lagring
+    lagring2 = skapa_lagring(
+        {},
+        miljo={
+            "FLODEN_S3_TYP": "s3",
+            "FLODEN_S3_ENDPOINT": "https://fsn1.your-objectstorage.com",
+            "FLODEN_S3_BUCKET": "floden-oppen-eu",
+            "FLODEN_S3_ACCESS_KEY": "ak",
+            "FLODEN_S3_SECRET_KEY": "sk",
+            "FLODEN_S3_CONNECT_TIMEOUT_S": "5.5",
+            "FLODEN_S3_READ_TIMEOUT_S": "25.0",
+            "FLODEN_S3_MAX_FORSOK": "4",
+        },
+    )
+    assert isinstance(lagring2, S3Lagring)
+    assert len(fanga) == 2
+    cfg2 = fanga[1][1]["config"]
+    assert isinstance(cfg2, BotocoreConfig)
+    assert cfg2.connect_timeout == 5.5
+    assert cfg2.read_timeout == 25.0
+    assert cfg2.retries == {"max_attempts": 4, "mode": "standard"}
+
+    # 3. Ogiltiga timeouts/försök avvisas tydligt
+    with pytest.raises(ObjektLagringFel, match="connect_timeout_s"):
+        S3Lagring(
+            endpoint_url="https://fsn1.your-objectstorage.com",
+            bucket="b",
+            access_key="ak",
+            secret_key="sk",
+            klient=mock_klient,
+            connect_timeout_s=0.0,
+        )
+    with pytest.raises(ObjektLagringFel, match="read_timeout_s"):
+        S3Lagring(
+            endpoint_url="https://fsn1.your-objectstorage.com",
+            bucket="b",
+            access_key="ak",
+            secret_key="sk",
+            klient=mock_klient,
+            read_timeout_s=float("inf"),
+        )
+    with pytest.raises(ObjektLagringFel, match="max_forsok"):
+        S3Lagring(
+            endpoint_url="https://fsn1.your-objectstorage.com",
+            bucket="b",
+            access_key="ak",
+            secret_key="sk",
+            klient=mock_klient,
+            max_forsok=0,
+        )

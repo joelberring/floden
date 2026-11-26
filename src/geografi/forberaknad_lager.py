@@ -20,7 +20,9 @@ import math
 import os
 import re
 import tempfile
-from collections.abc import Mapping, Sequence
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -46,6 +48,7 @@ STANDARD_RUTFILER: tuple[str, ...] = (
     "run.json",
 )
 STANDARD_RUTSTORLEK_M: float = 500.0
+STANDARD_NEGATIV_CACHE_TTL_S: float = 300.0
 
 _SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
 _RUT_ID_RE = re.compile(r"^mm_(-?\d+)_(-?\d+)$")
@@ -161,27 +164,61 @@ def _bbox_overlappar(
 
 
 class ForberaknadKommunLager:
-    """Deterministisk läs- och lokal LRU-cache-klient för förberäknade kommunrutor."""
+    """Deterministisk, trådsäker läs- och LRU-cache-klient för förberäknade kommunrutor."""
 
     def __init__(
         self,
         objektlagring: ObjektLagring,
-        cache_rot: Path,
-        max_gb: float = 10.0,
+        cache_rot: str | Path | None = None,
+        max_gb: float | None = None,
         *,
-        max_alder_dagar: float = 14.0,
+        max_alder_dagar: float | None = None,
         stada_vid_hamtning: bool = True,
+        negativ_cache_ttl_s: float = STANDARD_NEGATIV_CACHE_TTL_S,
+        konfig: Mapping[str, Any] | None = None,
+        miljo: Mapping[str, str] | None = None,
+        bas_rot: str | Path | None = None,
+        klocka: Callable[[], float] | None = None,
     ) -> None:
-        if not math.isfinite(max_gb) or max_gb <= 0.0:
-            raise ForberaknadLagerFel(f"max_gb måste vara > 0, fick {max_gb}.")
-        if not math.isfinite(max_alder_dagar) or max_alder_dagar <= 0.0:
-            raise ForberaknadLagerFel(f"max_alder_dagar måste vara > 0, fick {max_alder_dagar}.")
+        cache_konf = (
+            las_lokal_cache_konfig(konfig, miljo=miljo)
+            if cache_rot is None or konfig is not None or miljo is not None
+            else None
+        )
+        vald_rot = (
+            Path(cache_rot)
+            if cache_rot is not None
+            else (cache_konf.mapp if cache_konf is not None else Path("data/cache/s3_lru"))
+        )
+        if bas_rot is not None and not vald_rot.is_absolute():
+            vald_rot = Path(bas_rot) / vald_rot
+        vald_max_gb = (
+            float(max_gb)
+            if max_gb is not None
+            else (cache_konf.max_gb if cache_konf is not None else 10.0)
+        )
+        vald_max_alder = (
+            float(max_alder_dagar)
+            if max_alder_dagar is not None
+            else (cache_konf.max_alder_dagar if cache_konf is not None else 14.0)
+        )
+        if not math.isfinite(vald_max_gb) or vald_max_gb <= 0.0:
+            raise ForberaknadLagerFel(f"max_gb måste vara > 0, fick {vald_max_gb}.")
+        if not math.isfinite(vald_max_alder) or vald_max_alder <= 0.0:
+            raise ForberaknadLagerFel(f"max_alder_dagar måste vara > 0, fick {vald_max_alder}.")
+        if not math.isfinite(negativ_cache_ttl_s) or negativ_cache_ttl_s < 0.0:
+            raise ForberaknadLagerFel(
+                f"negativ_cache_ttl_s måste vara >= 0 och ändligt, fick {negativ_cache_ttl_s}."
+            )
         self._lagring = objektlagring
-        self._cache_rot = Path(cache_rot)
-        self._max_gb = float(max_gb)
-        self._max_alder_dagar = float(max_alder_dagar)
+        self._cache_rot = vald_rot
+        self._max_gb = vald_max_gb
+        self._max_alder_dagar = vald_max_alder
         self._stada_vid_hamtning = bool(stada_vid_hamtning)
-        self._saknade_nycklar: set[str] = set()
+        self._negativ_cache_ttl_s = float(negativ_cache_ttl_s)
+        self._klocka: Callable[[], float] = time.monotonic if klocka is None else klocka
+        self._lock = threading.RLock()
+        self._saknade_nycklar: dict[str, float] = {}
 
     @property
     def cache_rot(self) -> Path:
@@ -192,8 +229,40 @@ class ForberaknadKommunLager:
         return self._max_gb
 
     @property
+    def max_alder_dagar(self) -> float:
+        return self._max_alder_dagar
+
+    @property
+    def negativ_cache_ttl_s(self) -> float:
+        return self._negativ_cache_ttl_s
+
+    @property
     def kalla_typ(self) -> Literal["s3", "lokal"]:
         return "s3" if isinstance(self._lagring, S3Lagring) else "lokal"
+
+    def rensa_negativ_cache(self) -> None:
+        """Tömmer alla negativcache-poster under lås."""
+        with self._lock:
+            self._saknade_nycklar.clear()
+
+    def _ar_negativ_cachad(self, nyckel: str, nu_s: float) -> bool:
+        if self._negativ_cache_ttl_s <= 0.0:
+            self._saknade_nycklar.pop(nyckel, None)
+            return False
+        tidsstampel_s = self._saknade_nycklar.get(nyckel)
+        if tidsstampel_s is None:
+            return False
+        if (nu_s - tidsstampel_s) < self._negativ_cache_ttl_s:
+            return True
+        self._saknade_nycklar.pop(nyckel, None)
+        return False
+
+    def _markera_saknad(self, nyckel: str, nu_s: float) -> None:
+        if self._negativ_cache_ttl_s > 0.0:
+            self._saknade_nycklar[nyckel] = nu_s
+
+    def _rensa_saknad(self, nyckel: str) -> None:
+        self._saknade_nycklar.pop(nyckel, None)
 
     def _rutamapp(self, kommun: str, rut_id: str) -> Path:
         return self._cache_rot / "geografi" / kommun / rut_id
@@ -267,65 +336,76 @@ class ForberaknadKommunLager:
         lokal_run = rutamapp / "run.json"
         run_nyckel = geografi_nyckel(ren_kommun, ren_ruta, "run.json")
 
-        # Snabb lokal cache-träff: om `run.json` finns lokalt och varje efterfrågad fil
-        # antingen finns lokalt eller redan konstaterats saknas i S3 -> 0 S3-anrop!
-        if lokal_run.is_file():
-            _kontrollera_manifest_dataskydd(lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}")
-            saknas_lokalt = [
-                f
-                for f in normaliserade
-                if not (rutamapp / f).is_file()
-                and geografi_nyckel(ren_kommun, ren_ruta, f) not in self._saknade_nycklar
-            ]
-            if not saknas_lokalt:
-                markera_cache_anvand(lokal_run)
-                for f in normaliserade:
-                    p = rutamapp / f
-                    if p.is_file():
-                        markera_cache_anvand(p)
-                return rutamapp
+        with self._lock:
+            nu_s = self._klocka()
+            # Snabb lokal cache-träff: om `run.json` finns lokalt och varje efterfrågad fil
+            # antingen finns lokalt eller har giltig (ej utgången) negativcache -> 0 S3-anrop!
+            if lokal_run.is_file():
+                _kontrollera_manifest_dataskydd(lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}")
+                saknas_lokalt = [
+                    f
+                    for f in normaliserade
+                    if not (rutamapp / f).is_file()
+                    and not self._ar_negativ_cachad(
+                        geografi_nyckel(ren_kommun, ren_ruta, f), nu_s
+                    )
+                ]
+                if not saknas_lokalt:
+                    markera_cache_anvand(lokal_run)
+                    for f in normaliserade:
+                        p = rutamapp / f
+                        if p.is_file():
+                            markera_cache_anvand(p)
+                    return rutamapp
 
-        # Kontrollera alltid `run.json` först för dataskydd (även om ej i `filer`).
-        hamtade_nagot = False
-        if not lokal_run.is_file() and run_nyckel not in self._saknade_nycklar:
-            if self._lagring.finns(run_nyckel):
-                self._ladda_ner_atomiskt(run_nyckel, lokal_run)
-                hamtade_nagot = True
-            else:
-                self._saknade_nycklar.add(run_nyckel)
-        elif lokal_run.is_file():
-            _kontrollera_manifest_dataskydd(lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}")
+            # Kontrollera alltid `run.json` först för dataskydd (även om ej i `filer`).
+            hamtade_nagot = False
+            run_saknas_nu = False
+            if not lokal_run.is_file() and not self._ar_negativ_cachad(run_nyckel, nu_s):
+                if self._lagring.finns(run_nyckel):
+                    self._ladda_ner_atomiskt(run_nyckel, lokal_run)
+                    self._rensa_saknad(run_nyckel)
+                    hamtade_nagot = True
+                else:
+                    self._markera_saknad(run_nyckel, self._klocka())
+                    run_saknas_nu = True
+            elif lokal_run.is_file():
+                _kontrollera_manifest_dataskydd(lokal_run, sammanhang=f"{ren_kommun}/{ren_ruta}")
 
-        hittade_filer = 0
-        for filnamn in normaliserade:
-            mal = rutamapp / filnamn
-            if mal.is_file():
-                markera_cache_anvand(mal)
-                hittade_filer += 1
-                continue
-            nyckel = geografi_nyckel(ren_kommun, ren_ruta, filnamn)
-            if nyckel in self._saknade_nycklar:
-                continue
-            if self._lagring.finns(nyckel):
-                self._ladda_ner_atomiskt(nyckel, mal)
-                hamtade_nagot = True
-                hittade_filer += 1
-            else:
-                self._saknade_nycklar.add(nyckel)
+            hittade_filer = 0
+            for filnamn in normaliserade:
+                mal = rutamapp / filnamn
+                nyckel = geografi_nyckel(ren_kommun, ren_ruta, filnamn)
+                if mal.is_file():
+                    markera_cache_anvand(mal)
+                    self._rensa_saknad(nyckel)
+                    hittade_filer += 1
+                    continue
+                if (nyckel == run_nyckel and run_saknas_nu) or self._ar_negativ_cachad(
+                    nyckel, nu_s
+                ):
+                    continue
+                if self._lagring.finns(nyckel):
+                    self._ladda_ner_atomiskt(nyckel, mal)
+                    self._rensa_saknad(nyckel)
+                    hamtade_nagot = True
+                    hittade_filer += 1
+                else:
+                    self._markera_saknad(nyckel, self._klocka())
 
-        if hittade_filer == 0:
-            raise ForberaknadLagerFel(
-                f"Inga efterfrågade filer hittades i lagringen för {ren_kommun}/{ren_ruta} "
-                f"(sökte: {', '.join(normaliserade)})."
-            )
+            if hittade_filer == 0:
+                raise ForberaknadLagerFel(
+                    f"Inga efterfrågade filer hittades i lagringen för {ren_kommun}/{ren_ruta} "
+                    f"(sökte: {', '.join(normaliserade)})."
+                )
 
-        if hamtade_nagot and self._stada_vid_hamtning:
-            stada_lokal_cache(
-                self._cache_rot,
-                max_gb=self._max_gb,
-                max_alder_dagar=self._max_alder_dagar,
-            )
-        return rutamapp
+            if hamtade_nagot and self._stada_vid_hamtning:
+                stada_lokal_cache(
+                    self._cache_rot,
+                    max_gb=self._max_gb,
+                    max_alder_dagar=self._max_alder_dagar,
+                )
+            return rutamapp
 
     def hitta_rutor_for_utbredning(
         self,
@@ -374,11 +454,15 @@ def forberaknad_lager_fran_miljo(
     miljo: Mapping[str, str] | None = None,
     max_gb: float | None = None,
     klient: Any | None = None,
+    bas_rot: str | Path | None = None,
+    negativ_cache_ttl_s: float = STANDARD_NEGATIV_CACHE_TTL_S,
 ) -> ForberaknadKommunLager | None:
     """Skapar `ForberaknadKommunLager` ur `FLODEN_S3_*` / `[lagring]`, eller `None` om S3 ej aktiv.
 
     - Returnerar `None` direkt när S3 inte är konfigurerat (importerar aldrig `boto3`).
     - Kastar `ObjektLagringFel` (inget tyst fel) om S3 är aktiverat men saknar nycklar/bucket/boto3.
+    - Med `cache_rot=None` används `[lagring.lokal_cache] mapp` / `FLODEN_LOKAL_CACHE_MAPP`
+      (upplöst mot `bas_rot` om angiven och sökvägen är relativ).
     """
     env = os.environ if miljo is None else miljo
     lk = las_lagring_konfig(konfig, miljo=env)
@@ -396,15 +480,15 @@ def forberaknad_lager_fran_miljo(
 
         lk = replace(lk, typ="s3")
 
-    cache_konf = las_lokal_cache_konfig(konfig, miljo=env)
-    vald_rot = Path(cache_rot) if cache_rot is not None else cache_konf.mapp
-    vald_max_gb = float(max_gb) if max_gb is not None else cache_konf.max_gb
     lagring = skapa_lagring(lk, miljo=env, klient=klient)
     return ForberaknadKommunLager(
         lagring,
-        vald_rot,
-        max_gb=vald_max_gb,
-        max_alder_dagar=cache_konf.max_alder_dagar,
+        cache_rot=cache_rot,
+        max_gb=max_gb,
+        negativ_cache_ttl_s=negativ_cache_ttl_s,
+        konfig=konfig,
+        miljo=env,
+        bas_rot=bas_rot,
     )
 
 
@@ -413,6 +497,7 @@ __all__ = [
     "ForberaknadKommunLager",
     "ForberaknadLagerFel",
     "ObjektLagringFel",
+    "STANDARD_NEGATIV_CACHE_TTL_S",
     "STANDARD_RUTFILER",
     "STANDARD_RUTSTORLEK_M",
     "forberaknad_lager_fran_miljo",

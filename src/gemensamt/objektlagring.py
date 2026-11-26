@@ -12,11 +12,12 @@ Säkerhetsregler (`AGENTS.md`):
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import tempfile
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,9 @@ from gemensamt.hash import sha256_fil
 
 LagringTyp = Literal["lokal", "s3"]
 TILLATNA_LAGRINGSTYPER: tuple[str, ...] = ("lokal", "s3")
+STANDARD_CONNECT_TIMEOUT_S: float = 10.0
+STANDARD_READ_TIMEOUT_S: float = 60.0
+STANDARD_MAX_FORSOK: int = 3
 
 
 class ObjektLagringFel(Exception):
@@ -43,12 +47,25 @@ class LagringKonfig:
     access_key: str | None = None
     secret_key: str | None = None
     prefix: str = ""
+    connect_timeout_s: float = STANDARD_CONNECT_TIMEOUT_S
+    read_timeout_s: float = STANDARD_READ_TIMEOUT_S
+    max_forsok: int = STANDARD_MAX_FORSOK
 
     def __post_init__(self) -> None:
         if self.typ not in TILLATNA_LAGRINGSTYPER:
             raise ObjektLagringFel(
                 f"Ogiltig lagringstyp {self.typ!r}; välj bland {TILLATNA_LAGRINGSTYPER}."
             )
+        if not math.isfinite(self.connect_timeout_s) or self.connect_timeout_s <= 0.0:
+            raise ObjektLagringFel(
+                f"connect_timeout_s måste vara > 0 och ändligt, fick {self.connect_timeout_s}."
+            )
+        if not math.isfinite(self.read_timeout_s) or self.read_timeout_s <= 0.0:
+            raise ObjektLagringFel(
+                f"read_timeout_s måste vara > 0 och ändligt, fick {self.read_timeout_s}."
+            )
+        if self.max_forsok < 1:
+            raise ObjektLagringFel(f"max_forsok måste vara >= 1, fick {self.max_forsok}.")
 
 
 def _normalisera_nyckel(nyckel: str, *, tillat_tom: bool = False) -> str:
@@ -133,6 +150,29 @@ def las_lagring_konfig(
     access_key = _str_val("FLODEN_S3_ACCESS_KEY", "access_key")
     secret_key = _str_val("FLODEN_S3_SECRET_KEY", "secret_key")
     prefix = _str_val("FLODEN_S3_PREFIX", "prefix", "") or ""
+    connect_timeout_raw = _str_val(
+        "FLODEN_S3_CONNECT_TIMEOUT_S",
+        "connect_timeout_s",
+        str(STANDARD_CONNECT_TIMEOUT_S),
+    )
+    read_timeout_raw = _str_val(
+        "FLODEN_S3_READ_TIMEOUT_S",
+        "read_timeout_s",
+        str(STANDARD_READ_TIMEOUT_S),
+    )
+    max_forsok_raw = _str_val(
+        "FLODEN_S3_MAX_FORSOK",
+        "max_forsok",
+        str(STANDARD_MAX_FORSOK),
+    )
+    try:
+        connect_timeout_s = float(connect_timeout_raw or STANDARD_CONNECT_TIMEOUT_S)
+        read_timeout_s = float(read_timeout_raw or STANDARD_READ_TIMEOUT_S)
+        max_forsok = int(max_forsok_raw or STANDARD_MAX_FORSOK)
+    except (TypeError, ValueError) as exc:
+        raise ObjektLagringFel(
+            f"Ogiltiga S3-timeout/retry-värden i konfigurationen: {exc}"
+        ) from exc
 
     return LagringKonfig(
         typ=typ,
@@ -143,6 +183,9 @@ def las_lagring_konfig(
         access_key=access_key,
         secret_key=secret_key,
         prefix=_normalisera_prefix(prefix),
+        connect_timeout_s=connect_timeout_s,
+        read_timeout_s=read_timeout_s,
+        max_forsok=max_forsok,
     )
 
 
@@ -316,9 +359,25 @@ class S3Lagring(ObjektLagring):
         region: str = "fsn1",
         prefix: str = "",
         klient: Any | None = None,
+        connect_timeout_s: float = STANDARD_CONNECT_TIMEOUT_S,
+        read_timeout_s: float = STANDARD_READ_TIMEOUT_S,
+        max_forsok: int = STANDARD_MAX_FORSOK,
     ) -> None:
         if not bucket.strip():
             raise ObjektLagringFel("S3-konfiguration saknar 'bucket'.")
+        if not math.isfinite(connect_timeout_s) or connect_timeout_s <= 0.0:
+            raise ObjektLagringFel(
+                f"connect_timeout_s måste vara > 0 och ändligt, fick {connect_timeout_s}."
+            )
+        if not math.isfinite(read_timeout_s) or read_timeout_s <= 0.0:
+            raise ObjektLagringFel(
+                f"read_timeout_s måste vara > 0 och ändligt, fick {read_timeout_s}."
+            )
+        if max_forsok < 1:
+            raise ObjektLagringFel(f"max_forsok måste vara >= 1, fick {max_forsok}.")
+        self._connect_timeout_s = float(connect_timeout_s)
+        self._read_timeout_s = float(read_timeout_s)
+        self._max_forsok = int(max_forsok)
         if klient is None:
             if not endpoint_url.strip():
                 raise ObjektLagringFel("S3-konfiguration saknar 'endpoint'.")
@@ -328,17 +387,24 @@ class S3Lagring(ObjektLagring):
                 )
             try:
                 import boto3
+                from botocore.config import Config as BotocoreConfig
             except ImportError as exc:
                 raise ObjektLagringFel(
                     "S3-lagring kräver det valfria beroendet 'boto3'. "
                     "Installera med: pip install -e '.[s3]'"
                 ) from exc
+            klient_konfig = BotocoreConfig(
+                connect_timeout=self._connect_timeout_s,
+                read_timeout=self._read_timeout_s,
+                retries={"max_attempts": self._max_forsok, "mode": "standard"},
+            )
             klient = boto3.client(
                 "s3",
                 endpoint_url=endpoint_url.strip(),
                 aws_access_key_id=access_key.strip(),
                 aws_secret_access_key=secret_key.strip(),
                 region_name=region.strip() or "fsn1",
+                config=klient_konfig,
             )
         self._klient: Any = klient
         self._bucket = bucket.strip()
@@ -347,6 +413,18 @@ class S3Lagring(ObjektLagring):
         self._prefix = _normalisera_prefix(prefix)
         if self._prefix and not self._prefix.endswith("/"):
             self._prefix = f"{self._prefix}/"
+
+    @property
+    def connect_timeout_s(self) -> float:
+        return self._connect_timeout_s
+
+    @property
+    def read_timeout_s(self) -> float:
+        return self._read_timeout_s
+
+    @property
+    def max_forsok(self) -> int:
+        return self._max_forsok
 
     @property
     def bucket(self) -> str:
@@ -481,12 +559,44 @@ class S3Lagring(ObjektLagring):
         for i in range(0, len(nycklar), 1000):
             batch = [{"Key": self._full_nyckel(k)} for k in nycklar[i : i + 1000]]
             try:
-                self._klient.delete_objects(Bucket=self._bucket, Delete={"Objects": batch})
+                svar = self._klient.delete_objects(Bucket=self._bucket, Delete={"Objects": batch})
             except Exception as exc:  # noqa: BLE001
                 raise ObjektLagringFel(
                     f"S3 delete_objects misslyckades för prefix {ren_prefix!r}: {exc}"
                 ) from exc
-            raderade += len(batch)
+            if isinstance(svar, Mapping):
+                fel = svar.get("Errors")
+                if fel:
+                    fel_lista: list[Any] = (
+                        list(fel)
+                        if isinstance(fel, Sequence) and not isinstance(fel, str | bytes)
+                        else [fel]
+                    )
+                    max_visa = 10
+                    detaljer = ", ".join(
+                        (
+                            f"{e.get('Key', '?')}: {e.get('Code', '?')}"
+                            + (f" ({e['Message']})" if e.get("Message") else "")
+                        )
+                        if isinstance(e, Mapping)
+                        else str(e)
+                        for e in fel_lista[:max_visa]
+                    )
+                    if len(fel_lista) > max_visa:
+                        detaljer += f", ... (+{len(fel_lista) - max_visa} fler)"
+                    raise ObjektLagringFel(
+                        f"S3 delete_objects rapporterade {len(fel_lista)} delfel "
+                        f"för prefix {ren_prefix!r}: {detaljer}"
+                    )
+                raderade_svar = svar.get("Deleted")
+                if isinstance(raderade_svar, Sequence) and not isinstance(
+                    raderade_svar, str | bytes
+                ):
+                    raderade += len(raderade_svar)
+                else:
+                    raderade += len(batch)
+            else:
+                raderade += len(batch)
         return raderade
 
     def presigned_url(self, nyckel: str, giltig_s: int = 3600) -> str:
@@ -524,4 +634,7 @@ def skapa_lagring(
         region=lk.region,
         prefix=lk.prefix,
         klient=klient,
+        connect_timeout_s=lk.connect_timeout_s,
+        read_timeout_s=lk.read_timeout_s,
+        max_forsok=lk.max_forsok,
     )
