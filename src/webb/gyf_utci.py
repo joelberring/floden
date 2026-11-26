@@ -61,14 +61,12 @@ from karna.geometri import (
     las_markslag,
     las_terrang,
     las_vegetation,
-    ytmodell_fran,
 )
 from karna.geometri.lasa import vegetation_pa_marknat
-from karna.geometri.rasterfil import ruta_fran_geo
 from karna.ritat import RitatFel
 from karna.scenario import Andring, ScenarioFel, las_scenario
-from markmodell.byggnadsregister import ByggnadsPost, markhojd_under_byggnad
-from markmodell.hinder_oppningar import BYGGNAD, HARDGJORT, brann_in_byggnader
+from markmodell.byggnadsregister import ByggnadsPost
+from markmodell.hinder_oppningar import HARDGJORT
 from mikroklimat import (
     UTCI_STRESSKLASSER,
     VarmestressResultat,
@@ -310,21 +308,129 @@ def tolka_query_payload(
 # ------------------------------------------------------------------ geometriladdning
 
 
+def _punkter_i_ring(
+    e_rutnat: NDArray[np.float64],
+    n_rutnat: NDArray[np.float64],
+    ring: Sequence[tuple[float, float]],
+) -> NDArray[np.bool_]:
+    """Vektoriserad ray-casting point-in-polygon (samma regel som markmodellens K1-bygge)."""
+    innanfor = np.zeros(e_rutnat.shape, dtype=np.bool_)
+    antal = len(ring)
+    if antal < 3:
+        return innanfor
+    horn = ring[:-1] if ring[0] == ring[-1] and antal > 3 else ring
+    m = len(horn)
+    for i in range(m):
+        e1, n1 = float(horn[i][0]), float(horn[i][1])
+        e2, n2 = float(horn[(i + 1) % m][0]), float(horn[(i + 1) % m][1])
+        korsar_n = (n1 > n_rutnat) != (n2 > n_rutnat)
+        if not np.any(korsar_n):
+            continue
+        lutning = (e2 - e1) / ((n2 - n1) if n2 != n1 else 1e-18)
+        skarning_e = e1 + (n_rutnat - n1) * lutning
+        innanfor ^= korsar_n & (e_rutnat < skarning_e)
+    return innanfor
+
+
+def _byggnad_maske_geo(
+    polygon: Sequence[tuple[float, float]],
+    hal: Sequence[Sequence[tuple[float, float]]],
+    geo: GeoTransformInfo,
+) -> tuple[NDArray[np.bool_], tuple[int, int, int, int]] | None:
+    """Byggnadens cellmask i godtyckligt rektangulärt `GeoTransformInfo` (1×2, 2×1, 2×2 m.fl.)."""
+    if len(polygon) < 3:
+        return None
+    px_x = float(geo.pixelstorlek_x)
+    px_y = float(geo.pixelstorlek_y)
+    e_min_y = float(geo.x_min)
+    n_max_y = float(geo.y_max)
+    e_max_y = e_min_y + geo.bredd * px_x
+    n_min_y = n_max_y - geo.hojd * px_y
+
+    pe = [float(p[0]) for p in polygon]
+    pn = [float(p[1]) for p in polygon]
+    b_emin, b_emax = min(pe), max(pe)
+    b_nmin, b_nmax = min(pn), max(pn)
+    if b_emax < e_min_y or b_emin > e_max_y or b_nmax < n_min_y or b_nmin > n_max_y:
+        return None
+
+    kol0 = max(0, int(math.floor((b_emin - e_min_y) / px_x)) - 1)
+    kol1 = min(geo.bredd, int(math.ceil((b_emax - e_min_y) / px_x)) + 1)
+    rad0 = max(0, int(math.floor((n_max_y - b_nmax) / px_y)) - 1)
+    rad1 = min(geo.hojd, int(math.ceil((n_max_y - b_nmin) / px_y)) + 1)
+    if kol1 <= kol0 or rad1 <= rad0:
+        return None
+
+    e_vek = e_min_y + (np.arange(kol0, kol1, dtype=np.float64) + 0.5) * px_x
+    n_vek = n_max_y - (np.arange(rad0, rad1, dtype=np.float64) + 0.5) * px_y
+    sub_e, sub_n = np.meshgrid(e_vek, n_vek)
+    mask = _punkter_i_ring(sub_e, sub_n, polygon)
+    for ring in hal:
+        mask &= ~_punkter_i_ring(sub_e, sub_n, ring)
+    if not np.any(mask):
+        return None
+    return mask, (rad0, rad1, kol0, kol1)
+
+
+def _markhojd_under_byggnad_geo(
+    terrang_z: NDArray[np.float32],
+    geo: GeoTransformInfo,
+    polygon: Sequence[tuple[float, float]],
+    hal: Sequence[Sequence[tuple[float, float]]] = (),
+) -> float:
+    """Median av terrängen under byggnad på godtyckligt rektangulärt `GeoTransformInfo`."""
+    traff = _byggnad_maske_geo(polygon, hal, geo)
+    if traff is not None:
+        mask, (r0, r1, k0, k1) = traff
+        v = terrang_z[r0:r1, k0:k1][mask]
+        if np.isfinite(v).any():
+            return float(np.nanmedian(v))
+        for marg in (2, 5, 10, 25, 50):
+            ram = terrang_z[max(r0 - marg, 0) : r1 + marg, max(k0 - marg, 0) : k1 + marg]
+            if np.isfinite(ram).any():
+                return float(np.nanmedian(ram))
+    cx = sum(float(p[0]) for p in polygon) / len(polygon)
+    cy = sum(float(p[1]) for p in polygon) / len(polygon)
+    kol = min(max(int(math.floor((cx - geo.x_min) / geo.pixelstorlek_x)), 0), geo.bredd - 1)
+    rad = min(max(int(math.floor((geo.y_max - cy) / geo.pixelstorlek_y)), 0), geo.hojd - 1)
+    v0 = float(terrang_z[rad, kol])
+    if np.isfinite(v0):
+        return v0
+    for marg in (2, 5, 10, 25, 50):
+        ram = terrang_z[max(rad - marg, 0) : rad + marg + 1, max(kol - marg, 0) : kol + marg + 1]
+        if np.isfinite(ram).any():
+            return float(np.nanmedian(ram))
+    return v0
+
+
 def _brann_byggnader_mask(
     terrang: NDArray[np.float32],
     geo: GeoTransformInfo,
     byggnader: Sequence[ByggnadsPost],
 ) -> tuple[NDArray[np.float32], NDArray[np.bool_]]:
-    """Bygger DSM och fotavtrycksmask från terräng och byggnader (samma regel som K1 v2)."""
+    """Bygger DSM och fotavtrycksmask på godtyckligt rektangulärt rutnät (samma regel som K1 v2)."""
+    ny_z = np.array(terrang, dtype=np.float32, copy=True)
+    bygg_mask = np.zeros(terrang.shape, dtype=np.bool_)
     if not byggnader:
-        return terrang.copy(), np.zeros(terrang.shape, dtype=np.bool_)
-    dsm, slag = brann_in_byggnader(
-        terrang,
-        np.zeros(terrang.shape, dtype=np.uint8),
-        ruta_fran_geo(geo),
-        [b.till_byggnad() for b in byggnader],
-    )
-    return np.asarray(dsm, dtype=np.float32), np.asarray(slag == BYGGNAD, dtype=np.bool_)
+        return ny_z, bygg_mask
+
+    for post in byggnader:
+        b = post.till_byggnad()
+        traff = _byggnad_maske_geo(b.polygon, b.hal, geo)
+        if traff is None:
+            continue
+        mask, (rad0, rad1, kol0, kol1) = traff
+        z_sub = ny_z[rad0:rad1, kol0:kol1]
+        mask_sub = bygg_mask[rad0:rad1, kol0:kol1]
+        nya_bygg_mask = mask & (~mask_sub)
+        if b.takhoyd_rh2000 is not None:
+            takhoyd = np.float32(b.takhoyd_rh2000)
+            z_sub[mask] = np.maximum(z_sub[mask], takhoyd)
+        else:
+            z_sub[nya_bygg_mask] = z_sub[nya_bygg_mask] + np.float32(b.hinderhojd_m)
+        mask_sub |= mask
+
+    return ny_z, bygg_mask
 
 
 def _sammanfoga_k1_rutor(
@@ -732,7 +838,6 @@ def _tillampa_scenario_i_minnet(
     nya_trad_mask = np.zeros(proj_geom.tomt_mask.shape, dtype=np.bool_)
     nya_busk_mask = np.zeros(proj_geom.tomt_mask.shape, dtype=np.bool_)
     borttagna_bygg: list[ByggnadsPost] = []
-    mm = ruta_fran_geo(geo)
 
     for ra in andringar:
         try:
@@ -783,7 +888,7 @@ def _tillampa_scenario_i_minnet(
             )
             terr_saker = np.where(np.isfinite(terrang), terrang, np.float32(0.0))
             try:
-                mark_under = float(markhojd_under_byggnad(terr_saker, mm, yttre, hal_ringar))
+                mark_under = float(_markhojd_under_byggnad_geo(terr_saker, geo, yttre, hal_ringar))
             except Exception:  # noqa: BLE001 - fallback till medelvärde inom fotavtrycket
                 vals = terrang[mask & np.isfinite(terrang)]
                 mark_under = float(np.median(vals)) if vals.size else 0.0
@@ -1404,7 +1509,7 @@ def kor_varmestress_analys(
         NDArray[np.bool_],
     ]:
         terr_saker = np.where(np.isfinite(terrang_m), terrang_m, np.float32(0.0))
-        dsm_full = ytmodell_fran(terr_saker, geo, byggnader, vegetation_markrutnat=None)
+        dsm_full, _ = _brann_byggnader_mask(terr_saker, geo, byggnader)
         if steg == 1:
             tomt_w = proj_geom.tomt_mask[r0:r1, c0:c1]
             bygg_w = bygg_mask[r0:r1, c0:c1]
