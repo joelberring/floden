@@ -118,3 +118,41 @@ def test_feltext_hanvisar_till_steg_2_nar_korning_saknas() -> None:
     assert ei2.value.status == 409
     assert "steg 2" in str(ei2.value)
     assert "steg 3" not in str(ei2.value)
+
+
+def test_luft_mkn_utan_jamforelser_slapps_igenom_och_ekologi_kraver_jamforelser() -> None:
+    """W-B7: luft.mkn har aldrig [[jamforelser]] men ska väljas; ekologi utan jämförelse avvisas."""
+    rt = _fejk_rt(
+        korningar=[
+            {"korning_id": "k-luft-demo", "status": "klar", "skapad": "2026-11-25T10:00:00Z"},
+            {"korning_id": "k-luft-egen", "status": "klar", "skapad": "2026-11-25T11:00:00Z"},
+            {"korning_id": "k-eko-nulage", "status": "klar", "skapad": "2026-11-25T12:00:00Z"},
+            {"korning_id": "k-eko-jfr", "status": "klar", "skapad": "2026-11-25T09:00:00Z"},
+        ],
+        poster={
+            "k-luft-demo": {"korning_id": "k-luft-demo", "fraga_id": "demo-luft", "amne": "luft", "jamforelser": [], "scenarier": ["bas"]},
+            "k-luft-egen": {"korning_id": "k-luft-egen", "fraga_id": "luft-egen", "amne": "luft", "jamforelser": [], "scenarier": ["bas"]},
+            "k-eko-nulage": {"korning_id": "k-eko-nulage", "fraga_id": "lage-idag-ekologi", "amne": "ekologi", "jamforelser": [], "scenarier": ["fore"]},
+            "k-eko-jfr": {
+                "korning_id": "k-eko-jfr",
+                "fraga_id": "api-ekologi-1",
+                "amne": "ekologi",
+                "jamforelser": [{"namn": "konnektivitet_stromtathet_efter_minus_fore"}],
+                "scenarier": ["fore", "efter"],
+                "antaganden": ["Habitatnätverk Tallskog"],
+            },
+        },
+        underlag={
+            "k-luft-demo": {"slag": "demo", "scenario": None},
+            "k-luft-egen": {"slag": "egen", "scenario": None},
+            "k-eko-nulage": {"slag": "lage_idag", "scenario": None},
+            "k-eko-jfr": {"slag": "egen", "scenario": None},
+        },
+    )
+    luft_lista = korningar_for(rt, "proj-1", "luft")
+    assert [x["korning_id"] for x in luft_lista] == ["k-luft-egen", "k-luft-demo"]
+    assert valj_korning(rt, "proj-1", "luft")["korning_id"] == "k-luft-egen"
+
+    eko_lista = korningar_for(rt, "proj-1", "ekologi")
+    assert [x["korning_id"] for x in eko_lista] == ["k-eko-jfr"]
+    assert valj_korning(rt, "proj-1", "ekologi")["korning_id"] == "k-eko-jfr"

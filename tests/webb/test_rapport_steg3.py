@@ -100,6 +100,10 @@ def test_steg3_utan_korningar_hanvisar_till_steg2_och_skapar_sedan_laget_idag_ra
     assert per0["skyfall"]["kan_skapas"] is False
     assert "steg 2" in (per0["skyfall"]["forklaring"] or "")
     assert "steg 3" not in (per0["skyfall"]["forklaring"] or "")
+    assert per0["ekologi"]["mall"] is True and per0["ekologi"]["kan_skapas"] is False
+    assert "steg 2" in (per0["ekologi"]["forklaring"] or "")
+    assert per0["luft"]["mall"] is True and per0["luft"]["kan_skapas"] is True
+    assert "CSV" in (per0["luft"]["forklaring"] or "") and "bakgrund" in (per0["luft"]["forklaring"] or "").lower()
 
     s_tom, fel_tom = varld.json(varld.anna, "POST", url, {"amne": "skyfall"})
     assert s_tom == 409

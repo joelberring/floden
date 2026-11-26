@@ -487,6 +487,7 @@ def _sparbarhet(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
                 k.analys,
                 typ=k.typ,
                 scenario=k.scenario,
+                roll=k.meta.get("roll"),
                 utsnitt=k.meta.get("utsnitt"),
                 max_px=KART_PX,
                 rubrik=k.meta.get("rubrik"),
@@ -565,7 +566,10 @@ def _karta(r: Rapport, tj: RapportTjanst) -> tuple[list[str], int]:
                 (
                     k
                     for k in r.kartor
-                    if k.typ == "bas" and k.analys == j["analys"] and k.scenario == j["fore"]
+                    if k.typ == "bas"
+                    and k.analys == j["analys"]
+                    and k.scenario == j["fore"]
+                    and (not k.meta.get("roll") or k.meta.get("roll") == j["utdata"])
                 ),
                 None,
             )

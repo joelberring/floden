@@ -20,13 +20,17 @@ from typing import TYPE_CHECKING, Any, Final
 from rapport.referensflode import JFR, gardens_mottagare, pastaenden
 from rapport.referensflode_dagsljus import DagsljusKontekst, kontekst_fran_rapport
 from rapport.referensflode_dagsljus import pastaenden as pastaenden_dagsljus
+from rapport.referensflode_ekologi import EkologiKontekst, _kalla_kort
+from rapport.referensflode_ekologi import pastaenden as pastaenden_ekologi
+from rapport.referensflode_luft import kontekst_fran_rapport as kontekst_luft_fran_rapport
+from rapport.referensflode_luft import pastaenden as pastaenden_luft
 from rapport.skissrapport import AMNEN_NIVA1
 
 if TYPE_CHECKING:
     from rapport.skissrapport import Rapport, RapportTjanst
 
-AMNEN_MED_MALL: Final[tuple[str, ...]] = ("skyfall", "dagsljus")
-"""Ämnen som webbflödet har påståenden för (R1 och R2). Ekologi och luft har en R2-mall via MCP men inga påståenden i webbflödet."""
+AMNEN_MED_MALL: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "ekologi", "luft")
+"""Ämnen som webbflödet har påståenden för (R1 och R2)."""
 
 AMNESNAMN: Final[dict[str, str]] = {"skyfall": "Skyfall", "dagsljus": "Dagsljus och sol", "ekologi": "Ekologi", "luft": "Luft"}
 
@@ -117,13 +121,7 @@ def saknad_mall(amne: str) -> str | None:
     if amne not in AMNEN_NIVA1:
         return (
             f"Rapportmall (R2) för {AMNESNAMN[amne].lower()} saknas än: rapporten kan inte skapas förrän mallen "
-            "finns. Beräkningsresultaten finns i steg 4."
-        )
-    if amne == "luft":
-        return (
-            "Skissunderlaget för luft (R2) bygger på en given timserie av lokalt haltbidrag från ett annat verktyg och en "
-            "uttryckligt angiven bakgrund (lösaren luft.mkn), och webben har inget sätt att ange dem än. Det kan "
-            "skapas via MCP (rapport_skapa)."
+            "finns. Beräkningsresultaten finns i steg 2."
         )
     if amne not in AMNEN_MED_MALL:
         return (
@@ -522,6 +520,142 @@ def _regn_ur_idf(rt: RapportTjanst, r: Rapport) -> bool:
     return bool(rader) and "aterkomsttid_ar" in rader[0]["varden"]
 
 
+def ekologi_pastaenden(
+    rt: RapportTjanst,
+    r: Rapport,
+    *,
+    demo: bool,
+    har_avgransning: bool = False,
+) -> list[Mapping[str, Any]]:
+    """Påståenden för ekologi (EK-01–EK-15) ur `referensflode_ekologi`.
+
+    Deduplicerar efter-scenarier när körningen har flera utdataroller (t.ex. `stromtathet` och
+    `kansighet`), anpassar EK-14 när projektet inte är demokvarteret, och stöder även nuläge
+    (`lage_idag` utan jämförelse) när sådant underlag skickas in direkt."""
+    from rapport.ekologibelagg import EKOLOGI_LOSARE, _forsta_dok
+
+    k = r.korningar[0]
+    analys = next((a["analys"] for a in k["analyser"] if a["losare"] == EKOLOGI_LOSARE), None)
+    if analys is None:
+        raise ValueError("Körningen har ingen ekologianalys (ekologi.konnektivitet).")
+    jf = [j for j in k["jamforelser"] if j["analys"] == analys]
+    if jf:
+        ordnade_jf = sorted(jf, key=lambda j: 0 if j.get("utdata") == "stromtathet" else 1)
+        fore = str(ordnade_jf[0]["fore"])
+        sedda_efter: set[str] = set()
+        efter_par: list[tuple[str, str]] = []
+        for j in ordnade_jf:
+            if str(j["fore"]) != fore:
+                continue
+            efter_id = str(j["efter"])
+            if efter_id in sedda_efter:
+                continue
+            sedda_efter.add(efter_id)
+            efter_par.append((efter_id, str(j["namn"])))
+    else:
+        bas = _bas_scenario(k, analys)
+        if bas is None:
+            raise ValueError(
+                "Körningen har ingen ekologianalys med jämförelse före och efter och saknar scenario för läget idag."
+            )
+        fore = bas
+        efter_par = []
+
+    ruta: str | None = None
+    try:
+        svar = rt.tjanst.resultat_sammanfattning(str(k["korning_id"]), analys=analys, scenario=fore, max_rader=1)
+        rad = next((x for t in svar["matvarden"] for x in t["rader"]), None)
+        ruta = None if rad is None else rad["ruta"]
+    except Exception:  # noqa: BLE001 - ruta kan saknas i syntetiska tester
+        ruta = None
+
+    dok = _forsta_dok(rt.kalla, str(k["korning_id"]), analys, fore)
+    if dok is None:
+        raise ValueError("Körningen saknar ekologi.json.")
+    nv = dok.get("natverk", {})
+    kontekst = EkologiKontekst(
+        analys=analys,
+        fore=fore,
+        efter=tuple(efter_par),
+        ruta=ruta,
+        signalarter=tuple(str(a) for a in nv.get("signalarter", [])),
+        natverk_namn=str(nv.get("namn", "")),
+        kalla_kort=_kalla_kort(str(nv.get("kalla", {}).get("referens", ""))),
+        d50_antagen=bool(nv.get("d50_antagen")),
+    )
+    ruta_sfx = f".{ruta}" if ruta else ""
+
+    def mv(matt: str) -> str:
+        return f"matvarde.{analys}.{fore}{ruta_sfx}.{matt}"
+
+    def nv_adr(matt: str) -> str:
+        return f"ekonatverk.{analys}.{fore}{ruta_sfx}.{matt}"
+
+    ut: list[Mapping[str, Any]] = []
+    for p in pastaenden_ekologi(kontekst, r.fragor):
+        d = dict(p)
+        fid = str(d["fraga_id"])
+        if not efter_par:
+            if fid == "EK-08":
+                bel = [
+                    mv("eca_m2"),
+                    mv("pc"),
+                    mv("antal_flackar"),
+                    mv("eca_min_m2"),
+                    mv("eca_max_m2"),
+                ]
+                d["text"] = (
+                    f"I läget idag är ECA, den ekvivalenta sammanhängande habitatarean för potentiell livsmiljö, "
+                    f"okänd kvalitet, {_m(bel[0])}. PC är {_m(bel[1], 'avrundning=0,00001|enhet=nej')} och antalet "
+                    f"habitatfläckar är {_m(bel[2], 'enhet=nej')}. Mellan källans tröskelscenarier ligger ECA mellan "
+                    f"{_m(bel[3])} och {_m(bel[4])}. Rapporten redovisar enbart läget idag utan ritförslag."
+                )
+                d["belagg"] = bel
+            elif fid == "EK-10":
+                bel = [mv("cellstorlek_m"), mv("antal_flackar")]
+                d["text"] = (
+                    "Kartan visar strömtäthet (flaskhalsar) i läget idag. Strömtätheten är normaliserad och visar var "
+                    f"rörelsen mellan habitatfläckarna är koncentrerad i modellen. Rastrets cellstorlek är "
+                    f"{_m(bel[0], 'avrundning=1')} och antalet habitatfläckar är {_m(bel[1], 'enhet=nej')}. "
+                    "Fläckarnas betydelse för sambandet (dPC) finns i körningens resultatfil men redovisas inte som tal här."
+                )
+                d["belagg"] = bel
+            elif fid == "EK-11":
+                bel = [nv_adr("troskel_m"), nv_adr("troskel_hog_m"), mv("pc_min"), mv("pc_max")]
+                d["text"] = (
+                    f"Det källbaserade intervallet följer källans två spridningströsklar, {_m(bel[0])} och {_m(bel[1])}. "
+                    f"I läget idag ligger PC mellan {_m(bel[2], 'avrundning=0,00001|enhet=nej')} och "
+                    f"{_m(bel[3], 'avrundning=0,00001|enhet=nej')}. Intervallet visar inte osäkerheten i habitatval, "
+                    "motstånd per markslag eller signalartens verkliga spridning."
+                )
+                d["belagg"] = bel
+            elif fid == "EK-12":
+                d = {
+                    "fraga_id": "EK-12",
+                    "status": "ej_tillampligt",
+                    "fordjupning": "nej",
+                    "text": "Rapporten redovisar enbart läget idag utan ritförslag; inga alternativ jämförs.",
+                    "motivering": "Inget ritförslag är prövat i körningen (enbart nuläge).",
+                }
+        if fid == "EK-14" and not demo:
+            d["saknat_underlag"] = [
+                "Markunderlagets källa, version och licensvillkor för projektet samt eventuella lokala uppdateringar."
+            ]
+        ut.append(_anpassa_pastaende(d, har_avgransning=har_avgransning))
+    return ut
+
+
+def luft_pastaenden(
+    rt: RapportTjanst,
+    r: Rapport,
+    *,
+    har_avgransning: bool = False,
+) -> list[Mapping[str, Any]]:
+    """Påståenden för luft (LU-01–LU-15) ur `referensflode_luft` (lösaren `luft.mkn`)."""
+    alla = pastaenden_luft(kontekst_luft_fran_rapport(rt, r), r.fragor)
+    return [_anpassa_pastaende(p, har_avgransning=har_avgransning) for p in alla]
+
+
 def pastaenden_for(rt: RapportTjanst, r: Rapport) -> list[Mapping[str, Any]]:
     """Påståendena för rapportens ämne och frågor. Kastar `ValueError` om en fråga saknar påstående."""
     demo = r.projekt == "demokvarteret"
@@ -535,6 +669,10 @@ def pastaenden_for(rt: RapportTjanst, r: Rapport) -> list[Mapping[str, Any]]:
         )
     elif r.amne == "dagsljus":
         alla = dagsljus_pastaenden(rt, r, har_avgransning=avgransad)
+    elif r.amne == "ekologi":
+        alla = ekologi_pastaenden(rt, r, demo=demo, har_avgransning=avgransad)
+    elif r.amne == "luft":
+        alla = luft_pastaenden(rt, r, har_avgransning=avgransad)
     else:
         raise ValueError(saknad_mall(r.amne) or "Ämnet saknar påståenden.")
     valda = [p for p in alla if p["fraga_id"] in set(r.fragor)]

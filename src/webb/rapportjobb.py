@@ -15,8 +15,11 @@ status, aldrig syftestext.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -37,7 +40,7 @@ if TYPE_CHECKING:
 
 _logg = logging.getLogger(__name__)
 
-AMNEN_ORDNING: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "ekologi")
+AMNEN_ORDNING: Final[tuple[str, ...]] = ("skyfall", "dagsljus", "ekologi", "luft")
 STEG: Final[tuple[tuple[str, str], ...]] = (
     ("skapar", "Skapar rapporten och ritar kartor"),
     ("paastaenden", "Skriver påståenden med belägg"),
@@ -46,12 +49,175 @@ STEG: Final[tuple[tuple[str, str], ...]] = (
 )
 _JOBB_RE = re.compile(r"^j-[0-9a-f]{12}$")
 _BEST_FALT = {"syfte", "skede", "mottagare_roll", "amnen", "villkor", "fragor", "bara_med_underlag", "scenario", "projekt"}
+_LUFT_FALT = {
+    "serie_fore_csv",
+    "serie_efter_csv",
+    "bakgrund_ug_m3",
+    "osakerhet_halt_rel",
+    "osakerhet_bakgrund_ug_m3",
+    "emissionsfaktor_intervall",
+    "depositionsfaktor_intervall",
+    "grans_dygn_ug_m3",
+    "max_dygn_ar",
+}
+_LUFT_HALT_KOLUMNER: Final[tuple[str, ...]] = ("lokal_ug_m3", "halt_ug_m3", "halt_bidrag_ug_m3")
+_LUFT_TID_KOLUMNER: Final[tuple[str, ...]] = ("tid", "tid_s", "timme")
+_MAX_LUFT_CSV_BYTES: Final[int] = 5 * 1024 * 1024
 _MAX_FRAGOR = 200
 STANDARD_SYFTE = "Tidig sållning av frågorna för förslaget."
+LUFT_INDATA_TEXT = (
+    "Skissunderlaget för luft (PM10, luft.mkn) bygger på en extern timserie (CSV) och en uttryckligt "
+    "angiven bakgrundshalt (µg/m³). Ange timserie och bakgrund för att skapa rapporten."
+)
 
 
 def _nu() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _krav_tal(varde: Any, namn: str, *, minst: float | None = None, over: float | None = None, under: float | None = None) -> float:
+    if isinstance(varde, bool) or not isinstance(varde, int | float):
+        raise FlodenWebbFel(f"{namn} måste vara ett ändligt tal.", status_kod=400)
+    tal = float(varde)
+    if not math.isfinite(tal):
+        raise FlodenWebbFel(f"{namn} måste vara ett ändligt tal (inte NaN eller oändligt).", status_kod=400)
+    if minst is not None and tal < minst:
+        raise FlodenWebbFel(f"{namn} måste vara >= {minst:g} (fick {tal:g}).", status_kod=400)
+    if over is not None and tal <= over:
+        raise FlodenWebbFel(f"{namn} måste vara > {over:g} (fick {tal:g}).", status_kod=400)
+    if under is not None and tal >= under:
+        raise FlodenWebbFel(f"{namn} måste vara < {under:g} (fick {tal:g}).", status_kod=400)
+    return tal
+
+
+def _tolka_intervall(varde: Any, namn: str, *, strikt_positiv: bool) -> list[float]:
+    if not isinstance(varde, list | tuple) or len(varde) != 2:
+        raise FlodenWebbFel(f"{namn} måste vara två tal [lägst, högst].", status_kod=400)
+    lo = _krav_tal(varde[0], f"{namn}[0]", over=0.0 if strikt_positiv else None, minst=None if strikt_positiv else 0.0)
+    hi = _krav_tal(varde[1], f"{namn}[1]", over=0.0 if strikt_positiv else None, minst=None if strikt_positiv else 0.0)
+    if lo > hi:
+        raise FlodenWebbFel(f"{namn}: undre gräns ({lo:g}) får inte vara större än övre ({hi:g}).", status_kod=400)
+    return [lo, hi]
+
+
+def _validera_luft_csv(raw: Any, namn: str) -> str:
+    """Validerar en extern timserie-CSV och normaliserar kolumnhuvudet till `tid,lokal_ug_m3` för `luft.mkn`."""
+    if not isinstance(raw, str) or not raw.strip():
+        raise FlodenWebbFel(f"{namn} måste vara en icke-tom CSV-text.", status_kod=400)
+    if len(raw.encode("utf-8")) > _MAX_LUFT_CSV_BYTES:
+        raise FlodenWebbFel(f"{namn} är för stor (högst 5 MB).", status_kod=400)
+    text = raw.lstrip("\ufeff")
+    lasare = csv.reader(io.StringIO(text))
+    rubrik = next(lasare, None)
+    if not rubrik:
+        raise FlodenWebbFel(f"{namn} saknar rubrikrad (ange t.ex. tid,lokal_ug_m3 eller tid_s,halt_ug_m3).", status_kod=400)
+    kol_per_namn = {k.strip().lower(): i for i, k in enumerate(rubrik) if k.strip()}
+    halt_kol = next((kol_per_namn[k] for k in _LUFT_HALT_KOLUMNER if k in kol_per_namn), None)
+    if halt_kol is None:
+        raise FlodenWebbFel(
+            f"{namn} saknar haltkolumn (förväntade lokal_ug_m3, halt_ug_m3 eller halt_bidrag_ug_m3).",
+            status_kod=400,
+        )
+    tid_kol = next((kol_per_namn[k] for k in _LUFT_TID_KOLUMNER if k in kol_per_namn), None)
+    ut_rader = ["tid,lokal_ug_m3"]
+    antal = 0
+    for rad_nr, rad in enumerate(lasare, start=2):
+        if not rad or all(not cell.strip() for cell in rad):
+            continue
+        if halt_kol >= len(rad):
+            raise FlodenWebbFel(f"{namn} rad {rad_nr}: haltvärde saknas.", status_kod=400)
+        halt_text = rad[halt_kol].strip()
+        try:
+            halt = float(halt_text)
+        except ValueError as exc:
+            raise FlodenWebbFel(f"{namn} rad {rad_nr}: '{halt_text}' är inte ett giltigt tal.", status_kod=400) from exc
+        if not math.isfinite(halt) or halt < 0.0:
+            raise FlodenWebbFel(
+                f"{namn} rad {rad_nr}: haltbidraget måste vara ett ändligt tal >= 0 (fick {halt_text!r}).",
+                status_kod=400,
+            )
+        tid_text = (
+            rad[tid_kol].strip().replace(",", " ").replace("\n", " ").replace("\r", " ")
+            if tid_kol is not None and tid_kol < len(rad) and rad[tid_kol].strip()
+            else str(antal)
+        )
+        ut_rader.append(f"{tid_text},{halt_text}")
+        antal += 1
+    if antal < 24:
+        raise FlodenWebbFel(
+            f"{namn} måste innehålla minst 24 timvärden (1 helt dygn), fick {antal}.",
+            status_kod=400,
+        )
+    return "\n".join(ut_rader) + "\n"
+
+
+def _tolka_luft_indata(raw: Any) -> dict[str, Any]:
+    """Validerar det valfria `luft`-objektet i `POST /api/projekt/<id>/rapporter` (Uppdrag 4)."""
+    if not isinstance(raw, dict):
+        raise FlodenWebbFel("Fältet 'luft' måste vara ett JSON-objekt.", status_kod=400)
+    okanda = set(raw) - _LUFT_FALT
+    if okanda:
+        raise FlodenWebbFel(f"Okända fält i 'luft': {', '.join(sorted(okanda))}.", status_kod=400)
+    if "bakgrund_ug_m3" not in raw or raw["bakgrund_ug_m3"] is None:
+        raise FlodenWebbFel(
+            "luft.bakgrund_ug_m3 måste anges som ett ändligt tal >= 0 (µg/m³); Floden hittar aldrig på en bakgrundshalt.",
+            status_kod=400,
+        )
+    bakgrund = _krav_tal(raw["bakgrund_ug_m3"], "luft.bakgrund_ug_m3", minst=0.0)
+    fore_csv = _validera_luft_csv(raw.get("serie_fore_csv"), "luft.serie_fore_csv")
+    raw_efter = raw.get("serie_efter_csv")
+    if raw_efter is None or (isinstance(raw_efter, str) and not raw_efter.strip()):
+        efter_csv: str | None = None
+    else:
+        efter_csv = _validera_luft_csv(raw_efter, "luft.serie_efter_csv")
+
+    osak_rel = (
+        _krav_tal(raw["osakerhet_halt_rel"], "luft.osakerhet_halt_rel", minst=0.0, under=1.0)
+        if raw.get("osakerhet_halt_rel") is not None
+        else None
+    )
+    osak_bg = (
+        _krav_tal(raw["osakerhet_bakgrund_ug_m3"], "luft.osakerhet_bakgrund_ug_m3", minst=0.0)
+        if raw.get("osakerhet_bakgrund_ug_m3") is not None
+        else None
+    )
+    parametrar: dict[str, Any] = {"bakgrund_ug_m3": bakgrund}
+    if raw.get("emissionsfaktor_intervall") is not None:
+        parametrar["emissionsfaktor_intervall"] = _tolka_intervall(
+            raw["emissionsfaktor_intervall"], "luft.emissionsfaktor_intervall", strikt_positiv=False
+        )
+    elif osak_rel is not None:
+        parametrar["emissionsfaktor_intervall"] = [round(1.0 - osak_rel, 6), round(1.0 + osak_rel, 6)]
+    if raw.get("depositionsfaktor_intervall") is not None:
+        parametrar["depositionsfaktor_intervall"] = _tolka_intervall(
+            raw["depositionsfaktor_intervall"], "luft.depositionsfaktor_intervall", strikt_positiv=True
+        )
+    elif osak_rel is not None:
+        parametrar["depositionsfaktor_intervall"] = [1.0, 1.0]
+    if raw.get("grans_dygn_ug_m3") is not None:
+        parametrar["grans_dygn_ug_m3"] = _krav_tal(raw["grans_dygn_ug_m3"], "luft.grans_dygn_ug_m3", over=0.0)
+    if raw.get("max_dygn_ar") is not None:
+        v_max = _krav_tal(raw["max_dygn_ar"], "luft.max_dygn_ar", minst=0.0)
+        if v_max != int(v_max):
+            raise FlodenWebbFel("luft.max_dygn_ar måste vara ett heltal >= 0.", status_kod=400)
+        parametrar["max_dygn_ar"] = int(v_max)
+    return {
+        "serie_fore_csv": fore_csv,
+        "serie_efter_csv": efter_csv,
+        "parametrar": parametrar,
+        "osakerhet_bakgrund_ug_m3": osak_bg,
+    }
+
+
+def _skriv_atomiskt(fil: Path, text: str) -> None:
+    fil.parent.mkdir(parents=True, exist_ok=True)
+    tmp = fil.parent / f".{fil.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, fil)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class RapportJobbTjanst:
@@ -60,8 +226,17 @@ class RapportJobbTjanst:
         self.mapp = app.rapportmapp / "jobb"
         self._lock = threading.RLock()
         self._aktiva: set[str] = set()
+        self._stangd = False
         self._exekutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="floden-rapport")
         self._rt: RapportTjanst | None = None
+
+    def stang(self, *, vanta: bool = True) -> None:
+        """Stänger bakgrundsexekutorn rent vid serveravstängning (idempotent)."""
+        with self._lock:
+            if self._stangd:
+                return
+            self._stangd = True
+        self._exekutor.shutdown(wait=vanta, cancel_futures=True)
 
     @property
     def rt(self) -> RapportTjanst:
@@ -69,10 +244,27 @@ class RapportJobbTjanst:
         with self._lock:
             if self._rt is None:
                 from floden_mcp.karna_api import FlodenTjanst
+                from floden_mcp.oppenhet import Oppenhet
+                from gemensamt.konfig import KonfigFel, las_konfig
                 from rapport.skissrapport import RapportTjanst
 
                 rot = self.app.konfig_fil.resolve().parent
-                self._rt = RapportTjanst(FlodenTjanst(self.app, rot=rot), rapportmapp=self.app.rapportmapp)
+                tjanst = FlodenTjanst(self.app, rot=rot)
+                konfig: dict[str, Any] | None = None
+                if self.app.konfig_fil.is_file():
+                    try:
+                        konfig = las_konfig(
+                            self.app.konfig_fil,
+                            self.app.konfig_fil.with_name("config.local.toml"),
+                        )
+                    except KonfigFel:
+                        konfig = None
+                tjanst.oppenhet = Oppenhet.for_tjanst(tjanst, konfig=konfig)
+                self._rt = RapportTjanst(
+                    tjanst,
+                    rapportmapp=self.app.rapportmapp,
+                    projekt_oppen=tjanst.projekt_oppen,
+                )
             return self._rt
 
     # ------------------------------------------------------------------ vad som går att skapa
@@ -89,22 +281,28 @@ class RapportJobbTjanst:
 
         amnen: list[dict[str, Any]] = []
         for a in AMNEN_ORDNING:
-            forklaring = saknad_mall(a)
+            saknad = saknad_mall(a)
             kor: list[dict[str, Any]] = []
-            if forklaring is None:
+            if saknad is None:
                 kor = self._korningar_for(projekt, a)
-                if not kor:
+            if a == "luft" and saknad is None:
+                kan_skapas = True
+                forklaring: str | None = None if kor else LUFT_INDATA_TEXT
+            else:
+                forklaring = saknad
+                if forklaring is None and not kor:
                     forklaring = (
                         f"Det finns ingen klar beräkning av {AMNESNAMN[a].lower()} (läget idag eller förslag) i projektet. "
                         "Kör en beräkning i steg 2 (Karta & analys) först."
                     )
+                kan_skapas = forklaring is None
             amnen.append(
                 {
                     "id": a,
                     "namn": AMNESNAMN[a],
-                    "kan_skapas": forklaring is None,
+                    "kan_skapas": kan_skapas,
                     "forklaring": forklaring,
-                    "mall": saknad_mall(a) is None,
+                    "mall": saknad is None,
                     "forval_korning": kor[0]["korning_id"] if kor else None,
                     "forval_slag": kor[0]["slag"] if kor else None,
                     "korningar": kor,
@@ -121,16 +319,123 @@ class RapportJobbTjanst:
             raise FlodenWebbFel("Kroppen ska vara JSON.", status_kod=400) from exc
         if not isinstance(d, dict):
             raise FlodenWebbFel("Kroppen ska vara ett JSON-objekt.", status_kod=400)
-        okanda = set(d) - {"amne", "korning_id", "bestallning", "fragor", "scenario"}
+        okanda = set(d) - {"amne", "amnen", "korning_id", "bestallning", "fragor", "scenario", "luft"}
         if okanda:
             raise FlodenWebbFel(f"Okända fält: {', '.join(sorted(okanda))}.", status_kod=400)
         return d
 
-    def starta(self, projekt: str, kropp: bytes) -> dict[str, Any]:
-        d = self._tolka(kropp)
-        amne = d.get("amne", "skyfall")
+    @staticmethod
+    def _valj_amne(d: Mapping[str, Any]) -> str:
+        raw_amne = d.get("amne")
+        raw_amnen = d.get("amnen")
+        amne_fran_lista: str | None = None
+        if raw_amnen is not None:
+            if not isinstance(raw_amnen, list) or not raw_amnen or not all(isinstance(a, str) for a in raw_amnen):
+                raise FlodenWebbFel("Fältet 'amnen' ska vara en icke-tom lista med ämnesnamn.", status_kod=400)
+            unika = list(dict.fromkeys(raw_amnen))
+            if set(unika) == {"dagsljus", "sol"}:
+                amne_fran_lista = "dagsljus"
+            elif len(unika) == 1:
+                amne_fran_lista = unika[0]
+            else:
+                raise FlodenWebbFel(
+                    "Ange ett rapportämne per beställning (t.ex. ['skyfall'], ['ekologi'] eller ['luft']).",
+                    status_kod=400,
+                )
+        if raw_amne is not None:
+            if not isinstance(raw_amne, str):
+                raise FlodenWebbFel("Fältet 'amne' ska vara text.", status_kod=400)
+            if amne_fran_lista is not None and amne_fran_lista != raw_amne:
+                raise FlodenWebbFel(
+                    f"Fälten 'amne' ({raw_amne}) och 'amnen' ({raw_amnen}) stämmer inte överens.",
+                    status_kod=400,
+                )
+            amne = raw_amne
+        elif amne_fran_lista is not None:
+            amne = amne_fran_lista
+        else:
+            amne = "skyfall"
         if amne not in AMNEN_ORDNING:
             raise FlodenWebbFel(f"Okänt ämne. Välj bland: {', '.join(AMNEN_ORDNING)}.", status_kod=400)
+        return amne
+
+    def _luft_bas_och_fragedir(self, projekt: str) -> tuple[Path, Path]:
+        kalla = self.app.kartverktyg.kalla(projekt)
+        forsta_mall = next(iter(kalla.mallar.values()), None)
+        if forsta_mall is None:
+            raise FlodenWebbFel(
+                f"Projektet '{projekt}' saknar markmodell att koppla luftfrågan till.",
+                status_kod=409,
+            )
+        fragedir = kalla.fragedir or self.app.kartverktyg.fragedir
+        return forsta_mall.bas, fragedir
+
+    def _skriv_luft_fraga(
+        self,
+        projekt: str,
+        jobb_id: str,
+        luft_data: Mapping[str, Any],
+        bas: Path,
+        fragedir: Path,
+    ) -> tuple[str, str]:
+        """Skriver validerade CSV-filer i jobbets arbetsmapp och K20-fråga för `luft.mkn`."""
+        arbetsmapp = self.mapp / jobb_id
+        arbetsmapp.mkdir(parents=True, exist_ok=True)
+        fore_fil = arbetsmapp / "serie_fore.csv"
+        _skriv_atomiskt(fore_fil, str(luft_data["serie_fore_csv"]))
+        efter_fil: Path | None = None
+        if luft_data.get("serie_efter_csv") is not None:
+            efter_fil = arbetsmapp / "serie_efter.csv"
+            _skriv_atomiskt(efter_fil, str(luft_data["serie_efter_csv"]))
+
+        fragedir.mkdir(parents=True, exist_ok=True)
+        fraga_id = f"luft-{jobb_id}"
+        fraga_fil = fragedir / f"{fraga_id}.json"
+        fil_mapp = fraga_fil.parent.resolve()
+        rel_bas = Path(os.path.relpath(bas.resolve(), fil_mapp)).as_posix()
+        parametrar = dict(luft_data["parametrar"])
+        analyser: list[dict[str, Any]] = [
+            {
+                "id": "mkn_fore",
+                "losare": "luft.mkn",
+                "parametrar": parametrar,
+                "indata": {"timserie": Path(os.path.relpath(fore_fil.resolve(), fil_mapp)).as_posix()},
+            }
+        ]
+        if efter_fil is not None:
+            analyser.append(
+                {
+                    "id": "mkn_efter",
+                    "losare": "luft.mkn",
+                    "parametrar": parametrar,
+                    "indata": {"timserie": Path(os.path.relpath(efter_fil.resolve(), fil_mapp)).as_posix()},
+                }
+            )
+        bg = float(parametrar["bakgrund_ug_m3"])
+        osak_bg = luft_data.get("osakerhet_bakgrund_ug_m3")
+        extra_bg = f" (angiven bakgrundsosäkerhet ±{float(osak_bg):g} µg/m³)" if osak_bg is not None else ""
+        innehall = {
+            "kontrakt": "K20/v1",
+            "fraga_id": fraga_id,
+            "beskrivning": (
+                f"PM10 mot dygnsnormen (MKN) som intervall för projekt '{projekt}' ur extern timserie (CSV) "
+                f"och uttryckligt angiven bakgrund {bg:g} µg/m³{extra_bg}."
+            ),
+            "scenarier": {"bas": {"bas": rel_bas}},
+            "analyser": analyser,
+        }
+        _skriv_atomiskt(fraga_fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
+        ref = next(
+            (r for r, f in self.app.fragor._fragefiler().items() if f.resolve() == fraga_fil.resolve()),  # noqa: SLF001
+            None,
+        )
+        if ref is None:
+            raise FlodenWebbFel("Den skapade luftfrågan hittades inte i frågemapparna.", status_kod=500)
+        return ref, fraga_id
+
+    def starta(self, projekt: str, kropp: bytes) -> dict[str, Any]:
+        d = self._tolka(kropp)
+        amne = self._valj_amne(d)
         from rapport.bestallning import BestallningFel
         from rapport.skissrapport import RapportFel
         from rapport.webbflode import saknad_mall
@@ -146,11 +451,40 @@ class RapportJobbTjanst:
         sc = d.get("scenario")
         if sc is not None and not isinstance(sc, str):
             raise FlodenWebbFel("scenario ska vara förslagets namn (slug) som text.", status_kod=400)
-        try:
-            valt = valj_korning(self.rt, projekt, amne, korning_id=kid, scenario=sc)
-        except UnderlagFel as exc:
-            raise FlodenWebbFel(str(exc), status_kod=exc.status) from exc
-        kid = str(valt["korning_id"])
+
+        raw_luft = d.get("luft")
+        if raw_luft is not None and amne != "luft":
+            raise FlodenWebbFel("Fältet 'luft' får bara anges när ämnet är 'luft'.", status_kod=400)
+        if amne == "luft" and sc is not None:
+            raise FlodenWebbFel(
+                "Luftunderlaget har före och efter som två serier, inte som ett kartscenario; ange inget scenario.",
+                status_kod=400,
+            )
+
+        luft_data: dict[str, Any] | None = None
+        luft_bas_dir: tuple[Path, Path] | None = None
+        valt: dict[str, Any] | None = None
+        if amne == "luft" and raw_luft is not None:
+            if kid is not None:
+                raise FlodenWebbFel(
+                    "Ange antingen korning_id för en befintlig luftkörning eller fältet 'luft' för ny timserie, inte båda.",
+                    status_kod=400,
+                )
+            luft_data = _tolka_luft_indata(raw_luft)
+            luft_bas_dir = self._luft_bas_och_fragedir(projekt)
+        else:
+            try:
+                valt = valj_korning(self.rt, projekt, amne, korning_id=kid, scenario=sc)
+            except UnderlagFel as exc:
+                if amne == "luft" and exc.status == 409:
+                    raise FlodenWebbFel(
+                        "Det finns ingen klar luftberäkning (luft.mkn) i projektet. Ange fältet 'luft' med "
+                        "serie_fore_csv och bakgrund_ug_m3 (>= 0).",
+                        status_kod=400,
+                    ) from exc
+                raise FlodenWebbFel(str(exc), status_kod=exc.status) from exc
+            kid = str(valt["korning_id"])
+
         b = d.get("bestallning") or {}
         if not isinstance(b, dict) or set(b) - _BEST_FALT:
             raise FlodenWebbFel(
@@ -190,18 +524,33 @@ class RapportJobbTjanst:
             )
         if best.rapportamne != amne:
             raise FlodenWebbFel(f"Beställningens ämnen hör till {best.rapportamne}, inte {amne}.", status_kod=400)
+
         jobb_id = "j-" + os.urandom(6).hex()
-        post = {
-            "jobb_id": jobb_id,
-            "projekt": projekt,
-            "amne": amne,
-            "korning_id": kid,
-            "underlag": {
+        luft_fraga_ref: str | None = None
+        if luft_data is not None and luft_bas_dir is not None:
+            luft_fraga_ref, kid = self._skriv_luft_fraga(
+                projekt, jobb_id, luft_data, luft_bas_dir[0], luft_bas_dir[1]
+            )
+            underlag = {
+                "slag": "egen",
+                "scenario": None,
+                "fragor": list(best.urval),
+                "demo": False,
+            }
+        else:
+            assert valt is not None and kid is not None
+            underlag = {
                 "slag": valt["slag"],
                 "scenario": valt["scenario"],
                 "fragor": list(best.urval),
                 "demo": valt["slag"] == "demo",
-            },
+            }
+        post: dict[str, Any] = {
+            "jobb_id": jobb_id,
+            "projekt": projekt,
+            "amne": amne,
+            "korning_id": kid,
+            "underlag": underlag,
             "bestallning_id": best.bestallning_id,
             "status": "ko",
             "steg": None,
@@ -212,10 +561,14 @@ class RapportJobbTjanst:
             "start": None,
             "slut": None,
         }
+        if luft_fraga_ref is not None:
+            post["luft_fraga_ref"] = luft_fraga_ref
         with self._lock:
+            if self._stangd:
+                raise FlodenWebbFel("Rapporttjänsten håller på att stängas.", status_kod=503)
             self._skriv(post)
             self._aktiva.add(jobb_id)
-        self._exekutor.submit(self._kor, jobb_id)
+            self._exekutor.submit(self._kor, jobb_id)
         _logg.info("rapportjobb startat jobb=%s projekt=%s amne=%s", jobb_id, projekt, amne)
         return self._svar(post)
 
@@ -227,9 +580,7 @@ class RapportJobbTjanst:
     def _skriv(self, post: Mapping[str, Any]) -> None:
         self.mapp.mkdir(parents=True, exist_ok=True)
         fil = self._fil(str(post["jobb_id"]))
-        tmp = fil.with_suffix(".tmp")
-        tmp.write_text(json.dumps(post, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, fil)
+        _skriv_atomiskt(fil, json.dumps(post, ensure_ascii=False, indent=2) + "\n")
 
     def _las(self, jobb_id: str) -> dict[str, Any] | None:
         if not _JOBB_RE.match(jobb_id):
@@ -280,14 +631,15 @@ class RapportJobbTjanst:
         }
 
     def status(self, projekt: str, jobb_id: str) -> dict[str, Any]:
-        p = self._las(jobb_id)
-        if p is None or p.get("projekt") != projekt:
-            raise FlodenWebbFel(f"Okänt rapportjobb '{jobb_id}'.", status_kod=404)
         with self._lock:
+            p = self._las(jobb_id)
+            if p is None or p.get("projekt") != projekt:
+                raise FlodenWebbFel(f"Okänt rapportjobb '{jobb_id}'.", status_kod=404)
             if p["status"] in ("ko", "kor") and jobb_id not in self._aktiva:
                 p.update(status="fel", fel="Jobbet avbröts när servern stoppades.", slut=_nu())
                 self._skriv(p)
-        return self._svar(p)
+            kopia = dict(p)
+        return self._svar(kopia)
 
     # ------------------------------------------------------------------ köra
 
@@ -304,12 +656,13 @@ class RapportJobbTjanst:
         from rapport.skissexport import ExportStoppad
         from rapport.skissrapport import RapportFel
 
-        p = self._las(jobb_id)
-        if p is None:
-            return
         try:
+            with self._lock:
+                p = self._las(jobb_id)
+            if p is None:
+                return
             self._kor_inre(p)
-        except (RapportFel, PastaendeFel, BestallningFel, ValueError) as exc:
+        except (RapportFel, PastaendeFel, BestallningFel, FlodenWebbFel, ValueError) as exc:
             self._satt(jobb_id, status="fel", fel=str(exc), slut=_nu())
             _logg.info("rapportjobb fel jobb=%s typ=%s", jobb_id, type(exc).__name__)
         except ExportStoppad as exc:
@@ -327,10 +680,13 @@ class RapportJobbTjanst:
         jid, projekt = str(p["jobb_id"]), str(p["projekt"])
         rt = self.rt
         self._satt(jid, status="kor", start=_nu(), steg="skapar")
+        luft_ref = p.get("luft_fraga_ref")
+        if isinstance(luft_ref, str) and luft_ref:
+            self.app.fragor.kor_synkront(luft_ref, str(p["korning_id"]), projekt_id=projekt)
         r = rt.skapa(
             projekt=projekt,
             korningar=[str(p["korning_id"])],
-            mottagare=mottagare_for(projekt == "demokvarteret"),
+            mottagare=mottagare_for(projekt == "demokvarteret" and p["amne"] in ("skyfall", "dagsljus")),
             ai_stod=False,
             av="webb",
             bestallning=str(p["bestallning_id"]),
