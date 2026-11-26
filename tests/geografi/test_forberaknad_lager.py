@@ -130,6 +130,12 @@ def test_negativ_cache_respekterar_ttl_och_nyuppladdad_ruta_blir_synlig(tmp_path
         lager.hamta_ruta("nacka", "mm_150000_6580000", filer=("max_djup.tif",))
     finns_fore_extra = spion.antal_finns
 
+    # Upprepat anrop på enbart den saknade filen inom TTL MÅSTE fortfarande kasta fel (0 S3-anrop)
+    tid_s[0] = 1350.0
+    with pytest.raises(ForberaknadLagerFel):
+        lager.hamta_ruta("nacka", "mm_150000_6580000", filer=("max_djup.tif",))
+    assert spion.antal_finns == finns_fore_extra
+
     extra = tmp_path / "extra_max_djup.tif"
     extra.write_bytes(b"DJUP-V1")
     lokal.ladda_upp_fil(extra, geografi_nyckel("nacka", "mm_150000_6580000", "max_djup.tif"))

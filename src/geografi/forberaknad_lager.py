@@ -351,11 +351,15 @@ class ForberaknadKommunLager:
                     )
                 ]
                 if not saknas_lokalt:
+                    lokala = [rutamapp / f for f in normaliserade if (rutamapp / f).is_file()]
+                    if not lokala:
+                        raise ForberaknadLagerFel(
+                            f"Inga efterfrågade filer hittades i lagringen för "
+                            f"{ren_kommun}/{ren_ruta} (sökte: {', '.join(normaliserade)})."
+                        )
                     markera_cache_anvand(lokal_run)
-                    for f in normaliserade:
-                        p = rutamapp / f
-                        if p.is_file():
-                            markera_cache_anvand(p)
+                    for p in lokala:
+                        markera_cache_anvand(p)
                     return rutamapp
 
             # Kontrollera alltid `run.json` först för dataskydd (även om ej i `filer`).
