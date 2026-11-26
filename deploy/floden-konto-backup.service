@@ -1,0 +1,16 @@
+[Unit]
+Description=Floden timvis online-backup och verifiering av kontodatabasen (S4)
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=floden
+WorkingDirectory=/srv/floden
+EnvironmentFile=-/srv/floden/.env
+UMask=0077
+# Online-säker SQLite-kopia (sqlite3.backup) + integrity_check + SHA-256-manifest + rotation.
+# Lägg till --s3 när Hetzner Object Storage ([lagring] / FLODEN_S3_*) är aktiverat.
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml exec -T floden floden konto backup --ut data/lokal/backup/konto --behall-antal 48 --behall-dagar 14
+Nice=10
+IOSchedulingClass=idle

@@ -1,0 +1,11 @@
+[Unit]
+Description=Timvis backup av Flodens kontodatabas (SQLite WAL -> backup + SHA-256-manifest)
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=floden-konto-backup.service
+
+[Install]
+WantedBy=timers.target
