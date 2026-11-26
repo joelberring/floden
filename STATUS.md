@@ -2,6 +2,21 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-26 – Våg 5 (av 5) – Pass 4-slutgranskning & K38/Luft-fixar, korsvågs-E2E & dokumentationssynk (PR #162–#164)
+
+Gjort: Slutfört **Våg 5 av 5** (avslutar hela 5-vågscykeln efter Pass 3, totalt **22 verifierade PR:er `#143–#164`** under dagen) i tre konfliktfria PR:er (0 % filöverlapp, 11 unika filer, +2984/−157), oberoende granskade och sammanslagna på `main` (`74e57c5`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `data/mcp/metodstatus.toml`, `nord2000_konform` (`False`) och stavningen `kansighet` lämnades helt orörda:
+- **Pass 4-slutgranskning (`d147761..d4b717f`, 19 PR:er `#143–#161`):** Upptäckte och reproducerade 4 kvarstående P0/P1-buggar (2 K38-dataskyddsläckor, 1 K38-förkontroll och 1 Luft-CSV-bugg), vilka omedelbart åtgärdades i PR #164 före avslut.
+- **PR #164 (`74e57c5`, `v5/pass4-k38-och-luft-csv-fixar`) — Pass 4-fixar (2 P0 + 2 P1):** Täppte K38-läckan i MCP `bestallning_hamta` + `_kontrollera_svar_oppenhet` över `CallToolResult.structuredContent`/`content` (`src/floden_mcp/server.py`); täppte K38-läckan i `KartverktygTjanst.kor_ekologi(..., skrivskyddad=True)` med `k9_stangda/oppenhet.toml` (`oppen = false`) (`src/webb/kartverktyg.py`); kopplade in `_korningar_i_indata` i förkontrollen för `rapport_skapa(korningar=[stangd])` (0 filer på disk); anpassade `_validera_luft_csv`/`_tolka_luft_indata` i `src/webb/rapportjobb.py` för Flodens egen `timserie.csv` (`svag_vind`/`ogiltig`, bevarade kolumner, 400 på tvetydig flerreceptor-CSV).
+- **PR #163 (`5248624`, `v5/e2e-helhetsflode-och-u5f`) — Korsvågs-E2E & frontend-kontrakt:** Ny integrerad E2E-svit `tests/e2e/test_v5_helhetsflode.py` (4 fullskaliga korsvågs-E2E utan mockad fysik: flerruts geografi/vattenytor/planera/RBAC/analys/sektion; Steg 3 *läget idag*/Ekologi/Luft + MCP K38; S4 SQLite WAL-backup/verifiera/halsa med 0 PII; kopplad 1D/2D 2 kedjor + parallell batch DSM/NaN) samt `webb/src/flode/v5-e2e-kontrakt.test.ts` (5 frontend-kontraktstester över Våg 2–4).
+- **PR #162 (`172311e`, `v5/docs-plan-drift-synk`) — Dokumentationssynk på `main`:** Synkade `PLAN.md` (från #117 till komplett 2026-11-26-lägesbild efter #161), `docs/DRIFT.md` (Dockerfile med `s3`/`server`/`libredwg`, Compose S3/LRU, S4 backup + timer, S7 `floden geografi planera`), `docs/RAPPORTER.md` (Steg 3 *läget idag*/Ekologi/Luft + `figurer.py` + öppenhets-`dataklass`) och `STATUS.md`.
+
+Mätt:
+- **GitHub CI:** **11/11 gröna** på samtliga tre PR:er (#162–#164) — totalt **11/11 gröna på alla 22 PR:er `#143–#164`** under hela passet.
+- **3-vägs sammanslagning på `main` (`11` unika filer, 0 % överlapp):** `ruff check src tests testsvit` **0 fel**, `mypy --platform linux src` **0 fel** (383 källfiler), `floden testsvit` **18/18** (0,0000 % volymfel), samlad `pytest` **16 passed, 0 failed** (per PR: #164 **175 passed**, #162 **140 passed**, #163 **9 passed** inkl. 4 korsvågs-E2E på 31,3 s), `webb`: `npm test` **470/470 passed**, `npx tsc --noEmit` **0 fel**, `vite build` **127 moduler OK**.
+
+Öppet: Skarp driftsättning av `ghcr.io/joelberring/floden:main` på `floden.berring.se`, aktivering av Hetzner S3-bucket + `floden-konto-backup.timer` (`S4`), ommappning & mätning av `goteborg-test@v2` (`S5 → S6`), extern validering (`T09b` SCALGO/SMHI, `J1` Radiance/Circuitscape, `L-c` CEDVAL), Nord2000 4 underkända + årsmedel (`VTT-R-02530-06`), samt ev. avveckling av äldre `#/p/<projekt>/fragor`-dubblett (`U5f` i `webb/src/flode/fragor.ts`).
+Nästa: Dra hem nya containeravbildningen på `floden.berring.se` när `Avbildning` är grön på `main`, och aktivera `S4` samt `S5 → S6`.
+
 ## 2026-11-26 – Våg 4 (av 5) – Skarvfria flerpakets-vattenytor, batch-parallellitet & K1 v2 DSM, UX U5c/U5d, CAD-mått & `GET /api/analys/ekologi` (PR #159–#161)
 
 Gjort: Slutfört **Våg 4 av 5** i tre konfliktfria PR:er (0 % filöverlapp, 17 unika filer, +3498/−195), oberoende granskade och sammanslagna på `main` (`d4b717f`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `data/mcp/metodstatus.toml`, `nord2000_konform` och `kansighet` lämnades orörda:
