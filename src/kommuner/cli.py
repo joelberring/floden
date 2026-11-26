@@ -1,5 +1,5 @@
 # ruff: noqa: E501
-"""Kommandona `floden geografi mappa`, `floden geografi visa`, `floden projekt skapa|scenario-hus|kor|kommun-lager`.
+"""Kommandona `floden geografi mappa|visa|planera` och `floden projekt skapa|scenario-hus|kor|kommun-lager`.
 
 Felen skrivs som en rad som säger vad som ska göras, utan stackspår (som kan innehålla värden) om inte
 `--felsok` anges. Slutkoder: 2 = källa eller data, 3 = nyckel saknas eller nekas, 4 = konto, behörighet eller
@@ -86,6 +86,56 @@ def registrera(subparsers: Any) -> None:
     v = gs.add_parser("visa", help="Visa en geografis manifest (kontrollerar sha256 för alla filer).")
     v.add_argument("ref", help="id@version, t.ex. goteborg-test@v1")
     v.add_argument("--georot", default=STANDARD_GEOROT)
+    pl = gs.add_parser(
+        "planera",
+        help="Planera rutnät, buffert och uppskattade resurser (tid, RAM, disk) för en geografi.",
+        description=(
+            "Delar en avgränsning (GeoJSON, GeoPackage eller bbox) i standardiserade rutor i EPSG:3011, "
+            "beräknar kärn- och buffertrutor samt uppskattar körtid, topp-RAM och diskutrymme utifrån "
+            "repots källbelagda benchmarkvärden (uppskattning före S6-servermätning). Läser enbart "
+            "avgränsningen och kommunfilen, aldrig stängd baskarta."
+        ),
+    )
+    pl.add_argument("kommun", help="Kommun-id (ur data/kommuner/<id>.toml), t.ex. stockholm eller goteborg.")
+    pl.add_argument(
+        "--avgransning",
+        required=True,
+        help="Sökväg till GeoJSON/GeoPackage (.geojson, .json, .gpkg) eller bbox 'xmin,ymin,xmax,ymax'.",
+    )
+    pl.add_argument(
+        "--avgransning-epsg",
+        type=int,
+        default=None,
+        help="Koordinatsystem för --avgransning om filen saknar CRS eller vid bbox (t.ex. 3011, 3006, 4326).",
+    )
+    pl.add_argument(
+        "--upplosning-m",
+        type=float,
+        default=None,
+        help="Cellupplösning i meter (t.ex. 0.5, 1.0, 2.5; standard ur kommunfilen, annars 0.5).",
+    )
+    pl.add_argument(
+        "--buffert-m",
+        type=float,
+        default=None,
+        help="Buffert runt avgränsningen i meter (standard: dagsljusets påverkansradie och kommunens kontext).",
+    )
+    pl.add_argument("--rutstorlek-m", type=float, default=500.0, help="Inre rutstorlek i meter (standard 500.0).")
+    pl.add_argument("--overlapp-m", type=float, default=25.0, help="Överlapp per ruta i meter (standard 25.0).")
+    pl.add_argument(
+        "--arbetare",
+        type=int,
+        default=1,
+        help="Antal parallella CPU-arbetare för baslinjeuppskattningen (standard 1).",
+    )
+    pl.add_argument("--kommunfil", default=None, help="Annan kommunfil än data/kommuner/<kommun>.toml.")
+    pl.add_argument(
+        "--json",
+        dest="utdata_json",
+        action="store_true",
+        help="Skriv maskinläsbar JSON i stället för tabell.",
+    )
+    pl.add_argument("--felsok", action="store_true", help="Skriv stackspår vid oväntat fel.")
 
     p = subparsers.add_parser(
         "projekt",
@@ -147,6 +197,29 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
     if kommando == "geografi visa":
         d, sha = las_manifest(_abs(rot, args.georot), args.ref)
         print(json.dumps({"manifest_sha256": sha, **d}, indent=2, ensure_ascii=False))
+        return 0
+    if kommando == "geografi planera":
+        from geografi.planera import formatera_plan_tabell, planera_geografi
+
+        kommun = las_kommun(args.kommun, rot=rot, fil=_kommunfil(args))
+        avgr = args.avgransning
+        avgr_path = Path(avgr)
+        if not avgr_path.is_absolute() and not avgr_path.is_file() and (rot / avgr_path).is_file():
+            avgr = str(rot / avgr_path)
+        plan = planera_geografi(
+            kommun,
+            avgr,
+            upplosning_m=args.upplosning_m,
+            buffert_m=args.buffert_m,
+            rutstorlek_m=args.rutstorlek_m,
+            overlapp_m=args.overlapp_m,
+            arbetare=args.arbetare,
+            avgransning_epsg=args.avgransning_epsg,
+        )
+        if args.utdata_json:
+            print(json.dumps(plan.till_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(formatera_plan_tabell(plan))
         return 0
     if kommando == "geografi mappa":
         from geografi.mappa import mappa_geografi
