@@ -487,7 +487,7 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
         f"# Dagsljus i projektet {pid} (geografin {projekt['geografi']}): nuläget och scenarier.",
         'kontrakt = "K20/v1"',
         f'fraga_id = {_toml_str(pid + "-dagsljus")}',
-        f'beskrivning = {_toml_str("Soltimmar och dagsljus på fasader i " + pid)}',
+        f'beskrivning = {_toml_str("Soltimmar, himmelsexponering (SVF) och dagsljus på fasader i " + pid)}',
         "",
         "[scenarier.bas]",
         bas(geo, "bas").rstrip(),
@@ -502,18 +502,26 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
         f'datum = {json.dumps(list(d["datum"]))}, steg_min = {int(d["steg_min"])}, azimutriktningar = {int(d["azimutriktningar"])}, '
         f'cellstorlek_m = {d["cellstorlek_m"]}, hojd_max_m = {d["hojd_max_m"]}, h_min_grader = {d["h_min_grader"]}'
     )
+    svfpar = (
+        f'azimutriktningar = {int(d["azimutriktningar"])}, '
+        f'cellstorlek_m = {d["cellstorlek_m"]}, hojd_max_m = {d["hojd_max_m"]}, h_min_grader = {d["h_min_grader"]}'
+    )
     vscpar = (
         f'cellstorlek_m = {d["cellstorlek_m"]}, hojd_max_m = {d["hojd_max_m"]}, h_min_grader = {d["h_min_grader"]}, '
         f'fasad_steg_m = {d["fasad_steg_m"]}, vaningshojd_m = {d["vaningshojd_m"]}'
     )
     dag += [
         "", "[[analyser]]", 'id = "sol"', 'losare = "dagsljus.soltimmar_mark"', f"fokus = {fok}", f"parametrar = {{ {dagpar} }}",
+        "", "[[analyser]]", 'id = "svf"', 'losare = "dagsljus.svf_mark"', f"fokus = {fok}", f"parametrar = {{ {svfpar} }}",
         "", "[[analyser]]", 'id = "vsc"', 'losare = "dagsljus.vsc_fasad"', f"fokus = {fok}", f"parametrar = {{ {vscpar} }}",
     ]  # fmt: skip
     for s in scen:
         slugg = str(s["slug"])
         vatten += ["", "[[jamforelser]]", 'analys = "skyfall"', 'utdata = "max_djup"', 'fore = "bas"', f'efter = "{slugg}"', "troskel = 0.01"]
-        dag += ["", "[[jamforelser]]", 'analys = "sol"', 'utdata = "soltimmar"', 'fore = "bas"', f'efter = "{slugg}"', "troskel = 0.1"]
+        dag += [
+            "", "[[jamforelser]]", 'analys = "sol"', 'utdata = "soltimmar"', 'fore = "bas"', f'efter = "{slugg}"', "troskel = 0.1",
+            "", "[[jamforelser]]", 'analys = "svf"', 'utdata = "svf"', 'fore = "bas"', f'efter = "{slugg}"', "troskel = 0.01",
+        ]  # fmt: skip
     fv, fd = fdir / "skyfall.toml", fdir / "dagsljus.toml"
     fv.write_text("\n".join(vatten) + "\n", encoding="utf-8")
     fd.write_text("\n".join(dag) + "\n", encoding="utf-8")

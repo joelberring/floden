@@ -314,8 +314,23 @@ class _HorisontCachePost:
     max_avstand_m: float
     h_rad: NDArray[np.float32]
     trunk: NDArray[np.int32]
+    trunk_riktningar: frozenset[int]
+    giltiga_riktningar: frozenset[int]
     falt_utan_standard: Hojdfalt | None = None
     h0_rad: NDArray[np.float32] | None = None
+
+
+@dataclass(frozen=True)
+class _HorisontKubResultat:
+    """Resultat från `_berakna_horisont_kub` (full, inkrementell eller cacheträff)."""
+
+    h_rad: NDArray[np.float32]
+    h0_rad: NDArray[np.float32] | None
+    trunk: NDArray[np.int32]
+    berakningsplats: str
+    inkrementell: bool
+    inkrementell_orsak: str
+    andrade_celler: int
 
 
 _HORISONT_LOCK = threading.Lock()
@@ -368,6 +383,14 @@ def _ruta_recept_nycklar(ruta: Any) -> tuple[str, str]:
     return egen, bas
 
 
+def _hamta_exakt_horisont(primar_nyckel: tuple[Any, ...]) -> _HorisontCachePost | None:
+    with _HORISONT_LOCK:
+        post = _HORISONT_CACHE.get(primar_nyckel)
+        if post is not None:
+            _HORISONT_CACHE.move_to_end(primar_nyckel)
+        return post
+
+
 def _hamta_bas_horisont(
     bas_recept_nyckel: tuple[Any, ...],
     grid_nyckel: tuple[Any, ...],
@@ -400,6 +423,31 @@ def _spara_horisont_i_cache(
     ar_andrad_fran_bas: bool,
 ) -> None:
     with _HORISONT_LOCK:
+        befintlig = _HORISONT_CACHE.get(primar_nyckel)
+        if befintlig is not None and not befintlig.giltiga_riktningar.issubset(
+            post.giltiga_riktningar
+        ):
+            # Slå ihop giltiga riktningar så att en delmängd (t.ex. soltimmar) aldrig skriver
+            # över redan beräknade riktningar (t.ex. från SVF eller horisont).
+            h_ihop = befintlig.h_rad.copy()
+            h0_ihop = None if befintlig.h0_rad is None else befintlig.h0_rad.copy()
+            for k_idx in post.giltiga_riktningar:
+                h_ihop[k_idx] = post.h_rad[k_idx]
+                if h0_ihop is not None and post.h0_rad is not None:
+                    h0_ihop[k_idx] = post.h0_rad[k_idx]
+            post = _HorisontCachePost(
+                dsm_sha256=post.dsm_sha256,
+                falt=post.falt,
+                fonster=post.fonster,
+                antal_riktningar=post.antal_riktningar,
+                max_avstand_m=post.max_avstand_m,
+                h_rad=h_ihop,
+                trunk=befintlig.trunk,
+                trunk_riktningar=befintlig.trunk_riktningar,
+                giltiga_riktningar=befintlig.giltiga_riktningar | post.giltiga_riktningar,
+                falt_utan_standard=post.falt_utan_standard,
+                h0_rad=h0_ihop,
+            )
         _HORISONT_CACHE[primar_nyckel] = post
         _HORISONT_CACHE.move_to_end(primar_nyckel)
         _HORISONT_RECEPT_INDEX[recept_nyckel] = primar_nyckel
@@ -410,6 +458,375 @@ def _spara_horisont_i_cache(
             for idx_karta in (_HORISONT_RECEPT_INDEX, _HORISONT_GRID_INDEX):
                 for k in [kk for kk, vv in idx_karta.items() if vv == bort_nyckel]:
                     del idx_karta[k]
+
+
+def _berakna_trunk(
+    falt: Hojdfalt,
+    antal: int,
+    radie: float,
+    fonster: tuple[int, int, int, int],
+    aktiva_riktningar: frozenset[int] | None = None,
+) -> NDArray[np.int32]:
+    """Analytisk trunkeringsräkning för valda riktningar (bitidentisk med `_horisontpass`)."""
+    from dagsljus.horisont import _trunkering_ruta
+
+    r0, r1, c0, c1 = fonster
+    rmax_c = radie / falt.cell_m
+    trunk = np.zeros((r1 - r0, c1 - c0), dtype=np.int32)
+    for i, phi in enumerate(riktningar_rad(antal)):
+        if aktiva_riktningar is not None and i not in aktiva_riktningar:
+            continue
+        trunk += _trunkering_ruta(falt, float(phi), rmax_c, r0, r1, c0, c1)
+    return trunk
+
+
+def _samma_geometri(
+    post: _HorisontCachePost,
+    m: Mosaik,
+    antal: int,
+    radie: float,
+) -> bool:
+    return (
+        post.falt.z_m.shape == m.falt.z_m.shape
+        and post.falt.cell_m == m.falt.cell_m
+        and post.falt.x_min_m == m.falt.x_min_m
+        and post.falt.y_max_m == m.falt.y_max_m
+        and post.fonster == m.fonster
+        and post.antal_riktningar == antal
+        and post.max_avstand_m == radie
+    )
+
+
+def _kvalificerar_inkrementell(
+    bas_post: _HorisontCachePost,
+    m: Mosaik,
+    antal: int,
+    radie: float,
+    pa_gpu: bool,
+) -> tuple[bool, str, int]:
+    """Kontrollerar om `bas_post` kan uppdateras inkrementellt mot `m`."""
+    if pa_gpu:
+        return False, "gpu_ej_inkrementell", 0
+    if not _samma_geometri(bas_post, m, antal, radie):
+        return False, "olika_geometri", 0
+    if (m.falt_utan_standard is None) != (bas_post.falt_utan_standard is None):
+        return False, "standardhojd_andrad", 0
+    andrade_celler = int(np.count_nonzero(m.falt.z_m != bas_post.falt.z_m))
+    andel = float(andrade_celler) / float(m.falt.z_m.size)
+    std_for_stor = (
+        m.falt_utan_standard is not None
+        and bas_post.falt_utan_standard is not None
+        and (
+            bas_post.h0_rad is None
+            or float(
+                np.count_nonzero(m.falt_utan_standard.z_m != bas_post.falt_utan_standard.z_m)
+            )
+            / float(m.falt_utan_standard.z_m.size)
+            >= _HORISONT_MAX_ANDRAD_ANDEL
+        )
+    )
+    if andel >= _HORISONT_MAX_ANDRAD_ANDEL or std_for_stor:
+        return False, "for_stor_andring", andrade_celler
+    return True, "lokal_uppdatering", andrade_celler
+
+
+def _berakna_horisont_kub(
+    kontext: LosarKontext,
+    m: Mosaik,
+    *,
+    aktiva_riktningar: frozenset[int] | None = None,
+) -> _HorisontKubResultat:
+    """Hämtar, uppdaterar inkrementellt eller beräknar horisontkuben (float32, rad) för `m`.
+
+    Delas mellan `dagsljus.horisont`, `dagsljus.svf_mark` och `dagsljus.soltimmar_mark`:
+    1. Exakt DSM-träff i den trådsäkra minnescachen återanvänder redan beräknade riktningar och
+       kompletterar endast saknade riktningar (t.ex. SVF direkt efter soltimmar utan dubbeljobb).
+    2. Vid lokal byggnads-/DSM-ändring (< 25 % ändrade celler) uppdateras en cachad bas-horisont
+       med `uppdatera_horisont_inkrementellt` (bitidentiskt med full beräkning).
+    3. I övriga fall (kall cache, GPU, > 25 % ändring eller ändrad standardhöjd) sker transparent
+       fallback till full `_horisontpass`.
+    """
+    r0, r1, c0, c1 = m.fonster
+    antal = int(kontext.parametrar["azimutriktningar"])
+    radie = _radie_m(kontext.parametrar)
+    enhet = str(kontext.parametrar.get("enhet", "cpu"))
+    xp, enhet_namn = hamta_backend(enhet)
+    pa_gpu = ar_gpu_backend(xp)
+    plats = berakningsplats(enhet_namn, np.float32)
+    behov: frozenset[int] = (
+        frozenset(range(antal)) if aktiva_riktningar is None else aktiva_riktningar
+    )
+
+    assert kontext.ruta is not None
+    rutor_alla = (kontext.ruta, *kontext.grannar)
+    par_nycklar = [(r.ruta_id, *_ruta_recept_nycklar(r)) for r in rutor_alla]
+    egen_recept_tup = tuple((rid, egen) for rid, egen, _ in par_nycklar)
+    bas_recept_tup = tuple((rid, bas) for rid, _, bas in par_nycklar)
+    ar_andrad_fran_bas = bas_recept_tup != egen_recept_tup
+
+    dsm_sha = _dsm_sha256(m.falt)
+    dsm0_sha = "" if m.falt_utan_standard is None else _dsm_sha256(m.falt_utan_standard)
+    primar_nyckel = (dsm_sha, dsm0_sha, antal, radie, m.fonster)
+    recept_nyckel = (egen_recept_tup, antal, radie, m.fonster)
+    bas_recept_nyckel = (bas_recept_tup, antal, radie, m.fonster)
+    grid_nyckel = (
+        kontext.ruta.ruta_id,
+        m.falt.z_m.shape,
+        m.fonster,
+        m.falt.x_min_m,
+        m.falt.y_max_m,
+        m.falt.cell_m,
+        antal,
+        radie,
+    )
+
+    # 1. Exakt DSM-träff i minnescachen.
+    exakt_post = None if pa_gpu else _hamta_exakt_horisont(primar_nyckel)
+    if (
+        exakt_post is not None
+        and _samma_geometri(exakt_post, m, antal, radie)
+        and (m.falt_utan_standard is None) == (exakt_post.falt_utan_standard is None)
+    ):
+        saknade = behov - exakt_post.giltiga_riktningar
+        if not saknade:
+            trunk = (
+                exakt_post.trunk.copy()
+                if behov == exakt_post.trunk_riktningar
+                else _berakna_trunk(m.falt, antal, radie, m.fonster, aktiva_riktningar)
+            )
+            return _HorisontKubResultat(
+                h_rad=exakt_post.h_rad,
+                h0_rad=exakt_post.h0_rad,
+                trunk=trunk,
+                berakningsplats=plats,
+                inkrementell=True,
+                inkrementell_orsak="cache_traff",
+                andrade_celler=0,
+            )
+        # Komplettera enbart saknade riktningar (t.ex. SVF efter soltimmar på samma DSM).
+        h_ex = exakt_post.h_rad.copy()
+        h0_ex = None if exakt_post.h0_rad is None else exakt_post.h0_rad.copy()
+        andrade_ex = 0
+        orsak_ex = "delvis_cache_traff"
+        kvar = saknade
+        bas_for_saknade = _hamta_bas_horisont(
+            bas_recept_nyckel,
+            grid_nyckel,
+            ar_andrad_fran_bas=ar_andrad_fran_bas,
+            egen_dsm_sha=dsm_sha,
+        )
+        if bas_for_saknade is not None and bas_for_saknade.dsm_sha256 != dsm_sha:
+            ok_b, _ors_b, n_andr = _kvalificerar_inkrementell(
+                bas_for_saknade, m, antal, radie, pa_gpu
+            )
+            inkr_bar = saknade & bas_for_saknade.giltiga_riktningar
+            if ok_b and inkr_bar:
+                h_del = uppdatera_horisont_inkrementellt(
+                    bas_for_saknade.h_rad,
+                    bas_for_saknade.falt,
+                    m.falt,
+                    radie,
+                    fonster=m.fonster,
+                    aktiva_riktningar=inkr_bar,
+                )
+                for k_idx in inkr_bar:
+                    h_ex[k_idx] = h_del[k_idx]
+                if (
+                    h0_ex is not None
+                    and m.falt_utan_standard is not None
+                    and bas_for_saknade.falt_utan_standard is not None
+                    and bas_for_saknade.h0_rad is not None
+                ):
+                    h0_del = uppdatera_horisont_inkrementellt(
+                        bas_for_saknade.h0_rad,
+                        bas_for_saknade.falt_utan_standard,
+                        m.falt_utan_standard,
+                        radie,
+                        fonster=m.fonster,
+                        aktiva_riktningar=inkr_bar,
+                    )
+                    for k_idx in inkr_bar:
+                        h0_ex[k_idx] = h0_del[k_idx]
+                kvar = saknade - inkr_bar
+                andrade_ex = n_andr
+                orsak_ex = "lokal_uppdatering"
+        if kvar:
+            def _lagra_kvar(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+                h_ex[i] = h
+
+            def _lagra_kvar0(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+                assert h0_ex is not None
+                h0_ex[i] = h
+
+            _horisontpass(
+                kontext,
+                m,
+                [_lagra_kvar],
+                [_lagra_kvar0] if h0_ex is not None else None,
+                aktiva_riktningar=kvar,
+            )
+        trunk_ex = _berakna_trunk(m.falt, antal, radie, m.fonster, aktiva_riktningar)
+        _spara_horisont_i_cache(
+            primar_nyckel,
+            recept_nyckel,
+            grid_nyckel,
+            _HorisontCachePost(
+                dsm_sha256=dsm_sha,
+                falt=m.falt,
+                fonster=m.fonster,
+                antal_riktningar=antal,
+                max_avstand_m=radie,
+                h_rad=h_ex,
+                trunk=trunk_ex,
+                trunk_riktningar=behov,
+                giltiga_riktningar=exakt_post.giltiga_riktningar | saknade,
+                falt_utan_standard=m.falt_utan_standard,
+                h0_rad=h0_ex,
+            ),
+            ar_andrad_fran_bas=ar_andrad_fran_bas,
+        )
+        return _HorisontKubResultat(
+            h_rad=h_ex,
+            h0_rad=h0_ex,
+            trunk=trunk_ex,
+            berakningsplats=plats,
+            inkrementell=True,
+            inkrementell_orsak=orsak_ex,
+            andrade_celler=andrade_ex,
+        )
+
+    # 2. Inkrementell uppdatering från cachad bas-horisont vid lokal DSM-ändring.
+    bas_post = _hamta_bas_horisont(
+        bas_recept_nyckel,
+        grid_nyckel,
+        ar_andrad_fran_bas=ar_andrad_fran_bas,
+        egen_dsm_sha=dsm_sha,
+    )
+    inkrementell = False
+    inkrementell_orsak = "bas_saknas"
+    andrade_celler = 0
+    h_rad: NDArray[np.float32] | None = None
+    h0_rad: NDArray[np.float32] | None = None
+    trunk_res: NDArray[np.int32] | None = None
+
+    if bas_post is not None:
+        ok, orsak_b, n_andr = _kvalificerar_inkrementell(bas_post, m, antal, radie, pa_gpu)
+        andrade_celler = n_andr
+        if not ok:
+            inkrementell_orsak = orsak_b
+        else:
+            gemensamma = behov & bas_post.giltiga_riktningar
+            saknade_b = behov - bas_post.giltiga_riktningar
+            if not behov or gemensamma:
+                if gemensamma:
+                    h_rad = uppdatera_horisont_inkrementellt(
+                        bas_post.h_rad,
+                        bas_post.falt,
+                        m.falt,
+                        radie,
+                        fonster=m.fonster,
+                        aktiva_riktningar=gemensamma,
+                    )
+                    if (
+                        m.falt_utan_standard is not None
+                        and bas_post.falt_utan_standard is not None
+                        and bas_post.h0_rad is not None
+                    ):
+                        h0_rad = uppdatera_horisont_inkrementellt(
+                            bas_post.h0_rad,
+                            bas_post.falt_utan_standard,
+                            m.falt_utan_standard,
+                            radie,
+                            fonster=m.fonster,
+                            aktiva_riktningar=gemensamma,
+                        )
+                else:
+                    h_rad = np.zeros((antal, r1 - r0, c1 - c0), dtype=np.float32)
+                    if m.falt_utan_standard is not None:
+                        h0_rad = np.zeros((antal, r1 - r0, c1 - c0), dtype=np.float32)
+                if saknade_b:
+                    assert h_rad is not None
+
+                    def _lagra_s(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+                        assert h_rad is not None
+                        h_rad[i] = h
+
+                    def _lagra_s0(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+                        assert h0_rad is not None
+                        h0_rad[i] = h
+
+                    _horisontpass(
+                        kontext,
+                        m,
+                        [_lagra_s],
+                        [_lagra_s0] if h0_rad is not None else None,
+                        aktiva_riktningar=saknade_b,
+                    )
+                trunk_res = (
+                    bas_post.trunk.copy()
+                    if behov == bas_post.trunk_riktningar
+                    else _berakna_trunk(m.falt, antal, radie, m.fonster, aktiva_riktningar)
+                )
+                inkrementell = True
+                inkrementell_orsak = "lokal_uppdatering"
+            else:
+                inkrementell_orsak = "saknar_riktningar"
+
+    # 3. Full beräkning (kall cache, GPU eller ändring som inte kvalificerar).
+    if not inkrementell or h_rad is None or trunk_res is None:
+        h_rad = np.zeros((antal, r1 - r0, c1 - c0), dtype=np.float32)
+        h0_rad = (
+            np.zeros((antal, r1 - r0, c1 - c0), dtype=np.float32)
+            if m.falt_utan_standard is not None
+            else None
+        )
+
+        def lagra_rad(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+            assert h_rad is not None
+            h_rad[i] = h
+
+        def lagra_rad0(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+            assert h0_rad is not None
+            h0_rad[i] = h
+
+        pas = _horisontpass(
+            kontext,
+            m,
+            [lagra_rad],
+            [lagra_rad0] if h0_rad is not None else None,
+            aktiva_riktningar=aktiva_riktningar,
+        )
+        trunk_res = pas.trunk
+        plats = pas.berakningsplats
+
+    _spara_horisont_i_cache(
+        primar_nyckel,
+        recept_nyckel,
+        grid_nyckel,
+        _HorisontCachePost(
+            dsm_sha256=dsm_sha,
+            falt=m.falt,
+            fonster=m.fonster,
+            antal_riktningar=antal,
+            max_avstand_m=radie,
+            h_rad=h_rad,
+            trunk=trunk_res,
+            trunk_riktningar=behov,
+            giltiga_riktningar=behov,
+            falt_utan_standard=m.falt_utan_standard,
+            h0_rad=h0_rad,
+        ),
+        ar_andrad_fran_bas=ar_andrad_fran_bas,
+    )
+    return _HorisontKubResultat(
+        h_rad=h_rad,
+        h0_rad=h0_rad,
+        trunk=trunk_res,
+        berakningsplats=plats,
+        inkrementell=inkrementell,
+        inkrementell_orsak=inkrementell_orsak,
+        andrade_celler=andrade_celler,
+    )
 
 
 class Horisont(_DagsljusLosare):
@@ -426,155 +843,13 @@ class Horisont(_DagsljusLosare):
 
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
         m = _mosaik(kontext)
-        r0, r1, c0, c1 = m.fonster
         antal = int(kontext.parametrar["azimutriktningar"])
         radie = _radie_m(kontext.parametrar)
-        enhet = str(kontext.parametrar.get("enhet", "cpu"))
-        xp, enhet_namn = hamta_backend(enhet)
-        pa_gpu = ar_gpu_backend(xp)
-
-        assert kontext.ruta is not None
-        rutor_alla = (kontext.ruta, *kontext.grannar)
-        par_nycklar = [(r.ruta_id, *_ruta_recept_nycklar(r)) for r in rutor_alla]
-        egen_recept_tup = tuple((rid, egen) for rid, egen, _ in par_nycklar)
-        bas_recept_tup = tuple((rid, bas) for rid, _, bas in par_nycklar)
-        ar_andrad_fran_bas = bas_recept_tup != egen_recept_tup
-
-        dsm_sha = _dsm_sha256(m.falt)
-        primar_nyckel = (dsm_sha, antal, radie, m.fonster)
-        recept_nyckel = (egen_recept_tup, antal, radie, m.fonster)
-        bas_recept_nyckel = (bas_recept_tup, antal, radie, m.fonster)
-        grid_nyckel = (
-            kontext.ruta.ruta_id,
-            m.falt.z_m.shape,
-            m.fonster,
-            m.falt.x_min_m,
-            m.falt.y_max_m,
-            m.falt.cell_m,
-            antal,
-            radie,
-        )
-
-        bas_post = _hamta_bas_horisont(
-            bas_recept_nyckel,
-            grid_nyckel,
-            ar_andrad_fran_bas=ar_andrad_fran_bas,
-            egen_dsm_sha=dsm_sha,
-        )
-
-        inkrementell = False
-        inkrementell_orsak = "bas_saknas"
-        andrade_celler = 0
-        h_rad: NDArray[np.float32] | None = None
-        h0_rad: NDArray[np.float32] | None = None
-        pas: _Pass | None = None
-
-        if bas_post is not None:
-            if pa_gpu:
-                inkrementell_orsak = "gpu_ej_inkrementell"
-            elif (
-                bas_post.falt.z_m.shape != m.falt.z_m.shape
-                or bas_post.falt.cell_m != m.falt.cell_m
-                or bas_post.falt.x_min_m != m.falt.x_min_m
-                or bas_post.falt.y_max_m != m.falt.y_max_m
-                or bas_post.fonster != m.fonster
-                or bas_post.antal_riktningar != antal
-                or bas_post.max_avstand_m != radie
-            ):
-                inkrementell_orsak = "olika_geometri"
-            elif (m.falt_utan_standard is None) != (bas_post.falt_utan_standard is None):
-                inkrementell_orsak = "standardhojd_andrad"
-            else:
-                andrade_celler = int(np.count_nonzero(m.falt.z_m != bas_post.falt.z_m))
-                andel = float(andrade_celler) / float(m.falt.z_m.size)
-                std_for_stor = (
-                    m.falt_utan_standard is not None
-                    and bas_post.falt_utan_standard is not None
-                    and (
-                        bas_post.h0_rad is None
-                        or float(
-                            np.count_nonzero(
-                                m.falt_utan_standard.z_m != bas_post.falt_utan_standard.z_m
-                            )
-                        )
-                        / float(m.falt_utan_standard.z_m.size)
-                        >= _HORISONT_MAX_ANDRAD_ANDEL
-                    )
-                )
-                if andel >= _HORISONT_MAX_ANDRAD_ANDEL or std_for_stor:
-                    inkrementell_orsak = "for_stor_andring"
-                else:
-                    h_rad = uppdatera_horisont_inkrementellt(
-                        bas_post.h_rad,
-                        bas_post.falt,
-                        m.falt,
-                        radie,
-                        fonster=m.fonster,
-                    )
-                    std_riktn: NDArray[np.int32] | None = None
-                    if (
-                        m.falt_utan_standard is not None
-                        and bas_post.falt_utan_standard is not None
-                        and bas_post.h0_rad is not None
-                    ):
-                        h0_rad = uppdatera_horisont_inkrementellt(
-                            bas_post.h0_rad,
-                            bas_post.falt_utan_standard,
-                            m.falt_utan_standard,
-                            radie,
-                            fonster=m.fonster,
-                        )
-                        std_riktn = np.sum(h0_rad != h_rad, axis=0, dtype=np.int32)
-                    pas = _Pass(
-                        bas_post.trunk.copy(),
-                        std_riktn,
-                        berakningsplats(enhet_namn, np.float32),
-                    )
-                    inkrementell = True
-                    inkrementell_orsak = "lokal_uppdatering"
-
-        if not inkrementell or h_rad is None or pas is None:
-            h_rad = np.empty((antal, r1 - r0, c1 - c0), dtype=np.float32)
-            h0_rad = (
-                np.empty((antal, r1 - r0, c1 - c0), dtype=np.float32)
-                if m.falt_utan_standard is not None
-                else None
-            )
-
-            def lagra_rad(i: int, _phi: float, h: NDArray[np.float32]) -> None:
-                assert h_rad is not None
-                h_rad[i] = h
-
-            def lagra_rad0(i: int, _phi: float, h: NDArray[np.float32]) -> None:
-                assert h0_rad is not None
-                h0_rad[i] = h
-
-            pas = _horisontpass(
-                kontext,
-                m,
-                [lagra_rad],
-                [lagra_rad0] if h0_rad is not None else None,
-            )
-
-        lagr = np.rint(np.degrees(h_rad.astype(np.float64)) * 100.0).astype(np.uint16)
-        trunk = pas.trunk
-
-        _spara_horisont_i_cache(
-            primar_nyckel,
-            recept_nyckel,
-            grid_nyckel,
-            _HorisontCachePost(
-                dsm_sha256=dsm_sha,
-                falt=m.falt,
-                fonster=m.fonster,
-                antal_riktningar=antal,
-                max_avstand_m=radie,
-                h_rad=h_rad,
-                trunk=trunk,
-                falt_utan_standard=m.falt_utan_standard,
-                h0_rad=h0_rad,
-            ),
-            ar_andrad_fran_bas=ar_andrad_fran_bas,
+        kub = _berakna_horisont_kub(kontext, m)
+        lagr = np.rint(np.degrees(kub.h_rad.astype(np.float64)) * 100.0).astype(np.uint16)
+        trunk = kub.trunk
+        std_riktn = (
+            None if kub.h0_rad is None else np.sum(kub.h0_rad != kub.h_rad, axis=0, dtype=np.int32)
         )
 
         np.save(kontext.utmapp / "horisont.npy", lagr)
@@ -603,7 +878,7 @@ class Horisont(_DagsljusLosare):
         n_std, std_var = _skriv_standardflagga(
             kontext,
             m,
-            None if pas.standard_riktningar is None else pas.standard_riktningar > 0,
+            None if std_riktn is None else std_riktn > 0,
             trunk.shape,
         )
         return LosarUtdata(
@@ -618,10 +893,10 @@ class Horisont(_DagsljusLosare):
                 "celler": int(trunk.size),
                 "azimutriktningar": antal,
                 "celler_standardhojd": n_std,
-                "berakningsplats": pas.berakningsplats,
-                "inkrementell": inkrementell,
-                "inkrementell_orsak": inkrementell_orsak,
-                "andrade_celler": andrade_celler,
+                "berakningsplats": kub.berakningsplats,
+                "inkrementell": kub.inkrementell,
+                "inkrementell_orsak": kub.inkrementell_orsak,
+                "andrade_celler": kub.andrade_celler,
             },
             varningar=tuple(
                 _gemensamma_varningar(kontext, m) + _trunk_varning(trunk, antal) + std_var
@@ -638,21 +913,20 @@ class SvfMark(_DagsljusLosare):
         m = _mosaik(kontext)
         r0, r1, c0, c1 = m.fonster
         antal = int(kontext.parametrar["azimutriktningar"])
-        summa = np.zeros((r1 - r0, c1 - c0))
-        summa0 = np.zeros((r1 - r0, c1 - c0))
-
-        def ackumulera(_i: int, _phi: float, h: NDArray[np.float32]) -> None:
-            summa.__iadd__(np.sin(h.astype(np.float64)) ** 2)
-
-        def ackumulera0(_i: int, _phi: float, h: NDArray[np.float32]) -> None:
-            summa0.__iadd__(np.sin(h.astype(np.float64)) ** 2)
-
-        pas = _horisontpass(kontext, m, [ackumulera], [ackumulera0])
-        trunk = pas.trunk
+        kub = _berakna_horisont_kub(kontext, m)
+        summa = np.zeros((r1 - r0, c1 - c0), dtype=np.float64)
+        for i in range(antal):
+            summa += np.sin(kub.h_rad[i].astype(np.float64)) ** 2
         svf = 1.0 - summa / antal
+        flagga: NDArray[np.bool_] | None = None
+        if kub.h0_rad is not None:
+            summa0 = np.zeros((r1 - r0, c1 - c0), dtype=np.float64)
+            for i in range(antal):
+                summa0 += np.sin(kub.h0_rad[i].astype(np.float64)) ** 2
+            flagga = (1.0 - summa0 / antal) != svf
+        trunk = kub.trunk
         _skriv_raster(kontext.utmapp / "svf.tif", svf, m)
         _skriv_raster(kontext.utmapp / "trunkering.tif", trunk / antal, m)
-        flagga = None if pas.standard_riktningar is None else (1.0 - summa0 / antal) != svf
         n_std, std_var = _skriv_standardflagga(kontext, m, flagga, svf.shape)
         return LosarUtdata(
             filer={
@@ -665,7 +939,10 @@ class SvfMark(_DagsljusLosare):
                 "svf_min": float(svf.min()),
                 "celler": int(svf.size),
                 "celler_standardhojd": n_std,
-                "berakningsplats": pas.berakningsplats,
+                "berakningsplats": kub.berakningsplats,
+                "inkrementell": kub.inkrementell,
+                "inkrementell_orsak": kub.inkrementell_orsak,
+                "andrade_celler": kub.andrade_celler,
             },
             varningar=tuple(
                 _gemensamma_varningar(kontext, m) + _trunk_varning(trunk, antal) + std_var
@@ -768,21 +1045,27 @@ class SoltimmarMark(_DagsljusLosare):
         form = (r1 - r0, c1 - c0)
         steg_h = steg_min / 60.0 / len(datum)
         ack = SoltimmarAckumulator(antal, sol_h, sol_az, steg_h, form)
-        ack0 = SoltimmarAckumulator(antal, sol_h, sol_az, steg_h, form)
-        pas = _horisontpass(
-            kontext,
-            m,
-            [lambda i, _p, h: ack.mata(i, h)],
-            [lambda i, _p, h: ack0.mata(i, h)],
-            aktiva_riktningar=ack.aktiva_riktningar(),
-            hoppa_over=[lambda i: ack.mata(i, None)],
-            hoppa_over_utan_standard=[lambda i: ack0.mata(i, None)],
+        aktiva = ack.aktiva_riktningar()
+        kub = _berakna_horisont_kub(kontext, m, aktiva_riktningar=aktiva)
+        ack0 = (
+            SoltimmarAckumulator(antal, sol_h, sol_az, steg_h, form)
+            if kub.h0_rad is not None
+            else None
         )
-        trunk = pas.trunk
+        for i in range(antal):
+            if i in aktiva:
+                ack.mata(i, kub.h_rad[i])
+                if ack0 is not None and kub.h0_rad is not None:
+                    ack0.mata(i, kub.h0_rad[i])
+            else:
+                ack.mata(i, None)
+                if ack0 is not None:
+                    ack0.mata(i, None)
+        trunk = kub.trunk
         timmar = ack.timmar()
         _skriv_raster(kontext.utmapp / "soltimmar.tif", timmar, m)
         _skriv_raster(kontext.utmapp / "trunkering.tif", trunk / antal, m)
-        flagga = None if pas.standard_riktningar is None else ack0.timmar() != timmar
+        flagga = None if ack0 is None else ack0.timmar() != timmar
         n_std, std_var = _skriv_standardflagga(kontext, m, flagga, timmar.shape)
         var = _gemensamma_varningar(kontext, m) + _trunk_varning(trunk, antal) + std_var
         if antal < 128:
@@ -807,7 +1090,10 @@ class SoltimmarMark(_DagsljusLosare):
                 "lat_grader": lat,
                 "lon_grader": lon,
                 "celler_standardhojd": n_std,
-                "berakningsplats": pas.berakningsplats,
+                "berakningsplats": kub.berakningsplats,
+                "inkrementell": kub.inkrementell,
+                "inkrementell_orsak": kub.inkrementell_orsak,
+                "andrade_celler": kub.andrade_celler,
             },
             varningar=tuple(var),
         )
@@ -1543,6 +1829,31 @@ class SoltimmarFasad(_DagsljusLosare):
                 )
         giltiga = res.soltimmar_h[np.isfinite(res.soltimmar_h)]
         var = _gemensamma_varningar(kontext, m)
+        for namn, text in (
+            (
+                "inuti_hinder",
+                "startpunkten ligger under höjden i sin egen cell (punkten sitter i en "
+                "byggnad/under ett tak i DSM); soltimmar lämnas tom, kontrollera läget",
+            ),
+            ("utanfor_data", "startpunkten ligger utanför höjdfältet; soltimmar lämnas tom"),
+        ):
+            antal_status = res.status.count(namn)
+            if antal_status:
+                var.append(f"{antal_status} fasadpunkter ({namn}): {text}")
+        n_trunk = int(np.count_nonzero(res.trunk_ant))
+        if n_trunk:
+            var.append(
+                f"{n_trunk} fasadpunkter har strålar som lämnar höjdfältet före påverkansradien "
+                "(kolumnen trunkerade_riktningar)"
+            )
+        antal_az = int(kontext.parametrar["azimutriktningar"])
+        if 2 * kf < 128:
+            var.append(
+                f"halvplansriktningar={kf} (motsvarar {2 * kf} azimutriktningar, "
+                f"azimutriktningar={antal_az}): soltimmar nära skuggkanter kan avvika flera "
+                "tiondels timmar (uppmätt på syntetiskt block, docs/DAGSLJUS.md); använd >= 90 "
+                "halvplansriktningar (>= 180 azimutriktningar) för skuggstudier"
+            )
         n_std = int(np.count_nonzero(std_flagga))
         if m.standard_byggnader:
             var += _standard_varning(m, n_std, n, "fasadpunkter")
