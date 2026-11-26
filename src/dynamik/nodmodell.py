@@ -117,6 +117,14 @@ class DynamikResultat:
     regn_tak_m3: float = 0.0
     takvatten: bool = False
     takvatten_till_ledning_m3: float = 0.0
+    in_kum_m3_serie: tuple[float, ...] = ()
+    """Kumulativt inflöde (m³) per tidpunkt i `tider_s` (mark + effektivt takvatten)."""
+    lagrat_m3_serie: tuple[float, ...] = ()
+    """Total lagrad volym i sänkgrafen (m³) per tidpunkt i `tider_s`."""
+    utflode_kum_m3_serie: tuple[float, ...] = ()
+    """Kumulativt verkligt ytutflöde (m³) per tidpunkt i `tider_s` (exkl. ledningsavtappning)."""
+    avtappning_kum_m3_serie: tuple[float, ...] = ()
+    """Kumulativ ledningsavtappning (m³) per tidpunkt i `tider_s`."""
 
     def volymbalans(self) -> dict[str, float | bool]:
         """Regn på mark + tak mot lagrat, utflöde, avtappning och tak till ledning
