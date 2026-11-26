@@ -134,6 +134,8 @@ _STANDARDJAMFORELSE = {
 
 STANDARD_MAX_2D_CELLER = 250_000
 """Standardgräns för antal rasterceller i en 2D-skyfallskörning via webben (förhindrar oavsiktligt gigantiska jobb)."""
+_STANDARD_SKYFALL_FOKUS_MARGINAL_M = 100.0
+"""Standardmarginal (m) runt projektets avgränsning för automatiskt skyfallsfokus på äldre projekt."""
 _GILTIGA_SKYFALL_METODER = frozenset({"graf", "2d"})
 _TVAD_EJ_STODDA_NYCKLAR = ("persistens_faktor", "idf_kalla", "idf_klimatfaktor")
 
@@ -800,11 +802,74 @@ class KartverktygTjanst:
         return [_rektangel(r) for m in mallar.values() for r in m.rutor]
 
     def _fokus(self, mallar: Mapping[str, Mall]) -> list[float] | None:
-        for m in mallar.values():
+        ordning = [mallar["dagsljus"]] if "dagsljus" in mallar else []
+        ordning.extend(m for k, m in mallar.items() if k != "dagsljus")
+        for m in ordning:
             for a in m.fraga.analyser:
                 if a.fokus is not None:
                     return list(a.fokus)
         return None
+
+    def _fallback_vatten_fokus(self, kalla: Projektkalla) -> list[float] | None:
+        """Automatiskt skyfallsfokus för redan skapade geografiprojekt vars `skyfall.toml` saknar `fokus`.
+
+        Läser `vatten_ruta_3011` eller `avgransning_3011` ur `projekt.json`. Om `vatten_ruta_3011`
+        sparades som hela geografins `gransen_3011` (före ruturvalsfixen) härleds i stället
+        `avgransning_3011` ± tillrinningsmarginal klippt till geografin så att befintliga projekt
+        på servern bara laddar berörda rutor.
+        """
+        if kalla.slag != "geografi" or kalla.mapp is None:
+            return None
+        projekt: dict[str, Any] = {}
+        fil = kalla.mapp / "projekt.json"
+        if fil.is_file():
+            try:
+                raw = json.loads(fil.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    projekt = raw
+            except (OSError, ValueError):
+                projekt = {}
+
+        def _box4(v: Any) -> tuple[float, float, float, float] | None:
+            if not isinstance(v, list | tuple) or len(v) != 4:
+                return None
+            try:
+                x0, y0, x1, y1 = (float(c) for c in v)
+            except (TypeError, ValueError):
+                return None
+            if not all(math.isfinite(c) for c in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
+                return None
+            return (x0, y0, x1, y1)
+
+        avgr = _box4(projekt.get("avgransning_3011")) or kalla.avgransning
+        v_ruta = _box4(projekt.get("vatten_ruta_3011"))
+        gransen: tuple[float, float, float, float] | None = None
+        if self.geomapp is not None and kalla.geografi:
+            try:
+                manifest, _ = las_geo_manifest(self.geomapp, kalla.geografi, verifiera=False)
+                gransen = _box4(manifest.get("gransen_3011"))
+            except GeografiFel:
+                gransen = None
+
+        if v_ruta is not None:
+            ar_hela_geo = gransen is not None and all(
+                abs(a - b) <= 1e-3 for a, b in zip(v_ruta, gransen, strict=True)
+            )
+            if not ar_hela_geo:
+                return list(v_ruta)
+
+        if avgr is None:
+            return list(v_ruta) if v_ruta is not None else None
+
+        m = _STANDARD_SKYFALL_FOKUS_MARGINAL_M
+        if gransen is not None:
+            x0 = max(gransen[0], avgr[0] - m)
+            y0 = max(gransen[1], avgr[1] - m)
+            x1 = min(gransen[2], avgr[2] + m)
+            y1 = min(gransen[3], avgr[3] + m)
+            if x1 > x0 and y1 > y0:
+                return [x0, y0, x1, y1]
+        return [avgr[0] - m, avgr[1] - m, avgr[2] + m, avgr[3] + m]
 
     # ------------------------------------------------------------------ projektinfo
 
@@ -1554,6 +1619,7 @@ class KartverktygTjanst:
             mallar, d["andringar"], namn_slug, beskrivning=f"Ritat i kartan: {d['namn']}"
         )
         stangt = ritl.har_stangt_innehall(d.get("ritlager"), kalla.oppen)
+        vatten_fokus = self._fallback_vatten_fokus(kalla)
         poster: list[dict[str, Any]] = []
         for kort, analyser in urval.items():
             m = mallar[kort]
@@ -1572,7 +1638,7 @@ class KartverktygTjanst:
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
                 avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn, sol=sol,
-                skyfall_metod=skyfall_metod,
+                skyfall_metod=skyfall_metod, vatten_fokus=vatten_fokus,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             ref = self._ref_for(fil)
@@ -1666,6 +1732,7 @@ class KartverktygTjanst:
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
         skyfall_metod: str = "graf",
+        vatten_fokus: Sequence[float] | None = None,
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
         valda, synt_vsc = self._valj_med_vsc(m, analyser, sol, ["fore", "ritat"])
@@ -1711,6 +1778,8 @@ class KartverktygTjanst:
             _tillampa_sol(losare, post["parametrar"], sol)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
+            elif vatten_fokus is not None and losare in _LOSARE_MED_REGN:
+                post["fokus"] = list(vatten_fokus)
             if a.beror_pa:
                 post["beror_pa"] = [b for b in a.beror_pa if b in valda_ids]
             if a.indata:
@@ -1901,6 +1970,7 @@ class KartverktygTjanst:
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
         skyfall_metod: str = "graf",
+        vatten_fokus: Sequence[float] | None = None,
     ) -> dict[str, Any]:
         """K20 för läget idag: ett enda scenario (`fore`, projektets befintliga läge), inga jämförelser."""
         bas = self._rel(fil, m.bas)
@@ -1943,6 +2013,8 @@ class KartverktygTjanst:
             _tillampa_sol(losare, post["parametrar"], sol)
             if a.fokus is not None:
                 post["fokus"] = list(a.fokus)
+            elif vatten_fokus is not None and losare in _LOSARE_MED_REGN:
+                post["fokus"] = list(vatten_fokus)
             if a.beror_pa:
                 post["beror_pa"] = [b for b in a.beror_pa if b in valda_ids]
             if a.indata:
@@ -1980,6 +2052,7 @@ class KartverktygTjanst:
             urval.setdefault(kort, []).append(aid)
         if not urval:
             raise _fel("Välj minst en analys att räkna.", 400)
+        vatten_fokus = self._fallback_vatten_fokus(kalla)
         poster: list[dict[str, Any]] = []
         fragedir.mkdir(parents=True, exist_ok=True)
         proj = re.sub(r"[^a-z0-9_\-]+", "-", projekt.lower()).strip("-")[:38] or "projekt"
@@ -1987,7 +2060,8 @@ class KartverktygTjanst:
             fraga_id = f"{LAGE_IDAG_PREFIX}{proj}-{kort}"
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._lage_k20(
-                mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol, skyfall_metod
+                mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol, skyfall_metod,
+                vatten_fokus=vatten_fokus,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             poster.append(

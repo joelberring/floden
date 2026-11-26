@@ -20,6 +20,7 @@ import csv
 import hashlib
 import importlib
 import json
+import logging
 import math
 import os
 import re
@@ -70,6 +71,7 @@ from webb.resultatlager import (
     varde_intervall,
 )
 
+_logg = logging.getLogger(__name__)
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
@@ -822,9 +824,41 @@ class FragaTjanst:
         return mapp / str(j["ruta"]) if j.get("ruta") else mapp
 
     def _roller(self, k: Korning, j: dict[str, Any]) -> dict[str, str]:
-        """roll -> filnamn för ett jobb, ur dess run.json (K0)."""
-        manifest = json.loads((self._jobbmapp(k, j) / "run.json").read_text(encoding="utf-8"))
-        return {p["roll"]: p["fil"] for p in manifest.get("utdata", [])}
+        """roll -> filnamn för ett jobb, ur dess run.json (K0).
+
+        Saknad eller oläsbar `run.json` (t.ex. äldre eller avbruten körning på disk) loggar en
+        varning och returnerar `{}` i stället för att krascha med HTTP 500.
+        """
+        fil = self._jobbmapp(k, j) / "run.json"
+        try:
+            manifest = json.loads(fil.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _logg.warning(
+                "run.json saknas eller går inte att läsa för körning %s (%s/%s): %s",
+                k.korning_id,
+                j.get("analys"),
+                j.get("scenario"),
+                exc,
+            )
+            return {}
+        if not isinstance(manifest, dict):
+            _logg.warning(
+                "run.json har ogiltigt format för körning %s (%s/%s)",
+                k.korning_id,
+                j.get("analys"),
+                j.get("scenario"),
+            )
+            return {}
+        utdata = manifest.get("utdata", [])
+        if not isinstance(utdata, list):
+            return {}
+        return {
+            str(p["roll"]): str(p["fil"])
+            for p in utdata
+            if isinstance(p, dict)
+            and isinstance(p.get("roll"), str)
+            and isinstance(p.get("fil"), str)
+        }
 
     def _url_fil(self, k: Korning, rel: Path) -> str:
         return f"/api/korningar/{k.korning_id}/fil/{rel.relative_to(k.utmapp).as_posix()}"
@@ -1127,7 +1161,16 @@ class FragaTjanst:
 
         poster: list[dict[str, Any]] = []  # lager före rendering
         for (analys, sid), jobb in grupper.items():
-            roller = self._roller(k, jobb[0])
+            roller: dict[str, str] = {}
+            for j_kand in jobb:
+                roller = self._roller(k, j_kand)
+                if roller:
+                    break
+            if not roller:
+                varningar.append(
+                    f"Utdata saknas för {analys}/{sid} (run.json saknas eller kunde inte läsas)."
+                )
+                continue
             try:
                 primar_ordning = list(hamta_losare(jobb[0]["losare"]).utdataroller)
             except LosarFel:
@@ -1574,6 +1617,9 @@ class FragaTjanst:
         glob_geo, glob_mark, glob_osak, glob_slag = sammanfoga_rutor(
             rut_data, overlapp_m=overlapp_m
         )
+        from karna.inbyggda import kontrollera_sankgraf_celler
+
+        kontrollera_sankgraf_celler(int(glob_mark.shape[0] * glob_mark.shape[1]), len(mappar))
         graf = bygg_sankgraf(
             glob_mark,
             glob_osak,
@@ -1628,15 +1674,39 @@ class FragaTjanst:
                 status_kod=404,
             )
         rutor, varning = self._scenariorutor(k, s)
-        mappar = [m for _, m in sorted((rutor or {}).get(scenario, {}).items())]
+        scen_rutor = (rutor or {}).get(scenario, {})
+        run_fil = self._jobbmapp(k, jobb) / "run.json"
+        try:
+            run_data = json.loads(run_fil.read_text(encoding="utf-8"))
+            par = dict(run_data["parametrar"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            _logg.warning(
+                "run.json saknas eller går inte att läsa i _sankgraf_vektor för körning %s: %s",
+                k.korning_id,
+                exc,
+            )
+            raise FlodenWebbFel(
+                "Körningens manifest (run.json) saknas eller kan inte läsas "
+                "för sänkor och flödesvägar.",
+                status_kod=409,
+            ) from exc
+        ruta_ids = [
+            str(p["fil"])
+            for p in run_data.get("indata", [])
+            if isinstance(p, dict)
+            and isinstance(p.get("roll"), str)
+            and p["roll"].startswith("ruta:")
+            and isinstance(p.get("fil"), str)
+        ]
+        if ruta_ids and all(rid in scen_rutor for rid in ruta_ids):
+            mappar = [scen_rutor[rid] for rid in sorted(set(ruta_ids))]
+        else:
+            mappar = [m for _, m in sorted(scen_rutor.items())]
         if not mappar:
             raise FlodenWebbFel(
                 varning or "Scenariot saknar K1-rutor för sänkor och flödesvägar.",
                 status_kod=409,
             )
-        par = json.loads((self._jobbmapp(k, jobb) / "run.json").read_text(encoding="utf-8"))[
-            "parametrar"
-        ]
         try:
             if len(mappar) == 1:
                 graf, _ = kor_statisk_k1_mapp(

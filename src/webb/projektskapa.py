@@ -115,9 +115,13 @@ class ProjektSkapaTjanst:
         orgar = reg.organisationer_for_skapa(konto_id)
         ut: list[dict[str, Any]] = []
         if self.geomapp.is_dir():
-            for idmapp in sorted(p for p in self.geomapp.iterdir() if p.is_dir() and p.name != LAGERMAPP):
+            for idmapp in sorted(
+                p
+                for p in self.geomapp.iterdir()
+                if p.is_dir() and p.name != LAGERMAPP and not p.name.startswith("_")
+            ):
                 for vmapp in sorted(
-                    (p for p in idmapp.iterdir() if p.is_dir()),
+                    (p for p in idmapp.iterdir() if p.is_dir() and not p.name.startswith("_")),
                     key=lambda p: (len(p.name), p.name),
                 ):
                     ref = f"{idmapp.name}@{vmapp.name}"
