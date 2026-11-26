@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import heapq
 import json
 import logging
 import math
@@ -1585,6 +1586,146 @@ class FlodenApiApp:
             "depositionsfaktor_intervall": list(iv.depositionsfaktor_intervall),
         }
 
+    @staticmethod
+    def _tolka_och_kor_celf(
+        kropp_bytes: bytes,
+    ) -> tuple[int, list[dict[str, Any]], float]:
+        """Validerar `{k, kandidater}` och kör deterministisk submodulär CELF (max-täckning).
+
+        För kandidater `a` med icke-negativa bidragsvektorer `x_a >= 0` (lika långa) maximeras
+        den monotona submodulära täckningsfunktionen `f(S) = sum_j max_{a in S} x_{a,j}` med
+        lazy greedy (CELF), vilket ger `(1 - 1/e)`-garanti utan dubbelräkning av överlappande
+        åtgärder.
+        """
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt krävs.", status_kod=400)
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}", status_kod=400) from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.", status_kod=400)
+
+        k_raw = payload.get("k")
+        if isinstance(k_raw, bool) or not isinstance(k_raw, int) or not (1 <= k_raw <= 50):
+            raise FlodenWebbFel("Fältet 'k' ska vara ett heltal mellan 1 och 50.", status_kod=400)
+
+        kand_raw = payload.get("kandidater")
+        if not isinstance(kand_raw, Mapping) or not (1 <= len(kand_raw) <= 100):
+            raise FlodenWebbFel(
+                "Fältet 'kandidater' ska vara ett objekt med 1–100 kandidater.",
+                status_kod=400,
+            )
+
+        vektorer: dict[str, NDArray[np.float64]] = {}
+        langd: int | None = None
+        for aid in sorted(kand_raw):
+            lista = kand_raw[aid]
+            if not isinstance(aid, str) or not aid.strip():
+                raise FlodenWebbFel(
+                    "Varje kandidatnyckel i 'kandidater' måste vara en icke-tom sträng.",
+                    status_kod=400,
+                )
+            if not isinstance(lista, list) or not (1 <= len(lista) <= 10_000):
+                raise FlodenWebbFel(
+                    f"Kandidat '{aid}' ska vara en lista med 1–10000 icke-negativa tal.",
+                    status_kod=400,
+                )
+            if any(isinstance(v, bool) or not isinstance(v, int | float) for v in lista):
+                raise FlodenWebbFel(
+                    f"Kandidat '{aid}' får bara innehålla tal.",
+                    status_kod=400,
+                )
+            arr = np.asarray(lista, dtype=np.float64)
+            if not np.all(np.isfinite(arr)):
+                raise FlodenWebbFel(
+                    f"Kandidat '{aid}' får inte innehålla NaN eller oändligt.",
+                    status_kod=400,
+                )
+            if bool(np.any(arr < 0.0)):
+                raise FlodenWebbFel(
+                    f"Kandidat '{aid}' får inte innehålla negativa tal.",
+                    status_kod=400,
+                )
+            if langd is None:
+                langd = int(arr.size)
+            elif int(arr.size) != langd:
+                raise FlodenWebbFel(
+                    f"Alla kandidatvektorer måste ha samma längd ({langd}), "
+                    f"men '{aid}' har längd {arr.size}.",
+                    status_kod=400,
+                )
+            vektorer[aid] = arr
+
+        assert langd is not None
+        tackt = np.zeros(langd, dtype=np.float64)
+        vinst_ensam: dict[str, float] = {}
+        heap: list[tuple[float, str, int]] = []
+        for aid, arr in vektorer.items():
+            v0 = float(np.sum(arr))
+            vinst_ensam[aid] = v0
+            if v0 > 0.0:
+                heapq.heappush(heap, (-v0, aid, 0))
+
+        valda_ids: set[str] = set()
+        valda_atgarder: list[dict[str, Any]] = []
+        kumulativ = 0.0
+
+        for steg in range(min(k_raw, len(vektorer))):
+            if not heap:
+                break
+            vald_id: str | None = None
+            vald_marg = 0.0
+            while heap:
+                neg_v, aid, utv_steg = heapq.heappop(heap)
+                if aid in valda_ids:
+                    continue
+                if utv_steg == steg:
+                    vald_id = aid
+                    vald_marg = -neg_v
+                    break
+                ny_marg = float(np.sum(np.maximum(0.0, vektorer[aid] - tackt)))
+                if ny_marg > 0.0:
+                    heapq.heappush(heap, (-ny_marg, aid, steg))
+
+            if vald_id is None or vald_marg <= 0.0:
+                break
+
+            valda_ids.add(vald_id)
+            tackt = np.maximum(tackt, vektorer[vald_id])
+            kumulativ += vald_marg
+            valda_atgarder.append(
+                {
+                    "atgard_id": vald_id,
+                    "marginal_vinst": float(vald_marg),
+                    "kumulativ_vinst": float(kumulativ),
+                    "vinst_ensam": float(vinst_ensam[vald_id]),
+                }
+            )
+
+        return k_raw, valda_atgarder, float(kumulativ)
+
+    def kor_ekologi_atgarder_celf(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/ekologi-atgarder`: submodulär CELF-optimering."""
+        k_val, valda, total_vinst = self._tolka_och_kor_celf(kropp_bytes)
+        return {
+            "kontrakt": "floden-ekologi-celf/v1",
+            "k": k_val,
+            "valda_atgarder": valda,
+            "total_vinst": total_vinst,
+            "garanti_faktor": round(1.0 - math.exp(-1.0), 4),
+        }
+
+    def kor_luft_atgarder_celf(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/luft-atgarder`: submodulär CELF-optimering."""
+        k_val, valda, total_vinst = self._tolka_och_kor_celf(kropp_bytes)
+        return {
+            "kontrakt": "floden-luft-celf/v1",
+            "k": k_val,
+            "valda_atgarder": valda,
+            "total_vinst": total_vinst,
+        }
+
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/kor`: kör före/efter + ensemble och returnerar manifest."""
         t_start = time.perf_counter()
@@ -3015,11 +3156,17 @@ class FlodenApiApp:
             if verb == "POST" and ren_sokvag == "/api/analys/ekologi":
                 return _json_svar(200, self.kor_ekologi_analys(kropp))
 
+            if verb == "POST" and ren_sokvag == "/api/analys/ekologi-atgarder":
+                return _json_svar(200, self.kor_ekologi_atgarder_celf(kropp))
+
             if verb == "POST" and ren_sokvag == "/api/analys/buller-skarmar":
                 return _json_svar(200, self.kor_buller_optimering_analys(kropp))
 
             if verb == "POST" and ren_sokvag == "/api/analys/luft-mkn":
                 return _json_svar(200, self.kor_luft_mkn_analys(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/luft-atgarder":
+                return _json_svar(200, self.kor_luft_atgarder_celf(kropp))
 
             if ren_sokvag.startswith(PROV_PREFIX):
                 status, svar = prov_svar(verb, ren_sokvag)
