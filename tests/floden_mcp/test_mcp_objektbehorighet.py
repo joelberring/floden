@@ -56,10 +56,10 @@ def varld(
 
 def test_rapport_i_annat_projekt_ar_okand(varld: Any) -> None:
     klient, a, b, _ = varld
-    # Annas egen rapport släpps igenom rollkontrollen (verktyget svarar sedan själv), Bos rapport ser ut som en okänd.
+    # Annas egen rapport släpps igenom rollkontrollen för läsande verktyg; Bos rapport ser ut som en okänd.
+    _, text, _ = anropa_verktyg(klient, a, "rapport_hamta", {"rapport_id": "r-a"})
+    assert "Okänd rapport" not in text
     for verktyg in ("rapport_hamta", "rapport_kontrollera"):
-        _, text, _ = anropa_verktyg(klient, a, verktyg, {"rapport_id": "r-a"})
-        assert "Okänd rapport" not in text, verktyg
         fel, text, _ = anropa_verktyg(klient, a, verktyg, {"rapport_id": "r-b"})
         assert fel and text == "Okänd rapport 'r-b'.", verktyg
     fel, text, _ = anropa_verktyg(klient, b, "rapport_hamta", {"rapport_id": "r-a"})
@@ -68,8 +68,13 @@ def test_rapport_i_annat_projekt_ar_okand(varld: Any) -> None:
 
 def test_skrivande_rapportverktyg_kraver_utredare_i_rapportens_projekt(varld: Any) -> None:
     klient, a, b, _ = varld
-    # Anna är bara lasare i sitt projekt: export och påståenden nekas även utan `projekt`-argument.
-    for verktyg in ("rapport_exportera", "rapport_installningar", "pastaende_lagg_till"):
+    # Anna är bara lasare i sitt projekt: kontroll, export, inställningar och påståenden nekas även utan `projekt`-argument.
+    for verktyg in (
+        "rapport_kontrollera",
+        "rapport_exportera",
+        "rapport_installningar",
+        "pastaende_lagg_till",
+    ):
         fel, text, _ = anropa_verktyg(klient, a, verktyg, {"rapport_id": "r-a"})
         assert fel and text == "Okänd rapport 'r-a'.", verktyg
     # Bo är utredare i sitt projekt: släpps igenom kontrollen.

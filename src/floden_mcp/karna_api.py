@@ -35,7 +35,7 @@ from karna.analyslosare import LosarFel, lista_losare
 from karna.geometri import GeometriFel, las_byggnader, las_terrang
 from karna.ritat import HOJD_MAX_M, RitatFel
 from karna.scenario import ScenarioFel
-from karna.utredning import FragaFel, fraga_fran_dict
+from karna.utredning import FragaFel, fraga_fran_dict, las_fraga
 from webb.api import FlodenApiApp
 from webb.fel import FlodenWebbFel
 from webb.moduler import losarinfo, visningsnamn
@@ -386,15 +386,157 @@ class FlodenTjanst:
 
     # ------------------------------------------------------------------ läsa: frågor, körningar
 
-    def fragor_lista(self) -> dict[str, Any]:
+    def _projekt_id_i_mapp(self, pmapp: Path) -> str | None:
+        """Projektets id ur `<projektmapp>/projekt.json` (register_id med inloggning på)."""
+        try:
+            d = json.loads((pmapp / "projekt.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(d, dict) or d.get("kontrakt") != "floden-projekt/v1":
+            return None
+        rid = d.get("register_id")
+        if isinstance(rid, str) and rid.strip():
+            return rid.strip()
+        if not self.app.konto.aktiv:
+            pid = d.get("projekt_id")
+            if isinstance(pid, str) and pid.strip():
+                return pid.strip()
+        return None
+
+    def fragefil_eller_none(self, ref: str) -> Path | None:
+        """Frågefilen för `ref` utan fel (None om ogiltig eller okänd)."""
+        try:
+            fil: Path = self.fragor._fil_for(ref)  # noqa: SLF001
+        except FlodenWebbFel:
+            return None
+        return fil
+
+    def fraga_projekt(self, ref: str, fil: Path | None = None) -> str | None:
+        """Ägarprojektet för frågan `ref`, eller `None` för fristående frågor utanför projekt.
+
+        - Frågor under `<projektrot>/<mapp>/...` binds till projektets `register_id` ur
+          `projekt.json` (eller `projekt_id` när inloggning är av och `register_id` saknas).
+        - Demofrågor (`demo.json`, `demomapp`) och frågor i kartverktygets egen `fragedir`
+          hör till `demokvarteret`.
+        - Övriga fristående frågor ger `None` (kräver superadmin när inloggning är aktiv).
+        """
+        if fil is None:
+            fil = self.fragefil_eller_none(ref)
+        if fil is not None:
+            ren = fil.resolve()
+            projektrot = getattr(self.fragor, "projektrot", None)
+            if projektrot is not None:
+                ren_rot = projektrot.resolve()
+                if ren.is_relative_to(ren_rot):
+                    rel = ren.relative_to(ren_rot)
+                    if len(rel.parts) >= 2:
+                        return self._projekt_id_i_mapp(ren_rot / rel.parts[0])
+                    return None
+            demomapp = getattr(self.fragor, "demomapp", None)
+            if demomapp is not None and ren.is_relative_to(demomapp.resolve()):
+                return PROJEKT_ID
+            kv_fragedir = self.kv.fragedir.resolve()
+            if ren.is_relative_to(kv_fragedir):
+                return PROJEKT_ID
+        demo = self.fragor.demo()
+        delar = demo.get("delar", {}) if demo.get("finns") else {}
+        if isinstance(delar, Mapping) and ref in delar:
+            return PROJEKT_ID
+        return None
+
+    def konto_far_se_fraga(
+        self,
+        konto_id: str | None,
+        ref: str,
+        fil: Path | None = None,
+        *,
+        minst: str = "lasare",
+        behorighet: Callable[[str, str, str], bool] | None = None,
+    ) -> bool:
+        """Får kontot läsa/planera/köra frågan `ref`? Inloggning av: alltid. På: minst `minst` i
+        frågans ägarprojekt; fristående frågor utanför projekt bara för superadmin."""
+        if behorighet is None and not self.app.konto.aktiv:
+            return True
+        if konto_id is None:
+            return False
+        agarprojekt = self.fraga_projekt(ref, fil)
+        if agarprojekt is None:
+            return bool(self.app.konto.ar_superadmin(konto_id))
+        if behorighet is not None:
+            return bool(behorighet(konto_id, agarprojekt, minst))
+        return bool(self.app.konto.har_roll(konto_id, agarprojekt, minst))
+
+    def kontrollera_fraga_oppenhet(self, ref: str, fil: Path | None = None) -> None:
+        """K38: kastar `OppenhetNekad` om frågefilen, ägarprojektet eller någon källa inte är öppen."""
+        if self.oppenhet is None:
+            return
+        if fil is None:
+            fil = self.fragefil_eller_none(ref)
+        if fil is None:
+            return
+        self.oppenhet.kontrollera_sokvag(fil)
+        agarprojekt = self.fraga_projekt(ref, fil)
+        if agarprojekt is not None:
+            pmapp = self.projektmapp(agarprojekt)
+            if pmapp is not None:
+                self.oppenhet.kontrollera_sokvag(pmapp)
+        try:
+            fraga = las_fraga(fil)
+        except FragaFel:
+            return
+        for s in fraga.scenarier.values():
+            for p in (s.bas, *s.k9, *s.lappar):
+                self.oppenhet.kontrollera_sokvag(p)
+        for a in fraga.analyser:
+            for p in a.indata.values():
+                self.oppenhet.kontrollera_sokvag(p)
+
+    def fraga_oppen(self, ref: str, fil: Path | None = None) -> bool:
+        """Är frågan och alla dess källor öppna enligt K38?"""
+        if self.oppenhet is None:
+            return True
+        from floden_mcp.oppenhet import OppenhetNekad
+
+        try:
+            self.kontrollera_fraga_oppenhet(ref, fil)
+        except OppenhetNekad:
+            return False
+        return True
+
+    def _kravs_oppen_fraga(self, ref: str) -> None:
+        if self.oppenhet is None:
+            return
+        from floden_mcp.oppenhet import OppenhetNekad
+
+        try:
+            self.kontrollera_fraga_oppenhet(ref)
+        except OppenhetNekad as exc:
+            raise FlodenFel(str(exc), "nekad_oppenhet") from exc
+
+    def fragor_lista(
+        self,
+        konto_id: str | None = None,
+        *,
+        behorighet: Callable[[str, str, str], bool] | None = None,
+    ) -> dict[str, Any]:
         with _oversatt():
+            filer = self.fragor._fragefiler()  # noqa: SLF001
             d = self.fragor.lista_fragor()
         ut = []
+        dolda_icke_oppna = 0
         for f in d["fragor"]:
+            ref = str(f["ref"])
+            fil = filer.get(ref)
+            if not self.konto_far_se_fraga(konto_id, ref, fil, minst="lasare", behorighet=behorighet):
+                continue
+            if not self.fraga_oppen(ref, fil):
+                dolda_icke_oppna += 1
+                continue
             ut.append(
                 {
-                    "ref": f["ref"],
+                    "ref": ref,
                     "fraga_id": f["fraga_id"],
+                    "projekt": self.fraga_projekt(ref, fil),
                     "beskrivning": f["beskrivning"],
                     "giltig": f["giltig"],
                     "fel": f.get("fel"),
@@ -408,11 +550,14 @@ class FlodenTjanst:
                     "indata_saknas": f.get("indata_saknas", []),
                 }
             )
-        return {
+        svar: dict[str, Any] = {
             "kontrakt": "K20/v1",
             "fragor": ut,
             "tips": "Frågor med indata_saknas kan inte köras på den här datorn.",
         }
+        if dolda_icke_oppna:
+            svar["dolda_icke_oppna"] = dolda_icke_oppna
+        return svar
 
     def korningar_lista(
         self, max_antal: int = 20, konto_id: str | None = None
@@ -1091,8 +1236,18 @@ class FlodenTjanst:
     def _kontrollera_sokvagar(self, fraga: Any) -> None:
         roter = self._tillatna_rotter()
 
+        kv_rot = self.kv.mapp.resolve()
+        kv_tillatna = {PROJEKT_ID, self.kv.fragedir.name}
+
         def ok(p: Path) -> bool:
-            return any(p.resolve().is_relative_to(r) for r in roter)
+            ren = p.resolve()
+            if not any(ren.is_relative_to(r) for r in roter):
+                return False
+            if self.app.konto.aktiv and ren.is_relative_to(kv_rot):
+                rel = ren.relative_to(kv_rot)
+                if rel.parts and rel.parts[0] not in kv_tillatna:
+                    return False
+            return True
 
         if self.oppenhet is not None:
             from floden_mcp.oppenhet import OppenhetNekad
@@ -1228,6 +1383,7 @@ class FlodenTjanst:
                 "regel": "Läget idag: bara scenariot fore, ingen jämförelse. Cache (K22): jobb med oförändrad nyckel räknas inte om.",
             }
         if fraga is not None:
+            self._kravs_oppen_fraga(fraga)
             with _oversatt():
                 plan = self.fragor.planera_fraga(fraga)
             return {
@@ -1282,7 +1438,7 @@ class FlodenTjanst:
 
     def kor(
         self,
-        projekt: str = PROJEKT_ID,
+        projekt: str | None = PROJEKT_ID,
         scenario: str | None = None,
         fraga: str | None = None,
         analyser: Sequence[str] | None = None,
@@ -1292,12 +1448,13 @@ class FlodenTjanst:
         """Startar körningen i bakgrunden (som webben) och returnerar körnings-id direkt."""
         _ett_av(scenario, fraga, lage_idag)
         if lage_idag:
-            self._kravs_projekt(projekt)
-            valda = self._valda_analyser(projekt, analyser)
+            pid = projekt or PROJEKT_ID
+            self._kravs_projekt(pid)
+            valda = self._valda_analyser(pid, analyser)
             with _oversatt():
-                k = self.kv.kor_lage_idag(projekt, valda, avtappning_mm_h)
+                k = self.kv.kor_lage_idag(pid, valda, avtappning_mm_h)
             return {
-                "projekt": projekt,
+                "projekt": pid,
                 "lage": "idag",
                 "korningar": [
                     self._start_post(f["korning"], mall=f["mall"]) for f in k["fragor"]
@@ -1305,18 +1462,26 @@ class FlodenTjanst:
                 "nasta_steg": "Anropa vanta med körnings-id, sedan resultat_sammanfattning (bara före; ingen jämförelse).",
             }
         if fraga is not None:
+            self._kravs_oppen_fraga(fraga)
+            agarprojekt = self.fraga_projekt(fraga)
+            if self.app.konto.aktiv and agarprojekt is not None and projekt != agarprojekt:
+                raise FlodenFel(
+                    f"Frågan '{fraga}' hör till projektet '{agarprojekt}', inte '{projekt}'.",
+                    "behorighet",
+                )
             with _oversatt():
                 svar = self.fragor.starta_korning(fraga, projekt)
             return {
                 "korningar": [self._start_post(svar, fraga=fraga)],
                 "nasta_steg": "Anropa vanta med körnings-id, sedan resultat_sammanfattning.",
             }
-        self._kravs_projekt(projekt)
-        valda = self._valda_analyser(projekt, analyser)
+        pid = projekt or PROJEKT_ID
+        self._kravs_projekt(pid)
+        valda = self._valda_analyser(pid, analyser)
         with _oversatt():
-            k = self.kv.kor(projekt, str(scenario), valda, avtappning_mm_h)
+            k = self.kv.kor(pid, str(scenario), valda, avtappning_mm_h)
         return {
-            "projekt": projekt,
+            "projekt": pid,
             "scenario": scenario,
             "korningar": [
                 self._start_post(f["korning"], mall=f["mall"], k9_nyckel=f["k9_nyckel"])
