@@ -345,3 +345,228 @@ def test_kor_batch_rutor_med_objektlagring_och_omedelbar_rensning(tmp_path: Path
     assert anrop == []
 
 
+def test_s3_aterstart_verifierar_batch_nyckel_vid_andrad_upplosning_och_moduler(
+    tmp_path: Path,
+) -> None:
+    """S3-återstart hoppar över matchande `batch_nyckel` men kör om vid ny upplösning/moduler."""
+    from gemensamt.objektlagring import LokalLagring, geografi_nyckel
+
+    omrade = _skriv_2x2_omrade_geojson(tmp_path / "omrade.geojson")
+    rutor_25m = generera_rutor_for_omrade(
+        omrade, rutstorlek_m=500.0, overlapp_m=25.0, upplosning_m=2.5
+    )
+    lagring = LokalLagring(tmp_path / "s3_bucket")
+    utdata = tmp_path / "status_rot"
+
+    anrop: list[tuple[str, float, tuple[str, ...]]] = []
+
+    def korare(ruta: Ruta, arbetsmapp: Path, konfig: BatchKonfig, plats: str) -> RutUtdata:
+        anrop.append((ruta.namn, ruta.upplosning_m, konfig.moduler))
+        utfil = arbetsmapp / "mark.tif"
+        utfil.write_bytes(
+            f"{ruta.namn}:{ruta.upplosning_m}:{','.join(konfig.moduler)}:{plats}".encode()
+        )
+        return RutUtdata(
+            utdata_filer=(FilPost(roll="mark", fil="mark.tif", sha256=sha256_fil(utfil)),),
+            matvarden={"upplosning_m": ruta.upplosning_m},
+        )
+
+    konfig_v1 = BatchKonfig(
+        moduler=("vatten2d",),
+        utdata_rot=utdata,
+        enhet="cpu",
+        precision="f64",
+        dataklass="oppen",
+        upplosning_m=2.5,
+        kommun="goteborg",
+        lagring_typ="s3",
+        indata_filer=(omrade,),
+    )
+
+    # Pass 1: initial körning med vatten2d @ 2.5 m
+    s1 = kor_batch_rutor(rutor_25m, konfig_v1, rutkorare=korare, objektlagring=lagring)
+    assert len(s1.klara) == 4
+    assert len(s1.hoppade) == 0
+    assert len(anrop) == 4
+
+    # Pass 2: oförändrad konfig -> 100 % återanvändning (0 omberäkningar)
+    anrop.clear()
+    s2 = kor_batch_rutor(rutor_25m, konfig_v1, rutkorare=korare, objektlagring=lagring)
+    assert len(s2.hoppade) == 4
+    assert len(s2.klara) == 0
+    assert anrop == []
+
+    # Pass 3: ändrad moduluppsättning -> ny batch_nyckel -> alla 4 rutor MÅSTE köras om!
+    konfig_fler_moduler = BatchKonfig(
+        moduler=("vatten2d", "dagsljus"),
+        utdata_rot=utdata,
+        enhet="cpu",
+        precision="f64",
+        dataklass="oppen",
+        upplosning_m=2.5,
+        kommun="goteborg",
+        lagring_typ="s3",
+        indata_filer=(omrade,),
+    )
+    anrop.clear()
+    s3 = kor_batch_rutor(rutor_25m, konfig_fler_moduler, rutkorare=korare, objektlagring=lagring)
+    assert len(s3.klara) == 4
+    assert len(s3.hoppade) == 0
+    assert len(anrop) == 4
+
+    # Pass 4: ändrad upplösning (1.0 m i stället för 2.5 m) -> alla 4 rutor MÅSTE köras om!
+    rutor_1m = generera_rutor_for_omrade(
+        omrade, rutstorlek_m=500.0, overlapp_m=25.0, upplosning_m=1.0
+    )
+    konfig_1m = BatchKonfig(
+        moduler=("vatten2d", "dagsljus"),
+        utdata_rot=utdata,
+        enhet="cpu",
+        precision="f64",
+        dataklass="oppen",
+        upplosning_m=1.0,
+        kommun="goteborg",
+        lagring_typ="s3",
+        indata_filer=(omrade,),
+    )
+    anrop.clear()
+    s4 = kor_batch_rutor(rutor_1m, konfig_1m, rutkorare=korare, objektlagring=lagring)
+    assert len(s4.klara) == 4
+    assert len(s4.hoppade) == 0
+    assert all(uppl == 1.0 for _, uppl, _ in anrop)
+
+    # Pass 5: saknad utdatafil i lagringen trots befintlig run.json -> rutan körs om
+    forsta = rutor_1m[0].namn
+    lagring.radera_prefix(geografi_nyckel("goteborg", forsta, "mark.tif"))
+    assert lagring.finns(geografi_nyckel("goteborg", forsta, "run.json"))
+    assert not lagring.finns(geografi_nyckel("goteborg", forsta, "mark.tif"))
+
+    anrop.clear()
+    s5 = kor_batch_rutor(rutor_1m, konfig_1m, rutkorare=korare, objektlagring=lagring)
+    assert s5.klara == (forsta,)
+    assert len(s5.hoppade) == 3
+    assert lagring.finns(geografi_nyckel("goteborg", forsta, "mark.tif"))
+
+    # Pass 6: trasigt run.json i lagringen -> rutan körs om i stället för att hoppas över
+    trasig = tmp_path / "trasig_run.json"
+    trasig.write_text("{ogiltig json", encoding="utf-8")
+    lagring.ladda_upp_fil(trasig, geografi_nyckel("goteborg", forsta, "run.json"))
+    anrop.clear()
+    s6 = kor_batch_rutor(rutor_1m, konfig_1m, rutkorare=korare, objektlagring=lagring)
+    assert s6.klara == (forsta,)
+    assert len(s6.hoppade) == 3
+
+
+def test_colab_forberakna_s3_flaggor_och_bakatkompatibilitet(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`scripts/colab_forberakna.py` stöder `--lagring s3`, `--kommun` och `--upplosning-m`."""
+    import importlib.util
+
+    from gemensamt.objektlagring import LokalLagring, geografi_nyckel
+
+    skript = Path(__file__).resolve().parents[2] / "scripts" / "colab_forberakna.py"
+    spec = importlib.util.spec_from_file_location("colab_forberakna", skript)
+    assert spec is not None and spec.loader is not None
+    colab_mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(colab_mod)
+
+    omrade = _skriv_2x2_omrade_geojson(tmp_path / "omrade.geojson")
+    utdata = tmp_path / "colab_ut"
+
+    # 1. Bakåtkompatibla standardvärden utan nya flaggor
+    args_gammal = colab_mod.bygg_parser().parse_args(
+        ["--omrade", str(omrade), "--utdata", str(utdata)]
+    )
+    assert args_gammal.lagring == "lokal"
+    assert args_gammal.kommun == "standard"
+    assert args_gammal.upplosning_m == 1.0
+    assert args_gammal.behall_radata is False
+
+    # 2. Nya S3- och upplösningsflaggor matchar `floden forberakna`
+    args_s3 = colab_mod.bygg_parser().parse_args(
+        [
+            "--omrade",
+            str(omrade),
+            "--utdata",
+            str(utdata),
+            "--moduler",
+            "vatten2d,dagsljus",
+            "--enhet",
+            "cpu",
+            "--precision",
+            "f32",
+            "--lagring",
+            "s3",
+            "--kommun",
+            "goteborg",
+            "--upplosning-m",
+            "2.5",
+            "--behall-radata",
+        ]
+    )
+    konfig = colab_mod.skapa_batch_konfig(args_s3)
+    assert konfig.lagring_typ == "s3"
+    assert konfig.kommun == "goteborg"
+    assert konfig.upplosning_m == 2.5
+    assert konfig.behall_radata is True
+    assert konfig.dataklass == "oppen"
+    assert konfig.moduler == ("vatten2d", "dagsljus")
+    assert konfig.precision == "f32"
+
+    # 3. End-to-end-körning mot injicerad objektlagring (helt offline)
+    lagring = LokalLagring(tmp_path / "colab_s3")
+    rc = colab_mod.main(
+        [
+            "--omrade",
+            str(omrade),
+            "--utdata",
+            str(utdata),
+            "--enhet",
+            "cpu",
+            "--lagring",
+            "s3",
+            "--kommun",
+            "goteborg",
+            "--upplosning-m",
+            "2.5",
+        ],
+        objektlagring=lagring,
+    )
+    assert rc == 0
+    run_nyckel = geografi_nyckel("goteborg", "mm_150000_6580000", "run.json")
+    info_nyckel = geografi_nyckel("goteborg", "mm_150000_6580000", "ruta_info.json")
+    assert lagring.finns(run_nyckel)
+    assert lagring.finns(info_nyckel)
+    info_lokal = tmp_path / "ruta_info.json"
+    lagring.ladda_ner_fil(info_nyckel, info_lokal)
+    info = json.loads(info_lokal.read_text(encoding="utf-8"))
+    assert info["upplosning_m"] == 2.5
+
+    # 4. `--lagring s3` utan S3-konfig ger tydlig felkod 2 (aldrig tyst fallback till lokal)
+    for var in (
+        "FLODEN_S3_TYP",
+        "FLODEN_S3_ENDPOINT",
+        "FLODEN_S3_BUCKET",
+        "FLODEN_S3_ACCESS_KEY",
+        "FLODEN_S3_SECRET_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    rc_fel = colab_mod.main(
+        [
+            "--omrade",
+            str(omrade),
+            "--utdata",
+            str(tmp_path / "ut_fel"),
+            "--enhet",
+            "cpu",
+            "--lagring",
+            "s3",
+            "--konfig",
+            str(tmp_path / "saknas.toml"),
+        ]
+    )
+    assert rc_fel == 2
+
+
+

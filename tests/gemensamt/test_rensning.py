@@ -211,3 +211,45 @@ def test_cli_lagring_stada_torrkor_och_konfig(
     assert ck.mapp == Path("data/c")
     assert ck.max_gb == 5.0
     assert ck.max_alder_dagar == 7.0
+
+
+def test_stada_lokal_cache_hoppar_over_pagaende_floden_tempfiler(tmp_path: Path) -> None:
+    """Pågående atomiska `.floden_*`-tempfiler får aldrig raderas av ålder eller LRU."""
+    cache = tmp_path / "s3_lru"
+    rutmapp = cache / "geografi" / "nacka" / "mm_150000_6580000"
+    rutmapp.mkdir(parents=True)
+
+    tempfiler = [
+        cache / ".floden_tmp_root",
+        rutmapp / ".floden_rut_abc123",
+        rutmapp / ".floden_s3dl_xyz789",
+    ]
+    gammal_vanlig = rutmapp / "mark.tif"
+    farsk_vanlig = rutmapp / "run.json"
+
+    nu = 1_800_000_000.0
+    gammal_ts = nu - 30 * 86400.0  # 30 dagar gammal (> 14 dagar)
+    farsk_ts = nu - 60.0
+
+    for tf in tempfiler:
+        tf.write_bytes(b"T" * int(2 * BYTES_PER_MB))
+        os.utime(tf, (gammal_ts, gammal_ts))
+
+    gammal_vanlig.write_bytes(b"G" * int(2 * BYTES_PER_MB))
+    os.utime(gammal_vanlig, (gammal_ts, gammal_ts))
+
+    farsk_vanlig.write_bytes(b'{"kontrakt":"K0/v1"}' * 100)
+    os.utime(farsk_vanlig, (farsk_ts, farsk_ts))
+
+    # Mycket sträng både ålder och LRU-gräns (0.0001 GB ~= 100 KB)
+    torr = stada_lokal_cache(cache, max_gb=0.0001, max_alder_dagar=1.0, torrkor=True, nu_ts=nu)
+    assert set(torr.raderade_filer) == {"geografi/nacka/mm_150000_6580000/mark.tif"}
+    assert torr.antal_raderade == 1
+    assert all(tf.is_file() for tf in tempfiler)
+
+    skarp = stada_lokal_cache(cache, max_gb=0.0001, max_alder_dagar=1.0, torrkor=False, nu_ts=nu)
+    assert set(skarp.raderade_filer) == {"geografi/nacka/mm_150000_6580000/mark.tif"}
+    assert not gammal_vanlig.exists()
+    assert farsk_vanlig.is_file()
+    # Alla pågående `.floden_*`-tempfiler måste vara orörda!
+    assert all(tf.is_file() for tf in tempfiler)

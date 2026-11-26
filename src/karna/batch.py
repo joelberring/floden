@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import shutil
+import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -273,7 +274,7 @@ def berakna_batch_nyckel(
     plats: str,
 ) -> str:
     """Deterministisk SHA-256-nyckel för cachning och återupptagning av en ruta."""
-    nyckeldata = {
+    nyckeldata: dict[str, Any] = {
         "ruta": ruta.namn,
         "inre_bbox": list(ruta.inre_bbox),
         "overlapp_m": ruta.overlapp_m,
@@ -284,6 +285,8 @@ def berakna_batch_nyckel(
         "parametrar": dict(konfig.parametrar),
         "indata": [p.till_dict() for p in indata_poster],
     }
+    if konfig.upplosning_m != ruta.upplosning_m:
+        nyckeldata["konfig_upplosning_m"] = konfig.upplosning_m
     text = json.dumps(nyckeldata, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -300,6 +303,35 @@ def ruta_ar_klar(rutamapp: Path, forvantad_nyckel: str) -> bool:
     if manifest.parametrar.get("batch_nyckel") != forvantad_nyckel:
         return False
     return all((rutamapp / post.fil).is_file() for post in manifest.utdata)
+
+
+def ruta_ar_klar_i_objektlagring(
+    objektlagring: ObjektLagring,
+    kommun: str,
+    ruta_namn: str,
+    forvantad_nyckel: str,
+) -> bool:
+    """Returnerar True om rutan har ett giltigt `run.json` i objektlagring med matchande nyckel.
+
+    Verifierar både `parametrar["batch_nyckel"] == forvantad_nyckel` och att samtliga utdatafiler
+    i K0-manifestet finns i objektlagringen (motsvarar lokal `ruta_ar_klar`).
+    """
+    run_nyckel = geografi_nyckel(kommun, ruta_namn, "run.json")
+    if not objektlagring.finns(run_nyckel):
+        return False
+    with tempfile.TemporaryDirectory(prefix="floden_s3check_") as tmp_dir:
+        lokal_run = Path(tmp_dir) / "run.json"
+        objektlagring.ladda_ner_fil(run_nyckel, lokal_run)
+        try:
+            manifest = las_manifest(lokal_run)
+        except ManifestFel:
+            return False
+    if manifest.parametrar.get("batch_nyckel") != forvantad_nyckel:
+        return False
+    return all(
+        objektlagring.finns(geografi_nyckel(kommun, ruta_namn, post.fil))
+        for post in manifest.utdata
+    )
 
 
 def _skriv_status_atomiskt(status: BatchStatus, utdata_rot: Path) -> Path:
@@ -546,13 +578,13 @@ def kor_batch_rutor(
         nyckel = berakna_batch_nyckel(ruta, konfig, indata_poster, plats)
 
         if objektlagring is not None:
-            if objektlagring.finns(geografi_nyckel(konfig.kommun, ruta.namn, "run.json")):
-                hoppade.append(ruta.namn)
-                _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
-                continue
-
-            t0 = time.monotonic()
             try:
+                if ruta_ar_klar_i_objektlagring(objektlagring, konfig.kommun, ruta.namn, nyckel):
+                    hoppade.append(ruta.namn)
+                    _skriv_status_atomiskt(_bygg_status(), konfig.utdata_rot)
+                    continue
+
+                t0 = time.monotonic()
                 with temporar_rutkatalog(ruta.namn, behall=konfig.behall_radata) as tmp_mapp:
                     ut = korare(ruta, tmp_mapp, konfig, plats)
                     manifest = skapa_manifest(

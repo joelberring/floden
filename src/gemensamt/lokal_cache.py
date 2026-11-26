@@ -16,6 +16,7 @@ from typing import Any
 BYTES_PER_MB = 1024.0 * 1024.0
 BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0
 LRU_MAL_ANDEL = 0.85
+TEMPFIL_PREFIX = ".floden_"
 
 
 class LokalCacheFel(Exception):
@@ -71,11 +72,18 @@ def las_lokal_cache_konfig(
     if not isinstance(sektion, Mapping):
         raise LokalCacheFel("[lagring.lokal_cache] måste vara ett TOML-objekt.")
 
-    mapp_raw = env.get("FLODEN_LOKAL_CACHE_MAPP") or sektion.get("mapp") or "data/cache/s3_lru"
-    max_gb_raw = env.get("FLODEN_LOKAL_CACHE_MAX_GB") or sektion.get("max_gb") or 10.0
-    max_alder_raw = (
-        env.get("FLODEN_LOKAL_CACHE_MAX_ALDER_DAGAR") or sektion.get("max_alder_dagar") or 14.0
-    )
+    def _val(env_namn: str, konfig_nyckel: str, standard: Any) -> Any:
+        fran_env = env.get(env_namn)
+        if fran_env is not None and fran_env.strip() != "":
+            return fran_env.strip()
+        fran_konfig = sektion.get(konfig_nyckel)
+        if fran_konfig is not None and str(fran_konfig).strip() != "":
+            return fran_konfig
+        return standard
+
+    mapp_raw = _val("FLODEN_LOKAL_CACHE_MAPP", "mapp", "data/cache/s3_lru")
+    max_gb_raw = _val("FLODEN_LOKAL_CACHE_MAX_GB", "max_gb", 10.0)
+    max_alder_raw = _val("FLODEN_LOKAL_CACHE_MAX_ALDER_DAGAR", "max_alder_dagar", 14.0)
     try:
         max_gb = float(max_gb_raw)
         max_alder = float(max_alder_raw)
@@ -125,7 +133,8 @@ def stada_lokal_cache(
     1. Raderar alla vanliga filer vars `mtime` (och `atime`) är äldre än `max_alder_dagar`.
     2. Om total storlek fortfarande > `max_gb`: raderar äldst använda filer (LRU) tills total
        storlek är <= `0,85 * max_gb`.
-    3. Rör aldrig filer utanför `mapp` och följer aldrig symlänkar.
+    3. Rör aldrig filer utanför `mapp`, följer aldrig symlänkar och hoppar alltid över pågående
+       atomiska temporärfiler (`.floden_*`).
     """
     if max_gb <= 0.0:
         raise LokalCacheFel(f"max_gb måste vara > 0, fick {max_gb}.")
@@ -162,6 +171,8 @@ def stada_lokal_cache(
         # Filtrera bort symlänkade undermappar så os.walk aldrig går in i dem
         mappar[:] = [m for m in mappar if not (aktuell / m).is_symlink()]
         for filnamn in filer:
+            if filnamn.startswith(TEMPFIL_PREFIX):
+                continue
             fil = aktuell / filnamn
             if fil.is_symlink():
                 continue
