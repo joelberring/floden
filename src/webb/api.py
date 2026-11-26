@@ -1833,18 +1833,6 @@ class FlodenApiApp:
             else 0.0,
         }
 
-    def kor_ekologi_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
-        """Svar för `POST /api/analys/ekologi`: ECA och PC före/efter (skiss), flaskhalsar (K45)."""
-        if not kropp_bytes.strip():
-            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
-        try:
-            payload = json.loads(kropp_bytes.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
-            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
-        if not isinstance(payload, Mapping):
-            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
-        return self._kor_ekologi_payload(payload, skrivskyddad=False)
-
     def hamta_ekologi_analys(self, query: Mapping[str, list[str]]) -> dict[str, Any]:
         """Läsande `GET /api/analys/ekologi` (W-B8): tillåten för `lasare` utan projektmutering.
 
@@ -1863,14 +1851,26 @@ class FlodenApiApp:
                     payload[namn] = float(raw)
                 except ValueError as exc:
                     raise FlodenWebbFel(f"Fältet '{namn}' måste vara ett tal.") from exc
-        return self._kor_ekologi_payload(payload, skrivskyddad=True)
+        return self.kor_ekologi_analys(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            skrivskyddad=True,
+        )
 
-    def _kor_ekologi_payload(
-        self, payload: Mapping[str, Any], *, skrivskyddad: bool
+    def kor_ekologi_analys(
+        self, kropp_bytes: bytes, *, skrivskyddad: bool = False
     ) -> dict[str, Any]:
+        """Svar för `POST/GET /api/analys/ekologi`: ECA/PC före/efter (skiss), flaskhalsar (K45)."""
         from ekologi import STANDARD_ARTPROFILER, alla_natverk, korbara_natverk
         from webb.ekologi_analys import ekologi_svar
 
+        if not kropp_bytes.strip():
+            raise FlodenWebbFel("Tom förfrågningskropp; JSON-objekt med 'omrade_id' krävs.")
+        try:
+            payload = json.loads(kropp_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        if not isinstance(payload, Mapping):
+            raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.")
         omrade_id = payload.get("omrade_id")
         if not isinstance(omrade_id, str) or not omrade_id.strip():
             raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.")
