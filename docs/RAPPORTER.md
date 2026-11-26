@@ -6,7 +6,9 @@ En rapport är en lista *påståenden* (K32) som var och en besvarar en fråga u
 fyller. Före export körs en deterministisk kontroll; ett enda fel stoppar exporten. Beslutat av
 Joel 2026-11-22 (se `BESLUT.md`). Kod: `src/rapport/` (`pastaende`, `belaggskalla`,
 `fragekatalog`, `bestallning`, `skissrapport`, `skisskontroll`, `skissmall`, `amnestext`,
-`skissexport`, `fasadbelagg`, `referensflode`, `referensflode_dagsljus`, `referensflode_luft`, `luftbelagg`).
+`skissexport`, `figurer`, `korningsval`, `webbflode`, `fasadbelagg`, `ekologibelagg`,
+`luftbelagg`, `referensflode`, `referensflode_dagsljus`, `referensflode_ekologi`,
+`referensflode_luft`).
 Kontrakt: K30, K32 och K33 i `DATAKONTRAKT.md`.
 
 ## Två nivåer
@@ -71,7 +73,7 @@ exporten (`ExportStoppad`) med ett meddelande per fel; inget skrivs.
 | Osäkerhet | Antagandena (regn, takvatten, avtappning) står i rapporten; resultat från skissmetoder kallas inte verifierade eller säkerställda. |
 | Kartan | Teckenförklaring och skala, enhet, tomvärde i bildtexten, norr uppåt, skalstock, scenario i bildtexten, samma färgskala före och efter. |
 | Status per fråga | Statusreglerna; varje fråga har påstående; nivå 1 innehåller inga krav- eller lämplighetsformuleringar ("uppfyller kravet", "marken är lämplig"). |
-| Dataskydd | Rapportens dataklass är `oppet` (projektets klass i policyn); inga e-postadresser eller personnummer. |
+| Dataskydd | Rapportens dataklass är `oppet` (projektets klass i policyn; för geografiprojekt härleds den automatiskt ur `oppenhet.toml` via `_ProjektOppenPolicy` och `FlodenTjanst.projekt_oppen`, så öppna geografiprojekt klarar kontrollen medan stängda projekt som Stockholm spärras); inga e-postadresser eller personnummer. |
 | Metodstatus | Varje lösare har sin valideringsstatus i rapporten, oförändrad, och den syns i dokumentet; varje påståendes text står oförändrad i dokumentet. |
 
 Det inplanterade felet i testerna (`tests/rapport/test_skissrapport.py`) ändrar ett lagrat tal i
@@ -317,10 +319,16 @@ och `luftbelagg.LUFT_ADRESSMATT`). Beteckningarna PM10 och PM2,5 är tillåtna i
   utan körning med `luft.mkn`.
 
 `rapport_skapa` med ämnet luft och ett scenario i beställningen ger ett fel (luft-analyserna är inte scenarier), och
-utan en analys med `luft.mkn` i körningen ett fel med skäl. Webbens "Skapa rapport" (`POST /api/projekt/<id>/rapporter`)
-kör inte luft: det ger 409 med förklaringen att en serie och en bakgrund behövs och att rapporten kan skapas via MCP,
-som för ekologi. Demon har två påhittade timserier (`demovarld.luftserier`, 365 dygn, bakgrund 12,0 µg/m³; fråga
-`exempel/fragor/demo_luft.toml`, körning `demo-luft`).
+utan en analys med `luft.mkn` i körningen ett fel med skäl. **Webbens Steg 3 ("Rapport", `POST /api/projekt/<id>/rapporter`)**
+stöder numera både **ekologi** (EK-01–EK-15) och **luft** (LU-01–LU-15) utan 409: för luft skickar formuläret en extern
+timserie-CSV för läget före (`luft.serie_fore_csv`, minst 24 timvärden med kolumn `lokal_ug_m3`, `halt_ug_m3` eller
+`halt_bidrag_ug_m3`), valfri timserie-CSV för läget efter (`luft.serie_efter_csv`) samt en uttryckligt angiven
+bakgrundshalt (`luft.bakgrund_ug_m3 >= 0` µg/m³; Floden hittar aldrig på en bakgrundshalt). Servern validerar CSV och
+parametrar (saknad serie eller bakgrund ger ett begripligt 400-fel i stället för 409), skriver en K20-fråga och kör
+`luft.mkn` (`mkn_fore` och eventuellt `mkn_efter`) före kontroll och Word/PDF-export. Utöver externa serier kan även
+Flodens 3D-lösare `luft.halt` exportera en timserie via `Haltstatistik.timserie_for_cell`/`receptor` (`timserie.csv`) som
+indata till `luft.mkn`, fortsatt med obligatorisk `bakgrund_ug_m3 >= 0`. Demon har två påhittade timserier
+(`demovarld.luftserier`, 365 dygn, bakgrund 12,0 µg/m³; fråga `exempel/fragor/demo_luft.toml`, körning `demo-luft`).
 
 **Frågorna LU-01 till LU-15** ligger i huvudkatalogen `docs/utredningar-stockholm/fragor.json` (område luft). Frågetexterna
 är oförändrade. Markeringen per fråga (visat, delvis, underlag saknas, ej tillämpligt) står i `FLODEN_FORMAGA`, och
@@ -451,12 +459,7 @@ Före och efter (sbk):
 | Största vattendjup över mark, före (scenario fore), i m. | Största vattendjup på marken före förslaget, i meter (m). |
 | Status: Underlag saknas · Fördjupning: Kan inte avgöras | Underlag saknas. Kan inte bedömas med nuvarande underlag. |
 
-Kartorna ritas av MCP:s kartfunktion (`FlodenTjanst.karta`, samma raster, färgskala och takmask
-som webben): vit mark = under lägsta klassen, ljusgrått = tak eller inget värde, så att saknade
-celler inte ser torra ut. Rapportens kartor har rubrik i klarspråk ("Största vattendjup före
-förslaget", lagrad i `meta.rubrik` så att kontrollen ritar om samma bild) och decimalkomma i
-teckenförklaringen; axeletiketter som skulle krocka i nedre vänstra hörnet ritas inte. Metodnotisen är förvald: "Underlaget har tagits fram med Floden och
-AI-stöd (modell) … Körloggen finns som bilaga." och ansvarig utredare (valfri i nivå 1).
+Kartorna ritas av den enhetliga kartfigurmotorn `src/rapport/figurer.py` (ren Pillow + NumPy, inbäddade TrueType-typsnitt Gelasio för rubrik och Liberation Sans för teckenförklaring, skalstock och spårbarhetsfot, 9 deklarativa domänstilar `FIGURSTILAR`, automatisk skalstock, norrpil, projektpolygon i skogsgrönt och `run.json`-spårbarhet). Både skissrapporter (`FlodenTjanst.karta` / `skissrapport.py:_kartor`) och MCP (`floden_mcp/karta.py`) använder samma `rapport/figurer.py`-motor, med takmask så att tak och saknade celler aldrig ser torra ut. Enheterna speglar de faktiska rastren (`dagsljus_svf` andel `0–1`, `skyfall_ankomsttid` i `s`, `luft_vindkomfort` 0-baserat NEN 8100-klassindex `0..4` = A–E), och varje jämförelses utdataroll (t.ex. `stromtathet` och `kansighet` i ekologi) skickas vidare så kartorna förblir distinkta. Även en rapport som enbart avser *läget idag* (utan jämförelse) ritar nulägeskartor. Rapportens kartor har rubrik i klarspråk ("Största vattendjup före förslaget", lagrad i `meta.rubrik` så att kontrollen ritar om samma bild) och decimalkomma i teckenförklaringen. Metodnotisen är förvald: "Underlaget har tagits fram med Floden och AI-stöd (modell) … Körloggen finns som bilaga." och ansvarig utredare (valfri i nivå 1).
 
 **Export:** Word med python-docx och PDF med reportlab, båda ren Python (`pip install -e
 ".[rapport]"`, ingår i `dev` och `mcp`), samma block i båda. PDF-vägen valdes för att den saknar
@@ -523,26 +526,33 @@ Floden.
   `pastaende_lagg_till`, `rapport_kontrollera`, `rapport_exportera`, `rapport_hamta` och resursen
   `floden://rapport/{rapport_id}`; promptarna `skissunderlag_skyfall`,
   `skissunderlag_dagsljus`, `skissunderlag_ekologi` och `skissunderlag_luft`. Exempel: `PYTHONPATH=src python tools/mcp_rapportflode.py`.
-- **Webben, steg 5 "Skapa rapport" (U2):** rapporten speglar användarens val. Panelen visar under "Rapporten bygger på"
-  vilken körning (och vilket förslag) och vilka frågor från steg 3 rapporten bygger på, innan man trycker Skapa. Körningen
-  är den senaste för det ritade förslaget; finns ingen faller den tillbaka på projektets senaste egna körning och sist
-  demokörningen, och panelen varnar ("Förslaget är inte beräknat än … inte på ditt förslag") och rapportens handlingsruta
-  (raden Underlag) säger det: "demokörningen som följer med projektet; inget eget förslag är beräknat". Saknas körning
-  helt är knappen grå och panelen länkar till steg 3 (och steg 2). Frågorna är de som valts i steg 3 för ämnet (id ur
-  huvudkatalogen, till exempel SK-03); har inga valts tas alla frågor för ämnet och panelen säger det. Webben skickar
-  `fragor`, `scenario` (förslagets slug) och `korning_id` i `POST /api/projekt/<id>/rapporter` (K48); servern kontrollerar
-  att frågorna finns i katalogen och hör till ämnet (400), att körningen hör till projektet och duger för ämnet (404, samma
-  svar för en annans körning) och att kontot är utredare i projektet. Frågorna blir beställningens (K30) `fragor`.
+- **Webben, Steg 3 "Rapport" (U2 och Uppdrag 4):** rapporten speglar användarens val för alla fyra nivå 1-ämnen
+  (**skyfall**, **dagsljus och sol**, **ekologi** EK-01–EK-15 och **luft** LU-01–LU-15) utan 409. Panelen visar under
+  "Rapporten bygger på" vilken körning (förslag, *läget idag*, egen körning eller demokörning) och vilka frågor rapporten
+  bygger på, innan man trycker Skapa. Saknas förslagskörning faller valet tillbaka på projektets senaste körning — inklusive
+  enbart **läget idag** (`slag = "lage_idag"`, utan 409: `rapport/korningsval.py` släpper igenom nulägeskörningar,
+  `rapport/webbflode.py` skriver nulägespåståenden med jämförelsefrågor markerade *ej tillämpligt* och
+  `skissrapport.py:_kartor` ritar nulägeskartor) — och sist demokörningen. Saknas körning helt är knappen grå (utom för
+  luft, där extern CSV + bakgrund kan anges direkt i formuläret) och panelen länkar tillbaka till Steg 2 (Karta & analys).
+  För **luft** skickar formuläret `luft` (`serie_fore_csv`, valfri `serie_efter_csv`, `bakgrund_ug_m3` m.m.) till
+  `POST /api/projekt/<id>/rapporter`, som kör `luft.mkn` innan rapporten byggs och exporteras till Word och PDF.
+  Webben skickar `fragor`, `scenario`, `korning_id` och eventuellt `luft` i `POST /api/projekt/<id>/rapporter` (K48);
+  servern kontrollerar att frågorna finns i katalogen och hör till ämnet (400), att körningen hör till projektet och duger
+  för ämnet (404, samma svar för en annans körning) och att kontot är utredare i projektet. `RapportJobbTjanst` läser och
+  sparar jobbstatus trådsäkert och atomiskt och stängs rent vid serveravstängning.
+- **Öppenhets-`dataklass` för geografiprojekt:** `RapportTjanst` använder `_ProjektOppenPolicy` (`projekt_oppen =
+  FlodenTjanst.projekt_oppen`), som slår upp projektets K38-öppenhet ur `oppenhet.toml`. Öppna geografiprojekt får därmed
+  dataklass `oppet` och klarar exportkontrollen i Steg 3, medan stängda projekt (t.ex. Stockholm) fortsätter att spärras.
 - **MCP och underlaget (U2):** `rapport_skapa` tar `korningar` som förut, men de får utelämnas: då väljs samma körning som i
-  webben (`forslag` = förslagets slug; annars egen körning; demokörningen sist) och svaret har `underlag` per körning
-  (`slag`: `forslag`, `egen`, `demo`). Frågorna och ingressen kommer som förut ur beställningen (`bestallning_id`, K30);
+  webben (`forslag` = förslagets slug; `lage_idag` eller egen körning; demokörningen sist) och svaret har `underlag` per körning
+  (`slag`: `forslag`, `lage_idag`, `egen`, `demo`). Frågorna och ingressen kommer som förut ur beställningen (`bestallning_id`, K30);
   inget nytt beställningsfält uppfanns.
-- **Projektets avgränsning:** har projektet en polygon (`avgransning_polygon_3011`, K48) står "inom projektets avgränsning
-  (polygon)" i beläggens mottagare och nämnare i stället för "hela beräkningsområdet" (jämförelsemått och
-  `omrade.hela_omradet…`, som räknar celler inne i polygonen); projekt utan polygon som förut. Mått som inte avgränsas av
-  polygonen (lösarens egna summor, fasadpunkter, ekologi) behåller sin text.
-- **Webben, listor:** projektsidan listar rapporterna med kontrollens utfall (grön/röd) och länkar till
-  Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
+- **Projektets avgränsning:** har projektet en polygon (`avgransning_polygon_3011`, K48) står "inom projektets polygon" i
+  webbflödets påståendetexter och "inom projektets avgränsning (polygon)" i beläggens mottagare och nämnare i stället för
+  "hela beräkningsområdet" (jämförelsemått och `omrade.hela_omradet…`, som räknar celler inne i polygonen); projekt utan
+  polygon som förut. Mått som inte avgränsas av polygonen (lösarens egna summor, fasadpunkter, ekologi) behåller sin text.
+- **Webben, listor:** rapportlistan visar kontrollens utfall med både färgprick och synlig statustext (`role="status"`) samt
+  länkar till Word och PDF (`GET /api/projekt/<id>/rapporter`, `…/rapporter/<rapport_id>/fil/word|pdf`).
   Rapportmappen kan ändras med `[webb] rapportmapp`. Frågekatalogen nås med
   `GET /api/fragekatalog?omrade=dagsljus&villkor=…&text=…&ids=…` (samma innehåll som
   `fragekatalog_sok`, inklusive `floden.markning` per fråga).
@@ -553,17 +563,14 @@ språkprofil sbk, inga nummer, svensk sifferform, ingen logotyp, typsnitt Libera
 
 ## Begränsningar
 
-- Bara skyfall, dagsljus/sol, ekologi, luft och nivå 1 (buller har ingen skissrapport: Nord2000 inte konformt). Kartor ritas för varje jämförelse i körningen (före, efter, skillnad).
+- Bara skyfall, dagsljus/sol, ekologi, luft och nivå 1 (buller har ingen skissrapport: `nord2000_konform = False`). Kartor ritas både vid före/efter-jämförelse (före, efter, skillnad) och för enbart *läget idag* (nulägeskartor).
 - Bara måtten i `MATTKATALOG` kan användas (vatten: statisk fyllning och dynamik; dagsljus:
-  soltimmar på mark, SVF, VSC på fasadpunkter; ekologi: ECA, PC, fläckar och nätverksparametrar; luft: MKN-intervall för PM10 ur en given serie).
-- Skapa-i-webben (K48) har referensflöde för skyfall och dagsljus; ekologi och luft skapas via MCP. Körningens förslagskoppling bygger på förslagsfilens senaste körning per analysmall: äldre körningar av samma förslag räknas som förslag men utan namn.
-- Dagsljus: demons körning har ett datum (20 mars) och ingen SVF. Sol på fasad, sol på tak,
-  dagsljusfaktor i rum, utblick, årsstatistik och ekvinoktieskuggor (höst) finns inte i kärnan och
-  redovisas som underlag som saknas. Nivå 1 bedömer inte mot krav.
+  soltimmar på mark, SVF, VSC på fasadpunkter; ekologi: ECA, PC, fläckar och nätverksparametrar; luft: MKN-intervall för PM10 ur en given serie och angiven bakgrund).
+- Skapa-i-webben (K48, Steg 3) har referensflöde för alla fyra nivå 1-ämnen (skyfall, dagsljus/sol, ekologi och luft) samt för enbart *läget idag* (utan 409). Körningens förslagskoppling bygger på förslagsfilens senaste körning per analysmall: äldre körningar av samma förslag räknas som förslag men utan namn.
+- Dagsljus: demons förkörda körning har ett datum (20 mars) och ingen SVF, medan nya geografiprojekt numera genererar både `dagsljus.svf_mark` och höstdagjämning (`2026-09-22`). Dagsljusfaktor i rum, utblick och årsstatistik finns inte i kärnan och redovisas som underlag som saknas. Nivå 1 bedömer inte mot krav.
 - Beställningen styr urval och ingress men inte kontrollen; rollen byggaktör/granskare filtrerar
   på frågetyp, vilket är en förenkling som ska granskas.
-- Kartornas text är Pillows bitmapptypsnitt (samma kartografi som MCP och webben); det lokala
-  typsnittet används inte i kartorna.
+- Kartornas typografi använder paketets inbäddade typsnitt (Gelasio och Liberation Sans via `src/rapport/figurer.py`), inte ett eget lokalt typsnitt ur `[rapport]`.
 - Rapporter skapade före 2026-11-22 underkänns i kontrollen ("ritas inte likadant") eftersom
-  kartbilden har ändrats (axeletiketterna); skapa dem på nytt.
-- Frågekatalogen och mappningen är redaktionellt underlag och ska granskas av Joel.
+  kartmotorn har ändrats; skapa dem på nytt.
+- Frågekatalogen och mappningen är redaktionellt underlag och ska granskas av Joel. Alla metoder är fortsatt klassade `skiss`.
