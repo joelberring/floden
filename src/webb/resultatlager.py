@@ -45,6 +45,7 @@ PALETTER: dict[str, tuple[str, ...]] = {
     "sekventiell": _SEKVENTIELL,
     "hastighet": ("#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"),
     "fara": ("#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"),
+    "varme": ("#f7f4e8", "#fed976", "#fd8d3c", "#e31a1c", "#800026"),
     "tid": ("#ffffcc", "#fed976", "#fd8d3c", "#bd0026", "#4d004b"),
     "stromtathet": ("#000004", "#51127c", "#b73779", "#fc8961", "#fcfdbf"),
     "luft": ("#0d0887", "#7e03a8", "#cc4678", "#f89441", "#f0f921"),
@@ -73,7 +74,16 @@ _SKILLNAD_MINSKNING = "#2b5d8c"
 _SKILLNAD_OKNING = "#b4462b"
 
 MASKADE_ROLLER = frozenset(
-    {"soltimmar", "sammanhangande_soltimmar", "skuggmask", "svf", "max_djup", "fara"}
+    {
+        "soltimmar",
+        "sammanhangande_soltimmar",
+        "skuggmask",
+        "svf",
+        "max_djup",
+        "fara",
+        "utci_c",
+        "t_mrt_c",
+    }
 )
 """Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
 
@@ -98,6 +108,8 @@ ETIKETTER: dict[str, tuple[str, str]] = {
     "soltimmar": ("Soltimmar på marken", "h"),
     "sammanhangande_soltimmar": ("Sammanhängande soltimmar", "h"),
     "skuggmask": ("Solläge vid klockslag", ""),
+    "utci_c": ("Värmestress (UTCI)", "°C"),
+    "t_mrt_c": ("Medelstrålningstemperatur (T_mrt)", "°C"),
     "max_djup": ("Största vattendjup", "m"),
     "fara": ("Fara (djup × hastighet)", "m²/s"),
     "rannsten_flode": ("Rännstenar (1D-flöde)", "m³/s"),
@@ -122,6 +134,8 @@ SKALA_FOR_ROLL: dict[str, str] = {
     "max_djup": "vatten",
     "hastighet": "hastighet",
     "fara": "fara",
+    "utci_c": "varme",
+    "t_mrt_c": "varme",
     "ankomsttid": "tid",
     "tid_till_0_1m": "tid",
     "tid_till_0_2m": "tid",

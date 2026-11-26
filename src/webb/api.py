@@ -1137,6 +1137,9 @@ class FlodenApiApp:
         ] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
         self._sektioner_snapshot: list[dict[str, Any]] | None = None
+        from webb.gyf_utci import VarmestressLagerCache
+
+        self._varmestress_lager = VarmestressLagerCache()
 
     def stang(self) -> None:
         """Stänger bakgrundsexekutorer i `FragaTjanst` och ev. `RapportJobbTjanst` rent."""
@@ -2548,6 +2551,67 @@ class FlodenApiApp:
             "total_vinst": total_vinst,
         }
 
+    def hamta_gyf_analys(self, query: Mapping[str, list[str]]) -> dict[str, Any]:
+        """Skrivlös `GET /api/analys/gyf`: Svensk GYF (U16, skiss) för `lasare`+."""
+        from webb.gyf_utci import kor_gyf_analys, tolka_query_payload
+
+        payload = tolka_query_payload(query, ("omrade_id", "profil", "scenario"))
+        return kor_gyf_analys(self.kartverktyg, self.projekt, payload)
+
+    def kor_gyf_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/gyf`: Svensk GYF (U16, skiss) med valfri före/efter."""
+        from webb.gyf_utci import kor_gyf_analys, tolka_json_kropp
+
+        return kor_gyf_analys(self.kartverktyg, self.projekt, tolka_json_kropp(kropp_bytes))
+
+    def hamta_varmestress_analys(self, query: Mapping[str, list[str]]) -> dict[str, Any]:
+        """Skrivlös `GET /api/analys/varmestress`: UTCI/T_mrt (U15, skiss) för `lasare`+."""
+        from webb.gyf_utci import kor_varmestress_analys, tolka_query_payload
+
+        payload = tolka_query_payload(
+            query,
+            (
+                "omrade_id",
+                "scenario",
+                "t_luft_c",
+                "relativ_fuktighet_pct",
+                "vind_10m_m_s",
+                "sol_direkt_w_m2",
+                "sol_diffus_w_m2",
+                "solhojd_grad",
+                "solazimut_grad",
+                "antal_riktningar",
+            ),
+        )
+        return kor_varmestress_analys(
+            self.kartverktyg,
+            self.projekt,
+            payload,
+            lager_cache=self._varmestress_lager,
+        )
+
+    def kor_varmestress_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """Svar för `POST /api/analys/varmestress`: UTCI/T_mrt (U15, skiss, verklig SVF)."""
+        from webb.gyf_utci import kor_varmestress_analys, tolka_json_kropp
+
+        return kor_varmestress_analys(
+            self.kartverktyg,
+            self.projekt,
+            tolka_json_kropp(kropp_bytes),
+            lager_cache=self._varmestress_lager,
+        )
+
+    def varmestress_lager_png(self, projekt: str, lager_id: str) -> tuple[bytes, dict[str, str]]:
+        """Hämtar renderad PNG-förhandsvisning för ett värmestresslager (`utci_c`/`t_mrt_c`)."""
+        post = self._varmestress_lager.hamta(projekt, lager_id)
+        if post is None:
+            raise FlodenWebbFel(
+                f"Värmestresslagret '{lager_id}' finns inte (kör värmestressanalysen på nytt).",
+                status_kod=404,
+            )
+        png, u = post
+        return png, {"X-Floden-Utbredning": f"{u.x_min},{u.y_min},{u.x_max},{u.y_max}"}
+
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/kor`: kör före/efter + ensemble och returnerar manifest."""
         t_start = time.perf_counter()
@@ -3592,6 +3656,15 @@ class FlodenApiApp:
             png, extra = kv.geometri_png(projekt, rest[1].removesuffix(".png"))
             status, huvud, ut = _binart_svar(200, png, "image/png")
             return status, {**huvud, **extra}, ut
+        if (
+            verb == "GET"
+            and len(rest) == 2
+            and rest[0] == "varmestress"
+            and rest[1].endswith(".png")
+        ):
+            png, extra = self.varmestress_lager_png(projekt, rest[1].removesuffix(".png"))
+            status, huvud, ut = _binart_svar(200, png, "image/png")
+            return status, {**huvud, **extra}, ut
         if verb == "GET" and rest == ["hojd"]:
             # Markhöjden under pekaren (steg 2 och 4): samma behörighet som övriga projektdata.
             def _tal(namn: str) -> float:
@@ -4054,6 +4127,18 @@ class FlodenApiApp:
             if verb == "POST" and ren_sokvag == "/api/analys/luft-atgarder":
                 return _json_svar(200, self.kor_luft_atgarder_celf(kropp))
 
+            if verb == "GET" and ren_sokvag == "/api/analys/gyf":
+                return _json_svar(200, self.hamta_gyf_analys(query))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/gyf":
+                return _json_svar(200, self.kor_gyf_analys(kropp))
+
+            if verb == "GET" and ren_sokvag == "/api/analys/varmestress":
+                return _json_svar(200, self.hamta_varmestress_analys(query))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/varmestress":
+                return _json_svar(200, self.kor_varmestress_analys(kropp))
+
             if ren_sokvag.startswith(PROV_PREFIX):
                 status, svar = prov_svar(verb, ren_sokvag)
                 return _json_svar(status, svar)
@@ -4452,7 +4537,11 @@ class FlodenApiApp:
         sökvägen, så `_projekt_krav` når dem inte. Ogiltig kropp lämnas åt endpointen (400)."""
         ren = sokvag.rstrip("/") or "/"
         omrade_id: Any = None
-        if verb == "GET" and ren == "/api/analys/ekologi":
+        if verb == "GET" and ren in (
+            "/api/analys/ekologi",
+            "/api/analys/gyf",
+            "/api/analys/varmestress",
+        ):
             vals = (query or {}).get("omrade_id")
             omrade_id = vals[0] if vals else None
         elif verb == "POST" and ren in (
@@ -4460,6 +4549,8 @@ class FlodenApiApp:
             "/api/analys/intervall",
             "/api/analys/svf-intervall",
             "/api/analys/ekologi",
+            "/api/analys/gyf",
+            "/api/analys/varmestress",
             *BERAKNINGS_SOKVAGAR,
         ):
             try:
@@ -4469,10 +4560,12 @@ class FlodenApiApp:
             omrade_id = payload.get("omrade_id") if isinstance(payload, Mapping) else None
         else:
             return None
-        if isinstance(omrade_id, str) and (
-            self.projekt.ar_projekt(omrade_id) or self._registrerat_projekt(omrade_id)
-        ):
-            return omrade_id
+        if isinstance(omrade_id, str):
+            omrade_ren = omrade_id.strip()
+            if omrade_ren and (
+                self.projekt.ar_projekt(omrade_ren) or self._registrerat_projekt(omrade_ren)
+            ):
+                return omrade_ren
         return None
 
     def _registrerat_projekt(self, projekt_id: str) -> bool:

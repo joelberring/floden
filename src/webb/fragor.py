@@ -73,7 +73,7 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
-LAGER_VERSION = 10
+LAGER_VERSION = 11
 STANDARD_MAX_KO = 16
 
 

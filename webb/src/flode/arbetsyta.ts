@@ -82,6 +82,12 @@ import {
   type VektorSvar,
 } from "./analyslager.ts";
 import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
+import {
+  kopplaGyfUtciPaneler,
+  varmelagerTeckenHtml,
+  type GyfUtciKontroller,
+  type VarmestressLagerRef,
+} from "./gyf-utci.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
 import { tolkaFil } from "./filimport.ts";
 import { beraknaMarkvolym, forslagInfoHtml, markvolymText, sparStatus, type HusUppgift } from "./forslagtext.ts";
@@ -626,6 +632,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let ekologi: EkologiMedLager | null = null;
   let ekoLagerVal: "stromtathet" | "kansighet" = "stromtathet";
   let ekologiFel: string | null = null;
+  let aktivtVarmelager: VarmestressLagerRef | null = null;
   let natverkLista: Array<{ natverk_id: string; visningsnamn: string; korbar: boolean; lokalt: boolean }> = [];
   let valtNatverk: string | null = null;
   let lage: ArbetsLage = initialtLage;
@@ -842,6 +849,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
             ${luftFlikKnappHtml(false, false)}
           </div>
           <div id="ar-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar underlag …</p></div>
+          <div id="ar-gyf-utci-plats" class="ar-gyf-utci-plats"></div>
           ${extraAnalyserHtml()}
           <p class="flode-liten flode-dampad ar-buller-notis">Bullerkartflik (Nord2000) inväntar slutförd akustisk validering (<code>nord2000_konform</code>).</p>
         </div>
@@ -921,6 +929,16 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   const el = <T extends HTMLElement>(id: string): T => rot.querySelector(`#${id}`) as T;
   const lyssna = (m: HTMLElement, typ: string, f: (h: Event) => void): void => m.addEventListener(typ, f, { signal: ac.signal });
   kopplaExtraAnalyser(rot, ac.signal);
+  const gyfUtciKontroller: GyfUtciKontroller = kopplaGyfUtciPaneler(el("ar-gyf-utci-plats"), {
+    projekt,
+    hamtaScenario: () => (kalla === "ritat" && t.scenario ? t.scenario.slug : null),
+    hamtaLage: () => lage,
+    onVarmelagerAndrat: (nytt) => {
+      aktivtVarmelager = nytt;
+      synkaKarta();
+    },
+    signal: ac.signal,
+  });
 
   const vyerFor = (k: Kalla): ProjektVy[] => (k === "ritat" ? t.ritVyer : k === "lage" ? t.lageVyer : (projektSvar?.vyer ?? [])).filter((v) => v.avsnitt === amne);
   const harEfter = (): boolean => Boolean(vy && !vy.lage_idag && lagerPost(r, vy.efter_lager));
@@ -1347,7 +1365,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const harDjupSkala = Boolean(tl && vy && amne === "vatten" && tl.roll === "max_djup" && tl.typ !== "skillnad");
     const vektorHtml = lage === "3d" ? [] : aktivaVektorer().map((v) => vektorTeckenHtml(v, harDjupSkala));
     const regnRad = korningRegnRad();
-    const tom = (!tl || !vy) && !fasadTand && vektorHtml.length === 0;
+    const harVarmelager = Boolean(aktivtVarmelager && lage !== "3d" && lage !== "redigera");
+    const tom = (!tl || !vy) && !fasadTand && !harVarmelager && vektorHtml.length === 0;
     tecken.hidden = tom;
     if (tom) return;
 
@@ -1358,21 +1377,25 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     }
 
     let html = "";
-    if (regnRad && (tl || vektorHtml.length > 0)) {
-      html += `<span class="ar-tecken-regn">${esc(regnRad)}</span>`;
-    }
-    if (tl && vy) {
-      const namn =
-        lage === "redigera"
-          ? amne === "vatten" && tl.roll === "max_djup"
-            ? "Nulägets vattendjup (underlag)"
-            : `Nulägets ${tl.etikett.toLowerCase()} (underlag)`
-          : lage === "skillnad"
-            ? `Skillnad i ${tl.etikett.toLowerCase()}`
-            : tl.etikett;
-      const takKryss = lage !== "3d" && lage !== "redigera" && tl.tak_maskat ? `<label class="flode-kryss"><input type="checkbox" id="ar-visa-tak" ${visaTak ? "checked" : ""}/> Visa värden även på tak</label>` : "";
-      const osakFore = amne !== "luft" && osakPa.has(amne);
-      html += teckenHtml(tl, namn, osakFore) + takKryss;
+    if (harVarmelager && aktivtVarmelager) {
+      html += varmelagerTeckenHtml(aktivtVarmelager);
+    } else {
+      if (regnRad && (tl || vektorHtml.length > 0)) {
+        html += `<span class="ar-tecken-regn">${esc(regnRad)}</span>`;
+      }
+      if (tl && vy) {
+        const namn =
+          lage === "redigera"
+            ? amne === "vatten" && tl.roll === "max_djup"
+              ? "Nulägets vattendjup (underlag)"
+              : `Nulägets ${tl.etikett.toLowerCase()} (underlag)`
+            : lage === "skillnad"
+              ? `Skillnad i ${tl.etikett.toLowerCase()}`
+              : tl.etikett;
+        const takKryss = lage !== "3d" && lage !== "redigera" && tl.tak_maskat ? `<label class="flode-kryss"><input type="checkbox" id="ar-visa-tak" ${visaTak ? "checked" : ""}/> Visa värden även på tak</label>` : "";
+        const osakFore = amne !== "luft" && osakPa.has(amne);
+        html += teckenHtml(tl, namn, osakFore) + takKryss;
+      }
     }
     if (fasadTand) html += fasadForklaringHtml("skillnad", Boolean(skill));
     html += vektorHtml.map((x) => `<div class="flode-vektortecken">${x}</div>`).join("");
@@ -1569,9 +1592,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const ovan: RasterLager[] =
       lage === "3d"
         ? []
-        : !visad && ekoOverrideUrl && ekoOverrideUtbredning
-          ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: ekoOverrideUrl, utbredning: ekoOverrideUtbredning, skarpa: true } }]
-          : rasterAv("res:visad", visad, true, rasterOpacitet, ekoOverrideUrl ?? tidStegUrl);
+        : aktivtVarmelager && lage !== "redigera"
+          ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: aktivtVarmelager.png, utbredning: aktivtVarmelager.utbredning, skarpa: true } }]
+          : !visad && ekoOverrideUrl && ekoOverrideUtbredning
+            ? [{ id: "res:visad", opacitet: rasterOpacitet, synlig: true, kalla: { slag: "bild", url: ekoOverrideUrl, utbredning: ekoOverrideUtbredning, skarpa: true } }]
+            : rasterAv("res:visad", visad, true, rasterOpacitet, ekoOverrideUrl ?? tidStegUrl);
     bas.synka = () => a?.settLager([...basLagerListan, ...ovan]);
     bas.synka();
 
@@ -1779,6 +1804,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       window.requestAnimationFrame(() => a?.matOm());
     }
     void laddaTidsserie();
+    gyfUtciKontroller.synkaVarmelager();
     synkaKarta();
     if (lage === "redigera") planeraRitning();
     else ritaAnalysPanel();
@@ -2060,6 +2086,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       lage = "nulage";
     }
     void laddaTidsserie();
+    gyfUtciKontroller.uppdateraKontext();
     ritaAnalysPanel();
     synkaKarta();
   };

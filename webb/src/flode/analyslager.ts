@@ -22,6 +22,7 @@ export const PALETTER: Record<string, readonly string[]> = {
   sekventiell: ["#00204d", "#31446b", "#666970", "#958f78", "#cbba69", "#ffea46"],
   hastighet: ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"],
   fara: ["#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"],
+  varme: ["#f7f4e8", "#fed976", "#fd8d3c", "#e31a1c", "#800026"],
   tid: ["#ffffcc", "#fed976", "#fd8d3c", "#bd0026", "#4d004b"],
   tillrinning: ["#c6dbef", "#6baed6", "#2171b5", "#08306b"],
   stromtathet: ["#000004", "#51127c", "#b73779", "#fc8961", "#fcfdbf"],
@@ -114,6 +115,16 @@ export const ROLL_ETIKETTER: Record<string, { etikett: string; enhet: string; hj
     enhet: "",
     fil: "skuggmask.tif",
     hjalp: "Binär skuggmask (skugga eller solbelyst mark) vid valt klockslag i UTC.",
+  },
+  utci_c: {
+    etikett: "Värmestress (UTCI)",
+    enhet: "°C",
+    hjalp: "Universal Thermal Climate Index (°C) enligt Bröde m.fl. (2012) ur verklig SVF, skugga och väderparametrar (skiss).",
+  },
+  t_mrt_c: {
+    etikett: "Medelstrålningstemperatur (T_mrt)",
+    enhet: "°C",
+    hjalp: "6-riktnings medelstrålningstemperatur T_mrt (°C) enligt ISO 7726 / SOLWEIG (skiss).",
   },
   stromtathet: {
     etikett: "Strömtäthet (flaskhalsar)",
