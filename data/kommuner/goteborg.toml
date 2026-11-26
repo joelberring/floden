@@ -147,7 +147,7 @@ licens = "CC0-1.0"
 # --- Beräkningar för nuläget -------------------------------------------------------------------
 # Parametrarna skrivs i frågefilerna (K20) och i varje körnings manifest.
 [dagsljus]
-datum = ["2026-03-20"]
+datum = ["2026-03-20", "2026-09-22"]
 steg_min = 10
 azimutriktningar = 180
 cellstorlek_m = 1
