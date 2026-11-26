@@ -162,8 +162,17 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-projekt img, .flode-miniatyr-tom { width: 64px; height: 64px; flex: 0 0 auto; object-fit: cover; border-radius: 0; background: var(--fl-yta-dampad); }
 .flode-projekt-text { display: flex; flex-direction: column; gap: 4px; font-size: 13px; min-width: 0; }
 .flode-projekt-namn { font-weight: 600; font-size: 14px; }
+.flode-projekt-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 4px; font-size: 12px; color: var(--fl-mute); }
+.flode-projekt-org { color: var(--fl-ink); font-weight: 500; }
 .flode-projekt-handling { font-weight: 500; text-decoration: underline; }
 .flode-projekt:hover { border-color: var(--fl-ink); }
+.flode-tomlista {
+  display: flex; flex-direction: column; gap: 8px; padding: 14px;
+  border: 1px solid var(--fl-line-in); border-radius: 0; background: var(--fl-yta);
+}
+.flode-tomlista p { margin: 0; line-height: 1.45; }
+.flode-tomlista-rubrik { font-weight: 600; color: var(--fl-ink); }
+.flode-tomlista-handling { padding-top: 4px; }
 .flode-listhuvud code { font-size: 12px; }
 .flode-not { margin: auto 0 0; color: var(--fl-mute); font-size: 13px; line-height: 1.5; }
 .flode-not.framhav { color: var(--fl-ink); font-weight: 500; }
@@ -293,13 +302,27 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 }
 .flode-liten-rubrik { margin: 0; font-size: 13px; font-weight: 600; color: var(--fl-mute); }
 .flode-innehall-rad {
-  display: flex; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; font: inherit; font-size: 13px; text-align: left; cursor: pointer; color: var(--fl-ink);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 6px 0; border: 0; border-bottom: 1px solid var(--fl-line); background: transparent;
+  font: inherit; font-size: 13px; line-height: 1.35; text-align: left; cursor: pointer; color: var(--fl-ink);
 }
-.flode-innehall-rad:hover { text-decoration: underline; }
-.flode-prick { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 999px; }
+.flode-innehall-rad:hover .flode-innehall-titel,
+.flode-innehall-rad:hover:not(:has(.flode-innehall-titel)) { text-decoration: underline; }
+.flode-innehall-rad:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 2px; }
+.flode-statusmarkor {
+  display: inline-flex; align-items: center; gap: 6px; padding: 1px 6px;
+  border: 1px solid var(--fl-line-in); border-radius: 0; background: var(--fl-yta); color: var(--fl-ink);
+  font-size: 11px; font-weight: 600; line-height: 1.4; letter-spacing: 0.03em; white-space: nowrap; text-decoration: none;
+}
+.flode-statusmarkor.gron { border-color: var(--fl-ink); color: var(--fl-ink); }
+.flode-statusmarkor.gul { background: var(--fl-yta-dampad); border-color: var(--fl-ink); color: var(--fl-ink); }
+.flode-statusmarkor.gra { border-style: dashed; border-color: var(--fl-mute); color: var(--fl-mute); }
+.flode-statusmarkor.fel { border-color: var(--f-varning, #b42318); color: var(--f-varning, #b42318); }
+.flode-prick { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 999px; box-sizing: border-box; }
 .flode-prick.gron { background: var(--fl-ink); }
-.flode-prick.gul { background: var(--fl-mute); }
-.flode-prick.gra { background: var(--fl-line-in); }
+.flode-prick.gul { background: var(--fl-yta); border: 2px solid var(--fl-ink); }
+.flode-prick.gra { background: var(--fl-mute); }
+.flode-prick.fel { background: var(--f-varning, #b42318); }
 .flode-forhandsvisning { flex: 999 1 520px; min-width: 0; background: var(--fl-yta-dampad); padding: 20px; display: flex; justify-content: center; overflow: auto; }
 .flode-papper {
   width: 100%; max-width: 620px; background: var(--fl-yta); border: 1px solid var(--fl-line-in); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06); padding: 32px 40px;
@@ -468,7 +491,7 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 .flode-skapa-rad p { margin: 0; }
 /* Pekytor på smal skärm: minst 40 px höga (WCAG 2.5.8 kräver 24 px, 44 px rekommenderas) */
 @media (max-width: 600px) {
-  .flode-verktyg button { min-height: 44px; }
+  .flode-verktyg button, .flode-innehall-rad, .flode-tomlista .flode-knapp { min-height: 44px; }
   .flode-verktyg button, .flode-zoom button, .flode-segment button, .flode-chips button, .flode-flikar button, .flode-scen-knappar button { min-height: 40px; }
 }
 
@@ -503,6 +526,7 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 @media (pointer: coarse) {
   .kartmotor, .kartmotor canvas { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
   .flode-zoom button { min-width: 44px; min-height: 44px; }
+  .flode-innehall-rad, .flode-tomlista .flode-knapp { min-height: 44px; }
 }
 
 /* Visa: väljare för analyslager och vektorlager (steg 4) */
