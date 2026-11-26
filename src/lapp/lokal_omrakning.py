@@ -47,6 +47,8 @@ class LokalOmrakningResultat:
     antal_ateranvanda_noder: int
     antal_omraknade_celler: int
     kortid_s: float
+    full_omrakning: bool = False
+    orsak: str = "lokal_omrakning"
 
 
 def _utvidga_4grannar(mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
@@ -335,6 +337,8 @@ def uppdatera_sankgraf_lokalt(
             antal_ateranvanda_noder=len(bas_graf.noder),
             antal_omraknade_celler=0,
             kortid_s=time.perf_counter() - t_wall_start,
+            full_omrakning=False,
+            orsak="oforandrad",
         )
 
     # Om basgrafen saknar noder alls, kör direkt full byggning
@@ -354,6 +358,8 @@ def uppdatera_sankgraf_lokalt(
             antal_ateranvanda_noder=0,
             antal_omraknade_celler=hojd * bredd,
             kortid_s=time.perf_counter() - t_wall_start,
+            full_omrakning=True,
+            orsak="bas_saknar_noder",
         )
 
     n_celler = hojd * bredd
@@ -393,7 +399,7 @@ def uppdatera_sankgraf_lokalt(
         )
     )
 
-    def _full_omrakning() -> LokalOmrakningResultat:
+    def _full_omrakning(orsak: str) -> LokalOmrakningResultat:
         full_graf = bygg_sankgraf(
             ny_mark_z,
             ny_osakerhet_z,
@@ -409,10 +415,14 @@ def uppdatera_sankgraf_lokalt(
             antal_ateranvanda_noder=0,
             antal_omraknade_celler=n_celler,
             kortid_s=time.perf_counter() - t_wall_start,
+            full_omrakning=True,
+            orsak=orsak,
         )
 
-    if ny_instangd_vid_andring or (berorda_noder & slut_bas):
-        return _full_omrakning()
+    if ny_instangd_vid_andring:
+        return _full_omrakning("ny_slutsanka")
+    if berorda_noder & slut_bas:
+        return _full_omrakning("beror_slutsanka")
     # Säkerställ att alla 4-grannar till eff_andrad som är HAV också ingår i initialt delområde
     utvidgad_andrad = _utvidga_4grannar(eff_andrad)
     uppstroms_hav = _hitta_uppstroms_hav_celler(
@@ -444,8 +454,10 @@ def uppdatera_sankgraf_lokalt(
 
     while True:
         bevarade_noder = set(bas_graf.noder.keys()) - berorda_noder
-        if not bevarade_noder or (berorda_noder & slut_bas):
-            return _full_omrakning()
+        if not bevarade_noder:
+            return _full_omrakning("alla_noder_berorda")
+        if berorda_noder & slut_bas:
+            return _full_omrakning("beror_slutsanka")
 
         berorda_lov = [nid for nid in berorda_noder if bas_graf.noder[nid].ar_lov]
         omrakna_mask = np.array(eff_andrad | uppstroms_hav | extra_hav_mask, dtype=bool, copy=True)

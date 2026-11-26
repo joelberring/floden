@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 import math
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -199,7 +201,7 @@ class StatiskFyllning(Analyslosare):
         rutor = kontext.scenario.rutor
         p = kontext.parametrar
         regn_mm, regn_matvarden = self._regn_mm(p)
-        graf, geo = _bygg_sankgraf_for_rutor(
+        graf, geo, sg_info = _bygg_sankgraf_for_rutor(
             self.namn,
             rutor,
             persistens_faktor=p["persistens_faktor"],
@@ -240,6 +242,7 @@ class StatiskFyllning(Analyslosare):
                 **vattenantaganden_matvarden(graf.takvatten, avt_info),
                 "avtappat_m3": float(res.avtappat_m3),
                 "volymbalans": res.volymbalans(),
+                **_sankgraf_info_matvarden(sg_info),
             },
             varningar=(
                 *slutsanka_varningar(res.slutsankor),
@@ -406,7 +409,7 @@ class Dynamik(Analyslosare):
             else:
                 regntyp = "block" if (max(mm_h) - min(mm_h)) <= 1e-9 else "anpassad"
             varaktighet_min = float(tider[-1] - tider[0]) / 60.0
-        graf, geo = _bygg_sankgraf_for_rutor(
+        graf, geo, sg_info = _bygg_sankgraf_for_rutor(
             self.namn,
             rutor,
             persistens_faktor=p["persistens_faktor"],
@@ -482,6 +485,7 @@ class Dynamik(Analyslosare):
                 "slut_tid_s": float(res.tider_s[-1]) if res.tider_s else 0.0,
                 **vattenantaganden_matvarden(graf.takvatten, avt_info),
                 "volymbalans": res.volymbalans(),
+                **_sankgraf_info_matvarden(sg_info),
             },
             varningar=(
                 *((SLUTSANKA_VARNING,) if res.slutsankor else ()),
@@ -859,6 +863,110 @@ def _las_sammanfogade_rutor(
     return glob_geo, glob_mark, glob_osak, glob_slag, brytlinjer, oppningar
 
 
+_SANKGRAF_CACHE_MAX = 16
+_SANKGRAF_MAX_ANDRAD_ANDEL = 0.50
+
+
+@dataclass(frozen=True)
+class _SankgrafCachePost:
+    """Cachad ofiltrerad bas-`SankGraf` (utan persistensfilter och takvatten) för en K1-ruta."""
+
+    graf: Any
+    brytlinjer: tuple[Any, ...]
+    oppningar: tuple[Any, ...]
+
+
+@dataclass(frozen=True)
+class _SankgrafByggInfo:
+    """Telemetri om hur sänkgrafen byggdes (inkrementellt mot fryst bas eller full omräkning)."""
+
+    inkrementell: bool
+    orsak: str
+    ateranvanda_noder: int
+    omraknade_celler: int
+
+
+_SANKGRAF_LOCK = threading.Lock()
+_SANKGRAF_CACHE: OrderedDict[str, _SankgrafCachePost] = OrderedDict()
+
+
+def rensa_sankgraf_cache() -> None:
+    """Rensar modulens minnescache för bas-sänkgrafer (används i tester/benchmarks)."""
+    with _SANKGRAF_LOCK:
+        _SANKGRAF_CACHE.clear()
+
+
+def _sankgraf_info_matvarden(info: _SankgrafByggInfo) -> dict[str, Any]:
+    return {
+        "inkrementell": info.inkrementell,
+        "inkrementell_orsak": info.orsak,
+        "ateranvanda_noder": info.ateranvanda_noder,
+        "omraknade_celler": info.omraknade_celler,
+    }
+
+
+def _las_ruta_nycklar(ruta: Any) -> tuple[list[str], list[str]]:
+    """Returnerar `(egna_nycklar, bas_nycklar)` för en K1-ruta (recept-sha256 + mapp-hash)."""
+    from gemensamt.hash import sha256_fil
+
+    egna: list[str] = []
+    bas: list[str] = []
+    ruta_hash = getattr(ruta, "hash", None)
+    if isinstance(ruta_hash, str) and ruta_hash:
+        egna.append(ruta_hash)
+
+    mapp = Path(ruta.mapp)
+    recept_fil = mapp / "recept.json"
+    if recept_fil.is_file():
+        try:
+            egna.append(sha256_fil(recept_fil))
+            recept_data = json.loads(recept_fil.read_text(encoding="utf-8"))
+            if isinstance(recept_data, dict):
+                bas_sha = recept_data.get("bas_recept_sha256")
+                if isinstance(bas_sha, str) and bas_sha:
+                    bas.append(bas_sha)
+        except (OSError, ValueError):
+            pass
+
+    klar_fil = mapp.parent / ".klar"
+    if klar_fil.is_file():
+        try:
+            klar_data = json.loads(klar_fil.read_text(encoding="utf-8"))
+            if isinstance(klar_data, dict):
+                bas_h = klar_data.get("bas")
+                if isinstance(bas_h, str) and bas_h:
+                    bas.append(bas_h)
+        except (OSError, ValueError):
+            pass
+
+    egna_set = set(egna)
+    bas_unika = [k for k in dict.fromkeys(bas) if k not in egna_set]
+    return list(dict.fromkeys(egna)), bas_unika
+
+
+def _hamta_bas_sankgraf(bas_nycklar: Sequence[str]) -> _SankgrafCachePost | None:
+    if not bas_nycklar:
+        return None
+    with _SANKGRAF_LOCK:
+        for nyckel in bas_nycklar:
+            post = _SANKGRAF_CACHE.get(nyckel)
+            if post is not None:
+                _SANKGRAF_CACHE.move_to_end(nyckel)
+                return post
+    return None
+
+
+def _spara_sankgraf_i_cache(nycklar: Sequence[str], post: _SankgrafCachePost) -> None:
+    if not nycklar:
+        return
+    with _SANKGRAF_LOCK:
+        for nyckel in nycklar:
+            _SANKGRAF_CACHE[nyckel] = post
+            _SANKGRAF_CACHE.move_to_end(nyckel)
+        while len(_SANKGRAF_CACHE) > _SANKGRAF_CACHE_MAX:
+            _SANKGRAF_CACHE.popitem(last=False)
+
+
 def _bygg_sankgraf_for_rutor(
     namn: str,
     rutor: Sequence[Any],
@@ -866,25 +974,119 @@ def _bygg_sankgraf_for_rutor(
     persistens_faktor: float | None,
     takvatten: bool,
     takvatten_andel_ledning: float,
-) -> tuple[Any, Any]:
-    """Bygger en global `SankGraf` för en eller flera K1-rutor (via `sammanfoga_rutor`)."""
-    from sankgraf.fyllning import kor_statisk_k1_mapp
-    from sankgraf.hierarki import bygg_sankgraf
+) -> tuple[Any, Any, _SankgrafByggInfo]:
+    """Bygger en global `SankGraf` för en eller flera K1-rutor (inkrementellt för 1 ruta)."""
+    from lapp.kontrakt import LappFel
+    from lapp.lokal_omrakning import uppdatera_sankgraf_lokalt
+    from sankgraf.hierarki import _applicera_oppningar, bygg_sankgraf
     from sankgraf.persistens import filtrera_persistens
-    from sankgraf.takvatten import bygg_takvatten
+    from sankgraf.takvatten import bygg_takvatten, med_takvatten_graf
     from sankgraf.typer import SankGrafFel
 
     if not rutor:
         raise LosarFel(f"{namn}: scenariot saknar K1-rutor.")
+
     if len(rutor) == 1:
-        graf, _ = kor_statisk_k1_mapp(
-            rutor[0].mapp,
-            regn_m=0.0,
-            persistens_faktor=persistens_faktor,
-            takvatten=takvatten,
-            takvatten_andel_ledning=takvatten_andel_ledning,
+        ruta = rutor[0]
+        geo, mark_z, osak_z, markslag, brytlinjer, oppningar = _las_sammanfogade_rutor(
+            namn, rutor
         )
-        return graf, graf.geo
+        egna_nycklar, bas_nycklar = _las_ruta_nycklar(ruta)
+        bas_post = _hamta_bas_sankgraf(bas_nycklar)
+        bryt_tup = tuple(brytlinjer)
+        opp_tup = tuple(oppningar)
+        n_celler = int(mark_z.size)
+
+        graf_raw: Any = None
+        info: _SankgrafByggInfo | None = None
+        fallback_orsak = "bas_saknas"
+
+        if bas_post is not None:
+            if bas_post.graf.geo != geo:
+                fallback_orsak = "olika_geometri"
+            elif bas_post.brytlinjer != bryt_tup:
+                fallback_orsak = "brytlinjer_andrade"
+            else:
+                eff_z, eff_slag = _applicera_oppningar(mark_z, markslag, geo, oppningar)
+                z_lika = (eff_z == bas_post.graf.mark_z) | (
+                    np.isnan(eff_z) & np.isnan(bas_post.graf.mark_z)
+                )
+                eff_andrad = np.asarray(
+                    ~(z_lika & (eff_slag == bas_post.graf.markslag)), dtype=np.bool_
+                )
+                andrad_andel = (
+                    float(np.count_nonzero(eff_andrad)) / float(n_celler)
+                    if n_celler > 0
+                    else 0.0
+                )
+                if andrad_andel > _SANKGRAF_MAX_ANDRAD_ANDEL:
+                    fallback_orsak = "for_stor_andring"
+                else:
+                    try:
+                        lokal_res = uppdatera_sankgraf_lokalt(
+                            bas_post.graf,
+                            mark_z,
+                            osak_z,
+                            markslag,
+                            eff_andrad,
+                            brytlinjer=brytlinjer,
+                            oppningar=oppningar,
+                        )
+                        graf_raw = lokal_res.ny_graf
+                        if lokal_res.full_omrakning:
+                            info = _SankgrafByggInfo(
+                                inkrementell=False,
+                                orsak=lokal_res.orsak,
+                                ateranvanda_noder=0,
+                                omraknade_celler=n_celler,
+                            )
+                        else:
+                            info = _SankgrafByggInfo(
+                                inkrementell=True,
+                                orsak=lokal_res.orsak,
+                                ateranvanda_noder=lokal_res.antal_ateranvanda_noder,
+                                omraknade_celler=lokal_res.antal_omraknade_celler,
+                            )
+                    except LappFel:
+                        fallback_orsak = "fallback_lappfel"
+                    except SankGrafFel as exc:
+                        raise LosarFel(f"{namn}: {exc}") from exc
+
+        if graf_raw is None or info is None:
+            try:
+                graf_raw = bygg_sankgraf(
+                    mark_z,
+                    osak_z,
+                    markslag,
+                    geo,
+                    brytlinjer=brytlinjer,
+                    oppningar=oppningar,
+                )
+            except SankGrafFel as exc:
+                raise LosarFel(f"{namn}: {exc}") from exc
+            info = _SankgrafByggInfo(
+                inkrementell=False,
+                orsak=fallback_orsak,
+                ateranvanda_noder=0,
+                omraknade_celler=n_celler,
+            )
+
+        _spara_sankgraf_i_cache(
+            egna_nycklar,
+            _SankgrafCachePost(graf=graf_raw, brytlinjer=bryt_tup, oppningar=opp_tup),
+        )
+
+        try:
+            graf = graf_raw
+            if persistens_faktor is not None:
+                graf = filtrera_persistens(graf, faktor=persistens_faktor)
+            if takvatten:
+                graf = med_takvatten_graf(
+                    graf, ruta.mapp, andel_ledning=takvatten_andel_ledning
+                )
+        except SankGrafFel as exc:
+            raise LosarFel(f"{namn}: {exc}") from exc
+        return graf, graf.geo, info
 
     glob_geo, glob_mark, glob_osak, glob_slag, brytlinjer, oppningar = _las_sammanfogade_rutor(
         namn, rutor
@@ -910,7 +1112,16 @@ def _bygg_sankgraf_for_rutor(
             graf = replace(graf, takvatten=tv)
     except SankGrafFel as exc:
         raise LosarFel(f"{namn}: {exc}") from exc
-    return graf, glob_geo
+    return (
+        graf,
+        glob_geo,
+        _SankgrafByggInfo(
+            inkrementell=False,
+            orsak="flerruta",
+            ateranvanda_noder=0,
+            omraknade_celler=int(glob_mark.size),
+        ),
+    )
 
 
 _TVAD_PARAMETRAR = (

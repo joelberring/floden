@@ -16,8 +16,11 @@ går högst så långt, så hinder som skymmer mindre än h_min bortom radien in
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
+import threading
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,10 +30,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from dagsljus.horisont import (
+    Hojdfalt,
     horisont_mipmap,
     horisont_riktning_ruta,
     horisont_riktning_ruta_pa_enhet,
     riktningar_rad,
+    uppdatera_horisont_inkrementellt,
 )
 from dagsljus.matt import (
     SolsynlighetAckumulator,
@@ -294,6 +299,119 @@ class _DagsljusLosare(Analyslosare):
         return _radie_m(parametrar) + math.sqrt(2.0) * float(parametrar["cellstorlek_m"])
 
 
+_HORISONT_CACHE_MAX = 16
+_HORISONT_MAX_ANDRAD_ANDEL = 0.25
+
+
+@dataclass(frozen=True)
+class _HorisontCachePost:
+    """Cachad horisontkub (float32, rad) för inkrementell omräkning vid lokal DSM-ändring."""
+
+    dsm_sha256: str
+    falt: Hojdfalt
+    fonster: tuple[int, int, int, int]
+    antal_riktningar: int
+    max_avstand_m: float
+    h_rad: NDArray[np.float32]
+    trunk: NDArray[np.int32]
+    falt_utan_standard: Hojdfalt | None = None
+    h0_rad: NDArray[np.float32] | None = None
+
+
+_HORISONT_LOCK = threading.Lock()
+_HORISONT_CACHE: OrderedDict[tuple[Any, ...], _HorisontCachePost] = OrderedDict()
+_HORISONT_RECEPT_INDEX: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+_HORISONT_GRID_INDEX: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+
+
+def rensa_horisont_cache() -> None:
+    """Rensar modulens minnescache för bas-horisonter (används i tester/benchmarks)."""
+    with _HORISONT_LOCK:
+        _HORISONT_CACHE.clear()
+        _HORISONT_RECEPT_INDEX.clear()
+        _HORISONT_GRID_INDEX.clear()
+
+
+def _dsm_sha256(falt: Hojdfalt) -> str:
+    return hashlib.sha256(np.ascontiguousarray(falt.z_m, dtype=np.float64).tobytes()).hexdigest()
+
+
+def _ruta_recept_nycklar(ruta: Any) -> tuple[str, str]:
+    """Returnerar `(egen_nyckel, bas_nyckel)` för en K1-ruta."""
+    from gemensamt.hash import sha256_fil
+
+    mapp = Path(ruta.mapp)
+    egen = str(getattr(ruta, "hash", "") or mapp.name)
+    bas = egen
+    recept_fil = mapp / "recept.json"
+    if recept_fil.is_file():
+        try:
+            egen = sha256_fil(recept_fil)
+            data = json.loads(recept_fil.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                b = data.get("bas_recept_sha256")
+                if isinstance(b, str) and b:
+                    bas = b
+        except (OSError, ValueError):
+            pass
+    if bas == egen:
+        klar_fil = mapp.parent / ".klar"
+        if klar_fil.is_file():
+            try:
+                klar = json.loads(klar_fil.read_text(encoding="utf-8"))
+                if isinstance(klar, dict):
+                    b = klar.get("bas")
+                    if isinstance(b, str) and b:
+                        bas = b
+            except (OSError, ValueError):
+                pass
+    return egen, bas
+
+
+def _hamta_bas_horisont(
+    bas_recept_nyckel: tuple[Any, ...],
+    grid_nyckel: tuple[Any, ...],
+    *,
+    ar_andrad_fran_bas: bool,
+    egen_dsm_sha: str,
+) -> _HorisontCachePost | None:
+    with _HORISONT_LOCK:
+        primar: tuple[Any, ...] | None = None
+        if ar_andrad_fran_bas:
+            primar = _HORISONT_RECEPT_INDEX.get(bas_recept_nyckel)
+        if primar is None:
+            kand = _HORISONT_GRID_INDEX.get(grid_nyckel)
+            if kand is not None and (ar_andrad_fran_bas or kand[0] != egen_dsm_sha):
+                primar = kand
+        if primar is None:
+            return None
+        post = _HORISONT_CACHE.get(primar)
+        if post is not None:
+            _HORISONT_CACHE.move_to_end(primar)
+        return post
+
+
+def _spara_horisont_i_cache(
+    primar_nyckel: tuple[Any, ...],
+    recept_nyckel: tuple[Any, ...],
+    grid_nyckel: tuple[Any, ...],
+    post: _HorisontCachePost,
+    *,
+    ar_andrad_fran_bas: bool,
+) -> None:
+    with _HORISONT_LOCK:
+        _HORISONT_CACHE[primar_nyckel] = post
+        _HORISONT_CACHE.move_to_end(primar_nyckel)
+        _HORISONT_RECEPT_INDEX[recept_nyckel] = primar_nyckel
+        if not ar_andrad_fran_bas or grid_nyckel not in _HORISONT_GRID_INDEX:
+            _HORISONT_GRID_INDEX[grid_nyckel] = primar_nyckel
+        while len(_HORISONT_CACHE) > _HORISONT_CACHE_MAX:
+            bort_nyckel, _ = _HORISONT_CACHE.popitem(last=False)
+            for idx_karta in (_HORISONT_RECEPT_INDEX, _HORISONT_GRID_INDEX):
+                for k in [kk for kk, vv in idx_karta.items() if vv == bort_nyckel]:
+                    del idx_karta[k]
+
+
 class Horisont(_DagsljusLosare):
     namn: ClassVar[str] = "dagsljus.horisont"
     beskrivning: ClassVar[str] = (
@@ -310,13 +428,155 @@ class Horisont(_DagsljusLosare):
         m = _mosaik(kontext)
         r0, r1, c0, c1 = m.fonster
         antal = int(kontext.parametrar["azimutriktningar"])
-        lagr = np.empty((antal, r1 - r0, c1 - c0), dtype=np.uint16)
+        radie = _radie_m(kontext.parametrar)
+        enhet = str(kontext.parametrar.get("enhet", "cpu"))
+        xp, enhet_namn = hamta_backend(enhet)
+        pa_gpu = ar_gpu_backend(xp)
 
-        def lagra(i: int, _phi: float, h: NDArray[np.float32]) -> None:
-            lagr[i] = np.rint(np.degrees(h.astype(np.float64)) * 100.0).astype(np.uint16)
+        assert kontext.ruta is not None
+        rutor_alla = (kontext.ruta, *kontext.grannar)
+        par_nycklar = [(r.ruta_id, *_ruta_recept_nycklar(r)) for r in rutor_alla]
+        egen_recept_tup = tuple((rid, egen) for rid, egen, _ in par_nycklar)
+        bas_recept_tup = tuple((rid, bas) for rid, _, bas in par_nycklar)
+        ar_andrad_fran_bas = bas_recept_tup != egen_recept_tup
 
-        pas = _horisontpass(kontext, m, [lagra])
+        dsm_sha = _dsm_sha256(m.falt)
+        primar_nyckel = (dsm_sha, antal, radie, m.fonster)
+        recept_nyckel = (egen_recept_tup, antal, radie, m.fonster)
+        bas_recept_nyckel = (bas_recept_tup, antal, radie, m.fonster)
+        grid_nyckel = (
+            kontext.ruta.ruta_id,
+            m.falt.z_m.shape,
+            m.fonster,
+            m.falt.x_min_m,
+            m.falt.y_max_m,
+            m.falt.cell_m,
+            antal,
+            radie,
+        )
+
+        bas_post = _hamta_bas_horisont(
+            bas_recept_nyckel,
+            grid_nyckel,
+            ar_andrad_fran_bas=ar_andrad_fran_bas,
+            egen_dsm_sha=dsm_sha,
+        )
+
+        inkrementell = False
+        inkrementell_orsak = "bas_saknas"
+        andrade_celler = 0
+        h_rad: NDArray[np.float32] | None = None
+        h0_rad: NDArray[np.float32] | None = None
+        pas: _Pass | None = None
+
+        if bas_post is not None:
+            if pa_gpu:
+                inkrementell_orsak = "gpu_ej_inkrementell"
+            elif (
+                bas_post.falt.z_m.shape != m.falt.z_m.shape
+                or bas_post.falt.cell_m != m.falt.cell_m
+                or bas_post.falt.x_min_m != m.falt.x_min_m
+                or bas_post.falt.y_max_m != m.falt.y_max_m
+                or bas_post.fonster != m.fonster
+                or bas_post.antal_riktningar != antal
+                or bas_post.max_avstand_m != radie
+            ):
+                inkrementell_orsak = "olika_geometri"
+            elif (m.falt_utan_standard is None) != (bas_post.falt_utan_standard is None):
+                inkrementell_orsak = "standardhojd_andrad"
+            else:
+                andrade_celler = int(np.count_nonzero(m.falt.z_m != bas_post.falt.z_m))
+                andel = float(andrade_celler) / float(m.falt.z_m.size)
+                std_for_stor = (
+                    m.falt_utan_standard is not None
+                    and bas_post.falt_utan_standard is not None
+                    and (
+                        bas_post.h0_rad is None
+                        or float(
+                            np.count_nonzero(
+                                m.falt_utan_standard.z_m != bas_post.falt_utan_standard.z_m
+                            )
+                        )
+                        / float(m.falt_utan_standard.z_m.size)
+                        >= _HORISONT_MAX_ANDRAD_ANDEL
+                    )
+                )
+                if andel >= _HORISONT_MAX_ANDRAD_ANDEL or std_for_stor:
+                    inkrementell_orsak = "for_stor_andring"
+                else:
+                    h_rad = uppdatera_horisont_inkrementellt(
+                        bas_post.h_rad,
+                        bas_post.falt,
+                        m.falt,
+                        radie,
+                        fonster=m.fonster,
+                    )
+                    std_riktn: NDArray[np.int32] | None = None
+                    if (
+                        m.falt_utan_standard is not None
+                        and bas_post.falt_utan_standard is not None
+                        and bas_post.h0_rad is not None
+                    ):
+                        h0_rad = uppdatera_horisont_inkrementellt(
+                            bas_post.h0_rad,
+                            bas_post.falt_utan_standard,
+                            m.falt_utan_standard,
+                            radie,
+                            fonster=m.fonster,
+                        )
+                        std_riktn = np.sum(h0_rad != h_rad, axis=0, dtype=np.int32)
+                    pas = _Pass(
+                        bas_post.trunk.copy(),
+                        std_riktn,
+                        berakningsplats(enhet_namn, np.float32),
+                    )
+                    inkrementell = True
+                    inkrementell_orsak = "lokal_uppdatering"
+
+        if not inkrementell or h_rad is None or pas is None:
+            h_rad = np.empty((antal, r1 - r0, c1 - c0), dtype=np.float32)
+            h0_rad = (
+                np.empty((antal, r1 - r0, c1 - c0), dtype=np.float32)
+                if m.falt_utan_standard is not None
+                else None
+            )
+
+            def lagra_rad(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+                assert h_rad is not None
+                h_rad[i] = h
+
+            def lagra_rad0(i: int, _phi: float, h: NDArray[np.float32]) -> None:
+                assert h0_rad is not None
+                h0_rad[i] = h
+
+            pas = _horisontpass(
+                kontext,
+                m,
+                [lagra_rad],
+                [lagra_rad0] if h0_rad is not None else None,
+            )
+
+        lagr = np.rint(np.degrees(h_rad.astype(np.float64)) * 100.0).astype(np.uint16)
         trunk = pas.trunk
+
+        _spara_horisont_i_cache(
+            primar_nyckel,
+            recept_nyckel,
+            grid_nyckel,
+            _HorisontCachePost(
+                dsm_sha256=dsm_sha,
+                falt=m.falt,
+                fonster=m.fonster,
+                antal_riktningar=antal,
+                max_avstand_m=radie,
+                h_rad=h_rad,
+                trunk=trunk,
+                falt_utan_standard=m.falt_utan_standard,
+                h0_rad=h0_rad,
+            ),
+            ar_andrad_fran_bas=ar_andrad_fran_bas,
+        )
+
         np.save(kontext.utmapp / "horisont.npy", lagr)
         x_min, y_max = fonster_koordinater(m)
         (kontext.utmapp / "horisont.json").write_text(
@@ -331,7 +591,7 @@ class Horisont(_DagsljusLosare):
                     "y_max_m": y_max,
                     "cellstorlek_m": m.falt.cell_m,
                     "epsg": 3011,
-                    "max_avstand_m": _radie_m(kontext.parametrar),
+                    "max_avstand_m": radie,
                 },
                 sort_keys=True,
                 indent=2,
@@ -359,6 +619,9 @@ class Horisont(_DagsljusLosare):
                 "azimutriktningar": antal,
                 "celler_standardhojd": n_std,
                 "berakningsplats": pas.berakningsplats,
+                "inkrementell": inkrementell,
+                "inkrementell_orsak": inkrementell_orsak,
+                "andrade_celler": andrade_celler,
             },
             varningar=tuple(
                 _gemensamma_varningar(kontext, m) + _trunk_varning(trunk, antal) + std_var
