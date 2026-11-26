@@ -1,9 +1,9 @@
 """Svaret för `POST /api/analys/ekologi` (K45, `floden-ekologi/v1`).
 
 Analysen körs av kärnan (lösaren `ekologi.konnektivitet`, K21) som en vanlig körning före/efter;
-det här läser dess filer (`ekologi.json`, `stromtathet.tif`) och sätter ihop svaret. Inget tal
-räknas om här, utom att flaskhalsar plockas ur strömtätheten (största värdena, med ett minsta
-avstånd) och att skillnader mellan före och efter tas som differens.
+det här läser dess filer (`ekologi.json`, `stromtathet.tif`, `kansighet.tif`) och sätter ihop
+svaret. Inget tal räknas om här, utom att flaskhalsar plockas ur strömtätheten (största värdena,
+med ett minsta avstånd) och att skillnader mellan före och efter tas som differens.
 """
 
 from __future__ import annotations
@@ -80,17 +80,37 @@ def ekologi_svar(
         raise FlodenWebbFel("Körningen har inget skillnadslager för strömtätheten.", status_kod=500)
     fore_s, efter_s = str(skill["fore"]), str(skill["efter"])
 
-    def lager(sid: str) -> dict[str, Any] | None:
+    def lager(sid: str, roll: str = "stromtathet") -> dict[str, Any] | None:
         la = next(
             (
                 x for x in res["lager"]
-                if x["analys"] == analys and x["scenario"] == sid and x["roll"] == "stromtathet"
+                if x["analys"] == analys and x["scenario"] == sid and x["roll"] == roll
                 and x["typ"] != "skillnad"
             ),
             None,
         )
         return None if la is None else {"lager_id": la["id"], "png": la["png"],
                                          "utbredning": la["utbredning"]}
+
+    kans_skill = next(
+        (
+            la for la in res["lager"]
+            if la["analys"] == analys
+            and la["typ"] == "skillnad"
+            and la["roll"] == "kansighet"
+            and str(la.get("fore")) == fore_s
+            and str(la.get("efter")) == efter_s
+        ),
+        None,
+    )
+    if kans_skill is None:
+        kans_skill = next(
+            (
+                la for la in res["lager"]
+                if la["analys"] == analys and la["typ"] == "skillnad" and la["roll"] == "kansighet"
+            ),
+            None,
+        )
 
     fore = _las_json(fragor, korning_id, f"{analys}/{fore_s}/ekologi.json")
     efter = _las_json(fragor, korning_id, f"{analys}/{efter_s}/ekologi.json")
@@ -138,11 +158,22 @@ def ekologi_svar(
         ),
         "delta_pc": float(efter["PC"]) - float(fore["PC"]),
         "lager": {
-            "stromtathet_fore": lager(fore_s),
-            "stromtathet_efter": lager(efter_s),
+            "stromtathet_fore": lager(fore_s, "stromtathet"),
+            "stromtathet_efter": lager(efter_s, "stromtathet"),
             "stromtathet_skillnad": {
                 "lager_id": skill["id"], "png": skill["png"], "utbredning": skill["utbredning"],
             },
+            "kansighet_fore": lager(fore_s, "kansighet"),
+            "kansighet_efter": lager(efter_s, "kansighet"),
+            "kansighet_skillnad": (
+                None
+                if kans_skill is None
+                else {
+                    "lager_id": kans_skill["id"],
+                    "png": kans_skill["png"],
+                    "utbredning": kans_skill["utbredning"],
+                }
+            ),
         },
         "storsta_flaskhalsar": {
             "fore": flaskhalsar(fore_s),

@@ -121,14 +121,21 @@ _STANDARDJAMFORELSE = {
     "vatten.dynamik": ("max_djup", 0.01),
     "dagsljus.soltimmar_mark": ("soltimmar", 0.1),
     "dagsljus.soltimmar_sammanhangande": ("sammanhangande_soltimmar", 0.5),
+    "dagsljus.skuggmask_vid_klockslag": ("skuggmask", 0.5),
 }
 """Lösare -> (utdata, tröskel) för jämförelsen före/efter när mallen saknar jämförelser (som `skriv_fragor`)."""
 
 _LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
 _LOSARE_MED_REGN = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
-_LOSARE_MED_SOL = frozenset({"dagsljus.soltimmar_mark", "dagsljus.soltimmar_sammanhangande"})
+_LOSARE_MED_SOL = frozenset(
+    {
+        "dagsljus.soltimmar_mark",
+        "dagsljus.soltimmar_sammanhangande",
+        "dagsljus.skuggmask_vid_klockslag",
+    }
+)
 _SOL_NYCKLAR = frozenset(
-    {"datum_iso", "start_timme", "slut_timme", "sammanhangande", "inkludera_vsc"}
+    {"datum_iso", "start_timme", "slut_timme", "sammanhangande", "inkludera_vsc", "klockslag_utc"}
 )
 _DATUM_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DAGSLJUS_GEMENSAMMA_PAR = (
@@ -423,6 +430,25 @@ def _sol(v: Any) -> dict[str, Any] | None:
         if not isinstance(raa_b, bool):
             raise _fel(f"Solparametern '{nyckel}' måste vara sant eller falskt, fick {raa_b!r}.", 400)
         ut[nyckel] = raa_b
+    raa_kl = v.get("klockslag_utc")
+    if raa_kl is not None:
+        if isinstance(raa_kl, bool) or not isinstance(raa_kl, int | float) or not math.isfinite(float(raa_kl)):
+            raise _fel(
+                f"Solparametern 'klockslag_utc' måste vara ett ändligt tal, fick {raa_kl!r}.",
+                400,
+            )
+        val_kl = float(raa_kl)
+        if val_kl < 0.0 or val_kl > 24.0:
+            raise _fel(
+                f"Solparametern 'klockslag_utc' måste ligga i [0, 24], fick {val_kl:g}.",
+                400,
+            )
+        ut["klockslag_utc"] = val_kl
+    if "klockslag_utc" in ut and ut.get("sammanhangande") is True:
+        raise _fel(
+            "Solparametern 'klockslag_utc' (momentan skuggmask) kan inte kombineras med 'sammanhangande=true'.",
+            400,
+        )
     return ut or None
 
 
@@ -431,8 +457,25 @@ def _tillampa_sol(
     parametrar: dict[str, Any],
     sol: Mapping[str, Any] | None,
 ) -> None:
-    """Skriver in validerade dagsljusparametrar på `dagsljus.soltimmar_mark` / `dagsljus.soltimmar_sammanhangande`."""
+    """Skriver in validerade dagsljusparametrar på dagsljuslösare (`soltimmar_mark`,
+    `soltimmar_sammanhangande` eller `skuggmask_vid_klockslag`)."""
     if sol is None or losare not in _LOSARE_MED_SOL:
+        return
+    if losare == "dagsljus.skuggmask_vid_klockslag":
+        for nyckel in ("steg_min", "start_timme", "slut_timme"):
+            parametrar.pop(nyckel, None)
+        if "datum_iso" in sol:
+            parametrar["datum"] = str(sol["datum_iso"])
+        elif isinstance(parametrar.get("datum"), list | tuple):
+            mall_datum = parametrar["datum"]
+            if mall_datum:
+                parametrar["datum"] = str(mall_datum[0])
+            else:
+                parametrar.pop("datum", None)
+        if "klockslag_utc" in sol:
+            kl = float(sol["klockslag_utc"])
+            parametrar["klockslag"] = [0.0 if kl == 24.0 else kl]
+            parametrar["utc_offset_h"] = 0.0
         return
     if "datum_iso" in sol:
         parametrar["datum"] = [str(sol["datum_iso"])]
@@ -1463,11 +1506,14 @@ class KartverktygTjanst:
             valda_ids.add(str(synt_vsc["id"]))
         dynamisk = regn is not None and regn.get("berakningstyp") == "dynamisk"
         sammanhangande = sol is not None and sol.get("sammanhangande") is True
+        har_klockslag = sol is not None and "klockslag_utc" in sol
         ut_analyser: list[dict[str, Any]] = []
         losare_per_analys: dict[str, str] = {}
         for a in valda:
             if dynamisk and a.losare == "vatten.statisk_fyllning":
                 losare = "vatten.dynamik"
+            elif har_klockslag and a.losare == "dagsljus.soltimmar_mark":
+                losare = "dagsljus.skuggmask_vid_klockslag"
             elif sammanhangande and a.losare == "dagsljus.soltimmar_mark":
                 losare = "dagsljus.soltimmar_sammanhangande"
             else:
@@ -1501,11 +1547,13 @@ class KartverktygTjanst:
                 continue
             utdata = j.utdata
             troskel = j.troskel
+            eff_losare_j = losare_per_analys.get(j.analys)
             if (
-                losare_per_analys.get(j.analys) == "dagsljus.soltimmar_sammanhangande"
+                eff_losare_j
+                in ("dagsljus.soltimmar_sammanhangande", "dagsljus.skuggmask_vid_klockslag")
                 and utdata == "soltimmar"
             ):
-                utdata, troskel = _STANDARDJAMFORELSE["dagsljus.soltimmar_sammanhangande"]
+                utdata, troskel = _STANDARDJAMFORELSE[eff_losare_j]
             if (j.analys, utdata) in sedda:
                 continue
             sedda.add((j.analys, utdata))
@@ -1670,10 +1718,13 @@ class KartverktygTjanst:
             valda_ids.add(str(synt_vsc["id"]))
         dynamisk = regn is not None and regn.get("berakningstyp") == "dynamisk"
         sammanhangande = sol is not None and sol.get("sammanhangande") is True
+        har_klockslag = sol is not None and "klockslag_utc" in sol
         ut_analyser: list[dict[str, Any]] = []
         for a in valda:
             if dynamisk and a.losare == "vatten.statisk_fyllning":
                 losare = "vatten.dynamik"
+            elif har_klockslag and a.losare == "dagsljus.soltimmar_mark":
+                losare = "dagsljus.skuggmask_vid_klockslag"
             elif sammanhangande and a.losare == "dagsljus.soltimmar_mark":
                 losare = "dagsljus.soltimmar_sammanhangande"
             else:
