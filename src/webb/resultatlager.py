@@ -71,7 +71,9 @@ _VATTEN_ETIKETTER: dict[float, str] = {
 _SKILLNAD_MINSKNING = "#2b5d8c"
 _SKILLNAD_OKNING = "#b4462b"
 
-MASKADE_ROLLER = frozenset({"soltimmar", "svf", "max_djup"})
+MASKADE_ROLLER = frozenset(
+    {"soltimmar", "sammanhangande_soltimmar", "skuggmask", "svf", "max_djup"}
+)
 """Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
 
 TAKKALLA_FOTAVTRYCK = "fotavtryck"
@@ -89,6 +91,8 @@ def takkalla_for_roll(roll: str) -> str:
 
 ETIKETTER: dict[str, tuple[str, str]] = {
     "soltimmar": ("Soltimmar på marken", "h"),
+    "sammanhangande_soltimmar": ("Sammanhängande soltimmar", "h"),
+    "skuggmask": ("Solläge vid klockslag", ""),
     "max_djup": ("Största vattendjup", "m"),
     "svf": ("Andel himmel som syns", ""),
     "stromtathet": ("Strömtäthet (flaskhalsar)", ""),
@@ -119,6 +123,7 @@ SKALA_FOR_ROLL: dict[str, str] = {
     "forstarkning": "luft",
     "komfortklass": "klass",
     "faraklass": "klass",
+    "skuggmask": "klass",
     "trunkering": "klass",
     "standardhojd": "klass",
     "slutsanka": "klass",

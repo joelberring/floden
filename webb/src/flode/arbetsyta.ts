@@ -119,7 +119,6 @@ import type { Avslutbar } from "./projektlista.ts";
 import {
   medRegnForval,
   regnEtikett,
-  regnSignatur,
   regnValHtml,
   tolkaRegnTal,
   valdRegnText,
@@ -135,6 +134,7 @@ import {
   indexFranSvgX,
   ritaSektionSvg,
   sektionTillCsv,
+  sektionVattenLager,
   SektionVerktyg,
   type SektionSvar,
 } from "./sektion.ts";
@@ -160,8 +160,10 @@ import {
 } from "./tidsspelare.ts";
 import {
   aterladdaSparadeVyer,
+  bedomInstallningsStatus,
   forslagKropp,
   FORVALD_TAKFORM,
+  kanStartaKorning,
   lasArbetsytaUiLage,
   lasAvtappning,
   skapaDokFor,
@@ -741,11 +743,12 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     b?.settSektionMarkor(null);
     ritaBottenDock();
     try {
+      const vattenLager = sektionVattenLager(r?.lager, vy);
       const svar = await hamtaSektion(projekt, {
         punkter: pts,
         korning_id: vy?.korning_id ?? null,
-        fore_lager: vy?.fore_lager ?? null,
-        efter_lager: vy?.efter_lager ?? null,
+        fore_lager: vattenLager.fore_lager,
+        efter_lager: vattenLager.efter_lager,
       });
       if (nr !== sektionSeq || avslutad) return;
       sektionData = svar;
@@ -845,26 +848,22 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     el("ar-regn-plats").innerHTML = regnValHtml(t.regn, info?.regn_forval, t.avtappning, regnFel, avtappningFel);
     const pagar = arPagaende(t);
     const harRitatForslag = !t.dok.tom();
-    const signNu = regnSignatur(t.regn, t.avtappning);
-    const harNulageForRegn =
-      (t.lageVyer.length > 0 && t.lageRegnSignatur === signNu) ||
-      (t.ritVyer.length > 0 && t.ritRegnSignatur === signNu) ||
-      (t.regn.forval === "standard" && t.avtappning === null && (projektSvar?.vyer?.length ?? 0) > 0);
-    const ogiltigtRegn = Boolean(regnFel) || avtappningFel || Boolean(solFel);
-    const kanKora = !pagar && !ogiltigtRegn && forvaldaAnalyser().length > 0;
+    const inst = bedomInstallningsStatus(t, amne, projektSvar?.vyer);
+    const harAktuellt = inst.harAktuelltResultat;
+    const kanKora = !pagar && kanStartaKorning(forvaldaAnalyser(), regnFel, avtappningFel, solFel);
 
     let knappar = "";
     if (harRitatForslag) {
-      if (lage === "nulage" && !harNulageForRegn) {
+      if (lage === "nulage" && !harAktuellt) {
         knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
         knappar += `<button type="button" class="flode-knapp" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
       } else {
         knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
-        if (!harNulageForRegn) {
+        if (!harAktuellt) {
           knappar += `<button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
         }
       }
-    } else if (!harNulageForRegn) {
+    } else if (!harAktuellt) {
       knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : "Beräkna nuläge"}</button>`;
     } else {
       knappar = `<button type="button" class="flode-knapp" id="ar-rita-forslag">Rita förslag</button><button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : "Räkna om nuläge"}</button>`;
@@ -874,8 +873,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       ? `<p class="flode-liten" role="status" aria-live="polite">${esc(t.korning?.text ?? "Beräknar …")}</p>`
       : t.korning?.fel
         ? `<p class="flode-fel flode-liten" role="alert">${esc(t.korning.fel)}</p>`
-        : !harNulageForRegn
-          ? `<p class="flode-liten flode-dampad">Valt regn skiljer sig från visat resultat (eller saknar beräkning).</p>`
+        : inst.varningText
+          ? `<p class="flode-liten flode-dampad">${esc(inst.varningText)}</p>`
           : "";
 
     el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${status}${forberaknadBasRad()}`;
@@ -1547,8 +1546,19 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       k.setAttribute("aria-selected", String(k.dataset.amne === amne));
       k.tabIndex = k.dataset.amne === amne ? 0 : -1;
     }
-    const solBlock = amne === "dagsljus" ? solValHtml(t.sol, solFel) : "";
     const pagar = arPagaende(t);
+    const solUtdaterat =
+      amne === "dagsljus" &&
+      !pagar &&
+      !solFel &&
+      bedomInstallningsStatus(t, amne, projektSvar?.vyer).solUtdaterat;
+    const solBlock =
+      amne === "dagsljus"
+        ? solValHtml(t.sol, solFel) +
+          (solUtdaterat
+            ? `<p class="flode-liten flode-dampad ar-sol-utdaterad" role="status">Vald solinställning skiljer sig från visat resultat (eller saknar beräkning).</p>`
+            : "")
+        : "";
     if (!vy || !r) {
       inne.innerHTML = pagar
         ? `${solBlock}<h1 class="flode-h" id="ar-rubrik">Beräknar …</h1><p class="flode-dampad" role="status">${esc(t.korning?.text ?? "")}</p>`
@@ -1697,6 +1707,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const onskad = onskadVy ? vyerFor(kalla).find((v) => v.id === onskadVy) : undefined;
     onskadVy = null;
     await valjVy(onskad ?? vyerFor(kalla)[0] ?? null);
+    ritaRegnOchKor();
   };
 
   // ---------- Redigering: ritning, verktyg, markhöjning/sänkning & spara ----------
@@ -2147,14 +2158,16 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   // ---------- Körningar direkt från kartan ----------
   const korNulageNu = async (): Promise<void> => {
     const analyser = forvaldaAnalyser();
-    if (analyser.length === 0 || regnFel || avtappningFel) return;
+    solFel = valideraSolVal(t.sol);
+    if (!kanStartaKorning(analyser, regnFel, avtappningFel, solFel)) return;
     korAutoByt = "nulage";
     await startaLageIdag(t, analyser);
   };
 
   const korForslagNu = async (): Promise<void> => {
     const analyser = forvaldaAnalyser();
-    if (analyser.length === 0 || regnFel || avtappningFel) return;
+    solFel = valideraSolVal(t.sol);
+    if (!kanStartaKorning(analyser, regnFel, avtappningFel, solFel)) return;
     const ok = await sparaNu();
     if (!ok || !t.scenario || avslutad) {
       if (lage !== "redigera") stallLage("redigera");

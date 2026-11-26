@@ -10,11 +10,12 @@ projektets källa:
   det som alltid funnits och byggs i `kartverktyg.py`; ingenting här ändrar det.
 - **Projekt i en geografi** (`slag = "geografi"`): ett projekt som skapats ur en mappad geografi (K46) med
   `floden projekt skapa --geografi`, `POST /api/projekt` eller MCP `projekt_skapa`. Mallarna är projektets egna
-  frågor (`<projekt>/fragor/skyfall.toml` och `dagsljus.toml`, skrivna av `kommuner.projekt.skriv_fragor`):
-  skyfall räknar på projektets `k1_vatten` (en ruta runt avgränsningen) och dagsljus på geografins K1-rutnät. Rutnätet
+  frågor (`<projekt>/fragor/skyfall.toml`, `dagsljus.toml` och – när geografin har NMD-lager – `ekologi.toml`,
+  skrivna av `kommuner.projekt.skriv_fragor`): samtliga räknar på geografins flerruts-K1-rutnät. Rutnätet
   är hela geografin, så **rutorna klipps till de som skär projektets avgränsning** (polygonen om projektet har en,
   annars rektangeln); bara de bär byggnader, terräng och det som får ritas. Beräkningsfrågorna pekar fortfarande på hela
-  basen med `fokus` på projektet, som `floden projekt kor`.
+  basen (skyfall och ekologi ser därmed hela tillrinningsområdet resp. kontexten, dagsljus använder `fokus`), som
+  `floden projekt kor`.
 
 Projektets id i adressen är registrets id (`register_id` i `projekt.json`, samma id som rollerna och körningarna bär).
 Ett projekt som skapats lokalt utan inloggning har inget registerid och nås med sitt projektid (mappnamnet) så länge
@@ -50,8 +51,12 @@ if TYPE_CHECKING:
 PROJEKT_ID_DEMO = "demokvarteret"
 KONTRAKT_PROJEKT = "floden-projekt/v1"
 _ID_RE = re.compile(r"^[A-Za-z0-9_\-]{1,80}$")
-_FRAGEFILER = (("skyfall.toml", "vatten"), ("dagsljus.toml", "dagsljus"))
-"""Projektets egna frågefiler och mallens korta namn (samma som demons: `vatten`, `dagsljus`)."""
+_FRAGEFILER = (
+    ("skyfall.toml", "vatten"),
+    ("dagsljus.toml", "dagsljus"),
+    ("ekologi.toml", "ekologi"),
+)
+"""Projektets egna frågefiler och mallens korta namn (samma som demons: `vatten`, `dagsljus`, `ekologi`)."""
 Rektangel = tuple[float, float, float, float]
 
 

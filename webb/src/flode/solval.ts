@@ -2,7 +2,7 @@
  * Solinställningar för dagsljus- och solstudier i Sol-fliken: rena typer, förval, validering,
  * serialisering och HTML-mall utan DOM. All solgeometri och skuggberäkning sker på servern.
  */
-import type { SolParam } from "../karta/kartapi.ts";
+import type { KorningPost, KorningSolInfo, SolParam } from "../karta/kartapi.ts";
 import { esc } from "../sidor.ts";
 
 export type { SolParam };
@@ -127,6 +127,53 @@ export function tillSolParam(val: SolVal): SolParam | null {
 /** Deterministisk signatur för valda solinställningar. */
 export function solSignatur(val: SolVal): string {
   return JSON.stringify(tillSolParam(val));
+}
+
+/**
+ * Återskapar ett `SolVal` ur serverns faktiska körningsparametrar (`KorningPost.sol`, B14).
+ * Returnerar `null` om körningen saknar strukturerade solparametrar.
+ */
+export function solValFranServer(info: KorningSolInfo | null | undefined): SolVal | null {
+  if (!info || typeof info !== "object") return null;
+  if (info.ar_standard) return { ...STANDARD_SOLVAL };
+  const datum =
+    typeof info.datum_iso === "string" && arGiltigtDatumIso(info.datum_iso)
+      ? info.datum_iso
+      : VARDAGJAMNING_ISO;
+  const datumForval: SolDatumForval =
+    datum === MIDSOMMAR_ISO ? "midsommar" : datum === VARDAGJAMNING_ISO ? "vardagjamning" : "eget";
+  const klockslag_utc =
+    typeof info.klockslag_utc === "number" && Number.isFinite(info.klockslag_utc)
+      ? info.klockslag_utc
+      : null;
+  const brukstid: SolBrukstid =
+    klockslag_utc === null && info.start_timme === 9 && info.slut_timme === 17
+      ? "09-17"
+      : "heladagen";
+  return {
+    datumForval,
+    egetDatumIso: datum,
+    brukstid,
+    sammanhangande: klockslag_utc === null && Boolean(info.sammanhangande),
+    inkludera_vsc: Boolean(info.inkludera_vsc),
+    klockslag_utc,
+  };
+}
+
+/**
+ * Beräknar exakt solsignatur ur serverns klara körningar (aldrig ur klientens `sessionStorage`),
+ * så att ändrad solinställning före F5 alltid flaggas som utdaterad (B14).
+ */
+export function solSignaturFranKorningar(
+  korningar: readonly KorningPost[] | undefined,
+): string | null {
+  if (!Array.isArray(korningar)) return null;
+  for (const k of korningar) {
+    if (k?.status?.status !== "klar") continue;
+    const val = solValFranServer(k.sol);
+    if (val) return solSignatur(val);
+  }
+  return null;
 }
 
 /** Läser sparat SolVal från okänd JSON (t.ex. sessionStorage) med säkra förval. */

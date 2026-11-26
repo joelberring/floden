@@ -8,8 +8,20 @@ import { PlanDok } from "../karta/plandok.ts";
 import type { KorningPost, ProjektInfo, ScenarioPost } from "../karta/kartapi.ts";
 import type { RitlagerDok } from "../karta/ritlager.ts";
 import type { ProjektVy } from "../types.ts";
-import { lasRegnVal, regnSignatur, STANDARD_REGNVAL, type RegnVal } from "./regnval.ts";
-import { lasSolVal, STANDARD_SOLVAL, type SolVal } from "./solval.ts";
+import {
+  lasRegnVal,
+  regnSignatur,
+  regnSignaturFranKorningar,
+  STANDARD_REGNVAL,
+  type RegnVal,
+} from "./regnval.ts";
+import {
+  lasSolVal,
+  solSignatur,
+  solSignaturFranKorningar,
+  STANDARD_SOLVAL,
+  type SolVal,
+} from "./solval.ts";
 
 export type Skede = "skiss" | "planunderlag";
 export const MOTTAGARE: ReadonlyArray<{ id: string; namn: string }> = [
@@ -63,6 +75,9 @@ export interface FlodeTillstand {
   /** Regn+avtappningssignatur för senaste klara körning av läget idag respektive förslag. */
   lageRegnSignatur: string | null;
   ritRegnSignatur: string | null;
+  /** Solsignatur för senaste klara körning av läget idag respektive förslag (B14). */
+  lageSolSignatur: string | null;
+  ritSolSignatur: string | null;
   korning: KorningLage | null;
   /** Vyer ur körningen av det ritade förslaget. */
   ritVyer: ProjektVy[];
@@ -106,6 +121,8 @@ export function tillstandFor(projekt: string): FlodeTillstand {
     sol: { ...STANDARD_SOLVAL },
     lageRegnSignatur: null,
     ritRegnSignatur: null,
+    lageSolSignatur: null,
+    ritSolSignatur: null,
     korning: null,
     ritVyer: [],
     lageVyer: [],
@@ -275,17 +292,100 @@ function senastKordaScenario(scenarier: readonly ScenarioPost[]): ScenarioPost |
   return [...medKorning].sort((a, b) => (b.andrad ?? "").localeCompare(a.andrad ?? ""))[0] ?? null;
 }
 
+/** Bedömer om visat resultat matchar aktuella regn- och solinställningar (B5, B14). */
+export interface InstallningsStatus {
+  harNulageForRegn: boolean;
+  harNulageForSol: boolean;
+  regnUtdaterat: boolean;
+  solUtdaterat: boolean;
+  harAktuelltResultat: boolean;
+  varningText: string | null;
+}
+
+export function bedomInstallningsStatus(
+  t: Pick<
+    FlodeTillstand,
+    | "regn"
+    | "avtappning"
+    | "sol"
+    | "lageVyer"
+    | "ritVyer"
+    | "lageRegnSignatur"
+    | "ritRegnSignatur"
+    | "lageSolSignatur"
+    | "ritSolSignatur"
+  >,
+  amne: string,
+  projektVyer?: readonly Pick<ProjektVy, "avsnitt">[] | null,
+): InstallningsStatus {
+  const regnSignNu = regnSignatur(t.regn, t.avtappning);
+  const solSignNu = solSignatur(t.sol);
+  const harProjektVatten = (projektVyer ?? []).some((v) => v.avsnitt === "vatten");
+  const harProjektSol = (projektVyer ?? []).some((v) => v.avsnitt === "dagsljus");
+  const harLageVatten = t.lageVyer.some((v) => v.avsnitt === "vatten");
+  const harRitVatten = t.ritVyer.some((v) => v.avsnitt === "vatten");
+  const harLageSol = t.lageVyer.some((v) => v.avsnitt === "dagsljus");
+  const harRitSol = t.ritVyer.some((v) => v.avsnitt === "dagsljus");
+
+  const arStandardRegn =
+    t.regn.forval === "standard" && t.regn.berakningstyp === "statisk" && t.avtappning === null;
+  const harNulageForRegn =
+    (harLageVatten && t.lageRegnSignatur === regnSignNu) ||
+    (harRitVatten && t.ritRegnSignatur === regnSignNu) ||
+    (arStandardRegn && harProjektVatten);
+
+  const arStandardSol = solSignNu === solSignatur(STANDARD_SOLVAL);
+  const harNulageForSol =
+    (harLageSol && t.lageSolSignatur === solSignNu) ||
+    (harRitSol && t.ritSolSignatur === solSignNu) ||
+    (arStandardSol && harProjektSol);
+
+  const berorSol = amne === "dagsljus" || harLageSol || harRitSol || harProjektSol;
+  const regnUtdaterat = !harNulageForRegn;
+  const solUtdaterat = berorSol && !harNulageForSol;
+  const harAktuelltResultat = !regnUtdaterat && !solUtdaterat;
+
+  let varningText: string | null = null;
+  if (regnUtdaterat && solUtdaterat) {
+    varningText =
+      "Valt regn och solinställning skiljer sig från visat resultat (eller saknar beräkning).";
+  } else if (regnUtdaterat) {
+    varningText = "Valt regn skiljer sig från visat resultat (eller saknar beräkning).";
+  } else if (solUtdaterat) {
+    varningText = "Vald solinställning skiljer sig från visat resultat (eller saknar beräkning).";
+  }
+  return {
+    harNulageForRegn,
+    harNulageForSol,
+    regnUtdaterat,
+    solUtdaterat,
+    harAktuelltResultat,
+    varningText,
+  };
+}
+
+/** Spärr före körning: kräver minst en vald analys samt giltiga regn-, avtappnings- och solinställningar (B14). */
+export function kanStartaKorning(
+  analyser: readonly string[],
+  regnFel: string | null,
+  avtappningFel: boolean,
+  solFel: string | null,
+): boolean {
+  return analyser.length > 0 && !regnFel && !avtappningFel && !solFel;
+}
+
 /**
  * Återladdar senast beräknade nuläges- och förslagsvyer från servern vid projektöppning/sidomladdning,
  * så att sparade resultat inte verkar tappas när webbläsarens RAM töms.
+ *
+ * Signaturer (`lageRegnSignatur`, `ritRegnSignatur`, `lageSolSignatur`, `ritSolSignatur`) beräknas
+ * uteslutande ur serverkörningens faktiska parametrar — aldrig ur klientens `sessionStorage` (B5, B14).
  */
 export async function aterladdaSparadeVyer(
   t: FlodeTillstand,
   api: AterladdaVyerApi,
   kandaScenarier?: readonly ScenarioPost[],
 ): Promise<AterladdaResultat> {
-  const signNu = regnSignatur(t.regn, t.avtappning);
-
   const laddaLage = async (): Promise<void> => {
     if (t.lageVyer.length > 0) return;
     try {
@@ -293,7 +393,8 @@ export async function aterladdaSparadeVyer(
       const vyer = klaraVyerFran(st?.korningar);
       if (vyer.length > 0) {
         t.lageVyer = vyer;
-        t.lageRegnSignatur = signNu;
+        t.lageRegnSignatur = regnSignaturFranKorningar(st?.korningar);
+        t.lageSolSignatur = solSignaturFranKorningar(st?.korningar);
       }
     } catch {
       /* Ingen sparad nulägeskörning eller tillfälligt fel: lämna tomt utan krasch. */
@@ -321,7 +422,8 @@ export async function aterladdaSparadeVyer(
       const vyer = klaraVyerFran(st?.korningar);
       if (vyer.length > 0) {
         t.ritVyer = vyer;
-        t.ritRegnSignatur = signNu;
+        t.ritRegnSignatur = regnSignaturFranKorningar(st?.korningar);
+        t.ritSolSignatur = solSignaturFranKorningar(st?.korningar);
         if (!t.scenario) {
           t.scenario = kandidat;
           if (!t.namn) t.namn = kandidat.namn;
