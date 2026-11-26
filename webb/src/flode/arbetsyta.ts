@@ -113,7 +113,7 @@ import {
   type Underlag,
 } from "./nyckeltal.ts";
 import { osakerhetTal, overfallRader, type OsakerhetSvar } from "./osakerhet.ts";
-import { kroppHtml, type OsakerhetVisning } from "./panelhtml.ts";
+import { kroppHtml, osakerhetHtml, talListaHtml, type OsakerhetVisning } from "./panelhtml.ts";
 import { projektKallaText } from "./projektkalla.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import {
@@ -209,6 +209,163 @@ const TAL2 = talFormat(2);
 const AMNEN_ORDNING: ResultatAmne[] = ["vatten", "dagsljus", "ekologi", "luft"];
 const AMNESNAMN: Record<ResultatAmne, string> = { vatten: "Skyfall", dagsljus: "Sol", ekologi: "Ekologi", luft: LUFT_FLIK_NAMN };
 const MARK_SNABB_M = [-1.0, -0.5, -0.2, 0.2, 0.5, 1.0] as const;
+
+/** Knapp-id för "Visa osäkerhet" (måste matcha `osakerhetHtml` i `panelhtml.ts`, W-B4). */
+export const OSAKERHET_KNAPP_ID = "rs-osakerhet";
+
+/** Delegerad klickselektor i arbetsytan (Steg 2). */
+export const ARBETSYTA_KLICK_SELEKTOR =
+  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
+
+/** Kopplar 3D-vyns hovringsavläsning, objekttext och fel till arbetsytans DOM-uppdateringar (W-B4). */
+export function skapa3dAterkoppling(mal: {
+  avlasning(e: number | null, n: number | null): void;
+  sattText(txt: string | null): void;
+  sattFel(txt: string | null): void;
+}): {
+  avlasning(e: number | null, n: number | null): void;
+  text(txt: string | null): void;
+  fel(txt: string): void;
+} {
+  return {
+    avlasning: (e, n) => {
+      if (e !== null && n !== null) mal.sattText(null);
+      mal.avlasning(e, n);
+    },
+    text: (txt) => {
+      mal.sattText(txt && txt.trim() ? txt.trim() : null);
+    },
+    fel: (txt) => {
+      const ren = txt.trim();
+      mal.sattFel(ren ? (/^3d/i.test(ren) ? ren : `3D-vy: ${ren}`) : null);
+    },
+  };
+}
+
+/** Uppdaterar `#ar-hjalp` med 3D-fel, verktygshjälp eller mät-/sektionshjälp (W-B4). */
+export function renderaHjalpElement(
+  h: Pick<HTMLElement, "hidden" | "textContent" | "setAttribute"> & {
+    classList: Pick<DOMTokenList, "add" | "remove" | "toggle">;
+  },
+  indata: {
+    treDFel: string | null;
+    sektionAktiv: boolean;
+    sektionText: string;
+    matAktiv: boolean;
+    matText: string;
+    redigeraAktiv: boolean;
+    meddelande: Meddelande | null;
+    verktygText: string;
+  },
+): void {
+  if (indata.treDFel) {
+    h.hidden = false;
+    h.classList.add("fel", "flode-fel");
+    h.setAttribute("role", "alert");
+    h.textContent = indata.treDFel;
+    return;
+  }
+  h.setAttribute("role", "status");
+  if (indata.sektionAktiv) {
+    h.hidden = false;
+    h.classList.remove("fel", "flode-fel");
+    h.textContent = indata.sektionText;
+    return;
+  }
+  if (indata.matAktiv) {
+    h.hidden = false;
+    h.classList.remove("fel", "flode-fel");
+    h.textContent = indata.matText;
+    return;
+  }
+  if (!indata.redigeraAktiv) {
+    h.hidden = true;
+    h.classList.remove("fel", "flode-fel");
+    return;
+  }
+  const text = indata.meddelande ? indata.meddelande.text : indata.verktygText;
+  h.hidden = !text;
+  h.textContent = text;
+  const arFel = indata.meddelande?.typ === "fel";
+  h.classList.toggle("fel", arFel);
+  h.classList.toggle("flode-fel", arFel);
+  if (arFel) h.setAttribute("role", "alert");
+}
+
+/** Domänkorrekt hjälptext i nulägespanelen (aldrig hårdkodat "vattendjup" för sol/ekologi/luft, W-B8). */
+export function nulageTipsHtmlForAmne(amne: ResultatAmne): string {
+  if (amne === "vatten") {
+    return "Håll pekaren över kartan för exakt vattendjup och markhöjd. Använd <strong>Mät bredd</strong> eller <strong>Sektion</strong> för att granska rinnstråk, eller växla till <strong>Redigera förslag</strong> för att rita hus och ändra markhöjd ovanpå vattnet.";
+  }
+  if (amne === "dagsljus") {
+    return "Håll pekaren över kartan för soltimmar och markhöjd. Växla till <strong>Redigera förslag</strong> för att rita hus och se hur skuggningen förändras.";
+  }
+  if (amne === "luft") {
+    return "Håll pekaren över kartan för vind- eller haltvärde på gånghöjd och markhöjd. Växla till <strong>Redigera förslag</strong> för att pröva ett nytt förslag.";
+  }
+  return "Håll pekaren över kartan för spridningsvärde och markhöjd. Välj habitatnätverk ovan eller växla till <strong>Redigera förslag</strong> för att pröva hur nya byggnader och ytor påverkar konnektiviteten.";
+}
+
+/** Mätvärden i nulägespanelen för Ekologi-fliken (ECA före, PC före och antal habitatfläckar, W-B8). */
+export function nulageEkologiTalHtml(u: Underlag): string {
+  const ekoTal = nyckeltal("ekologi", u);
+  const ecaFore = ekoTal[0];
+  const pcFore = ekoTal[3];
+  const flackAntal = u.ekologi?.fore?.antal_flackar;
+  const poster = [
+    ...(ecaFore ? [ecaFore] : []),
+    ...(pcFore ? [pcFore] : []),
+    {
+      etikett: "Habitatfläckar i nuläget",
+      varde: typeof flackAntal === "number" && Number.isFinite(flackAntal) ? formatera(flackAntal, 0) : "–",
+    },
+  ];
+  return talListaHtml(poster);
+}
+
+/** Uppdaterar avläsningsrutan `#ar-avl` för både 2D och 3D (markvärden, 3D-objekttext och markhöjd, W-B4). */
+export function renderaAvlasningElement(
+  ruta: Pick<HTMLElement, "hidden" | "innerHTML">,
+  indata: {
+    senasteAvl: AvlasningSvar | null;
+    vy: Pick<ProjektVy, "fore_lager" | "efter_lager" | "skillnad_lager" | "lage_idag"> | null;
+    lage: ArbetsLage;
+    amne: ResultatAmne;
+    visaTak: boolean;
+    treDText: string | null;
+    hojdText: string | null;
+  },
+): void {
+  const delar: string[] = [];
+  const { senasteAvl, vy, lage, amne, visaTak, treDText, hojdText } = indata;
+  if (senasteAvl && vy && !senasteAvl.varden.every((x) => !x.inom)) {
+    const rader: Array<[string, string | null]> =
+      lage === "nulage" || lage === "redigera" || vy.lage_idag
+        ? [["Nuläge", vy.fore_lager]]
+        : [
+            ["Nuläge", vy.fore_lager],
+            ["Efter", vy.efter_lager],
+            ["Skillnad", vy.skillnad_lager],
+          ];
+    for (const [namn, id] of rader) {
+      const x = senasteAvl.varden.find((v) => v.lager_id === id && v.inom);
+      if (!x) continue;
+      let text: string;
+      if (x.tak && !visaTak) text = "tak, inte mark";
+      else if (x.varde === null) text = amne === "vatten" ? "torr mark (0 cm)" : "inget värde";
+      else if (amne === "vatten" && x.enhet === "m") {
+        text = `${formateraDjupCm(x.varde, x.typ === "skillnad")}${x.tak ? " (tak)" : ""}`;
+      } else {
+        text = `${x.typ === "skillnad" && x.varde > 0 ? "+" : ""}${formatera(x.varde, 2)}${x.enhet ? ` ${x.enhet}` : ""}${x.tak ? " (tak)" : ""}`;
+      }
+      delar.push(`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`);
+    }
+  }
+  if (treDText) delar.push(`<span class="ar-avl-3d"><strong>${esc(treDText)}</strong></span>`);
+  if (hojdText) delar.push(`<span class="flode-dampad" id="ar-hojd">${esc(hojdText)}</span>`);
+  ruta.hidden = delar.length === 0;
+  ruta.innerHTML = delar.join("");
+}
 
 const FIGURFARG: Record<string, string> = {
   mark: "#8b5e3c",
@@ -393,6 +550,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let avlTimer: number | null = null;
   let hojdText: string | null = null;
   let senasteAvl: AvlasningSvar | null = null;
+  let treDText: string | null = null;
+  let treDFel: string | null = null;
 
   // Redigeringstillstånd (Ritverktyg, kontroll, sparande)
   let verktyg: Ritverktyg | null = null;
@@ -884,8 +1043,16 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const visaTomKort = lage === "nulage" && !harFore() && !pagar && Boolean(info);
     tomKort.hidden = !visaTomKort;
     if (visaTomKort) {
+      const tomBeskrivning =
+        amne === "vatten"
+          ? `Kör en skyfallsberäkning för projektets befintliga läge med <strong>${esc(valdRegnText(t.regn, info?.regn_forval, t.avtappning))}</strong> så visas vattendjup och flödesvägar direkt på kartan.`
+          : amne === "dagsljus"
+            ? "Kör en nulägesberäkning för projektets befintliga läge så visas soltimmar och skuggning direkt på kartan."
+            : amne === "ekologi"
+              ? "Kör en nulägesberäkning för projektets befintliga läge så visas ekologisk konnektivitet direkt på kartan."
+              : "Kör en nulägesberäkning för projektets befintliga läge så visas vindkomfort och luftresultat direkt på kartan.";
       tomKort.innerHTML = `<h2>Nuläget är inte beräknat än</h2>
-        <p>Kör en skyfallsberäkning för projektets befintliga läge med <strong>${esc(valdRegnText(t.regn, info?.regn_forval, t.avtappning))}</strong> så visas vattendjup och flödesvägar direkt på kartan.</p>
+        <p>${tomBeskrivning}</p>
         <button type="button" class="flode-knapp svart stor" id="ar-tom-kor-nulage"${kanKora ? "" : " disabled"}>Beräkna nuläge</button>`;
     }
   };
@@ -1035,7 +1202,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (tl && vy) {
       const namn =
         lage === "redigera"
-          ? "Nulägets vattendjup (underlag)"
+          ? amne === "vatten"
+            ? "Nulägets vattendjup (underlag)"
+            : `Nulägets ${tl.etikett.toLowerCase()} (underlag)`
           : lage === "skillnad"
             ? `Skillnad i ${tl.etikett.toLowerCase()}`
             : tl.etikett;
@@ -1068,34 +1237,15 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       sankaEl.innerHTML = "";
     }
 
-    const ruta = el("ar-avl");
-    const delar: string[] = [];
-    if (senasteAvl && vy && lage !== "3d" && !senasteAvl.varden.every((x) => !x.inom)) {
-      const rader: Array<[string, string | null]> =
-        lage === "nulage" || lage === "redigera" || vy.lage_idag
-          ? [["Nuläge", vy.fore_lager]]
-          : [
-              ["Nuläge", vy.fore_lager],
-              [`Efter`, vy.efter_lager],
-              ["Skillnad", vy.skillnad_lager],
-            ];
-      for (const [namn, id] of rader) {
-        const x = senasteAvl.varden.find((v) => v.lager_id === id && v.inom);
-        if (!x) continue;
-        let text: string;
-        if (x.tak && !visaTak) text = "tak, inte mark";
-        else if (x.varde === null) text = "torr mark (0 cm)";
-        else if (amne === "vatten" && x.enhet === "m") {
-          text = `${formateraDjupCm(x.varde, x.typ === "skillnad")}${x.tak ? " (tak)" : ""}`;
-        } else {
-          text = `${x.typ === "skillnad" && x.varde > 0 ? "+" : ""}${formatera(x.varde, 2)}${x.enhet ? ` ${x.enhet}` : ""}${x.tak ? " (tak)" : ""}`;
-        }
-        delar.push(`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`);
-      }
-    }
-    if (hojdText && lage !== "3d") delar.push(`<span class="flode-dampad" id="ar-hojd">${esc(hojdText)}</span>`);
-    ruta.hidden = delar.length === 0;
-    ruta.innerHTML = delar.join("");
+    renderaAvlasningElement(el("ar-avl"), {
+      senasteAvl,
+      vy,
+      lage,
+      amne,
+      visaTak,
+      treDText,
+      hojdText,
+    });
   };
 
   const planeraAvlasning = (e: number | null, n: number | null): void => {
@@ -1103,7 +1253,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (avlTimer !== null) window.clearTimeout(avlTimer);
     avlTimer = null;
     const v = vy;
-    const visaRasterAvl = lage !== "3d" && (lage !== "redigera" || visaVattenUnder);
+    const visaRasterAvl = lage !== "redigera" || visaVattenUnder;
     if (e === null || n === null || !v || !r || !visaRasterAvl) {
       avlSeq += 1;
       senasteAvl = null;
@@ -1312,28 +1462,17 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   };
 
   const visaHjalp = (): void => {
-    const h = el("ar-hjalp");
-    if (sektion.aktiv) {
-      h.hidden = false;
-      h.classList.remove("fel");
-      h.textContent = sektion.hjalpText();
-      return;
-    }
-    if (mat.aktiv) {
-      h.hidden = false;
-      h.classList.remove("fel");
-      h.textContent = mat.hjalpText();
-      return;
-    }
-    if (lage !== "redigera" || !verktyg) {
-      h.hidden = true;
-      return;
-    }
     const aktivRoll = t.dok.lagerAv(t.dok.aktivtLager)?.roll;
-    const text = meddelande ? meddelande.text : hjalpText(verktyg, aktivRoll);
-    h.hidden = !text;
-    h.textContent = text;
-    h.classList.toggle("fel", meddelande?.typ === "fel");
+    renderaHjalpElement(el("ar-hjalp"), {
+      treDFel,
+      sektionAktiv: sektion.aktiv,
+      sektionText: sektion.hjalpText(),
+      matAktiv: mat.aktiv,
+      matText: mat.hjalpText(),
+      redigeraAktiv: lage === "redigera" && Boolean(verktyg),
+      meddelande,
+      verktygText: verktyg ? hjalpText(verktyg, aktivRoll) : "",
+    });
   };
 
   // ---------- 3D-vy ----------
@@ -1342,6 +1481,18 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const [e, n] = wgs84TillSweref(v.lng, v.lat);
     return { e, n, mpp: meterPerPxFranZoom(v.zoom, v.lat), hojdPx: el("ar-a").clientHeight || 600 };
   };
+  const koppla3dAterkoppling = () =>
+    skapa3dAterkoppling({
+      avlasning: planeraAvlasning,
+      sattText: (txt) => {
+        treDText = txt;
+        ritaAvlasning();
+      },
+      sattFel: (txt) => {
+        treDFel = txt;
+        visaHjalp();
+      },
+    });
   lager3dLista.vidAndring(() => ritaTecken());
   lager3dLista.registrera({ id: "geo:byggnader", grupp: "geometri", namn: "Byggnader", synlig: true, opacitet: 1, hjalp: "Byggnaderna i 3D." });
   lager3dLista.registrera({ id: "plan:aktuellt", grupp: "planforslag", namn: "Aktuellt förslag", synlig: true, opacitet: 1, hjalp: "Det du ritar just nu." });
@@ -1353,6 +1504,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     ruta.hidden = !redigera3dPa;
     el("ar-redigera-3d-knapp").setAttribute("aria-pressed", String(redigera3dPa));
     if (redigera3dPa && !vy3dDock && a && info) {
+      treDText = null;
+      treDFel = null;
+      visaHjalp();
       lager3dLista.sattSynlig(VY3D_ID, true);
       vy3dDock = skapa3dVy({
         projekt,
@@ -1371,13 +1525,15 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           return { e, n, mpp: meterPerPxFranZoom(v.zoom, v.lat), hojdPx: yta3d.clientHeight || 220 };
         },
         settKartvy: () => undefined,
-        avlasning: () => undefined,
-        text: () => undefined,
-        fel: () => undefined,
+        ...koppla3dAterkoppling(),
       }).montera(yta3d);
     } else if (!redigera3dPa && vy3dDock) {
       vy3dDock.avmontera();
       vy3dDock = null;
+      treDText = null;
+      treDFel = null;
+      planeraAvlasning(null, null);
+      visaHjalp();
     }
   };
 
@@ -1387,6 +1543,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     lage = nytt;
     if (lage !== "redigera" && redigera3dPa) sattRedigera3d(false);
     if (till3d && !vy3d && a && info) {
+      treDText = null;
+      treDFel = null;
+      planeraAvlasning(null, null);
       const harSkill = Boolean(vy && lagerPost(r, vy.skillnad_lager));
       for (const id of ["fore", "efter", "skillnad"]) lager3dLista.sattSynlig(`res:${id}`, id === (harSkill ? "skillnad" : "fore"));
       lager3dLista.sattSynlig(VY3D_ID, true);
@@ -1408,13 +1567,14 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           const [lng, lat] = swerefTillWgs84(e, n);
           a?.settVy({ lng, lat, zoom: zoomFranMeterPerPx(mpp, lat) });
         },
-        avlasning: () => undefined,
-        text: () => undefined,
-        fel: () => undefined,
+        ...koppla3dAterkoppling(),
       }).montera(el("ar-3d"));
     } else if (!till3d && vy3d) {
       vy3d.avmontera();
       vy3d = null;
+      treDText = null;
+      treDFel = null;
+      planeraAvlasning(null, null);
       el("ar-3d").hidden = true;
       el("ar-a").style.visibility = "";
       window.requestAnimationFrame(() => a?.matOm());
@@ -1594,20 +1754,36 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const u = underlag();
     const regn = amne === "vatten" ? korningRegnRad() : null;
     const vattenAnt = amne === "vatten" ? [...new Set((r.antaganden.vatten ?? []).flatMap((x) => [x.takvatten_text, x.avtappning_text]).filter((x): x is string => Boolean(x)))] : [];
+    const natverkVal =
+      amne === "ekologi" && natverkLista.length > 0
+        ? `<label class="flode-liten">Habitatnätverk <select id="ar-natverk" aria-label="Habitatnätverk">${natverkLista.map((n) => `<option value="${esc(n.natverk_id)}"${n.natverk_id === (valtNatverk ?? ekologi?.artprofil_id) ? " selected" : ""}>${esc(n.visningsnamn)}</option>`).join("")}</select></label>`
+        : "";
+    const ekoKalla = amne === "ekologi" ? [resultatEtikett(ekologi), kallRad(ekologi), ...antagandeRader(ekologi), intervallForklaring(ekologi)].filter(Boolean) : [];
+    const ekoVarning = amne === "ekologi" ? [...(ekologi?.varningar ?? []), ...(ekologiFel ? [`Ekologisvaret gick inte att hämta: ${ekologiFel}`] : [])] : [];
 
     if (kalla === "lage" || lage === "nulage") {
       const djupTxt = u.foreDjup_m !== null && u.foreDjup_m !== undefined ? formateraDjupCm(u.foreDjup_m) : "–";
       const volTxt = u.foreLagrat_m3 !== null && u.foreLagrat_m3 !== undefined ? `${formatera(u.foreLagrat_m3, 0)} m³` : "–";
-      const nulageTal =
-        amne === "vatten"
-          ? `<dl class="flode-tal"><div><dt>Största djup i nuläget</dt><dd>${esc(djupTxt)}</dd></div><div><dt>Stående vatten i lågpunkter</dt><dd>${esc(volTxt)}</dd></div></dl>`
+      let nulageTal = "";
+      if (amne === "vatten") {
+        nulageTal = `<dl class="flode-tal"><div><dt>Största djup i nuläget</dt><dd>${esc(djupTxt)}</dd></div><div><dt>Stående vatten i lågpunkter</dt><dd>${esc(volTxt)}</dd></div></dl>`;
+      } else if (amne === "ekologi") {
+        nulageTal = nulageEkologiTalHtml(u);
+      }
+      const nulageTipsHtml = nulageTipsHtmlForAmne(amne);
+      const ekoKallaHtml =
+        ekoKalla.length > 0
+          ? `<ul class="flode-liten flode-dampad" id="rs-eko-kalla">${ekoKalla.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`
           : "";
-      const anm = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), `Körning ${vy.korning_id}.`].filter(Boolean).join(" ");
-      inne.innerHTML = `${kallVal}${solBlock}${lagerBlock}
+      const nulageOsakHtml = amne === "vatten" || amne === "dagsljus" ? osakerhetHtml(osakerhetVisning()) : "";
+      const anm = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ...ekoVarning, `Körning ${vy.korning_id}.`].filter(Boolean).join(" ");
+      inne.innerHTML = `${kallVal}${solBlock}${natverkVal}${lagerBlock}
         <h1 class="flode-h" id="ar-rubrik">Nuläge · ${esc(AMNESNAMN[amne])}</h1>
         ${nulageTal}
+        ${nulageOsakHtml}
         ${dpcTabellHtml()}
-        <p class="flode-liten flode-dampad">Håll pekaren över kartan för exakt vattendjup och markhöjd. Använd <strong>Mät bredd</strong> eller <strong>Sektion</strong> för att granska rinnstråk, eller växla till <strong>Redigera förslag</strong> för att rita hus och ändra markhöjd ovanpå vattnet.</p>
+        ${ekoKallaHtml}
+        <p class="flode-liten flode-dampad">${nulageTipsHtml}</p>
         <p class="flode-liten flode-dampad">${esc(anm)}</p>
         <details class="flode-detalj"><summary>Så läser du kartan</summary><p class="flode-liten flode-dampad">${esc(lasKartan(vy, "fore", info?.paahittat !== false))}</p></details>`;
       return;
@@ -1616,12 +1792,6 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const tal = nyckeltal(amne, u);
     const jfr = jamforelse(amne, u);
     const ingress = amne === "dagsljus" || amne === "ekologi" ? projektSvar?.avsnitt?.find((x) => x.id === amne)?.ingress : null;
-    const natverkVal =
-      amne === "ekologi" && natverkLista.length > 0
-        ? `<label class="flode-liten">Habitatnätverk <select id="ar-natverk" aria-label="Habitatnätverk">${natverkLista.map((n) => `<option value="${esc(n.natverk_id)}"${n.natverk_id === (valtNatverk ?? ekologi?.artprofil_id) ? " selected" : ""}>${esc(n.visningsnamn)}</option>`).join("")}</select></label>`
-        : "";
-    const ekoKalla = amne === "ekologi" ? [resultatEtikett(ekologi), kallRad(ekologi), ...antagandeRader(ekologi), intervallForklaring(ekologi)].filter(Boolean) : [];
-    const ekoVarning = amne === "ekologi" ? [...(ekologi?.varningar ?? []), ...(ekologiFel ? [`Ekologisvaret gick inte att hämta: ${ekologiFel}`] : [])] : [];
     const raderRegn = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ingress ?? "", ...ekoVarning, `Körning ${vy.korning_id}.`].filter(Boolean).join(" ");
     const vyVal =
       vyer.length > 1
@@ -1659,7 +1829,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
             : await lasJson<MarkSvar>(`/api/korningar/${encodeURIComponent(ny.korning_id)}/marksiffror?lager=${encodeURIComponent(ny.skillnad_lager)}`).catch(() => null);
         let eko: EkologiMedLager | null = null;
         let ekoFel: string | null = null;
-        if (amne === "ekologi" && kalla !== "lage") {
+        if (amne === "ekologi") {
           const begaran: Record<string, unknown> = { omrade_id: projekt };
           if (valtNatverk) begaran.natverk = valtNatverk;
           if (natverkLista.length === 0) {
@@ -2323,9 +2493,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   // ---------- Händelsehantering ----------
   lyssna(rot, "click", (h) => {
     const target = h.target as Element;
-    const m = target.closest<HTMLElement>(
-      "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#ar-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara",
-    );
+    const m = target.closest<HTMLElement>(ARBETSYTA_KLICK_SELEKTOR);
     if (!m) return;
 
     if (m.id === "ar-tecken-vaxla") {
@@ -2576,7 +2744,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       void laddaVektorer();
       return;
     }
-    if (m.id === "ar-osakerhet") {
+    if (m.id === OSAKERHET_KNAPP_ID) {
       if (amne !== LUFT_AMNE && osakPa.has(amne)) {
         osakPa.delete(amne);
         ritaAnalysPanel();

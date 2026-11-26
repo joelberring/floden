@@ -864,12 +864,12 @@ export interface RapportAmne {
   forklaring: string | null;
   mall: boolean;
   forval_korning: string | null;
-  /** Slag på förvalskörningen: förslag, egen eller demo (K48). */
+  /** Slag på förvalskörningen: förslag, läget idag, egen eller demo (K48). */
   forval_slag?: KorningSlag | null;
   korningar: RapportKorning[];
 }
 
-export type KorningSlag = "forslag" | "egen" | "demo" | "okand";
+export type KorningSlag = "forslag" | "lage_idag" | "egen" | "demo" | "okand";
 
 export interface RapportKorning {
   korning_id: string;
@@ -892,11 +892,21 @@ export interface RapportBestallningBegaran {
   mottagare_roll?: string;
 }
 
-/** Valen som följer med när rapporten skapas (K48): körningen, förslaget och frågorna ur steg 3. */
+/** Extern luftindata (timserie i CSV + explicit bakgrundshalt) till `POST /api/projekt/<id>/rapporter`. */
+export interface LuftRapportIndata {
+  serie_fore_csv: string;
+  serie_efter_csv?: string | null;
+  bakgrund_ug_m3: number;
+  osakerhet_halt_rel?: number;
+  osakerhet_bakgrund_ug_m3?: number;
+}
+
+/** Valen som följer med när rapporten skapas (K48): körningen, förslaget, frågorna och ev. luftindata. */
 export interface RapportVal {
   korning_id?: string;
   scenario?: string;
   fragor?: string[];
+  luft?: LuftRapportIndata;
 }
 
 export interface RapportJobb {
