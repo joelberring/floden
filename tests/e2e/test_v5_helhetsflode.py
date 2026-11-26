@@ -1000,7 +1000,19 @@ def test_e2e_v5_konto_backup_verifiera_halsa_och_noll_pii(tmp_path: Path) -> Non
     with pytest.raises(BackupFel, match="SHA-256"):
         verifiera_backup(manip_fil)
 
-    # Driftskontroll (`drifts_halsa`)
+    # Driftskontroll (`drifts_halsa`): lokal lagring -> helt grön (`status == "ok"`),
+    # S3-lagring -> `ok=True` och strippad endpoint-URL (`varning` om `boto3` saknas i miljön).
+    halsa_lokal = drifts_halsa(
+        db_sokvag=db_fil, miljo={"FLODEN_NYCKELHEMLIGHET": fernet_nyckel}
+    )
+    assert halsa_lokal["ok"] is True
+    assert halsa_lokal["status"] == "ok"
+    assert halsa_lokal["varningar"] == []
+    assert halsa_lokal["databas"]["wal_aktivt"] is True
+    assert halsa_lokal["databas"]["integrity_check"] == "ok"
+    assert halsa_lokal["nyckelforrad"]["paslagen"] is True
+    assert halsa_lokal["lagring"]["typ"] == "lokal"
+
     miljo_env = {
         "FLODEN_NYCKELHEMLIGHET": fernet_nyckel,
         "FLODEN_S3_TYP": "s3",
@@ -1011,10 +1023,12 @@ def test_e2e_v5_konto_backup_verifiera_halsa_och_noll_pii(tmp_path: Path) -> Non
     }
     halsa = drifts_halsa(db_sokvag=db_fil, miljo=miljo_env)
     assert halsa["ok"] is True
-    assert halsa["status"] == "ok"
+    assert halsa["status"] == ("ok" if halsa["lagring"]["boto3_installerad"] else "varning")
     assert halsa["databas"]["wal_aktivt"] is True
     assert halsa["databas"]["integrity_check"] == "ok"
     assert halsa["nyckelforrad"]["paslagen"] is True
+    assert halsa["lagring"]["konfigurerad"] is True
+    assert halsa["lagring"]["har_nycklar"] is True
     assert halsa["lagring"]["endpoint"] == "https://fsn1.your-objectstorage.com"
 
     # 0 PII och 0 hemligheter i lokalt manifest, uppladdat manifest, resultat och hälsosvar
@@ -1025,6 +1039,7 @@ def test_e2e_v5_konto_backup_verifiera_halsa_och_noll_pii(tmp_path: Path) -> Non
         manifest_s3,
         json.dumps(res.till_dict(), ensure_ascii=False),
         json.dumps(ver.till_dict(), ensure_ascii=False),
+        json.dumps(halsa_lokal, ensure_ascii=False),
         json.dumps(halsa, ensure_ascii=False),
     )
     for kanslig in (epost, namn, fernet_nyckel, api_hemlighet, s3_access, s3_secret, url_losen):
