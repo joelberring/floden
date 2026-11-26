@@ -173,7 +173,7 @@ def test_asgi_samtidighetsgrans_ger_503_men_blockerar_inte_get() -> None:
 
     async def _kor() -> None:
         tung1 = asyncio.create_task(
-            _anropa_asgi(asgi_app, "POST", "/api/simulera", chunks=(b"{}",))
+            _anropa_asgi(asgi_app, "POST", "/api/kor", chunks=(b"{}",))
         )
         while not spy.startad.is_set():
             await asyncio.sleep(0.005)
@@ -184,7 +184,7 @@ def test_asgi_samtidighetsgrans_ger_503_men_blockerar_inte_get() -> None:
 
         # Andra samtidiga tunga POST ska avvisas med 503 + Retry-After
         p2_status, p2_headers, p2_kropp = await _anropa_asgi(
-            asgi_app, "POST", "/api/simulera", chunks=(b"{}",)
+            asgi_app, "POST", "/api/kor", chunks=(b"{}",)
         )
         assert p2_status == 503
         assert p2_headers["retry-after"] == "5"
