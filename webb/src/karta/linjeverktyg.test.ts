@@ -269,3 +269,43 @@ test("pekaren lämnar kartan mitt i en linje: förhandsvisningen försvinner uta
   klicka(r, [[320, 300]]);
   assert.equal(r.linje.utkast.length, 2);
 });
+
+test("CAD-mått: Linjeverktyg och Ritverktyg accepterar exakta punkter via SWEREF och längd/bäring för linje och yta", () => {
+  const { r, dok } = skapa();
+
+  // 1. Linje med startpunkt i SWEREF och nästa punkt 25,5 m i bäring 45°
+  r.sattVerktyg("linje");
+  assert.equal(r.laggTillPunktSweref(500, 600), true);
+  assert.equal(r.laggTillPunktMedMatt(25.5, 45), true);
+  assert.equal(r.laggTillPunktMedMatt(0, 90), false);
+  assert.equal(r.laggTillPunktMedMatt(-2, 90), false);
+  assert.equal(r.laggTillPunktSweref(Number.NaN, 600), false);
+  assert.equal(r.linje.utkast.length, 2);
+  assert.ok(Math.abs(r.linje.utkast[1]!.x - (500 + 25.5 / Math.SQRT2)) < 1e-9);
+  assert.ok(Math.abs(r.linje.utkast[1]!.y - (600 + 25.5 / Math.SQRT2)) < 1e-9);
+  assert.equal(r.tangent(tang("Enter")), true);
+
+  const linje = [...dok.figurer.values()].find((f) => f.typ === "linje")!;
+  assert.equal(linje.punkter.length, 2);
+  // PlanDok.normaliseraLinje avrundar sparade hörn till 1 cm (samma regel som servern)
+  assert.deepEqual(xy(linje.punkter), [
+    [500, 600],
+    [Math.round((500 + 25.5 / Math.SQRT2) * 100) / 100, Math.round((600 + 25.5 / Math.SQRT2) * 100) / 100],
+  ]);
+
+  // 2. Markyta 10 × 15 m direkt via Linjeverktyg.laggTillPunktSweref / laggTillPunktMedMatt
+  r.sattVerktyg("yta");
+  assert.equal(r.linje.laggTillPunktSweref("yta", 1000, 2000), true);
+  assert.equal(r.linje.laggTillPunktMedMatt("yta", 10, 90), true);
+  assert.equal(r.linje.laggTillPunktMedMatt("yta", 15, 0), true);
+  assert.equal(r.linje.laggTillPunktMedMatt("yta", 10, 270), true);
+  assert.equal(r.linje.avsluta("yta"), true);
+
+  const ytaFig = [...dok.figurer.values()].find((f) => f.typ === "yta")!;
+  assert.deepEqual(xy(ytaFig.punkter), [
+    [1000, 2000],
+    [1010, 2000],
+    [1010, 2015],
+    [1000, 2015],
+  ]);
+});

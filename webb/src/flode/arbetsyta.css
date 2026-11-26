@@ -1160,6 +1160,176 @@
   border-top: 1px solid var(--f-linje, #d9d9d9);
 }
 
+/* ---------- U5c: Tangentbordsavläsning & kartcentrumsikt ---------- */
+#ar-a:focus-visible {
+  outline: 2px solid var(--f-accent, #111111);
+  outline-offset: -2px;
+}
+.ar-centrum-sikte {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  pointer-events: none;
+}
+.ar-centrum-sikte[hidden] {
+  display: none;
+}
+.ar-centrum-sikte::before,
+.ar-centrum-sikte::after {
+  content: "";
+  position: absolute;
+  background: var(--f-accent, #111111);
+  box-shadow: 0 0 0 1px var(--f-bakgrund, #ffffff);
+}
+.ar-centrum-sikte::before {
+  left: 50%;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+.ar-centrum-sikte::after {
+  top: 50%;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+.ar-avl-punkt {
+  font-family: var(--f-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--f-text-sekundar, #222222);
+  border-bottom: 1px solid var(--f-linje, #e5e5e5);
+  padding-bottom: 3px;
+}
+
+/* ---------- U5d: Kompakt ordlista (svartvit hopfällbar panel) ---------- */
+.ar-ordlista {
+  border-top: 1px solid var(--f-linje, #e5e5e5);
+  padding-top: 8px;
+}
+.ar-ordlista > summary {
+  min-height: var(--f-mal-yta, 44px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--f-text, #111111);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ar-ordlista > summary:focus-visible {
+  outline: 2px solid var(--f-accent, #111111);
+  outline-offset: 2px;
+}
+.ar-ordlista-lista {
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ar-ordlista-post {
+  padding: 6px 8px;
+  background: var(--f-yta-dampad, #f4f4f4);
+  border: 1px solid var(--f-linje, #e5e5e5);
+}
+.ar-ordlista-post dt {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--f-text, #111111);
+}
+.ar-ordlista-post dd {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--f-text-sekundar, #222222);
+}
+
+/* ---------- Numerisk CAD-måttinmatning i ritläget ---------- */
+.ar-cad {
+  border: 1px solid var(--f-linje-stark, #111111);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+}
+.ar-cad-summary {
+  list-style: none;
+  min-height: var(--f-mal-yta, 44px);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--f-yta-dampad, #f4f4f4);
+}
+.ar-cad-summary::-webkit-details-marker {
+  display: none;
+}
+.ar-cad-summary:focus-visible {
+  outline: 2px solid var(--f-accent, #111111);
+  outline-offset: -2px;
+}
+.ar-cad[open] > .ar-cad-summary {
+  border-bottom: 1px solid var(--f-linje, #e5e5e5);
+}
+.ar-cad-status {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+.ar-cad-kropp {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ar-cad-lage button {
+  min-height: 36px;
+}
+.ar-cad-ref {
+  margin: 0;
+  font-family: var(--f-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--f-text-sekundar, #222222);
+  font-variant-numeric: tabular-nums;
+}
+.ar-cad-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ar-cad-falt {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.ar-cad-falt input[type="text"] {
+  min-height: var(--f-mal-yta, 44px);
+  font-variant-numeric: tabular-nums;
+}
+.ar-cad-knapp {
+  width: 100%;
+  min-height: var(--f-mal-yta, 44px);
+}
+.ar-cad-fel {
+  margin: 0;
+}
+
+@media (pointer: coarse) {
+  .ar-zoomrad button,
+  .ar-cad-lage button {
+    min-height: var(--f-mal-yta, 44px);
+    min-width: var(--f-mal-yta, 44px);
+  }
+}
+
 /* ---------- Mobil ---------- */
 @media (max-width: 860px) {
   .ar-vaxel {
@@ -1170,11 +1340,19 @@
     max-width: none;
   }
   .ar-vaxel button {
-    min-height: 40px;
+    min-height: var(--f-mal-yta, 44px);
   }
   .ar-kartverktyg {
     top: 56px;
     right: 8px;
+  }
+  .ar-zoomrad {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .ar-zoomrad button {
+    min-height: var(--f-mal-yta, 44px);
+    min-width: var(--f-mal-yta, 44px);
   }
   .ar-verktyg {
     top: 56px;
@@ -1185,7 +1363,7 @@
     flex-wrap: wrap;
   }
   .ar-verktyg button {
-    min-height: 40px;
+    min-height: var(--f-mal-yta, 44px);
   }
   .ar-vattenunder {
     top: auto;
@@ -1207,7 +1385,8 @@
   .ar-panel {
     max-width: none;
   }
-  .ar-regn-grid {
+  .ar-regn-grid,
+  .ar-cad-falt {
     grid-template-columns: 1fr;
   }
 }

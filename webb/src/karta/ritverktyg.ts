@@ -19,7 +19,17 @@ import { avstand, begransadRackvidd, btaUppskattning, punktIRinger, sjalvkorsand
 import { traffAvstand, traffTest, type HusForm } from "./hit.ts";
 import type { PlanDok } from "./plandok.ts";
 import { formatera } from "../tal.ts";
-import { arLinjeVerktyg, Linjeverktyg, type ExtraLinje, type LinjeVerktyg } from "./linjeverktyg.ts";
+import {
+  arLinjeVerktyg,
+  beraknaPunktFranLangdOchBaring,
+  Linjeverktyg,
+  tolkaLangdOchBaring,
+  tolkaSwerefKoordinat,
+  type CadTolkning,
+  type ExtraLinje,
+  type LinjeVerktyg,
+} from "./linjeverktyg.ts";
+export { beraknaPunktFranLangdOchBaring, tolkaLangdOchBaring, tolkaSwerefKoordinat, type CadTolkning };
 import { FORVAL, bindningAv, kommandoFor, type Kommando, type Tangentkarta } from "./tangenter.ts";
 import { fastAt, fastPaStrale, fastRackvidd, lasVinkel, ringExtra, utkastExtra, vinkelRef, type FastIndex, type FastTraff } from "./snap.ts";
 
@@ -414,7 +424,11 @@ export class Ritverktyg {
 
   /** Avslutar utkastet: minst tre hörn och ingen korsning, annars ett tydligt besked och man ritar vidare. */
   avsluta(): boolean {
-    const ring = this.utkast.filter((p, i) => i === 0 || avstand(p, this.utkast[i - 1] as Punkt) > 1e-6);
+    const filtrerad = this.utkast.filter((p, i) => i === 0 || avstand(p, this.utkast[i - 1] as Punkt) > 1e-6);
+    const ring =
+      filtrerad.length > 1 && avstand(filtrerad[0] as Punkt, filtrerad[filtrerad.length - 1] as Punkt) < 1e-6
+        ? filtrerad.slice(0, -1)
+        : filtrerad;
     if (ring.length < 3) {
       this.miljo.meddela({ typ: "fel", text: "Ett hus behöver minst tre hörn. Klicka fler punkter, eller tryck Esc för att avbryta." });
       return false;
@@ -456,6 +470,95 @@ export class Ritverktyg {
     this.utkast.pop();
     if (this.utkast.length === 0) this.startFast = undefined;
     this.signalera();
+  }
+
+  /** Senaste punkten i aktivt ritverktygs utkast (hus, linje eller yta), eller null. */
+  sistaUtkastPunkt(): Punkt | null {
+    if (this.verktyg === "hus") return this.utkast[this.utkast.length - 1] ?? null;
+    if (this.verktyg === "linje" || this.verktyg === "yta") return this.linje.utkast[this.linje.utkast.length - 1] ?? null;
+    return null;
+  }
+
+  /**
+   * Lägger till en exakt punkt i SWEREF 99 18 00 (E, N i meter) i det aktiva ritverktyget
+   * (`hus`, `linje` eller `yta`). Returnerar true om punkten lades till.
+   */
+  laggTillPunktSweref(e_m: number, n_m: number): boolean {
+    if (!Number.isFinite(e_m) || !Number.isFinite(n_m)) {
+      this.miljo.meddela({ typ: "fel", text: "Ogiltig SWEREF-koordinat (E och N måste vara ändliga tal)." });
+      return false;
+    }
+    if (this.verktyg === "linje" || this.verktyg === "yta") {
+      const ok = this.linje.laggTillPunktSweref(this.verktyg, e_m, n_m);
+      if (ok) {
+        this.mark = this.linje.mark;
+        this.fast = null;
+        this.lasLinje = null;
+      }
+      return ok;
+    }
+    if (this.verktyg !== "hus") {
+      this.miljo.meddela({
+        typ: "info",
+        text: "Välj först ett ritverktyg (Nytt hus, Höj/sänk mark, Mur/vall, Öppning eller Fri yta).",
+      });
+      return false;
+    }
+    if (this.utkast.length === 0 && !this.husLagerKontroll()) return false;
+    const q: Punkt = { x: e_m, y: n_m };
+    const sista = this.utkast[this.utkast.length - 1];
+    if (sista && avstand(sista, q) < 1e-6) {
+      this.miljo.meddela({ typ: "fel", text: "Punkten ligger på samma plats som föregående hörn." });
+      return false;
+    }
+    this.utkast.push(q);
+    this.mark = q;
+    this.fast = null;
+    this.lasLinje = null;
+    this.miljo.meddela(null);
+    this.signalera();
+    return true;
+  }
+
+  /**
+   * Lägger till nästa punkt i aktivt ritverktyg med längd (m) och geodetisk bäring (°, 0° = norr, 90° = öst)
+   * från senaste punkten i utkastet (eller angiven startpunkt om utkastet är tomt).
+   */
+  laggTillPunktMedMatt(langd_m: number, baring_grader: number, start?: Punkt): boolean {
+    if (!Number.isFinite(langd_m) || langd_m <= 0) {
+      this.miljo.meddela({ typ: "fel", text: "Längden måste vara ett tal större än 0 meter." });
+      return false;
+    }
+    if (!Number.isFinite(baring_grader)) {
+      this.miljo.meddela({ typ: "fel", text: "Bäringen måste vara ett giltigt tal i grader." });
+      return false;
+    }
+    if (this.verktyg === "linje" || this.verktyg === "yta") {
+      const ok = this.linje.laggTillPunktMedMatt(this.verktyg, langd_m, baring_grader, start);
+      if (ok) {
+        this.mark = this.linje.mark;
+        this.fast = null;
+        this.lasLinje = null;
+      }
+      return ok;
+    }
+    if (this.verktyg !== "hus") {
+      this.miljo.meddela({
+        typ: "info",
+        text: "Välj först ett ritverktyg (Nytt hus, Höj/sänk mark, Mur/vall, Öppning eller Fri yta).",
+      });
+      return false;
+    }
+    const ref = this.utkast[this.utkast.length - 1] ?? start;
+    if (!ref) {
+      this.miljo.meddela({
+        typ: "fel",
+        text: "Sätt en första punkt (klicka i kartan eller ange E, N) innan du anger längd och bäring.",
+      });
+      return false;
+    }
+    const nasta = beraknaPunktFranLangdOchBaring(ref, langd_m, baring_grader);
+    return this.laggTillPunktSweref(nasta.x, nasta.y);
   }
 
   // ------------------------------------------------------------------ drag

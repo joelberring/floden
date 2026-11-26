@@ -13,9 +13,65 @@
 import { foljKant, type FoljLinje } from "./foljkant.ts";
 import { avstand, begransadRackvidd, sjalvkorsande, yta, type Punkt } from "./geom.ts";
 import { flyttaPunkt, forenkla, infogaPunkt, klipp, kopiaP, langd, mittpunkter, narmastPunkt, narmastSida, slaIhop, taBortPunkt, vand, type P3 } from "./linje.ts";
-import { forvalEgenskaper } from "./egenskaper.ts";
+import { forvalEgenskaper, tolkaTal } from "./egenskaper.ts";
 import type { Figur, PlanDok } from "./plandok.ts";
 import { byggFastIndex, fastAt, fastPaStrale, fastRackvidd, lasVinkel, ringExtra, utkastExtra, vinkelRef, type FastIndex, type FastTraff } from "./snap.ts";
+
+/** Resultat vid tolkning av numerisk CAD-inmatning (SWEREF-koordinat eller längd + bäring). */
+export type CadTolkning<T> = { ok: true; varde: T } | { ok: false; fel: string };
+
+/**
+ * Deterministisk CAD-geometri i SWEREF 99 18 00 (x = E, y = N, meter):
+ * geodetisk bäring i grader där 0° = norr (+N), 90° = öst (+E), 180° = söder (−N), 270° = väst (−E).
+ * Avvisar NaN, icke-ändliga värden och längd <= 0.
+ */
+export function beraknaPunktFranLangdOchBaring(start: Punkt, langd_m: number, baring_grader: number): Punkt {
+  if (!Number.isFinite(start.x) || !Number.isFinite(start.y)) {
+    throw new RangeError("Startpunkten måste ha ändliga SWEREF-koordinater (E, N).");
+  }
+  if (!Number.isFinite(langd_m) || langd_m <= 0) {
+    throw new RangeError("Längden måste vara ett ändligt tal större än 0 meter.");
+  }
+  if (!Number.isFinite(baring_grader)) {
+    throw new RangeError("Bäringen måste vara ett ändligt tal i grader.");
+  }
+  const vinkel = ((baring_grader % 360) + 360) % 360;
+  if (vinkel === 0) return { x: start.x, y: start.y + langd_m };
+  if (vinkel === 90) return { x: start.x + langd_m, y: start.y };
+  if (vinkel === 180) return { x: start.x, y: start.y - langd_m };
+  if (vinkel === 270) return { x: start.x - langd_m, y: start.y };
+  const rad = (vinkel * Math.PI) / 180;
+  return {
+    x: start.x + langd_m * Math.sin(rad),
+    y: start.y + langd_m * Math.cos(rad),
+  };
+}
+
+/** Tolkar SWEREF 99 18 00-koordinater (E, N i meter). Stöder punkt och komma, avvisar tomt och NaN. */
+export function tolkaSwerefKoordinat(eText: string, nText: string): CadTolkning<Punkt> {
+  const e = tolkaTal(eText);
+  const n = tolkaTal(nText);
+  if (e === undefined || n === undefined) {
+    return { ok: false, fel: "Ange både E och N som giltiga tal i meter (SWEREF 99 18 00)." };
+  }
+  return { ok: true, varde: { x: e, y: n } };
+}
+
+/** Tolkar längd (> 0 m) och geodetisk bäring (grader, 0° = norr, 90° = öst). Stöder decimalpunkt och decimalkomma. */
+export function tolkaLangdOchBaring(
+  langdText: string,
+  baringText: string,
+): CadTolkning<{ langd_m: number; baring_grader: number }> {
+  const langd_m = tolkaTal(langdText);
+  if (langd_m === undefined || langd_m <= 0) {
+    return { ok: false, fel: "Längden måste vara ett tal större än 0 meter." };
+  }
+  const baring_grader = tolkaTal(baringText);
+  if (baring_grader === undefined) {
+    return { ok: false, fel: "Ange bäring som ett tal i grader (0° = norr, 90° = öst)." };
+  }
+  return { ok: true, varde: { langd_m, baring_grader } };
+}
 
 export type LinjeVerktyg = "linje" | "yta" | "klipp" | "ihop" | "vand" | "forenkla";
 export const LINJEVERKTYG: readonly LinjeVerktyg[] = ["linje", "yta", "klipp", "ihop", "vand", "forenkla"];
@@ -345,6 +401,58 @@ export class Linjeverktyg {
     this.utkast.pop();
     if (this.utkast.length === 0) this.rensaUtkast();
     this.signalera();
+  }
+
+  /**
+   * Lägger till en exakt punkt i SWEREF 99 18 00 (E, N i meter) i pågående linje- eller ytutkast,
+   * utan fäst eller pekaravrundning. Returnerar true om punkten lades till.
+   */
+  laggTillPunktSweref(verktyg: "linje" | "yta", e_m: number, n_m: number): boolean {
+    if (!Number.isFinite(e_m) || !Number.isFinite(n_m)) {
+      this.miljo.meddela({ typ: "fel", text: "Ogiltig SWEREF-koordinat (E och N måste vara ändliga tal)." });
+      return false;
+    }
+    if (this.utkast.length === 0 && !this.lagerKontroll(verktyg)) return false;
+    const q: P3 = { x: e_m, y: n_m };
+    const forra = this.utkast[this.utkast.length - 1];
+    if (forra && avstand(forra, q) < 1e-6) {
+      this.miljo.meddela({ typ: "fel", text: "Punkten ligger på samma plats som föregående punkt." });
+      return false;
+    }
+    this.utkast.push(q);
+    this.mark = q;
+    this.fast = null;
+    this.lasLinje = null;
+    this.foljForhand = null;
+    this.sistaFastId = undefined;
+    this.miljo.meddela(null);
+    this.signalera();
+    return true;
+  }
+
+  /**
+   * Lägger till nästa punkt i pågående utkast via längd (m) och geodetisk bäring (°, 0° = norr, 90° = öst)
+   * från senaste punkten i utkastet (eller angiven startpunkt om utkastet är tomt).
+   */
+  laggTillPunktMedMatt(verktyg: "linje" | "yta", langd_m: number, baring_grader: number, start?: Punkt): boolean {
+    if (!Number.isFinite(langd_m) || langd_m <= 0) {
+      this.miljo.meddela({ typ: "fel", text: "Längden måste vara ett tal större än 0 meter." });
+      return false;
+    }
+    if (!Number.isFinite(baring_grader)) {
+      this.miljo.meddela({ typ: "fel", text: "Bäringen måste vara ett giltigt tal i grader." });
+      return false;
+    }
+    const ref = this.utkast[this.utkast.length - 1] ?? start;
+    if (!ref) {
+      this.miljo.meddela({
+        typ: "fel",
+        text: "Sätt en första punkt (klicka i kartan eller ange E, N) innan du anger längd och bäring.",
+      });
+      return false;
+    }
+    const nasta = beraknaPunktFranLangdOchBaring(ref, langd_m, baring_grader);
+    return this.laggTillPunktSweref(verktyg, nasta.x, nasta.y);
   }
 
   // ------------------------------------------------------------------ träff och markering

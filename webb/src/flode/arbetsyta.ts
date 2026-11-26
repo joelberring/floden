@@ -11,7 +11,7 @@
  * - Permanent grafisk skalstock, mätverktyg ("Mät bredd") i alla kartlägen, snabbknappar för vattenlager
  *   och pekavläsning med vattendjup i cm (och m) tillsammans med markhöjd.
  */
-import { hamtaAvlasning, hamtaMarkhojd, hamtaProjekt, hamtaResultat, lasJson } from "../api.ts";
+import { hamtaAvlasning, hamtaEkologiAnalys, hamtaMarkhojd, hamtaProjekt, hamtaResultat, lasJson, type EkologiAnalysFraga } from "../api.ts";
 import { ApiFel } from "../apifel.ts";
 import type { AvlasningSvar, LagerPost, ResultatSvar } from "../fragor-typer.ts";
 import { andraFalt, etikettFor, faltFor, hojdlage, lutningFranHornhojder, tolkaTal, type Falt } from "../karta/egenskaper.ts";
@@ -44,6 +44,7 @@ import { arGrovPekare, Kartmotor, TOM_RITVY, type AnalysVektor, type RasterLager
 import { LagerLista } from "../karta/lager.ts";
 import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { langd } from "../karta/linje.ts";
+import { tolkaLangdOchBaring, tolkaSwerefKoordinat } from "../karta/linjeverktyg.ts";
 import { OVERFALL_LAGER_ID, overfallLager, ritadeOverfall } from "../karta/overfall.ts";
 import { PlanDok } from "../karta/plandok.ts";
 import { nyttLager, type Roll, type RollInfo } from "../karta/ritlager.ts";
@@ -113,7 +114,7 @@ import {
   type Underlag,
 } from "./nyckeltal.ts";
 import { osakerhetTal, overfallRader, type OsakerhetSvar } from "./osakerhet.ts";
-import { kroppHtml, osakerhetHtml, talListaHtml, type OsakerhetVisning } from "./panelhtml.ts";
+import { cadMattHtml, kroppHtml, ordlistaHtml, osakerhetHtml, talListaHtml, type CadInmatningsLage, type OsakerhetVisning } from "./panelhtml.ts";
 import { projektKallaText } from "./projektkalla.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import {
@@ -215,7 +216,7 @@ export const OSAKERHET_KNAPP_ID = "rs-osakerhet";
 
 /** Delegerad klickselektor i arbetsytan (Steg 2). */
 export const ARBETSYTA_KLICK_SELEKTOR =
-  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
+  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
 
 /** Kopplar 3D-vyns hovringsavläsning, objekttext och fel till arbetsytans DOM-uppdateringar (W-B4). */
 export function skapa3dAterkoppling(mal: {
@@ -292,18 +293,142 @@ export function renderaHjalpElement(
   if (arFel) h.setAttribute("role", "alert");
 }
 
-/** Domänkorrekt hjälptext i nulägespanelen (aldrig hårdkodat "vattendjup" för sol/ekologi/luft, W-B8). */
+/** Domänkorrekt hjälptext i nulägespanelen (aldrig hårdkodat "vattendjup" för sol/ekologi/luft, W-B8 / U5d). */
 export function nulageTipsHtmlForAmne(amne: ResultatAmne): string {
   if (amne === "vatten") {
-    return "Håll pekaren över kartan för exakt vattendjup och markhöjd. Använd <strong>Mät bredd</strong> eller <strong>Sektion</strong> för att granska rinnstråk, eller växla till <strong>Redigera förslag</strong> för att rita hus och ändra markhöjd ovanpå vattnet.";
+    return "Håll pekaren över kartan eller tryck <strong>Läs av kartcentrum</strong> (Alt+I) för exakt vattendjup och markhöjd. Använd <strong>Mät bredd</strong> eller <strong>Sektion</strong> för att granska rinnstråk, eller växla till <strong>Redigera förslag</strong> för att rita hus och ändra markhöjd ovanpå vattnet.";
   }
   if (amne === "dagsljus") {
-    return "Håll pekaren över kartan för soltimmar och markhöjd. Växla till <strong>Redigera förslag</strong> för att rita hus och se hur skuggningen förändras.";
+    return "Håll pekaren över kartan eller tryck <strong>Läs av kartcentrum</strong> (Alt+I) för soltimmar, SVF och markhöjd. Växla till <strong>Redigera förslag</strong> för att rita hus och se hur skuggningen förändras.";
   }
   if (amne === "luft") {
-    return "Håll pekaren över kartan för vind- eller haltvärde på gånghöjd och markhöjd. Växla till <strong>Redigera förslag</strong> för att pröva ett nytt förslag.";
+    return "Håll pekaren över kartan eller tryck <strong>Läs av kartcentrum</strong> (Alt+I) för vind- eller haltvärde på gånghöjd och markhöjd. Växla till <strong>Redigera förslag</strong> för att pröva ett nytt förslag.";
   }
-  return "Håll pekaren över kartan för spridningsvärde och markhöjd. Välj habitatnätverk ovan eller växla till <strong>Redigera förslag</strong> för att pröva hur nya byggnader och ytor påverkar konnektiviteten.";
+  return "Håll pekaren över kartan eller tryck <strong>Läs av kartcentrum</strong> (Alt+I) för spridningsvärde och markhöjd. Välj habitatnätverk ovan eller växla till <strong>Redigera förslag</strong> för att pröva hur nya byggnader och ytor påverkar konnektiviteten.";
+}
+
+/** Domänkorrekt underlagsetikett i Redigera förslag (aldrig "vatten" för sol/ekologi/luft, U5d). */
+export function underlagEtikettForAmne(amne: ResultatAmne): string {
+  if (amne === "vatten") return "Visa nulägets vatten under";
+  if (amne === "dagsljus") return "Visa nulägets solkarta under";
+  if (amne === "luft") return "Visa nulägets luftkarta under";
+  return "Visa nulägets ekologikarta under";
+}
+
+/** Domänkorrekt gruppetikett för kartlagerknapparna i Steg 2 (U5d). */
+export function lagerGruppEtikettForAmne(amne: ResultatAmne): string {
+  return `Välj kartlager för ${AMNESNAMN[amne].toLowerCase()}`;
+}
+
+/** Domänkorrekt "Så läser du kartan"-text (förhindrar vattendjupstext i Ekologi skillnad, U5d). */
+export function lasKartanForAmne(amne: ResultatAmne, vy: ProjektVy, lage: Lage, paahittat = true): string {
+  const grund = lasKartan(vy, lage, paahittat);
+  if (amne === "ekologi" && lage === "skillnad") {
+    return grund.replace(
+      "Skillnad visar bara det som ändrats: rött är djupare vatten efter förändringen, blått är grundare.",
+      "Skillnad visar bara det som ändrats mellan före och efter i spridningsflödet: rött är ökning och blått är minskning.",
+    );
+  }
+  return grund;
+}
+
+/* ---------- U5c: Tangentbordsavläsning av kartvärden (SWEREF 99 18 00) ---------- */
+
+export type PilTangent = "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight";
+
+export function arPilTangent(key: string): key is PilTangent {
+  return key === "ArrowUp" || key === "ArrowDown" || key === "ArrowLeft" || key === "ArrowRight";
+}
+
+/** Kortkommando Alt+I (hanterar både `key === "i"` och macOS `code === "KeyI"`). */
+export function arKartcentrumKortkommando(
+  h: Pick<KeyboardEvent, "key" | "code" | "altKey" | "ctrlKey" | "metaKey">,
+): boolean {
+  return h.altKey && !h.ctrlKey && !h.metaKey && (h.key.toLowerCase() === "i" || h.code === "KeyI");
+}
+
+/** Räknar om kartcentrum (WGS 84) till SWEREF 99 18 00 (E, N i meter). */
+export function beraknaKartcentrumSweref(vy: { lng: number; lat: number }): { e: number; n: number } {
+  const [e, n] = wgs84TillSweref(vy.lng, vy.lat);
+  return { e, n };
+}
+
+/** Flyttar kartcentrum deterministiskt i SWEREF 99 18 00 vid piltangent på fokuserad karta (U5c). */
+export function forflyttaKartvyMedPil(
+  vy: { lng: number; lat: number; zoom: number },
+  tangent: PilTangent,
+  meterPerPx: number,
+  finsteg = false,
+): { lng: number; lat: number; zoom: number; e: number; n: number } {
+  const { e, n } = beraknaKartcentrumSweref(vy);
+  const mpp = Number.isFinite(meterPerPx) && meterPerPx > 0 ? meterPerPx : 1;
+  const stegM = Math.max(finsteg ? 0.5 : 2, mpp * (finsteg ? 12 : 48));
+  const nyE = tangent === "ArrowRight" ? e + stegM : tangent === "ArrowLeft" ? e - stegM : e;
+  const nyN = tangent === "ArrowUp" ? n + stegM : tangent === "ArrowDown" ? n - stegM : n;
+  const [lng, lat] = swerefTillWgs84(nyE, nyN);
+  return { lng, lat, zoom: vy.zoom, e: nyE, n: nyN };
+}
+
+/** Visningstext för kartcentrum i `#ar-avl` (SWEREF 99 18 00, meter). */
+export function formateraKartcentrumEtikett(e: number, n: number): string {
+  return `Kartcentrum · E ${formatera(Math.round(e), 0)}, N ${formatera(Math.round(n), 0)}`;
+}
+
+/** Kopplar tangentbordsstyrd avläsning (knapp, Alt+I och piltangenter) till samma deterministiska värdeavläsning som mus-hovring (U5c). */
+export function skapaTangentbordsAvlasning(mal: {
+  hamtaVy(): { lng: number; lat: number; zoom: number } | null;
+  settVy(vy: { lng: number; lat: number; zoom: number }): void;
+  meterPerPx(): number;
+  lasAv(e: number, n: number): void;
+}): {
+  lasCentrum(): { e: number; n: number } | null;
+  stegPil(tangent: PilTangent, finsteg?: boolean): { e: number; n: number } | null;
+} {
+  return {
+    lasCentrum: () => {
+      const nu = mal.hamtaVy();
+      if (!nu) return null;
+      const punkt = beraknaKartcentrumSweref(nu);
+      mal.lasAv(punkt.e, punkt.n);
+      return punkt;
+    },
+    stegPil: (tangent, finsteg = false) => {
+      const nu = mal.hamtaVy();
+      if (!nu) return null;
+      const ny = forflyttaKartvyMedPil(nu, tangent, mal.meterPerPx(), finsteg);
+      mal.settVy({ lng: ny.lng, lat: ny.lat, zoom: ny.zoom });
+      mal.lasAv(ny.e, ny.n);
+      return { e: ny.e, n: ny.n };
+    },
+  };
+}
+
+/** Tolkar och tillämpar numerisk CAD-inmatning (längd + bäring eller SWEREF E, N) på aktivt ritverktyg. */
+export function tillampaCadInmatning(
+  mal: {
+    laggTillPunktSweref(e_m: number, n_m: number): boolean;
+    laggTillPunktMedMatt(langd_m: number, baring_grader: number): boolean;
+  },
+  inmatning: {
+    lage: CadInmatningsLage;
+    langdText: string;
+    baringText: string;
+    eText: string;
+    nText: string;
+  },
+): { ok: true } | { ok: false; fel: string } {
+  if (inmatning.lage === "sweref") {
+    const tolkad = tolkaSwerefKoordinat(inmatning.eText, inmatning.nText);
+    if (!tolkad.ok) return { ok: false, fel: tolkad.fel };
+    const lagt = mal.laggTillPunktSweref(tolkad.varde.x, tolkad.varde.y);
+    return lagt ? { ok: true } : { ok: false, fel: "Punkten kunde inte läggas till i aktivt ritverktyg." };
+  }
+  const tolkad = tolkaLangdOchBaring(inmatning.langdText, inmatning.baringText);
+  if (!tolkad.ok) return { ok: false, fel: tolkad.fel };
+  const lagt = mal.laggTillPunktMedMatt(tolkad.varde.langd_m, tolkad.varde.baring_grader);
+  return lagt
+    ? { ok: true }
+    : { ok: false, fel: "Sätt en första punkt (klicka i kartan eller ange E, N) innan du anger längd och bäring." };
 }
 
 /** Mätvärden i nulägespanelen för Ekologi-fliken (ECA före, PC före och antal habitatfläckar, W-B8). */
@@ -323,7 +448,7 @@ export function nulageEkologiTalHtml(u: Underlag): string {
   return talListaHtml(poster);
 }
 
-/** Uppdaterar avläsningsrutan `#ar-avl` för både 2D och 3D (markvärden, 3D-objekttext och markhöjd, W-B4). */
+/** Uppdaterar avläsningsrutan `#ar-avl` för 2D, 3D och tangentbordsavläsning (markvärden, 3D-objekttext och markhöjd, W-B4 / U5c). */
 export function renderaAvlasningElement(
   ruta: Pick<HTMLElement, "hidden" | "innerHTML">,
   indata: {
@@ -334,10 +459,16 @@ export function renderaAvlasningElement(
     visaTak: boolean;
     treDText: string | null;
     hojdText: string | null;
+    punktEtikett?: string | null;
+    tomText?: string | null;
   },
 ): void {
   const delar: string[] = [];
-  const { senasteAvl, vy, lage, amne, visaTak, treDText, hojdText } = indata;
+  const { senasteAvl, vy, lage, amne, visaTak, treDText, hojdText, punktEtikett, tomText } = indata;
+  if (punktEtikett) {
+    delar.push(`<span class="ar-avl-punkt">${esc(punktEtikett)}</span>`);
+  }
+  let antalVarden = 0;
   if (senasteAvl && vy && !senasteAvl.varden.every((x) => !x.inom)) {
     const rader: Array<[string, string | null]> =
       lage === "nulage" || lage === "redigera" || vy.lage_idag
@@ -359,10 +490,14 @@ export function renderaAvlasningElement(
         text = `${x.typ === "skillnad" && x.varde > 0 ? "+" : ""}${formatera(x.varde, 2)}${x.enhet ? ` ${x.enhet}` : ""}${x.tak ? " (tak)" : ""}`;
       }
       delar.push(`<span><span class="flode-dampad">${esc(namn)}</span> <strong>${esc(text)}</strong></span>`);
+      antalVarden += 1;
     }
   }
   if (treDText) delar.push(`<span class="ar-avl-3d"><strong>${esc(treDText)}</strong></span>`);
   if (hojdText) delar.push(`<span class="flode-dampad" id="ar-hojd">${esc(hojdText)}</span>`);
+  if (punktEtikett && antalVarden === 0 && !treDText && !hojdText && tomText) {
+    delar.push(`<span class="flode-dampad">${esc(tomText)}</span>`);
+  }
   ruta.hidden = delar.length === 0;
   ruta.innerHTML = delar.join("");
 }
@@ -552,6 +687,19 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let senasteAvl: AvlasningSvar | null = null;
   let treDText: string | null = null;
   let treDFel: string | null = null;
+  let centrumAktiv = false;
+  let centrumEtikett: string | null = null;
+
+  // Numerisk CAD-inmatning i ritläget
+  let cadOppen = false;
+  let cadLage: CadInmatningsLage = "sweref";
+  let cadManuelltLage = false;
+  let cadLangdText = "";
+  let cadBaringText = "";
+  let cadEText = "";
+  let cadNText = "";
+  let cadFel: string | null = null;
+  let cadNyckel = "";
 
   // Redigeringstillstånd (Ritverktyg, kontroll, sparande)
   let verktyg: Ritverktyg | null = null;
@@ -584,16 +732,17 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   rot.innerHTML = `
     <div class="flode-sida flode-fast ar-sida${uiLage.panelDold ? " panel-dold" : ""}">
       <section class="flode-karta ar-karta" aria-label="Karta">
-        <div class="flode-karta-yta" id="ar-a"></div>
+        <div class="flode-karta-yta" id="ar-a" tabindex="0" role="region" aria-label="Karta i SWEREF 99 18 00. Använd piltangenter för att flytta kartan och Alt+I eller Enter för att läsa av kartcentrum."></div>
         <div class="flode-karta-yta flode-b" id="ar-b" hidden></div>
         <div class="flode-karta-yta" id="ar-3d" hidden></div>
+        <div class="ar-centrum-sikte" id="ar-centrum-sikte" aria-hidden="true" hidden></div>
 
         <div class="ar-vaxel" role="group" aria-label="Kartläge" id="ar-vaxel">
           ${ARBETSLAGEN.map(([id, n]) => `<button type="button" data-lage="${id}" aria-pressed="${id === lage}">${esc(n)}</button>`).join("")}
         </div>
 
         <div class="ar-vattenunder" id="ar-vattenunder" hidden>
-          <label class="flode-kryss"><input type="checkbox" id="ar-vatten-under" checked /> Visa nulägets vatten under</label>
+          <label class="flode-kryss"><input type="checkbox" id="ar-vatten-under" checked /> <span id="ar-vatten-under-text">${esc(underlagEtikettForAmne(amne))}</span></label>
           <label class="flode-kryss" id="ar-flode-under-rad" hidden><input type="checkbox" id="ar-flode-under" /> Flödesvägar under</label>
         </div>
 
@@ -645,6 +794,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           <div class="ar-zoomrad" id="ar-zoomrad" role="group" aria-label="Kartverktyg">
             <button type="button" id="ar-mat-knapp" aria-pressed="false" title="Mät bredd eller avstånd i meter mellan två punkter (M)">Mät bredd</button>
             <button type="button" id="ar-sektion-knapp" aria-pressed="false" title="Rita sektion för mark-, byggnads- och vattenprofil (S)">Sektion</button>
+            <button type="button" id="ar-las-centrum" title="Läs av kartvärde och markhöjd vid kartcentrum (Alt+I)">Läs av kartcentrum</button>
             <span class="ar-zoom-skil" aria-hidden="true"></span>
             <button type="button" id="ar-in" aria-label="Zooma in">+</button>
             <button type="button" id="ar-ut" aria-label="Zooma ut">−</button>
@@ -670,7 +820,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         <div class="flode-kartkort ar-hjalp" id="ar-hjalp" role="status" hidden></div>
         <div class="ar-hoger-botten" id="ar-hoger-botten">
           <div class="flode-kartkort ar-sanka-kort" id="ar-sanka" role="status" hidden></div>
-          <div class="flode-kartkort flode-avlasning ar-avlasning" id="ar-avl" role="status" hidden></div>
+          <div class="flode-kartkort flode-avlasning ar-avlasning" id="ar-avl" role="status" aria-live="polite" aria-atomic="true" hidden></div>
           <div class="ar-notis" id="ar-notis" hidden></div>
           <div class="ar-skalstock" id="ar-skalstock" aria-live="off"></div>
         </div>
@@ -706,6 +856,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
             <button type="button" class="flode-knapp" id="ar-spara" aria-describedby="ar-sparstatus">Spara</button>
             <p class="flode-liten flode-dampad flode-sparstatus" id="ar-sparstatus" role="status" aria-live="polite"></p>
           </div>
+
+          <div id="ar-cad-plats" hidden></div>
 
           <section class="flode-ruta" id="ar-hus-kort" aria-label="Valt hus" hidden>
             <div class="flode-tva">
@@ -756,6 +908,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
             <div id="ar-tangenter"></div>
           </details>
         </div>
+
+        ${ordlistaHtml()}
 
         <div class="flode-rad-slut">
           <a class="flode-knapp stor" href="${flodeAdress(projekt, "rapport")}">Gå vidare till rapport</a>
@@ -1162,7 +1316,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const not = [valdRoll ? valText(valdRoll, kartLageForAnalys(), Boolean(vyBas.lage_idag)) : "", vektorFel ?? ""].filter(Boolean).join(" ");
     return `<div class="ar-lagerblock" aria-label="Kartlager">
       <span class="ar-sektion-rubrik">Kartlager</span>
-      <div class="ar-lagerknappar" role="group" aria-label="Välj vatten- och analyslager">${knappar.join("")}</div>
+      <div class="ar-lagerknappar" role="group" aria-label="${esc(lagerGruppEtikettForAmne(amne))}">${knappar.join("")}</div>
       ${gransRader ? `<div class="ar-grans-rader">${gransRader}</div>` : ""}
       ${not ? `<p class="flode-liten flode-dampad">${esc(not)}</p>` : ""}
     </div>`;
@@ -1202,7 +1356,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (tl && vy) {
       const namn =
         lage === "redigera"
-          ? amne === "vatten"
+          ? amne === "vatten" && tl.roll === "max_djup"
             ? "Nulägets vattendjup (underlag)"
             : `Nulägets ${tl.etikett.toLowerCase()} (underlag)`
           : lage === "skillnad"
@@ -1237,6 +1391,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       sankaEl.innerHTML = "";
     }
 
+    el("ar-centrum-sikte").hidden = !centrumAktiv || lage === "3d";
     renderaAvlasningElement(el("ar-avl"), {
       senasteAvl,
       vy,
@@ -1245,10 +1400,24 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       visaTak,
       treDText,
       hojdText,
+      punktEtikett: centrumAktiv ? centrumEtikett : null,
+      tomText: centrumAktiv ? "Inget beräknat kartvärde i denna punkt" : null,
     });
   };
 
-  const planeraAvlasning = (e: number | null, n: number | null): void => {
+  const planeraAvlasning = (e: number | null, n: number | null, kallaLage: "pekare" | "centrum" = "pekare"): void => {
+    if (kallaLage === "pekare") {
+      if (e !== null && n !== null) {
+        centrumAktiv = false;
+        centrumEtikett = null;
+      } else if (centrumAktiv) {
+        return;
+      }
+    } else if (e !== null && n !== null) {
+      centrumAktiv = true;
+      centrumEtikett = formateraKartcentrumEtikett(e, n);
+      treDText = null;
+    }
     markhojd.ror(e, n);
     if (avlTimer !== null) window.clearTimeout(avlTimer);
     avlTimer = null;
@@ -1260,7 +1429,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       ritaAvlasning();
       return;
     }
-    avlTimer = window.setTimeout(() => {
+    const hamtaNu = (): void => {
       const nr = ++avlSeq;
       hamtaAvlasning(v.korning_id, v.skillnad_lager, e, n).then(
         (svar) => {
@@ -1276,7 +1445,28 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           }
         },
       );
-    }, 90);
+    };
+    if (kallaLage === "centrum") {
+      ritaAvlasning();
+      hamtaNu();
+    } else {
+      avlTimer = window.setTimeout(hamtaNu, 90);
+    }
+  };
+
+  const tangentbordsAvlasning = skapaTangentbordsAvlasning({
+    hamtaVy: () => a?.hamtaVy() ?? null,
+    settVy: (nyVy) => {
+      a?.settVy(nyVy);
+      b?.settVy(nyVy);
+      if (lage === "redigera") planeraRitning();
+    },
+    meterPerPx: () => a?.meterPerPx() ?? 1,
+    lasAv: (e, n) => planeraAvlasning(e, n, "centrum"),
+  });
+
+  const lasAvKartcentrum = (): void => {
+    tangentbordsAvlasning.lasCentrum();
   };
 
   const visaSanka = (e: number, n: number): void => {
@@ -1399,10 +1589,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     notisEl.hidden = !notis;
     notisEl.textContent = notis ?? "";
 
-    // Visa vatten-under-reglaget i Redigera förslag när nulägesvatten finns
+    // Visa underlagsreglaget i Redigera förslag när nulägeslager finns (domänkorrekt etikett, U5d)
     const vattenUnderBar = el("ar-vattenunder");
     vattenUnderBar.hidden = lage !== "redigera" || !fore;
-    el("ar-flode-under-rad").hidden = !tillgangligaVektorer().includes("flodesvagar");
+    el("ar-vatten-under-text").textContent = underlagEtikettForAmne(amne);
+    el("ar-flode-under-rad").hidden = amne !== "vatten" || !tillgangligaVektorer().includes("flodesvagar");
 
     el("ar-b").hidden = !delat;
     el("ar-svep-rad").hidden = !delat;
@@ -1745,7 +1936,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         korningId: vy.korning_id,
         roller: rollerNu(),
         tal: luftNyckeltal(r.tabeller, foreScen, efterScen),
-        las: lasKartan(vy, kartLageForAnalys(), info?.paahittat !== false),
+        las: lasKartanForAmne(amne, vy, kartLageForAnalys(), info?.paahittat !== false),
         lageIdag: kalla === "lage",
       })}`;
       return;
@@ -1785,7 +1976,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         ${ekoKallaHtml}
         <p class="flode-liten flode-dampad">${nulageTipsHtml}</p>
         <p class="flode-liten flode-dampad">${esc(anm)}</p>
-        <details class="flode-detalj"><summary>Så läser du kartan</summary><p class="flode-liten flode-dampad">${esc(lasKartan(vy, "fore", info?.paahittat !== false))}</p></details>`;
+        <details class="flode-detalj"><summary>Så läser du kartan</summary><p class="flode-liten flode-dampad">${esc(lasKartanForAmne(amne, vy, "fore", info?.paahittat !== false))}</p></details>`;
       return;
     }
 
@@ -1804,7 +1995,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       kalla: ekoKalla,
       anmarkning: raderRegn,
       osakerhet: amne === "ekologi" ? null : osakerhetVisning(),
-      las: lasKartan(vy, kartLageForAnalys(), info?.paahittat !== false),
+      las: lasKartanForAmne(amne, vy, kartLageForAnalys(), info?.paahittat !== false),
     })}${dpcTabellHtml()}`;
   };
 
@@ -1830,16 +2021,18 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         let eko: EkologiMedLager | null = null;
         let ekoFel: string | null = null;
         if (amne === "ekologi") {
-          const begaran: Record<string, unknown> = { omrade_id: projekt };
-          if (valtNatverk) begaran.natverk = valtNatverk;
           if (natverkLista.length === 0) {
             natverkLista = await lasJson<{ natverk: typeof natverkLista }>("/api/ekologi/natverk")
               .then((s) => s.natverk.filter((n) => n.korbar && !n.lokalt))
               .catch(() => []);
           }
-          if (kalla === "ritat" && t.scenario) begaran.scenario = t.scenario.slug;
+          const ekoFraga: EkologiAnalysFraga = {
+            omrade_id: projekt,
+            ...(valtNatverk ? { natverk: valtNatverk } : {}),
+            ...(kalla === "ritat" && t.scenario ? { scenario: t.scenario.slug } : {}),
+          };
           try {
-            eko = await lasJson<EkologiMedLager>("/api/analys/ekologi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(begaran) });
+            eko = await hamtaEkologiAnalys<EkologiMedLager>(ekoFraga);
           } catch (e) {
             ekoFel = e instanceof Error ? e.message : String(e);
           }
@@ -2081,8 +2274,55 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     el("ar-figur-info").textContent = `${langdText}Servern kontrollerar värdena när förslaget sparas.`;
   };
 
+  const uppdateraCadPanel = (tvinga = false): void => {
+    const plats = el("ar-cad-plats");
+    const ritarAktivt =
+      lage === "redigera" &&
+      Boolean(verktyg && (verktyg.verktyg === "hus" || verktyg.verktyg === "linje" || verktyg.verktyg === "yta"));
+    if (!ritarAktivt || !verktyg) {
+      plats.hidden = true;
+      plats.innerHTML = "";
+      cadNyckel = "";
+      cadFel = null;
+      return;
+    }
+    const utkast = verktyg.verktyg === "hus" ? verktyg.utkast : verktyg.linje.utkast;
+    const antalPunkter = utkast.length;
+    const senastePunkt = verktyg.sistaUtkastPunkt();
+    if (!cadManuelltLage) {
+      cadLage = antalPunkter > 0 ? "matt" : "sweref";
+    }
+    const nyckel = JSON.stringify([
+      verktyg.verktyg,
+      cadOppen,
+      cadLage,
+      antalPunkter,
+      senastePunkt?.x ?? null,
+      senastePunkt?.y ?? null,
+      cadFel,
+    ]);
+    plats.hidden = false;
+    if (!tvinga && nyckel === cadNyckel) return;
+    const aktivId = document.activeElement instanceof HTMLElement && plats.contains(document.activeElement) ? document.activeElement.id : "";
+    cadNyckel = nyckel;
+    plats.innerHTML = cadMattHtml({
+      synlig: true,
+      oppen: cadOppen,
+      lage: cadLage,
+      antalPunkter,
+      senastePunkt,
+      langdText: cadLangdText,
+      baringText: cadBaringText,
+      eText: cadEText,
+      nText: cadNText,
+      fel: cadFel,
+    });
+    if (aktivId) plats.querySelector<HTMLElement>(`#${aktivId}`)?.focus();
+  };
+
   const uppdateraRedigeraPanel = (): void => {
     if (!verktyg || !info) return;
+    uppdateraCadPanel();
     const hojdFalt = el<HTMLInputElement>("ar-hojd");
     const takFalt = el<HTMLSelectElement>("ar-tak");
     const husKort = el("ar-hus-kort");
@@ -2544,6 +2784,18 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       sektion.vaxla();
       return;
     }
+    if (m.id === "ar-las-centrum") {
+      lasAvKartcentrum();
+      return;
+    }
+    if (m.dataset.cadLage) {
+      cadLage = m.dataset.cadLage === "sweref" ? "sweref" : "matt";
+      cadManuelltLage = true;
+      cadOppen = true;
+      cadFel = null;
+      uppdateraCadPanel(true);
+      return;
+    }
     if (m.id === "ar-redigera-3d-knapp") {
       sattRedigera3d(!redigera3dPa);
       return;
@@ -2846,6 +3098,26 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     }
     if (s.id === "ar-namn") {
       ritaSparStatus();
+      return;
+    }
+    if (s.id === "ar-cad-langd") {
+      cadLangdText = s.value;
+      cadFel = null;
+      return;
+    }
+    if (s.id === "ar-cad-baring") {
+      cadBaringText = s.value;
+      cadFel = null;
+      return;
+    }
+    if (s.id === "ar-cad-e") {
+      cadEText = s.value;
+      cadFel = null;
+      return;
+    }
+    if (s.id === "ar-cad-n") {
+      cadNText = s.value;
+      cadFel = null;
       return;
     }
     const slag = s.dataset.grans as VektorSlag | undefined;
@@ -3163,10 +3435,76 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     { signal: ac.signal },
   );
 
-  // Tangentbord (Esc, S för Sektion, M för Mät bredd i alla 2D-lägen, samt ritverktyg)
+  // CAD-måttformulär: Enter eller "Lägg till punkt" + öppna/stäng-tillstånd på <details id="ar-cad">
+  lyssna(rot, "submit", (h) => {
+    const form = (h.target as Element | null)?.closest<HTMLFormElement>("#ar-cad-form");
+    if (!form || !verktyg) return;
+    h.preventDefault();
+    const res = tillampaCadInmatning(verktyg, {
+      lage: cadLage,
+      langdText: cadLangdText,
+      baringText: cadBaringText,
+      eText: cadEText,
+      nText: cadNText,
+    });
+    if (!res.ok) {
+      cadFel = meddelande?.typ === "fel" ? meddelande.text : res.fel;
+      cadOppen = true;
+      uppdateraCadPanel(true);
+      return;
+    }
+    cadFel = null;
+    cadOppen = true;
+    cadManuelltLage = false;
+    if (cadLage === "sweref") {
+      cadEText = "";
+      cadNText = "";
+    }
+    planeraRitning();
+    uppdateraCadPanel(true);
+    window.requestAnimationFrame(() => {
+      const nastaFalt = rot.querySelector<HTMLInputElement>(cadLage === "matt" ? "#ar-cad-langd" : "#ar-cad-e");
+      nastaFalt?.focus();
+      nastaFalt?.select();
+    });
+  });
+  rot.addEventListener(
+    "toggle",
+    (h) => {
+      const d = h.target as HTMLDetailsElement | null;
+      if (d?.id === "ar-cad") cadOppen = d.open;
+    },
+    { capture: true, signal: ac.signal },
+  );
+
+  // Tangentbord på fokuserad kartbehållare (#ar-a): piltangenter flyttar och läser av kartcentrum (U5c)
+  el("ar-a").addEventListener(
+    "keydown",
+    (h) => {
+      if (lage === "3d" || h.ctrlKey || h.metaKey || h.altKey) return;
+      if (arPilTangent(h.key)) {
+        h.preventDefault();
+        h.stopPropagation();
+        tangentbordsAvlasning.stegPil(h.key, h.shiftKey);
+        return;
+      }
+      if ((h.key === "Enter" || h.key === " ") && lage !== "redigera" && !mat.aktiv && !sektion.aktiv) {
+        h.preventDefault();
+        lasAvKartcentrum();
+      }
+    },
+    { capture: true, signal: ac.signal },
+  );
+
+  // Tangentbord (Alt+I för kartcentrum, Esc, S för Sektion, M för Mät bredd i alla 2D-lägen, samt ritverktyg)
   const tangent = (h: KeyboardEvent): void => {
     const m = h.target as HTMLElement | null;
     if (m && (m.tagName === "INPUT" || m.tagName === "TEXTAREA" || m.tagName === "SELECT" || m.isContentEditable)) return;
+    if (arKartcentrumKortkommando(h)) {
+      h.preventDefault();
+      lasAvKartcentrum();
+      return;
+    }
     if (h.key === "Escape") {
       if (sektion.aktiv) {
         if (sektion.avbryt()) h.preventDefault();
@@ -3174,6 +3512,15 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       }
       if (mat.aktiv) {
         if (mat.avbryt()) h.preventDefault();
+        return;
+      }
+      if (centrumAktiv && lage !== "redigera") {
+        centrumAktiv = false;
+        centrumEtikett = null;
+        senasteAvl = null;
+        hojdText = null;
+        ritaAvlasning();
+        h.preventDefault();
         return;
       }
     }
