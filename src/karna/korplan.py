@@ -13,7 +13,9 @@ redan finns i cachen körs inte igen.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
@@ -21,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from gemensamt.hash import sha256_fil
-from gemensamt.manifest import FilPost, skapa_manifest, skriv_manifest
+from gemensamt.manifest import FilPost, RunManifest, skapa_manifest
 from karna.analyslosare import (
     Analyslosare,
     BeroendeResultat,
@@ -37,6 +39,48 @@ from karna.rutscenario import Ruta, RutScenario, materialisera_scenario
 from karna.utredning import Analys, KorbarFraga
 
 KONTRAKT_SAMMANSTALLNING = "K20/v1-sammanstallning"
+
+
+def _skriv_text_atomiskt(mal: Path, text: str) -> Path:
+    """Skriver UTF-8-text atomiskt via tempfil i samma katalog + `os.replace`.
+
+    Samtida läsare (t.ex. `floden_mcp.oppenhet` som söker efter `run.json`) ser aldrig en
+    tom eller halvt skriven fil, och vid fel städas tempfilen alltid bort.
+    """
+    mal.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_namn = tempfile.mkstemp(prefix=f".{mal.name}.", suffix=".tmp", dir=str(mal.parent))
+    tmp_path = Path(tmp_namn)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, mal)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return mal
+
+
+def _skriv_manifest_atomiskt(manifest: RunManifest, mal: Path) -> Path:
+    """Skriver ett validerat `RunManifest` atomiskt till `mal`."""
+    innehall = json.dumps(manifest.till_dict(), indent=2, ensure_ascii=False) + "\n"
+    return _skriv_text_atomiskt(mal, innehall)
+
+
+def _kopiera_atomiskt(kalla: Path, mal: Path) -> Path:
+    """Kopierar en fil atomiskt via tempfil i `mal.parent` + `os.replace`."""
+    mal.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_namn = tempfile.mkstemp(prefix=f".{mal.name}.", suffix=".tmp", dir=str(mal.parent))
+    tmp_path = Path(tmp_namn)
+    try:
+        os.close(fd)
+        shutil.copy2(kalla, tmp_path)
+        os.replace(tmp_path, mal)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return mal
 
 
 @dataclass
@@ -237,18 +281,18 @@ def _kor_jobb(j: Jobb, cache: ResultatCache, plan: Plan) -> None:
             poster.append(FilPost(roll=roll, fil=namn, sha256=sha))
             filer[roll] = {"fil": namn, "sha256": sha}
         matvarden = json.loads(kanonisk_json(dict(resultat.matvarden)))
-        (tmp / "nyckel.json").write_text(
+        _skriv_text_atomiskt(
+            tmp / "nyckel.json",
             json.dumps(j.nyckel_objekt, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
-            encoding="utf-8",
         )
-        (tmp / "utdata.json").write_text(
+        _skriv_text_atomiskt(
+            tmp / "utdata.json",
             json.dumps(
                 {"filer": filer, "matvarden": matvarden, "varningar": list(resultat.varningar)},
                 indent=2,
                 ensure_ascii=False,
             )
             + "\n",
-            encoding="utf-8",
         )
         manifest = skapa_manifest(
             modul=f"karna:{j.losare.namn}",
@@ -269,7 +313,7 @@ def _kor_jobb(j: Jobb, cache: ResultatCache, plan: Plan) -> None:
             matvarden={**matvarden, "kortid_s": round(kortid, 6)},
             varningar=list(resultat.varningar),
         )
-        skriv_manifest(manifest, tmp / "run.json")
+        _skriv_manifest_atomiskt(manifest, tmp / "run.json")
         return {"kortid_s": kortid}
 
     t0 = time.perf_counter()
@@ -328,7 +372,7 @@ def kor_utredning(
         if j.ruta is not None:
             mal = mal / j.ruta.ruta_id
         shutil.copytree(cache.jobbmapp(j.nyckel) / "utdata", mal)
-        shutil.copy2(cache.jobbmapp(j.nyckel) / "run.json", mal / "run.json")
+        _kopiera_atomiskt(cache.jobbmapp(j.nyckel) / "run.json", mal / "run.json")
 
     jamforelser = [kor_jamforelse(jf, plan, cache, ut / "jamforelser") for jf in fraga.jamforelser]
 
@@ -365,8 +409,9 @@ def kor_utredning(
             "total_tid_s": round(time.perf_counter() - t_start, 6),
         },
     }
-    (ut / "sammanstallning.json").write_text(
-        json.dumps(sammanstallning, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    _skriv_text_atomiskt(
+        ut / "sammanstallning.json",
+        json.dumps(sammanstallning, indent=2, ensure_ascii=False) + "\n",
     )
     indata = []
     if fraga.kalla is not None:
@@ -384,7 +429,7 @@ def kor_utredning(
         ],
         matvarden=dict(sammanstallning["sammanfattning"]),
     )
-    skriv_manifest(manifest, ut / "run.json")
+    _skriv_manifest_atomiskt(manifest, ut / "run.json")
     return Korresultat(plan=plan, utmapp=ut, sammanstallning=sammanstallning)
 
 

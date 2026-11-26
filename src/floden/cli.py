@@ -1706,6 +1706,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_lagring(subparsers)
 
+    from konto.cli import registrera as registrera_konto
+
+    registrera_konto(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Floden i webbläsaren: klient och API från samma port.",
@@ -1985,6 +1989,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from gemensamt.lagring_cli import kor as kor_lagring
 
         return kor_lagring(args)
+    if args.kommando == "konto":
+        from konto.cli import kor as kor_konto
+
+        return kor_konto(args)
     if args.kommando == "forberakna":
         from karna.batch import (
             BatchFel,
