@@ -156,6 +156,7 @@ def mappa_geografi(
     baskarta_filer: Sequence[Path] = (),
     dwgread: str | None = None,
     nan_varning_andel: float = 0.20,
+    forberaknad_lager: Any | None = None,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
     from kommuner.baskarta import byggnader_ur_lokala_filer, tak_till_gpkg
@@ -595,6 +596,16 @@ def mappa_geografi(
     for mapp in (lager_k1.mapp, versionsmapp(geo_rot, geografi_id, version)):
         skriv_oppenhet_toml(mapp, oppen=oppna_k1, licens=lic, kalla=kalla_text, anledning=anledning)
 
+    forberaknad_bas_info: dict[str, Any] | None = None
+    if forberaknad_lager is not None:
+        rutor_forb = forberaknad_lager.hitta_rutor_for_utbredning(kommun.id, extent)
+        if rutor_forb:
+            forberaknad_bas_info = {
+                "kalla": getattr(forberaknad_lager, "kalla_typ", "s3"),
+                "kommun": kommun.id,
+                "rutor": list(rutor_forb),
+            }
+
     manifest: dict[str, Any] = {
         "kontrakt": KONTRAKT_GEOGRAFI,
         "id": geografi_id,
@@ -638,6 +649,7 @@ def mappa_geografi(
             "tillrinning": {k: tr[k] for k in ("cell_m", "celler", "yta_m2", "krav_buffert_m", "nar_kanten")},
             **({"vattenytor": vatten_info} if vatten_info else {}),
             "hojdmodell_kvalitet": hojd_kvalitet,
+            **({"forberaknad_bas": forberaknad_bas_info} if forberaknad_bas_info else {}),
             "sankgraf": "inte förberäknad: byggs och cachas av kärnan (K22) vid första körningen",
         },
         "flaggor": {

@@ -22,6 +22,7 @@ import http.client
 import io
 import ipaddress
 import json
+import logging
 import math
 import re
 import socket
@@ -40,6 +41,10 @@ from shapely.geometry import Polygon
 
 from gemensamt import avgransning as avgr_mod
 from gemensamt.hash import sha256_fil
+from gemensamt.objektlagring import ObjektLagringFel
+from geografi.forberaknad_lager import ForberaknadKommunLager, ForberaknadLagerFel
+from geografi.modell import GeografiFel
+from geografi.modell import las_manifest as las_geo_manifest
 from karna import ritlager as ritl
 from karna.geometri import las_byggnader
 from karna.geometri.tillampa import valj_k1_version, verifiera_byggnadsreferenser
@@ -579,12 +584,14 @@ class KartverktygTjanst:
         geomapp: Path | None = None,
         projektrot: Path | None = None,
         kraver_registerid: bool = False,
+        forberaknad_lager: ForberaknadKommunLager | None = None,
     ) -> None:
         self.fragor = fragor
         self.geomapp = geomapp
         self.projektrot = projektrot if projektrot is not None else fragor.projektrot
         self.kraver_registerid = kraver_registerid
         """Med inloggning på nås projekt i en geografi bara med registrets id (rollerna hänger på det)."""
+        self.forberaknad_lager = forberaknad_lager
         self.mapp = mapp
         self.datamappar = list(datamappar)
         self.tillat_loopback = tillat_loopback
@@ -824,10 +831,54 @@ class KartverktygTjanst:
             "kalla": kalla,
         }
 
+    def _forberaknad_bas(
+        self,
+        kalla: Projektkalla,
+        utbredning: tuple[float, float, float, float],
+    ) -> dict[str, Any] | None:
+        """Returnerar metadata om förberäknade rutor i `ForberaknadKommunLager` för projektet, annars None."""
+        lager = self.forberaknad_lager
+        if lager is None or not kalla.geografi:
+            return None
+        kommun: str | None = None
+        if self.geomapp is not None:
+            try:
+                manifest, _ = las_geo_manifest(self.geomapp, kalla.geografi, verifiera=False)
+                raw_kommun = manifest.get("kommun")
+                if isinstance(raw_kommun, str) and raw_kommun.strip():
+                    kommun = raw_kommun.strip()
+            except GeografiFel:
+                pass
+        if kommun is None:
+            kommun = kalla.geografi.split("@", 1)[0].strip()
+        if not kommun:
+            return None
+        bbox = kalla.avgransning if kalla.avgransning is not None else utbredning
+        try:
+            rutor = lager.hitta_rutor_for_utbredning(kommun, bbox)
+        except (ForberaknadLagerFel, ObjektLagringFel) as exc:
+            logging.getLogger(__name__).warning(
+                "Kunde inte läsa förberäknade rutor för kommun %s: %s", kommun, exc
+            )
+            return None
+        if not rutor:
+            return None
+        return {
+            "kalla": lager.kalla_typ,
+            "kommun": kommun,
+            "antal_rutor": len(rutor),
+        }
+
     def projektinfo(self, projekt: str) -> dict[str, Any]:
         kalla = self.kalla(projekt)
         mallar = dict(kalla.mallar)
         rutor = self._rutor_alla(mallar)
+        utbr = (
+            min(r[0] for r in rutor),
+            min(r[1] for r in rutor),
+            max(r[2] for r in rutor),
+            max(r[3] for r in rutor),
+        )
         byggn = self._alla_byggnader(kalla)
         trunkerad = len(byggn) > MAX_BYGGNADER
         brytl = self._alla_brytlinjer(kalla)
@@ -838,6 +889,7 @@ class KartverktygTjanst:
             "slag": kalla.slag,
             "namn": kalla.namn,
             "geografi": kalla.geografi,
+            "forberaknad_bas": self._forberaknad_bas(kalla, utbr),
             "avgransning_3011": list(kalla.avgransning) if kalla.avgransning else None,
             "avgransning_polygon_3011": (
                 avgr_mod.till_geojson(kalla.polygon) if kalla.polygon is not None else None
@@ -849,10 +901,10 @@ class KartverktygTjanst:
             "hojd_max_m": HOJD_MAX_M,
             "vaningshojd_m": VANINGSHOJD_M,
             "utbredning": {
-                "x_min": min(r[0] for r in rutor),
-                "y_min": min(r[1] for r in rutor),
-                "x_max": max(r[2] for r in rutor),
-                "y_max": max(r[3] for r in rutor),
+                "x_min": utbr[0],
+                "y_min": utbr[1],
+                "x_max": utbr[2],
+                "y_max": utbr[3],
             },
             "baser": {
                 k: {
@@ -1233,13 +1285,24 @@ class KartverktygTjanst:
                     continue
                 if not isinstance(d, dict) or d.get("format") != FORMAT:
                     continue
+                korningar = d.get("korningar", {})
+                har_korning = False
+                if isinstance(korningar, Mapping):
+                    for kpost in korningar.values():
+                        kid = kpost.get("korning_id") if isinstance(kpost, Mapping) else None
+                        if isinstance(kid, str) and kid:
+                            korning = self.fragor.korning_eller_none(kid)
+                            if korning is not None and korning.status == "klar":
+                                har_korning = True
+                                break
                 ut.append(
                     {
                         "slug": fil.stem,
                         "namn": d.get("namn", fil.stem),
                         "andrad": d.get("andrad"),
                         "antal_andringar": len(d.get("andringar", [])),
-                        "korningar": d.get("korningar", {}),
+                        "korningar": korningar,
+                        "har_korning": har_korning,
                     }
                 )
         return {"scenarier": ut}
@@ -1853,6 +1916,38 @@ class KartverktygTjanst:
         )
         return {"lage": "idag", "fragor": ut}
 
+    @staticmethod
+    def _regn_text_fran_resultat(res: Mapping[str, Any]) -> str | None:
+        """Formaterar läsbar regntext ur körningens `antaganden.regn`, eller None om okänt."""
+        antag = res.get("antaganden")
+        if not isinstance(antag, Mapping):
+            return None
+        regn_lista = antag.get("regn")
+        if not isinstance(regn_lista, list) or not regn_lista:
+            return None
+        r = regn_lista[0]
+        if not isinstance(r, Mapping):
+            return None
+        delar: list[str] = []
+        aterkomst = r.get("aterkomsttid_ar")
+        if isinstance(aterkomst, int | float) and not isinstance(aterkomst, bool):
+            delar.append(f"{float(aterkomst):g}-årsregn")
+        var_min = r.get("varaktighet_min")
+        if isinstance(var_min, int | float) and not isinstance(var_min, bool):
+            delar.append(f"{float(var_min):g} min")
+        kf = r.get("klimatfaktor")
+        if (
+            isinstance(kf, int | float)
+            and not isinstance(kf, bool)
+            and abs(float(kf) - 1.0) > 1e-9
+        ):
+            delar.append(f"kf {float(kf):g}")
+        regn_mm = r.get("regn_mm")
+        if isinstance(regn_mm, int | float) and not isinstance(regn_mm, bool):
+            mm_txt = f"{float(regn_mm):g} mm"
+            return f"{', '.join(delar)} ({mm_txt})" if delar else mm_txt
+        return ", ".join(delar) if delar else None
+
     def status_lage_idag(self, projekt: str) -> dict[str, Any]:
         """Körningarnas status för läget idag och, för klara, vyerna (bara före) för kartan."""
         self._kravs_projekt(projekt)
@@ -1862,12 +1957,13 @@ class KartverktygTjanst:
                 st = self.fragor.korning_status(k["korning_id"])
             except FlodenWebbFel:
                 continue
-            post: dict[str, Any] = {"mall": kort, "status": st, "vyer": []}
+            post: dict[str, Any] = {"mall": kort, "status": st, "vyer": [], "regn_text": None}
             if st["status"] == "klar":
                 try:
                     res = self.fragor.resultat(k["korning_id"])
                     post["vyer"] = self._lage_vyer(res, k["korning_id"])
                     post["varningar"] = [str(v["text"]) for v in res.get("varningar", [])]
+                    post["regn_text"] = self._regn_text_fran_resultat(res)
                 except FlodenWebbFel:
                     pass
             ut.append(post)
