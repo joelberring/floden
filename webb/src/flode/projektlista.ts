@@ -6,21 +6,28 @@ import { hamtaProjekt, hamtaProjektLista } from "../api.ts";
 import { hamtaBildMedUtbredning, hamtaProjektInfo, type ProjektInfo } from "../karta/kartapi.ts";
 import type { Kartmotor } from "../karta/kartmotor.ts";
 import { esc, formatera } from "../sidor.ts";
-import type { ProjektSvar } from "../types.ts";
+import type { ProjektListaPost, ProjektSvar } from "../types.ts";
 import { kontoLage, vidKontoandring } from "../konto.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
 import { flodeAdress, installningarAdress, NYTT_PROJEKT_ADRESS } from "./adress.ts";
 import { sattProjektNamn } from "./huvud.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
-import { nyttProjektHtml, radHandling, rollRad } from "./projektlogik.ts";
+import { nyttProjektHtml, projektOrganisationNamn, projektRadHtml, tomProjektlistaHtml } from "./projektlogik.ts";
 import { arkiveradeLankHtml } from "./projektinstallningar-logik.ts";
+
+type ProjektListaPostMedOrg = ProjektListaPost & {
+  organisation_namn?: string | null;
+  organisation?: string | null;
+};
 
 interface Rad {
   id: string;
   namn: string;
   undertitel: string;
   paahittat: boolean;
-  roll: string;
+  organisation_namn: string | null;
+  roll: string | null;
+  organisation_synlig?: boolean;
   detalj: ProjektSvar | null;
   miniatyr: string | null;
 }
@@ -61,16 +68,19 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null, arkive
         <div class="flode-kartkort" id="projekt-kartkort" hidden></div>
       </section>
     </div>`;
-  // Kontoläget kan komma efter första ritningen (GET /konto/jag): knappen ritas om när det ändras.
+  const rader = rot.querySelector<HTMLElement>("#projekt-rader") as HTMLElement;
+  const kort = rot.querySelector<HTMLElement>("#projekt-kartkort") as HTMLElement;
+  let arTomLista = false;
+
+  // Kontoläget kan komma efter första ritningen (GET /konto/jag): knapp och ev. tomtext ritas om när det ändras.
   const ritaNytt = (): void => {
     if (avslutad) return;
     const plats = rot.querySelector<HTMLElement>("#nytt-projekt-plats");
     if (plats) plats.innerHTML = nyttProjektHtml(kontoLage().lage, NYTT_PROJEKT_ADRESS);
+    if (arTomLista) rader.innerHTML = tomProjektlistaHtml(kontoLage().lage, arkiverade, NYTT_PROJEKT_ADRESS);
   };
   ritaNytt();
   vidKontoandring(ritaNytt);
-  const rader = rot.querySelector<HTMLElement>("#projekt-rader") as HTMLElement;
-  const kort = rot.querySelector<HTMLElement>("#projekt-kartkort") as HTMLElement;
 
   const visaKarta = async (r: Rad): Promise<void> => {
     let info: ProjektInfo;
@@ -93,7 +103,7 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null, arkive
     void bas.ladda(r.id);
     const u = info.utbredning;
     kort.hidden = false;
-    kort.innerHTML = `<strong>${esc(r.namn)}</strong><span class="flode-dampad">${esc(formatera(u.x_max - u.x_min, 0))} × ${esc(formatera(u.y_max - u.y_min, 0))} m · SWEREF 99 18 00</span>
+    kort.innerHTML = `<strong>${esc(r.namn)}</strong>${r.organisation_namn ? `<span class="flode-dampad">${esc(r.organisation_namn)}</span>` : ""}<span class="flode-dampad">${esc(formatera(u.x_max - u.x_min, 0))} × ${esc(formatera(u.y_max - u.y_min, 0))} m · SWEREF 99 18 00</span>
       <a class="flode-knapp svart liten" id="projekt-oppna" href="${flodeAdress(r.id, "forslag")}">Öppna projektet</a>
       <a class="flode-knapp liten" id="projekt-installningar" href="${installningarAdress(r.id)}">Projektinställningar</a>`;
   };
@@ -104,9 +114,19 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null, arkive
       const s = await hamtaProjektLista(arkiverade);
       // Listan ritas direkt; status och miniatyr fylls i efter hand, så att ett långsamt eller trasigt projekt
       // (stor geografi, bakgrundskarta som inte laddas) aldrig håller kvar "Hämtar projekten ...".
-      lista = s.projekt.map((p): Rad => {
+      lista = (s.projekt as ProjektListaPostMedOrg[]).map((p): Rad => {
         sattProjektNamn(p.id, p.namn);
-        return { id: p.id, namn: p.namn, undertitel: p.undertitel, paahittat: p.paahittat, roll: rollRad(p), detalj: null, miniatyr: null };
+        return {
+          id: p.id,
+          namn: p.namn,
+          undertitel: p.undertitel,
+          paahittat: p.paahittat,
+          organisation_namn: projektOrganisationNamn(p),
+          roll: p.roll ?? null,
+          organisation_synlig: p.organisation_synlig,
+          detalj: null,
+          miniatyr: null,
+        };
       });
     } catch (e) {
       if (avslutad) return;
@@ -139,29 +159,28 @@ export function visaProjektlista(rot: HTMLElement, valtId: string | null, arkive
     };
     if (avslutad) return;
     if (lista.length === 0) {
-      if (arkiverade) {
-        rader.innerHTML = `<p class="flode-dampad">Det finns inga arkiverade projekt.</p>`;
-        return;
-      }
-      rader.innerHTML = `<p class="flode-dampad">Det finns inga projekt än. Demokvarteret byggs med <code>floden demo</code>; ladda sedan om sidan.</p>`;
+      arTomLista = true;
+      rader.innerHTML = tomProjektlistaHtml(kontoLage().lage, arkiverade, NYTT_PROJEKT_ADRESS);
       return;
     }
     let val: Rad = lista.find((r) => r.id === valtId) ?? (lista[0] as Rad);
     const ritaRader = (): void => {
       rader.innerHTML = lista
-        .map((r) => {
-          const pa = r.id === val.id;
-          return `<a class="flode-projekt${pa ? " vald" : ""}" href="${flodeAdress(r.id, "forslag")}" data-projekt="${esc(r.id)}"${pa ? ' aria-current="true"' : ""}>
-            ${r.miniatyr ? `<img src="${esc(r.miniatyr)}" alt="" />` : `<span class="flode-miniatyr-tom" aria-hidden="true"></span>`}
-            <span class="flode-projekt-text">
-              <span class="flode-projekt-namn">${esc(r.namn)}</span>
-              <span class="flode-dampad">${esc(r.paahittat ? "Påhittat" : "Verkligt")} · ${esc(r.undertitel)}</span>
-              <span class="flode-dampad">${esc(statusRad(r.detalj))}</span>
-              ${r.roll ? `<span class="flode-dampad">${esc(r.roll)}</span>` : ""}
-              <span class="flode-projekt-handling">${esc(radHandling(pa))}</span>
-            </span>
-          </a>`;
-        })
+        .map((r) =>
+          projektRadHtml({
+            id: r.id,
+            namn: r.namn,
+            undertitel: r.undertitel,
+            paahittat: r.paahittat,
+            organisation_namn: r.organisation_namn,
+            roll: r.roll,
+            organisation_synlig: r.organisation_synlig,
+            statusText: statusRad(r.detalj),
+            href: flodeAdress(r.id, "forslag"),
+            vald: r.id === val.id,
+            miniatyr: r.miniatyr,
+          }),
+        )
         .join("");
     };
     ritaRader();

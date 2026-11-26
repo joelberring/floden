@@ -72,6 +72,49 @@ export const PRICK_TEXT: Record<Prick, string> = {
   gra: "Kan inte avgöras med nuvarande underlag",
 };
 
+/** Kort synlig statustext bredvid varje färgprick i rapportens innehållsförteckning (U5e). */
+export const PRICK_ETIKETT: Record<Prick, string> = {
+  gron: "Klar",
+  gul: "Fördjupa",
+  gra: "Underlag saknas",
+};
+
+export type StatusMarkorLage = Prick | "klar" | "pagar" | "koad" | "ko" | "kor" | "fel" | "kontrollera";
+
+export interface StatusMarkorInfo {
+  prick: Prick | "fel";
+  etikett: string;
+  beskrivning: string;
+}
+
+/** Samtliga statuslägen med synlig textetikett och skärmläsarbeskrivning (aldrig enbart färg). */
+export const STATUS_MARKOR_INFO: Record<StatusMarkorLage, StatusMarkorInfo> = {
+  gron: { prick: "gron", etikett: PRICK_ETIKETT.gron, beskrivning: PRICK_TEXT.gron },
+  gul: { prick: "gul", etikett: PRICK_ETIKETT.gul, beskrivning: PRICK_TEXT.gul },
+  gra: { prick: "gra", etikett: PRICK_ETIKETT.gra, beskrivning: PRICK_TEXT.gra },
+  klar: { prick: "gron", etikett: "Klar", beskrivning: "Klar" },
+  pagar: { prick: "gul", etikett: "Pågår", beskrivning: "Pågår" },
+  kor: { prick: "gul", etikett: "Pågår", beskrivning: "Pågår" },
+  koad: { prick: "gra", etikett: "Köad", beskrivning: "Köad" },
+  ko: { prick: "gra", etikett: "Köad", beskrivning: "Köad" },
+  kontrollera: { prick: "gul", etikett: "Kontrollera", beskrivning: "Kontrollera" },
+  fel: { prick: "fel", etikett: "Fel", beskrivning: "Fel" },
+};
+
+/** Statusprick med synlig text bredvid pricken (tillgänglig för färgblinda och skärmläsare). */
+export function statusMarkorHtml(lage: StatusMarkorLage, beskrivning?: string): string {
+  const info = STATUS_MARKOR_INFO[lage];
+  const full = beskrivning ?? info.beskrivning;
+  const aria = full && full !== info.etikett ? `${info.etikett}: ${full}` : info.etikett;
+  return `<span class="flode-statusmarkor ${info.prick}" data-status-lage="${esc(lage)}" role="status" title="${esc(full)}" aria-label="${esc(aria)}"><span class="flode-prick ${info.prick}" aria-hidden="true"></span><span class="flode-statusmarkor-text">${esc(info.etikett)}</span></span>`;
+}
+
+/** En frågerad i rapportens innehållsförteckning: frågetext + tillgänglig statusmarkör med text. */
+export function innehallRadHtml(f: RapportFraga): string {
+  const p = prickFor(f);
+  return `<button type="button" class="flode-innehall-rad" data-mal="fraga-${esc(f.id)}"><span class="flode-innehall-titel">${esc(f.id)} ${esc(f.fraga)}</span>${statusMarkorHtml(p)}</button>`;
+}
+
 /** Sammanfattningens mening, bara räknad på rapportens egna frågor. */
 export function sammanfattningsText(fragor: ReadonlyArray<RapportFraga>): string {
   const n = fragor.length;
@@ -169,12 +212,7 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   };
 
   const rita = (r: RapportInnehall, lista: RapportRad[]): void => {
-    const nav = r.fragor
-      .map((f) => {
-        const p = prickFor(f);
-        return `<button type="button" class="flode-innehall-rad" data-mal="fraga-${esc(f.id)}"><span class="flode-prick ${p}" role="img" aria-label="${esc(PRICK_TEXT[p])}"></span>${esc(f.id)} ${esc(f.fraga)}</button>`;
-      })
-      .join("");
+    const nav = r.fragor.map(innehallRadHtml).join("");
     const val = lista.length > 1
       ? `<label class="flode-falt"><span class="flode-liten flode-dampad">Rapport</span><select id="rp-val">${lista.map((x) => `<option value="${esc(x.rapport_id)}"${x.rapport_id === r.rapport_id ? " selected" : ""}>${esc(x.titel)} (${esc(x.skapad.slice(0, 10))})</option>`).join("")}</select></label>`
       : "";

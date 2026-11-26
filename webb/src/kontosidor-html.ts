@@ -76,15 +76,15 @@ export function produktTabell(n: NyckelStatus): string {
   const tr = rader
     .map(
       (p) => `<tr data-produkt="${esc(p.roll)}">
-        <td>${esc(p.namn)}</td><td>${esc(p.anvands_till)}${p.anmarkning ? ` <span class="dampad">${esc(p.anmarkning)}</span>` : ""}</td>
-        <td>${p.behovs ? "Behövs" : "Valfri"}</td></tr>`,
+        <td data-etikett="Produkt">${esc(p.namn)}</td><td data-etikett="Används till">${esc(p.anvands_till)}${p.anmarkning ? ` <span class="dampad">${esc(p.anmarkning)}</span>` : ""}</td>
+        <td data-etikett="Behövs/Valfri">${p.behovs ? "Behövs" : "Valfri"}</td></tr>`,
     )
     .join("");
   return `<details class="nyckel-detaljer" data-produkter>
       <summary>Produkter att beställa på Geotorget (${rader.length} st)</summary>
       <div class="nyckel-detaljer-inre">
         <p class="nyckel-ingress">Varje produkt beställs för sig, avgiftsfritt, för ditt konto på${lank || " Geotorget."} Beställ de som Floden ska använda för det du vill göra. <a href="https://github.com/joelberring/floden/blob/main/docs/KONTO.md" target="_blank" rel="noopener noreferrer">Så kopplar du Lantmäteriet</a>.</p>
-        <div class="tabell-ruta"><table class="data-tabell kompakt">
+        <div class="tabell-ruta"><table class="data-tabell kompakt f-korttabell">
           <thead><tr><th scope="col">Produkt</th><th scope="col">Används till</th><th scope="col">Behövs/Valfri</th></tr></thead>
           <tbody>${tr}</tbody></table></div>
         <p class="hjalp-ruta nyckel-notis" role="note" data-bestallning-tid>${esc(n.bestallning_text ?? "En beställning kan ta tid, ibland dagar, innan produkten är aktiv. Lantmäteriet svarar då 401 eller 403.")}</p>
@@ -264,12 +264,12 @@ export function mcpTokenAvsnitt(a: McpAvsnitt): string {
   const rader = svar.tokens
     .map(
       (t) => `<tr>
-        <td>${esc(t.namn)}</td><td>${esc(t.skapad_datum ?? "–")}</td><td>${esc(t.senast_anvand_datum ?? "Aldrig")}</td><td class="mono">…${esc(t.slutar_pa)}</td>
-        <td><button type="button" class="knapp knapp-kompakt" data-aterkalla-mcp="${esc(t.id)}" data-aterkalla-namn="${esc(t.namn)}">Återkalla</button></td></tr>`,
+        <td data-etikett="Namn">${esc(t.namn)}</td><td data-etikett="Skapad">${esc(t.skapad_datum ?? "–")}</td><td data-etikett="Senast använd">${esc(t.senast_anvand_datum ?? "Aldrig")}</td><td class="mono" data-etikett="Slutar på">…${esc(t.slutar_pa)}</td>
+        <td class="f-korttabell-atgard" data-etikett="Åtgärd"><button type="button" class="knapp knapp-kompakt" data-aterkalla-mcp="${esc(t.id)}" data-aterkalla-namn="${esc(t.namn)}">Återkalla</button></td></tr>`,
     )
     .join("");
   const tabell = svar.tokens.length
-    ? `<div class="tabell-ruta"><table class="data-tabell kompakt">
+    ? `<div class="tabell-ruta"><table class="data-tabell kompakt f-korttabell">
         <thead><tr><th scope="col">Namn</th><th scope="col">Skapad</th><th scope="col">Senast använd</th><th scope="col">Slutar på</th><th scope="col">Åtgärd</th></tr></thead>
         <tbody>${rader}</tbody></table></div>`
     : `<p class="dampad liten-text">Inga aktiva token än.</p>`;
@@ -305,12 +305,12 @@ export function anslutnaApparAvsnitt(a: McpAvsnitt): string {
   const rader = a.appar
     .map(
       (p) => `<tr>
-        <td>${esc(p.namn)}</td><td>${esc(p.skapad_datum ?? "–")}</td><td>${esc(p.senast_anvand_datum ?? "Aldrig")}</td>
-        <td><button type="button" class="knapp knapp-kompakt" data-aterkalla-app="${esc(p.id)}" data-aterkalla-namn="${esc(p.namn)}">Ta bort tillgång</button></td></tr>`,
+        <td data-etikett="App">${esc(p.namn)}</td><td data-etikett="Godkänd">${esc(p.skapad_datum ?? "–")}</td><td data-etikett="Senast använd">${esc(p.senast_anvand_datum ?? "Aldrig")}</td>
+        <td class="f-korttabell-atgard" data-etikett="Åtgärd"><button type="button" class="knapp knapp-kompakt" data-aterkalla-app="${esc(p.id)}" data-aterkalla-namn="${esc(p.namn)}">Ta bort tillgång</button></td></tr>`,
     )
     .join("");
   const tabell = a.appar.length
-    ? `<div class="tabell-ruta"><table class="data-tabell kompakt">
+    ? `<div class="tabell-ruta"><table class="data-tabell kompakt f-korttabell">
         <thead><tr><th scope="col">App</th><th scope="col">Godkänd</th><th scope="col">Senast använd</th><th scope="col">Åtgärd</th></tr></thead>
         <tbody>${rader}</tbody></table></div>`
     : `<p class="dampad liten-text">Inga anslutna appar.</p>`;
@@ -491,10 +491,10 @@ function rollVal(roller: string[], vald: string, attribut: string): string {
 
 function medlemsRad(pid: string, roller: string[], m: AdminMedlem): string {
   return `<tr>
-    <td>${esc(m.namn)}${m.sparrad ? ` <span class="chip">Spärrad</span>` : ""}</td>
-    <td>${esc(m.epost ?? "–")}</td>
-    <td>${rollVal(roller, m.roll, `data-roll-projekt="${esc(pid)}" data-roll-konto="${esc(m.konto_id)}" aria-label="Roll för ${esc(m.namn)}"`)}</td>
-    <td>
+    <td data-etikett="Namn">${esc(m.namn)}${m.sparrad ? ` <span class="chip">Spärrad</span>` : ""}</td>
+    <td data-etikett="E-post">${esc(m.epost ?? "–")}</td>
+    <td data-etikett="Roll">${rollVal(roller, m.roll, `data-roll-projekt="${esc(pid)}" data-roll-konto="${esc(m.konto_id)}" aria-label="Roll för ${esc(m.namn)}"`)}</td>
+    <td class="f-korttabell-atgard" data-etikett="Åtgärd">
       <button type="button" class="knapp knapp-liten" data-ta-bort-roll="${esc(pid)}|${esc(m.konto_id)}">Ta bort från projektet</button>
       <button type="button" class="knapp knapp-liten" data-sparra="${esc(m.konto_id)}" data-sparra-till="${m.sparrad ? "nej" : "ja"}">${m.sparrad ? "Öppna kontot" : "Spärra kontot"}</button>
     </td></tr>`;
@@ -507,7 +507,7 @@ const INBJUDAN_TEXT: Record<AdminInbjudan["status"], string> = {
 };
 
 function inbjudanRad(i: AdminInbjudan): string {
-  return `<tr><td>${esc(i.epost)}</td><td>${esc(rollNamn(i.roll))}</td><td>${esc(INBJUDAN_TEXT[i.status])}</td><td>${esc(datumTid(i.giltig_till))}</td></tr>`;
+  return `<tr><td data-etikett="E-post">${esc(i.epost)}</td><td data-etikett="Roll">${esc(rollNamn(i.roll))}</td><td data-etikett="Status">${esc(INBJUDAN_TEXT[i.status])}</td><td data-etikett="Giltig till">${esc(datumTid(i.giltig_till))}</td></tr>`;
 }
 
 /** Kryssrutan "Synligt för organisationen <namn>". Bara projektets utredare och skaparen kan ändra. */
@@ -524,12 +524,12 @@ export function delningHtml(p: AdminProjektDetalj["projekt"]): string {
 export function adminProjektHtml(d: AdminProjektDetalj): string {
   const p = d.projekt;
   const medlemmar = d.medlemmar.length
-    ? `<div class="tabell-ruta"><table class="data-tabell">
+    ? `<div class="tabell-ruta"><table class="data-tabell f-korttabell">
         <thead><tr><th scope="col">Namn</th><th scope="col">E-post</th><th scope="col">Roll</th><th scope="col">Åtgärd</th></tr></thead>
         <tbody>${d.medlemmar.map((m) => medlemsRad(p.id, d.roller, m)).join("")}</tbody></table></div>`
     : `<p class="dampad">Inga medlemmar än.</p>`;
   const inbjudningar = d.inbjudningar.length
-    ? `<div class="tabell-ruta"><table class="data-tabell">
+    ? `<div class="tabell-ruta"><table class="data-tabell f-korttabell">
         <thead><tr><th scope="col">E-post</th><th scope="col">Roll</th><th scope="col">Status</th><th scope="col">Giltig till</th></tr></thead>
         <tbody>${d.inbjudningar.map(inbjudanRad).join("")}</tbody></table></div>`
     : `<p class="dampad">Inga inbjudningar.</p>`;
@@ -560,18 +560,18 @@ function orgMedlemsRad(oid: string, d: AdminOrganisationDetalj, m: AdminMedlem):
   const atgard = redigerbar
     ? `<button type="button" class="knapp knapp-liten" data-org-ta-bort="${esc(oid)}|${esc(m.konto_id)}">Ta bort från organisationen</button>`
     : "–";
-  return `<tr><td>${namn}</td><td>${esc(m.epost ?? "–")}</td><td>${roll}</td><td>${atgard}</td></tr>`;
+  return `<tr><td data-etikett="Namn">${namn}</td><td data-etikett="E-post">${esc(m.epost ?? "–")}</td><td data-etikett="Roll">${roll}</td><td class="f-korttabell-atgard" data-etikett="Åtgärd">${atgard}</td></tr>`;
 }
 
 export function adminOrganisationHtml(d: AdminOrganisationDetalj): string {
   const o = d.organisation;
   const medlemmar = d.medlemmar.length
-    ? `<div class="tabell-ruta"><table class="data-tabell">
+    ? `<div class="tabell-ruta"><table class="data-tabell f-korttabell">
         <thead><tr><th scope="col">Namn</th><th scope="col">E-post</th><th scope="col">Roll</th><th scope="col">Åtgärd</th></tr></thead>
         <tbody>${d.medlemmar.map((m) => orgMedlemsRad(o.id, d, m)).join("")}</tbody></table></div>`
     : `<p class="dampad">Inga medlemmar än.</p>`;
   const inbjudningar = d.inbjudningar.length
-    ? `<div class="tabell-ruta"><table class="data-tabell">
+    ? `<div class="tabell-ruta"><table class="data-tabell f-korttabell">
         <thead><tr><th scope="col">E-post</th><th scope="col">Roll</th><th scope="col">Status</th><th scope="col">Giltig till</th></tr></thead>
         <tbody>${d.inbjudningar.map(inbjudanRad).join("")}</tbody></table></div>`
     : `<p class="dampad">Inga inbjudningar.</p>`;

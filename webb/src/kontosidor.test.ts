@@ -537,6 +537,30 @@ test("projektraden visar roll och delning med organisationen", () => {
   assert.equal(rollRad({ roll: "lasare" }), "Din roll: läsare");
   assert.equal(rollRad({ roll: "utredare", organisation_synlig: true }), "Din roll: utredare · delat med organisationen");
   assert.equal(rollRad({ organisation_synlig: true }), "delat med organisationen");
+  assert.equal(rollRad({ organisation_namn: "Stockholms stad", roll: "utredare", organisation_synlig: true }), "Stockholms stad · Din roll: utredare · delat med organisationen");
+  assert.equal(rollRad({ organisation: "Göteborgs stad", roll: "lasare", organisation_synlig: false }), "Göteborgs stad · Din roll: läsare · privat");
   assert.equal(rollRad({}), "");
   assert.equal(rollRad({ roll: null }), "");
+});
+
+test("U5b: alla kontotabeller (Nycklar och Administration) använder .f-korttabell och data-etikett på varje cell", () => {
+  settKontoLage(anvandare({ admin: true }));
+  const nyckelSida = sidaNycklar(nycklar(true), null, {
+    ...mcpSvar(2),
+    appar: [{ id: "a1", namn: "Claude Desktop", skapad_datum: "2027-01-15", senast_anvand_datum: "2027-01-16" }],
+  });
+  const adminSida = sidaAdministration([detalj], null, "", [orgDetalj(["medlem", "ledare", "organisationsadmin", "agare"])]);
+  for (const html of [nyckelSida, adminSida]) {
+    const tabeller = [...html.matchAll(/<table\b([^>]*)>/g)];
+    assert.ok(tabeller.length >= 3, "Förväntade flera tabeller i kontosidan");
+    for (const t of tabeller) {
+      assert.match(t[1] ?? "", /\bf-korttabell\b/, `Tabell saknar klass .f-korttabell: ${t[0]}`);
+    }
+    const celler = [...html.matchAll(/<td\b([^>]*)>/g)];
+    assert.ok(celler.length > 0);
+    for (const c of celler) {
+      assert.match(c[1] ?? "", /\bdata-etikett="[^"]+"/, `Tabellcell saknar icke-tom data-etikett: ${c[0]}`);
+    }
+  }
+  settKontoLage({ lage: "av" });
 });

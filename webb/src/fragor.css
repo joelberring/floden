@@ -473,3 +473,87 @@ input[type="radio"] {
   margin-right: 8px;
   font-size: 0.875rem;
 }
+
+/* Responsiva konto- och administrationstabeller (U5b): staplade kort på smal skärm utan sidledsskroll. */
+@media (max-width: 720px) {
+  .tabell-ruta:has(> .f-korttabell) {
+    overflow-x: visible;
+  }
+  .f-korttabell,
+  .data-tabell.f-korttabell,
+  .data-tabell.kompakt.f-korttabell {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border-collapse: separate;
+  }
+  .f-korttabell thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .f-korttabell tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .f-korttabell tbody tr,
+  .data-tabell.f-korttabell tbody tr,
+  .data-tabell.kompakt.f-korttabell tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 14px;
+    border: 1px solid var(--f-linje-stark, #111111);
+    border-radius: 0;
+    background: var(--f-yta, #ffffff);
+  }
+  .f-korttabell td,
+  .data-tabell.f-korttabell td,
+  .data-tabell.kompakt.f-korttabell td,
+  .data-tabell.f-korttabell td:first-child,
+  .data-tabell.kompakt.f-korttabell td:first-child {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    padding: 8px 0 0;
+    border-top: 1px solid var(--f-linje, #e5e5e5);
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--f-text, #111111);
+    overflow-wrap: anywhere;
+  }
+  .f-korttabell td:first-child,
+  .data-tabell.f-korttabell td:first-child,
+  .data-tabell.kompakt.f-korttabell td:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+  .f-korttabell td::before {
+    content: attr(data-etikett);
+    font-size: var(--f-etikett-storlek, 11px);
+    letter-spacing: var(--f-etikett-sparr, 0.12em);
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--f-text-dampad, #595959);
+  }
+  .f-korttabell td.f-korttabell-atgard {
+    gap: 8px;
+  }
+  .f-korttabell td .knapp,
+  .f-korttabell td .knapp-liten,
+  .f-korttabell td .knapp-kompakt,
+  .f-korttabell td select.kontroll {
+    width: 100%;
+    min-width: 0;
+    min-height: var(--f-mal-yta, 44px);
+    font-size: 14px;
+  }
+  .f-korttabell td .knapp + .knapp {
+    margin-left: 0;
+  }
+}
