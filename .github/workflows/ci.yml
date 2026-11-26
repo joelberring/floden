@@ -229,49 +229,93 @@ jobs:
       - name: Mät 1000x1000 Rust vs Python SankGraf-prestanda och RSS
         run: |
           python -c '
-          import math, os, resource, time
+          import gc, math, subprocess, sys, tempfile, time, tracemalloc
+          from pathlib import Path
           import numpy as np
           from scipy.ndimage import gaussian_filter
           from sankgraf.hierarki import _berakna_avrinningsomraden, _bygg_granspar
-          from sankgraf.rust_brygga import kor_sankgraf_karna_rust, hitta_sankgraf_karna
-          print("Binär:", hitta_sankgraf_karna())
+          from sankgraf.rust_brygga import (
+              _LAGE_KOMPLETT,
+              _skriv_indata,
+              hitta_sankgraf_karna,
+              kor_sankgraf_karna_rust,
+          )
+
+          binar = hitta_sankgraf_karna()
+          print("Binär:", binar)
           n = 1000
           rng = np.random.default_rng(42)
           y = np.linspace(0.0, 12.0 * math.pi, n, dtype=np.float32)
           x = np.linspace(0.0, 12.0 * math.pi, n, dtype=np.float32)
           yy, xx = np.meshgrid(y, x, indexing="ij")
           brus = gaussian_filter(rng.normal(0.0, 1.0, size=(n, n)), sigma=4.0).astype(np.float32)
-          z = np.round(10.0 + 0.5*np.sin(xx)*np.cos(yy) + 0.25*np.sin(2.3*xx+0.7)*np.sin(1.9*yy) + 1.5*brus, 2).astype(np.float32)
-          aktiv = np.ones((n, n), dtype=np.bool_)
-          t0 = time.perf_counter()
-          f_py, c_py, l_py = _berakna_avrinningsomraden(z, aktiv, {})
-          gp_py = _bygg_granspar(c_py, aktiv, z, {})
-          t_py = time.perf_counter() - t0
-          t1 = time.perf_counter()
-          f_rs, c_rs, l_rs, gp_rs = kor_sankgraf_karna_rust(z, aktiv, {})
-          t_rs = time.perf_counter() - t1
-          assert l_py == l_rs
-          np.testing.assert_array_equal(f_py, f_rs)
-          np.testing.assert_array_equal(c_py, c_rs)
-          for a, b in zip(gp_py, gp_rs, strict=True):
-              np.testing.assert_array_equal(a, b)
-          rss_child_mb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0
-          print(f"1000x1000 kuperad (1M celler, lov={l_rs}, par={gp_rs[0].size}): Python={t_py:.3f}s Rust={t_rs:.3f}s speedup={t_py/t_rs:.2f}x child_maxrss={rss_child_mb:.1f}MB ({rss_child_mb*1024*1024/1_000_000:.1f} B/cell)")
+          z_kup = np.round(
+              10.0
+              + 0.5 * np.sin(xx) * np.cos(yy)
+              + 0.25 * np.sin(2.3 * xx + 0.7) * np.sin(1.9 * yy)
+              + 1.5 * brus,
+              2,
+          ).astype(np.float32)
           z_platt = np.round(10.0 + 0.4 * np.sin(xx * 0.5) * np.cos(yy * 0.5), 1).astype(np.float32)
-          t2 = time.perf_counter()
-          f_py2, c_py2, l_py2 = _berakna_avrinningsomraden(z_platt, aktiv, {})
-          gp_py2 = _bygg_granspar(c_py2, aktiv, z_platt, {})
-          t_py2 = time.perf_counter() - t2
-          t3 = time.perf_counter()
-          f_rs2, c_rs2, l_rs2, gp_rs2 = kor_sankgraf_karna_rust(z_platt, aktiv, {})
-          t_rs2 = time.perf_counter() - t3
-          assert l_py2 == l_rs2
-          np.testing.assert_array_equal(f_py2, f_rs2)
-          np.testing.assert_array_equal(c_py2, c_rs2)
-          for a, b in zip(gp_py2, gp_rs2, strict=True):
-              np.testing.assert_array_equal(a, b)
-          rss_child_mb2 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0
-          print(f"1000x1000 platårik (1M celler, lov={l_rs2}, par={gp_rs2[0].size}): Python={t_py2:.3f}s Rust={t_rs2:.3f}s speedup={t_py2/t_rs2:.2f}x child_maxrss={rss_child_mb2:.1f}MB")
+          aktiv = np.ones((n, n), dtype=np.bool_)
+
+          def mat_ren_rust_rss_mb(z_arr):
+              with tempfile.TemporaryDirectory(prefix="floden-bench-") as tmp:
+                  in_f = Path(tmp) / "in.flsg"
+                  ut_f = Path(tmp) / "ut.flsg"
+                  _skriv_indata(in_f, _LAGE_KOMPLETT, z_arr, aktiv, None, {})
+                  # Mät från en ren miniprocess utan NumPy/SciPy så inte Python-förälderns RSS ärvs vid fork()
+                  if Path("/usr/bin/time").is_file():
+                      p = subprocess.run(
+                          ["/usr/bin/time", "-f", "%M", str(binar), str(in_f), str(ut_f)],
+                          capture_output=True,
+                          text=True,
+                          check=True,
+                      )
+                      rss_kib = int(p.stderr.strip().splitlines()[-1])
+                  else:
+                      code = (
+                          "import resource, subprocess, sys; "
+                          "subprocess.run(sys.argv[1:], check=True); "
+                          "print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss)"
+                      )
+                      p = subprocess.run(
+                          [sys.executable, "-S", "-c", code, str(binar), str(in_f), str(ut_f)],
+                          capture_output=True,
+                          text=True,
+                          check=True,
+                      )
+                      rss_kib = int(p.stdout.strip().splitlines()[-1])
+                  return rss_kib / 1024.0
+
+          for etikett, z_arr in (("kuperad", z_kup), ("platårik", z_platt)):
+              gc.collect()
+              tracemalloc.start(1)
+              t0 = time.perf_counter()
+              f_py, c_py, l_py = _berakna_avrinningsomraden(z_arr, aktiv, {})
+              gp_py = _bygg_granspar(c_py, aktiv, z_arr, {})
+              t_py = time.perf_counter() - t0
+              _, py_peak_bytes = tracemalloc.get_traced_memory()
+              tracemalloc.stop()
+
+              t1 = time.perf_counter()
+              f_rs, c_rs, l_rs, gp_rs = kor_sankgraf_karna_rust(z_arr, aktiv, {})
+              t_rs = time.perf_counter() - t1
+
+              assert l_py == l_rs
+              np.testing.assert_array_equal(f_py, f_rs)
+              np.testing.assert_array_equal(c_py, c_rs)
+              for a, b in zip(gp_py, gp_rs, strict=True):
+                  np.testing.assert_array_equal(a, b)
+
+              rust_rss_mb = mat_ren_rust_rss_mb(z_arr)
+              b_per_cell = rust_rss_mb * 1024.0 * 1024.0 / (n * n)
+              py_peak_mb = py_peak_bytes / (1024.0 * 1024.0)
+              print(
+                  f"1000x1000 {etikett} (1M celler, lov={l_rs}, par={gp_rs[0].size}): "
+                  f"Python={t_py:.3f}s (tracemalloc_peak={py_peak_mb:.1f}MB) | "
+                  f"Rust={t_rs:.3f}s (speedup={t_py/t_rs:.2f}x, rust_rss={rust_rss_mb:.1f}MB = {b_per_cell:.1f} B/cell)"
+              )
           '
 
   # Sammanfattande statusjobb med samma id som tidigare för smidigt branch-skydd.
