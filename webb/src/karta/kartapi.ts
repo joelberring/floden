@@ -15,15 +15,30 @@ import {
   type VarmestressAnalysSvar,
   type VarmestressParam,
 } from "../flode/gyf-utci";
+import {
+  cadExportUrl,
+  cadImportUrl,
+  type CadExportFormat,
+  type CadImportSvar,
+} from "../flode/cadbim";
+import {
+  BULLER_ANALYS_URL,
+  type BullerAnalysSvar,
+  type BullerVagSegment,
+} from "../flode/bullerflik";
 
 export type {
+  BullerAnalysSvar,
+  BullerVagSegment,
+  CadExportFormat,
+  CadImportSvar,
   GyfAnalysSvar,
   GyfProfilId,
   Utbredning,
   VarmestressAnalysSvar,
   VarmestressParam,
 };
-export { gyfAnalysUrl, varmestressAnalysUrl };
+export { BULLER_ANALYS_URL, cadExportUrl, cadImportUrl, gyfAnalysUrl, varmestressAnalysUrl };
 
 const BAS = "/api/kartverktyg";
 const post = <T>(url: string, kropp: unknown): Promise<T> =>
@@ -398,6 +413,29 @@ export const hamtaVarmestressAnalys = (
 export const beraknaVarmestressAnalys = (
   begaran: { omrade_id: string; scenario?: string | null } & Partial<VarmestressParam>,
 ): Promise<VarmestressAnalysSvar> => post("/api/analys/varmestress", begaran);
+
+/** Importerar en CAD/BIM-fil (`.gpkg`, `.dxf`, `.ifc`, `.xml`) till K50-GeoJSON i EPSG:3011. */
+export const importeraCadFil = (
+  projekt: string,
+  begaran: {
+    filnamn: string;
+    innehall_base64?: string;
+    innehall_text?: string;
+    ursprung_e_m?: number;
+    ursprung_n_m?: number;
+    ursprung_z_m?: number;
+    kalla_epsg?: number;
+  },
+): Promise<CadImportSvar> => post(cadImportUrl(projekt), begaran);
+
+/** Kör buller-skissanalys (`buller.nord2000`, alltid `nord2000_konform: false`, rapport spärrad). */
+export const beraknaBullerSkiss = (begaran: {
+  omrade_id: string;
+  scenario?: string | null;
+  vagsegment: BullerVagSegment[];
+  mottagarhojd_m?: number;
+  raster_cell_m?: number;
+}): Promise<BullerAnalysSvar> => post(BULLER_ANALYS_URL, begaran);
 
 /** Hämtar en rasterbild med utbredningen ur huvudet `X-Floden-Utbredning` och ger en objekt-URL. */
 export async function hamtaBildMedUtbredning(url: string): Promise<{ url: string; utbredning: Utbredning }> {

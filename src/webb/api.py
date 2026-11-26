@@ -1137,9 +1137,11 @@ class FlodenApiApp:
         ] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
         self._sektioner_snapshot: list[dict[str, Any]] | None = None
+        from webb.cad_buller_api import BullerLagerCache
         from webb.gyf_utci import VarmestressLagerCache
 
         self._varmestress_lager = VarmestressLagerCache()
+        self._buller_lager = BullerLagerCache()
 
     def stang(self) -> None:
         """Stänger bakgrundsexekutorer i `FragaTjanst` och ev. `RapportJobbTjanst` rent."""
@@ -2612,6 +2614,54 @@ class FlodenApiApp:
         png, u = post
         return png, {"X-Floden-Utbredning": f"{u.x_min},{u.y_min},{u.x_max},{u.y_max}"}
 
+    def importera_cad(
+        self,
+        projekt_id: str,
+        kropp_bytes: bytes,
+        query: Mapping[str, list[str]],
+    ) -> dict[str, Any]:
+        """`POST /api/projekt/<id>/cad/importera`: läser GPKG/DXF/IFC/LandXML till K50."""
+        from webb.cad_buller_api import importera_cad_fil
+
+        return importera_cad_fil(self.kartverktyg, self.projekt, projekt_id, kropp_bytes, query)
+
+    def exportera_cad(
+        self,
+        projekt_id: str,
+        query: Mapping[str, list[str]],
+    ) -> tuple[int, dict[str, str], bytes]:
+        """`GET /api/projekt/<id>/cad/exportera`: exporterar GPKG/DXF/LandXML/OBJ/GLB (skrivlös)."""
+        from webb.cad_buller_api import exportera_cad_fil
+
+        data, content_type, _, extra = exportera_cad_fil(
+            self.kartverktyg, self.projekt, projekt_id, query
+        )
+        status, huvud, ut = _binart_svar(200, data, content_type)
+        return status, {**huvud, **extra}, ut
+
+    def kor_buller_skiss_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """`POST /api/analys/buller`: K21-skissanalys (`buller.nord2000`, alltid skiss)."""
+        from webb.cad_buller_api import kor_buller_analys
+        from webb.gyf_utci import tolka_json_kropp
+
+        return kor_buller_analys(
+            self.kartverktyg,
+            self.projekt,
+            tolka_json_kropp(kropp_bytes),
+            lager_cache=self._buller_lager,
+        )
+
+    def buller_lager_png(self, projekt: str, bild_id: str) -> tuple[bytes, dict[str, str]]:
+        """Hämtar takmaskad PNG-förhandsvisning för bullerlagret (`ekvivalent_ljudniva_dba`)."""
+        post = self._buller_lager.hamta(projekt, bild_id)
+        if post is None:
+            raise FlodenWebbFel(
+                f"Bullerlagret '{bild_id}' finns inte (kör buller-skissanalysen på nytt).",
+                status_kod=404,
+            )
+        png, u = post
+        return png, {"X-Floden-Utbredning": f"{u.x_min},{u.y_min},{u.x_max},{u.y_max}"}
+
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/kor`: kör före/efter + ensemble och returnerar manifest."""
         t_start = time.perf_counter()
@@ -3665,6 +3715,15 @@ class FlodenApiApp:
             png, extra = self.varmestress_lager_png(projekt, rest[1].removesuffix(".png"))
             status, huvud, ut = _binart_svar(200, png, "image/png")
             return status, {**huvud, **extra}, ut
+        if (
+            verb == "GET"
+            and len(rest) == 2
+            and rest[0] == "buller"
+            and rest[1].endswith(".png")
+        ):
+            png, extra = self.buller_lager_png(projekt, rest[1].removesuffix(".png"))
+            status, huvud, ut = _binart_svar(200, png, "image/png")
+            return status, {**huvud, **extra}, ut
         if verb == "GET" and rest == ["hojd"]:
             # Markhöjden under pekaren (steg 2 och 4): samma behörighet som övriga projektdata.
             def _tal(namn: str) -> float:
@@ -4035,6 +4094,13 @@ class FlodenApiApp:
                 delar_p = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
                 if verb == "POST" and len(delar_p) == 2 and delar_p[1] == "rapporter":
                     return _json_svar(202, self.rapportjobb.starta(delar_p[0], kropp))
+                if (
+                    verb == "POST"
+                    and len(delar_p) == 3
+                    and delar_p[1] == "cad"
+                    and delar_p[2] == "importera"
+                ):
+                    return _json_svar(200, self.importera_cad(delar_p[0], kropp, query))
                 if verb != "GET":
                     return _json_svar(405, {"fel": "Metoden är inte tillåten.", "status": 405})
                 delar = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
@@ -4044,6 +4110,8 @@ class FlodenApiApp:
                     svar = self.projekt.hamta(delar[0])
                     svar["rapporter"] = self.rapporter_for(delar[0])
                     return _json_svar(200, svar)
+                if len(delar) == 3 and delar[1] == "cad" and delar[2] == "exportera":
+                    return self.exportera_cad(delar[0], query)
                 if len(delar) == 2 and delar[1] == "rapporter":
                     return _json_svar(
                         200,
@@ -4117,6 +4185,9 @@ class FlodenApiApp:
 
             if verb == "POST" and ren_sokvag == "/api/analys/ekologi-atgarder":
                 return _json_svar(200, self.kor_ekologi_atgarder_celf(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/buller":
+                return _json_svar(200, self.kor_buller_skiss_analys(kropp))
 
             if verb == "POST" and ren_sokvag == "/api/analys/buller-skarmar":
                 return _json_svar(200, self.kor_buller_optimering_analys(kropp))
@@ -4218,9 +4289,28 @@ class FlodenApiApp:
             return self._hantera_projektinstallning(inst, kontroll.inloggad.konto_id, las_kropp)
         projekt_krav = _projekt_krav(verb, req.sokvag) if self.konto.aktiv else None
         if projekt_krav is not None:
-            kontroll = self.konto.kraver_projektbehorighet(
-                req, projekt_krav[0], minst=projekt_krav[1]
-            )
+            if _ar_cad_eller_buller_projekt_sokvag(req.sokvag):
+                kontroll = self.konto.kraver_inloggning(req)
+                if not kontroll.tillaten:
+                    assert kontroll.svar is not None
+                    return kontroll.svar
+                pid_krav = projekt_krav[0].strip()
+                if not pid_krav or not (
+                    self.projekt.ar_projekt(pid_krav) or self._registrerat_projekt(pid_krav)
+                ):
+                    return _utan_cors(
+                        _json_svar(
+                            404,
+                            {"fel": f"Okänt projekt '{projekt_krav[0]}'.", "status": 404},
+                        )
+                    )
+                kontroll = self.konto.kraver_projektbehorighet(
+                    req, pid_krav, minst=projekt_krav[1]
+                )
+            else:
+                kontroll = self.konto.kraver_projektbehorighet(
+                    req, projekt_krav[0], minst=projekt_krav[1]
+                )
         else:
             kontroll = self.konto.kraver_inloggning(req)
         if not kontroll.tillaten:
@@ -4446,12 +4536,13 @@ class FlodenApiApp:
                         _json_svar(404, {"fel": f"Okänt område '{analys_projekt}'.", "status": 404})
                     )
             else:
-                # B13: `POST /api/analys/ekologi` skriver projektets K20/K9-filer och kräver därför
-                # fortsatt `utredare`+. Läsande `GET /api/analys/ekologi` (W-B8) muterar aldrig
-                # projektet och tillåter `lasare` (obehöriga utanför projektet får alltid 403).
+                # B13: `POST /api/analys/ekologi` och `POST /api/analys/buller` kräver `utredare`+.
+                # Läsande `GET /api/analys/...` muterar aldrig projektet och tillåter `lasare`
+                # (obehöriga utanför projektet får alltid 403).
                 minst_roll = (
                     "utredare"
-                    if verb == "POST" and ren_analys == "/api/analys/ekologi"
+                    if verb == "POST"
+                    and ren_analys in ("/api/analys/ekologi", "/api/analys/buller")
                     else "lasare"
                 )
                 kontroll = self.konto.kraver_projektbehorighet(
@@ -4551,13 +4642,19 @@ class FlodenApiApp:
             "/api/analys/ekologi",
             "/api/analys/gyf",
             "/api/analys/varmestress",
+            "/api/analys/buller",
             *BERAKNINGS_SOKVAGAR,
         ):
             try:
                 payload = json.loads(kropp.decode("utf-8"))
             except (UnicodeDecodeError, ValueError, RecursionError):
                 return None
-            omrade_id = payload.get("omrade_id") if isinstance(payload, Mapping) else None
+            if isinstance(payload, Mapping):
+                omrade_id = payload.get("omrade_id")
+                if (omrade_id is None or omrade_id == "") and ren == "/api/analys/buller":
+                    omrade_id = payload.get("projekt_id")
+            else:
+                omrade_id = None
         else:
             return None
         if isinstance(omrade_id, str):
@@ -4622,6 +4719,24 @@ def _projektinstallning_krav(verb: str, sokvag: str) -> tuple[str, str] | None:
     ):
         return delar[2], delar[3]
     return None
+
+
+def _ar_cad_eller_buller_projekt_sokvag(sokvag: str) -> bool:
+    """True för `/api/projekt/<id>/cad/*` och `/api/kartverktyg/<id>/buller/*.png`."""
+    delar = [urllib.parse.unquote(d) for d in sokvag.split("/") if d]
+    if (
+        len(delar) == 5
+        and delar[:2] == ["api", "projekt"]
+        and delar[3] == "cad"
+        and delar[4] in ("importera", "exportera")
+    ):
+        return True
+    return (
+        len(delar) == 5
+        and delar[:2] == ["api", "kartverktyg"]
+        and delar[3] == "buller"
+        and delar[4].endswith(".png")
+    )
 
 
 def _projekt_krav(verb: str, sokvag: str) -> tuple[str, str] | None:
