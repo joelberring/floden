@@ -5,14 +5,15 @@ Samma val för webben (`POST /api/projekt/<id>/rapporter`) och MCP (`rapport_ska
 är ett *underlag* av ett av tre slag (se `FlodenApiApp.korningsunderlag`):
 
 - `forslag`: körd för ett ritat förslag (scenario) i projektet;
-- `lage_idag`: projektets egen körning av befintligt läge (U5a, bara `fore`); räknas som `egen` i förvalsordningen men
-  saknar jämförelse och väljs därför aldrig av sig själv (se `valj_korning`);
+- `lage_idag`: projektets egen körning av befintligt läge (U5a, bara `fore`/`bas`); kan ligga till grund för en
+  nulägesrapport (läget idag) i steg 3 (Rapport) utan ritförslag;
 - `egen`: annan klar körning som hör till projektet (till exempel startad via MCP);
 - `demo`: demokörningen som följer med projektet, utan eget förslag.
 
-Förvalet är användarens senaste körning för förslaget (`forslag`), annars den senaste `egen`, och demokörningen
-bara om inget annat finns. Då står det i rapporten (Underlag i handlingsrutan). En körning som saknas, hör till ett
-annat projekt eller inte har ämnets analys med jämförelse före och efter ger `UnderlagFel` (404), inte en tyst reserv.
+Förvalet är användarens senaste körning för förslaget (`forslag`), annars den senaste egna körningen (`egen` med
+jämförelse före `lage_idag` utan jämförelse), och demokörningen bara om inget annat finns. Då står det i rapporten
+(Underlag i handlingsrutan). En körning som saknas, hör till ett annat projekt eller inte har ämnets analys ger
+`UnderlagFel` (404), inte en tyst reserv.
 """
 
 from __future__ import annotations
@@ -53,8 +54,9 @@ def underlagstext(underlag: dict[str, Any] | None, sbk: bool = True) -> str:
 
 
 def korningar_for(rt: RapportTjanst, projekt: str, amne: str) -> list[dict[str, Any]]:
-    """Klara körningar i projektet som rapporten om `amne` kan bygga på (ämnets analys och en jämförelse),
-    i förvalsordning: användarens förslag, egna körningar, demokörningen; nyast först inom varje slag."""
+    """Klara körningar i projektet som rapporten om `amne` kan bygga på (ämnets analys med jämförelse, eller
+    projektets körning av läget idag när nulägesrapport stöds), i förvalsordning: användarens förslag, egna
+    körningar (med jämförelse före läget idag), demokörningen; nyast först inom varje grupp."""
     app = rt.tjanst.app
     ut: list[dict[str, Any]] = []
     for k in app.fragor.lista_korningar()["korningar"]:
@@ -65,9 +67,14 @@ def korningar_for(rt: RapportTjanst, projekt: str, amne: str) -> list[dict[str, 
             post = rt._korningspost(kid, amne)  # noqa: SLF001 - samma kontroll som rapport_skapa
         except Exception:  # noqa: BLE001 - körningen duger inte för ämnet
             continue
-        if not post["jamforelser"]:
-            continue
         u = app.korningsunderlag(kid)
+        har_jamforelser = bool(post["jamforelser"])
+        # Läget idag (nuläge utan ritförslag) stöds för ämnen som har nulägesrapport (skyfall, dagsljus m.fl.),
+        # men inte för ekologi vars kontroll kräver före, efter och skillnad.
+        if not har_jamforelser and (
+            u["slag"] != "lage_idag" or not post["scenarier"] or amne == "ekologi"
+        ):
+            continue
         ut.append(
             {
                 "korning_id": post["korning_id"],
@@ -75,10 +82,13 @@ def korningar_for(rt: RapportTjanst, projekt: str, amne: str) -> list[dict[str, 
                 "skapad": k.get("skapad"),
                 "slag": u["slag"],
                 "scenario": u["scenario"],
+                "_har_jamforelser": har_jamforelser,
             }
         )
     ut.sort(key=lambda x: str(x["skapad"] or ""), reverse=True)
-    ut.sort(key=lambda x: RANG.get(str(x["slag"]), 3))
+    ut.sort(key=lambda x: (RANG.get(str(x["slag"]), 3), 0 if x["_har_jamforelser"] else 1))
+    for post_ut in ut:
+        post_ut.pop("_har_jamforelser", None)
     return ut
 
 
@@ -93,8 +103,8 @@ def valj_korning(
     """Körningen rapporten ska bygga på, som posten ur `korningar_for`.
 
     `korning_id` anges uttryckligen (valideras mot projektet, ämnet och eventuellt förslag), annars väljs
-    användarens senaste körning för `scenario` (förslagets slug), och utan förslag förvalet ovan. Utan
-    körning alls: `UnderlagFel` med vad som ska göras."""
+    användarens senaste körning för `scenario` (förslagets slug), och utan förslag förvalet ovan (inklusive
+    läget idag när projektet saknar förslagskörning). Utan körning alls: `UnderlagFel` med vad som ska göras."""
     namn = {"skyfall": "skyfall", "dagsljus": "dagsljus och sol", "ekologi": "ekologi", "luft": "luft"}.get(amne, amne)
     kand = korningar_for(rt, projekt, amne)
     if scenario is not None:
@@ -106,16 +116,6 @@ def valj_korning(
     if korning_id is not None:
         post = next((k for k in kand if k["korning_id"] == korning_id), None)
         if post is None:
-            app = rt.tjanst.app
-            if (
-                app.projekt_for_korning(korning_id) == projekt
-                and app.korningsunderlag(korning_id)["slag"] == "lage_idag"
-            ):
-                raise UnderlagFel(
-                    f"Körningen '{korning_id}' är läget idag (projektets befintliga läge, utan förslag). Rapporten bygger på "
-                    "en jämförelse före och efter; rita ett förslag och kör beräkningarna i steg 3.",
-                    409,
-                )
             # Samma svar för en körning som saknas och en i ett annat projekt: ingen ledtråd om andras körningar.
             raise UnderlagFel(f"Körningen '{korning_id}' finns inte i projektet eller duger inte för {amne}.", 404)
         if scenario is not None and post not in kand_sc:
@@ -125,10 +125,12 @@ def valj_korning(
         return kand_sc[0]
     if scenario is not None:
         raise UnderlagFel(
-            f"Förslaget '{scenario}' har ingen klar beräkning av {namn} med före och efter. Kör beräkningarna i steg 3 först.",
+            f"Förslaget '{scenario}' har ingen klar beräkning av {namn} med före och efter. "
+            "Kör beräkningen i steg 2 (Karta & analys) först.",
             409,
         )
     raise UnderlagFel(
-        f"Det finns ingen klar beräkning av {namn} med före och efter i projektet. Kör beräkningarna i steg 3 först.",
+        f"Det finns ingen klar beräkning av {namn} (läget idag eller förslag) i projektet. "
+        "Kör en beräkning i steg 2 (Karta & analys) först.",
         409,
     )

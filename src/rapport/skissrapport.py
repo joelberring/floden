@@ -68,6 +68,11 @@ _AMNESDOMAN: Final[dict[str, str]] = {
     "ekologi": "ekologi",
     "luft": "luft",
 }
+_PRIMAR_KARTROLL: Final[dict[str, tuple[str, ...]]] = {
+    "skyfall": ("max_djup",),
+    "dagsljus": ("soltimmar",),
+    "ekologi": ("stromtathet",),
+}
 _ID_RE: Final[re.Pattern[str]] = re.compile(r"^r-[0-9a-f]{12}$")
 KART_PX: Final[int] = 560
 TOMVARDE_TEXT: Final[str] = tomvarde_lagrad("skyfall")
@@ -595,68 +600,168 @@ class RapportTjanst:
         mapp.mkdir(parents=True, exist_ok=True)
         ut: list[Karta] = []
         gjorda_bas: set[tuple[Any, ...]] = set()
+        sedda_id: set[str] = set()
         for k in korningar:
             res = self.kalla._resultat(k["korning_id"])  # noqa: SLF001
             losare_per_analys = {a["analys"]: a["losare"] for a in k["analyser"]}
-            for j in k["jamforelser"]:
-                utsnitt = kartutsnitt(res, j)
-                for typ, scen in (("bas", j["fore"]), ("scenario", j["efter"]), ("skillnad", j["efter"])):
-                    if typ == "bas":
-                        # Före-kartan är densamma för alla alternativ med samma utsnitt: en bild.
-                        nyckel = (k["korning_id"], j["analys"], j["fore"], tuple(utsnitt or ()))
-                        if nyckel in gjorda_bas:
-                            continue
-                        gjorda_bas.add(nyckel)
-                    try:
-                        png, meta = self.tjanst.karta(
-                            k["korning_id"],
-                            j["analys"],
-                            typ=typ,
-                            scenario=scen,
-                            utsnitt=utsnitt,
-                            max_px=KART_PX,
-                            rubrik=kartrubrik_text(amne, typ, scen, j["fore"], j["efter"]),
+            if k["jamforelser"]:
+                for j in k["jamforelser"]:
+                    utsnitt = kartutsnitt(res, j)
+                    for typ, scen in (("bas", j["fore"]), ("scenario", j["efter"]), ("skillnad", j["efter"])):
+                        if typ == "bas":
+                            # Före-kartan är densamma för alla alternativ med samma utsnitt: en bild.
+                            nyckel = (k["korning_id"], j["analys"], j["fore"], tuple(utsnitt or ()))
+                            if nyckel in gjorda_bas:
+                                continue
+                            gjorda_bas.add(nyckel)
+                        rubrik = kartrubrik_text(amne, typ, scen, j["fore"], j["efter"])
+                        try:
+                            png, meta = self.tjanst.karta(
+                                k["korning_id"],
+                                j["analys"],
+                                typ=typ,
+                                scenario=scen,
+                                utsnitt=utsnitt,
+                                max_px=KART_PX,
+                                rubrik=rubrik,
+                            )
+                        except FlodenFel as exc:
+                            raise RapportFel(f"Kartan kunde inte ritas: {exc}") from exc
+                        kart_id = f"{j['namn']}.{typ}"
+                        if kart_id in sedda_id:
+                            kart_id = f"{j['namn']}_{k['korning_id']}.{typ}"
+                        sedda_id.add(kart_id)
+                        fil = f"kartor/{kart_id}.png"
+                        (mapp / f"{kart_id}.png").write_bytes(png)
+                        ut.append(
+                            Karta(
+                                kart_id=kart_id,
+                                korning_id=str(k["korning_id"]),
+                                jamforelse=str(j["namn"]),
+                                analys=str(j["analys"]),
+                                lager_id=str(meta["lager_id"]),
+                                typ=typ,
+                                scenario=str(meta["scenario"]),
+                                fil=fil,
+                                png_sha256=str(meta["png_sha256"]),
+                                bildtext=bildtext_lagrad(
+                                    amne, typ, j, meta, losare_per_analys.get(j["analys"], ""),
+                                    str(k["korning_id"]),
+                                ),
+                                meta={
+                                    key: meta[key]
+                                    for key in (
+                                        "norr",
+                                        "skalstock_m",
+                                        "enhet",
+                                        "skala",
+                                        "cellstorlek_m",
+                                        "kartutsnitt",
+                                        "metodstatus",
+                                        "roll",
+                                    )
+                                }
+                                | {key: meta[key] for key in ("kartmotor", "figurstil") if key in meta}
+                                | ({"enhet": EKOLOGI_ENHET} if amne == "ekologi" else {})
+                                | {
+                                    "utsnitt": utsnitt,
+                                    "rubrik": rubrik,
+                                },
+                            )
                         )
-                    except FlodenFel as exc:
-                        raise RapportFel(f"Kartan kunde inte ritas: {exc}") from exc
-                    kart_id = f"{j['namn']}.{typ}"
-                    fil = f"kartor/{kart_id}.png"
-                    (mapp / f"{kart_id}.png").write_bytes(png)
-                    ut.append(
-                        Karta(
-                            kart_id=kart_id,
-                            korning_id=str(k["korning_id"]),
-                            jamforelse=str(j["namn"]),
-                            analys=str(j["analys"]),
-                            lager_id=str(meta["lager_id"]),
-                            typ=typ,
-                            scenario=str(meta["scenario"]),
-                            fil=fil,
-                            png_sha256=str(meta["png_sha256"]),
-                            bildtext=bildtext_lagrad(
-                                amne, typ, j, meta, losare_per_analys.get(j["analys"], ""),
-                                str(k["korning_id"]),
-                            ),
-                            meta={
-                                key: meta[key]
-                                for key in (
-                                    "norr",
-                                    "skalstock_m",
-                                    "enhet",
-                                    "skala",
-                                    "cellstorlek_m",
-                                    "kartutsnitt",
-                                    "metodstatus",
-                                    "roll",
-                                )
-                            }
-                            | ({"enhet": EKOLOGI_ENHET} if amne == "ekologi" else {})
-                            | {
-                                "utsnitt": utsnitt,
-                                "rubrik": kartrubrik_text(amne, typ, scen, j["fore"], j["efter"]),
-                            },
-                        )
+                continue
+
+            # Läget idag (inga jämförelser): rendera nulägeskartor för ämnets primära resultatraster
+            # så att nulägesrapporter alltid har kartfigurer enligt t.ex. SK-12 / SO-15.
+            tillatna_roller = _PRIMAR_KARTROLL.get(amne)
+            if tillatna_roller is None:
+                continue
+            kandidatlager = [
+                la
+                for la in res.get("lager", [])
+                if la.get("analys") in losare_per_analys
+                and la.get("typ") != "skillnad"
+                and la.get("primar")
+                and la.get("roll") in tillatna_roller
+            ]
+            baslager = [la for la in kandidatlager if la.get("typ") == "bas"]
+            valda_lager = baslager or kandidatlager
+            for la in valda_lager:
+                analys = str(la["analys"])
+                roll = str(la["roll"])
+                scen = str(la["scenario"])
+                typ = str(la["typ"])
+                j_bas = {
+                    "namn": f"{analys}_{roll}_{scen}",
+                    "analys": analys,
+                    "utdata": roll,
+                    "fore": scen,
+                    "efter": scen,
+                }
+                utsnitt = kartutsnitt(res, j_bas)
+                nyckel = (k["korning_id"], analys, scen, tuple(utsnitt or ()))
+                if nyckel in gjorda_bas:
+                    continue
+                gjorda_bas.add(nyckel)
+                rubrik = _nulagesrubrik(amne)
+                try:
+                    png, meta = self.tjanst.karta(
+                        k["korning_id"],
+                        analys,
+                        typ=typ,
+                        scenario=scen,
+                        utsnitt=utsnitt,
+                        max_px=KART_PX,
+                        rubrik=rubrik,
                     )
+                except FlodenFel as exc:
+                    raise RapportFel(f"Kartan kunde inte ritas: {exc}") from exc
+                kart_id = f"{j_bas['namn']}.{typ}"
+                if kart_id in sedda_id:
+                    kart_id = f"{j_bas['namn']}_{k['korning_id']}.{typ}"
+                sedda_id.add(kart_id)
+                fil = f"kartor/{kart_id}.png"
+                (mapp / f"{kart_id}.png").write_bytes(png)
+                ut.append(
+                    Karta(
+                        kart_id=kart_id,
+                        korning_id=str(k["korning_id"]),
+                        jamforelse="",
+                        analys=analys,
+                        lager_id=str(meta["lager_id"]),
+                        typ=typ,
+                        scenario=str(meta["scenario"]),
+                        fil=fil,
+                        png_sha256=str(meta["png_sha256"]),
+                        bildtext=bildtext_lagrad(
+                            amne,
+                            "bas",
+                            j_bas,
+                            meta,
+                            losare_per_analys.get(analys, ""),
+                            str(k["korning_id"]),
+                        ),
+                        meta={
+                            key: meta[key]
+                            for key in (
+                                "norr",
+                                "skalstock_m",
+                                "enhet",
+                                "skala",
+                                "cellstorlek_m",
+                                "kartutsnitt",
+                                "metodstatus",
+                                "roll",
+                            )
+                        }
+                        | {key: meta[key] for key in ("kartmotor", "figurstil") if key in meta}
+                        | ({"enhet": EKOLOGI_ENHET} if amne == "ekologi" else {})
+                        | {
+                            "utsnitt": utsnitt,
+                            "rubrik": rubrik,
+                        },
+                    )
+                )
         return ut
 
     def skapa(
@@ -1225,6 +1330,15 @@ class RapportTjanst:
 
     def lista(self, projekt: str | None = None) -> list[dict[str, Any]]:
         return [sammanfattning(r, self.arkiv) for r in self.arkiv.lista(projekt)]
+
+
+def _nulagesrubrik(amne: str) -> str:
+    """Kartrubrik i bilden för nulägeskartor (läget idag utan jämförelse mot förslag)."""
+    return {
+        "skyfall": "Största vattendjup – läget idag",
+        "dagsljus": "Soltimmar på marken – läget idag",
+        "ekologi": "Strömtäthet (flaskhalsar) – läget idag",
+    }.get(amne, f"{TITEL.get(amne, amne)} – läget idag")
 
 
 def kartutsnitt(res: Mapping[str, Any], j: Mapping[str, Any]) -> list[float] | None:

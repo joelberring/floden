@@ -18,6 +18,7 @@ from rapport.figurer import (
     FIGURSTILAR,
     FigurFel,
     _berakna_skalstock_m,
+    figurstil_for_lager,
     hamta_figurstil,
     klassificera_raster,
     rendera_kartfigur,
@@ -80,11 +81,13 @@ def test_alla_nio_domanstilar_finns_och_kan_renderas(tmp_path: Path) -> None:
         elif namn == "buller_dba":
             raster = np.linspace(42.0, 72.0, 40 * 50, dtype=np.float64).reshape((40, 50))
         elif namn == "dagsljus_svf":
-            raster = np.linspace(0.0, 100.0, 40 * 50, dtype=np.float64).reshape((40, 50))
+            raster = np.linspace(0.0, 1.0, 40 * 50, dtype=np.float64).reshape((40, 50))
         elif namn == "dagsljus_soltimmar":
             raster = np.linspace(0.0, 10.0, 40 * 50, dtype=np.float64).reshape((40, 50))
         elif namn == "skyfall_ankomsttid":
-            raster = np.linspace(0.0, 55.0, 40 * 50, dtype=np.float64).reshape((40, 50))
+            raster = np.linspace(0.0, 3600.0, 40 * 50, dtype=np.float64).reshape((40, 50))
+        elif namn == "luft_vindkomfort":
+            raster = (np.arange(40 * 50, dtype=np.float64) % 5).reshape((40, 50))
         else:
             raster = np.linspace(0.0, 1.2, 40 * 50, dtype=np.float64).reshape((40, 50))
 
@@ -258,3 +261,106 @@ def test_kartor_inkoppling_med_geo_och_polygon(tmp_path: Path) -> None:
 
     with pytest.raises(RapportKartaFel):
         rendera_diffkarta_png(diff, tmp_path / "fel.png", titel="Fel", max_abs_m=0.0)
+
+
+def test_dagsljus_svf_klassificerar_verklig_himmelsandel_0_till_1() -> None:
+    """B12: svf.tif är himmelsandel 0,0–1,0 (ej 0–100); 0.2, 0.5, 0.85 ska få distinkta färger."""
+    stil = hamta_figurstil("dagsljus_svf")
+    assert "0–1" in stil.enhet or "andel" in stil.enhet
+    assert stil.enhet != "%"
+    assert max(k.min_varde or 0.0 for k in stil.klasser) <= 1.0
+
+    raster = np.array([[np.nan, 0.10, 0.20], [0.50, 0.70, 0.85]], dtype=np.float64)
+    rgb = klassificera_raster(raster, stil)
+
+    assert tuple(rgb[0, 0]) == stil.tomvarde_farg
+    assert tuple(rgb[0, 1]) == stil.klasser[0].farg
+    assert tuple(rgb[0, 2]) == stil.klasser[1].farg
+    assert tuple(rgb[1, 0]) == stil.klasser[2].farg
+    assert tuple(rgb[1, 1]) == stil.klasser[3].farg
+    assert tuple(rgb[1, 2]) == stil.klasser[4].farg
+    # Kontrollera att 0.2, 0.5 och 0.85 verkligen hamnar i tre helt skilda klasser
+    farger_urval = {tuple(rgb[0, 2]), tuple(rgb[1, 0]), tuple(rgb[1, 2])}
+    assert len(farger_urval) == 3
+
+
+def test_skyfall_ankomsttid_klassificerar_verkliga_sekunder() -> None:
+    """B12: tid_till_0_1m.tif / ankomsttid.tif lagrar sekunder s (ej 0–40 min)."""
+    stil = hamta_figurstil("skyfall_ankomsttid")
+    assert stil.enhet == "s"
+    assert all("s" in k.etikett for k in stil.klasser)
+
+    raster = np.array([[np.nan, 120.0, 600.0], [1800.0, 3600.0, 0.0]], dtype=np.float64)
+    rgb = klassificera_raster(raster, stil)
+
+    assert tuple(rgb[0, 0]) == stil.tomvarde_farg
+    assert tuple(rgb[0, 1]) == stil.klasser[0].farg  # 120 s (0–600 s)
+    assert tuple(rgb[0, 2]) == stil.klasser[1].farg  # 600 s (600–1200 s)
+    assert tuple(rgb[1, 0]) == stil.klasser[2].farg  # 1800 s (1200–2400 s)
+    assert tuple(rgb[1, 1]) == stil.klasser[3].farg  # 3600 s (>= 2400 s)
+    assert tuple(rgb[1, 2]) == stil.klasser[0].farg  # 0 s
+    # Alla fyra exempelvärden 120 s, 600 s, 1800 s, 3600 s ska ha unika färger
+    farger_urval = {tuple(rgb[0, 1]), tuple(rgb[0, 2]), tuple(rgb[1, 0]), tuple(rgb[1, 1])}
+    assert len(farger_urval) == 4
+
+
+def test_luft_vindkomfort_klassificerar_nen8100_klasser_utan_ms() -> None:
+    """B12: komfortklass.tif är NEN 8100-klassindex 0..4 (A–E) från luft.vindkomfort, ej m/s."""
+    from luft.vindkomfort import KRITERIER, _klassa_komfort
+
+    stil = hamta_figurstil("luft_vindkomfort")
+    assert stil.enhet == "klass"
+    assert "m/s" not in stil.enhet
+    assert "m/s" not in stil.storhet
+    assert all("m/s" not in k.etikett for k in stil.klasser)
+
+    # Använd Flodens faktiska NEN 8100-klassificerare för att verifiera exakt 1-till-1-matchning
+    andel = np.array([[0.01, 0.03, 0.07], [0.15, 0.30, np.nan]], dtype=np.float64)
+    komfort_raster = _klassa_komfort(KRITERIER["nen8100"], {5.0: andel})
+    np.testing.assert_array_equal(komfort_raster[0], [0.0, 1.0, 2.0])
+    np.testing.assert_array_equal(komfort_raster[1, :2], [3.0, 4.0])
+    assert np.isnan(komfort_raster[1, 2])
+
+    rgb = klassificera_raster(komfort_raster, stil)
+    assert tuple(rgb[0, 0]) == stil.klasser[0].farg  # A (0)
+    assert tuple(rgb[0, 1]) == stil.klasser[1].farg  # B (1)
+    assert tuple(rgb[0, 2]) == stil.klasser[2].farg  # C (2)
+    assert tuple(rgb[1, 0]) == stil.klasser[3].farg  # D (3)
+    assert tuple(rgb[1, 1]) == stil.klasser[4].farg  # E (4)
+    assert tuple(rgb[1, 2]) == stil.tomvarde_farg  # NaN (byggnad)
+    alla_klassfarger = {
+        tuple(rgb[0, 0]),
+        tuple(rgb[0, 1]),
+        tuple(rgb[0, 2]),
+        tuple(rgb[1, 0]),
+        tuple(rgb[1, 1]),
+    }
+    assert len(alla_klassfarger) == 5
+
+
+def test_figurstil_for_lager_matchar_domaner_och_saknar_hardskriven_djuptext() -> None:
+    """B12: figurstil_for_lager mappar kända roller + skillnad utan fel enhet/djuptext."""
+    assert figurstil_for_lager({"roll": "max_djup", "typ": "bas"}).namn == "skyfall_djup"
+    assert figurstil_for_lager({"roll": "svf", "typ": "bas"}).namn == "dagsljus_svf"
+    assert figurstil_for_lager({"roll": "tid_till_0_1m", "typ": "bas"}).namn == "skyfall_ankomsttid"
+    assert figurstil_for_lager({"roll": "ankomsttid", "typ": "bas"}).namn == "skyfall_ankomsttid"
+    assert figurstil_for_lager({"roll": "komfortklass", "typ": "bas"}).namn == "luft_vindkomfort"
+    assert figurstil_for_lager({"roll": "soltimmar", "typ": "bas"}).namn == "dagsljus_soltimmar"
+    assert figurstil_for_lager({"roll": "stromtathet", "typ": "bas"}).namn == "ekologi_stromtathet"
+
+    sol_diff = figurstil_for_lager(
+        {
+            "roll": "soltimmar",
+            "doman": "dagsljus",
+            "etikett": "Soltimmar på marken",
+            "enhet": "h",
+            "typ": "skillnad",
+            "farg": "skillnad",
+            "skala": {"min": 0.0, "max": 4.0},
+            "teckenforklaring": {"typ": "divergerande", "max": 4.0, "troskel": 0.25},
+        }
+    )
+    assert sol_diff.enhet == "h"
+    assert "0,02 m" not in sol_diff.tomvarde_etikett
+    assert all("0,02 m" not in k.etikett for k in sol_diff.klasser)
+    assert any("h" in k.etikett for k in sol_diff.klasser)
