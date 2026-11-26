@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   arGiltigtDatumIso,
+  arOgonblicksskugga,
   effektivtSolDatum,
+  formateraKlockslagUtc,
+  formateraTimme,
   lasSolVal,
   MIDSOMMAR_ISO,
   solSignatur,
@@ -13,6 +16,7 @@ import {
   valideraSolVal,
   VARDAGJAMNING_ISO,
 } from "./solval.ts";
+import { ROLL_ETIKETTER, rollEtikett } from "./analyslager.ts";
 
 test("standard solval ger null (serverns förval) och icke-standard ger exakt backend-kontrakt", () => {
   assert.equal(tillSolParam(STANDARD_SOLVAL), null);
@@ -73,4 +77,48 @@ test("lasSolVal, solSignatur och solValHtml fungerar deterministiskt", () => {
   assert.match(html, /data-sol-kryss="sammanhangande"/);
   assert.match(html, /data-sol-kryss="inkludera_vsc"/);
   assert.match(html, /ar-sol-datum/);
+  assert.match(html, /data-sol-lage="soltimmar" aria-pressed="true"/);
+  assert.match(html, /data-sol-lage="skuggmask" aria-pressed="false"/);
+});
+
+test("ögonblicksskugga (klockslag_utc): param-kontrakt, validering, formatering och HTML", () => {
+  const skuggVal = {
+    ...STANDARD_SOLVAL,
+    datumForval: "midsommar" as const,
+    sammanhangande: true,
+    inkludera_vsc: true,
+    klockslag_utc: 12.5,
+  };
+  assert.equal(arOgonblicksskugga(STANDARD_SOLVAL), false);
+  assert.equal(arOgonblicksskugga(skuggVal), true);
+  assert.equal(valideraSolVal(skuggVal), null);
+  assert.ok(valideraSolVal({ ...STANDARD_SOLVAL, klockslag_utc: 5 }));
+  assert.ok(valideraSolVal({ ...STANDARD_SOLVAL, klockslag_utc: 21 }));
+  assert.deepEqual(tillSolParam(skuggVal), {
+    datum_iso: MIDSOMMAR_ISO,
+    start_timme: null,
+    slut_timme: null,
+    sammanhangande: null,
+    inkludera_vsc: true,
+    klockslag_utc: 12.5,
+  });
+  assert.equal(formateraTimme(12.5), "12:30");
+  assert.match(formateraKlockslagUtc(12), /kl\. 12:00 UTC \(13:00 normaltid \/ 14:00 sommartid\)/);
+
+  const laddad = lasSolVal({ datumForval: "midsommar", klockslag_utc: 14 });
+  assert.equal(laddad.klockslag_utc, 14);
+  assert.equal(lasSolVal({ klockslag_utc: 99 }).klockslag_utc, null);
+
+  const html = solValHtml(skuggVal, null);
+  assert.match(html, /data-sol-lage="skuggmask" aria-pressed="true"/);
+  assert.match(html, /data-sol-klockslag/);
+  assert.match(html, /kl\. 12:30 UTC/);
+  assert.doesNotMatch(html, /data-sol-brukstid=/);
+  assert.doesNotMatch(html, /data-sol-kryss="sammanhangande"/);
+
+  assert.equal(ROLL_ETIKETTER.skuggmask?.etikett, "Ögonblicksskugga");
+  assert.deepEqual(rollEtikett("skuggmask", "skuggmask", ""), {
+    etikett: "Ögonblicksskugga",
+    enhet: "",
+  });
 });
