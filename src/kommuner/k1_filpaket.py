@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from numpy.typing import NDArray
 
 from gemensamt.hash import sha256_fil
 from kommuner.filpaket import Filpaket
@@ -23,7 +24,7 @@ from kommuner.hojdmodell import (
     HojdLuckDiagnos,
     Hojdmodell,
 )
-from kommuner.vattenytor import Linje, vattenytor_i_ruta
+from kommuner.vattenytor import Linje, vattenytor_for_rutor
 from lantmateriet.omrade import Omrade, rutor_for_omrade
 from markmodell.byggnadskallor import las_byggnadskalla
 from markmodell.hinder_oppningar import HARDGJORT, VATTEN
@@ -86,7 +87,31 @@ def bygg_omrade_filpaket(
         rutlista = [Ruta(e, n, ruta_storlek_m, 0.0, upplosning_m) for e, n in rutor_for_omrade(omrade.polygon, ruta_storlek_m)]
     skriv(f"{len(rutlista)} ruta/rutor, upplösning {upplosning_m:g} m (kommunens höjdmodell)")
     ut.mkdir(parents=True, exist_ok=True)
-    for ruta in rutlista:
+    def _las_ruta_z(ruta: Ruta) -> tuple[NDArray[np.float32], list[str], HojdLuckDiagnos]:
+        if hasattr(hojdmodell, "grund_z_med_diagnos"):
+            return hojdmodell.grund_z_med_diagnos(ruta, nan_varning_andel=nan_varning_andel)
+        z_ra, v_ra = hojdmodell.grund_z(ruta)
+        n_nan = int(np.count_nonzero(np.isnan(z_ra)))
+        diag = HojdLuckDiagnos(
+            ruta=ruta.namn,
+            totalt_celler=int(z_ra.size),
+            nan_fore_celler=n_nan,
+            nan_efter_celler=n_nan,
+            utanfor_plattor_celler=n_nan,
+            vattenyta_celler=0,
+            stort_hal_celler=0,
+            smahal_fyllda_celler=0,
+            smahal_ej_fyllda_celler=0,
+            max_hal_avstand_m=0.0,
+            nan_troskel_andel=nan_varning_andel,
+        )
+        return z_ra, v_ra, diag
+
+    def _bygg_ruta(
+        ruta: Ruta,
+        z: NDArray[np.float32],
+        vatten: tuple[NDArray[np.bool_], NDArray[np.float32]] | None,
+    ) -> None:
         yb = ruta.yttre_bbox
         ruta_kand = [
             k for k in kandidater
@@ -95,40 +120,9 @@ def bygg_omrade_filpaket(
                 or max(p[1] for p in k.polygon) < yb[1] or min(p[1] for p in k.polygon) > yb[3]
             )
         ]  # fmt: skip
-        try:
-            if hasattr(hojdmodell, "grund_z_med_diagnos"):
-                z, v, diagnos = hojdmodell.grund_z_med_diagnos(
-                    ruta, nan_varning_andel=nan_varning_andel
-                )
-            else:
-                z, v = hojdmodell.grund_z(ruta)
-                n_nan = int(np.count_nonzero(np.isnan(z)))
-                diagnos = HojdLuckDiagnos(
-                    ruta=ruta.namn,
-                    totalt_celler=int(z.size),
-                    nan_fore_celler=n_nan,
-                    nan_efter_celler=n_nan,
-                    utanfor_plattor_celler=n_nan,
-                    vattenyta_celler=0,
-                    stort_hal_celler=0,
-                    smahal_fyllda_celler=0,
-                    smahal_ej_fyllda_celler=0,
-                    max_hal_avstand_m=0.0,
-                    nan_troskel_andel=nan_varning_andel,
-                )
-        except Exception as exc:
-            res.varningar.append(f"{ruta.namn}: {exc}")
-            continue
-        res.hojd_luckor.append(diagnos)
-        res.max_nan_andel = max(res.max_nan_andel, diagnos.nan_efter_andel)
-        if diagnos.over_troskel:
-            res.hog_nan_flagga = True
-        res.varningar.extend(v)
         slag_grund = None
-        if strandlinjer:
-            vmask, vniva = vattenytor_i_ruta(
-                z, ruta, strandlinjer, marginal_m=vatten_marginal_m, max_avstand_m=vatten_max_avstand_m
-            )
+        if vatten is not None:
+            vmask, vniva = vatten
             if vmask.any():
                 z = np.array(z, dtype=np.float32, copy=True)
                 z[vmask] = vniva[vmask]
@@ -159,13 +153,55 @@ def bygg_omrade_filpaket(
         res.varningar.extend(f"{ruta.namn}: {w}" for w in rr.varningar)
         skriv(f"{ruta.namn}: {len(ruta_kand)} byggnader")
         res.rutor.append(ruta.namn)
+
+    if strandlinjer:
+        # Läs markhöjd för alla rutor först så att sammanhängande vattenytor över rutgränser
+        # får en gemensam global RH 2000-nivå utan steg längs skarven.
+        laddade: list[tuple[Ruta, NDArray[np.float32]]] = []
+        for ruta in rutlista:
+            try:
+                z, v, diagnos = _las_ruta_z(ruta)
+            except Exception as exc:
+                res.varningar.append(f"{ruta.namn}: {exc}")
+                continue
+            res.hojd_luckor.append(diagnos)
+            res.max_nan_andel = max(res.max_nan_andel, diagnos.nan_efter_andel)
+            if diagnos.over_troskel:
+                res.hog_nan_flagga = True
+            res.varningar.extend(v)
+            laddade.append((ruta, z))
+        vatten_per_ruta = (
+            vattenytor_for_rutor(
+                laddade,
+                strandlinjer,
+                marginal_m=vatten_marginal_m,
+                max_avstand_m=vatten_max_avstand_m,
+            )
+            if laddade
+            else []
+        )
+        for (ruta, z), vatten in zip(laddade, vatten_per_ruta, strict=True):
+            _bygg_ruta(ruta, z, vatten)
+    else:
+        for ruta in rutlista:
+            try:
+                z, v, diagnos = _las_ruta_z(ruta)
+            except Exception as exc:
+                res.varningar.append(f"{ruta.namn}: {exc}")
+                continue
+            res.hojd_luckor.append(diagnos)
+            res.max_nan_andel = max(res.max_nan_andel, diagnos.nan_efter_andel)
+            if diagnos.over_troskel:
+                res.hog_nan_flagga = True
+            res.varningar.extend(v)
+            _bygg_ruta(ruta, z, None)
     if strandlinjer:
         if res.vatten_niva_m is not None:
             lo, hi = res.vatten_niva_m
             res.varningar.append(
                 f"{res.vatten_m2:.0f} m² vattenyta ur strandlinjer, nivå {lo:.1f}–{hi:.1f} m RH 2000. Ytan är plan "
-                "(nivå = närmaste strandlinjes z) med markslag vatten; lösaren har inget fast randvillkor för "
-                "vattennivå eller utlopp, så regn på ytan stannar på ytan."
+                "(global mediannivå per sammanhängande vattenyta) med markslag vatten; lösaren har inget fast "
+                "randvillkor för vattennivå eller utlopp, så regn på ytan stannar på ytan."
             )
         else:
             res.varningar.append("Strandlinjer lästes men inga celler under strandnivån nådde en strandlinje: inga vattenytor.")
