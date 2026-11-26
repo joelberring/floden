@@ -328,6 +328,15 @@ def bygg_server(
                 return rapporter.hamta(rid)
         return None
 
+    def _las_bestallning(bid: str) -> Any | None:
+        """Läser en beställning ur arkivet (`rapporter.bestallningar.las`), med reserv till `rapporter.bestallning_hamta`."""
+        try:
+            return rapporter.bestallningar.las(bid)
+        except Exception:  # noqa: BLE001 - reserv om tester stubbat `RapportTjanst.bestallning_hamta`
+            with contextlib.suppress(Exception):
+                return rapporter.bestallning_hamta(bid)
+        return None
+
     def _korningar_i_rapport(r: Any) -> set[str]:
         ut: set[str] = set()
         for post in getattr(r, "korningar", ()) or ():
@@ -373,32 +382,53 @@ def bygg_server(
         for kid in sorted(kids):
             _kontrollera_korning_oppenhet(kid)
 
+    def _samla_fran_svar(
+        obj: Any,
+        korningar_out: set[str],
+        rapporter_out: set[str],
+        projekt_out: set[str],
+        djup: int = 0,
+    ) -> None:
+        if djup > 8:
+            return
+        if isinstance(obj, Mapping):
+            for k, v in obj.items():
+                if k == "korning_id" and isinstance(v, str):
+                    korningar_out.add(v)
+                elif k == "korning_ids" and isinstance(v, list):
+                    korningar_out.update(x for x in v if isinstance(x, str))
+                elif k == "korningar" and isinstance(v, list):
+                    for item in v[:500]:
+                        if isinstance(item, str):
+                            korningar_out.add(item)
+                        elif isinstance(item, Mapping):
+                            _samla_fran_svar(item, korningar_out, rapporter_out, projekt_out, djup + 1)
+                elif k == "rapport_id" and isinstance(v, str):
+                    rapporter_out.add(v)
+                elif k == "projekt" and isinstance(v, str) and v:
+                    projekt_out.add(v)
+                elif isinstance(v, Mapping | list):
+                    _samla_fran_svar(v, korningar_out, rapporter_out, projekt_out, djup + 1)
+        elif isinstance(obj, list):
+            for x in obj[:500]:
+                _samla_fran_svar(x, korningar_out, rapporter_out, projekt_out, djup + 1)
+
     def _kontrollera_svar_oppenhet(
         d: Mapping[str, Any], korningar_out: set[str], rapporter_out: set[str]
     ) -> None:
         sc = d.get("structuredContent") or d.get("structured_content")
-        _hitta_korningar(sc, korningar_out)
-        _hitta_rapporter(sc, rapporter_out)
         projekt_i_svar: set[str] = set()
-        for post in d.get("contents") or []:
-            text = post.get("text") if isinstance(post, Mapping) else getattr(post, "text", None)
-            if not isinstance(text, str) or not text.lstrip().startswith(("{", "[")):
-                continue
-            try:
-                tolkad = json.loads(text)
-            except ValueError:
-                continue
-            _hitta_korningar(tolkad, korningar_out)
-            _hitta_rapporter(tolkad, rapporter_out)
-            if isinstance(tolkad, Mapping):
-                if isinstance(tolkad.get("projekt"), str):
-                    projekt_i_svar.add(tolkad["projekt"])
-                if isinstance(tolkad.get("korningar"), list):
-                    for item in tolkad["korningar"]:
-                        if isinstance(item, str):
-                            korningar_out.add(item)
-                        elif isinstance(item, Mapping) and isinstance(item.get("korning_id"), str):
-                            korningar_out.add(item["korning_id"])
+        _samla_fran_svar(sc, korningar_out, rapporter_out, projekt_i_svar)
+        for falt_namn in ("contents", "content"):
+            for post in d.get(falt_namn) or []:
+                text = post.get("text") if isinstance(post, Mapping) else getattr(post, "text", None)
+                if not isinstance(text, str) or not text.lstrip().startswith(("{", "[")):
+                    continue
+                try:
+                    tolkad = json.loads(text)
+                except ValueError:
+                    continue
+                _samla_fran_svar(tolkad, korningar_out, rapporter_out, projekt_i_svar)
         for pid in sorted(projekt_i_svar):
             pmapp = tjanst.projektmapp(pid)
             if pmapp is not None:
@@ -421,8 +451,9 @@ def bygg_server(
                 kontrollera.append((rid, "rapport", str(r.projekt)))
         bid = argument.get("bestallning_id")
         if isinstance(bid, str) and bid:
-            with contextlib.suppress(Exception):  # okänd beställning: verktyget svarar själv
-                kontrollera.append((bid, "beställning", rapporter.bestallning_hamta(bid).projekt))
+            b_obj = _las_bestallning(bid)
+            if b_obj is not None:
+                kontrollera.append((bid, "beställning", str(b_obj.projekt)))
         for id_, slag, projekt_id in kontrollera:
             if konto is None or not _har_roll(konto, projekt_id, minst):
                 return f"Okänd {slag} '{id_}'."
@@ -465,6 +496,9 @@ def bygg_server(
                         and not explicit_projekt_var.get()
                     ):
                         projekt_eff = tjanst.fraga_projekt(str(kwargs["fraga"])) or PROJEKT_ID
+                    elif namn == "bestallning_hamta" and kwargs.get("bestallning_id"):
+                        b_obj = _las_bestallning(str(kwargs["bestallning_id"]))
+                        projekt_eff = str(b_obj.projekt) if b_obj is not None else PROJEKT_ID
                     elif explicit_projekt_var.get() and "projekt" in kwargs:
                         projekt_eff = str(kwargs["projekt"])
                     elif kwargs.get("korning_id"):
@@ -480,6 +514,9 @@ def bygg_server(
                     elif kwargs.get("rapport_id"):
                         r_obj = _las_rapport(str(kwargs["rapport_id"]))
                         projekt_eff = str(r_obj.projekt) if r_obj is not None else PROJEKT_ID
+                    elif kwargs.get("bestallning_id"):
+                        b_obj = _las_bestallning(str(kwargs["bestallning_id"]))
+                        projekt_eff = str(b_obj.projekt) if b_obj is not None else PROJEKT_ID
                     elif "projekt" in kwargs:
                         projekt_eff = str(kwargs["projekt"])
                     else:
@@ -547,8 +584,17 @@ def bygg_server(
             projekt = argument.get("projekt", PROJEKT_ID)
             klass = klasser.get(vilket, DataKlass.OPPET)
             korningar: set[str] = set()
-            _hitta_korningar(argument, korningar)
+            _korningar_i_indata(argument, korningar)
             rapporter_set = _rapport_ids_for(argument, vilket)
+            bestallning_ref = (
+                str(argument["bestallning_id"])
+                if isinstance(argument.get("bestallning_id"), str) and argument["bestallning_id"]
+                else None
+            )
+            bestallning_obj = _las_bestallning(bestallning_ref) if bestallning_ref is not None else None
+            bestallning_projekt = (
+                str(bestallning_obj.projekt) if bestallning_obj is not None else None
+            )
             fraga_ref = (
                 str(argument["fraga"])
                 if ctx.method == "tools/call"
@@ -574,6 +620,8 @@ def bygg_server(
             else:
                 if fraga_ref is not None and fraga_agarprojekt is not None:
                     effektiv_projekt = fraga_agarprojekt
+                elif vilket == "bestallning_hamta" and bestallning_projekt is not None:
+                    effektiv_projekt = bestallning_projekt
                 elif "projekt" not in argument and rapporter_set:
                     rapport_klasser = [
                         klass_for_projekt(klass, str(r_obj.projekt))
@@ -582,6 +630,8 @@ def bygg_server(
                     ]
                     effektiv = hogsta(*rapport_klasser) if rapport_klasser else klass_for_projekt(klass, str(projekt))
                     effektiv_projekt = ""
+                elif "projekt" not in argument and bestallning_projekt is not None:
+                    effektiv_projekt = bestallning_projekt
                 elif "projekt" not in argument and isinstance(argument.get("korning_id"), str):
                     p_k = tjanst.app.projekt_for_korning(str(argument["korning_id"]))
                     if p_k is not None and (
@@ -596,6 +646,8 @@ def bygg_server(
                     effektiv_projekt = str(projekt)
                 if effektiv_projekt:
                     effektiv = klass_for_projekt(klass, effektiv_projekt)
+                if bestallning_projekt is not None and effektiv_projekt != bestallning_projekt:
+                    effektiv = hogsta(effektiv, klass_for_projekt(klass, bestallning_projekt))
             post: dict[str, Any] = {
                 "tid": nu(),
                 "session": tillstand.session_id,
@@ -623,6 +675,11 @@ def bygg_server(
                 if (
                     fraga_ref is None
                     and not (rapporter_set and "projekt" not in argument)
+                    and not (
+                        vilket == "bestallning_hamta"
+                        and bestallning_ref is not None
+                        and "projekt" not in argument
+                    )
                     and not behorighet(konto, str(projekt), minst)
                 ):
                     text = (
@@ -732,6 +789,18 @@ def bygg_server(
                         return _result_fel(
                             "Nekad: projektets underlag är inte öppna data. Innehåll härlett ur icke-öppna data "
                             "lämnas inte ut via MCP. Inget har lämnats ut."
+                        )
+            if bestallning_projekt is not None:
+                pmapp_b = tjanst.projektmapp(bestallning_projekt)
+                if pmapp_b is not None:
+                    try:
+                        oppenhet.kontrollera_sokvag(pmapp_b)
+                    except OppenhetNekad:
+                        _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
+                        return _neka_svar(
+                            ctx.method,
+                            "Nekad: projektets underlag är inte öppna data. Innehåll härlett ur icke-öppna data "
+                            "lämnas inte ut via MCP. Inget har lämnats ut.",
                         )
             if fraga_ref is not None:
                 try:
