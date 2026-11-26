@@ -40,7 +40,7 @@ from geografi.modell import (
     tolka_ref,
     versionsmapp,
 )
-from kommuner.konfig import KommunKonfig
+from kommuner.konfig import _REPO_ROT, KommunKonfig, LuftKonfig
 from kommuner.skapa import (
     SkapaFel,
     _oppna_register,
@@ -415,6 +415,48 @@ def _ekologi_natverk(kommun: KommunKonfig) -> str:
     return "barrskog-nacka"
 
 
+def _los_luftfil(sokvag_str: str, kommun: KommunKonfig, geo_rot: Path) -> Path:
+    p = Path(sokvag_str)
+    if p.is_absolute():
+        return p
+    kandidater: list[Path] = []
+    if kommun.fil != Path("."):
+        kandidater.append(kommun.fil.parent / p)
+    kandidater.extend([geo_rot / p, _REPO_ROT / p])
+    for kand in kandidater:
+        if kand.is_file():
+            return kand
+    return kandidater[0]
+
+
+def _luft_underlag(
+    kommun: KommunKonfig, geo_rot: Path, manifest: Mapping[str, Any]
+) -> tuple[LuftKonfig, Path, Path | None] | None:
+    """Returnerar `(luft_konfig, vader_path, vagar_path)` när kommun eller geografi har luftunderlag."""
+    luft = kommun.luft
+    if luft is None:
+        raw = manifest.get("luft")
+        if isinstance(raw, Mapping) and isinstance(raw.get("vader_fil"), str) and raw["vader_fil"].strip():
+            vagar_raw = raw.get("vagar_fil")
+            bg_raw = raw.get("bakgrund_ug_m3")
+            bg = (
+                float(bg_raw)
+                if isinstance(bg_raw, int | float) and not isinstance(bg_raw, bool)
+                else None
+            )
+            luft = LuftKonfig(
+                vader_fil=str(raw["vader_fil"]).strip(),
+                vagar_fil=str(vagar_raw).strip() if isinstance(vagar_raw, str) else "",
+                bakgrund_ug_m3=bg,
+                bakgrund_kalla=str(raw.get("bakgrund_kalla", "")).strip(),
+            )
+    if luft is None:
+        return None
+    vader = _los_luftfil(luft.vader_fil, kommun, geo_rot)
+    vagar = _los_luftfil(luft.vagar_fil, kommun, geo_rot) if luft.vagar_fil else None
+    return luft, vader, vagar
+
+
 def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapping[str, Any]) -> list[Path]:
     """(Åter)skriver projektets K20-frågor: nuläget och ett scenario per post i scenarier.json."""
     projekt = las_projekt(mapp)
@@ -511,6 +553,90 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
         fe = fdir / "ekologi.toml"
         fe.write_text("\n".join(eko) + "\n", encoding="utf-8")
         skrivna.append(fe)
+    luft_info = _luft_underlag(kommun, geo_rot, manifest)
+    if luft_info is not None:
+        lk, vader_fil, vagar_fil = luft_info
+        veg_toml = "true" if lk.vegetation else "false"
+        luft_gem = (
+            f"dx_m = {lk.dx_m:g}, riktningar = {lk.riktningar}, "
+            f"genomstromningar = {lk.genomstromningar:g}, "
+            f"buffert_uppstroms_m = {lk.buffert_uppstroms_m:g}, "
+            f"buffert_nedstroms_m = {lk.buffert_nedstroms_m:g}, "
+            f"buffert_sidor_m = {lk.buffert_sidor_m:g}, "
+            f"omsampling = {_toml_str(lk.omsampling)}, vegetation = {veg_toml}"
+        )
+        beskr = f"Vindkomfort och luftkvalitet i {pid}"
+        if lk.bakgrund_ug_m3 is not None and lk.bakgrund_kalla:
+            beskr += f" (bakgrund: {lk.bakgrund_ug_m3:g} µg/m³, {lk.bakgrund_kalla})"
+        luft_rader = [
+            f"# Luft i projektet {pid} (geografin {projekt['geografi']}): nuläget och scenarier.",
+            'kontrakt = "K20/v1"',
+            f'fraga_id = {_toml_str(pid + "-luft")}',
+            f"beskrivning = {_toml_str(beskr)}",
+            "",
+            "[scenarier.bas]",
+            bas(geo, "bas").rstrip(),
+        ]
+        for s in scen:
+            slugg = str(s["slug"])
+            luft_rader += [
+                "",
+                f"[scenarier.{slugg}]",
+                bas(geo, slugg).rstrip(),
+                f'k9 = [{_toml_str(_rel(fdir, mapp / s["k9_dagsljus"]))}]',
+            ]
+        vader_rel = _toml_str(_rel(fdir, vader_fil))
+        luft_rader += [
+            "",
+            "[[analyser]]",
+            'id = "vindkomfort"',
+            'losare = "luft.vindkomfort"',
+            f"parametrar = {{ {luft_gem}, kriterium = {_toml_str(lk.kriterium)} }}",
+            f"indata = {{ vader = {vader_rel} }}",
+        ]
+        if vagar_fil is not None:
+            vagar_rel = _toml_str(_rel(fdir, vagar_fil))
+            luft_rader += [
+                "",
+                "[[analyser]]",
+                'id = "halt"',
+                'losare = "luft.halt"',
+                f"parametrar = {{ {luft_gem}, amne = {_toml_str(lk.amne)}, utvardering_hojd_m = {lk.utvardering_hojd_m:g} }}",
+                f"indata = {{ vagar = {vagar_rel}, vader = {vader_rel} }}",
+            ]
+            if lk.bakgrund_ug_m3 is not None:
+                luft_rader += [
+                    "",
+                    "[[analyser]]",
+                    'id = "mkn"',
+                    'losare = "luft.mkn"',
+                    'beror_pa = ["halt"]',
+                    f"parametrar = {{ bakgrund_ug_m3 = {lk.bakgrund_ug_m3:g} }}",
+                ]
+        for s in scen:
+            slugg = str(s["slug"])
+            luft_rader += [
+                "",
+                "[[jamforelser]]",
+                'analys = "vindkomfort"',
+                'utdata = "forstarkning"',
+                'fore = "bas"',
+                f'efter = "{slugg}"',
+                "troskel = 0.05",
+            ]
+            if vagar_fil is not None:
+                luft_rader += [
+                    "",
+                    "[[jamforelser]]",
+                    'analys = "halt"',
+                    'utdata = "arsmedel"',
+                    'fore = "bas"',
+                    f'efter = "{slugg}"',
+                    "troskel = 0.1",
+                ]
+        fl = fdir / "luft.toml"
+        fl.write_text("\n".join(luft_rader) + "\n", encoding="utf-8")
+        skrivna.append(fl)
     return skrivna
 
 
@@ -610,6 +736,8 @@ def kor_projekt(
     fragor = ["skyfall", "dagsljus"]
     if (mapp / "fragor" / "ekologi.toml").is_file():
         fragor.append("ekologi")
+    if (mapp / "fragor" / "luft.toml").is_file():
+        fragor.append("luft")
     resultat: dict[str, dict[str, Any]] = {}
     for fraga in fragor:
         ref = next((r for r in t._fragefiler() if r == fraga or r.startswith(fraga)), fraga)  # noqa: SLF001

@@ -160,6 +160,31 @@ class EkologiForval:
 
 
 @dataclass(frozen=True)
+class LuftKonfig:
+    """Valfritt `[luft]`-avsnitt: underlag och parametrar för luftanalyser i geografiprojekt.
+
+    `bakgrund_ug_m3` har inget förval (`None` = utelämnad): enligt `AGENTS.md` gissas aldrig
+    bakgrundshalt, så `luft.mkn` skrivs bara i `luft.toml` när en explicit bakgrund finns angiven.
+    """
+
+    vader_fil: str
+    vagar_fil: str = ""
+    bakgrund_ug_m3: float | None = None
+    bakgrund_kalla: str = ""
+    dx_m: float = 4.0
+    riktningar: int = 4
+    genomstromningar: float = 2.0
+    kriterium: str = "nen8100"
+    amne: str = "PM10"
+    utvardering_hojd_m: float = 2.0
+    buffert_uppstroms_m: float = 80.0
+    buffert_nedstroms_m: float = 160.0
+    buffert_sidor_m: float = 60.0
+    omsampling: str = "medel"
+    vegetation: bool = False
+
+
+@dataclass(frozen=True)
 class KommunKonfig:
     id: str
     namn: str
@@ -176,6 +201,7 @@ class KommunKonfig:
     geografier: Mapping[str, GeografiDef]
     fil: Path = field(default=Path("."), compare=False)
     ekologi: EkologiForval | None = None
+    luft: LuftKonfig | None = None
 
     def omrade(self, omrade_id: str | None) -> Testomrade:
         valt = omrade_id or self.standard_omrade
@@ -266,6 +292,97 @@ def _tolka_ekologi(e: Any) -> EkologiForval | None:
     return EkologiForval(server, lokalt, dict(kv), _text(e, "anmarkning", var, tom_ok=True) if "anmarkning" in e else "")
 
 
+def _tolka_luft(raw: Any) -> LuftKonfig | None:
+    """Valfritt avsnitt `[luft]`. Saknas det skapas ingen `luft.toml` i projektet."""
+    if raw is None:
+        return None
+    var = "[luft]"
+    if not isinstance(raw, Mapping):
+        raise KommunKonfigFel(f"{var} ska vara ett avsnitt.")
+    _stram(
+        raw,
+        var,
+        (
+            "vader_fil",
+            "vagar_fil",
+            "bakgrund_ug_m3",
+            "bakgrund_kalla",
+            "dx_m",
+            "riktningar",
+            "genomstromningar",
+            "kriterium",
+            "amne",
+            "utvardering_hojd_m",
+            "buffert_uppstroms_m",
+            "buffert_nedstroms_m",
+            "buffert_sidor_m",
+            "omsampling",
+            "vegetation",
+        ),
+    )
+    vader_fil = _text(raw, "vader_fil", var)
+    vagar_fil = _text(raw, "vagar_fil", var, tom_ok=True) if "vagar_fil" in raw else ""
+    bakgrund_ug_m3: float | None = None
+    if "bakgrund_ug_m3" in raw:
+        bakgrund_ug_m3 = _tal(raw, "bakgrund_ug_m3", var, minst=0.0)
+        if not vagar_fil:
+            raise KommunKonfigFel(
+                f"{var}: 'bakgrund_ug_m3' för luft.mkn kräver även 'vagar_fil' (för luft.halt)."
+            )
+    bakgrund_kalla = (
+        _text(raw, "bakgrund_kalla", var, tom_ok=True) if "bakgrund_kalla" in raw else ""
+    )
+    dx_m = _tal(raw, "dx_m", var, minst=0.25) if "dx_m" in raw else 4.0
+    rikt = raw.get("riktningar", 4)
+    if isinstance(rikt, bool) or not isinstance(rikt, int) or not 1 <= rikt <= 72:
+        raise KommunKonfigFel(f"{var}: 'riktningar' ska vara ett heltal 1-72, fick {rikt!r}.")
+    genom = _tal(raw, "genomstromningar", var, minst=0.0) if "genomstromningar" in raw else 2.0
+    if genom <= 0.0:
+        raise KommunKonfigFel(f"{var}: 'genomstromningar' ska vara > 0.")
+    kriterium = _text(raw, "kriterium", var) if "kriterium" in raw else "nen8100"
+    if kriterium not in ("nen8100", "lawson-lddc"):
+        raise KommunKonfigFel(
+            f"{var}: 'kriterium' ska vara 'nen8100' eller 'lawson-lddc', fick {kriterium!r}."
+        )
+    amne = _text(raw, "amne", var) if "amne" in raw else "PM10"
+    utv_h = _tal(raw, "utvardering_hojd_m", var, minst=0.0) if "utvardering_hojd_m" in raw else 2.0
+    if utv_h <= 0.0:
+        raise KommunKonfigFel(f"{var}: 'utvardering_hojd_m' ska vara > 0.")
+    oms = _text(raw, "omsampling", var) if "omsampling" in raw else "medel"
+    if oms not in ("medel", "max"):
+        raise KommunKonfigFel(f"{var}: 'omsampling' ska vara 'medel' eller 'max', fick {oms!r}.")
+    veg = raw.get("vegetation", False)
+    if not isinstance(veg, bool):
+        raise KommunKonfigFel(f"{var}: 'vegetation' ska vara true eller false.")
+    return LuftKonfig(
+        vader_fil=vader_fil,
+        vagar_fil=vagar_fil,
+        bakgrund_ug_m3=bakgrund_ug_m3,
+        bakgrund_kalla=bakgrund_kalla,
+        dx_m=dx_m,
+        riktningar=int(rikt),
+        genomstromningar=genom,
+        kriterium=kriterium,
+        amne=amne,
+        utvardering_hojd_m=utv_h,
+        buffert_uppstroms_m=(
+            _tal(raw, "buffert_uppstroms_m", var, minst=0.0)
+            if "buffert_uppstroms_m" in raw
+            else 80.0
+        ),
+        buffert_nedstroms_m=(
+            _tal(raw, "buffert_nedstroms_m", var, minst=0.0)
+            if "buffert_nedstroms_m" in raw
+            else 160.0
+        ),
+        buffert_sidor_m=(
+            _tal(raw, "buffert_sidor_m", var, minst=0.0) if "buffert_sidor_m" in raw else 60.0
+        ),
+        omsampling=oms,
+        vegetation=veg,
+    )
+
+
 def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig:
     """Validerar en inläst kommunfil. Se `data/kommuner/goteborg.toml` för formatet."""
     _stram(
@@ -274,7 +391,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         (
             "kontrakt", "id", "namn", "publicering_epsg", "intern_epsg", "standard_omrade",
             "omraden", "geografier", "lantmateriet", "hojd", "filpaket", "byggnader", "baskarta", "dagsljus", "skyfall",
-            "ekologi",
+            "ekologi", "luft",
         ),
     )  # fmt: skip
     if data.get("kontrakt") != KONTRAKT:
@@ -557,6 +674,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
         geografier=geos,
         fil=fil,
         ekologi=_tolka_ekologi(data.get("ekologi")),
+        luft=_tolka_luft(data.get("luft")),
     )
 
 
