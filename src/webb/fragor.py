@@ -59,6 +59,7 @@ from webb.resultatlager import (
     Mosaik,
     Utbredning,
     etikett_och_enhet,
+    fara_mosaik,
     farg_for_roll,
     rita_bild,
     sammanfoga,
@@ -72,7 +73,7 @@ from webb.resultatlager import (
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
 _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
-LAGER_VERSION = 9
+LAGER_VERSION = 10
 STANDARD_MAX_KO = 16
 
 
@@ -859,6 +860,7 @@ class FragaTjanst:
             ),
             "antaganden": self._antaganden(k, s),
             "datatabeller": self._datatabeller(k, s),
+            "vektorlager": self._vektorlager(k, s),
             "tidsserie_scenarier": self._tidsserie_scenarier(k, s),
         }
 
@@ -1174,6 +1176,39 @@ class FragaTjanst:
                 mosaiker[p["id"]] = sammanfoga(p["filer"])
             except (LagerFel, OSError, ValueError) as exc:
                 varningar.append(f"Lagret {p['id']} kunde inte visas: {exc}")
+        # Deterministisk härledd riskroll `fara = max_djup * hastighet` (m²/s) för 2D-körningar,
+        # med bevarad NaN där endera saknas. Skapas före skillnadsloop så även `fara` får skillnad.
+        per_as_roll: dict[tuple[str, str, str], dict[str, Any]] = {
+            (str(p["analys"]), str(p["scenario"]), str(p["roll"])): p
+            for p in poster
+            if not p["skillnad"] and p["id"] in mosaiker
+        }
+        for (analys_id, scen_id, roll), p_djup in list(per_as_roll.items()):
+            if roll != "max_djup" or (analys_id, scen_id, "fara") in per_as_roll:
+                continue
+            p_hast = per_as_roll.get((analys_id, scen_id, "hastighet"))
+            if p_hast is None:
+                continue
+            fara_m = fara_mosaik(mosaiker[p_djup["id"]], mosaiker[p_hast["id"]])
+            if fara_m is None:
+                continue
+            fara_id = f"{analys_id}.{scen_id}.fara"
+            mosaiker[fara_id] = fara_m
+            poster.append(
+                {
+                    "id": fara_id,
+                    "analys": analys_id,
+                    "scenario": scen_id,
+                    "roll": "fara",
+                    "typ": p_djup["typ"],
+                    "primar": False,
+                    "filer": [],
+                    "ruta_ider": [],
+                    "skillnad": False,
+                    "troskel": 0.0,
+                    "harledd": True,
+                }
+            )
         # Roller som frågan inte jämför får ändå en skillnad (efter minus före, cell för cell),
         # så att varje roll går att se som före, efter och skillnad.
         jamforda = {(p["analys"], p["roll"], p["scenario"]) for p in poster if p["skillnad"]}
@@ -1386,6 +1421,27 @@ class FragaTjanst:
                 if fil is None or not fil.is_file():
                     raise FlodenWebbFel("Körningen har inga fasadpunkter med VSC.", status_kod=404)
                 ut = analysvektor.vsc_geojson(fil)
+            elif slag == "rannsten_flode":
+                fil = next(
+                    (
+                        self._jobbmapp(k, j) / roller["rannsten_flode"]
+                        for j in s["jobb"]
+                        if j["scenario"] == scenario
+                        and "rannsten_flode" in (roller := self._roller(k, j))
+                    ),
+                    None,
+                )
+                if fil is None or not fil.is_file():
+                    raise FlodenWebbFel(
+                        "Körningen har inget 1D-rännstenslager (underlaget saknar 3D-kantsten).",
+                        status_kod=404,
+                    )
+                try:
+                    ut = analysvektor.rannsten_flode_geojson(fil)
+                except (OSError, ValueError) as exc:
+                    raise FlodenWebbFel(
+                        f"Kunde inte läsa 1D-rännstenslagret: {exc}", status_kod=500
+                    ) from exc
             else:
                 ut = self._sankgraf_vektor(k, s, scenario, slag, yta, vol, djup)
             ut = {"slag": slag, "scenario": scenario, "korning_id": korning_id, **ut}
@@ -2159,9 +2215,35 @@ class FragaTjanst:
             ".tiff": "image/tiff",
             ".csv": "text/csv; charset=utf-8",
             ".json": "application/json; charset=utf-8",
+            ".geojson": "application/geo+json; charset=utf-8",
             ".png": "image/png",
         }
         return fil.read_bytes(), typer.get(fil.suffix.lower(), "application/octet-stream")
+
+    def _vektorlager(self, k: Korning, s: dict[str, Any]) -> list[dict[str, Any]]:
+        """Vektorfiler (GeoJSON) som lösarna skrivit i resultatet (t.ex. `rannsten_flode`)."""
+        ut: list[dict[str, Any]] = []
+        for j in s["jobb"]:
+            for roll, namn in self._roller(k, j).items():
+                if namn.lower().endswith(".geojson"):
+                    fil = self._jobbmapp(k, j) / namn
+                    etikett, enhet = etikett_och_enhet(roll)
+                    ut.append(
+                        {
+                            "analys": j["analys"],
+                            "scenario": j["scenario"],
+                            "ruta": j.get("ruta"),
+                            "roll": roll,
+                            "etikett": etikett,
+                            "enhet": enhet,
+                            "fil": namn,
+                            "url": self._url_fil(k, fil),
+                            "vektor_url": (
+                                f"/api/korningar/{k.korning_id}/vektor/{j['scenario']}/{roll}"
+                            ),
+                        }
+                    )
+        return ut
 
     def _datatabeller(self, k: Korning, s: dict[str, Any]) -> list[dict[str, Any]]:
         ut: list[dict[str, Any]] = []

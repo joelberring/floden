@@ -44,6 +44,7 @@ _SEKVENTIELL: tuple[str, ...] = (
 PALETTER: dict[str, tuple[str, ...]] = {
     "sekventiell": _SEKVENTIELL,
     "hastighet": ("#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"),
+    "fara": ("#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"),
     "tid": ("#ffffcc", "#fed976", "#fd8d3c", "#bd0026", "#4d004b"),
     "stromtathet": ("#000004", "#51127c", "#b73779", "#fc8961", "#fcfdbf"),
     "luft": ("#0d0887", "#7e03a8", "#cc4678", "#f89441", "#f0f921"),
@@ -72,7 +73,7 @@ _SKILLNAD_MINSKNING = "#2b5d8c"
 _SKILLNAD_OKNING = "#b4462b"
 
 MASKADE_ROLLER = frozenset(
-    {"soltimmar", "sammanhangande_soltimmar", "skuggmask", "svf", "max_djup"}
+    {"soltimmar", "sammanhangande_soltimmar", "skuggmask", "svf", "max_djup", "fara"}
 )
 """Markrasterroller där byggnadernas fotavtryck är tak, inte mark (maskas, märks "tak")."""
 
@@ -87,13 +88,19 @@ def takkalla_for_roll(roll: str) -> str:
     taket: byggnadens fotavtryck (`byggnader.gpkg`) är tak. Vatten räknas på marken, där en port
     är öppen och vattnet rinner: bara det som är byggnad i markslaget är tak.
     """
-    return TAKKALLA_MARKSLAG if roll == "max_djup" else TAKKALLA_FOTAVTRYCK
+    return (
+        TAKKALLA_MARKSLAG
+        if roll in {"max_djup", "fara", "hastighet", "ankomsttid"}
+        else TAKKALLA_FOTAVTRYCK
+    )
 
 ETIKETTER: dict[str, tuple[str, str]] = {
     "soltimmar": ("Soltimmar på marken", "h"),
     "sammanhangande_soltimmar": ("Sammanhängande soltimmar", "h"),
     "skuggmask": ("Solläge vid klockslag", ""),
     "max_djup": ("Största vattendjup", "m"),
+    "fara": ("Fara (djup × hastighet)", "m²/s"),
+    "rannsten_flode": ("Rännstenar (1D-flöde)", "m³/s"),
     "svf": ("Andel himmel som syns", ""),
     "stromtathet": ("Strömtäthet (flaskhalsar)", ""),
     "kansighet": ("Känslighet för motstånd", ""),
@@ -114,6 +121,7 @@ ETIKETTER: dict[str, tuple[str, str]] = {
 SKALA_FOR_ROLL: dict[str, str] = {
     "max_djup": "vatten",
     "hastighet": "hastighet",
+    "fara": "fara",
     "ankomsttid": "tid",
     "tid_till_0_1m": "tid",
     "tid_till_0_2m": "tid",
@@ -499,3 +507,24 @@ def skillnad_mosaik(fore: Mosaik, efter: Mosaik) -> Mosaik | None:
         efter.utbredning,
         efter.pixelstorlek_m,
     )
+
+
+def fara_mosaik(max_djup: Mosaik, hastighet: Mosaik) -> Mosaik | None:
+    """Deterministisk härledd riskroll `fara = max_djup * hastighet` (m²/s), cell för cell.
+
+    Bevarar `NaN` exakt där antingen `max_djup` eller `hastighet` saknas (icke-ändligt värde).
+    Returnerar `None` om lagren inte ligger på samma rutnät.
+    """
+    if (
+        max_djup.raster.shape != hastighet.raster.shape
+        or max_djup.utbredning != hastighet.utbredning
+    ):
+        return None
+    if abs(max_djup.pixelstorlek_m - hastighet.pixelstorlek_m) > 1e-9:
+        return None
+    h = np.asarray(max_djup.raster, dtype=np.float64)
+    v = np.asarray(hastighet.raster, dtype=np.float64)
+    giltig = np.isfinite(h) & np.isfinite(v)
+    ut = np.full(h.shape, np.nan, dtype=np.float32)
+    ut[giltig] = (h[giltig] * v[giltig]).astype(np.float32)
+    return Mosaik(ut, max_djup.utbredning, max_djup.pixelstorlek_m)

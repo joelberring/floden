@@ -216,7 +216,7 @@ export const OSAKERHET_KNAPP_ID = "rs-osakerhet";
 
 /** Delegerad klickselektor i arbetsytan (Steg 2). */
 export const ARBETSYTA_KLICK_SELEKTOR =
-  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
+  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-skyfall-metod],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
 
 /** Kopplar 3D-vyns hovringsavläsning, objekttext och fel till arbetsytans DOM-uppdateringar (W-B4). */
 export function skapa3dAterkoppling(mal: {
@@ -519,6 +519,7 @@ const TAKHJALP: Record<string, string> = {
 
 const ROLL_SNABBNAMN: Record<string, string> = {
   max_djup: "Vattendjup",
+  fara: "Fara (h·v)",
   hastighet: "Hastighet",
   ankomsttid: "Ankomsttid",
   soltimmar: "Soltimmar",
@@ -1158,7 +1159,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   };
 
   const ritaRegnOchKor = (): void => {
-    el("ar-regn-plats").innerHTML = regnValHtml(t.regn, info?.regn_forval, t.avtappning, regnFel, avtappningFel);
+    el("ar-regn-plats").innerHTML = regnValHtml(t.regn, info?.regn_forval, t.avtappning, regnFel, avtappningFel, t.skyfallMetod);
     const pagar = arPagaende(t);
     const harRitatForslag = !t.dok.tom();
     const inst = bedomInstallningsStatus(t, amne, projektSvar?.vyer);
@@ -1199,7 +1200,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (visaTomKort) {
       const tomBeskrivning =
         amne === "vatten"
-          ? `Kör en skyfallsberäkning för projektets befintliga läge med <strong>${esc(valdRegnText(t.regn, info?.regn_forval, t.avtappning))}</strong> så visas vattendjup och flödesvägar direkt på kartan.`
+          ? `Kör en skyfallsberäkning för projektets befintliga läge med <strong>${esc(valdRegnText(t.regn, info?.regn_forval, t.avtappning, t.skyfallMetod))}</strong> så visas vattendjup och flödesvägar direkt på kartan.`
           : amne === "dagsljus"
             ? "Kör en nulägesberäkning för projektets befintliga läge så visas soltimmar och skuggning direkt på kartan."
             : amne === "ekologi"
@@ -1218,7 +1219,14 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const sc = r && vy ? vektorScenario(r.lager, vy, kartLageForAnalys()) : null;
     return sc && vy ? `${vy.korning_id}|${sc}|${slag}|${vektorGrans[slag] ?? ""}` : null;
   };
-  const tillgangligaVektorer = (): VektorSlag[] => (r ? vektorVal(amne, r.antaganden.analyser).map((x) => x.slag) : []);
+  const vektorerForResultat = () => {
+    if (!r) return [];
+    const alla = vektorVal(amne, r.antaganden.analyser);
+    if (!Array.isArray(r.vektorlager)) return alla;
+    const harRannsten = r.vektorlager.some((v) => v.roll === "rannsten_flode");
+    return alla.filter((v) => v.slag !== "rannsten_flode" || harRannsten);
+  };
+  const tillgangligaVektorer = (): VektorSlag[] => vektorerForResultat().map((x) => x.slag);
   const aktivaVektorer = (): VektorSvar[] => {
     if (lage === "3d") return [];
     const onskade: ReadonlySet<VektorSlag> =
@@ -1288,7 +1296,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (!r || !vyBas) return "";
     const roller = rollerNu();
     const aktivNyckel = valtNyckel ?? forvaldNyckel(roller, vyBas);
-    const vektorer = vektorVal(amne, r.antaganden.analyser);
+    const vektorer = vektorerForResultat();
     if (roller.length === 0 && vektorer.length === 0) return "";
     const matt = roller.filter((x) => !x.kontroll);
     const kontroller = roller.filter((x) => x.kontroll);
@@ -2857,6 +2865,13 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       tillampaGrundkarta(val, nu.val === "ren" ? 0.85 : nu.opacitet, kartLager);
       basLagerListan = bas?.lagerListan() ?? [];
       synkaKarta();
+      return;
+    }
+    if (m.dataset.skyfallMetod) {
+      t.skyfallMetod = m.dataset.skyfallMetod === "2d" ? "2d" : "graf";
+      regnFel = valideraRegnVal(t.regn);
+      sparaTillstand(t);
+      ritaRegnOchKor();
       return;
     }
     if (m.dataset.regnBerakningstyp) {

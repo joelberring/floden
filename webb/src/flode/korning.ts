@@ -2,7 +2,7 @@
  * Körningen av det ritade förslaget med de befintliga scenario-API:erna (`kor`, `status`). Lever i
  * modulen, inte i sidan, så att den fortsätter om man byter steg; sidorna prenumererar på läget.
  */
-import type { KorningPost, RegnParam, SolParam } from "../karta/kartapi.ts";
+import type { KorningPost, RegnParam, SkyfallMetod, SolParam } from "../karta/kartapi.ts";
 import { formatera } from "../tal.ts";
 import type { ProjektVy } from "../types.ts";
 import { regnSignaturFranKorningar, tillRegnParam } from "./regnval.ts";
@@ -17,6 +17,7 @@ export interface KorningApi {
     avtappning_mm_h: number | null,
     regn: RegnParam | null,
     sol: SolParam | null,
+    skyfall_metod?: SkyfallMetod | null,
   ) => Promise<unknown>;
   korLageIdag: (
     projekt: string,
@@ -24,6 +25,7 @@ export interface KorningApi {
     avtappning_mm_h: number | null,
     regn: RegnParam | null,
     sol: SolParam | null,
+    skyfall_metod?: SkyfallMetod | null,
   ) => Promise<unknown>;
   scenarioStatus: (projekt: string, slug: string) => Promise<{ korningar: KorningPost[] }>;
   lageIdagStatus: (projekt: string) => Promise<{ korningar: KorningPost[] }>;
@@ -100,7 +102,15 @@ export async function startaKorning(
   t.ritVyer = [];
   signalera();
   try {
-    await kApi.korScenario(t.projekt, sc.slug, analyser, t.avtappning, tillRegnParam(t.regn), tillSolParam(t.sol));
+    await kApi.korScenario(
+      t.projekt,
+      sc.slug,
+      analyser,
+      t.avtappning,
+      tillRegnParam(t.regn, t.skyfallMetod),
+      tillSolParam(t.sol),
+      t.skyfallMetod,
+    );
   } catch (e) {
     t.korning = { slug: sc.slug, text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs };
     signalera();
@@ -127,7 +137,14 @@ export async function startaLageIdag(
   t.lageVyer = [];
   signalera();
   try {
-    await kApi.korLageIdag(t.projekt, analyser, t.avtappning, tillRegnParam(t.regn), tillSolParam(t.sol));
+    await kApi.korLageIdag(
+      t.projekt,
+      analyser,
+      t.avtappning,
+      tillRegnParam(t.regn, t.skyfallMetod),
+      tillSolParam(t.sol),
+      t.skyfallMetod,
+    );
   } catch (e) {
     t.korning = { slug: "", text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs, lage: true };
     signalera();

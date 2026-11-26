@@ -21,6 +21,7 @@ export type VisaAmne = "vatten" | "dagsljus" | "ekologi" | "luft" | "buller";
 export const PALETTER: Record<string, readonly string[]> = {
   sekventiell: ["#00204d", "#31446b", "#666970", "#958f78", "#cbba69", "#ffea46"],
   hastighet: ["#440154", "#3b528b", "#21908d", "#5dc863", "#fde725"],
+  fara: ["#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"],
   tid: ["#ffffcc", "#fed976", "#fd8d3c", "#bd0026", "#4d004b"],
   tillrinning: ["#c6dbef", "#6baed6", "#2171b5", "#08306b"],
   stromtathet: ["#000004", "#51127c", "#b73779", "#fc8961", "#fcfdbf"],
@@ -91,6 +92,11 @@ export interface LagerVal {
 
 /** Kända roller med svensk etikett, enhet och kort förklaring (kompletterar serverns metadata). */
 export const ROLL_ETIKETTER: Record<string, { etikett: string; enhet: string; hjalp: string; fil?: string }> = {
+  fara: {
+    etikett: "Fara (djup × hastighet)",
+    enhet: "m²/s",
+    hjalp: "Härledd skyfallsfara h_max × v_max (m²/s) ur 2D-beräkningens maxdjup och maxhastighet.",
+  },
   ankomsttid: {
     etikett: "Ankomsttid (tid till 0,1 m)",
     enhet: "min",

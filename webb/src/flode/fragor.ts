@@ -165,7 +165,14 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       lageTidText = "–";
       if (analyser.length > 0) {
         try {
-          const p = await planeraLageIdag(projekt, analyser.map((a) => a.id), t.avtappning, tillRegnParam(t.regn));
+          const p = await planeraLageIdag(
+            projekt,
+            analyser.map((a) => a.id),
+            t.avtappning,
+            tillRegnParam(t.regn, t.skyfallMetod),
+            null,
+            t.skyfallMetod,
+          );
           if (nr !== planNr || avslutad) return;
           lageTidText = uppskattadTidText(p.fragor.map((f) => f.uppskattad_tid_s));
         } catch {
@@ -181,7 +188,15 @@ export function visaFragor(rot: HTMLElement, projekt: string): Avslutbar {
       return;
     }
     try {
-      const p = await planeraScenario(projekt, t.scenario.slug, analyser.map((a) => a.id), t.avtappning, tillRegnParam(t.regn));
+      const p = await planeraScenario(
+        projekt,
+        t.scenario.slug,
+        analyser.map((a) => a.id),
+        t.avtappning,
+        tillRegnParam(t.regn, t.skyfallMetod),
+        null,
+        t.skyfallMetod,
+      );
       if (nr !== planNr || avslutad) return;
       tidText = uppskattadTidText(p.fragor.map((f) => f.uppskattad_tid_s));
     } catch {
