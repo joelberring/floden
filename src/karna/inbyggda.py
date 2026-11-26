@@ -12,6 +12,8 @@
 - `luft.mkn`: global; monotont MKN-intervall (PM10) ur en given timserie och en bakgrund
   (`karna/luft_losare.py`; ingen spridningsberäkning; ger belägg för rapporttal).
 - `ekologi.konnektivitet`: global; ekologisk konnektivitet (`karna/ekologi_losare.py`, K44/K45).
+- `buller.nord2000`: global skisslösare för vägtrafikbuller (`buller/losare_k21.py`;
+  `nord2000_konform=False`, formella bullerrapporter spärrade).
 - `geometri.lutning`: rutvis med kort påverkansradie; lutning i grader ur markmodellen.
   Visar och testar den lokala omräkningen.
 """
@@ -30,6 +32,7 @@ from typing import Any, ClassVar
 import numpy as np
 from numpy.typing import NDArray
 
+from buller.losare_k21 import LOSARE as _BULLER_LOSARE  # bullerimporterna i den filen är lata
 from karna.analyslosare import Analyslosare, LosarFel, LosarKontext, LosarUtdata
 from karna.ekologi_losare import LOSARE as _EKOLOGI_LOSARE
 from karna.luft_losare import LOSARE as _LUFT_LOSARE  # luftimporterna i den filen är lata
@@ -1667,5 +1670,11 @@ class TvadLokalTroghet(Analyslosare):
 
 
 LOSARE: list[Analyslosare] = [
-    StatiskFyllning(), Dynamik(), TvadLokalTroghet(), Lutning(), *_LUFT_LOSARE, *_EKOLOGI_LOSARE
+    StatiskFyllning(),
+    Dynamik(),
+    TvadLokalTroghet(),
+    Lutning(),
+    *_LUFT_LOSARE,
+    *_EKOLOGI_LOSARE,
+    *_BULLER_LOSARE,
 ]
