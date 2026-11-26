@@ -1014,11 +1014,19 @@ class TvadLokalTroghet(Analyslosare):
             )
         ut["subgrid_faktor"] = subgrid
 
-        for flagga, standard in (("oppna_rander", True), ("anvand_rust", True)):
-            v = parametrar.get(flagga, standard)
-            if not isinstance(v, bool):
-                raise LosarFel(f"{self.namn}: '{flagga}' måste vara true eller false, fick {v!r}.")
-            ut[flagga] = v
+        oppna = parametrar.get("oppna_rander", True)
+        if not isinstance(oppna, bool):
+            raise LosarFel(
+                f"{self.namn}: 'oppna_rander' måste vara true eller false, fick {oppna!r}."
+            )
+        ut["oppna_rander"] = oppna
+
+        rust_val = parametrar.get("anvand_rust", None)
+        if rust_val is not None and not isinstance(rust_val, bool):
+            raise LosarFel(
+                f"{self.namn}: 'anvand_rust' måste vara true, false eller null, fick {rust_val!r}."
+            )
+        ut["anvand_rust"] = rust_val
 
         enhet = parametrar.get("enhet", "cpu")
         if not isinstance(enhet, str) or enhet not in ("cpu", "cuda", "auto"):
@@ -1202,7 +1210,7 @@ class TvadLokalTroghet(Analyslosare):
                 enhet=str(p["enhet"]),
                 precision=p["precision"],
                 vattenniva_rh2000_m=p.get("vattenniva_rh2000_m"),
-                anvand_rust=bool(p["anvand_rust"]),
+                anvand_rust=p["anvand_rust"],
             )
         except TvadFel as exc:
             raise LosarFel(f"{self.namn}: {exc}") from exc

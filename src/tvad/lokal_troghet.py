@@ -55,6 +55,9 @@ GRAVITATION_M_S2 = 9.81
 KONTRAKT_K6 = "K6/v1"
 FROUDE_MAX = 2.0
 MARKSLAG_VATTEN = 8
+RUST_MIN_CELLER = 20_000
+"""Minsta antal celler (höjd × bredd) för automatisk Rust-dispatch (`anvand_rust=None`).
+Under gränsen dominerar subprocess-start och `.npy`-I/O över tidsslingan."""
 _MIN_RAND_LUTNING = 1e-3
 _DT_MIN_S = 1e-4
 
@@ -975,7 +978,7 @@ def kor_2d_lokal_troghet(
     enhet: str = "cpu",
     precision: Literal["f64", "f32"] = "f64",
     vattenniva_rh2000_m: float | None = None,
-    anvand_rust: bool = True,
+    anvand_rust: bool | None = None,
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -1039,17 +1042,25 @@ def kor_2d_lokal_troghet(
         regn_tid_s, regn_intensitet_mm_h, slut_tid_s
     )
 
-    # Automatisk dispatch till den bitidentiska Rust-kärnan (rust/tvad_karna) när alla
-    # kriterier som Rust-kärnan stöder är uppfyllda och binären finns tillgänglig.
+    # Automatisk dispatch till den bitidentiska Rust-kärnan (rust/tvad_karna):
+    # - `anvand_rust=True`: använd Rust oavsett rutnätsstorlek när kriterierna uppfylls.
+    # - `anvand_rust=None` (auto): använd Rust när `hojd_fin * bredd_fin >= RUST_MIN_CELLER`.
+    # - `anvand_rust=False`: kör alltid Python.
+    # Obs: utan `MARKSLAG_VATTEN` påverkar `vattenniva_rh2000_m` inte fysiken alls, så båda
+    # fallen väljer samma backend (garanterar bakåtkompatibilitet utan ULP-skillnader).
+    har_vatten = bool(np.any(markslag == MARKSLAG_VATTEN))
+    vill_anvanda_rust = (
+        anvand_rust is True
+        or (anvand_rust is None and hojd_fin * bredd_fin >= RUST_MIN_CELLER)
+    )
     if (
-        anvand_rust
+        vill_anvanda_rust
         and subgrid_faktor == 1
         and kalltermer is None
         and not brytlinjer
-        and vattenniva_rh2000_m is None
+        and not har_vatten
         and enhet == "cpu"
         and precision == "f64"
-        and not bool(np.any(markslag == MARKSLAG_VATTEN))
     ):
         from tvad.rust_backend import hitta_tvad_karna, kor_2d_lokal_troghet_rust
 
