@@ -12,7 +12,14 @@ import numpy as np
 from PIL import Image
 
 from testsvit.k1_io import skriv_geotiff
-from webb.resultatlager import LagerFel, rita_png, sammanfoga, teckenforklaring, varde_intervall
+from webb.resultatlager import (
+    LagerFel,
+    etikett_och_enhet,
+    rita_png,
+    sammanfoga,
+    teckenforklaring,
+    varde_intervall,
+)
 
 
 def _tif(mapp: Path, namn: str, varde: float, x: float, y_max: float, n: int = 10) -> Path:
@@ -102,6 +109,10 @@ class TestRita(unittest.TestCase):
             rita_png(np.zeros((2, 2), np.float32), "regnbage", lo=0.0, hi=1.0)
         self.assertEqual(varde_intervall([np.array([np.nan], dtype=np.float32)]), (0.0, 0.0))
         self.assertEqual(teckenforklaring("sekventiell", 0.0, 1.0)["typ"], "kontinuerlig")
+
+    def test_ankomsttid_har_enhet_sekunder(self) -> None:
+        # W-B6: kärnan skriver tid_till_0_1m_s i sekunder (s), inte minuter.
+        self.assertEqual(etikett_och_enhet("ankomsttid"), ("Tid till vattnet kommer", "s"))
 
 
 if __name__ == "__main__":

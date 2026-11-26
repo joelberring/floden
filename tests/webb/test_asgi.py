@@ -225,3 +225,66 @@ def test_asgi_lifespan() -> None:
         ]
 
     asyncio.run(_kor())
+
+
+def test_asgi_http_disconnect_kor_inte_hantera_http() -> None:
+    spy = _SpyApiApp()
+    asgi_app = FlodenAsgiApp(spy)  # type: ignore[arg-type]
+
+    async def _kor() -> None:
+        scope: dict[str, Any] = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "path": "/api/kor",
+            "query_string": b"",
+            "headers": [],
+        }
+        skickade: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def send(meddelande: Mapping[str, Any]) -> None:
+            skickade.append(dict(meddelande))
+
+        await asgi_app(scope, receive, send)
+        assert spy.anrop == []
+        assert skickade == []
+
+    asyncio.run(_kor())
+
+
+def test_asgi_lifespan_shutdown_anropar_stang_och_post_projekt_ar_tung() -> None:
+    class _StangSpy(_SpyApiApp):
+        def __init__(self) -> None:
+            super().__init__()
+            self.stangd = 0
+
+        def stang(self) -> None:
+            self.stangd += 1
+
+    spy = _StangSpy()
+    asgi_app = FlodenAsgiApp(spy)  # type: ignore[arg-type]
+    assert FlodenAsgiApp._ar_tung_berakning("POST", "/api/projekt") is True
+    assert FlodenAsgiApp._ar_tung_berakning("GET", "/api/projekt") is False
+
+    async def _kor() -> None:
+        in_meddelanden = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
+        ut: list[dict[str, Any]] = []
+
+        async def receive() -> dict[str, Any]:
+            return next(in_meddelanden)
+
+        async def send(m: Mapping[str, Any]) -> None:
+            ut.append(dict(m))
+
+        await asgi_app({"type": "lifespan"}, receive, send)
+        assert ut == [
+            {"type": "lifespan.startup.complete"},
+            {"type": "lifespan.shutdown.complete"},
+        ]
+        assert spy.stangd == 1
+
+    asyncio.run(_kor())

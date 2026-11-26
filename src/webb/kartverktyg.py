@@ -62,7 +62,7 @@ from karna.scenario import Andring, Planscenario, ScenarioFel, skriv_scenario
 from karna.utredning import las_fraga
 from webb.fel import FlodenWebbFel
 from webb.felforklaring import SLUTET_INFO
-from webb.fragor import FragaTjanst
+from webb.fragor import FragaTjanst, skriv_atomiskt_text
 from webb.moduler import visningsnamn
 from webb.projektkalla import (
     Mall,
@@ -1384,10 +1384,7 @@ class KartverktygTjanst:
         }
         if v.get("ritlager") is not None:
             d["ritlager"] = v["ritlager"]  # K50, additivt; `andringar` är redan hela K9 (fria + översatta)
-        fil.parent.mkdir(parents=True, exist_ok=True)
-        tmp = fil.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-        tmp.replace(fil)
+        skriv_atomiskt_text(fil, json.dumps(d, indent=2, ensure_ascii=False) + "\n")
         return d
 
     def byt_namn(self, projekt: str, namn_slug: str, nytt_namn: str) -> dict[str, Any]:
@@ -1404,7 +1401,7 @@ class KartverktygTjanst:
         d.update(namn=namn, slug=ny, andrad=datetime.now(UTC).isoformat(timespec="seconds"))
         d["korningar"] = {}  # frågefilerna heter efter scenariot: nya körs efter namnbytet
         mal = self._fil(projekt, ny)
-        mal.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        skriv_atomiskt_text(mal, json.dumps(d, indent=2, ensure_ascii=False) + "\n")
         if ny != namn_slug:
             self._fil(projekt, namn_slug).unlink(missing_ok=True)
         return d
@@ -1471,7 +1468,7 @@ class KartverktygTjanst:
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
                 avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn, sol=sol,
             )
-            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
+            skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             ref = self._ref_for(fil)
             poster.append(
                 {"mall": kort, "ref": ref, "fraga_id": fraga_id, "k9": str(k9_fil.name),
@@ -1750,7 +1747,7 @@ class KartverktygTjanst:
             ut.append({**p, "korning": svar})
         d["korningar"] = korningar
         fil = self._fil(projekt, namn_slug)
-        fil.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        skriv_atomiskt_text(fil, json.dumps(d, indent=2, ensure_ascii=False) + "\n")
         return {"slug": namn_slug, "fragor": ut}
 
     # ------------------------------------------------------------------ läget idag (U5a)
@@ -1854,7 +1851,7 @@ class KartverktygTjanst:
             innehall = self._lage_k20(
                 mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol
             )
-            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
+            skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             poster.append(
                 {
                     "mall": kort,
@@ -1914,10 +1911,9 @@ class KartverktygTjanst:
             }
             ut.append({**p, "korning": svar})
         fil = self._lage_fil(projekt)
-        fil.parent.mkdir(parents=True, exist_ok=True)
-        fil.write_text(
+        skriv_atomiskt_text(
+            fil,
             json.dumps({"lage": "idag", "korningar": korningar}, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
         )
         return {"lage": "idag", "fragor": ut}
 
@@ -2273,6 +2269,16 @@ class KartverktygTjanst:
         return [str(k["korning_id"]) for k in self._las_lage(projekt).get("korningar", {}).values()]
 
     @staticmethod
+    def _avsnitt_for_lager(la: Mapping[str, Any]) -> str:
+        """Visningsavsnitt (domän) ur lagrets `doman`-fält, med reserv för äldre lager utan domän."""
+        doman = str(la.get("doman") or "").strip()
+        if doman:
+            return doman
+        return {"skyfall": "vatten", "konnektivitet": "ekologi"}.get(
+            str(la.get("analys", "")), "dagsljus"
+        )
+
+    @staticmethod
     def _lage_vyer(res: Mapping[str, Any], korning_id: str) -> list[dict[str, Any]]:
         """Vyer för läget idag: en per analys med primärt lager i `fore`. Ingen efter- eller skillnadsvy
         (`efter_lager` är null, `skillnad_lager` pekar på samma lager som `fore_lager`, `lage_idag` är sant)."""
@@ -2283,9 +2289,7 @@ class KartverktygTjanst:
             vyer.append(
                 {
                     "id": f"{korning_id}:{la['id']}",
-                    "avsnitt": {"skyfall": "vatten", "konnektivitet": "ekologi"}.get(
-                        la["analys"], "dagsljus"
-                    ),
+                    "avsnitt": KartverktygTjanst._avsnitt_for_lager(la),
                     "rubrik": f"Läget idag: {la.get('etikett') or la['analys']}",
                     "mattnamn": la.get("etikett") or la["analys"],
                     "korning_id": korning_id,
@@ -2306,13 +2310,18 @@ class KartverktygTjanst:
         namn_slug: str | None,
         parametrar: Mapping[str, Any],
         konto_projekt: str | None = None,
+        *,
+        skrivskyddad: bool = False,
+        arbetsmapp: Path | None = None,
     ) -> dict[str, Any]:
         """Kör (eller återanvänder ur cachen) ekologianalysen före/efter synkront.
 
         `namn_slug` är ett sparat scenario; utan det används projektets förslag (K9 i mallen, eller
         ett tomt nulägesscenario för geografiprojekt som ännu saknar sparat scenario). Körningen får
         ett id som beror på projekt, parametrar och scenariots K9-nyckel, så samma anrop ger samma
-        körning. Fel i lösaren (t.ex. för många fläckar) kastas som 400.
+        körning. Med `skrivskyddad=True` skrivs temporära K9-/K20-filer bara i `arbetsmapp`
+        (intern cachekatalog) utan att mutera projektets mappar eller scenarier. Fel i lösaren
+        (t.ex. för många fläckar) kastas som 400.
         """
         import hashlib
 
@@ -2330,7 +2339,11 @@ class KartverktygTjanst:
         analys = next((a.id for a in m.fraga.analyser if a.losare == "ekologi.konnektivitet"), None)
         if analys is None:
             raise _fel("Ekologimallen saknar lösaren ekologi.konnektivitet.", 500)
-        fragedir = kalla.fragedir or self.fragedir
+        fragedir = (
+            (arbetsmapp or (self.fragor.cachemapp / "_ekologi_las" / projekt))
+            if skrivskyddad
+            else (kalla.fragedir or self.fragedir)
+        )
         proj_tag = f"-{kalla.fraga_infix}" if kalla.fraga_infix else ""
         over = {analys: dict(parametrar)}
         tag = hashlib.sha256(json.dumps(over, sort_keys=True).encode()).hexdigest()[:8]
@@ -2343,7 +2356,11 @@ class KartverktygTjanst:
                 recept = self._bas_recept(m)
                 if not recept:
                     raise _fel(f"Basen {m.bas} saknar recept.json.", 500)
-                k9_fil = self.mapp / projekt / "k9" / "api-ekologi-nulage.json"
+                k9_fil = (
+                    (fragedir / "k9" / "api-ekologi-nulage.json")
+                    if skrivskyddad
+                    else (self.mapp / projekt / "k9" / "api-ekologi-nulage.json")
+                )
                 skriv_scenario(
                     Planscenario("nulage", recept, (), beskrivning="Nuläge utan ändring"),
                     k9_fil,
@@ -2351,13 +2368,43 @@ class KartverktygTjanst:
                 sc_namn = "nuläge"
             fraga_id = f"api-ekologi{proj_tag}-{tag}"
             fil = fragedir / f"{fraga_id}.json"
-            fragedir.mkdir(parents=True, exist_ok=True)
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, sc_namn, [analys], parametrar_over=over
             )
-            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
-            ref = self._ref_for(fil)
+            skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             scen_nyckel = sha256_fil(k9_fil)
+            korning_id = (
+                f"api-ekologi{proj_tag}-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
+            )
+            if skrivskyddad:
+                status, _ = self.fragor.kor_fil_synkront(fil, korning_id, konto_projekt or projekt)
+                return {"korning_id": korning_id, "status": status, "analys": analys, "ref": fraga_id}
+            ref = self._ref_for(fil)
+        elif skrivskyddad:
+            d = self._las(projekt, namn_slug)
+            k9_map = self._k9_per_bas(
+                mallar, d["andringar"], namn_slug, beskrivning=f"Ritat i kartan: {d['namn']}"
+            )
+            sc, _ = k9_map["ekologi"]
+            if not sc.andringar:
+                raise _fel(
+                    "Förslaget har ingen ändring som berör området för ekologi; "
+                    "välj en annan analys eller rita inom området."
+                )
+            k9_fil = fragedir / "k9" / f"{namn_slug}__ekologi.json"
+            skriv_scenario(sc, k9_fil)
+            fraga_id = f"api{tag}-{namn_slug[:24]}-ekologi"
+            fil = fragedir / f"{fraga_id}.json"
+            innehall = self._k20(
+                m, fil, k9_fil, fraga_id, d["namn"], [analys], parametrar_over=over
+            )
+            skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
+            scen_nyckel = sc.nyckel
+            korning_id = (
+                f"api-ekologi{proj_tag}-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
+            )
+            status, _ = self.fragor.kor_fil_synkront(fil, korning_id, konto_projekt or projekt)
+            return {"korning_id": korning_id, "status": status, "analys": analys, "ref": fraga_id}
         else:
             poster = self._skriv_fragor(
                 projekt, namn_slug, [f"ekologi.{analys}"], prefix=f"api{tag}", parametrar_over=over
@@ -2365,7 +2412,9 @@ class KartverktygTjanst:
             p = poster[0]
             ref = str(p["ref"])
             scen_nyckel = str(p["k9_nyckel"])
-        korning_id = f"api-ekologi{proj_tag}-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
+            korning_id = (
+                f"api-ekologi{proj_tag}-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
+            )
         status, _ = self.fragor.kor_synkront(ref, korning_id, konto_projekt or projekt)
         return {"korning_id": korning_id, "status": status, "analys": analys, "ref": ref}
 
@@ -2435,9 +2484,7 @@ class KartverktygTjanst:
             vyer.append(
                 {
                     "id": f"{korning_id}:{la['id']}",
-                    "avsnitt": {"skyfall": "vatten", "konnektivitet": "ekologi"}.get(
-                        la["analys"], "dagsljus"
-                    ),
+                    "avsnitt": KartverktygTjanst._avsnitt_for_lager(la),
                     "rubrik": f"{namn}: {la.get('etikett') or la['analys']}",
                     "mattnamn": la.get("etikett") or la["analys"],
                     "korning_id": korning_id,

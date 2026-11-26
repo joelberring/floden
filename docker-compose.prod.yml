@@ -40,6 +40,9 @@ services:
       FLODEN_S3_REGION: ${FLODEN_S3_REGION:-}
       FLODEN_S3_ACCESS_KEY: ${FLODEN_S3_ACCESS_KEY:-}
       FLODEN_S3_SECRET_KEY: ${FLODEN_S3_SECRET_KEY:-}
+      FLODEN_S3_PREFIX: ${FLODEN_S3_PREFIX:-}
+      FLODEN_LOKAL_CACHE_MAPP: ${FLODEN_LOKAL_CACHE_MAPP:-}
+      FLODEN_LOKAL_CACHE_MAX_GB: ${FLODEN_LOKAL_CACHE_MAX_GB:-}
     volumes:
       - ./config.local.toml:/app/config.local.toml:ro
       # Bara på serverns disk tills förrådet (S4) finns. Kontodatabasen är det enda som inte går att räkna om.
