@@ -49,7 +49,12 @@ from sankgraf.rust_brygga import (
     rust_min_celler,
     valj_sankgraf_karna,
 )
-from sankgraf.typer import MARKSLAG_BYGGNAD, SankGraf
+from sankgraf.typer import (
+    MARKSLAG_BYGGNAD,
+    SankGraf,
+    las_brytlinjer_fran_gpkg,
+    las_oppningar_fran_gpkg,
+)
 from testsvit.k1_io import BrytlinjePost, GeoTransformInfo, OppningPost, las_geotiff
 
 REPO_ROT = Path(__file__).resolve().parents[2]
@@ -604,8 +609,12 @@ def test_rust_paritet_500x500_kuperad_och_platarik() -> None:
 
 def test_rust_paritet_a_fall_testsvit() -> None:
     _krav_eller_skip_rust_binar()
-    a_mappar = sorted(p for p in TESTSVIT_ROT.iterdir() if p.is_dir() and p.name.startswith("A"))
-    assert len(a_mappar) >= 9
+    a_mappar = sorted(
+        p
+        for p in TESTSVIT_ROT.iterdir()
+        if p.is_dir() and p.name.startswith("A") and (p / "indata" / "mark.tif").is_file()
+    )
+    assert len(a_mappar) >= 13
     for mapp in a_mappar:
         indata = mapp / "indata"
         mark, geo = las_geotiff(indata / "mark.tif")
@@ -614,9 +623,17 @@ def test_rust_paritet_a_fall_testsvit() -> None:
         mark_f32 = np.asarray(mark, dtype=np.float32)
         osak_f32 = np.asarray(osak, dtype=np.float32)
         slag_u8 = np.asarray(slag, dtype=np.uint8)
+        bryt_fil = indata / "brytlinjer.gpkg"
+        opp_fil = indata / "oppningar.gpkg"
+        bryt = las_brytlinjer_fran_gpkg(bryt_fil) if bryt_fil.is_file() else ()
+        opp = las_oppningar_fran_gpkg(opp_fil) if opp_fil.is_file() else ()
 
-        py_graf = bygg_sankgraf(mark_f32, osak_f32, slag_u8, geo, anvand_rust=False)
-        rs_graf = bygg_sankgraf(mark_f32, osak_f32, slag_u8, geo, anvand_rust=True)
+        py_graf = bygg_sankgraf(
+            mark_f32, osak_f32, slag_u8, geo, brytlinjer=bryt, oppningar=opp, anvand_rust=False
+        )
+        rs_graf = bygg_sankgraf(
+            mark_f32, osak_f32, slag_u8, geo, brytlinjer=bryt, oppningar=opp, anvand_rust=True
+        )
         _jamfor_sankgraf_exakt(py_graf, rs_graf)
 
         fyll_rs = statisk_fyllning(rs_graf, 0.15)
