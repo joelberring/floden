@@ -1,5 +1,5 @@
 /*
- * Steg 5 · Rapport: innehållsförteckning med en statusprick per fråga, förhandsvisning (serif i
+ * Steg 3 · Rapport: innehållsförteckning med en statusprick per fråga, förhandsvisning (serif i
  * brödtexten) och kontroll med export (PDF och Word). Innehållet kommer ur rapportarkivet
  * (`GET /api/projekt/<id>/rapporter/<rapport>`); talen är Flodens värden ur påståendenas belägg och
  * markeras. Panelen "Skapa rapport" (rapportskapa.ts) startar ett jobb på servern (K48), visar förloppet och
@@ -13,7 +13,18 @@ import type { RapportAmne, RapportJobb, RapportRad } from "../types.ts";
 import type { Avslutbar } from "./projektlista.ts";
 import { flodeAdress } from "./adress.ts";
 import { hamtaFragelista } from "./fragor.ts";
-import { arPagaende, skapaPanelHtml, valjUnderlag } from "./rapportskapa.ts";
+import {
+  arPagaende,
+  behoverLuftForm,
+  byggRapportValForSkapa,
+  knappLage,
+  MAX_LUFT_CSV_BYTES,
+  skapaPanelHtml,
+  TOMT_LUFT_FORM,
+  valideraLuftIndata,
+  valjUnderlag,
+  type LuftFormTillstand,
+} from "./rapportskapa.ts";
 import type { FlodeFraga } from "./status.ts";
 import { sparaTillstand, tillstandFor } from "./tillstand.ts";
 
@@ -94,9 +105,27 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   let jobbFel: string | null = null;
   let katalog: FlodeFraga[] | null = null;
   let timer: number | null = null;
+  const luftForm: LuftFormTillstand = { ...TOMT_LUFT_FORM };
+
+  const aktivtAmne = (): RapportAmne | undefined => amnen.find((a) => a.id === valtAmne);
 
   const underlagNu = (): ReturnType<typeof valjUnderlag> =>
-    valjUnderlag(amnen.find((a) => a.id === valtAmne), t.scenario, t.valda, katalog);
+    valjUnderlag(aktivtAmne(), t.scenario, t.valda, katalog, luftForm.anvandNySerie);
+
+  const uppdateraLuftKnappOchFel = (): void => {
+    const amne = aktivtAmne();
+    const lage = knappLage(amne, t.bestallning, arPagaende(jobb), underlagNu().saknasKorning, luftForm);
+    const knapp = rot.querySelector<HTMLButtonElement>("#rp-skapa-knapp");
+    if (knapp) knapp.disabled = !lage.aktiv;
+    const not = rot.querySelector<HTMLElement>("#rp-knapp-not");
+    if (not) not.textContent = lage.text;
+    const felEl = rot.querySelector<HTMLElement>("#rp-luft-fel");
+    if (felEl) {
+      const luftFel = behoverLuftForm(amne, luftForm) ? valideraLuftIndata(luftForm) : null;
+      felEl.hidden = !luftFel;
+      felEl.textContent = luftFel ?? "";
+    }
+  };
 
   const frageurvalHtml = (): string => {
     const amnesFragor = (katalog ?? []).filter((f) => f.amne === valtAmne);
@@ -122,7 +151,7 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
     const oppen = m.querySelector<HTMLDetailsElement>("#rp-frageurval")?.open ?? false;
     m.innerHTML =
       frageurvalHtml() +
-      skapaPanelHtml({ projekt, underlag: underlagNu(), amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel });
+      skapaPanelHtml({ projekt, underlag: underlagNu(), amnen, valt: valtAmne, best: t.bestallning, jobb, fel: jobbFel, luftForm });
     if (oppen) {
       const det = m.querySelector<HTMLDetailsElement>("#rp-frageurval");
       if (det) det.open = true;
@@ -250,12 +279,18 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   };
   const startaJobb = async (): Promise<void> => {
     jobbFel = null;
+    const valRes = byggRapportValForSkapa(aktivtAmne(), underlagNu(), luftForm);
+    if (!valRes.ok) {
+      jobbFel = valRes.fel;
+      ritaSkapa();
+      return;
+    }
     try {
       jobb = await startaRapportJobb(
         projekt,
         valtAmne,
         { syfte: t.bestallning.syfte, skede: t.bestallning.skede, mottagare_roll: t.bestallning.mottagare },
-        underlagNu().val,
+        valRes.val,
       );
     } catch (e) {
       jobbFel = e instanceof Error ? e.message : String(e);
@@ -270,10 +305,15 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   rot.addEventListener(
     "click",
     (h) => {
-      const m = (h.target as Element).closest<HTMLElement>("[data-rp-amne],[data-rp-skede],#rp-skapa-knapp");
+      const m = (h.target as Element).closest<HTMLElement>("[data-rp-amne],[data-rp-skede],[data-rp-luft-lage],#rp-skapa-knapp");
       if (!m) return;
-      if (m.dataset.rpAmne) valtAmne = m.dataset.rpAmne;
-      else if (m.dataset.rpSkede) {
+      if (m.dataset.rpAmne) {
+        valtAmne = m.dataset.rpAmne;
+        jobbFel = null;
+      } else if (m.dataset.rpLuftLage) {
+        luftForm.anvandNySerie = m.dataset.rpLuftLage === "ny";
+        jobbFel = null;
+      } else if (m.dataset.rpSkede) {
         t.bestallning.skede = m.dataset.rpSkede as "skiss" | "planunderlag";
         sparaTillstand(t);
       } else if (m.id === "rp-skapa-knapp") {
@@ -297,6 +337,31 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
         else t.valda.delete(m.dataset.rpFraga);
         sparaTillstand(t);
         ritaSkapa();
+      } else if (m.dataset.rpLuftFil) {
+        const filFalt = m as HTMLInputElement;
+        const fil = filFalt.files?.[0];
+        const roll = m.dataset.rpLuftFil;
+        filFalt.value = "";
+        if (!fil) return;
+        if (fil.size > MAX_LUFT_CSV_BYTES) {
+          jobbFel = "CSV-filen är för stor (högst 5 MB).";
+          ritaSkapa();
+          return;
+        }
+        void fil.text().then(
+          (txt) => {
+            if (avslutad) return;
+            if (roll === "fore") luftForm.serie_fore_csv = txt;
+            else luftForm.serie_efter_csv = txt;
+            jobbFel = null;
+            ritaSkapa();
+          },
+          () => {
+            if (avslutad) return;
+            jobbFel = "CSV-filen kunde inte läsas.";
+            ritaSkapa();
+          },
+        );
       }
     },
     { signal: ac.signal },
@@ -304,17 +369,24 @@ export function visaRapport(rot: HTMLElement, projekt: string): Avslutbar {
   rot.addEventListener(
     "input",
     (h) => {
-      const m = h.target as HTMLTextAreaElement;
+      const m = h.target as HTMLTextAreaElement | HTMLInputElement;
       if (m.id === "rp-syfte") {
         t.bestallning.syfte = m.value;
         sparaTillstand(t);
+      } else if (m.dataset.rpLuftFalt) {
+        const falt = m.dataset.rpLuftFalt;
+        if (falt === "serie_fore_csv") luftForm.serie_fore_csv = m.value;
+        else if (falt === "serie_efter_csv") luftForm.serie_efter_csv = m.value;
+        else if (falt === "bakgrund_text") luftForm.bakgrund_text = m.value;
+        jobbFel = null;
+        uppdateraLuftKnappOchFel();
       }
     },
     { signal: ac.signal },
   );
 
   const klar = (async () => {
-    // Frågorna från steg 3 (id ur huvudkatalogen); utan katalog skickas inga och rapporten tar alla frågor för ämnet.
+    // Frågorna ur huvudkatalogen; utan katalog skickas inga och rapporten tar alla frågor för ämnet.
     void hamtaFragelista()
       .then((l) => {
         katalog = l.kalla === "katalog" ? l.fragor : null;

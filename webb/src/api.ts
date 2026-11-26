@@ -20,6 +20,7 @@ import type {
   OmradeLagerSvar,
   RapportBegaran,
   GeografierSvar,
+  LuftRapportIndata,
   RapportAmne,
   RapportBestallningBegaran,
   RapportVal,
@@ -32,10 +33,10 @@ import type {
   RiskSvar,
   RuttBegaran,
   RuttSvar,
-} from "./types";
+} from "./types.ts";
 import type { MarkhojdSvar } from "./flode/markhojd.ts";
-import { csrfHuvud, settKontoLage } from "./konto";
-import { ApiFel, OinloggadFel } from "./apifel";
+import { csrfHuvud, settKontoLage } from "./konto.ts";
+import { ApiFel, OinloggadFel } from "./apifel.ts";
 
 export { ApiFel, OinloggadFel };
 import type {
@@ -48,7 +49,7 @@ import type {
   PlanSvar,
   ResultatSvar,
   TabellForhandsvisning,
-} from "./fragor-typer";
+} from "./fragor-typer.ts";
 
 const API_BAS = "/api";
 
@@ -160,6 +161,33 @@ export function hamtaRapportAmnen(projekt: string): Promise<{ amnen: RapportAmne
   return lasJson<{ amnen: RapportAmne[] }>(`${API_BAS}/projekt/${encodeURIComponent(projekt)}/rapporter`);
 }
 
+export interface RapportJobbKropp {
+  amne: string;
+  amnen?: string[];
+  bestallning: RapportBestallningBegaran;
+  korning_id?: string;
+  scenario?: string;
+  fragor?: string[];
+  luft?: LuftRapportIndata;
+}
+
+/** Bygger JSON-kroppen för `POST /api/projekt/<id>/rapporter` (bakåtkompatibel med äldre ämnen). */
+export function byggRapportJobbKropp(
+  amne: string,
+  bestallning: RapportBestallningBegaran,
+  val: RapportVal = {},
+): RapportJobbKropp {
+  return {
+    amne,
+    ...(amne === "luft" ? { amnen: [amne] } : {}),
+    bestallning,
+    ...(val.korning_id && !val.luft ? { korning_id: val.korning_id } : {}),
+    ...(val.scenario && !val.luft ? { scenario: val.scenario } : {}),
+    ...(val.fragor && val.fragor.length > 0 ? { fragor: val.fragor } : {}),
+    ...(val.luft ? { luft: val.luft } : {}),
+  };
+}
+
 export function startaRapportJobb(
   projekt: string,
   amne: string,
@@ -169,13 +197,7 @@ export function startaRapportJobb(
   return lasJson<RapportJobb>(`${API_BAS}/projekt/${encodeURIComponent(projekt)}/rapporter`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      amne,
-      bestallning,
-      ...(val.korning_id ? { korning_id: val.korning_id } : {}),
-      ...(val.scenario ? { scenario: val.scenario } : {}),
-      ...(val.fragor && val.fragor.length > 0 ? { fragor: val.fragor } : {}),
-    }),
+    body: JSON.stringify(byggRapportJobbKropp(amne, bestallning, val)),
   });
 }
 
