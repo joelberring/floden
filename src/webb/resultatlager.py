@@ -103,7 +103,7 @@ ETIKETTER: dict[str, tuple[str, str]] = {
     "forstarkning": ("Vindförstärkning på gånghöjd", "gånger"),
     "arsmedel": ("Årsmedelhalt", "µg/m³"),
     "hastighet": ("Vattnets hastighet", "m/s"),
-    "ankomsttid": ("Tid till vattnet kommer", "min"),
+    "ankomsttid": ("Tid till vattnet kommer", "s"),
     "tid_till_0_1m": ("Tid till 10 cm djup", "s"),
     "tid_till_0_2m": ("Tid till 20 cm djup", "s"),
     "trunkering": ("Kontroll: avskuren horisont", ""),

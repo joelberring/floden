@@ -168,7 +168,7 @@ class FlodenAsgiApp:
         return sem
 
     _TUNGA_EXAKTA: frozenset[str] = frozenset(
-        {"/api/kor", "/api/risk", "/api/rapport", "/api/rutt"}
+        {"/api/kor", "/api/risk", "/api/rapport", "/api/rutt", "/api/projekt"}
     )
 
     @staticmethod
@@ -213,7 +213,9 @@ class FlodenAsgiApp:
     ) -> tuple[bytes | None, int | None, str | None]:
         """Läser förfrågningskropp med hård bytegräns.
 
-        Returnerar `(kropp, None, None)` vid framgång, eller `(None, status, feltext)`.
+        Returnerar `(kropp, None, None)` vid framgång, `(None, status, feltext)` vid
+        validerings-/storleksfel, eller `(None, None, None)` om klienten kopplade ner
+        (`http.disconnect`) innan kroppen var färdigläst.
         """
         raw_len = rubriker.get("content-length")
         if raw_len is not None and raw_len != "":
@@ -234,7 +236,7 @@ class FlodenAsgiApp:
             meddelande = await receive()
             typ = meddelande.get("type")
             if typ == "http.disconnect":
-                return b"", None, None
+                return None, None, None
             if typ != "http.request":
                 break
             del_bytes = bytes(meddelande.get("body", b"") or b"")
@@ -268,7 +270,12 @@ class FlodenAsgiApp:
                     return
                 await send({"type": "lifespan.startup.complete"})
             elif typ == "lifespan.shutdown":
-                await stack.aclose()
+                try:
+                    await stack.aclose()
+                finally:
+                    stang_app = getattr(self.app, "stang", None)
+                    if callable(stang_app):
+                        await asyncio.to_thread(stang_app)
                 await send({"type": "lifespan.shutdown.complete"})
                 return
 
@@ -302,13 +309,16 @@ class FlodenAsgiApp:
         kropp_in: bytes = b""
         if metod in {"POST", "PUT", "PATCH"}:
             kropp_opt, fel_status, fel_text = await self._las_kropp(receive, rubriker)
-            if fel_status is not None or kropp_opt is None:
+            if fel_status is not None:
                 await _skicka_fel(
                     send,
-                    fel_status or 400,
+                    fel_status,
                     fel_text or "Ogiltig förfrågningskropp.",
                     huvud=huvud,
                 )
+                return
+            if kropp_opt is None:
+                # Klienten avbröt förbindelsen (`http.disconnect`) innan kroppen levererades.
                 return
             kropp_in = kropp_opt
 

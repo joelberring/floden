@@ -21,7 +21,7 @@ if [ "$inloggning" != "pa" ] && [ "${FLODEN_TILLAT_UTAN_INLOGGNING:-0}" != "1" ]
   exit 1
 fi
 
-if [ ! -d data/demo/varld ] && [ "${FLODEN_DEMO:-1}" = "1" ]; then
+if [ ! -f data/demo/varld/demo.json ] && [ "${FLODEN_DEMO:-1}" = "1" ]; then
   echo "Floden: bygger demovärlden (första starten, kan ta några minuter) …"
   floden demo || echo "Floden: demovärlden kunde inte byggas; webben startar ändå." >&2
 fi

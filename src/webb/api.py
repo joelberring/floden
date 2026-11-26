@@ -134,7 +134,7 @@ from testsvit.k1_io import (
 from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
 from tvad.felindikator import berakna_2d_felindikator
 from webb.fel import FlodenWebbFel
-from webb.fragor import FragaTjanst
+from webb.fragor import STANDARD_MAX_KO, FragaTjanst, skriv_atomiskt_text
 from webb.kartverktyg import LAGE_IDAG_PREFIX, KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
@@ -672,7 +672,7 @@ def _json_svar(status_kod: int, payload: Mapping[str, Any]) -> tuple[int, dict[s
         "Content-Length": str(len(kropp)),
         "Cache-Control": "no-store",
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
     }
     return status_kod, headers, kropp
@@ -1004,6 +1004,14 @@ def _skapa_fragetjanst(
         pp = Path(p)
         return pp if pp.is_absolute() else rot / pp
 
+    raw_max_ko = os.environ.get("FLODEN_MAX_KO") or webb.get("max_ko", STANDARD_MAX_KO)
+    try:
+        max_ko = int(raw_max_ko)
+    except (TypeError, ValueError):
+        max_ko = STANDARD_MAX_KO
+    if max_ko < 0:
+        max_ko = STANDARD_MAX_KO
+
     return FragaTjanst(
         rot=rot,
         fragemappar=[abs_(m) for m in fragemappar],
@@ -1011,6 +1019,7 @@ def _skapa_fragetjanst(
         korningsmapp=abs_(korningsmapp or webb.get("korningsmapp", STANDARD_KORNINGSMAPP)),
         demomapp=abs_(webb.get("demomapp", STANDARD_DEMOMAPP)),
         projektrot=abs_(projektmapp or STANDARD_PROJEKTMAPP),
+        max_ko=max_ko,
     )
 
 
@@ -1112,11 +1121,41 @@ class FlodenApiApp:
         self._fragekonfig = (fragemappar, cachemapp, korningsmapp)
         self._fragor: FragaTjanst | None = None
         self._lock = threading.Lock()
+        self._sektioner_lock = threading.Lock()
         self._omrade_cache: dict[str, LaddatOmrade] = {}
         self._projektmodell_cache: dict[
             tuple[str, tuple[tuple[str, int], ...]], _K1Markmodell
         ] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
+        self._sektioner_snapshot: list[dict[str, Any]] | None = None
+
+    def stang(self) -> None:
+        """Stänger bakgrundsexekutorer i `FragaTjanst` och ev. `RapportJobbTjanst` rent."""
+        with self._lock:
+            fragor = self._fragor
+            rapportjobb = self._rapportjobb
+        if fragor is not None:
+            fragor.stang()
+        if rapportjobb is not None:
+            stang_rj = getattr(rapportjobb, "stang", None)
+            if callable(stang_rj):
+                stang_rj()
+
+    def _kartverktyg_fragedir(self) -> Path:
+        """Kartverktygets egen frågemapp (`demokvarteret`), utan att initiera tjänsten."""
+        if self._kartverktyg is not None:
+            return self._kartverktyg.fragedir
+        rot = self.konfig_fil.resolve().parent
+        mapp_cfg = self._kartkonfig[0]
+        if mapp_cfg is None:
+            webb_cfg: dict[str, Any] = {}
+            if self.konfig_fil.is_file():
+                with self.konfig_fil.open("rb") as fh:
+                    webb_cfg = dict(tomllib.load(fh).get("webb", {}))
+            mapp_cfg = webb_cfg.get("kartverktygsmapp", STANDARD_KARTVERKTYGSMAPP)
+        pp = Path(mapp_cfg).expanduser()
+        bas = pp if pp.is_absolute() else rot / pp
+        return bas / "fragor"
 
     @property
     def fragor(self) -> FragaTjanst:
@@ -1139,8 +1178,9 @@ class FlodenApiApp:
                     lokal = rot / "config.local.toml"
                     konfig_dict = las_konfig(self.konfig_fil, lokal)
                 self._forberaknad_lager = forberaknad_lager_fran_miljo(
-                    rot / "data" / "cache" / "s3_lru",
+                    cache_rot=None,
                     konfig=konfig_dict,
+                    bas_rot=rot,
                 )
                 self._forberaknad_lager_inlast = True
             return self._forberaknad_lager
@@ -1317,13 +1357,20 @@ class FlodenApiApp:
         return ut
 
     def hamta_sektioner(self) -> dict[str, Gatusektion]:
-        """Läser gatusektioner från `config.toml` med trådsäker cache."""
-        with self._lock:
+        """Läser gatusektioner från `config.toml` med separat lås och låsfri snabbväg."""
+        cachad = self._sektioner_cache
+        if cachad is not None:
+            return cachad
+        with self._sektioner_lock:
             if self._sektioner_cache is None:
                 if self.konfig_fil.is_file():
-                    self._sektioner_cache = las_gatusektioner_fran_konfig(self.konfig_fil)
+                    sektioner = las_gatusektioner_fran_konfig(self.konfig_fil)
                 else:
-                    self._sektioner_cache = {}
+                    sektioner = {}
+                self._sektioner_snapshot = [
+                    sek.till_dict() for _, sek in sorted(sektioner.items())
+                ]
+                self._sektioner_cache = sektioner
             return self._sektioner_cache
 
     def _upptack_omraden(self) -> dict[str, Testfall]:
@@ -1425,7 +1472,17 @@ class FlodenApiApp:
         return modell
 
     def halsa(self) -> dict[str, Any]:
-        """Svar för `GET /api/halsa`."""
+        """Svar för `GET /api/halsa` (låsfri mot huvudlåset + ögonblicksbild av körkön)."""
+        sektioner = self._sektioner_snapshot
+        if sektioner is None:
+            self.hamta_sektioner()
+            sektioner = self._sektioner_snapshot or []
+        fragor = self._fragor
+        ko_status = (
+            fragor.ko_status()
+            if fragor is not None
+            else {"koade": 0, "pagaende": 0, "max_ko": STANDARD_MAX_KO}
+        )
         return {
             "status": "ok",
             "version": API_VERSION,
@@ -1439,7 +1496,8 @@ class FlodenApiApp:
             "epsg": EPSG_INTERN,
             "hojdsystem": HOJDSYSTEM,
             "kallor": list(DEFAULT_KALLOR),
-            "gatusektioner": [sek.till_dict() for _, sek in sorted(self.hamta_sektioner().items())],
+            "gatusektioner": list(sektioner),
+            "ko": ko_status,
         }
 
     def lista_omraden(self) -> dict[str, Any]:
@@ -1775,8 +1833,33 @@ class FlodenApiApp:
             else 0.0,
         }
 
-    def kor_ekologi_analys(self, kropp_bytes: bytes) -> dict[str, Any]:
-        """Svar för `POST /api/analys/ekologi`: ECA och PC före/efter (skiss), flaskhalsar (K45)."""
+    def hamta_ekologi_analys(self, query: Mapping[str, list[str]]) -> dict[str, Any]:
+        """Läsande `GET /api/analys/ekologi` (W-B8): tillåten för `lasare` utan projektmutering.
+
+        Skriver aldrig i projektets `fragor/` eller `kartverktyg/<projekt>/`, utan bara till en
+        intern arbetskatalog under `cachemapp/_ekologi_las/`.
+        """
+        payload: dict[str, Any] = {}
+        for namn in ("omrade_id", "natverk", "artprofil", "scenario"):
+            val = (query.get(namn) or [""])[0]
+            if val != "":
+                payload[namn] = val
+        for namn in ("max_flackar", "antal_flaskhalsar", "cellstorlek_m", "flaskhals_avstand_m"):
+            raw = (query.get(namn) or [""])[0]
+            if raw != "":
+                try:
+                    payload[namn] = float(raw)
+                except ValueError as exc:
+                    raise FlodenWebbFel(f"Fältet '{namn}' måste vara ett tal.") from exc
+        return self.kor_ekologi_analys(
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            skrivskyddad=True,
+        )
+
+    def kor_ekologi_analys(
+        self, kropp_bytes: bytes, *, skrivskyddad: bool = False
+    ) -> dict[str, Any]:
+        """Svar för `POST/GET /api/analys/ekologi`: ECA/PC före/efter (skiss), flaskhalsar (K45)."""
         from ekologi import STANDARD_ARTPROFILER, alla_natverk, korbara_natverk
         from webb.ekologi_analys import ekologi_svar
 
@@ -1843,6 +1926,7 @@ class FlodenApiApp:
                     omrade_id,
                     scenario.strip() if isinstance(scenario, str) else None,
                     over,
+                    skrivskyddad=skrivskyddad,
                 )
             else:
                 k = self._kor_ekologi_geografi(
@@ -1852,6 +1936,7 @@ class FlodenApiApp:
                     cell_m=cell_m,
                     max_flackar=max_flackar,
                     extra_varning=extra_varning,
+                    skrivskyddad=skrivskyddad,
                 )
         except FlodenWebbFel as exc:
             if exc.status_kod == 500 and "LosarFel" in str(exc):
@@ -1878,6 +1963,7 @@ class FlodenApiApp:
         cell_m: float,
         max_flackar: int,
         extra_varning: list[str],
+        skrivskyddad: bool = False,
     ) -> dict[str, Any]:
         """Kör ekologisk konnektivitet (K45) synkront för ett projekt i en geografi.
 
@@ -1999,13 +2085,18 @@ class FlodenApiApp:
                 )
                 stangt = ritl.har_stangt_innehall(sc_dok.get("ritlager"), kalla.oppen)
                 k9_sub = "k9_stangda" if stangt else "k9"
-                k9_mapp = self.kartverktyg.mapp / kalla.id / k9_sub
+                k9_bas = (
+                    (self.fragor.cachemapp / "_ekologi_las" / kalla.id)
+                    if skrivskyddad
+                    else (self.kartverktyg.mapp / kalla.id)
+                )
+                k9_mapp = k9_bas / k9_sub
                 k9_mapp.mkdir(parents=True, exist_ok=True)
                 if stangt:
-                    (k9_mapp / "oppenhet.toml").write_text(
+                    skriv_atomiskt_text(
+                        k9_mapp / "oppenhet.toml",
                         'kontrakt = "floden-oppenhet/v1"\noppen = false\n'
                         'kalla = "Förslag med objekt i ett stängt ritlager (K50)"\n',
-                        encoding="utf-8",
                     )
                 k9_fil = k9_mapp / f"{scenario}__ekologi.json"
                 skriv_scenario(sc_obj, k9_fil)
@@ -2044,7 +2135,11 @@ class FlodenApiApp:
                     "(ΔECA = 0)."
                 )
 
-        fragedir = kalla.fragedir or self.kartverktyg.fragedir
+        fragedir = (
+            (self.fragor.cachemapp / "_ekologi_las" / kalla.id)
+            if skrivskyddad
+            else (kalla.fragedir or self.kartverktyg.fragedir)
+        )
         fragedir.mkdir(parents=True, exist_ok=True)
         tag = hashlib.sha256(
             json.dumps(
@@ -2099,7 +2194,16 @@ class FlodenApiApp:
                 },
             ],
         }
-        fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
+        korning_id = f"api-ekologi-{tag}"
+        if skrivskyddad:
+            status, _ = self.fragor.kor_fil_synkront(fil, korning_id, kalla.id)
+            return {
+                "korning_id": korning_id,
+                "status": status,
+                "analys": "konnektivitet",
+                "ref": fraga_id,
+            }
         ref = next(
             (r for r, f in self.fragor._fragefiler().items() if f.resolve() == fil.resolve()),
             None,
@@ -2108,7 +2212,6 @@ class FlodenApiApp:
             raise FlodenWebbFel(
                 "Den skapade ekologifrågan hittades inte i frågemapparna.", status_kod=500
             )
-        korning_id = f"api-ekologi-{tag}"
         status, _ = self.fragor.kor_synkront(ref, korning_id, kalla.id)
         return {"korning_id": korning_id, "status": status, "analys": "konnektivitet", "ref": ref}
 
@@ -3351,24 +3454,76 @@ class FlodenApiApp:
             svar_rutt["rekommenderade_insatser"] = rekommenderade_insatser
         return svar_rutt
 
+    def projekt_for_fraga(self, ref: str, fil: Path | None = None) -> str | None:
+        """Ägarprojektet för frågan `ref`, eller `None` för fristående frågor utanför projekt."""
+        return self.fragor.agarprojekt_for_fil(
+            ref,
+            fil,
+            kraver_registerid=self.konto.aktiv,
+            demo_fragemapp=self._kartverktyg_fragedir(),
+        )
+
+    def konto_far_se_fraga(
+        self,
+        konto_id: str | None,
+        ref: str,
+        fil: Path | None = None,
+        *,
+        minst: str = "lasare",
+    ) -> bool:
+        """Får kontot läsa/planera/köra frågan `ref`? Inloggning av: alltid. På: minst `minst` i
+        frågans ägarprojekt; fristående frågor utanför projekt bara för superadmin."""
+        if not self.konto.aktiv:
+            return True
+        if konto_id is None:
+            return False
+        agarprojekt = self.projekt_for_fraga(ref, fil)
+        if agarprojekt is None:
+            return bool(self.konto.ar_superadmin(konto_id))
+        return bool(self.konto.har_roll(konto_id, agarprojekt, minst))
+
+    def fragor_for_konto(self, konto_id: str | None) -> dict[str, Any]:
+        """`GET /api/fragor`: filtrerar projektfrågor på användarens behöriga projekt."""
+        if not self.konto.aktiv:
+            return self.fragor.lista_fragor()
+        return self.fragor.lista_fragor(
+            filtrera=lambda ref, fil: self.konto_far_se_fraga(
+                konto_id, ref, fil, minst="lasare"
+            )
+        )
+
+    @staticmethod
+    def _begart_projekt_ur_kropp(kropp: bytes) -> str | None:
+        if not kropp.strip():
+            return None
+        try:
+            payload = json.loads(kropp.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
+        valt = payload.get("projekt_id") if isinstance(payload, Mapping) else None
+        if valt is None:
+            return None
+        if not isinstance(valt, str) or not valt.strip():
+            raise FlodenWebbFel("Fältet 'projekt_id' ska vara en text.")
+        return valt
+
     def projekt_for_start(self, ref: str, kropp: bytes) -> str | None:
-        """Projektet en körning av frågan `ref` startas i: `projekt_id` i begäran, annars
-        demokvarteret när frågan hör till demon, annars None (inget projekt)."""
-        if kropp.strip():
-            try:
-                payload = json.loads(kropp.decode("utf-8"))
-            except (UnicodeDecodeError, ValueError, RecursionError) as exc:
-                raise FlodenWebbFel(f"Ogiltig JSON i förfrågan: {exc}") from exc
-            valt = payload.get("projekt_id") if isinstance(payload, Mapping) else None
-            if valt is not None:
-                if not isinstance(valt, str) or not valt.strip():
-                    raise FlodenWebbFel("Fältet 'projekt_id' ska vara en text.")
-                return valt
-        demo = self.fragor.demo()
-        delar = demo.get("delar", {}) if demo.get("finns") else {}
-        if ref in delar:
-            return PROJEKT_ID_DEMO
-        return None
+        """Projektet en körning av frågan `ref` startas i.
+
+        Projektbundna frågor (inkl. demokvarteret) binds till sitt ägarprojekt och nekar
+        motsägande `projekt_id` i kroppen (403). Fristående frågor använder begärt `projekt_id`
+        eller `None`.
+        """
+        begart = self._begart_projekt_ur_kropp(kropp)
+        agarprojekt = self.projekt_for_fraga(ref)
+        if agarprojekt is not None:
+            if begart is not None and begart != agarprojekt:
+                raise FlodenWebbFel(
+                    f"Frågan '{ref}' hör till ett annat projekt och kan inte köras i '{begart}'.",
+                    status_kod=403,
+                )
+            return agarprojekt
+        return begart
 
     def _hantera_fragor(
         self, verb: str, sokvag: str, kropp: bytes = b""
@@ -3865,6 +4020,9 @@ class FlodenApiApp:
             if verb == "POST" and ren_sokvag == "/api/analys/svf-intervall":
                 return _json_svar(200, self.kor_svf_intervall_analys(kropp))
 
+            if verb == "GET" and ren_sokvag == "/api/analys/ekologi":
+                return _json_svar(200, self.hamta_ekologi_analys(query))
+
             if verb == "POST" and ren_sokvag == "/api/analys/ekologi":
                 return _json_svar(200, self.kor_ekologi_analys(kropp))
 
@@ -3892,13 +4050,19 @@ class FlodenApiApp:
                 },
             )
         except FlodenWebbFel as exc:
-            return _json_svar(
+            status, headers, kropp = _json_svar(
                 exc.status_kod,
                 {
                     "fel": str(exc),
                     "status": exc.status_kod,
                 },
             )
+            retry_after = getattr(exc, "retry_after_s", None)
+            if retry_after is not None:
+                headers["Retry-After"] = str(int(retry_after))
+            elif exc.status_kod == 503:
+                headers["Retry-After"] = "5"
+            return status, headers, kropp
         except Exception:  # noqa: BLE001 - returnera tydligt API-fel utan tyst krasch
             _logg.exception("Oväntat fel i webb-API (%s %s)", verb, ren_sokvag)
             return _json_svar(
@@ -3931,9 +4095,12 @@ class FlodenApiApp:
             try:
                 kropp_in = las_kropp() if verb in ("POST", "PUT", "PATCH", "DELETE") else b""
             except FlodenWebbFel as exc:
-                status, headers, kropp = _json_svar(
+                svar_fel = _json_svar(
                     exc.status_kod, {"fel": str(exc), "status": exc.status_kod}
                 )
+                if self.konto.aktiv:
+                    return _utan_cors(svar_fel)
+                status, headers, kropp = svar_fel
                 return status, list(headers.items()), kropp
             return self.konto.hantera_konto(verb, req.sokvag, req.query, req.headers, kropp_in)
         if verb in ("GET", "HEAD") and not req.sokvag.startswith("/api"):
@@ -3964,10 +4131,9 @@ class FlodenApiApp:
             and req.sokvag.startswith(PROV_PREFIX)
             and (kontroll.inloggad is None or not kontroll.inloggad.superadmin)
         ):
-            status, headers, kropp = _json_svar(
-                403, {"fel": "Provsidorna är bara för superadmin.", "status": 403}
+            return _utan_cors(
+                _json_svar(403, {"fel": "Provsidorna är bara för superadmin.", "status": 403})
             )
-            return status, list(headers.items()), kropp
         # Legacy `POST /api/rapport` (testsvitsexport) kräver superadmin när inloggning är aktiv;
         # projektrapporter skapas via `POST /api/projekt/<id>/rapporter` (kräver utredare).
         if (
@@ -3998,11 +4164,12 @@ class FlodenApiApp:
             if eget is not None:
                 return eget
         try:
-            kropp_in = las_kropp() if verb == "POST" else b""
+            kropp_in = las_kropp() if verb in ("POST", "PUT", "PATCH") else b""
         except FlodenWebbFel as exc:
-            status, headers, kropp = _json_svar(
-                exc.status_kod, {"fel": str(exc), "status": exc.status_kod}
-            )
+            svar_fel = _json_svar(exc.status_kod, {"fel": str(exc), "status": exc.status_kod})
+            if self.konto.aktiv:
+                return _utan_cors(svar_fel)
+            status, headers, kropp = svar_fel
             return status, list(headers.items()), kropp
         if self.konto.aktiv and (req.sokvag.rstrip("/") + "/").startswith("/api/korningar/"):
             delar = [urllib.parse.unquote(d) for d in req.sokvag.split("/") if d]
@@ -4019,6 +4186,131 @@ class FlodenApiApp:
         ):
             konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
             return _utan_cors(_json_svar(200, self.korningar_for_konto(konto_id)))
+        if self.konto.aktiv and (req.sokvag.rstrip("/") + "/").startswith("/api/fragor/"):
+            f_delar = [urllib.parse.unquote(d) for d in req.sokvag.split("/") if d]
+            konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
+            if verb == "GET" and f_delar == ["api", "fragor"]:
+                return _utan_cors(_json_svar(200, self.fragor_for_konto(konto_id)))
+            if (verb == "GET" and len(f_delar) == 3 and f_delar[:2] == ["api", "fragor"]) or (
+                verb == "POST"
+                and len(f_delar) == 4
+                and f_delar[:2] == ["api", "fragor"]
+                and f_delar[3] == "plan"
+            ):
+                ref_f = f_delar[2]
+                try:
+                    fil_f = self.fragor.fragefil_eller_none(ref_f)
+                except FlodenWebbFel as exc:
+                    return _utan_cors(
+                        _json_svar(exc.status_kod, {"fel": str(exc), "status": exc.status_kod})
+                    )
+                if fil_f is None or not self.konto_far_se_fraga(
+                    konto_id, ref_f, fil_f, minst="lasare"
+                ):
+                    return _utan_cors(
+                        _json_svar(404, {"fel": f"Okänd fråga '{ref_f}'.", "status": 404})
+                    )
+            if (
+                verb == "POST"
+                and len(f_delar) == 4
+                and f_delar[:2] == ["api", "fragor"]
+                and f_delar[3] == "kor"
+            ):
+                ref_k = f_delar[2]
+                try:
+                    fil_k = self.fragor.fragefil_eller_none(ref_k)
+                    begart_projekt = self._begart_projekt_ur_kropp(kropp_in)
+                except FlodenWebbFel as exc:
+                    return _utan_cors(
+                        _json_svar(exc.status_kod, {"fel": str(exc), "status": exc.status_kod})
+                    )
+                agarprojekt = self.projekt_for_fraga(ref_k, fil_k)
+                if fil_k is not None:
+                    if agarprojekt is None:
+                        # Fristående frågefil utanför projekt: endast superadmin.
+                        if konto_id is None or not self.konto.ar_superadmin(konto_id):
+                            return _utan_cors(
+                                _json_svar(404, {"fel": f"Okänd fråga '{ref_k}'.", "status": 404})
+                            )
+                        if begart_projekt is not None and not self.konto.har_roll(
+                            konto_id, begart_projekt, "utredare"
+                        ):
+                            return _utan_cors(
+                                _json_svar(
+                                    403,
+                                    {
+                                        "fel": "Saknar behörighet att starta körningar i projektet "
+                                        "(rollen utredare krävs).",
+                                        "status": 403,
+                                    },
+                                )
+                            )
+                    else:
+                        # Projektbunden fråga: minst `lasare` för att se den (annars 404),
+                        # matchande `projekt_id` om angivet och `utredare` i ägarprojektet.
+                        if konto_id is None or not self.konto.har_roll(
+                            konto_id, agarprojekt, "lasare"
+                        ):
+                            return _utan_cors(
+                                _json_svar(404, {"fel": f"Okänd fråga '{ref_k}'.", "status": 404})
+                            )
+                        if begart_projekt is not None and begart_projekt != agarprojekt:
+                            return _utan_cors(
+                                _json_svar(
+                                    403,
+                                    {
+                                        "fel": f"Frågan '{ref_k}' hör till ett annat projekt och "
+                                        f"kan inte köras i '{begart_projekt}'.",
+                                        "status": 403,
+                                    },
+                                )
+                            )
+                        if not self.konto.har_roll(konto_id, agarprojekt, "utredare"):
+                            return _utan_cors(
+                                _json_svar(
+                                    403,
+                                    {
+                                        "fel": "Saknar behörighet att starta körningar i projektet "
+                                        "(rollen utredare krävs).",
+                                        "status": 403,
+                                    },
+                                )
+                            )
+                else:
+                    # Frågereferens saknar fil på disk (t.ex. demo-ref eller okänd ref):
+                    # kontrollera ägarprojekt/begärt projekt innan `starta_korning` ger 404.
+                    if agarprojekt is not None:
+                        if begart_projekt is not None and begart_projekt != agarprojekt:
+                            return _utan_cors(
+                                _json_svar(
+                                    403,
+                                    {
+                                        "fel": f"Frågan '{ref_k}' hör till ett annat projekt och "
+                                        f"kan inte köras i '{begart_projekt}'.",
+                                        "status": 403,
+                                    },
+                                )
+                            )
+                        ok = konto_id is not None and self.konto.har_roll(
+                            konto_id, agarprojekt, "utredare"
+                        )
+                    else:
+                        ok = konto_id is not None and (
+                            self.konto.har_roll(konto_id, begart_projekt, "utredare")
+                            if begart_projekt is not None
+                            else self.konto.ar_superadmin(konto_id)
+                        )
+                    if not ok:
+                        return _utan_cors(
+                            _json_svar(
+                                403,
+                                {
+                                    "fel": "Saknar behörighet att starta körningar i projektet "
+                                    "(ange 'projekt_id' där du är utredare).",
+                                    "status": 403,
+                                },
+                            )
+                        )
         if self.konto.aktiv and verb == "POST":
             start = [urllib.parse.unquote(d) for d in req.sokvag.split("/") if d]
             if len(start) == 4 and start[:2] == ["api", "kartverktyg"] and start[3] == "sektion":
@@ -4041,33 +4333,7 @@ class FlodenApiApp:
                         return _utan_cors(
                             _json_svar(404, {"fel": f"Okänd körning '{kid}'.", "status": 404})
                         )
-            if len(start) == 4 and start[:2] == ["api", "fragor"] and start[3] == "kor":
-                konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
-                try:
-                    projekt_id = self.projekt_for_start(start[2], kropp_in)
-                except FlodenWebbFel as exc:
-                    return _utan_cors(
-                        _json_svar(exc.status_kod, {"fel": str(exc), "status": exc.status_kod})
-                    )
-                # Utredare i projektet krävs. Utan projekt (en fråga som inte hör till något) får
-                # bara superadmin starta; körningen blir då en körning utan projekt.
-                ok = konto_id is not None and (
-                    self.konto.har_roll(konto_id, projekt_id, "utredare")
-                    if projekt_id is not None
-                    else self.konto.ar_superadmin(konto_id)
-                )
-                if not ok:
-                    return _utan_cors(
-                        _json_svar(
-                            403,
-                            {
-                                "fel": "Saknar behörighet att starta körningar i projektet "
-                                "(ange 'projekt_id' där du är utredare).",
-                                "status": 403,
-                            },
-                        )
-                    )
-        analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in)
+        analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in, req.query)
         if analys_projekt is not None and self.konto.aktiv:
             ren_analys = req.sokvag.rstrip("/") or "/"
             if ren_analys in BERAKNINGS_SOKVAGAR:
@@ -4079,9 +4345,14 @@ class FlodenApiApp:
                         _json_svar(404, {"fel": f"Okänt område '{analys_projekt}'.", "status": 404})
                     )
             else:
-                # Ekologianalysen skriver K20-frågor och kör synkront -> kräver skrivroll
-                # (`utredare`+). Övriga projektanalyser sparar inget -> `lasare` räcker.
-                minst_roll = "utredare" if ren_analys == "/api/analys/ekologi" else "lasare"
+                # B13: `POST /api/analys/ekologi` skriver projektets K20/K9-filer och kräver därför
+                # fortsatt `utredare`+. Läsande `GET /api/analys/ekologi` (W-B8) muterar aldrig
+                # projektet och tillåter `lasare` (obehöriga utanför projektet får alltid 403).
+                minst_roll = (
+                    "utredare"
+                    if verb == "POST" and ren_analys == "/api/analys/ekologi"
+                    else "lasare"
+                )
                 kontroll = self.konto.kraver_projektbehorighet(
                     req, analys_projekt, minst=minst_roll
                 )
@@ -4152,24 +4423,36 @@ class FlodenApiApp:
             svar = {"fel": str(exc), "status": exc.status_kod}
             return _utan_cors(_json_svar(exc.status_kod, svar))
 
-    def _projekt_for_analys(self, verb: str, sokvag: str, kropp: bytes) -> str | None:
-        """Projektet en analys (`POST /api/analys/...`) gäller, om `omrade_id` är ett projekt.
+    def _projekt_for_analys(
+        self,
+        verb: str,
+        sokvag: str,
+        kropp: bytes,
+        query: Mapping[str, Sequence[str]] | None = None,
+    ) -> str | None:
+        """Projektet en analys (`POST/GET /api/analys/...`) gäller, om `omrade_id` är ett projekt.
 
-        Analyserna har projektet i kroppen, inte i sökvägen, så `_projekt_krav` når dem inte.
-        Kroppen som inte går att tolka lämnas åt endpointen att avvisa (400)."""
-        if verb != "POST" or (sokvag.rstrip("/") or "/") not in (
+        Analyserna har projektet i kroppen (eller query för `GET /api/analys/ekologi`), inte i
+        sökvägen, så `_projekt_krav` når dem inte. Ogiltig kropp lämnas åt endpointen (400)."""
+        ren = sokvag.rstrip("/") or "/"
+        omrade_id: Any = None
+        if verb == "GET" and ren == "/api/analys/ekologi":
+            vals = (query or {}).get("omrade_id")
+            omrade_id = vals[0] if vals else None
+        elif verb == "POST" and ren in (
             "/api/analys/bifurkationer",
             "/api/analys/intervall",
             "/api/analys/svf-intervall",
             "/api/analys/ekologi",
             *BERAKNINGS_SOKVAGAR,
         ):
+            try:
+                payload = json.loads(kropp.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError, RecursionError):
+                return None
+            omrade_id = payload.get("omrade_id") if isinstance(payload, Mapping) else None
+        else:
             return None
-        try:
-            payload = json.loads(kropp.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError, RecursionError):
-            return None
-        omrade_id = payload.get("omrade_id") if isinstance(payload, Mapping) else None
         if isinstance(omrade_id, str) and (
             self.projekt.ar_projekt(omrade_id) or self._registrerat_projekt(omrade_id)
         ):
@@ -4384,10 +4667,23 @@ def skapa_http_server(
         def do_POST(self) -> None:  # noqa: N802
             self._hantera("POST")
 
+        def do_PUT(self) -> None:  # noqa: N802
+            self._hantera("PUT")
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            self._hantera("DELETE")
+
         def log_message(self, format: str, *args: Any) -> None:
             return
 
-    return ThreadingHTTPServer((host, port), _FlodenHandler)
+    class _FlodenHttpServer(ThreadingHTTPServer):
+        def server_close(self) -> None:
+            try:
+                super().server_close()
+            finally:
+                app.stang()
+
+    return _FlodenHttpServer((host, port), _FlodenHandler)
 
 
 def main() -> None:

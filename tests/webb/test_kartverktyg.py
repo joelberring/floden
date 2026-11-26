@@ -880,3 +880,26 @@ def test_markyta_med_lutning_delta_och_slant_godkanns_och_felaktig_nekas(kv: Kv)
     ):
         _, v = kv.json("POST", f"{P}/validera", {"andringar": [snedyta(cx, cy, 20, 0, e)]})
         assert not v["giltig"] and v["fel"], e
+
+
+def test_avsnitt_for_lager_bevarar_luft_doman_i_vyer() -> None:
+    """W-B9: `_lage_vyer` och `_vyer` ska använda lagrets `doman` och inte mappa `luft` till `dagsljus`."""
+    from webb.kartverktyg import KartverktygTjanst
+
+    lage = KartverktygTjanst._lage_vyer(  # noqa: SLF001
+        {
+            "lager": [
+                {
+                    "id": "mkn.fore.arsmedel",
+                    "analys": "mkn",
+                    "doman": "luft",
+                    "scenario": "fore",
+                    "typ": "bas",
+                    "primar": True,
+                    "etikett": "Årsmedelhalt",
+                }
+            ]
+        },
+        "k-luft",
+    )
+    assert [v["avsnitt"] for v in lage] == ["luft"]
