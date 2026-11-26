@@ -19,7 +19,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -108,9 +108,16 @@ from sankgraf.bifurkation import (
     detektera_bifurkationer,
 )
 from sankgraf.fyllning import statisk_fyllning
-from sankgraf.hierarki import bygg_sankgraf
-from sankgraf.takvatten import med_takvatten_graf
+from sankgraf.hierarki import bygg_sankgraf, sammanfoga_rutor
+from sankgraf.takvatten import (
+    TakPolygon,
+    bygg_takvatten,
+    las_takpolygoner,
+    med_takvatten,
+    med_takvatten_graf,
+)
 from sankgraf.typer import (
+    MARKSLAG_BYGGNAD,
     SankGraf,
     SankGrafFel,
     las_brytlinjer_fran_gpkg,
@@ -153,6 +160,9 @@ from webb.rendering import (
 )
 from webb.vy3d import Vy3dTjanst
 
+if TYPE_CHECKING:
+    from webb.projektkalla import Projektkalla
+
 API_VERSION = "0.1.0"
 _ENSEMBLE_FAKTORER: tuple[tuple[str, float, float], ...] = (
     ("p10-låg", 0.85, 2.0),
@@ -184,7 +194,7 @@ class LaddatOmrade:
 
 @dataclass(frozen=True)
 class _K1Markmodell:
-    """Det bifurkationsanalysen behöver ur en K1-mapp: raster, geo och sänkgraf (med takvatten)."""
+    """Det analysändpunkterna behöver ur en eller flera K1-mappar: raster, geo och sänkgraf."""
 
     mark_z: NDArray[np.float32]
     osakerhet_z: NDArray[np.float32]
@@ -193,6 +203,64 @@ class _K1Markmodell:
     brytlinjer: tuple[BrytlinjePost, ...]
     oppningar: tuple[OppningPost, ...]
     bas_graf: SankGraf
+    k1_mapp: Path | None = None
+    k1_mappar: tuple[Path, ...] = ()
+
+
+def _bestam_overlapp_m_rutor(
+    rutor: Sequence[Path], geos: Sequence[GeoTransformInfo]
+) -> float:
+    """Bestämmer gemensamt rutöverlapp (m) ur `recept.json` eller rutornas överlappande ränder."""
+    recept_varden: list[float] = []
+    for mapp in rutor:
+        recept = mapp / "recept.json"
+        if not recept.is_file():
+            continue
+        try:
+            data = json.loads(recept.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and "overlapp_m" in data:
+            ov = data["overlapp_m"]
+            if (
+                not isinstance(ov, bool)
+                and isinstance(ov, int | float)
+                and math.isfinite(float(ov))
+            ):
+                if float(ov) < 0.0:
+                    raise SankGrafFel(f"Ogiltigt overlapp_m ({ov}) i {recept}.")
+                recept_varden.append(float(ov))
+    if len(recept_varden) == len(rutor) and recept_varden:
+        for ov in recept_varden[1:]:
+            if not math.isclose(ov, recept_varden[0], rel_tol=0.0, abs_tol=1e-6):
+                raise SankGrafFel(
+                    f"Oförenliga overlapp_m i rutornas recept.json: {sorted(set(recept_varden))}."
+                )
+        return recept_varden[0]
+
+    kandidater: list[float] = []
+    tol = 1e-6
+    for i in range(len(geos)):
+        ga = geos[i]
+        for j in range(i + 1, len(geos)):
+            gb = geos[j]
+            if min(ga.y_max, gb.y_max) > max(ga.y_min, gb.y_min) + tol:
+                v, o = (ga, gb) if ga.x_min <= gb.x_min else (gb, ga)
+                if v.x_min < o.x_min - tol and v.x_max >= o.x_min - tol and v.x_max < o.x_max - tol:
+                    kandidater.append(max(0.0, 0.5 * (v.x_max - o.x_min)))
+            if min(ga.x_max, gb.x_max) > max(ga.x_min, gb.x_min) + tol:
+                s, n = (ga, gb) if ga.y_min <= gb.y_min else (gb, ga)
+                if s.y_min < n.y_min - tol and s.y_max >= n.y_min - tol and s.y_max < n.y_max - tol:
+                    kandidater.append(max(0.0, 0.5 * (s.y_max - n.y_min)))
+
+    if not kandidater:
+        return 0.0
+    for ov in kandidater[1:]:
+        if not math.isclose(ov, kandidater[0], rel_tol=0.0, abs_tol=1e-6):
+            raise SankGrafFel(
+                f"Oförenliga rutöverlapp mellan angränsande K1-rutor: {sorted(set(kandidater))}."
+            )
+    return kandidater[0]
 
 
 def _las_k1_markmodell(indata: Path, *, takvatten_mapp: Path | None = None) -> _K1Markmodell:
@@ -218,7 +286,354 @@ def _las_k1_markmodell(indata: Path, *, takvatten_mapp: Path | None = None) -> _
         brytlinjer=brytlinjer,
         oppningar=oppningar,
         bas_graf=med_takvatten_graf(graf, takvatten_mapp),
+        k1_mapp=indata,
+        k1_mappar=(indata,),
     )
+
+
+def _las_k1_markmodell_rutor(rutor: Sequence[Path]) -> _K1Markmodell:
+    """Läser en eller flera K1-rutor och sammanfogar till en gemensam sänkgraf med takvatten."""
+    if not rutor:
+        raise SankGrafFel("Kan inte ladda en tom lista av K1-rutor.")
+    if len(rutor) == 1:
+        return _las_k1_markmodell(rutor[0], takvatten_mapp=rutor[0])
+
+    rut_data: list[
+        tuple[GeoTransformInfo, NDArray[np.float32], NDArray[np.float32], NDArray[np.uint8]]
+    ] = []
+    geos: list[GeoTransformInfo] = []
+    brytlinjer_lista: list[BrytlinjePost] = []
+    oppningar_lista: list[OppningPost] = []
+    sedda_bryt: set[Any] = set()
+    sedda_opp: set[Any] = set()
+    tak_per_id: dict[str, TakPolygon] = {}
+
+    for mapp in rutor:
+        mark_raw, geo = las_geotiff(mapp / "mark.tif")
+        osak_raw, _ = las_geotiff(mapp / "osakerhet.tif")
+        slag_raw, _ = las_geotiff(mapp / "markslag.tif")
+        geos.append(geo)
+        rut_data.append(
+            (
+                geo,
+                np.asarray(mark_raw, dtype=np.float32),
+                np.asarray(osak_raw, dtype=np.float32),
+                np.asarray(slag_raw, dtype=np.uint8),
+            )
+        )
+        bryt_fil = mapp / "brytlinjer.gpkg"
+        if bryt_fil.is_file():
+            for b in las_brytlinjer_fran_gpkg(bryt_fil):
+                nyckel_b = (b.typ, b.hojd_m, tuple(b.koordinater), b.z_kron_rh2000)
+                if nyckel_b not in sedda_bryt:
+                    sedda_bryt.add(nyckel_b)
+                    brytlinjer_lista.append(b)
+        opp_fil = mapp / "oppningar.gpkg"
+        if opp_fil.is_file():
+            for o in las_oppningar_fran_gpkg(opp_fil):
+                nyckel_o = (o.typ, o.bredd_m, o.botten_rh2000, tuple(o.koordinater))
+                if nyckel_o not in sedda_opp:
+                    sedda_opp.add(nyckel_o)
+                    oppningar_lista.append(o)
+        bygg_fil = mapp / "byggnader.gpkg"
+        if bygg_fil.is_file():
+            for tp in las_takpolygoner(bygg_fil):
+                tak_per_id.setdefault(tp.byggnad_id, tp)
+
+    overlapp_m = _bestam_overlapp_m_rutor(rutor, geos)
+    glob_geo, glob_mark, glob_osak, glob_slag = sammanfoga_rutor(rut_data, overlapp_m=overlapp_m)
+    brytlinjer = tuple(brytlinjer_lista)
+    oppningar = tuple(oppningar_lista)
+    graf = bygg_sankgraf(
+        glob_mark,
+        glob_osak,
+        glob_slag,
+        glob_geo,
+        brytlinjer=brytlinjer,
+        oppningar=oppningar,
+    )
+    oppning_mask = (
+        np.asarray(
+            (glob_slag == MARKSLAG_BYGGNAD) & (graf.markslag != MARKSLAG_BYGGNAD),
+            dtype=np.bool_,
+        )
+        if oppningar
+        else None
+    )
+    tak = bygg_takvatten(
+        graf.mark_z,
+        graf.markslag,
+        graf.geo,
+        byggnader=tuple(tak_per_id.values()),
+        oppning_mask=oppning_mask,
+    )
+    return _K1Markmodell(
+        mark_z=glob_mark,
+        osakerhet_z=glob_osak,
+        markslag=glob_slag,
+        geo=glob_geo,
+        brytlinjer=brytlinjer,
+        oppningar=oppningar,
+        bas_graf=med_takvatten(graf, tak),
+        k1_mapp=rutor[0],
+        k1_mappar=tuple(rutor),
+    )
+
+
+def _brann_in_byggnader_pa_geo(
+    mark_z: NDArray[np.float32],
+    geo: GeoTransformInfo,
+    byggnader: Sequence[Any],
+) -> tuple[NDArray[np.float32], NDArray[np.uint8]]:
+    """Bränner in byggnader på godtyckligt rektangulärt `GeoTransformInfo`-rutnät.
+
+    Samma cellcentrum- och takhöjdsregel som `markmodell.hinder_oppningar.brann_in_byggnader`,
+    men utan krav på kvadratisk enskild K1-ruta (för flerrutsmosaiker).
+    """
+    from markmodell.hinder_oppningar import _punkter_i_polygon
+
+    ny_z = np.array(mark_z, dtype=np.float32, copy=True)
+    ny_slag = np.zeros(mark_z.shape, dtype=np.uint8)
+    if not byggnader:
+        return ny_z, ny_slag
+
+    hojd, bredd = int(geo.hojd), int(geo.bredd)
+    dx, dy = float(geo.pixelstorlek_x), float(geo.pixelstorlek_y)
+    e_min_y, n_min_y = float(geo.x_min), float(geo.y_min)
+    e_max_y, n_max_y = float(geo.x_max), float(geo.y_max)
+    e_vektor = e_min_y + (np.arange(bredd, dtype=np.float64) + 0.5) * dx
+    n_vektor = n_max_y - (np.arange(hojd, dtype=np.float64) + 0.5) * dy
+
+    for post in byggnader:
+        byggnad = post.till_byggnad()
+        pe = [p[0] for p in byggnad.polygon]
+        pn = [p[1] for p in byggnad.polygon]
+        b_emin, b_emax = min(pe), max(pe)
+        b_nmin, b_nmax = min(pn), max(pn)
+        if b_emax < e_min_y or b_emin > e_max_y or b_nmax < n_min_y or b_nmin > n_max_y:
+            continue
+        kol0 = max(0, int(math.floor((b_emin - e_min_y) / dx)) - 1)
+        kol1 = min(bredd, int(math.ceil((b_emax - e_min_y) / dx)) + 1)
+        rad0 = max(0, int(math.floor((n_max_y - b_nmax) / dy)) - 1)
+        rad1 = min(hojd, int(math.ceil((n_max_y - b_nmin) / dy)) + 1)
+        if kol1 <= kol0 or rad1 <= rad0:
+            continue
+        sub_e, sub_n = np.meshgrid(e_vektor[kol0:kol1], n_vektor[rad0:rad1])
+        mask = _punkter_i_polygon(sub_e, sub_n, byggnad.polygon)
+        for ring in byggnad.hal:
+            mask &= ~_punkter_i_polygon(sub_e, sub_n, ring)
+        if not np.any(mask):
+            continue
+        z_sub = ny_z[rad0:rad1, kol0:kol1]
+        slag_sub = ny_slag[rad0:rad1, kol0:kol1]
+        nya_bygg_mask = mask & (slag_sub != MARKSLAG_BYGGNAD)
+        if byggnad.takhoyd_rh2000 is not None:
+            takhoyd = np.float32(byggnad.takhoyd_rh2000)
+            z_sub[mask] = np.maximum(z_sub[mask], takhoyd)
+        else:
+            z_sub[nya_bygg_mask] = z_sub[nya_bygg_mask] + np.float32(byggnad.hinderhojd_m)
+        slag_sub[mask] = np.uint8(MARKSLAG_BYGGNAD)
+
+    return ny_z, ny_slag
+
+
+def _extrakt_svf_terrang_och_byggnader(
+    omrade: _K1Markmodell | LaddatOmrade,
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.bool_]]:
+    """Extraherar `(mark_ren_rh2000_m, byggnadshojd_m, byggnad_mask)` för SVF-intervallanalys.
+
+    K1 v2 (`terrang.tif` + `byggnader.gpkg`, en eller flera rutor): verklig mark utan byggnader
+    ur `terrang.tif` och verklig takhöjd över terräng ur `byggnader.gpkg` (utan portar i taket).
+    K1 v1 (`mark.tif` + `markslag.tif`): byggnader identifieras med `MARKSLAG_BYGGNAD` (9) och
+    lokal markhöjd under byggnader tas från närmaste giltiga markcell.
+    Ger tydligt 400-fel om byggnadshöjder saknas eller inte kan bestämmas (aldrig tyst 0 eller
+    gissad standardhöjd).
+    """
+    from scipy import ndimage
+
+    from karna.geometri import GeometriFel, las_terrang
+    from karna.geometri.lasa import alla_byggnader
+
+    mark_ra_m = np.asarray(omrade.mark_z, dtype=np.float64)
+    markslag = np.asarray(omrade.markslag, dtype=np.uint8)
+    slag_bygg_mask = markslag == MARKSLAG_BYGGNAD
+    if isinstance(omrade, _K1Markmodell):
+        k1_mappar: tuple[Path, ...] = (
+            omrade.k1_mappar
+            if omrade.k1_mappar
+            else ((omrade.k1_mapp,) if omrade.k1_mapp is not None else ())
+        )
+    else:
+        k1_mappar = (omrade.fall.mapp / "indata",)
+
+    har_terr_lista = [(m / "terrang.tif").is_file() for m in k1_mappar]
+    har_bygg_lista = [(m / "byggnader.gpkg").is_file() for m in k1_mappar]
+    har_nagon_terr = any(har_terr_lista)
+    har_alla_terr = bool(k1_mappar) and all(har_terr_lista)
+    har_nagon_bygg = any(har_bygg_lista)
+
+    if har_nagon_bygg and not har_alla_terr:
+        raise FlodenWebbFel(
+            "K1-rutan har byggnader.gpkg men saknar terrang.tif; "
+            "byggnadshöjder kan inte bestämmas.",
+            status_kod=400,
+        )
+    if har_nagon_terr and not har_alla_terr:
+        raise FlodenWebbFel(
+            "Vissa K1-rutor saknar terrang.tif; terränghöjder kan inte sammanfogas för SVF-analys.",
+            status_kod=400,
+        )
+
+    if har_alla_terr:
+        if len(k1_mappar) == 1:
+            try:
+                terrang_f32, geo_t = las_terrang(k1_mappar[0])
+            except GeometriFel as exc:
+                raise FlodenWebbFel(
+                    f"Kunde inte läsa terrang.tif för SVF-analys: {exc}", status_kod=400
+                ) from exc
+        else:
+            terr_rutor: list[
+                tuple[GeoTransformInfo, NDArray[np.float32], NDArray[np.float32], NDArray[np.uint8]]
+            ] = []
+            geos_t: list[GeoTransformInfo] = []
+            try:
+                for mapp in k1_mappar:
+                    if har_nagon_bygg:
+                        t_arr, g_i = las_terrang(mapp)
+                    else:
+                        t_raw, g_i = las_geotiff(mapp / "terrang.tif")
+                        t_arr = np.asarray(t_raw, dtype=np.float32)
+                    geos_t.append(g_i)
+                    terr_rutor.append(
+                        (
+                            g_i,
+                            t_arr,
+                            np.zeros(t_arr.shape, dtype=np.float32),
+                            np.zeros(t_arr.shape, dtype=np.uint8),
+                        )
+                    )
+                overlapp_m = _bestam_overlapp_m_rutor(k1_mappar, geos_t)
+                geo_t, terrang_f32, _, _ = sammanfoga_rutor(terr_rutor, overlapp_m=overlapp_m)
+            except (GeometriFel, K1FormatFel, SankGrafFel, OSError) as exc:
+                raise FlodenWebbFel(
+                    f"Kunde inte sammanfoga terrang.tif för SVF-analys: {exc}", status_kod=400
+                ) from exc
+        if (
+            terrang_f32.shape != mark_ra_m.shape
+            or not math.isclose(geo_t.x_min, omrade.geo.x_min, rel_tol=0.0, abs_tol=1e-6)
+            or not math.isclose(geo_t.y_max, omrade.geo.y_max, rel_tol=0.0, abs_tol=1e-6)
+        ):
+            raise FlodenWebbFel(
+                f"terrang.tif ({terrang_f32.shape}) matchar inte mark.tif ({mark_ra_m.shape}).",
+                status_kod=400,
+            )
+        terrang_m = np.asarray(terrang_f32, dtype=np.float64)
+        giltig_terr = np.isfinite(terrang_m)
+        if not np.any(giltig_terr):
+            raise FlodenWebbFel("terrang.tif saknar ändliga höjdvärden.", status_kod=400)
+        if not np.all(giltig_terr):
+            idx_t: Any = ndimage.distance_transform_edt(
+                ~giltig_terr, return_distances=False, return_indices=True
+            )
+            mark_ren_m = np.asarray(terrang_m[idx_t[0], idx_t[1]], dtype=np.float64)
+        else:
+            mark_ren_m = terrang_m
+
+        if har_nagon_bygg:
+            try:
+                byggnader = tuple(alla_byggnader(k1_mappar).values())
+            except GeometriFel as exc:
+                raise FlodenWebbFel(
+                    f"Kunde inte läsa byggnader.gpkg för SVF-analys: {exc}", status_kod=400
+                ) from exc
+            if np.any(slag_bygg_mask) and not byggnader:
+                raise FlodenWebbFel(
+                    "Markmodellen innehåller byggnadsceller (markslag 9) men "
+                    "byggnader.gpkg saknar byggnader; byggnadshöjder kan inte bestämmas.",
+                    status_kod=400,
+                )
+            dsm_f32, dsm_slag = _brann_in_byggnader_pa_geo(
+                mark_ren_m.astype(np.float32),
+                geo_t,
+                byggnader,
+            )
+            utanfor_mosaik = (~giltig_terr) & (~np.isfinite(mark_ra_m)) & (~slag_bygg_mask)
+            dsm_bygg_mask = (
+                np.asarray(dsm_slag, dtype=np.uint8) == MARKSLAG_BYGGNAD
+            ) & (~utanfor_mosaik)
+            bygg_mask = dsm_bygg_mask | slag_bygg_mask
+            if np.any(bygg_mask) and not np.all(giltig_terr[bygg_mask]):
+                raise FlodenWebbFel(
+                    "terrang.tif saknar ändliga markhöjder under byggnader; "
+                    "byggnadshöjder kan inte bestämmas.",
+                    status_kod=400,
+                )
+            diff_m = np.asarray(dsm_f32, dtype=np.float64) - mark_ren_m
+            if np.any(bygg_mask) and (
+                not np.any(dsm_bygg_mask)
+                or not np.all(np.isfinite(diff_m[dsm_bygg_mask]))
+                or float(np.max(diff_m[dsm_bygg_mask])) <= 0.0
+            ):
+                raise FlodenWebbFel(
+                    "Byggnadshöjder kunde inte bestämmas ur terrang.tif och byggnader.gpkg "
+                    "(saknar positiv takhöjd över terräng).",
+                    status_kod=400,
+                )
+            bygg_hojd_m = np.where(dsm_bygg_mask, np.maximum(diff_m, 0.0), 0.0)
+            return mark_ren_m, bygg_hojd_m, bygg_mask
+
+        bygg_mask = slag_bygg_mask
+        if np.any(bygg_mask):
+            if not np.all(np.isfinite(mark_ra_m[bygg_mask])) or not np.all(giltig_terr[bygg_mask]):
+                raise FlodenWebbFel(
+                    "Byggnadsceller saknar ändliga höjdvärden i mark.tif eller terrang.tif.",
+                    status_kod=400,
+                )
+            diff_m = mark_ra_m - mark_ren_m
+            if float(np.max(diff_m[bygg_mask])) <= 0.0:
+                raise FlodenWebbFel(
+                    "Byggnadshöjder kunde inte bestämmas ur mark.tif och terrang.tif "
+                    "(saknar positiv höjd över terräng).",
+                    status_kod=400,
+                )
+            bygg_hojd_m = np.where(bygg_mask, np.maximum(diff_m, 0.0), 0.0)
+        else:
+            bygg_hojd_m = np.zeros_like(mark_ren_m)
+        return mark_ren_m, bygg_hojd_m, bygg_mask
+
+    # K1 v1 (saknar `terrang.tif` och `byggnader.gpkg`): använd `MARKSLAG_BYGGNAD` (9)
+    # och lokal markhöjd ur närmaste giltiga markcell.
+    bygg_mask = slag_bygg_mask
+    giltig_mark = np.isfinite(mark_ra_m) & (~bygg_mask)
+    if not np.any(giltig_mark):
+        raise FlodenWebbFel(
+            "Markmodellen saknar giltiga markceller för SVF-analys.", status_kod=400
+        )
+    if not np.all(giltig_mark):
+        idx_m: Any = ndimage.distance_transform_edt(
+            ~giltig_mark, return_distances=False, return_indices=True
+        )
+        mark_ren_m = np.asarray(mark_ra_m[idx_m[0], idx_m[1]], dtype=np.float64)
+    else:
+        mark_ren_m = mark_ra_m
+
+    if np.any(bygg_mask):
+        if not np.all(np.isfinite(mark_ra_m[bygg_mask])):
+            raise FlodenWebbFel(
+                "Byggnadsceller i mark.tif saknar ändliga höjdvärden.", status_kod=400
+            )
+        diff_m = mark_ra_m - mark_ren_m
+        if float(np.max(diff_m[bygg_mask])) <= 0.0:
+            raise FlodenWebbFel(
+                "Byggnadshöjder kunde inte bestämmas ur mark.tif: byggnadsceller "
+                "(markslag 9) saknar positiv höjd över omgivande mark.",
+                status_kod=400,
+            )
+        bygg_hojd_m = np.where(bygg_mask, np.maximum(diff_m, 0.0), 0.0)
+    else:
+        bygg_hojd_m = np.zeros_like(mark_ren_m)
+    return mark_ren_m, bygg_hojd_m, bygg_mask
 
 
 def _tolka_tal(payload: Mapping[str, Any], namn: str, standard: float) -> float:
@@ -698,7 +1113,9 @@ class FlodenApiApp:
         self._fragor: FragaTjanst | None = None
         self._lock = threading.Lock()
         self._omrade_cache: dict[str, LaddatOmrade] = {}
-        self._projektmodell_cache: dict[tuple[str, str, int], _K1Markmodell] = {}
+        self._projektmodell_cache: dict[
+            tuple[str, tuple[tuple[str, int], ...]], _K1Markmodell
+        ] = {}
         self._sektioner_cache: dict[str, Gatusektion] | None = None
 
     @property
@@ -880,8 +1297,8 @@ class FlodenApiApp:
 
     @property
     def projekt(self) -> ProjektTjanst:
-        """Demokvarteret som projekt (ur demokörningarna)."""
-        return ProjektTjanst(self.fragor)
+        """Demokvarteret och geografiprojekt (ur demokörningarna och kartverktyget)."""
+        return ProjektTjanst(self.fragor, kartverktyg=lambda: self.kartverktyg)
 
     def _demo_moduler(self) -> set[str]:
         """Domäner (modulnamn) som är förkörda i demon, ur demons översikt och frågornas lösare."""
@@ -980,18 +1397,21 @@ class FlodenApiApp:
         return laddat
 
     def ladda_projektmodell(self, projekt_id: str) -> _K1Markmodell:
-        """Projektets egen markmodell (K1-mappen), cachad tills filen ändras.
+        """Projektets egen markmodell (en eller flera K1-rutor), cachad tills någon fil ändras.
 
         Oberoende av testsviten. Okänt projekt eller saknad markmodell ger 404; behörigheten
         kontrolleras av anroparen (`hantera_http`)."""
-        mapp = self.projekt.markmodell_mapp(projekt_id)
-        nyckel = (projekt_id, str(mapp), (mapp / "mark.tif").stat().st_mtime_ns)
+        rutor = self.projekt.markmodell_rutor(projekt_id)
+        nyckel: tuple[str, tuple[tuple[str, int], ...]] = (
+            projekt_id,
+            tuple((str(m), (m / "mark.tif").stat().st_mtime_ns) for m in rutor),
+        )
         with self._lock:
             cachad = self._projektmodell_cache.get(nyckel)
         if cachad is not None:
             return cachad
         try:
-            modell = _las_k1_markmodell(mapp, takvatten_mapp=mapp)
+            modell = _las_k1_markmodell_rutor(rutor)
         except (K1FormatFel, SankGrafFel, OSError) as exc:
             raise FlodenWebbFel(
                 f"Kunde inte ladda markmodellen för projektet '{projekt_id}': {exc}",
@@ -1235,7 +1655,7 @@ class FlodenApiApp:
             regn_intens = omrade.regn_intensitet_mm_h
         else:
             regn_tid_s = (0.0, 3600.0)
-            regn_intens = (referensregn_mm, 0.0)
+            regn_intens = (referensregn_mm, referensregn_mm)
 
         punkter = detektera_bifurkationer(
             omrade.bas_graf,
@@ -1319,24 +1739,13 @@ class FlodenApiApp:
                 raise FlodenWebbFel("Fältet 'svf_troskel' måste ligga i [0, 1].")
 
         omrade = self._ladda_analys_omrade(omrade_id)
-        mark_ra = np.asarray(omrade.mark_z, dtype=np.float64)
-        bygg_mask = np.asarray(omrade.markslag, dtype=np.uint8) == 2
-        giltig_mark = np.isfinite(mark_ra) & (~bygg_mask)
-        bas_z = float(np.median(mark_ra[giltig_mark])) if np.any(giltig_mark) else 0.0
-        mark_ren = np.where(np.isfinite(mark_ra) & (~bygg_mask), mark_ra, bas_z)
-        bygg_hojd = np.where(
-            bygg_mask & np.isfinite(mark_ra),
-            np.maximum(mark_ra - bas_z, 0.0),
-            0.0,
-        )
-        if np.any(bygg_mask) and float(np.max(bygg_hojd)) <= 0.0:
-            bygg_hojd = np.where(bygg_mask, 10.0, 0.0)
+        mark_ren_m, bygg_hojd_m, bygg_mask = _extrakt_svf_terrang_och_byggnader(omrade)
 
         cell_m = float(omrade.geo.pixelstorlek_x)
         try:
             svf_iv = kor_monoton_svf_intervall(
-                mark_ren,
-                bygg_hojd,
+                mark_ren_m,
+                bygg_hojd_m,
                 osakerhet_m,
                 cell_m=cell_m,
                 x_min_m=float(omrade.geo.x_min),
@@ -1344,7 +1753,7 @@ class FlodenApiApp:
                 antal_riktningar=antal_riktningar_raw,
                 svf_troskel=svf_troskel,
             )
-            mitt_rad = (mark_ren + bygg_hojd)[mark_ren.shape[0] // 2, :]
+            mitt_rad = (mark_ren_m + bygg_hojd_m)[mark_ren_m.shape[0] // 2, :]
             horisont_ost = horisont_1d_konvext_holje(mitt_rad, cell_m, riktning=1)
         except HorisontFel as exc:
             raise FlodenWebbFel(f"Dagsljusintervallfel: {exc}", status_kod=400) from exc
@@ -1427,12 +1836,23 @@ class FlodenApiApp:
         if "cellstorlek_m" in payload or over.get("artprofil") is not None:
             over["cellstorlek_m"] = cell_m
         over["max_flackar"] = max_flackar
+        kalla = self.kartverktyg.kalla(omrade_id)
         try:
-            k = self.kartverktyg.kor_ekologi(
-                omrade_id,
-                scenario.strip() if isinstance(scenario, str) else None,
-                over,
-            )
+            if "ekologi" in kalla.mallar:
+                k = self.kartverktyg.kor_ekologi(
+                    omrade_id,
+                    scenario.strip() if isinstance(scenario, str) else None,
+                    over,
+                )
+            else:
+                k = self._kor_ekologi_geografi(
+                    kalla,
+                    scenario=scenario.strip() if isinstance(scenario, str) else None,
+                    over=over,
+                    cell_m=cell_m,
+                    max_flackar=max_flackar,
+                    extra_varning=extra_varning,
+                )
         except FlodenWebbFel as exc:
             if exc.status_kod == 500 and "LosarFel" in str(exc):
                 raise FlodenWebbFel(str(exc), status_kod=400) from exc
@@ -1448,6 +1868,249 @@ class FlodenApiApp:
             max_flackar=max_flackar,
             extra_varningar=extra_varning,
         )
+
+    def _kor_ekologi_geografi(
+        self,
+        kalla: Projektkalla,
+        *,
+        scenario: str | None,
+        over: Mapping[str, Any],
+        cell_m: float,
+        max_flackar: int,
+        extra_varning: list[str],
+    ) -> dict[str, Any]:
+        """Kör ekologisk konnektivitet (K45) synkront för ett projekt i en geografi.
+
+        Använder projektets K1-bas (`vatten` om den finns, annars första mallen) och geografins
+        NMD-lager (`indata.geografi`) när det finns; annars artprofil direkt på K1-markslag.
+        """
+        import hashlib
+
+        from ekologi import kommunforval
+        from geografi.modell import (
+            MANIFEST_NAMN,
+            GeografiFel,
+            las_manifest,
+            tolka_ref,
+            versionsmapp,
+        )
+        from karna import ritlager as ritl
+        from karna.geometri import las_byggnader
+        from karna.scenario import Andring, Planscenario, ScenarioFel, skriv_scenario
+
+        mall = kalla.mallar.get("vatten") or next(iter(kalla.mallar.values()), None)
+        if mall is None:
+            raise FlodenWebbFel(
+                f"Projektet '{kalla.id}' saknar K1-bas för ekologianalys.", status_kod=404
+            )
+
+        manifest_fil: Path | None = None
+        har_nmd = False
+        kommun_id: str | None = None
+        if kalla.geografi:
+            try:
+                gid, gver = tolka_ref(kalla.geografi)
+                manifest, _ = las_manifest(self.geomapp, kalla.geografi, verifiera=False)
+                manifest_fil = versionsmapp(self.geomapp, gid, gver) / MANIFEST_NAMN
+                lager_map = manifest.get("lager")
+                har_nmd = isinstance(lager_map, Mapping) and "nmd" in lager_map
+                raw_k = manifest.get("kommun")
+                if isinstance(raw_k, str) and raw_k.strip():
+                    kommun_id = raw_k.strip()
+            except GeografiFel:
+                manifest_fil = None
+
+        par: dict[str, Any] = {"max_flackar": int(max_flackar)}
+        indata_filer: dict[str, Path] = {}
+        if over.get("artprofil") is not None:
+            par["artprofil"] = str(over["artprofil"])
+            par["cellstorlek_m"] = float(cell_m)
+        elif over.get("natverk") is not None:
+            if not har_nmd or manifest_fil is None:
+                raise FlodenWebbFel(
+                    f"Geografin '{kalla.geografi}' saknar NMD-lager (lager.nmd) för nätverket "
+                    f"'{over['natverk']}'. Mappa geografin med --nmd eller ange 'artprofil'.",
+                    status_kod=400,
+                )
+            par["natverk"] = str(over["natverk"])
+            if "cellstorlek_m" in over:
+                par["cellstorlek_m"] = float(over["cellstorlek_m"])
+            indata_filer["geografi"] = manifest_fil
+        elif har_nmd and manifest_fil is not None:
+            forval = kommunforval().get(kommun_id or "")
+            default_nv = (
+                forval.forval_server[0] if forval and forval.forval_server else "barrskog-nacka"
+            )
+            par["natverk"] = default_nv
+            if "cellstorlek_m" in over:
+                par["cellstorlek_m"] = float(over["cellstorlek_m"])
+            indata_filer["geografi"] = manifest_fil
+        else:
+            par["artprofil"] = "pollinerare"
+            par["cellstorlek_m"] = float(cell_m)
+            extra_varning.append(
+                "Geografin saknar NMD-lager; kör med föråldrad artprofil 'pollinerare' på "
+                "K1-markslag (skiss utan källor)."
+            )
+
+        k9_fil: Path | None = None
+        scen_nyckel = "nulage"
+        efter_namn = "efter"
+
+        def _las_projekt_scenarier() -> list[dict[str, Any]]:
+            if kalla.mapp is None:
+                return []
+            sfil = kalla.mapp / "scenarier.json"
+            if not sfil.is_file():
+                return []
+            try:
+                raw = json.loads(sfil.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return []
+            lista = raw.get("scenarier") if isinstance(raw, Mapping) else None
+            return [s for s in lista if isinstance(s, dict)] if isinstance(lista, list) else []
+
+        if scenario is not None:
+            if self.kartverktyg.finns_scenario(kalla.id, scenario):
+                sc_dok = self.kartverktyg.hamta_scenario(kalla.id, scenario)
+                recept = tuple(
+                    sha256_fil(r.mapp / "recept.json")
+                    for r in mall.rutor
+                    if (r.mapp / "recept.json").is_file()
+                )
+                if not recept:
+                    raise FlodenWebbFel(f"Basen {mall.bas} saknar recept.json.", status_kod=422)
+                ids = {b.byggnad_id for r in mall.rutor for b in las_byggnader(r.mapp)}
+                med: list[Andring] = []
+                for a in sc_dok.get("andringar", []):
+                    if a.get("typ") in ("byggnad_hojd", "byggnad_bort"):
+                        bid = str((a.get("egenskaper") or {}).get("byggnads_id", ""))
+                        if bid not in ids:
+                            continue
+                    try:
+                        med.append(Andring.fran_dict(a))
+                    except ScenarioFel as exc:
+                        raise FlodenWebbFel(str(exc), status_kod=400) from exc
+                sc_obj = Planscenario(
+                    scenario,
+                    recept,
+                    tuple(med),
+                    beskrivning=f"Ritat i kartan: {sc_dok.get('namn', scenario)}",
+                )
+                stangt = ritl.har_stangt_innehall(sc_dok.get("ritlager"), kalla.oppen)
+                k9_sub = "k9_stangda" if stangt else "k9"
+                k9_mapp = self.kartverktyg.mapp / kalla.id / k9_sub
+                k9_mapp.mkdir(parents=True, exist_ok=True)
+                if stangt:
+                    (k9_mapp / "oppenhet.toml").write_text(
+                        'kontrakt = "floden-oppenhet/v1"\noppen = false\n'
+                        'kalla = "Förslag med objekt i ett stängt ritlager (K50)"\n',
+                        encoding="utf-8",
+                    )
+                k9_fil = k9_mapp / f"{scenario}__ekologi.json"
+                skriv_scenario(sc_obj, k9_fil)
+                scen_nyckel = sc_obj.nyckel
+                efter_namn = "ritat"
+            else:
+                traff = next(
+                    (s for s in _las_projekt_scenarier() if s.get("slug") == scenario), None
+                )
+                rel_k9 = traff.get("k9_vatten") if isinstance(traff, Mapping) else None
+                if (
+                    kalla.mapp is not None
+                    and isinstance(rel_k9, str)
+                    and (kalla.mapp / rel_k9).is_file()
+                ):
+                    k9_fil = kalla.mapp / rel_k9
+                    scen_nyckel = sha256_fil(k9_fil)
+                else:
+                    raise FlodenWebbFel(
+                        f"Det finns inget sparat scenario '{scenario}'.", status_kod=404
+                    )
+        else:
+            for post in reversed(_las_projekt_scenarier()):
+                rel_k9 = post.get("k9_vatten")
+                if (
+                    kalla.mapp is not None
+                    and isinstance(rel_k9, str)
+                    and (kalla.mapp / rel_k9).is_file()
+                ):
+                    k9_fil = kalla.mapp / rel_k9
+                    scen_nyckel = sha256_fil(k9_fil)
+                    break
+            if k9_fil is None:
+                extra_varning.append(
+                    "Projektet har inget sparat förslag/scenario; före och efter visar nuläget "
+                    "(ΔECA = 0)."
+                )
+
+        fragedir = kalla.fragedir or self.kartverktyg.fragedir
+        fragedir.mkdir(parents=True, exist_ok=True)
+        tag = hashlib.sha256(
+            json.dumps(
+                {"p": par, "s": scen_nyckel, "k": kalla.id, "i": sorted(indata_filer)},
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()[:10]
+        infix = (kalla.fraga_infix or "projekt").lower()[:24]
+        fraga_id = f"api-ekologi-{infix}-{tag}"
+        fil = fragedir / f"{fraga_id}.json"
+        fil_mapp = fil.parent.resolve()
+        rel_bas = Path(os.path.relpath(mall.bas.resolve(), fil_mapp)).as_posix()
+        scenarier_k20: dict[str, Any] = {
+            "fore": {"bas": rel_bas},
+            efter_namn: {"bas": rel_bas},
+        }
+        if k9_fil is not None:
+            scenarier_k20[efter_namn]["k9"] = [
+                Path(os.path.relpath(k9_fil.resolve(), fil_mapp)).as_posix()
+            ]
+        analys_post: dict[str, Any] = {
+            "id": "konnektivitet",
+            "losare": "ekologi.konnektivitet",
+            "scenarier": ["fore", efter_namn],
+            "parametrar": par,
+        }
+        if indata_filer:
+            analys_post["indata"] = {
+                roll: Path(os.path.relpath(p_fil.resolve(), fil_mapp)).as_posix()
+                for roll, p_fil in indata_filer.items()
+            }
+        innehall = {
+            "kontrakt": "K20/v1",
+            "fraga_id": fraga_id,
+            "beskrivning": f"Ekologisk konnektivitet (skiss) för projekt '{kalla.namn}'.",
+            "scenarier": scenarier_k20,
+            "analyser": [analys_post],
+            "jamforelser": [
+                {
+                    "analys": "konnektivitet",
+                    "utdata": "stromtathet",
+                    "fore": "fore",
+                    "efter": efter_namn,
+                    "troskel": 0.01,
+                },
+                {
+                    "analys": "konnektivitet",
+                    "utdata": "kansighet",
+                    "fore": "fore",
+                    "efter": efter_namn,
+                    "troskel": 0.01,
+                },
+            ],
+        }
+        fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        ref = next(
+            (r for r, f in self.fragor._fragefiler().items() if f.resolve() == fil.resolve()),
+            None,
+        )
+        if ref is None:
+            raise FlodenWebbFel(
+                "Den skapade ekologifrågan hittades inte i frågemapparna.", status_kod=500
+            )
+        korning_id = f"api-ekologi-{tag}"
+        status, _ = self.fragor.kor_synkront(ref, korning_id, kalla.id)
+        return {"korning_id": korning_id, "status": status, "analys": "konnektivitet", "ref": ref}
 
     def ekologi_natverk_lista(self) -> dict[str, Any]:
         """Svar för `GET /api/ekologi/natverk`: habitatnätverken (K47) och kommunernas förval."""
@@ -3305,6 +3968,24 @@ class FlodenApiApp:
                 403, {"fel": "Provsidorna är bara för superadmin.", "status": 403}
             )
             return status, list(headers.items()), kropp
+        # Legacy `POST /api/rapport` (testsvitsexport) kräver superadmin när inloggning är aktiv;
+        # projektrapporter skapas via `POST /api/projekt/<id>/rapporter` (kräver utredare).
+        if (
+            self.konto.aktiv
+            and verb == "POST"
+            and (req.sokvag.rstrip("/") or "/") == "/api/rapport"
+            and (kontroll.inloggad is None or not kontroll.inloggad.superadmin)
+        ):
+            return _utan_cors(
+                _json_svar(
+                    403,
+                    {
+                        "fel": "Legacy /api/rapport är bara för superadmin när inloggning är på "
+                        "(använd /api/projekt/<id>/rapporter).",
+                        "status": 403,
+                    },
+                )
+            )
         nytt = self._hantera_skapa_projekt(verb, req.sokvag, kontroll, las_kropp)
         if nytt is not None:
             return nytt
@@ -3388,7 +4069,8 @@ class FlodenApiApp:
                     )
         analys_projekt = self._projekt_for_analys(verb, req.sokvag, kropp_in)
         if analys_projekt is not None and self.konto.aktiv:
-            if (req.sokvag.rstrip("/") or "/") in BERAKNINGS_SOKVAGAR:
+            ren_analys = req.sokvag.rstrip("/") or "/"
+            if ren_analys in BERAKNINGS_SOKVAGAR:
                 # Beräkningarna (`/api/kor|risk|rutt`) sparar inget: läsare räcker. Saknad roll
                 # ger 404, som för körningar: ett projekt-id får inte gå att pröva sig fram till.
                 konto_id = kontroll.inloggad.konto_id if kontroll.inloggad is not None else None
@@ -3397,8 +4079,12 @@ class FlodenApiApp:
                         _json_svar(404, {"fel": f"Okänt område '{analys_projekt}'.", "status": 404})
                     )
             else:
-                # Som projektets övriga API: en uttrycklig projektroll krävs, inte bara inloggning.
-                kontroll = self.konto.kraver_projektbehorighet(req, analys_projekt, minst="lasare")
+                # Ekologianalysen skriver K20-frågor och kör synkront -> kräver skrivroll
+                # (`utredare`+). Övriga projektanalyser sparar inget -> `lasare` räcker.
+                minst_roll = "utredare" if ren_analys == "/api/analys/ekologi" else "lasare"
+                kontroll = self.konto.kraver_projektbehorighet(
+                    req, analys_projekt, minst=minst_roll
+                )
                 if not kontroll.tillaten:
                     assert kontroll.svar is not None
                     return kontroll.svar

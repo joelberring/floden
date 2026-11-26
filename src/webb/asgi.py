@@ -167,9 +167,44 @@ class FlodenAsgiApp:
             self._semafor_per_loop[nyckel] = sem
         return sem
 
+    _TUNGA_EXAKTA: frozenset[str] = frozenset(
+        {"/api/kor", "/api/risk", "/api/rapport", "/api/rutt"}
+    )
+
     @staticmethod
     def _ar_tung_berakning(metod: str, sokvag: str) -> bool:
-        return metod == "POST" and sokvag.startswith("/api/")
+        """Avgör om en HTTP-förfrågan är en tung beräknings- eller rapport-POST.
+
+        Snabba UI-POST:er (t.ex. `validera`, `sektion`, spara/döp om/ta bort scenario,
+        `plan`, WMS-lager, projektinställningar) hålls utanför semaforen så att de inte
+        svälts ut av samtidiga tunga beräkningar.
+        """
+        if metod != "POST":
+            return False
+        ren = sokvag.rstrip("/") or "/"
+        if ren in FlodenAsgiApp._TUNGA_EXAKTA or ren.startswith("/api/analys/"):
+            return True
+        delar = [d for d in ren.split("/") if d]
+        # POST /api/projekt/<id>/rapporter
+        if len(delar) == 4 and delar[:2] == ["api", "projekt"] and delar[3] == "rapporter":
+            return True
+        # POST /api/fragor/<ref>/kor
+        if len(delar) == 4 and delar[:2] == ["api", "fragor"] and delar[3] == "kor":
+            return True
+        # POST /api/kartverktyg/<projekt>/lage-idag/kor
+        if (
+            len(delar) == 5
+            and delar[:2] == ["api", "kartverktyg"]
+            and delar[3:] == ["lage-idag", "kor"]
+        ):
+            return True
+        # POST /api/kartverktyg/<projekt>/scenarier/<slug>/kor
+        return (
+            len(delar) == 6
+            and delar[:2] == ["api", "kartverktyg"]
+            and delar[3] == "scenarier"
+            and delar[5] == "kor"
+        )
 
     async def _las_kropp(
         self,

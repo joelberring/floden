@@ -16,13 +16,17 @@ om vad som ändrats i kvarteret kommer ur K9-scenariofilerna (`beskrivning`).
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from demovarld.fragor import FRAGA_DAGSLJUS, FRAGA_EKOLOGI, FRAGA_VATTEN
 from webb.fel import FlodenWebbFel
 from webb.fragor import FragaTjanst
 from webb.moduler import visningsnamn
+
+if TYPE_CHECKING:
+    from webb.kartverktyg import KartverktygTjanst
 
 PROJEKT_ID = "demokvarteret"
 NAMN = "Demokvarteret"
@@ -68,12 +72,22 @@ def _vattenantaganden(res: dict[str, Any]) -> list[str]:
     return ut
 
 class ProjektTjanst:
-    """Demokvarteret som projekt, byggt på frågetjänstens körningar."""
+    """Demokvarteret som projekt och uppslag av markmodell för geografiprojekt."""
 
-    def __init__(self, fragor: FragaTjanst) -> None:
+    def __init__(
+        self,
+        fragor: FragaTjanst,
+        kartverktyg: KartverktygTjanst | Callable[[], KartverktygTjanst] | None = None,
+    ) -> None:
         self.fragor = fragor
+        self._kartverktyg = kartverktyg
 
     # ------------------------------------------------------------------ hjälp
+
+    def _kv(self) -> KartverktygTjanst | None:
+        if callable(self._kartverktyg):
+            return self._kartverktyg()
+        return self._kartverktyg
 
     def _demo_delar(self) -> dict[str, dict[str, Any]]:
         d = self.fragor.demo()
@@ -92,31 +106,71 @@ class ProjektTjanst:
         except FlodenWebbFel:
             return False
 
-    @staticmethod
-    def ar_projekt(projekt_id: str) -> bool:
-        """Är `projekt_id` ett projekt som projektsidan känner till (byggt eller inte)?"""
-        return projekt_id == PROJEKT_ID
+    def ar_projekt(self, projekt_id: str) -> bool:
+        """Är `projekt_id` ett känt projekt (demokvarteret eller ett geografiprojekt)?"""
+        if projekt_id == PROJEKT_ID:
+            return True
+        kv = self._kv()
+        if kv is None:
+            return False
+        return kv.projektmapp(projekt_id) is not None
+
+    def markmodell_rutor(self, projekt_id: str) -> tuple[Path, ...]:
+        """Projektets K1-rutor (en eller flera mappar med `mark.tif`).
+
+        Demokvarteret: vattenrutan (fokusområdet), samma K1-ruta som vattenlösaren räknar på.
+        Inget krav på att demokörningarna är klara; bara markmodellen behövs.
+        Geografiprojekt: löses upp via `kartverktyg.kalla(projekt_id)` (alla giltiga K1-rutor
+        i vattenmallen, eller första mallen om vatten saknas).
+        Okänt projekt eller ingen byggd markmodell ger 404."""
+        if projekt_id == PROJEKT_ID:
+            rot = self.fragor.demomapp
+            rutor = (
+                sorted(
+                    p for p in (rot / "vatten" / "bas").glob("mm_*") if (p / "mark.tif").is_file()
+                )
+                if rot is not None
+                else []
+            )
+            if len(rutor) != 1:
+                raise FlodenWebbFel(
+                    f"Projektet '{projekt_id}' har ingen byggd markmodell. "
+                    "Bygg den med: floden demo",
+                    status_kod=404,
+                )
+            return (rutor[0],)
+        kv = self._kv()
+        if kv is None:
+            raise FlodenWebbFel(f"Okänt projekt '{projekt_id}'.", status_kod=404)
+        kalla = kv.kalla(projekt_id)
+        mall = kalla.mallar.get("vatten") or next(iter(kalla.mallar.values()), None)
+        geo_rutor = (
+            tuple(r.mapp for r in mall.rutor if (r.mapp / "mark.tif").is_file())
+            if mall is not None
+            else ()
+        )
+        if not geo_rutor:
+            raise FlodenWebbFel(
+                f"Projektet '{projekt_id}' har ingen byggd markmodell (K1-ruta saknas).",
+                status_kod=404,
+            )
+        return geo_rutor
 
     def markmodell_mapp(self, projekt_id: str) -> Path:
         """Projektets K1-mapp (en ruta med `mark.tif`, `markslag.tif`, `byggnader.gpkg` ...).
 
         Demokvarteret: vattenrutan (fokusområdet), samma K1-ruta som vattenlösaren räknar på.
-        Inget krav på att demokörningarna är klara; bara markmodellen behövs. Okänt projekt eller
-        ingen byggd markmodell ger 404."""
-        if not self.ar_projekt(projekt_id):
-            raise FlodenWebbFel(f"Okänt projekt '{projekt_id}'.", status_kod=404)
-        rot = self.fragor.demomapp
-        rutor = (
-            sorted(p for p in (rot / "vatten" / "bas").glob("mm_*") if (p / "mark.tif").is_file())
-            if rot is not None
-            else []
+        Inget krav på att demokörningarna är klara; bara markmodellen behövs.
+        Geografiprojekt: löses upp via `kartverktyg.kalla(projekt_id)` (vattenmallens K1-ruta).
+        Okänt projekt eller ingen byggd markmodell ger 404; flera rutor ger 422."""
+        rutor = self.markmodell_rutor(projekt_id)
+        if len(rutor) == 1:
+            return rutor[0]
+        raise FlodenWebbFel(
+            f"Projektet '{projekt_id}' har {len(rutor)} K1-rutor utan enkel vattenruta; "
+            "kan inte ladda en enskild markmodellruta.",
+            status_kod=422,
         )
-        if len(rutor) != 1:
-            raise FlodenWebbFel(
-                f"Projektet '{projekt_id}' har ingen byggd markmodell. Bygg den med: floden demo",
-                status_kod=404,
-            )
-        return rutor[0]
 
     def finns(self) -> bool:
         delar = self._demo_delar()
