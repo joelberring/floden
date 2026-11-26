@@ -2,6 +2,22 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-26 – Pass 3-översyn & Våg 1 (av 5) – 1D/2D-rännstenstopologi, K21-lapp, MCP K38-säkerhet, S3-härdning & snabbare CI (PR #147–#150)
+
+Gjort: Genomfört en ny fullständig kodgranskning (Pass 3 på `f46af5e`: 3 parallella granskare identifierade 27 verifierade buggar `K-B1..K-B10`, `W-B1..W-B9`, `D-B1..D-B8`) och slutfört **Våg 1 av 5** i fyra konfliktfria PR:er (0 % filöverlapp, 47 unika filer), oberoende granskade och sammanslagna på `main` (`fb8a75b`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `nord2000_konform`, `metodstatus` och `kansighet` lämnades orörda:
+- **PR #149 (`791c5d6`, `v1/tvad-rannsten-k21-lapp`) — K-B1, K-B2, K-B3, K-B4, K-B7:** Införde kedjegränser (`kedje_id`) och utlopp per kedjeände i 1D-rännstenen (`src/tvad/rannsten_1d.py`) så skilda kantstenar aldrig teleporterar vatten, eliminerade tyst `zb = 0,0`, bevarade per-nod `z_botten_rh2000` genom GPKG (`k1_skrivare.py`, `typer.py`), lade till 2D-randpost i `volymbalans()` + initialt `max_djup` + f32-varning (`lokal_troghet.py`), lagade uppströms HAV-tapp vid marksänkning/rivning i K21 inkrementell sänkgraf (`lokal_omrakning.py`), flerruts `magasin`/`gata` (`tillampa.py`) samt `equal_nan=True` i K1 v2-rutcache (`karna/geometri/tillampa.py`).
+- **PR #150 (`fb8a75b`, `v1/mcp-sakerhet-och-radering`) — W-B1 (MCP), W-B2, W-B9 (radering):** Täppte K38-dataskyddsläcka på `floden://rapport/{id}` i `resources/read` (både för- och efterkontroll av `contents[].text`), lade `rapport_kontrollera` i `SKRIVVERKTYG`, lät `karta_bild` och `korplan`/`kor` (via `explicit_projekt_var`) härleda verkligt ägarprojekt/dataklass, täppte MCP cross-tenant IDOR på projektfrågor, samt utökade `projektinstallningar.py` till full projektradering inkl. `kartverktyg/k9_stangda`, rapportjobb och minnescacher med path-containment.
+- **PR #147 (`430dd4f`, `v1/s3-lagring-lru-och-batch`) — D-B2 (S3/LRU), D-B3, D-B8 (Colab):** `S3Lagring.radera_prefix` kontrollerar nu `svar.get("Errors")` (kastar `ObjektLagringFel`, inga tysta delfel), explicita `BotocoreConfig`-timeouts/retries (10 s / 60 s / 3 försök), `RLock` + TTL + felfast snabbväg i `ForberaknadKommunLager`, `.floden_*`-filter i `stada_lokal_cache`, S3 `batch_nyckel`-verifiering vid återstart i `batch.py`, samt `--lagring s3`/`--kommun`/`--upplosning-m` i `scripts/colab_forberakna.py`.
+- **PR #148 (`f5e2272`, `v1/ci-demo-session-och-fladder`) — D-B7 + fladdriga tidstester:** Delad fillåst `session`-demomall i `tests/demovarld/test_demo.py` och `conftest.py` (1× bygge per session), deterministisk K21-horisonttest (91,3 % cell-/strålreduktion), `FLODEN_TIDSFAKTOR` i 10 hårdkodade väggklocketester + `Event`-synk i ASGI-tester, `timeout-minutes: 20` i `ci.yml`, pinnad `boto3==1.44.12` + `uvicorn==0.54.0` i `[dev]`.
+
+Mätt:
+- **GitHub CI:** **11/11 gröna** på samtliga fyra PR:er (#147–#150) + **`Avbildning/build` grön** på #148. Uppmätt CI-uppsnabbning från #148: `tester-utan-rust (webb)` **6m58s → 4m17s** (−2m41s), `rapport-och-mcp` **3m32s → 1m50s** (−1m42s).
+- **4-vägs sammanslagning på `main` (`47` unika filer, 0 % överlapp):** `ruff` 0 fel, `mypy --platform linux src` 0 fel (380 filer), `floden testsvit` **18/18 GODKÄNDA** (0,0000 % volymfel; A5b 0°/20°/45° `t = 63,7/64,7/66,0 s`, `h = 0,071 m`; EA1 `MAE = 0,0053 m`, EA2 `IoU = 0,850`, EA8A `IoU = 0,930`), riktad Våg 1 + P0 + `test_paketgranser.py` **203 passed, 1 skipped, 0 failed** (PR #149 `pytest` 491 passed, PR #147 144 passed, PR #148 92 passed, PR #150 37 passed).
+- **Fysik-/säkerhetsverifiering:** 2 skilda kantstenar över 8 m vägg ger exakt **0,0 m** läckage; K21 HAV-sänkning ger **0 felklassade celler** (`< 1e-6 m`); 2D `volymbalans()` `< 1e-10` vid fast `vattenniva_rh2000_m`; K38-stängd rapport blockeras i `floden://rapport/*`.
+
+Öppet: Återstående 4 utvecklingsvågor ur Pass 3 (Våg 2 webb-API/samtidighet + Steg 3 Ekologi/Luft + luftkedja; Våg 3 U7 planering + S4 backup + Dagsljus P1 + U5b/e/g; Våg 4 vattenytor/batch-parallellitet + U5c/d/CAD; Våg 5 Pass 4-granskning + `PLAN.md`/`DRIFT.md`-synk).
+Nästa: Starta Våg 2 omedelbart.
+
 ## 2026-11-26 – Uppdrag 9–11 (P0) – Alla 14 verifierade P0-buggar B1–B14 åtgärdade och sammanslagna på `main` (PR #143–#146)
 
 Gjort: Åtgärdat samtliga 14 verifierade P0-buggar (`B1–B14`) från kodgranskningen 2026-11-26 i fyra konfliktfria PR:er (0 % filöverlapp, 41 unika filer), oberoende granskade och sammanslagna på `main` (`0ac18e7`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md` och frysta stavningen `kansighet` (K45/v1) lämnades orörda:
