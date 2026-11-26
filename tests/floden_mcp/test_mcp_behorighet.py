@@ -116,6 +116,6 @@ def test_verktygsklassningen_ar_fullstandig(demo: Demo, miljo: Miljo, tmp_path: 
     alla = anyio.run(namn)
     assert alla >= SKRIVVERKTYG and alla >= UTAN_ROLLKRAV
     assert not (SKRIVVERKTYG & UTAN_ROLLKRAV)
-    skrivande_ord = ("skapa", "kor", "lagg_till", "exportera", "installningar")
+    skrivande_ord = ("skapa", "kor", "lagg_till", "kontrollera", "exportera", "installningar")
     for v in alla - SKRIVVERKTYG - UTAN_ROLLKRAV:
         assert not any(o == v or v.endswith("_" + o) for o in skrivande_ord), f"{v} verkar skriva"

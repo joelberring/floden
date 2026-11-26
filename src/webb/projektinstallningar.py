@@ -21,6 +21,7 @@ redan är borta är inget fel).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -48,17 +49,43 @@ _FEL_RATT = "Du har inte rätt att göra det här i projektet."
 def _ta_bort_mapp(rot: Path, mapp: Path) -> bool:
     """Tar bort `mapp` om den är en egen mapp direkt under `rot` (aldrig `rot` själv, aldrig något utanför).
     En symbolisk länk tas bort som länk; det den pekar på rörs inte. Ger om något fanns att ta bort."""
+    ren_rot = rot.resolve()
     if mapp.is_symlink():
+        if mapp.parent.resolve() != ren_rot or mapp.name in ("", ".", ".."):
+            raise FlodenWebbFel(
+                "Raderingen avbröts: en sökväg låg utanför projektets egna mappar.", status_kod=500
+            )
         mapp.unlink()
         return True
     if not mapp.exists():
         return False
     ren = mapp.resolve()
-    if ren.parent != rot.resolve() or ren == rot.resolve():
+    if ren.parent != ren_rot or ren == ren_rot:
         raise FlodenWebbFel(
             "Raderingen avbröts: en sökväg låg utanför projektets egna mappar.", status_kod=500
         )
     shutil.rmtree(ren)
+    return True
+
+
+def _ta_bort_fil(rot: Path, fil: Path) -> bool:
+    """Tar bort `fil` om den är en fil direkt under `rot` (aldrig något utanför)."""
+    ren_rot = rot.resolve()
+    if fil.is_symlink():
+        if fil.parent.resolve() != ren_rot or fil.name in ("", ".", ".."):
+            raise FlodenWebbFel(
+                "Raderingen avbröts: en sökväg låg utanför projektets egna mappar.", status_kod=500
+            )
+        fil.unlink()
+        return True
+    if not fil.exists():
+        return False
+    ren = fil.resolve()
+    if ren.parent != ren_rot or not ren.is_file():
+        raise FlodenWebbFel(
+            "Raderingen avbröts: en sökväg låg utanför projektets egna mappar.", status_kod=500
+        )
+    ren.unlink()
     return True
 
 
@@ -144,6 +171,81 @@ class ProjektInstallningarTjanst:
 
     # ------------------------------------------------------------------ radera
 
+    def _har_pagaende_rapportjobb(self, pid: str) -> bool:
+        """Finns det ett aktivt rapportjobb i minnet för projektet?"""
+        rj = getattr(self.app, "_rapportjobb", None)
+        if rj is None:
+            return False
+        aktiva = getattr(rj, "_aktiva", None)
+        las = getattr(rj, "_las", None)
+        if not aktiva or not callable(las):
+            return False
+        rj_lock = getattr(rj, "_lock", None)
+        ctx = rj_lock if rj_lock is not None else contextlib.nullcontext()
+        with ctx:
+            for jid in list(aktiva):
+                post = las(jid)
+                if (
+                    isinstance(post, Mapping)
+                    and post.get("projekt") == pid
+                    and post.get("status") in ("ko", "kor")
+                ):
+                    return True
+        return False
+
+    def _rensa_projektcache(self, pid: str, korning_ids: Iterable[str]) -> int:
+        """Rensar projektets och dess körningars cacheposter i minnet (stöder valfria beroenden)."""
+        rensade = 0
+        kids = tuple(korning_ids)
+        modell_cache = getattr(self.app, "_projektmodell_cache", None)
+        if isinstance(modell_cache, dict):
+            app_lock = getattr(self.app, "_lock", None)
+            ctx = app_lock if app_lock is not None else contextlib.nullcontext()
+            with ctx:
+                nycklar = [
+                    k
+                    for k in list(modell_cache)
+                    if k == pid or (isinstance(k, tuple) and bool(k) and k[0] == pid)
+                ]
+                for nyckel in nycklar:
+                    modell_cache.pop(nyckel, None)
+                    rensade += 1
+        vy3d = getattr(self.app, "_vy3d", None)
+        if vy3d is not None:
+            vy_lock = getattr(vy3d, "_lock", None)
+            ctx = vy_lock if vy_lock is not None else contextlib.nullcontext()
+            with ctx:
+                terrang = getattr(vy3d, "_terrang_per_projekt", None)
+                if isinstance(terrang, dict) and pid in terrang:
+                    terrang.pop(pid, None)
+                    rensade += 1
+                spann = getattr(vy3d, "_spann", None)
+                if isinstance(spann, dict):
+                    prefix = f"{pid}|"
+                    for nyckel in [
+                        k
+                        for k in list(spann)
+                        if isinstance(k, str)
+                        and (
+                            k.startswith(prefix)
+                            or any(f"/{kid}/" in k or f"\\{kid}\\" in k for kid in kids)
+                        )
+                    ]:
+                        spann.pop(nyckel, None)
+                        rensade += 1
+                minne = getattr(vy3d, "_minne", None)
+                if isinstance(minne, dict) and minne:
+                    rensade += len(minne)
+                    minne.clear()
+        rj = getattr(self.app, "_rapportjobb", None)
+        rt = getattr(rj, "_rt", None) if rj is not None else None
+        rt_tjanst = getattr(rt, "tjanst", None) if rt is not None else None
+        byggnader = getattr(rt_tjanst, "_byggnader", None) if rt_tjanst is not None else None
+        if isinstance(byggnader, dict) and pid in byggnader:
+            byggnader.pop(pid, None)
+            rensade += 1
+        return rensade
+
     def radera(self, konto_id: str, projekt_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         """`POST /api/projekt/<id>/radera`. Fel är `FlodenWebbFel`: 400 fel eller saknad bekräftelse, 403 saknad
         rätt (också okänt projekt), 409 demokvarteret eller en pågående körning."""
@@ -168,26 +270,58 @@ class ProjektInstallningarTjanst:
                     "Projektet har en pågående körning. Vänta tills den är klar och försök igen.",
                     status_kod=409,
                 )
+            if self._har_pagaende_rapportjobb(pid):
+                raise FlodenWebbFel(
+                    "Projektet har ett pågående rapportjobb. Vänta tills det är klart och försök igen.",
+                    status_kod=409,
+                )
             borttaget = {"projektmapp": 0, "korningar": 0, "rapporter": 0, "bestallningar": 0}
+            korning_ids = [k.korning_id for k in korningar]
             korningsmapp = fragor.korningsmapp
             for k in korningar:
                 if _ta_bort_mapp(korningsmapp, k.mapp):
                     borttaget["korningar"] += 1
-            fragor.glom_korningar([k.korning_id for k in korningar])
+            fragor.glom_korningar(korning_ids)
             rapporter = Path(self.app.rapportmapp)
             for rapport in _poster_for_projekt(rapporter.glob("*/rapport.json"), pid):
                 if _ta_bort_mapp(rapporter, rapport.parent):
                     borttaget["rapporter"] += 1
-            for fil in _poster_for_projekt((rapporter / "bestallningar").glob("b-*.json"), pid):
-                fil.unlink()
-                borttaget["bestallningar"] += 1
+            bestallningsmapp = rapporter / "bestallningar"
+            if bestallningsmapp.is_dir():
+                for fil in _poster_for_projekt(bestallningsmapp.glob("b-*.json"), pid):
+                    if _ta_bort_fil(bestallningsmapp, fil):
+                        borttaget["bestallningar"] += 1
+            rj = getattr(self.app, "_rapportjobb", None)
+            jobbmapp = Path(getattr(rj, "mapp", None) or (rapporter / "jobb"))
+            borttagna_jobb = 0
+            if jobbmapp.is_dir():
+                for fil in _poster_for_projekt(jobbmapp.glob("*.json"), pid):
+                    if _ta_bort_fil(jobbmapp, fil):
+                        borttagna_jobb += 1
             mapp = hitta_projektmapp(self.app.projektmapp, pid, tillat_projektid=False)
             if mapp is not None and _ta_bort_mapp(self.app.projektmapp, mapp):
                 borttaget["projektmapp"] = 1
-            self.app.kartverktyg.glom_projekt(pid)
+            kv = getattr(self.app, "kartverktyg", None)
+            kv_borttagen = 0
+            if kv is not None:
+                kv_mapp = getattr(kv, "mapp", None)
+                if kv_mapp is not None and _ta_bort_mapp(Path(kv_mapp), Path(kv_mapp) / pid):
+                    kv_borttagen = 1
+                glom = getattr(kv, "glom_projekt", None)
+                if callable(glom):
+                    glom(pid)
+            rensad_cache = self._rensa_projektcache(pid, korning_ids)
             try:
                 register = reg.radera_projekt(konto_id, pid)
             except BehorighetFel as exc:  # kan inte hända efter kontrollen; aldrig ett tyst fel
                 raise FlodenWebbFel(_FEL_RATT, status_kod=403) from exc
-        _logg.info("projekt raderat konto=%s projekt=%s %s", konto_id, pid, borttaget)
+        _logg.info(
+            "projekt raderat konto=%s projekt=%s %s kartverktyg=%d rapportjobb=%d cache=%d",
+            konto_id,
+            pid,
+            borttaget,
+            kv_borttagen,
+            borttagna_jobb,
+            rensad_cache,
+        )
         return {"status": "raderat", "projekt_id": pid, "borttaget": {**borttaget, **register}}

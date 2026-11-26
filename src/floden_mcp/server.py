@@ -29,8 +29,9 @@ from typing import Annotated, Any
 
 from mcp.server.context import ServerRequestContext
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
-from mcp_types import CallToolResult, ImageContent, TextContent
+from mcp.server.mcpserver.exceptions import ResourceNotFoundError, ToolError
+from mcp.shared.exceptions import MCPError
+from mcp_types import INVALID_PARAMS, CallToolResult, ImageContent, TextContent
 from pydantic import Field
 
 from floden_mcp import MCP_VERSION
@@ -246,10 +247,11 @@ SKRIVVERKTYG = frozenset(
         "rapport_skapa",
         "rapport_installningar",
         "pastaende_lagg_till",
+        "rapport_kontrollera",
         "rapport_exportera",
     }
 )
-"""Verktyg som skriver (scenarier, frågor, körningar, rapporter, export): rollen utredare krävs.
+"""Verktyg som skriver (scenarier, frågor, körningar, rapporter, kontroll, export): rollen utredare krävs.
 Alla andra verktyg läser och kräver minst lasare. Verktyg utan `projekt`-argument (körningar,
 resultat, rapporter) gäller i dag bara demokvarteret och kräver rollen där."""
 
@@ -259,6 +261,12 @@ Behorighet = Callable[[str, str, str], bool]
 
 def _result_fel(text: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+
+
+def _neka_svar(method: str, text: str) -> CallToolResult:
+    if method == "resources/read":
+        raise MCPError(code=INVALID_PARAMS, message=text)
+    return _result_fel(text)
 
 
 def bygg_server(
@@ -302,28 +310,121 @@ def bygg_server(
     # Verktygets dataklass (alla öppna i R0) och om det gäller ett projekt.
     klasser: dict[str, DataKlass] = {}
     utan_projekt = {"session_deklarera", "korlogg_hamta", "metoder_lista", "projekt_skapa"}
+    explicit_projekt_var: ContextVar[bool] = ContextVar(
+        f"floden_mcp_explicit_projekt_{id(server)}", default=False
+    )
 
-    def _objekt_nekas(argument: Mapping[str, Any], vilket: str, konto: str | None, minst: str) -> str | None:
-        """Text om verktyget/resursen pekar på en rapport eller beställning i ett projekt som kontot inte har
-        rollen i (annars None). Samma text som för en som saknas."""
-        if behorighet is None:
-            return None
+    def _har_roll(konto_id: str, projekt_id: str, minst: str) -> bool:
+        if behorighet is not None:
+            return bool(behorighet(konto_id, projekt_id, minst))
+        return bool(tjanst.app.konto.har_roll(konto_id, projekt_id, minst))
+
+    def _las_rapport(rid: str) -> Any | None:
+        """Läser en rapport ur arkivet (`rapporter.arkiv.las(rid)`), med reserv till `rapporter.hamta`."""
+        try:
+            return rapporter.arkiv.las(rid)
+        except Exception:  # noqa: BLE001 - reserv om tester stubbat `RapportTjanst.hamta`
+            with contextlib.suppress(Exception):
+                return rapporter.hamta(rid)
+        return None
+
+    def _korningar_i_rapport(r: Any) -> set[str]:
+        ut: set[str] = set()
+        for post in getattr(r, "korningar", ()) or ():
+            if isinstance(post, Mapping) and isinstance(post.get("korning_id"), str):
+                ut.add(post["korning_id"])
+            elif isinstance(post, str):
+                ut.add(post)
+        for karta in getattr(r, "kartor", ()) or ():
+            kid = getattr(karta, "korning_id", None)
+            if isinstance(kid, str):
+                ut.add(kid)
+        for p in getattr(r, "pastaenden", ()) or ():
+            for b in getattr(p, "belagg", ()) or ():
+                kid = getattr(b, "korning_id", None)
+                if isinstance(kid, str):
+                    ut.add(kid)
+        return ut
+
+    def _rapport_ids_for(argument: Mapping[str, Any], vilket: str) -> set[str]:
         rapport_ids: set[str] = set()
         _hitta_rapporter(argument, rapport_ids)
         if vilket.startswith("resurs:floden://rapport/"):
             rapport_ids.add(urllib.parse.unquote(vilket.rsplit("/", 1)[1]))
+        return rapport_ids
+
+    def _kontrollera_korning_oppenhet(kid: str) -> None:
+        oppenhet.kontrollera_korning(kid)
+        p_k = tjanst.app.projekt_for_korning(kid)
+        if p_k is not None:
+            pm_k = tjanst.projektmapp(p_k)
+            if pm_k is not None:
+                oppenhet.kontrollera_sokvag(pm_k)
+
+    def _kontrollera_rapport_oppenhet(rid: str, korningar_out: set[str]) -> None:
+        r = _las_rapport(rid)
+        if r is None:
+            return
+        pmapp = tjanst.projektmapp(str(r.projekt))
+        if pmapp is not None:
+            oppenhet.kontrollera_sokvag(pmapp)
+        kids = _korningar_i_rapport(r)
+        korningar_out.update(kids)
+        for kid in sorted(kids):
+            _kontrollera_korning_oppenhet(kid)
+
+    def _kontrollera_svar_oppenhet(
+        d: Mapping[str, Any], korningar_out: set[str], rapporter_out: set[str]
+    ) -> None:
+        sc = d.get("structuredContent") or d.get("structured_content")
+        _hitta_korningar(sc, korningar_out)
+        _hitta_rapporter(sc, rapporter_out)
+        projekt_i_svar: set[str] = set()
+        for post in d.get("contents") or []:
+            text = post.get("text") if isinstance(post, Mapping) else getattr(post, "text", None)
+            if not isinstance(text, str) or not text.lstrip().startswith(("{", "[")):
+                continue
+            try:
+                tolkad = json.loads(text)
+            except ValueError:
+                continue
+            _hitta_korningar(tolkad, korningar_out)
+            _hitta_rapporter(tolkad, rapporter_out)
+            if isinstance(tolkad, Mapping):
+                if isinstance(tolkad.get("projekt"), str):
+                    projekt_i_svar.add(tolkad["projekt"])
+                if isinstance(tolkad.get("korningar"), list):
+                    for item in tolkad["korningar"]:
+                        if isinstance(item, str):
+                            korningar_out.add(item)
+                        elif isinstance(item, Mapping) and isinstance(item.get("korning_id"), str):
+                            korningar_out.add(item["korning_id"])
+        for pid in sorted(projekt_i_svar):
+            pmapp = tjanst.projektmapp(pid)
+            if pmapp is not None:
+                oppenhet.kontrollera_sokvag(pmapp)
+        for rid in sorted(rapporter_out):
+            _kontrollera_rapport_oppenhet(rid, korningar_out)
+        for kid in sorted(korningar_out):
+            _kontrollera_korning_oppenhet(kid)
+
+    def _objekt_nekas(argument: Mapping[str, Any], vilket: str, konto: str | None, minst: str) -> str | None:
+        """Text om verktyget/resursen pekar på en rapport eller beställning i ett projekt som kontot inte har
+        rollen i (annars None). Samma text som för en som saknas."""
+        if behorighet is None and not tjanst.app.konto.aktiv:
+            return None
+        rapport_ids = _rapport_ids_for(argument, vilket)
         kontrollera: list[tuple[str, str, str]] = []
         for rid in sorted(rapport_ids):
-            try:
-                kontrollera.append((rid, "rapport", rapporter.hamta(rid).projekt))
-            except Exception:  # noqa: BLE001 - okänd rapport: verktyget svarar själv
-                continue
+            r = _las_rapport(rid)
+            if r is not None:
+                kontrollera.append((rid, "rapport", str(r.projekt)))
         bid = argument.get("bestallning_id")
         if isinstance(bid, str) and bid:
             with contextlib.suppress(Exception):  # okänd beställning: verktyget svarar själv
                 kontrollera.append((bid, "beställning", rapporter.bestallning_hamta(bid).projekt))
         for id_, slag, projekt_id in kontrollera:
-            if konto is None or not behorighet(konto, projekt_id, minst):
+            if konto is None or not _har_roll(konto, projekt_id, minst):
                 return f"Okänd {slag} '{id_}'."
         return None
 
@@ -356,8 +457,28 @@ def bygg_server(
                 except ExportStoppad as exc:
                     raise ToolError(f"{exc} {_FEL_PREFIX}export_stoppad") from exc
                 if isinstance(svar, dict):
-                    projekt = None if namn in utan_projekt else kwargs.get("projekt", PROJEKT_ID)
-                    return {"dataklass": klass_for_projekt(klass, projekt).value, **svar}
+                    if namn in utan_projekt:
+                        projekt_eff: str | None = None
+                    elif "projekt" in kwargs:
+                        projekt_eff = str(kwargs["projekt"])
+                    elif namn in ("korplan", "kor") and kwargs.get("fraga"):
+                        projekt_eff = tjanst.fraga_projekt(str(kwargs["fraga"])) or PROJEKT_ID
+                    elif kwargs.get("korning_id"):
+                        p_k = tjanst.app.projekt_for_korning(str(kwargs["korning_id"]))
+                        if p_k is not None and (
+                            namn == "karta_bild"
+                            or p_k in policy.projektklasser
+                            or tjanst.projekt_oppen(p_k) is not None
+                        ):
+                            projekt_eff = p_k
+                        else:
+                            projekt_eff = PROJEKT_ID
+                    elif kwargs.get("rapport_id"):
+                        r_obj = _las_rapport(str(kwargs["rapport_id"]))
+                        projekt_eff = str(r_obj.projekt) if r_obj is not None else PROJEKT_ID
+                    else:
+                        projekt_eff = PROJEKT_ID
+                    return {"dataklass": klass_for_projekt(klass, projekt_eff).value, **svar}
                 return svar
 
             server.tool(name=namn, description=beskrivning)(inre)
@@ -413,16 +534,62 @@ def bygg_server(
         klient = _klient(ctx)
         sid, konto, token_id = _http(ctx)
         token = tillstand.aktivera(sid, konto)
+        exp_token = explicit_projekt_var.set("projekt" in argument)
         try:
             modell = rensa_text(argument.pop("modell", None)) or tillstand.modell
             roll = rensa_text(argument.pop("roll", None)) or tillstand.roll
             projekt = argument.get("projekt", PROJEKT_ID)
             klass = klasser.get(vilket, DataKlass.OPPET)
-            effektiv = (
-                klass
-                if vilket in utan_projekt or ctx.method != "tools/call"
-                else klass_for_projekt(klass, str(projekt))
+            korningar: set[str] = set()
+            _hitta_korningar(argument, korningar)
+            rapporter_set = _rapport_ids_for(argument, vilket)
+            fraga_ref = (
+                str(argument["fraga"])
+                if ctx.method == "tools/call"
+                and vilket in ("korplan", "kor")
+                and isinstance(argument.get("fraga"), str)
+                and argument["fraga"]
+                else None
             )
+            fraga_fil = tjanst.fragefil_eller_none(fraga_ref) if fraga_ref is not None else None
+            fraga_agarprojekt = (
+                tjanst.fraga_projekt(fraga_ref, fraga_fil) if fraga_ref is not None else None
+            )
+            if ctx.method == "resources/read" and vilket.startswith("resurs:floden://rapport/"):
+                rid_res = urllib.parse.unquote(vilket.rsplit("/", 1)[1])
+                r_res = _las_rapport(rid_res)
+                effektiv = (
+                    klass_for_projekt(DataKlass.OPPET, str(r_res.projekt))
+                    if r_res is not None
+                    else DataKlass.OPPET
+                )
+            elif ctx.method != "tools/call" or vilket in utan_projekt:
+                effektiv = klass
+            else:
+                if fraga_ref is not None and fraga_agarprojekt is not None:
+                    effektiv_projekt = fraga_agarprojekt
+                elif "projekt" not in argument and rapporter_set:
+                    rapport_klasser = [
+                        klass_for_projekt(klass, str(r_obj.projekt))
+                        for rid in sorted(rapporter_set)
+                        if (r_obj := _las_rapport(rid)) is not None
+                    ]
+                    effektiv = hogsta(*rapport_klasser) if rapport_klasser else klass_for_projekt(klass, str(projekt))
+                    effektiv_projekt = ""
+                elif "projekt" not in argument and isinstance(argument.get("korning_id"), str):
+                    p_k = tjanst.app.projekt_for_korning(str(argument["korning_id"]))
+                    if p_k is not None and (
+                        vilket == "karta_bild"
+                        or p_k in policy.projektklasser
+                        or tjanst.projekt_oppen(p_k) is not None
+                    ):
+                        effektiv_projekt = p_k
+                    else:
+                        effektiv_projekt = str(projekt)
+                else:
+                    effektiv_projekt = str(projekt)
+                if effektiv_projekt:
+                    effektiv = klass_for_projekt(klass, effektiv_projekt)
             post: dict[str, Any] = {
                 "tid": nu(),
                 "session": tillstand.session_id,
@@ -436,12 +603,8 @@ def bygg_server(
                 "indata_hash": hash_av(argument),
                 "indata_nycklar": sorted(argument),
                 "dataklass": effektiv.value,
+                "rapport_id": rapporter_set,
             }
-            korningar: set[str] = set()
-            _hitta_korningar(argument, korningar)
-            rapporter_set: set[str] = set()
-            _hitta_rapporter(argument, rapporter_set)
-            post["rapport_id"] = rapporter_set
             if behorighet is not None and ctx.method == "tools/call" and vilket not in UTAN_ROLLKRAV:
                 minst = "utredare" if vilket in SKRIVVERKTYG else "lasare"
                 if konto is None:
@@ -451,20 +614,96 @@ def bygg_server(
                     )
                     _skriv(logg, post, "nekad_behorighet", korningar, "inget konto", None, t0)
                     return _result_fel(text)
-                if not behorighet(konto, str(projekt), minst):
+                if (
+                    fraga_ref is None
+                    and not (rapporter_set and "projekt" not in argument)
+                    and not behorighet(konto, str(projekt), minst)
+                ):
                     text = (
                         f"Nekad: kontot saknar rollen {minst} i projektet. Verktyget gäller "
                         "bara projekt där du har en roll."
                     )
                     _skriv(logg, post, "nekad_behorighet", korningar, f"saknar {minst}", None, t0)
                     return _result_fel(text)
-            if behorighet is not None and ctx.method in ("tools/call", "resources/read"):
+            if fraga_ref is not None and (behorighet is not None or tjanst.app.konto.aktiv):
+                minst = "utredare" if vilket == "kor" else "lasare"
+                if konto is None:
+                    text = (
+                        "Inloggning krävs: den här servern kräver ett konto. Anslut över HTTP med "
+                        "en personlig MCP-token eller via Claude-appens koppling (docs/KONTO.md)."
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, "inget konto", None, t0)
+                    return _result_fel(text)
+                if fraga_fil is None and fraga_agarprojekt is None:
+                    if "projekt" in argument and not _har_roll(konto, str(argument["projekt"]), minst):
+                        text = (
+                            f"Nekad: kontot saknar rollen {minst} i projektet. Verktyget gäller "
+                            "bara projekt där du har en roll."
+                        )
+                        _skriv(logg, post, "nekad_behorighet", korningar, f"saknar {minst}", None, t0)
+                        return _result_fel(text)
+                    text = f"Okänd fråga '{fraga_ref}'."
+                    _skriv(logg, post, "nekad_behorighet", korningar, "okänd fråga", None, t0)
+                    return _result_fel(text)
+                if fraga_agarprojekt is None:
+                    if not tjanst.app.konto.ar_superadmin(konto):
+                        text = f"Okänd fråga '{fraga_ref}'."
+                        _skriv(logg, post, "nekad_behorighet", korningar, "fråga utanför projekt", None, t0)
+                        return _result_fel(text)
+                    if "projekt" in argument and not _har_roll(konto, str(argument["projekt"]), minst):
+                        text = (
+                            f"Nekad: kontot saknar rollen {minst} i projektet. Verktyget gäller "
+                            "bara projekt där du har en roll."
+                        )
+                        _skriv(logg, post, "nekad_behorighet", korningar, f"saknar {minst}", None, t0)
+                        return _result_fel(text)
+                else:
+                    if not _har_roll(konto, fraga_agarprojekt, minst):
+                        if (
+                            "projekt" in argument
+                            and str(argument["projekt"]) == fraga_agarprojekt
+                            and _har_roll(konto, fraga_agarprojekt, "lasare")
+                        ):
+                            text = (
+                                f"Nekad: kontot saknar rollen {minst} i projektet. Verktyget gäller "
+                                "bara projekt där du har en roll."
+                            )
+                        else:
+                            text = f"Okänd fråga '{fraga_ref}'."
+                        _skriv(logg, post, "nekad_behorighet", korningar, "fråga i annat projekt", None, t0)
+                        return _result_fel(text)
+                    if (vilket == "kor" and str(projekt) != fraga_agarprojekt) or (
+                        vilket == "korplan"
+                        and "projekt" in argument
+                        and str(argument["projekt"]) != fraga_agarprojekt
+                    ):
+                        text = (
+                            f"Frågan '{fraga_ref}' hör till projektet '{fraga_agarprojekt}', "
+                            f"inte '{projekt}'."
+                        )
+                        _skriv(logg, post, "nekad_behorighet", korningar, "fel ägarprojekt för fråga", None, t0)
+                        return _result_fel(text)
+            if ctx.method in ("tools/call", "resources/read") and (
+                behorighet is not None or tjanst.app.konto.aktiv
+            ):
+                if (
+                    ctx.method == "resources/read"
+                    and vilket.startswith("resurs:floden://rapport/")
+                    and konto is None
+                ):
+                    text = (
+                        "Inloggning krävs: den här servern kräver ett konto. Anslut över HTTP med "
+                        "en personlig MCP-token eller via Claude-appens koppling (docs/KONTO.md)."
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, "inget konto", None, t0)
+                    return _neka_svar(ctx.method, text)
                 # Rapporter och beställningar hör till ett projekt: rollen prövas i det projektet, inte i
                 # `projekt`-argumentet (som saknas och förvalt är demokvarteret). Okänd och nekad ser lika ut.
-                nekad_text = _objekt_nekas(argument, vilket, konto, "utredare" if vilket in SKRIVVERKTYG else "lasare")
+                minst_obj = "utredare" if (ctx.method == "tools/call" and vilket in SKRIVVERKTYG) else "lasare"
+                nekad_text = _objekt_nekas(argument, vilket, konto, minst_obj)
                 if nekad_text is not None:
                     _skriv(logg, post, "nekad_behorighet", korningar, "objekt i annat projekt", None, t0)
-                    return _result_fel(nekad_text)
+                    return _neka_svar(ctx.method, nekad_text)
             if ctx.method == "tools/call" and tjanst.app.konto.aktiv:
                 # Samma körningsbehörighet som webben (`/api/korningar/<id>/*`): minst lasare i
                 # körningens projekt, annars "okänd körning" (ingen skillnad mot en som saknas).
@@ -488,35 +727,43 @@ def bygg_server(
                             "Nekad: projektets underlag är inte öppna data. Innehåll härlett ur icke-öppna data "
                             "lämnas inte ut via MCP. Inget har lämnats ut."
                         )
+            if fraga_ref is not None:
+                try:
+                    tjanst.kontrollera_fraga_oppenhet(fraga_ref, fraga_fil)
+                except OppenhetNekad as exc:
+                    _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
+                    return _result_fel(str(exc))
+            if rapporter_set:
+                try:
+                    for rid in sorted(rapporter_set):
+                        _kontrollera_rapport_oppenhet(rid, korningar)
+                except OppenhetNekad as exc:
+                    _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
+                    return _neka_svar(ctx.method, str(exc))
             try:
                 policy.kontrollera(str(klient["namn"]), effektiv)
             except PolicyNekad as exc:
                 _skriv(logg, post, "nekad_policy", korningar, str(exc), None, t0)
-                return _result_fel(str(exc))
+                return _neka_svar(ctx.method, str(exc))
             try:
                 for kid in sorted(korningar):
-                    oppenhet.kontrollera_korning(kid)
+                    _kontrollera_korning_oppenhet(kid)
             except OppenhetNekad as exc:
                 _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
-                return _result_fel(str(exc))
+                return _neka_svar(ctx.method, str(exc))
             try:
                 resultat = await call_next(ctx)
             except Exception as exc:
                 _skriv(logg, post, "fel", korningar, f"{type(exc).__name__}", None, t0)
                 raise
             d = _till_dict(resultat)
-            _hitta_korningar(d.get("structuredContent") or d.get("structured_content"), korningar)
             try:
-                # Efterkontroll: allt som svaret nämner ska också vara öppet (t.ex. en rapport som
-                # bygger på körningar), annars lämnas svaret inte ut.
-                for kid in sorted(korningar):
-                    oppenhet.kontrollera_korning(kid)
+                # Efterkontroll: allt som svaret nämner ska också vara öppet (både structuredContent
+                # och contents[].text för resurser), annars lämnas svaret inte ut.
+                _kontrollera_svar_oppenhet(d, korningar, rapporter_set)
             except OppenhetNekad as exc:
                 _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
-                return _result_fel(str(exc))
-            _hitta_rapporter(
-                d.get("structuredContent") or d.get("structured_content"), rapporter_set
-            )
+                return _neka_svar(ctx.method, str(exc))
             fel = bool(d.get("isError") or d.get("is_error"))
             try:
                 _skriv(
@@ -529,11 +776,13 @@ def bygg_server(
                     t0,
                 )
             except KorloggFel as exc:
-                return _result_fel(
-                    f"Körloggen kan inte skrivas, så resultatet lämnas inte ut: {exc}"
+                return _neka_svar(
+                    ctx.method,
+                    f"Körloggen kan inte skrivas, så resultatet lämnas inte ut: {exc}",
                 )
             return resultat
         finally:
+            explicit_projekt_var.reset(exp_token)
             tillstand.aterstall(token)
 
     server.middleware.append(mellanvara)
@@ -686,7 +935,7 @@ def bygg_server(
         "här. Frågekatalogen (beställning och mottagare) kommer i R2.",
     )
     def fragor_lista(modell: Modell = None, roll: Roll = None) -> dict[str, Any]:
-        return tjanst.fragor_lista()
+        return tjanst.fragor_lista(tillstand.konto, behorighet=behorighet)
 
     @verktyg("korningar_lista", "Körningar (senaste först) med status och framsteg.")
     def korningar_lista(
@@ -786,7 +1035,8 @@ def bygg_server(
             png, meta = tjanst.karta(korning_id, analys, typ, scenario, roll_namn, utsnitt, max_px)
         except FlodenFel as exc:
             raise ToolError(f"{exc} {_FEL_PREFIX}{exc.kod}") from exc
-        meta = {"dataklass": policy.klass_for(DataKlass.OPPET, PROJEKT_ID).value, **meta}
+        projekt_k = tjanst.app.projekt_for_korning(korning_id) or PROJEKT_ID
+        meta = {"dataklass": klass_for_projekt(DataKlass.OPPET, projekt_k).value, **meta}
         return CallToolResult(
             content=[
                 ImageContent(
@@ -896,7 +1146,15 @@ def bygg_server(
         modell: Modell = None,
         roll: Roll = None,
     ) -> dict[str, Any]:
-        return tjanst.kor(projekt, scenario, fraga, analyser, avtappning_mm_h, lage_idag)
+        projekt_arg: str | None = projekt
+        if (
+            fraga is not None
+            and not explicit_projekt_var.get()
+            and tjanst.app.konto.aktiv
+            and tjanst.fraga_projekt(fraga) is None
+        ):
+            projekt_arg = None
+        return tjanst.kor(projekt_arg, scenario, fraga, analyser, avtappning_mm_h, lage_idag)
 
     @verktyg(
         "vanta",
@@ -927,7 +1185,7 @@ def bygg_server(
     ) -> dict[str, Any]:
         return tjanst.jamfor(korning_id, omrade)
 
-    _registrera_rapportverktyg(server, verktyg, rapporter, tillstand, behorighet)
+    _registrera_rapportverktyg(server, verktyg, rapporter, tillstand, behorighet, oppenhet)
     _registrera_resurser(server, tjanst)
     return server
 
@@ -938,6 +1196,7 @@ def _registrera_rapportverktyg(
     rapporter: RapportTjanst,
     tillstand: Sessionstillstand,
     behorighet: Behorighet | None = None,
+    oppenhet: Oppenhet | None = None,
 ) -> None:
     """Rapportverktygen (R1): frågekatalog, skissrapport, påståenden med belägg, kontroll, export."""
     RapportId = Annotated[str, Field(description="Rapport-id från rapport_skapa (r-<12 hex>).")]
@@ -1296,14 +1555,33 @@ def _registrera_rapportverktyg(
         roll: Roll = None,
     ) -> dict[str, Any]:
         if rapport_id is None:
-            # Bara rapporter i projekt där kontot har en roll (utan inloggning: alla).
+            # Bara rapporter i projekt där kontot har en roll (utan inloggning: alla) och öppna data (K38).
             konto = tillstand.konto
             alla = rapporter.lista()
-            if behorighet is not None:
+            if behorighet is not None or rapporter.tjanst.app.konto.aktiv:
                 alla = [
-                    r for r in alla
-                    if konto is not None and behorighet(konto, str(r.get("projekt", "")), "lasare")
-                ]  # fmt: skip
+                    r
+                    for r in alla
+                    if konto is not None
+                    and (
+                        behorighet(konto, str(r.get("projekt", "")), "lasare")
+                        if behorighet is not None
+                        else rapporter.tjanst.app.konto.har_roll(
+                            konto, str(r.get("projekt", "")), "lasare"
+                        )
+                    )
+                ]
+            if oppenhet is not None:
+                synliga = [
+                    r
+                    for r in alla
+                    if rapporter.tjanst.projekt_oppen(str(r.get("projekt", ""))) is not False
+                    and all(oppenhet.oppen_korning(str(kid)) for kid in r.get("korningar", []))
+                ]
+                dolda = len(alla) - len(synliga)
+                if dolda:
+                    return {"rapporter": synliga, "dolda_icke_oppna": dolda}
+                alla = synliga
             return {"rapporter": alla}
         return _rapport_svar(rapporter, rapport_id)
 
@@ -1315,7 +1593,10 @@ def _registrera_rapportverktyg(
         mime_type="application/json",
     )
     def rapport_resurs(rapport_id: str) -> str:
-        return json.dumps(_rapport_svar(rapporter, rapport_id), ensure_ascii=False, indent=1)
+        try:
+            return json.dumps(_rapport_svar(rapporter, rapport_id), ensure_ascii=False, indent=1)
+        except RapportFel as exc:
+            raise ResourceNotFoundError(str(exc)) from exc
 
     @server.prompt(
         name="skissunderlag_skyfall",
