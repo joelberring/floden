@@ -110,6 +110,12 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-knapp.svart { background: var(--fl-accent); border-color: var(--fl-accent); color: var(--fl-yta) !important; }
 .flode-knapp.svart:hover:not(:disabled) { background: var(--fl-accent-hover); border-color: var(--fl-accent-hover); }
 .flode-knapp.stor { height: 44px; font-size: 14px; }
+.flode-knapp.diskret {
+  min-height: 30px; height: auto; padding: 4px 10px;
+  border-color: var(--fl-line-in); color: var(--fl-mute); font-size: 12px; font-weight: 400;
+}
+.flode-knapp.diskret:hover:not(:disabled) { border-color: var(--fl-ink); color: var(--fl-ink); }
+.ar-kor-knappar .flode-knapp { min-height: 36px; height: auto; padding: 6px 10px; line-height: 1.25; text-align: center; }
 .flode-knapp:disabled, .flode-knapp.inaktiv { opacity: 0.45; cursor: not-allowed; }
 .flode-knapp:focus-visible { outline: 2px solid var(--fl-accent); outline-offset: 2px; }
 .flode-falt { display: flex; flex-direction: column; gap: 6px; }
@@ -133,11 +139,16 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-fieldset legend { padding: 0; margin-bottom: 6px; }
 
 /* Segment och flikar */
-.flode-segment { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0; padding: 0; background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; }
-.flode-segment button { height: 34px; border: 0; border-right: 1px solid var(--fl-line-in); border-radius: 0; background: transparent; font: inherit; font-size: 13px; color: var(--fl-mute); cursor: pointer; }
+.flode-segment { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 0; padding: 0; background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; }
+.flode-segment button {
+  min-height: 34px; height: auto; padding: 5px 8px; line-height: 1.25; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  border: 0; border-right: 1px solid var(--fl-line-in); border-radius: 0; background: transparent;
+  font: inherit; font-size: 13px; color: var(--fl-mute); cursor: pointer;
+}
 .flode-segment button:last-child { border-right: 0; }
 .flode-segment button[aria-pressed="true"] { background: var(--fl-accent); color: var(--fl-yta); font-weight: 500; }
-.flode-segment.liten button { height: 28px; font-size: 12px; }
+.flode-segment.liten button { min-height: 28px; padding: 4px 6px; font-size: 12px; }
 .flode-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .flode-chips button {
   height: 32px; padding: 0 12px; border: 1px solid var(--fl-line-in); border-radius: 0; background: var(--fl-yta); font: inherit; font-size: 13px; cursor: pointer;
