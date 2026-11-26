@@ -115,12 +115,13 @@ class ProjektTjanst:
             return False
         return kv.projektmapp(projekt_id) is not None
 
-    def markmodell_mapp(self, projekt_id: str) -> Path:
-        """Projektets K1-mapp (en ruta med `mark.tif`, `markslag.tif`, `byggnader.gpkg` ...).
+    def markmodell_rutor(self, projekt_id: str) -> tuple[Path, ...]:
+        """Projektets K1-rutor (en eller flera mappar med `mark.tif`).
 
         Demokvarteret: vattenrutan (fokusområdet), samma K1-ruta som vattenlösaren räknar på.
         Inget krav på att demokörningarna är klara; bara markmodellen behövs.
-        Geografiprojekt: löses upp via `kartverktyg.kalla(projekt_id)` (vattenmallens K1-ruta).
+        Geografiprojekt: löses upp via `kartverktyg.kalla(projekt_id)` (alla giltiga K1-rutor
+        i vattenmallen, eller första mallen om vatten saknas).
         Okänt projekt eller ingen byggd markmodell ger 404."""
         if projekt_id == PROJEKT_ID:
             rot = self.fragor.demomapp
@@ -137,26 +138,36 @@ class ProjektTjanst:
                     "Bygg den med: floden demo",
                     status_kod=404,
                 )
-            return rutor[0]
+            return (rutor[0],)
         kv = self._kv()
         if kv is None:
             raise FlodenWebbFel(f"Okänt projekt '{projekt_id}'.", status_kod=404)
         kalla = kv.kalla(projekt_id)
         mall = kalla.mallar.get("vatten") or next(iter(kalla.mallar.values()), None)
         geo_rutor = (
-            [r.mapp for r in mall.rutor if (r.mapp / "mark.tif").is_file()]
+            tuple(r.mapp for r in mall.rutor if (r.mapp / "mark.tif").is_file())
             if mall is not None
-            else []
+            else ()
         )
-        if len(geo_rutor) == 1:
-            return geo_rutor[0]
         if not geo_rutor:
             raise FlodenWebbFel(
                 f"Projektet '{projekt_id}' har ingen byggd markmodell (K1-ruta saknas).",
                 status_kod=404,
             )
+        return geo_rutor
+
+    def markmodell_mapp(self, projekt_id: str) -> Path:
+        """Projektets K1-mapp (en ruta med `mark.tif`, `markslag.tif`, `byggnader.gpkg` ...).
+
+        Demokvarteret: vattenrutan (fokusområdet), samma K1-ruta som vattenlösaren räknar på.
+        Inget krav på att demokörningarna är klara; bara markmodellen behövs.
+        Geografiprojekt: löses upp via `kartverktyg.kalla(projekt_id)` (vattenmallens K1-ruta).
+        Okänt projekt eller ingen byggd markmodell ger 404; flera rutor ger 422."""
+        rutor = self.markmodell_rutor(projekt_id)
+        if len(rutor) == 1:
+            return rutor[0]
         raise FlodenWebbFel(
-            f"Projektet '{projekt_id}' har {len(geo_rutor)} K1-rutor utan enkel vattenruta; "
+            f"Projektet '{projekt_id}' har {len(rutor)} K1-rutor utan enkel vattenruta; "
             "kan inte ladda en enskild markmodellruta.",
             status_kod=422,
         )

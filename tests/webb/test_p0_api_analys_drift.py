@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import threading
 import time
@@ -17,14 +18,27 @@ import pytest
 
 from dagsljus.intervall import kor_monoton_svf_intervall
 from data_inlasning.nmd import NmdLager, skriv_nmd
-from demovarld.varld import DemoVarld, bygg_ruta_vatten
+from demovarld.varld import (
+    KODVERSION,
+    START_TID,
+    DemoVarld,
+    bygg_ruta_vatten,
+    byggnader,
+    kantsten,
+    markslag_grund,
+    portar,
+    terrang_z,
+    vegetation_hojd,
+)
 from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
 from dynamik.nodmodell import skapa_regn_intervall
 from gemensamt.hash import sha256_fil
-from geografi.modell import KONTRAKT_GEOGRAFI, lagra, skriv_manifest
+from geografi.modell import KONTRAKT_GEOGRAFI, lager_mapp, lagra, skriv_manifest
 from karna.geometri import las_byggnader, las_terrang, ytmodell_fran
 from karna.scenario import Andring, Planscenario, skriv_scenario
 from markmodell.byggnadsregister import skriv_byggnader_gpkg
+from markmodell.pipeline import bygg_markmodell_ruta
+from markmodell.rutnat import Ruta
 from sankgraf.typer import MARKSLAG_BYGGNAD
 from tests.konto.conftest import ANNA, ORIGIN, Miljo, Webblasare
 from tests.konto.conftest import miljo as konto_miljo  # noqa: F401
@@ -32,6 +46,7 @@ from tests.webb.test_asgi import _anropa_asgi
 from testsvit.k1_io import las_geotiff, skriv_geotiff
 from webb.api import FlodenApiApp
 from webb.asgi import FlodenAsgiApp
+from webb.fel import FlodenWebbFel
 from webb.projektkalla import KONTRAKT_PROJEKT
 
 REPO = Path(__file__).resolve().parents[2]
@@ -545,6 +560,238 @@ def test_b10_alla_fyra_analys_endpoints_pa_geografiprojekt_och_behorighet(
     assert (
         v.http("anna", "POST", "/api/analys/ekologi", {"omrade_id": "syntetiskt-kvarter"})[0] == 404
     )
+
+
+def _bygg_demoruta_med_overlapp(
+    varld: DemoVarld,
+    ut: Path,
+    e_min_m: float,
+    n_min_m: float,
+    storlek_m: float,
+    overlapp_m: float,
+) -> Path:
+    ruta = Ruta(e_min_m, n_min_m, storlek_m, overlapp_m, varld.upplosning_m)
+    e, n = ruta.cell_centra_en()
+    ee, nn = np.meshgrid(e, n)
+    ut.mkdir(parents=True, exist_ok=True)
+    res = bygg_markmodell_ruta(
+        ruta,
+        ut,
+        grund_z=terrang_z(varld, ee, nn).astype(np.float32),
+        markslag_grund=markslag_grund(varld, ruta),
+        brytlinjer=kantsten(varld),
+        byggnadskandidater=byggnader(varld),
+        oppningar=portar(varld),
+        byggnadshojd_fran_laser=False,
+        vegetation_hojd_m=vegetation_hojd(varld, ruta),
+        vegetation_upplosning_m=varld.vegetation_upplosning_m,
+        kodversion=KODVERSION,
+        start_tid=START_TID,
+    )
+    return Path(res.katalog)
+
+
+def test_b10_flerruts_geografiprojekt_utan_k1_vatten_alla_fyra_analys_endpoints(
+    tmp_path: Path, konto_miljo: Miljo
+) -> None:
+    """2-rutors geografiprojekt utan `k1_vatten` (B7-layout) ska ge 200 och fysiska tal på alla 4 `/api/analys/*`."""
+    varld = DemoVarld()
+    e0, n0, _, _ = varld.fokus_3011
+    storlek_m = 150.0
+    overlapp_m = 10.0
+
+    # Bygg två angränsande K1 v2-rutor med 10 m överlapp längs södra halvan av fokusområdet (300 x 150 m)
+    k1_tmp = tmp_path / "bygge_k1_flerruta"
+    _bygg_demoruta_med_overlapp(varld, k1_tmp, e0, n0, storlek_m, overlapp_m)
+    _bygg_demoruta_med_overlapp(varld, k1_tmp, e0 + storlek_m, n0, storlek_m, overlapp_m)
+
+    x0, y0 = e0, n0
+    x1, y1 = e0 + 2.0 * storlek_m, n0 + storlek_m
+    geo_rot = tmp_path / "geo_verklig"
+    proj_rot = tmp_path / "projekt_verklig"
+    k1_lager = lagra(geo_rot, k1_tmp)
+    k1_lagrad_mapp = lager_mapp(geo_rot, k1_lager.sha256)
+
+    # Syntetiskt NMD-lager med två skilda barrskogsfläckar över de två rutorna
+    nmd_tmp = tmp_path / "bygge_nmd"
+    nmd_tmp.mkdir(parents=True)
+    cell_m = 10.0
+    bredd = int(np.ceil((x1 - x0) / cell_m)) + 4
+    hojd = int(np.ceil((y1 - y0) / cell_m)) + 4
+    klasser = np.full((hojd, bredd), 53, dtype=np.uint8)
+    klasser[2 : hojd - 2, 2 : bredd // 2 - 1] = 111
+    klasser[2 : hojd - 2, bredd // 2 + 1 : bredd - 2] = 111
+    skriv_nmd(NmdLager(klasser, x0 - 20.0, y1 + 20.0, cell_m), nmd_tmp / "nmd.tif")
+    nmd_lager = lagra(geo_rot, nmd_tmp)
+
+    _, manifest_sha = skriv_manifest(
+        geo_rot,
+        {
+            "kontrakt": KONTRAKT_GEOGRAFI,
+            "id": "flerruta",
+            "version": "v1",
+            "kommun": "goteborg",
+            "karna_3011": [x0 + 10.0, y0 + 10.0, x1 - 10.0, y1 - 10.0],
+            "gransen_3011": [x0, y0, x1, y1],
+            "lager": {
+                "k1_rutnat": {"sha256": k1_lager.sha256},
+                "nmd": {"sha256": nmd_lager.sha256, "buffert_m": 200.0, "cell_m": cell_m},
+            },
+            "kallor": {
+                "hojd": {"licens": "CC0-1.0", "kalla": "Syntetisk"},
+                "byggnader": {"licens": "CC0-1.0", "kalla": "Syntetisk"},
+                "nmd": {"licens": "CC0-1.0", "kalla": "Syntetisk NMD"},
+            },
+            "oppen_for_mcp": True,
+        },
+    )
+
+    reg = konto_miljo.register
+    org1 = reg.skapa_organisation("Flerrutekommun")
+    org2 = reg.skapa_organisation("AnnanKommun")
+    anna = reg.forbered_konto("anna@example.test")
+    reg.gor_organisationsadmin(anna, org1)
+    bo = reg.forbered_konto("bo@example.test")
+    reg.lagg_till_medlem(bo, org1, None, "test")
+    di = reg.forbered_konto("di@example.test")
+    reg.gor_organisationsadmin(di, org2)
+    pid, _ = reg.registrera_projekt_for_konto(anna, org1, "Flerrutsprojekt")
+    reg.bjud_in(anna, pid, "bo@example.test", "lasare")
+
+    # Skapa projektmapp UTAN k1_vatten: skyfall.toml pekar direkt på geografins 2-rutors k1_rutnat
+    pmapp = proj_rot / "flerrutsprojekt"
+    fdir = pmapp / "fragor"
+    fdir.mkdir(parents=True, exist_ok=True)
+    assert not (pmapp / "k1_vatten").exists()
+    (pmapp / "oppenhet.toml").write_text(
+        'kontrakt = "floden-oppenhet/v1"\noppen = true\nlicens = "CC0-1.0"\n',
+        encoding="utf-8",
+    )
+    (pmapp / "projekt.json").write_text(
+        json.dumps(
+            {
+                "kontrakt": KONTRAKT_PROJEKT,
+                "projekt_id": "flerrutsprojekt",
+                "register_id": pid,
+                "namn": "Flerrutsprojekt",
+                "kommun": "goteborg",
+                "geografi": "flerruta@v1",
+                "geografi_manifest_sha256": manifest_sha,
+                "avgransning_3011": [x0 + 20.0, y0 + 20.0, x1 - 20.0, y1 - 20.0],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    rel_k1 = Path(os.path.relpath(k1_lagrad_mapp.resolve(), fdir.resolve())).as_posix()
+    (fdir / "skyfall.toml").write_text(
+        'kontrakt = "K20/v1"\n'
+        'fraga_id = "flerrutsprojekt-skyfall"\n'
+        'beskrivning = "Skyfall direkt på geografins 2-rutors k1_rutnat (B7)"\n\n'
+        f'[scenarier.bas]\nbas = "{rel_k1}"\n\n'
+        '[[analyser]]\nid = "skyfall"\nlosare = "vatten.statisk_fyllning"\n'
+        "parametrar = { regn_mm = 50.0 }\n",
+        encoding="utf-8",
+    )
+
+    # Använd symlänkade rötter för att samtidigt verifiera symlänksäker relativsökväg i ekologi
+    geo_link = tmp_path / "geo_lank"
+    proj_link = tmp_path / "projekt_lank"
+    geo_link.symlink_to(geo_rot)
+    proj_link.symlink_to(proj_rot)
+
+    webb: dict[str, Webblasare] = {}
+    for namn, claims in (("anna", ANNA), ("bo", BO), ("di", DI)):
+        w = konto_miljo.webblasare()
+        assert w.logga_in(konto_miljo.idp, claims)[0] == 302
+        webb[namn] = w
+
+    app = FlodenApiApp(
+        testsvit_rot=REPO / "testsvit",
+        konfig_fil=tmp_path / "saknas.toml",
+        fragemappar=[tmp_path / "fragor"],
+        cachemapp=tmp_path / "cache",
+        korningsmapp=tmp_path / "korningar",
+        konto=konto_miljo.adapter,
+        geomapp=geo_link,
+        projektmapp=proj_link,
+        kartverktygsmapp=tmp_path / "kartverktyg",
+    )
+
+    def _http(vem: str, sokvag: str, kropp: Mapping[str, Any]) -> tuple[int, dict[str, Any]]:
+        w = webb[vem]
+        rub = {
+            "Cookie": "; ".join(f"{k}={v}" for k, v in w.kakor.items()),
+            "Origin": ORIGIN,
+            **w.csrf_headers(),
+        }
+        data = json.dumps(kropp).encode("utf-8")
+        st, _, svar = app.hantera_http("POST", sokvag, rub, lambda: data)
+        return st, json.loads(svar.decode("utf-8")) if svar else {}
+
+    # Bakåtkompatibilitet: markmodell_rutor returnerar båda rutorna, markmodell_mapp ger fortsatt 422
+    rutor = app.projekt.markmodell_rutor(pid)
+    assert len(rutor) == 2
+    with pytest.raises(FlodenWebbFel) as exc_422:
+        app.projekt.markmodell_mapp(pid)
+    assert exc_422.value.status_kod == 422
+
+    # Verifiera att sammanslagen modell klipper bort 10 m överlapp -> 300 x 150 m (150 x 300 celler)
+    modell = app.ladda_projektmodell(pid)
+    assert modell.mark_z.shape == (150, 300)
+    assert len(modell.k1_mappar) == 2
+    assert modell.bas_graf.takvatten is not None
+    assert len(modell.bas_graf.takvatten.byggnader) >= 4
+
+    # 1. Bifurkationer
+    st_b, d_b = _http("anna", "/api/analys/bifurkationer", {"omrade_id": pid})
+    assert st_b == 200, d_b
+    assert d_b["format"] == "floden-bifurkation-felindikator/v1"
+    assert d_b["omrade_id"] == pid
+    assert d_b["felindikator"]["antal_aktiva_celler"] > 0
+    assert d_b["felindikator"]["antal_noder_totalt"] >= 1
+    assert _http("di", "/api/analys/bifurkationer", {"omrade_id": pid})[0] == 403
+
+    # 2. Vattenintervall
+    st_i, d_i = _http(
+        "anna",
+        "/api/analys/intervall",
+        {"omrade_id": pid, "referensregn_mm": 50.0, "klimatfaktor_intervall": [1.0, 1.2]},
+    )
+    assert st_i == 200, d_i
+    assert d_i["format"] == "floden-vatten-intervall/v1"
+    assert d_i["sammanfattning"]["antal_noder"] >= 1
+    assert d_i["sammanfattning"]["storsta_max_djup_m"] > 0.0
+    assert d_i["max_volymfel_rel"] < 1e-2
+
+    # 3. SVF-intervall (sammanfogad terrang.tif + deduplicerade byggnader över 2 rutor)
+    st_s, d_s = _http(
+        "anna",
+        "/api/analys/svf-intervall",
+        {"omrade_id": pid, "osakerhet_byggnad_m": 1.5, "antal_riktningar": 8},
+    )
+    assert st_s == 200, d_s
+    assert d_s["format"] == "floden-dagsljus-svf-intervall/v1"
+    assert 0.0 < d_s["svf_min_medel"] < d_s["svf_max_medel"] < 1.0
+    assert d_s["bredd_max"] > 0.0
+    assert d_s["mittlinje_max_horisont_rad"] > 0.0
+
+    # 4. Ekologi (fungerar även via symlänkad geografi-/projektrot och nekar läsare med 403)
+    st_e, d_e = _http("anna", "/api/analys/ekologi", {"omrade_id": pid, "natverk": "barrskog-nacka"})
+    assert st_e == 200, d_e
+    assert d_e["format"] == "floden-ekologi/v1"
+    assert d_e["fore"]["ECA_m2"] > 0.0
+    assert d_e["fore"]["antal_flackar"] >= 2
+    assert _http("bo", "/api/analys/ekologi", {"omrade_id": pid})[0] == 403
+    assert _http("di", "/api/analys/ekologi", {"omrade_id": pid})[0] == 403
+
+    # 5. Bevarat 400-fel i SVF-intervall om en av rutorna saknar terrang.tif
+    (rutor[1] / "terrang.tif").unlink()
+    st_fel, d_fel = _http(
+        "anna", "/api/analys/svf-intervall", {"omrade_id": pid, "antal_riktningar": 8}
+    )
+    assert st_fel == 400, d_fel
+    assert "terrang.tif" in d_fel["fel"]
 
 
 # ------------------------------------------------------------------ B13: ASGI-semafor + legacy /api/rapport
