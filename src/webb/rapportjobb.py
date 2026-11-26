@@ -59,6 +59,7 @@ _LUFT_FALT = {
     "depositionsfaktor_intervall",
     "grans_dygn_ug_m3",
     "max_dygn_ar",
+    "receptor",
 }
 _LUFT_HALT_KOLUMNER: Final[tuple[str, ...]] = ("lokal_ug_m3", "halt_ug_m3", "halt_bidrag_ug_m3")
 _LUFT_TID_KOLUMNER: Final[tuple[str, ...]] = ("tid", "tid_s", "timme")
@@ -100,8 +101,23 @@ def _tolka_intervall(varde: Any, namn: str, *, strikt_positiv: bool) -> list[flo
     return [lo, hi]
 
 
-def _validera_luft_csv(raw: Any, namn: str) -> str:
-    """Validerar en extern timserie-CSV och normaliserar kolumnhuvudet till `tid,lokal_ug_m3` för `luft.mkn`."""
+def _tolka_luft_bool(varde: str | None, kolumn: str, namn: str, rad_nr: int) -> bool:
+    text = (varde or "").strip().lower()
+    if text in ("1", "true", "ja", "sant"):
+        return True
+    if text in ("0", "false", "nej", "falskt", ""):
+        return False
+    raise FlodenWebbFel(f"{namn} rad {rad_nr}: ogiltigt värde {varde!r} i '{kolumn}'.", status_kod=400)
+
+
+def _validera_luft_csv(raw: Any, namn: str, *, receptor: str | None = None) -> str:
+    """Validerar en extern eller Floden-genererad timserie-CSV för `luft.mkn`.
+
+    För Flodens timserieformat (`halt_bidrag_ug_m3`, med valfria `receptor`, `svag_vind`,
+    `ogiltig`) följs samma regler som `karna.luft_losare.LuftMkn` och originalkolumnerna
+    bevaras så att `svag_vind`/`ogiltig` och receptorurval följer med till `luft.mkn`.
+    Enkla externa serier (`lokal_ug_m3`/`halt_ug_m3`) normaliseras till `tid,lokal_ug_m3`.
+    """
     if not isinstance(raw, str) or not raw.strip():
         raise FlodenWebbFel(f"{namn} måste vara en icke-tom CSV-text.", status_kod=400)
     if len(raw.encode("utf-8")) > _MAX_LUFT_CSV_BYTES:
@@ -111,22 +127,118 @@ def _validera_luft_csv(raw: Any, namn: str) -> str:
     rubrik = next(lasare, None)
     if not rubrik:
         raise FlodenWebbFel(f"{namn} saknar rubrikrad (ange t.ex. tid,lokal_ug_m3 eller tid_s,halt_ug_m3).", status_kod=400)
-    kol_per_namn = {k.strip().lower(): i for i, k in enumerate(rubrik) if k.strip()}
-    halt_kol = next((kol_per_namn[k] for k in _LUFT_HALT_KOLUMNER if k in kol_per_namn), None)
-    if halt_kol is None:
+    norm_rubrik = [k.strip().lower() for k in rubrik]
+    kol_per_namn = {k: i for i, k in enumerate(norm_rubrik) if k}
+    if "halt_bidrag_ug_m3" in kol_per_namn:
+        halt_kol = kol_per_namn["halt_bidrag_ug_m3"]
+        rec_kol = kol_per_namn.get("receptor")
+        svag_kol = kol_per_namn.get("svag_vind")
+        ogilt_kol = kol_per_namn.get("ogiltig")
+        alla_rader = [
+            (rad_nr, rad)
+            for rad_nr, rad in enumerate(lasare, start=2)
+            if rad and any(cell.strip() for cell in rad)
+        ]
+        if rec_kol is not None:
+            alla_rec = sorted(
+                {rad[rec_kol].strip() if rec_kol < len(rad) else "" for _, rad in alla_rader}
+            )
+            if receptor is not None:
+                valda_rader = [
+                    (nr, rad)
+                    for nr, rad in alla_rader
+                    if (rad[rec_kol].strip() if rec_kol < len(rad) else "") == receptor
+                ]
+                if not valda_rader:
+                    raise FlodenWebbFel(
+                        f"{namn}: receptorn '{receptor}' saknas (tillgängliga: {alla_rec}).",
+                        status_kod=400,
+                    )
+            elif "maxcell" in alla_rec:
+                valda_rader = [
+                    (nr, rad)
+                    for nr, rad in alla_rader
+                    if (rad[rec_kol].strip() if rec_kol < len(rad) else "") == "maxcell"
+                ]
+            elif len(alla_rec) <= 1:
+                valda_rader = alla_rader
+            else:
+                raise FlodenWebbFel(
+                    f"{namn} innehåller flera receptorer ({', '.join(alla_rec)}); "
+                    "ange parametern 'receptor' eller en timserie med en enda receptor (eller 'maxcell').",
+                    status_kod=400,
+                )
+        elif receptor is not None and receptor != "maxcell":
+            raise FlodenWebbFel(
+                f"{namn}: parametern receptor='{receptor}' angavs, men timserien saknar kolumnen 'receptor'.",
+                status_kod=400,
+            )
+        else:
+            valda_rader = alla_rader
+
+        antal_giltiga = 0
+        for rad_nr, rad in valda_rader:
+            svag = (
+                _tolka_luft_bool(rad[svag_kol] if svag_kol < len(rad) else "", "svag_vind", namn, rad_nr)
+                if svag_kol is not None
+                else False
+            )
+            ogilt = (
+                _tolka_luft_bool(rad[ogilt_kol] if ogilt_kol < len(rad) else "", "ogiltig", namn, rad_nr)
+                if ogilt_kol is not None
+                else False
+            )
+            if ogilt or svag:
+                continue
+            if halt_kol >= len(rad):
+                raise FlodenWebbFel(f"{namn} rad {rad_nr}: haltvärde saknas.", status_kod=400)
+            halt_text = rad[halt_kol].strip()
+            try:
+                halt = float(halt_text)
+            except ValueError as exc:
+                raise FlodenWebbFel(f"{namn} rad {rad_nr}: '{halt_text}' är inte ett giltigt tal.", status_kod=400) from exc
+            if not math.isfinite(halt) or halt < 0.0:
+                raise FlodenWebbFel(
+                    f"{namn} rad {rad_nr}: haltbidraget måste vara ett ändligt tal >= 0 (fick {halt_text!r}).",
+                    status_kod=400,
+                )
+            antal_giltiga += 1
+        if antal_giltiga < 24:
+            raise FlodenWebbFel(
+                f"{namn} måste innehålla minst 24 giltiga timvärden (1 helt dygn, utöver svag_vind/ogiltig), fick {antal_giltiga}.",
+                status_kod=400,
+            )
+        buf = io.StringIO()
+        skrivare = csv.writer(buf, lineterminator="\n")
+        skrivare.writerow(norm_rubrik)
+        for _, rad in valda_rader:
+            skrivare.writerow(rad)
+        return buf.getvalue()
+
+    enkel_halt_kol = next((kol_per_namn[k] for k in _LUFT_HALT_KOLUMNER if k in kol_per_namn), None)
+    if enkel_halt_kol is None:
         raise FlodenWebbFel(
             f"{namn} saknar haltkolumn (förväntade lokal_ug_m3, halt_ug_m3 eller halt_bidrag_ug_m3).",
             status_kod=400,
         )
+    if receptor is not None:
+        raise FlodenWebbFel(
+            f"{namn}: parametern receptor='{receptor}' stöds inte för enkel timserie utan kolumnen 'halt_bidrag_ug_m3'.",
+            status_kod=400,
+        )
+    rec_kol_enkel = kol_per_namn.get("receptor")
     tid_kol = next((kol_per_namn[k] for k in _LUFT_TID_KOLUMNER if k in kol_per_namn), None)
     ut_rader = ["tid,lokal_ug_m3"]
     antal = 0
+    enkla_receptorer: set[str] = set()
     for rad_nr, rad in enumerate(lasare, start=2):
         if not rad or all(not cell.strip() for cell in rad):
             continue
-        if halt_kol >= len(rad):
+        if rec_kol_enkel is not None:
+            enkla_receptorer.add(rad[rec_kol_enkel].strip() if rec_kol_enkel < len(rad) else "")
+        if enkel_halt_kol >= len(rad):
             raise FlodenWebbFel(f"{namn} rad {rad_nr}: haltvärde saknas.", status_kod=400)
-        halt_text = rad[halt_kol].strip()
+        halt_text = rad[enkel_halt_kol].strip()
         try:
             halt = float(halt_text)
         except ValueError as exc:
@@ -143,6 +255,11 @@ def _validera_luft_csv(raw: Any, namn: str) -> str:
         )
         ut_rader.append(f"{tid_text},{halt_text}")
         antal += 1
+    if len(enkla_receptorer) > 1:
+        raise FlodenWebbFel(
+            f"{namn} innehåller flera receptorer ({', '.join(sorted(enkla_receptorer))}); skicka en timserie per receptor.",
+            status_kod=400,
+        )
     if antal < 24:
         raise FlodenWebbFel(
             f"{namn} måste innehålla minst 24 timvärden (1 helt dygn), fick {antal}.",
@@ -164,12 +281,18 @@ def _tolka_luft_indata(raw: Any) -> dict[str, Any]:
             status_kod=400,
         )
     bakgrund = _krav_tal(raw["bakgrund_ug_m3"], "luft.bakgrund_ug_m3", minst=0.0)
-    fore_csv = _validera_luft_csv(raw.get("serie_fore_csv"), "luft.serie_fore_csv")
+    raw_receptor = raw.get("receptor")
+    receptor: str | None = None
+    if raw_receptor is not None:
+        if not isinstance(raw_receptor, str) or not raw_receptor.strip():
+            raise FlodenWebbFel("luft.receptor måste vara en icke-tom text.", status_kod=400)
+        receptor = raw_receptor.strip()
+    fore_csv = _validera_luft_csv(raw.get("serie_fore_csv"), "luft.serie_fore_csv", receptor=receptor)
     raw_efter = raw.get("serie_efter_csv")
     if raw_efter is None or (isinstance(raw_efter, str) and not raw_efter.strip()):
         efter_csv: str | None = None
     else:
-        efter_csv = _validera_luft_csv(raw_efter, "luft.serie_efter_csv")
+        efter_csv = _validera_luft_csv(raw_efter, "luft.serie_efter_csv", receptor=receptor)
 
     osak_rel = (
         _krav_tal(raw["osakerhet_halt_rel"], "luft.osakerhet_halt_rel", minst=0.0, under=1.0)
@@ -182,6 +305,8 @@ def _tolka_luft_indata(raw: Any) -> dict[str, Any]:
         else None
     )
     parametrar: dict[str, Any] = {"bakgrund_ug_m3": bakgrund}
+    if receptor is not None:
+        parametrar["receptor"] = receptor
     if raw.get("emissionsfaktor_intervall") is not None:
         parametrar["emissionsfaktor_intervall"] = _tolka_intervall(
             raw["emissionsfaktor_intervall"], "luft.emissionsfaktor_intervall", strikt_positiv=False

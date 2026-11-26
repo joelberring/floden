@@ -2391,7 +2391,23 @@ class KartverktygTjanst:
                     "Förslaget har ingen ändring som berör området för ekologi; "
                     "välj en annan analys eller rita inom området."
                 )
-            k9_fil = fragedir / "k9" / f"{namn_slug}__ekologi.json"
+            stangt = ritl.har_stangt_innehall(d.get("ritlager"), kalla.oppen)
+            k9_namn = f"{namn_slug}__ekologi.json"
+            oppen_fil = fragedir / "k9" / k9_namn
+            stangd_mapp = fragedir / "k9_stangda"
+            stangd_fil = stangd_mapp / k9_namn
+            if stangt:
+                stangd_mapp.mkdir(parents=True, exist_ok=True)
+                skriv_atomiskt_text(
+                    stangd_mapp / "oppenhet.toml",
+                    'kontrakt = "floden-oppenhet/v1"\noppen = false\n'
+                    'kalla = "Förslag med objekt i ett stängt ritlager (K50)"\n',
+                )
+                oppen_fil.unlink(missing_ok=True)
+                k9_fil = stangd_fil
+            else:
+                stangd_fil.unlink(missing_ok=True)
+                k9_fil = oppen_fil
             skriv_scenario(sc, k9_fil)
             fraga_id = f"api{tag}-{namn_slug[:24]}-ekologi"
             fil = fragedir / f"{fraga_id}.json"
@@ -2399,7 +2415,7 @@ class KartverktygTjanst:
                 m, fil, k9_fil, fraga_id, d["namn"], [analys], parametrar_over=over
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
-            scen_nyckel = sc.nyckel
+            scen_nyckel = f"{sc.nyckel}:stangt" if stangt else sc.nyckel
             korning_id = (
                 f"api-ekologi{proj_tag}-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
             )
