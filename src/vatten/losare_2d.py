@@ -207,6 +207,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         "antal_tidssteg": res.antal_tidssteg,
         "kortid_s": res.kortid_s,
         "berakningsplats": res.berakningsplats,
+        "anvande_rust": res.anvande_rust,
         "andrade_celler": andrade,
         "sanktermer": termer.beskrivning(),
         **avt_info,

@@ -99,6 +99,8 @@ class TvadResultat:
     0,0 = inte mätt (Rust-kärnan, SFINCS-import, hybrid)."""
     berakningsplats: str = "cpu_f64"
     """K0-etikett för beräkningsbackend och precision (`cpu_f64`, `cuda_f64`, `cuda_f32`)."""
+    anvande_rust: bool = False
+    """Sant om tidsslingan kördes i den bitidentiska Rust-kärnan (`rust/tvad_karna`)."""
 
     def volymbalans(self) -> dict[str, float | bool]:
         """Regn på hela rutan (mark + tak) mot lagrat, utflöde, infiltration, avtappning och
@@ -973,6 +975,7 @@ def kor_2d_lokal_troghet(
     enhet: str = "cpu",
     precision: Literal["f64", "f32"] = "f64",
     vattenniva_rh2000_m: float | None = None,
+    anvand_rust: bool = True,
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -1035,6 +1038,47 @@ def kor_2d_lokal_troghet(
     tider, intens_m_s, t_start, t_slut = validera_regnserie(
         regn_tid_s, regn_intensitet_mm_h, slut_tid_s
     )
+
+    # Automatisk dispatch till den bitidentiska Rust-kärnan (rust/tvad_karna) när alla
+    # kriterier som Rust-kärnan stöder är uppfyllda och binären finns tillgänglig.
+    if (
+        anvand_rust
+        and subgrid_faktor == 1
+        and kalltermer is None
+        and not brytlinjer
+        and vattenniva_rh2000_m is None
+        and enhet == "cpu"
+        and precision == "f64"
+        and not bool(np.any(markslag == MARKSLAG_VATTEN))
+    ):
+        from tvad.rust_backend import hitta_tvad_karna, kor_2d_lokal_troghet_rust
+
+        try:
+            binar_sokvag: Path | None = hitta_tvad_karna()
+        except TvadFel:
+            binar_sokvag = None
+        if binar_sokvag is not None:
+            res_rust = kor_2d_lokal_troghet_rust(
+                mark_z,
+                markslag,
+                geo,
+                regn_tid_s,
+                regn_intensitet_mm_h,
+                slut_tid_s=slut_tid_s,
+                cfl=cfl,
+                min_djup_m=min_djup_m,
+                gles_front=gles_front,
+                subgrid_faktor=1,
+                oppna_rander=oppna_rander,
+                manning_tabell=manning_tabell,
+                dt_max_s=dt_max_s,
+                z_nivaer=z_nivaer,
+                theta=theta,
+                binar=binar_sokvag,
+                takvatten=takvatten,
+            )
+            res_rust.anvande_rust = True
+            return res_rust
 
     subgrid: SubgridTabell | None = None
     if subgrid_faktor > 1:
