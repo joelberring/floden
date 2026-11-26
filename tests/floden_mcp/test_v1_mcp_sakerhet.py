@@ -326,6 +326,27 @@ def test_karta_bild_anvander_korningens_verkliga_projekt_id_i_policy(
     )
     assert not demo_ok.is_error and demo_ok.structured_content["dataklass"] == "oppet"
 
+    # korplan(fraga=...) utan explicit `projekt` för en fråga i ett 'internt'-klassat projekt:
+    # både policyn och svarets `dataklass`-fält ska använda ägarprojektet ('internt'), inte 'demokvarteret'.
+    projektrot = tmp_path / "projekt"
+    mcp.app.projektmapp = projektrot
+    mcp.app.fragor.projektrot = projektrot
+    mcp.app.kartverktyg.projektrot = projektrot
+    _skriv_projekt(
+        projektrot,
+        "proj-internt-mapp",
+        "proj-internt",
+        oppen=True,
+        fraga_namn="fraga-intern-klass",
+        bas=demo.varld / "vatten" / "bas",
+    )
+    mcp.server = bygg_server(mcp.tjanst, policy=policy, logg=mcp.logg, miljo={})
+    nekad_plan = mcp.anropa("korplan", {"fraga": "fraga-intern-klass"}, klient="extern-klient")
+    assert nekad_plan.is_error and "internt" in nekad_plan.content[0].text
+    ok_plan = mcp.anropa("korplan", {"fraga": "fraga-intern-klass"}, klient="intern-klient")
+    assert not ok_plan.is_error, ok_plan.content[0].text
+    assert ok_plan.structured_content["dataklass"] == "internt"
+
 
 # ------------------------------------------------------------------ W-B1: MCP fragor_lista / korplan / kor
 

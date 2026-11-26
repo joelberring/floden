@@ -459,10 +459,14 @@ def bygg_server(
                 if isinstance(svar, dict):
                     if namn in utan_projekt:
                         projekt_eff: str | None = None
-                    elif "projekt" in kwargs:
-                        projekt_eff = str(kwargs["projekt"])
-                    elif namn in ("korplan", "kor") and kwargs.get("fraga"):
+                    elif (
+                        namn in ("korplan", "kor")
+                        and kwargs.get("fraga")
+                        and not explicit_projekt_var.get()
+                    ):
                         projekt_eff = tjanst.fraga_projekt(str(kwargs["fraga"])) or PROJEKT_ID
+                    elif explicit_projekt_var.get() and "projekt" in kwargs:
+                        projekt_eff = str(kwargs["projekt"])
                     elif kwargs.get("korning_id"):
                         p_k = tjanst.app.projekt_for_korning(str(kwargs["korning_id"]))
                         if p_k is not None and (
@@ -476,6 +480,8 @@ def bygg_server(
                     elif kwargs.get("rapport_id"):
                         r_obj = _las_rapport(str(kwargs["rapport_id"]))
                         projekt_eff = str(r_obj.projekt) if r_obj is not None else PROJEKT_ID
+                    elif "projekt" in kwargs:
+                        projekt_eff = str(kwargs["projekt"])
                     else:
                         projekt_eff = PROJEKT_ID
                     return {"dataklass": klass_for_projekt(klass, projekt_eff).value, **svar}
