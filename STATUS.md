@@ -2,6 +2,19 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-26 – Våg 9 – RAM-härdning, skyfall-ruturval (`fokus`), oberoende ämneskörning & driftsbuggar från `floden.berring.se` (PR #177–#178)
+
+Gjort: Åtgärdat de fem skarpa driftsfynden från live-testet på `floden.berring.se` (`goteborg-test@v4` 3 GB cgroup OOM-kill, `fragor._roller` HTTP 500, `_filcache@*`-loggspam, tvångskörning av Skyfall vid Dagsljus och `.flode-segment`-glipa) samt dokumenterat 4-lagers RAM-planen i `docs/DRIFT.md` i två konfliktfria PR:er (0 % filöverlapp, 15 filer, +2 298/−121), oberoende verifierade och sammanslagna på `main` (`c86a2d6`). Skyddade filer lämnades helt orörda:
+- **PR #178 (`fix/v9-ram-ruturval-och-status500`, `3064f4e`) — Backend RAM-härdning & driftsfixar:** Lade till `fokus` i `skyfall.toml` (`kommuner/projekt.py`, baserat på `avgransning_3011 + kontext_m`) och `_overlappar_fokus`-filtrering för globala vattenlösare (`radie is None`) i `karna/korplan.py` + bakåtkompatibel `_fallback_vatten_fokus` i `webb/kartverktyg.py` för redan skapade projekt (kapar 16+ rutor → projektets lokala rutor); fail-fast `FLODEN_MAX_SANKGRAF_CELLER` (standard `4 500 000`) + `_SANKGRAF_CACHE_MAX_CELLER = 1 500 000` + `gc.collect()` i `karna/inbyggda.py`; fångade saknad `run.json` i `webb/fragor.py:_roller` (varning i st.f. HTTP 500); filtrerade interna `_*`-kataloger (`_filcache@*`) i `webb/projektskapa.py`; gjorde `mem_limit: ${FLODEN_MEM_LIMIT:-3g}` och `FLODEN_MAX_SANKGRAF_CELLER` konfigurerbara i `docker-compose.prod.yml` samt lade till `## Minneshantering och RAM-plan (CX23 → S5k)` i `docs/DRIFT.md`.
+- **PR #177 (`fix/v9-webb-amneskorning-och-segment`, `daa088f`) — Frontend oberoende ämneskörning & CSS:** Primärknappar i Steg 2 (`arbetsyta.ts`) kör nu aktivt ämne oberoende (t.ex. enbart Dagsljus utan Skyfall) med ämnesmedveten validering + sekundär knapp `#ar-kor-alla` (*"Beräkna alla ämnen"*); `korning.ts` filtrerar statuspollen på startade `korning_id`/mallar, väntar klart på alla startade körningar, bevarar andra ämnens vyer/signaturer och tillämpar lyckade delresultat även vid delfel; `.flode-segment` i `flode.css` använder `align-items: stretch` + `min-height`/`height: auto` utan vit glipa vid 2-radig text.
+
+Mätt:
+- **GitHub CI:** **11/11 gröna** på båda PR:erna (`#177` och `#178`) — totalt **36 verifierade PR:er `#143–#178`**.
+- **2-vägs sammanslagning på `main` (`c86a2d6`, 15 filer, 0 % överlapp):** `ruff check src tests testsvit` **0 fel**, `mypy --platform linux src` **0 fel (397 källfiler)**, `floden testsvit` **18/18 godkända (0,0000 % volymfel)**, samlad `pytest` (`karna`, `kommuner`, `geografi`, `webb`, `test_paketgranser.py`) **993/993 passed, 0 failed**, `webb`: `npm test` **498/498 passed**, `npx tsc --noEmit` **0 fel**, `vite build` **OK (4,16 s)**.
+
+Öppet: Uppdatera `floden.berring.se` med ny `docker-compose.prod.yml` och färsk `ghcr.io/joelberring/floden:main` och prova både Dagsljus ensamt och Skyfall på `goteborg-test@v4`; nästa steg i RAM-planen är Rust-sänkgraf (Lager 3b), barnprocessisolering (Lager 3c) samt S4/S5k (Lager 4).
+Nästa: Dra hem nya avbildningen på `floden.berring.se` när `Avbildning (publish)` är klar.
+
 ## 2026-11-26 – Våg 8 – CAD/BIM & Buller-skissflik i webben (U17/U13), U18 Drift/WMTS-proxy/SMHI, Korsvågs-E2E V6–V7 & 1×2-fix (PR #173–#176)
 
 Gjort: Slutfört **Våg 8** (avslutar 3-vågscykeln Våg 6–8 efter marknadsbenchmarken, totalt **12 nya PR:er `#165–#176`** och **34 verifierade PR:er `#143–#176`** under hela passet) i fyra konfliktfria PR:er (0 % filöverlapp, 26 unika filer, +10 687/−141), oberoende verifierade och sammanslagna på `main` (`809293b`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `docs/OM-FLODEN.md`, `data/om/floden.toml`, `data/mcp/metodstatus.toml`, `pyproject.toml`, `kansighet` och `nord2000_konform` (`False`) lämnades helt orörda:
