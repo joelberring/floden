@@ -1,0 +1,454 @@
+# Svenska kommunprofiler för Grönytefaktor (GYF) på kvartersmark.
+#
+# STATUS: `skiss` för samtliga profiler. Varje vikt och mappning mot K1 v2-markslag
+# ligger öppet i denna konfigurationsfil så att Joel kan granska och justera varje
+# parameter utan kodändring. Filens SHA-256 ingår i GYF-resultatet för reproducerbarhet.
+#
+# K1 v2-markslagskoder (docs/DATAKONTRAKT.md, data/markklasser.toml):
+#   0 = okänt          (mappas AVSIKTLIGT INTE -> flaggas alltid i flaggad_area_m2 + varningar)
+#   1 = hårdgjort      (asfalt, betong)
+#   2 = tak            (tätt tak)
+#   3 = grönt tak      (sedumtak / vegetationsklätt tak)
+#   4 = gräs           (gräs / öppen vegetation på mark)
+#   5 = skog           (skog / träd- och buskmark på mark)
+#   6 = berg i dagen   (obebyggd berghäll)
+#   7 = grus           (grus / genomsläpplig yta)
+#   8 = vatten         (öppen vattenyta)
+#   9 = byggnad        (byggnad / tätt tak)
+#
+# K50-överlagringar (`yt_overlagring`) kan ange mer specifika delfaktorer ovanpå
+# markslagsrastret, bl.a. `regnbadd`, `vaxtbadd_bjalklag`, `gront_tak` och `genomslapplig`.
+# Vid överlapp mellan flera överlagringar i samma cell gäller listan `overlagring_prioritet`
+# från vänster (högst prioritet) till höger (lägst prioritet).
+
+format = "floden-gyf-profiler/v1"
+version = "1.0.0"
+
+# =============================================================================
+# 1. Stockholms stad – Grönytefaktor för kvartersmark (skiss)
+# =============================================================================
+
+[profiler.stockholm]
+namn = "Stockholms stad – Grönytefaktor för kvartersmark"
+kommun = "Stockholm"
+riktmarke = 0.60
+status = "skiss"
+version = "2026.1-skiss"
+beskrivning = "Skissprofil baserad på Stockholms stads modell för grönytefaktor (GYF) på kvartersmark med delfaktorer för grundytan och tilläggsfaktorer för bl.a. trädskikt, buskskikt och småbiotoper. Normalt grundkrav för kvartersmark med 50–70 % bebyggd yta är 0,60."
+kalla = "Stockholms stad (Exploateringskontoret & Stadsbyggnadskontoret), Grönytefaktor för kvartersmark – Beräkningsmodell och vägledning (Norra Djurgårdsstaden / stadens GYF-handbok); översikt på gronytefaktor.se."
+kalla_url = "https://tillstand.stockholm/tillstand-regler-och-tillsyn/bygga-och-bo/gronytefaktor/"
+overlagring_prioritet = [
+    "regnbadd",
+    "vattenyta",
+    "vaxtbadd_bjalklag",
+    "gront_tak",
+    "genomslapplig",
+    "skog_naturmark",
+    "vegetation_mark",
+    "berg_i_dagen",
+    "hardgjord",
+    "byggnad_tak",
+]
+anmarkning = "Skissförenkling för raster- och K50-indata: Stockholms fulla Excel-mall delar upp växtbäddar på bjälklag och gröna tak i flera jorddjupsintervall (t.ex. 50–120 mm, 120–300 mm, 300–600 mm, >600 mm, >800 mm), tillämpar balanskrav mellan ekosystemtjänster (ofta 60 %) och viktar nya/befintliga träd per stamomkretsklass. Här används schablonvikter som Joel kan justera."
+
+[profiler.stockholm.delfaktorer.skog_naturmark]
+namn = "Skog och naturmark på mark"
+faktor = 1.0
+k1_koder = [5]
+beskrivning = "Bevarad naturmark, skog och trädklädd mark direkt på naturlig undergrund."
+kalla = "Stockholms stad GYF för kvartersmark (ej underbyggd växtbädd / bevarad naturmark); konservativ skissvikt 1,0 utan fältinventering."
+typ = "schablon"
+anmarkning = "I Stockholms fulla mall kan högkvalitativ bevarad naturmark ge högre faktor än 1,0."
+
+[profiler.stockholm.delfaktorer.vegetation_mark]
+namn = "Vegetation på mark"
+faktor = 1.0
+k1_koder = [4]
+beskrivning = "Gräs, äng och plantering direkt på naturlig mark (ej underbyggd växtbädd)."
+kalla = "Stockholms stad GYF för kvartersmark (ej underbyggd växtbädd / markgrönska = 1,0)."
+typ = "kalla"
+
+[profiler.stockholm.delfaktorer.vaxtbadd_bjalklag]
+namn = "Växtbädd på bjälklag"
+faktor = 0.8
+k1_koder = []
+beskrivning = "Vegetationsyta på underbyggd gård/garagebjälklag (schablon för ca 600–800 mm jorddjup)."
+kalla = "Stockholms stad GYF för kvartersmark (växtbädd på bjälklag styrs av jorddjup; skisschablon 0,8)."
+typ = "schablon"
+anmarkning = "Jorddjup anges inte i K1; ange via K50 yt_overlagring['vaxtbadd_bjalklag']."
+
+[profiler.stockholm.delfaktorer.gront_tak]
+namn = "Grönt tak / sedumtak"
+faktor = 0.4
+k1_koder = [3]
+beskrivning = "Vegetationsklätt tak (schablon motsvarande ca 300–600 mm växtbädd; tunna sedumtak 50–120 mm har 0,1 i Stockholms mall)."
+kalla = "Stockholms stad GYF för kvartersmark (grönt tak 300–600 mm = 0,4; 120–300 mm = 0,3; 50–120 mm = 0,1)."
+typ = "schablon"
+anmarkning = "K1 skiljer inte substratdjup på gröna tak; 0,4 är ett mellanschablonvärde."
+
+[profiler.stockholm.delfaktorer.vattenyta]
+namn = "Öppen vattenyta"
+faktor = 1.0
+k1_koder = [8]
+beskrivning = "Permanent, biologiskt tillgänglig vattenyta (damm, bäck eller våtmark)."
+kalla = "Stockholms stad GYF för kvartersmark (permanent vattenyta med ekologisk funktion = 1,0)."
+typ = "schablon"
+
+[profiler.stockholm.delfaktorer.regnbadd]
+namn = "Regnbädd / lokal dagvattenfördröjning"
+faktor = 1.0
+k1_koder = []
+beskrivning = "Vegetationsklädd regnbädd eller svackdike på mark för lokal dagvattenfördröjning och rening."
+kalla = "Stockholms stad GYF för kvartersmark (växtbädd på mark med dagvattenfunktion; skisschablon 1,0)."
+typ = "schablon"
+
+[profiler.stockholm.delfaktorer.genomslapplig]
+namn = "Genomsläpplig beläggning"
+faktor = 0.4
+k1_koder = [7]
+beskrivning = "Halvöppen eller genomsläpplig yta som grus, singel, gräsarmering eller porös beläggning."
+kalla = "Stockholms stad GYF för kvartersmark (genomsläpplig markbeläggning; skisschablon 0,4)."
+typ = "schablon"
+
+[profiler.stockholm.delfaktorer.berg_i_dagen]
+namn = "Berg i dagen"
+faktor = 0.2
+k1_koder = [6]
+beskrivning = "Obebyggd berghäll utan djup växtbädd."
+kalla = "Eget skissval i Floden för K1-kod 6 (berg i dagen saknar entydig rad i grundtabellen)."
+typ = "skissval"
+
+[profiler.stockholm.delfaktorer.hardgjord]
+namn = "Hårdgjord tät yta"
+faktor = 0.0
+k1_koder = [1]
+beskrivning = "Tät hårdgjord markyta (asfalt, betong eller tät stenläggning)."
+kalla = "Stockholms stad GYF för kvartersmark (tät yta = 0,0)."
+typ = "kalla"
+
+[profiler.stockholm.delfaktorer.byggnad_tak]
+namn = "Byggnad och tätt tak"
+faktor = 0.0
+k1_koder = [2, 9]
+beskrivning = "Byggnadsfotavtryck och täta konventionella takytor."
+kalla = "Stockholms stad GYF för kvartersmark (tät takyta / byggnad = 0,0)."
+typ = "kalla"
+
+[profiler.stockholm.tillaggsfaktorer.trad_krontackning]
+namn = "Träd (krontäckning)"
+faktor = 0.4
+beskrivning = "Tillägg för nya/medelstora träd räknat per m² krontäckning ovanpå grundytan."
+kalla = "Stockholms stad GYF för kvartersmark (tilläggsfaktor trädskikt; skissomräkning till krontäckning i m²)."
+typ = "schablon"
+
+[profiler.stockholm.tillaggsfaktorer.befintligt_trad]
+namn = "Befintligt stort träd (krontäckning)"
+faktor = 0.6
+beskrivning = "Högre tillägg för bevarade befintliga träd och karaktärsträd per m² krontäckning."
+kalla = "Stockholms stad GYF för kvartersmark (bevarade träd ger högre tillägg än nyplanterade; skissvikt)."
+typ = "schablon"
+
+[profiler.stockholm.tillaggsfaktorer.buskskikt]
+namn = "Buskskikt"
+faktor = 0.2
+beskrivning = "Tillägg för flerskiktad buskvegetation per m² yta."
+kalla = "Stockholms stad GYF för kvartersmark (tilläggsfaktor buskskikt; skisschablon)."
+typ = "schablon"
+
+[profiler.stockholm.tillaggsfaktorer.smabiotop_regnbadd]
+namn = "Småbiotop / regnbäddstillägg"
+faktor = 0.2
+beskrivning = "Tillägg för småbiotop (t.ex. fjärilsrabatt, faunadepå) eller extra fördröjningsfunktion i regnbädd per m²."
+kalla = "Stockholms stad GYF för kvartersmark (tilläggsfaktorer biodiversitet och dagvatten; skisschablon)."
+typ = "schablon"
+
+[profiler.stockholm.tillaggsfaktorer.klattervaxter_fasad]
+namn = "Vertikal grönska / klätterväxter på fasad"
+faktor = 0.3
+beskrivning = "Tillägg för vegetationsklädd fasad eller spaljé räknat per m² täckt fasadyta."
+kalla = "Stockholms stad GYF för kvartersmark (vertikal grönska; skisschablon)."
+typ = "schablon"
+
+# =============================================================================
+# 2. Göteborgs Stad – Grönytefaktor för kvartersmark (skiss)
+# =============================================================================
+
+[profiler.goteborg]
+namn = "Göteborgs Stad – Grönytefaktor för kvartersmark"
+kommun = "Göteborg"
+riktmarke = 0.60
+status = "skiss"
+version = "2026.1-skiss"
+beskrivning = "Skissprofil baserad på Göteborgs Stads GYF-modell där varje yttyp värderas i intervallet [0, 1] som sammanvägt medelvärde över sex miljöutmaningar (biologisk mångfald, buller, dagvatten, lokalklimat, luftkvalitet och rekreation)."
+kalla = "Göteborgs Stad (Stadsbyggnadskontoret / Park- och naturförvaltningen), Grönytefaktor i Göteborg – Beräkningsmodell för kvartersmark och allmän platsmark; sammanställning på gronytefaktor.se och boverket.se."
+kalla_url = "https://goteborg.se/wps/portal/start/bygga-bo-och-leva-hallbart/bygga-riva-och-forandra/detaljplanering/gronytefaktor"
+overlagring_prioritet = [
+    "regnbadd",
+    "vattenyta",
+    "vaxtbadd_bjalklag",
+    "gront_tak",
+    "genomslapplig",
+    "skog_naturmark",
+    "vegetation_mark",
+    "berg_i_dagen",
+    "hardgjord",
+    "byggnad_tak",
+]
+anmarkning = "I Göteborgs Stads officiella modell styrs riktmärket av stadstyp och täthet (t.ex. 0,25 för mycket tät stad, 0,35 för relativt tät, 0,45 för gles bebyggelse och 0,55 för park) och kan viktas mot lokala miljöutmaningar och trafiknivå. Här sätts riktmärket enhetligt till 0,60 som skissvärde och oviktade medelvärden används per ytkategori; Joel kan justera riktmärke och vikter per projekt."
+
+[profiler.goteborg.delfaktorer.skog_naturmark]
+namn = "Skog och naturmark"
+faktor = 0.85
+k1_koder = [5]
+beskrivning = "Flerskiktad skog och naturmark med höga delvärden över samtliga sex miljöutmaningar."
+kalla = "Göteborgs Stad GYF-modell (oviktat medelvärde för skog/naturmark i [0, 1]; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.vegetation_mark]
+namn = "Vegetation på mark (gräsyta)"
+faktor = 0.55
+k1_koder = [4]
+beskrivning = "Öppen gräsyta på mark (motsvarar ca 0,54 i Göteborgs oviktade sex-utmaningsmedel)."
+kalla = "Göteborgs Stad GYF-modell (gräsmatta ca 0,54 i oviktat medelvärde över sex miljöutmaningar; avrundad skiss 0,55)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.vaxtbadd_bjalklag]
+namn = "Växtbädd på bjälklag"
+faktor = 0.50
+k1_koder = []
+beskrivning = "Planterad växtbädd på bjälklag med något lägre mark- och dagvattenprestanda än naturmark."
+kalla = "Göteborgs Stad GYF-modell (bjälklagsgrönska; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.gront_tak]
+namn = "Grönt tak / sedumtak"
+faktor = 0.35
+k1_koder = [3]
+beskrivning = "Vegetationsklätt tak med främst dagvattenfördröjande och lokalklimatisk nytta."
+kalla = "Göteborgs Stad GYF-modell (sedumtak / grönt tak i oviktat sex-utmaningsmedel; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.vattenyta]
+namn = "Öppen vattenyta"
+faktor = 0.65
+k1_koder = [8]
+beskrivning = "Öppen vattenyta / damm med bidrag till dagvatten, lokalklimat, rekreation och biologisk mångfald."
+kalla = "Göteborgs Stad GYF-modell (blå yta; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.regnbadd]
+namn = "Regnbädd / blågrön fördröjningsyta"
+faktor = 0.75
+k1_koder = []
+beskrivning = "Vegetationsklädd regnbädd som kombinerar dagvattenfördröjning, rening och biologisk mångfald."
+kalla = "Göteborgs Stad GYF-modell (öppen dagvattenlösning med vegetation; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.genomslapplig]
+namn = "Genomsläpplig beläggning"
+faktor = 0.25
+k1_koder = [7]
+beskrivning = "Halvöppen beläggning (grus, gräsarmering, fogad sten) med begränsad infiltration."
+kalla = "Göteborgs Stad GYF-modell (halvöppen hårdgjord yta; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.berg_i_dagen]
+namn = "Berg i dagen"
+faktor = 0.15
+k1_koder = [6]
+beskrivning = "Obebyggd berghäll med lågt dagvattenmagasin men visst lokalt naturvärde."
+kalla = "Eget skissval i Floden för K1-kod 6."
+typ = "skissval"
+
+[profiler.goteborg.delfaktorer.hardgjord]
+namn = "Hårdgjord tät yta"
+faktor = 0.0
+k1_koder = [1]
+beskrivning = "Tät hårdgjord yta (asfalt/betong)."
+kalla = "Göteborgs Stad GYF-modell (tät hårdgjord yta ligger nära 0, ca 0,00–0,04; skissvärde 0,0)."
+typ = "schablon"
+
+[profiler.goteborg.delfaktorer.byggnad_tak]
+namn = "Byggnad och tätt tak"
+faktor = 0.0
+k1_koder = [2, 9]
+beskrivning = "Byggnadsfotavtryck och tätt tak."
+kalla = "Göteborgs Stad GYF-modell (tät byggnadsyta = 0,0)."
+typ = "kalla"
+
+[profiler.goteborg.tillaggsfaktorer.trad_krontackning]
+namn = "Träd (krontäckning)"
+faktor = 0.50
+beskrivning = "Tillägg för trädkrona per m²; träd värderas högt över samtliga sex miljöutmaningar i Göteborg."
+kalla = "Göteborgs Stad GYF-modell (trädskikt; skisschablon per m² krontäckning)."
+typ = "schablon"
+
+[profiler.goteborg.tillaggsfaktorer.befintligt_trad]
+namn = "Befintligt stort träd (krontäckning)"
+faktor = 0.65
+beskrivning = "Tillägg för äldre/stora befintliga träd per m² krontäckning."
+kalla = "Göteborgs Stad GYF-modell (stora träd; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.tillaggsfaktorer.buskskikt]
+namn = "Buskskikt"
+faktor = 0.25
+beskrivning = "Tillägg för buskskikt per m²."
+kalla = "Göteborgs Stad GYF-modell (buskar; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.tillaggsfaktorer.smabiotop_regnbadd]
+namn = "Småbiotop / regnbäddstillägg"
+faktor = 0.20
+beskrivning = "Tillägg för småbiotop eller lokal dagvattenåtgärd per m²."
+kalla = "Göteborgs Stad GYF-modell (biologisk mångfald och dagvatten; skisschablon)."
+typ = "schablon"
+
+[profiler.goteborg.tillaggsfaktorer.klattervaxter_fasad]
+namn = "Vertikal grönska / klätterväxter på fasad"
+faktor = 0.25
+beskrivning = "Tillägg för fasadgrönska per m²."
+kalla = "Göteborgs Stad GYF-modell (vertikal vegetation; skisschablon)."
+typ = "schablon"
+
+# =============================================================================
+# 3. Malmö stad – Grönytefaktor för kvartersmark (skiss)
+# =============================================================================
+
+[profiler.malmo]
+namn = "Malmö stad – Grönytefaktor för kvartersmark"
+kommun = "Malmö"
+riktmarke = 0.60
+status = "skiss"
+version = "2026.1-skiss"
+beskrivning = "Skissprofil baserad på Malmö stads riktlinjer för grönytefaktor på kvartersmark (ursprungligen Bo01 / Västra Hamnen, reviderad 2014) med tydliga delfaktorer för markgrönska, bjälklag, gröna tak och genomsläppliga beläggningar samt tillägg för träd och dagvattenlösningar."
+kalla = "Malmö stad (Stadsbyggnadskontoret), Grönytefaktor för kvartersmark – Riktlinjer och beräkningstabell (2014; ursprung Bo01 / Västra Hamnen); översikt på gronytefaktor.se."
+kalla_url = "https://malmo.se/Bo-och-leva/Bygga-och-bo/Stadsplanering-och-detaljplaner/Gronytefaktor.html"
+overlagring_prioritet = [
+    "regnbadd",
+    "vattenyta",
+    "vaxtbadd_bjalklag",
+    "gront_tak",
+    "genomslapplig",
+    "skog_naturmark",
+    "vegetation_mark",
+    "berg_i_dagen",
+    "hardgjord",
+    "byggnad_tak",
+]
+anmarkning = "I Malmö stads ursprungliga tabell ges stora träd fasta schablonareor (t.ex. 25 m² ekoeffektiv yta för fullvuxet träd >18 m) och avvattning till grönska har ett tak motsvarande markgrönskans yta. Här representeras tillägg likformigt per m² för reproducerbar raster- och vektorberäkning; Joel kan justera varje vikt."
+
+[profiler.malmo.delfaktorer.skog_naturmark]
+namn = "Skog och naturmark på mark"
+faktor = 1.0
+k1_koder = [5]
+beskrivning = "Grönska och trädbestånd direkt på underliggande jord."
+kalla = "Malmö stad GYF (2014), grönska på marken på underliggande jord = 1,0."
+typ = "kalla"
+
+[profiler.malmo.delfaktorer.vegetation_mark]
+namn = "Vegetation på mark"
+faktor = 1.0
+k1_koder = [4]
+beskrivning = "Grönska på marken (växtbädd direkt på underliggande naturlig jord)."
+kalla = "Malmö stad GYF (2014), grönska på marken = 1,0."
+typ = "kalla"
+
+[profiler.malmo.delfaktorer.vaxtbadd_bjalklag]
+namn = "Växtbädd på bjälklag (200–800 mm)"
+faktor = 0.7
+k1_koder = []
+beskrivning = "Växtbädd på bjälklag med 200–800 mm jorddjup (djup >=800 mm ger 0,9 i Malmös tabell)."
+kalla = "Malmö stad GYF (2014), växtbädd på bjälklag 200–800 mm = 0,7 (>=800 mm = 0,9)."
+typ = "kalla"
+
+[profiler.malmo.delfaktorer.gront_tak]
+namn = "Grönt tak / sedumtak (80–200 mm)"
+faktor = 0.6
+k1_koder = [3]
+beskrivning = "Etablerat grönt tak / sedum-örttak med 80–200 mm växtbädd (tunnare 40–80 mm ger 0,4 i Malmös tabell)."
+kalla = "Malmö stad GYF (2014), grönt tak / bjälklag 80–200 mm = 0,6 (40–80 mm = 0,4)."
+typ = "kalla"
+
+[profiler.malmo.delfaktorer.vattenyta]
+namn = "Öppen vattenyta"
+faktor = 1.0
+k1_koder = [8]
+beskrivning = "Öppen, permanent vattenyta med ekologisk och dagvattenreglerande funktion."
+kalla = "Malmö stad GYF (2014), öppen vattenyta / damm (skisschablon 1,0)."
+typ = "schablon"
+
+[profiler.malmo.delfaktorer.regnbadd]
+namn = "Regnbädd / öppen dagvattenhantering i grönska"
+faktor = 1.0
+k1_koder = []
+beskrivning = "Vegetationsklädd regnbädd på mark för lokal omhändertagande av dagvatten."
+kalla = "Malmö stad GYF (2014), grönska på mark med dagvattenfunktion = 1,0."
+typ = "schablon"
+
+[profiler.malmo.delfaktorer.genomslapplig]
+namn = "Genomsläpplig beläggning (grus / gräsarmering)"
+faktor = 0.4
+k1_koder = [7]
+beskrivning = "Halvöppna till öppna hårdgjorda ytor på mark som grus, singel och gräsarmering (fogade plattor ger 0,2)."
+kalla = "Malmö stad GYF (2014), halvöppen/öppen hårdgjord yta på mark = 0,4 (fogad plattbeläggning = 0,2)."
+typ = "kalla"
+
+[profiler.malmo.delfaktorer.berg_i_dagen]
+namn = "Berg i dagen"
+faktor = 0.2
+k1_koder = [6]
+beskrivning = "Obebyggd berghäll utan växtbädd."
+kalla = "Eget skissval i Floden för K1-kod 6."
+typ = "skissval"
+
+[profiler.malmo.delfaktorer.hardgjord]
+namn = "Hårdgjord tät yta"
+faktor = 0.0
+k1_koder = [1]
+beskrivning = "Tät beläggning som asfalt och betong."
+kalla = "Malmö stad GYF (2014), täta ytor = 0,0."
+typ = "kalla"
+
+[profiler.malmo.delfaktorer.byggnad_tak]
+namn = "Byggnad och tätt tak"
+faktor = 0.0
+k1_koder = [2, 9]
+beskrivning = "Byggnad och konventionellt tätt tak."
+kalla = "Malmö stad GYF (2014), täta takytor = 0,0."
+typ = "kalla"
+
+[profiler.malmo.tillaggsfaktorer.trad_krontackning]
+namn = "Träd (krontäckning)"
+faktor = 0.50
+beskrivning = "Tillägg för träd räknat per m² krontäckning (motsvarar t.ex. 25 m² ekoeffektiv yta vid 50 m² krona)."
+kalla = "Malmö stad GYF (2014), stora träd ger 25 m² ekoeffektiv yta; här uttryckt per m² krontäckning som skiss."
+typ = "schablon"
+
+[profiler.malmo.tillaggsfaktorer.befintligt_trad]
+namn = "Befintligt stort träd (krontäckning)"
+faktor = 0.70
+beskrivning = "Högre tillägg för bevarade stora träd per m² krontäckning."
+kalla = "Malmö stad GYF (2014), bevarade stora träd; skisschablon per m² krontäckning."
+typ = "schablon"
+
+[profiler.malmo.tillaggsfaktorer.buskskikt]
+namn = "Buskskikt"
+faktor = 0.20
+beskrivning = "Tillägg för buskar och flerskiktad plantering per m²."
+kalla = "Malmö stad GYF (2014), buskar; skisschablon per m²."
+typ = "schablon"
+
+[profiler.malmo.tillaggsfaktorer.smabiotop_regnbadd]
+namn = "Småbiotop / avvattning till grönska"
+faktor = 0.25
+beskrivning = "Tillägg för småbiotop eller yta som avvattnas till lokal grönska/regnbädd per m²."
+kalla = "Malmö stad GYF (2014), avvattning till grönska och biologisk mångfald; skisschablon."
+typ = "schablon"
+
+[profiler.malmo.tillaggsfaktorer.klattervaxter_fasad]
+namn = "Klätterväxter på fasad"
+faktor = 0.30
+beskrivning = "Tillägg för gröna väggar / klätterväxter per m² fasadyta."
+kalla = "Malmö stad GYF (2014), gröna väggar/klätterväxter; skisschablon."
+typ = "schablon"
