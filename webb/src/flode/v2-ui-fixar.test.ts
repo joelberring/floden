@@ -428,13 +428,22 @@ test("W-B9: korning.ts stämplar serverns faktiska regn-/solsignatur (inte klien
   assert.equal(st.regnUtdaterat, true);
   assert.equal(st.solUtdaterat, true);
 
-  // Om servern saknar regn-/solmetadata stämplas null (aldrig klientens nuvarande värden)
+  // Om bara skyfall körs om med saknad regnmetadata stämplas regn till null medan dagsljus och dess solsignatur bevaras
   tillampaKlaraKorningar(
     t,
     [{ mall: "skyfall", status: { status: "klar" }, vyer: [skapaVy("vatten", true)], regn: null, sol: null }],
     true,
   );
   assert.equal(t.lageRegnSignatur, null);
+  assert.equal(t.lageSolSignatur, solSignatur(STANDARD_SOLVAL));
+  assert.ok(t.lageVyer.some((v) => v.avsnitt === "dagsljus"), "Tidigare dagsljusvy ska bevaras vid omkörning av skyfall");
+
+  // Om även dagsljus saknar serverns solmetadata stämplas solsignatur till null (aldrig klientens nuvarande värden)
+  tillampaKlaraKorningar(
+    t,
+    [{ mall: "dagsljus", status: { status: "klar" }, vyer: [skapaVy("dagsljus", true)], regn: null, sol: null }],
+    true,
+  );
   assert.equal(t.lageSolSignatur, null);
 });
 

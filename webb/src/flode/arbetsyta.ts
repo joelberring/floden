@@ -110,7 +110,7 @@ import {
   type GrundkartaVal,
 } from "./grundkartval.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
-import { arPagaende, startaKorning, startaLageIdag, vidKorning } from "./korning.ts";
+import { arPagaende, senasteKlaraAvsnitt, startaKorning, startaLageIdag, vidKorning } from "./korning.ts";
 import { harLuftKorningar, LUFT_AMNE, LUFT_FLIK_NAMN, luftFlikKnappHtml, luftLagerVal, luftNyckeltal, luftPanelHtml } from "./luftflik.ts";
 import { markhojdAvlasning } from "./markhojd.ts";
 import { formateraDjupCm, kortMarkhojdText, MatVerktyg, skalstockHtml, skalstockMatt } from "./matverktyg.ts";
@@ -226,6 +226,7 @@ const TAL1 = talFormat(1);
 const TAL2 = talFormat(2);
 const AMNEN_ORDNING: ResultatAmne[] = ["vatten", "dagsljus", "ekologi", "luft"];
 const AMNESNAMN: Record<ResultatAmne, string> = { vatten: "Skyfall", dagsljus: "Sol", ekologi: "Ekologi", luft: LUFT_FLIK_NAMN };
+const KOR_AMNESNAMN: Record<ResultatAmne, string> = { vatten: "skyfall", dagsljus: "dagsljus", ekologi: "ekologi", luft: "luft" };
 const MARK_SNABB_M = [-1.0, -0.5, -0.2, 0.2, 0.5, 1.0] as const;
 
 /** Knapp-id för "Visa osäkerhet" (måste matcha `osakerhetHtml` i `panelhtml.ts`, W-B4). */
@@ -233,7 +234,122 @@ export const OSAKERHET_KNAPP_ID = "rs-osakerhet";
 
 /** Delegerad klickselektor i arbetsytan (Steg 2). */
 export const ARBETSYTA_KLICK_SELEKTOR =
-  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-skyfall-metod],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
+  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-skyfall-metod],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-kor-alla,#ar-rita-forslag,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
+
+/** Mappar ett analys-id (`"vatten.skyfall"`, `"dagsljus.sol"`, …) eller mallnamn till arbetsytans ämne. */
+export function amneForAnalysId(analysId: string, mall?: string | null): ResultatAmne | null {
+  const m = (mall ?? (analysId.includes(".") ? analysId.slice(0, analysId.indexOf(".")) : analysId)).trim().toLowerCase();
+  if (m === "vatten" || m === "skyfall") return "vatten";
+  if (m === "dagsljus" || m === "sol") return "dagsljus";
+  if (m === "ekologi") return "ekologi";
+  if (m === "luft") return "luft";
+  return null;
+}
+
+/** Projektets förvalda körbara analyser (alla ämnen), med fallback till samtliga om inget är markerat `forval`. */
+export function forvaldaAnalyserForInfo(info: Pick<ProjektInfo, "analyser"> | null | undefined): string[] {
+  if (!info || !Array.isArray(info.analyser)) return [];
+  const alla = info.analyser.filter((x) => x.forval).map((x) => x.id);
+  return alla.length > 0 ? alla : info.analyser.map((x) => x.id);
+}
+
+/** Distinkta ämnen som har minst en körbar analys i projektets `info.analyser`. */
+export function korbaraAmnenI(info: Pick<ProjektInfo, "analyser"> | null | undefined): ResultatAmne[] {
+  if (!info || !Array.isArray(info.analyser)) return [];
+  const hittade = new Set<ResultatAmne>();
+  for (const a of info.analyser) {
+    const am = amneForAnalysId(a.id, a.mall);
+    if (am) hittade.add(am);
+  }
+  return AMNEN_ORDNING.filter((x) => hittade.has(x));
+}
+
+/**
+ * Väljer körbara analyser enbart för aktivt ämne (`"vatten"` → skyfall, `"dagsljus"` → dagsljus/sol,
+ * `"ekologi"` → ekologi), med säker fallback till `forvaldaAnalyserForInfo(info)` om ämnet saknar
+ * egna körbara analyser i `info.analyser`.
+ */
+export function analyserForAktivtAmne(
+  info: Pick<ProjektInfo, "analyser"> | null | undefined,
+  amne: ResultatAmne,
+): string[] {
+  if (!info || !Array.isArray(info.analyser) || info.analyser.length === 0) return [];
+  const matchande = info.analyser.filter((a) => amneForAnalysId(a.id, a.mall) === amne);
+  if (matchande.length === 0) return forvaldaAnalyserForInfo(info);
+  const forvalda = matchande.filter((a) => a.forval).map((a) => a.id);
+  return forvalda.length > 0 ? forvalda : matchande.map((a) => a.id);
+}
+
+/**
+ * Ämnesmedveten startspärr: `regnFel` och `avtappningFel` blockerar bara när vatten/skyfall ingår
+ * i `analyser`, och `solFel` blockerar bara när dagsljus/sol ingår i `analyser`.
+ */
+export function kanStartaKorningForAnalyser(
+  analyser: readonly string[],
+  regnFel: string | null,
+  avtappningFel: boolean,
+  solFel: string | null,
+): boolean {
+  if (analyser.length === 0) return false;
+  const harVatten = analyser.some((id) => amneForAnalysId(id) === "vatten");
+  const harSol = analyser.some((id) => amneForAnalysId(id) === "dagsljus");
+  return kanStartaKorning(
+    analyser,
+    harVatten ? regnFel : null,
+    harVatten ? avtappningFel : false,
+    harSol ? solFel : null,
+  );
+}
+
+/** Etiketter för primära körknappar (ämnesspecifika när projektet har > 1 körbart ämne) samt sekundär "alla ämnen"-knapp. */
+export function korKnappEtiketterForAmne(
+  info: Pick<ProjektInfo, "analyser"> | null | undefined,
+  amne: ResultatAmne,
+): {
+  arFlerAmnen: boolean;
+  nulage: string;
+  raknaOmNulage: string;
+  forslag: string;
+  allaNulage: string;
+  allaForslag: string;
+} {
+  const korbara = korbaraAmnenI(info);
+  const harEgetAmne = Boolean(info?.analyser?.some((a) => amneForAnalysId(a.id, a.mall) === amne));
+  const arFlerAmnen = korbara.length > 1 && harEgetAmne;
+  const namn = KOR_AMNESNAMN[amne];
+  return {
+    arFlerAmnen,
+    nulage: arFlerAmnen ? `Beräkna ${namn} (nuläge)` : "Beräkna nuläge",
+    raknaOmNulage: arFlerAmnen ? `Räkna om ${namn}` : "Räkna om nuläge",
+    forslag: arFlerAmnen ? `Beräkna ${namn} (förslag)` : "Beräkna förslag",
+    allaNulage: "Beräkna alla ämnen",
+    allaForslag: "Beräkna alla ämnen (förslag)",
+  };
+}
+
+/**
+ * Väljer vilket ämne som ska visas efter avslutad körning (även vid delfel):
+ * behåller aktivt ämne om det blev klart eller redan har en vy, annars växlar det
+ * till första ämne som blev klart så lyckade delresultat visas direkt på kartan.
+ */
+export function valjAmneEfterKorning(
+  aktuelltAmne: ResultatAmne,
+  vyer: readonly Pick<ProjektVy, "avsnitt">[],
+  klaraAvsnitt: readonly string[],
+): ResultatAmne {
+  if (klaraAvsnitt.includes(aktuelltAmne) && vyer.some((v) => v.avsnitt === aktuelltAmne)) {
+    return aktuelltAmne;
+  }
+  if (vyer.some((v) => v.avsnitt === aktuelltAmne)) {
+    return aktuelltAmne;
+  }
+  for (const a of klaraAvsnitt) {
+    if ((AMNEN_ORDNING as readonly string[]).includes(a) && vyer.some((v) => v.avsnitt === a)) {
+      return a as ResultatAmne;
+    }
+  }
+  return aktuelltAmne;
+}
 
 /** Kopplar 3D-vyns hovringsavläsning, objekttext och fel till arbetsytans DOM-uppdateringar (W-B4). */
 export function skapa3dAterkoppling(mal: {
@@ -983,11 +1099,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   const harEfter = (): boolean => Boolean(vy && !vy.lage_idag && lagerPost(r, vy.efter_lager));
   const harFore = (): boolean => Boolean(vy && lagerPost(r, vy.fore_lager));
 
-  const forvaldaAnalyser = (): string[] => {
-    if (!info) return [];
-    const alla = info.analyser.filter((x) => x.forval).map((x) => x.id);
-    return alla.length > 0 ? alla : info.analyser.map((x) => x.id);
-  };
+  const forvaldaAnalyser = (): string[] => forvaldaAnalyserForInfo(info);
+  const aktivaAnalyser = (): string[] => analyserForAktivtAmne(info, amne);
 
   /** Regnetikett ur körningens resultat (enkel 1-radig text). */
   const korningRegnRad = (): string | null => {
@@ -1220,35 +1333,68 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const pagar = arPagaende(t);
     const harRitatForslag = !t.dok.tom();
     const inst = bedomInstallningsStatus(t, amne, projektSvar?.vyer);
-    const harAktuellt = inst.harAktuelltResultat;
-    const kanKora = !pagar && kanStartaKorning(forvaldaAnalyser(), regnFel, avtappningFel, solFel);
+    const etiketter = korKnappEtiketterForAmne(info, amne);
+    const harEgetAmne = Boolean(info?.analyser?.some((a) => amneForAnalysId(a.id, a.mall) === amne));
+    const harAktuellt =
+      amne === "vatten"
+        ? !inst.regnUtdaterat
+        : amne === "dagsljus"
+          ? !inst.solUtdaterat
+          : harEgetAmne
+            ? vyerFor("lage").length > 0 || vyerFor("ritat").length > 0 || vyerFor("projekt").length > 0
+            : inst.harAktuelltResultat;
+    const aktivVarning =
+      amne === "vatten"
+        ? inst.regnUtdaterat
+          ? t.skyfallMetod === "2d"
+            ? "Vald skyfallsmetod (2D) eller regn skiljer sig från visat resultat (eller saknar beräkning)."
+            : "Valt regn skiljer sig från visat resultat (eller saknar beräkning)."
+          : null
+        : amne === "dagsljus"
+          ? inst.solUtdaterat
+            ? "Vald solinställning skiljer sig från visat resultat (eller saknar beräkning)."
+            : null
+          : harEgetAmne
+            ? null
+            : inst.varningText;
+    const kanKoraAktivt = !pagar && kanStartaKorningForAnalyser(aktivaAnalyser(), regnFel, avtappningFel, solFel);
+    const kanKoraAlla = !pagar && kanStartaKorningForAnalyser(forvaldaAnalyser(), regnFel, avtappningFel, solFel);
 
     let knappar = "";
+    let allaMal: "nulage" | "forslag" = "nulage";
     if (harRitatForslag) {
       if (lage === "nulage" && !harAktuellt) {
-        knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
-        knappar += `<button type="button" class="flode-knapp" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
+        knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKoraAktivt ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : esc(etiketter.nulage)}</button>`;
+        knappar += `<button type="button" class="flode-knapp" id="ar-kor-forslag"${kanKoraAktivt ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : esc(etiketter.forslag)}</button>`;
+        allaMal = "nulage";
       } else {
-        knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-forslag"${kanKora ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : "Beräkna förslag"}</button>`;
+        knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-forslag"${kanKoraAktivt ? "" : " disabled"}>${pagar && !t.korning?.lage ? "Beräknar …" : esc(etiketter.forslag)}</button>`;
         if (!harAktuellt) {
-          knappar += `<button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : "Beräkna nuläge"}</button>`;
+          knappar += `<button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKoraAktivt ? "" : " disabled"}>${pagar && t.korning?.lage ? "Beräknar …" : esc(etiketter.nulage)}</button>`;
         }
+        allaMal = "forslag";
       }
     } else if (!harAktuellt) {
-      knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : "Beräkna nuläge"}</button>`;
+      knappar = `<button type="button" class="flode-knapp svart" id="ar-kor-nulage"${kanKoraAktivt ? "" : " disabled"}>${pagar ? "Beräknar …" : esc(etiketter.nulage)}</button>`;
+      allaMal = "nulage";
     } else {
-      knappar = `<button type="button" class="flode-knapp" id="ar-rita-forslag">Rita förslag</button><button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKora ? "" : " disabled"}>${pagar ? "Beräknar …" : "Räkna om nuläge"}</button>`;
+      knappar = `<button type="button" class="flode-knapp" id="ar-rita-forslag">Rita förslag</button><button type="button" class="flode-knapp" id="ar-kor-nulage"${kanKoraAktivt ? "" : " disabled"}>${pagar ? "Beräknar …" : esc(etiketter.raknaOmNulage)}</button>`;
+      allaMal = "nulage";
     }
+
+    const allaKnapp = etiketter.arFlerAmnen
+      ? `<button type="button" class="flode-knapp diskret ar-kor-alla" id="ar-kor-alla" data-kor-alla="${allaMal}"${kanKoraAlla ? "" : " disabled"}>${esc(allaMal === "forslag" ? etiketter.allaForslag : etiketter.allaNulage)}</button>`
+      : "";
 
     const status = pagar
       ? `<p class="flode-liten" role="status" aria-live="polite">${esc(t.korning?.text ?? "Beräknar …")}</p>`
       : t.korning?.fel
         ? `<p class="flode-fel flode-liten" role="alert">${esc(t.korning.fel)}</p>`
-        : inst.varningText
-          ? `<p class="flode-liten flode-dampad">${esc(inst.varningText)}</p>`
+        : aktivVarning
+          ? `<p class="flode-liten flode-dampad">${esc(aktivVarning)}</p>`
           : "";
 
-    el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${status}${forberaknadBasRad()}`;
+    el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${allaKnapp}${status}${forberaknadBasRad()}`;
 
     // Tom-kort mitt på kartan när nuläget inte är beräknat än
     const tomKort = el("ar-tom-kort");
@@ -1265,7 +1411,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
               : "Kör en nulägesberäkning för projektets befintliga läge så visas vindkomfort och luftresultat direkt på kartan.";
       tomKort.innerHTML = `<h2>Nuläget är inte beräknat än</h2>
         <p>${tomBeskrivning}</p>
-        <button type="button" class="flode-knapp svart stor" id="ar-tom-kor-nulage"${kanKora ? "" : " disabled"}>Beräkna nuläge</button>`;
+        <button type="button" class="flode-knapp svart stor" id="ar-tom-kor-nulage"${kanKoraAktivt ? "" : " disabled"}>${esc(etiketter.nulage)}</button>`;
     }
   };
 
@@ -1990,10 +2136,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
             : "")
         : "";
     if (!vy || !r) {
+      const nulageKnappNamn = korKnappEtiketterForAmne(info, amne).nulage;
       inne.innerHTML = pagar
         ? `${solBlock}<h1 class="flode-h" id="ar-rubrik">Beräknar …</h1><p class="flode-dampad" role="status">${esc(t.korning?.text ?? "")}</p>`
         : `${solBlock}<h1 class="flode-h" id="ar-rubrik">${esc(AMNESNAMN[amne])} – nuläge</h1>
-           <p class="flode-dampad">Inga beräknade resultat för ${esc(AMNESNAMN[amne].toLowerCase())} ännu. Tryck <strong>Beräkna nuläge</strong> ovan för att räkna ut projektets befintliga läge, eller byt till <strong>Redigera förslag</strong> för att rita ändringar.</p>`;
+           <p class="flode-dampad">Inga beräknade resultat för ${esc(AMNESNAMN[amne].toLowerCase())} ännu. Tryck <strong>${esc(nulageKnappNamn)}</strong> ovan för att räkna ut projektets befintliga läge, eller byt till <strong>Redigera förslag</strong> för att rita ändringar.</p>`;
       return;
     }
 
@@ -2651,18 +2798,20 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   };
 
   // ---------- Körningar direkt från kartan ----------
-  const korNulageNu = async (): Promise<void> => {
-    const analyser = forvaldaAnalyser();
+  const korNulageNu = async (omfang: "aktivt" | "alla" = "aktivt"): Promise<void> => {
+    const analyser = omfang === "alla" ? forvaldaAnalyser() : aktivaAnalyser();
+    regnFel = valideraRegnVal(t.regn);
     solFel = valideraSolVal(t.sol);
-    if (!kanStartaKorning(analyser, regnFel, avtappningFel, solFel)) return;
+    if (!kanStartaKorningForAnalyser(analyser, regnFel, avtappningFel, solFel)) return;
     korAutoByt = "nulage";
     await startaLageIdag(t, analyser);
   };
 
-  const korForslagNu = async (): Promise<void> => {
-    const analyser = forvaldaAnalyser();
+  const korForslagNu = async (omfang: "aktivt" | "alla" = "aktivt"): Promise<void> => {
+    const analyser = omfang === "alla" ? forvaldaAnalyser() : aktivaAnalyser();
+    regnFel = valideraRegnVal(t.regn);
     solFel = valideraSolVal(t.sol);
-    if (!kanStartaKorning(analyser, regnFel, avtappningFel, solFel)) return;
+    if (!kanStartaKorningForAnalyser(analyser, regnFel, avtappningFel, solFel)) return;
     const ok = await sparaNu();
     if (!ok || !t.scenario || avslutad) {
       if (lage !== "redigera") stallLage("redigera");
@@ -2672,24 +2821,31 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     await startaKorning(t, analyser);
   };
 
+  let senastHanteradKorning: typeof t.korning = null;
   const avlyssnaKorning = vidKorning(() => {
     if (avslutad) return;
     ritaRegnOchKor();
-    if (t.korning?.klar && !t.korning.fel) {
-      if (t.korning.lage && t.lageVyer.length > 0) {
+    if (t.korning?.klar && t.korning !== senastHanteradKorning) {
+      senastHanteradKorning = t.korning;
+      const klaraAvsnitt = senasteKlaraAvsnitt(projekt);
+      const harNyaKlara = !t.korning.fel || klaraAvsnitt.length > 0;
+      if (harNyaKlara && t.korning.lage && t.lageVyer.length > 0) {
         kalla = "lage";
         if (korAutoByt === "nulage") lage = "nulage";
         korAutoByt = null;
-        void valjAmne(amne);
-      } else if (!t.korning.lage && t.ritVyer.length > 0) {
+        void valjAmne(valjAmneEfterKorning(amne, t.lageVyer, klaraAvsnitt));
+        return;
+      }
+      if (harNyaKlara && !t.korning.lage && t.ritVyer.length > 0) {
         kalla = "ritat";
         if (korAutoByt === "efter") lage = "efter";
         korAutoByt = null;
-        void valjAmne(amne);
+        void valjAmne(valjAmneEfterKorning(amne, t.ritVyer, klaraAvsnitt));
+        return;
       }
-    } else {
-      ritaAnalysPanel();
+      korAutoByt = null;
     }
+    ritaAnalysPanel();
   });
   avbryt.push(avlyssnaKorning);
 
@@ -3020,11 +3176,16 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       return;
     }
     if (m.id === "ar-kor-nulage" || m.id === "ar-tom-kor-nulage") {
-      void korNulageNu();
+      void korNulageNu("aktivt");
       return;
     }
     if (m.id === "ar-kor-forslag") {
-      void korForslagNu();
+      void korForslagNu("aktivt");
+      return;
+    }
+    if (m.id === "ar-kor-alla") {
+      if (m.dataset.korAlla === "forslag") void korForslagNu("alla");
+      else void korNulageNu("alla");
       return;
     }
     if (m.id === "ar-spara") {
