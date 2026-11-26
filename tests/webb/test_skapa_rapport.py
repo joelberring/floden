@@ -259,7 +259,7 @@ def test_forslaget_styr_vilken_korning_rapporten_bygger_pa(v: Varld) -> None:
     assert v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "hus-a"})[0] == 404
     _spara_forslag(v, "hus-a", "Hus A", {})
     s, e = v.json(v.anna, "POST", url, {"amne": "skyfall", "scenario": "hus-a"})
-    assert s == 409 and "steg 3" in e["fel"]
+    assert s == 409 and "steg 2" in e["fel"] and "steg 3" not in e["fel"]
     # Förslaget har en körning: den väljs (användarens förslag går före demokörningen) och förvalet i listan ändras.
     _spara_forslag(v, "hus-a", "Hus A", {"vatten": "demo-vatten"})
     per = {a["id"]: a for a in v.json(v.anna, "GET", url)[1]["amnen"]}
@@ -295,9 +295,13 @@ def test_belagg_sager_projektets_avgransning_nar_polygon_finns(v: Varld, monkeyp
     assert efter.varde == fore.varde  # texten ändras, inte talet (demon har ingen polygon att räkna på)
 
 
-def test_lage_idag_ar_projektets_egen_men_rapporten_kraver_jamforelse(v: Varld) -> None:
-    """U5a: en körning av läget idag märks så i underlaget, men väljs aldrig av sig själv och nekas tydligt som rapportunderlag."""
+def test_lage_idag_kan_skapa_nulagesrapport_med_kartor_utan_409(v: Varld) -> None:
+    """B12: en körning av läget idag är valbar i steg 3 utan 409 och skapar nulägesrapport med kartfigur."""
     import time
+
+    from PIL import Image
+
+    from rapport.figurer import FARG_BAKGRUND
 
     kv = v.app.kartverktyg
     k = kv.kor_lage_idag(DEMO, ["vatten.skyfall"])
@@ -310,7 +314,17 @@ def test_lage_idag_ar_projektets_egen_men_rapporten_kraver_jamforelse(v: Varld) 
     assert v.app.korningsunderlag(kid)["slag"] == "lage_idag"
     url = f"/api/projekt/{DEMO}/rapporter"
     per = {a["id"]: a for a in v.json(v.anna, "GET", url)[1]["amnen"]}
-    assert kid not in {x["korning_id"] for x in per["skyfall"]["korningar"]}
-    assert per["skyfall"]["forval_slag"] in ("demo", "forslag", "egen")
-    s, e = v.json(v.anna, "POST", url, {"amne": "skyfall", "korning_id": kid})
-    assert s == 409 and "läget idag" in e["fel"] and "steg 3" in e["fel"]
+    assert kid in {x["korning_id"] for x in per["skyfall"]["korningar"]}
+    assert per["skyfall"]["forval_slag"] == "lage_idag"
+    s, d = v.json(v.anna, "POST", url, {"amne": "skyfall", "korning_id": kid})
+    assert s == 202, d
+    assert d["underlag"]["slag"] == "lage_idag"
+    klar = v.vanta(v.anna, d)
+    assert klar["status"] == "klar", klar
+    assert klar["kontroll"] == {"godkand": True, "antal_fel": 0, "exporterad": True}
+    rap = _rapport_json(v, klar["rapport_id"])
+    assert len(rap["kartor"]) >= 1
+    assert rap["kartor"][0]["meta"]["kartmotor"] == "rapport.figurer"
+    kartfil = v.rot / "rapporter" / klar["rapport_id"] / rap["kartor"][0]["fil"]
+    with Image.open(kartfil) as img:
+        assert img.getpixel((2, 2)) == FARG_BAKGRUND

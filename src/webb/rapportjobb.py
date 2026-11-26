@@ -95,8 +95,8 @@ class RapportJobbTjanst:
                 kor = self._korningar_for(projekt, a)
                 if not kor:
                     forklaring = (
-                        f"Det finns ingen klar beräkning av {AMNESNAMN[a].lower()} med före och efter i projektet. "
-                        "Kör beräkningarna i steg 3 först."
+                        f"Det finns ingen klar beräkning av {AMNESNAMN[a].lower()} (läget idag eller förslag) i projektet. "
+                        "Kör en beräkning i steg 2 (Karta & analys) först."
                     )
             amnen.append(
                 {
