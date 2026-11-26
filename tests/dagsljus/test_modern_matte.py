@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 import time
 
 import numpy as np
@@ -52,7 +53,8 @@ def test_dozier_frew_exakt_mot_n2_och_snabb() -> None:
     h_stor = horisont_1d_konvext_holje(z_stor, 1.0, riktning=1)
     dt_s = time.perf_counter() - t0
     assert h_stor.shape == (2000,)
-    assert dt_s < 0.05
+    grans_s = 0.05 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    assert dt_s < grans_s, f"Dozier-Frew (N=2000) tog {dt_s:.4f} s (gräns < {grans_s:.3f} s)"
 
 
 def test_monoton_svf_intervall_innesluter_slumpade_hushojder() -> None:

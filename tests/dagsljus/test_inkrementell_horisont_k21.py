@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 
+import dagsljus.floden_losare as floden_losare_mod
+import dagsljus.horisont as horisont_mod
 from dagsljus.exempelkvarter import bygg_ruta, byggnads_id, rektangel
 from dagsljus.floden_losare import rensa_horisont_cache
 from gemensamt.hash import sha256_fil
@@ -193,10 +197,13 @@ def test_horisont_fallback_nar_over_25_procent_andras(tmp_path: Path) -> None:
     np.testing.assert_array_equal(h_s, h_r)
 
 
-def test_horisont_inkrementell_speedup_matbar(tmp_path: Path) -> None:
-    """Lokal byggnad på en 120×120-ruta är snabbare inkrementellt än full beräkning."""
+def test_horisont_inkrementell_speedup_matbar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lokal byggnad på en 120×120-ruta minskar antalet beräknade cell-strålar kraftigt."""
     rensa_horisont_cache()
-    bas_rot, _, bas_sha = _skapa_k1_v2_bas(tmp_path / "bas", sida_m=120.0)
+    bas_rot, ruta_mapp, bas_sha = _skapa_k1_v2_bas(tmp_path / "bas", sida_m=120.0)
+    rid = ruta_mapp.name
     k9_fil = _skriv_k9(
         tmp_path / "litet_hus.k9.json",
         "litet-hus",
@@ -224,7 +231,30 @@ def test_horisont_inkrementell_speedup_matbar(tmp_path: Path) -> None:
     )
     kor_utredning(fraga_bas, ResultatCache(tmp_path / "cache_bas"), tmp_path / "ut_bas")
 
-    # Mät inkrementell körning
+    # Räkna deterministiskt antalet cell-strålar och ren kärntid (utan disk-I/O från kor_utredning)
+    orig_horisont = horisont_mod.horisont_riktning_ruta
+    matning: dict[str, float] = {"anrop": 0.0, "cell_stralar": 0.0, "karna_tid_s": 0.0}
+
+    def _raknande_horisont(
+        falt: Any,
+        phi_rad: float,
+        max_avstand_m: float,
+        *,
+        fonster: tuple[int, int, int, int] | None = None,
+        **kw: Any,
+    ) -> Any:
+        ny, nx = falt.z_m.shape
+        r_a, r_b, c_a, c_b = fonster if fonster is not None else (0, ny, 0, nx)
+        matning["anrop"] += 1.0
+        matning["cell_stralar"] += float((r_b - r_a) * (c_b - c_a))
+        t0 = time.perf_counter()
+        res = orig_horisont(falt, phi_rad, max_avstand_m, fonster=fonster, **kw)
+        matning["karna_tid_s"] += time.perf_counter() - t0
+        return res
+
+    monkeypatch.setattr(horisont_mod, "horisont_riktning_ruta", _raknande_horisont)
+    monkeypatch.setattr(floden_losare_mod, "horisont_riktning_ruta", _raknande_horisont)
+
     fraga_efter = fraga_fran_dict(
         {
             "kontrakt": "K20/v1",
@@ -234,17 +264,38 @@ def test_horisont_inkrementell_speedup_matbar(tmp_path: Path) -> None:
         },
         tmp_path,
     )
-    t0 = time.perf_counter()
+
+    # 1. Inkrementell körning
     res_i = kor_utredning(fraga_efter, ResultatCache(tmp_path / "cache_i"), tmp_path / "ut_i")
-    t_inkr = time.perf_counter() - t0
-    assert res_i.sammanstallning["jobb"][0]["matvarden"]["inkrementell"] is True
+    mv_i = res_i.sammanstallning["jobb"][0]["matvarden"]
+    assert mv_i["inkrementell"] is True
+    assert mv_i["andrade_celler"] == 36
+    cell_stralar_inkr = int(matning["cell_stralar"])
+    karna_tid_inkr = matning["karna_tid_s"]
 
-    # Mät full körning (rensad horisontcache)
+    # 2. Full körning (rensad horisontcache)
+    matning["anrop"] = 0.0
+    matning["cell_stralar"] = 0.0
+    matning["karna_tid_s"] = 0.0
     rensa_horisont_cache()
-    t0 = time.perf_counter()
     res_f = kor_utredning(fraga_efter, ResultatCache(tmp_path / "cache_f"), tmp_path / "ut_f")
-    t_full = time.perf_counter() - t0
-    assert res_f.sammanstallning["jobb"][0]["matvarden"]["inkrementell"] is False
+    mv_f = res_f.sammanstallning["jobb"][0]["matvarden"]
+    assert mv_f["inkrementell"] is False
+    cell_stralar_full = int(matning["cell_stralar"])
+    karna_tid_full = matning["karna_tid_s"]
 
-    # Körtiden i sammanställningen/klockan ska vara snabbare för den lokala uppdateringen
-    assert t_inkr < t_full
+    # Deterministisk arbetsminskning (> 80 % färre cell-strålar, normalt ~91 %) + bitidentitet
+    assert cell_stralar_full == 120 * 120 * 64
+    assert cell_stralar_inkr < 0.25 * cell_stralar_full, (
+        f"Inkrementell räknade om {cell_stralar_inkr}/{cell_stralar_full} cell-strålar"
+    )
+    h_i = np.load(tmp_path / "ut_i" / "hor" / "efter" / rid / "horisont.npy")
+    h_f = np.load(tmp_path / "ut_f" / "hor" / "efter" / rid / "horisont.npy")
+    np.testing.assert_array_equal(h_i, h_f)
+
+    # Isolerad kärntid styrd av FLODEN_TIDSFAKTOR (undviker I/O-fladder på delade CI-noder)
+    tidsfaktor = float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    assert karna_tid_inkr < karna_tid_full * tidsfaktor, (
+        f"Inkrementell kärntid {karna_tid_inkr:.4f} s >= "
+        f"{karna_tid_full:.4f} s * {tidsfaktor:g}"
+    )

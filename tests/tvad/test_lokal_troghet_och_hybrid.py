@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -196,7 +197,8 @@ class TestHybridOchK6Export(unittest.TestCase):
         self.assertIsNotNone(jamf.ankomsttid_mae_s)
         assert jamf.ankomsttid_mae_s is not None
         self.assertLess(jamf.ankomsttid_mae_s, 20.0)
-        self.assertGreater(jamf.speedup_faktor, 2.0)
+        tidsfaktor = float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        self.assertGreater(jamf.speedup_faktor, 2.0 / tidsfaktor)
         # Inga negativa djup eller numerisk instabilitet
         self.assertTrue(bool(np.all(np.isfinite(res_hyb.max_djup_m))))
         self.assertTrue(bool(np.all(res_hyb.slut_djup_m >= 0.0)))
@@ -236,7 +238,9 @@ class TestHybridOchK6Export(unittest.TestCase):
         self.assertIsNotNone(jamf.ankomsttid_mae_s)
         assert jamf.ankomsttid_mae_s is not None
         self.assertLess(jamf.ankomsttid_mae_s, 10.0)
-        self.assertGreater(jamf.speedup_faktor, 3.0)
+        tidsfaktor = float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        self.assertGreater(jamf.speedup_faktor, 3.0 / tidsfaktor)
+        self.assertLess(res_hyb.aktiv_cell_andel, res_full.aktiv_cell_andel)
 
     def test_k6_export_och_reproducerbarhet(self) -> None:
         mark, markslag, geo = _skapa_kombinerad_sluttning_och_sanka()

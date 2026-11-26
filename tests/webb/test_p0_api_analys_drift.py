@@ -825,7 +825,8 @@ class _SemaforSpyApp:
 
 def test_b13_asgi_snabba_ui_post_blockeras_inte_av_mattad_tung_semafor() -> None:
     """När tunga semaforen är full ska snabba UI-POST:er (validera, sektion, spara) gå igenom med 200."""
-    spy = _SemaforSpyApp("/api/kor", fordrojning_s=2.0)
+    tidsfaktor = float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    spy = _SemaforSpyApp("/api/kor", fordrojning_s=10.0 * tidsfaktor)
     asgi_app = FlodenAsgiApp(
         spy,  # type: ignore[arg-type]
         max_samtidiga_berakningar=1,
@@ -836,11 +837,14 @@ def test_b13_asgi_snabba_ui_post_blockeras_inte_av_mattad_tung_semafor() -> None
         tung = asyncio.create_task(
             _anropa_asgi(asgi_app, "POST", "/api/kor", chunks=(b"{}",))
         )
-        while not spy.startad.is_set():
-            await asyncio.sleep(0.005)
-
+        deadline = time.monotonic() + 5.0 * tidsfaktor
         try:
+            while not spy.startad.is_set():
+                assert time.monotonic() < deadline, "Tung POST startade inte i tid"
+                await asyncio.sleep(0.005)
+
             # Snabba UI-POST:er får INTE blockeras eller få 503
+            grans_snabb_s = 0.5 * tidsfaktor
             for snabb_vag in (
                 "/api/kartverktyg/demo/validera",
                 "/api/kartverktyg/demo/sektion",
@@ -855,7 +859,7 @@ def test_b13_asgi_snabba_ui_post_blockeras_inte_av_mattad_tung_semafor() -> None
                 t0 = time.monotonic()
                 st, _, _ = await _anropa_asgi(asgi_app, "POST", snabb_vag, chunks=(b"{}",))
                 assert st == 200, (snabb_vag, st)
-                assert time.monotonic() - t0 < 0.5, snabb_vag
+                assert time.monotonic() - t0 < grans_snabb_s, snabb_vag
 
             # Tunga beräknings-/rapport-POST:er ska däremot avvisas med 503 + Retry-After
             for tung_vag in (

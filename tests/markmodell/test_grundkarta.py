@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import time
 import unittest
@@ -500,7 +501,8 @@ class TestGrundkarta(unittest.TestCase):
         t0 = time.perf_counter()
         res = interpolera_med_brytlinjer(pe, pn, pz, ruta, [mur], max_avstand_m=3.0)
         tid_s = time.perf_counter() - t0
-        self.assertLess(tid_s, 0.5)
+        grans_s = 0.5 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        self.assertLess(tid_s, grans_s)
         self.assertEqual(res.mark_z.shape, (80, 80))
         self.assertEqual(res.antal_blockerade_celler, 0)
 

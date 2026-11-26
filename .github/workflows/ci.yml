@@ -23,6 +23,7 @@ env:
 jobs:
   lint-och-typer:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Hämta kod
@@ -63,6 +64,7 @@ jobs:
 
   bygg-rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Hämta kod
@@ -92,6 +94,7 @@ jobs:
 
   tester-utan-rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +163,7 @@ jobs:
 
   vatten-och-rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [bygg-rust]
 
     steps:
@@ -207,6 +211,7 @@ jobs:
   # Sammanfattande statusjobb med samma id som tidigare för smidigt branch-skydd.
   kvalitet-och-tester:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [lint-och-typer, bygg-rust, tester-utan-rust, vatten-och-rust]
     if: always()
 
@@ -223,6 +228,7 @@ jobs:
 
   webb-klient:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: webb

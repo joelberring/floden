@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from pathlib import Path
 
@@ -199,7 +200,8 @@ def test_deterministisk_byte_identisk_png_och_snabb_rendering(tmp_path: Path) ->
     h1 = hashlib.sha256(f1.read_bytes()).hexdigest()
     h2 = hashlib.sha256(f2.read_bytes()).hexdigest()
     assert h1 == h2
-    assert tid_ms < 250.0  # Normalt ~20-50 ms, generös marginal för CI
+    grans_ms = 250.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+    assert tid_ms < grans_ms, f"Kartfigur tog {tid_ms:.1f} ms (gräns < {grans_ms:.0f} ms)"
 
 
 def test_valideringsfel_ger_tydliga_undantag() -> None:

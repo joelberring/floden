@@ -6,6 +6,7 @@ import csv
 import importlib
 import json
 import math
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -193,7 +194,8 @@ class TestEnhetssvarOchEnsemble(unittest.TestCase):
         vinst = mat_faltning_vinst(graf, regnserier, dt_s=10.0, horisont_s=1800.0)
         self.assertEqual(vinst.antal_regn, 10)
         self.assertLess(vinst.max_rel_volymfel_fore_overfall, 0.01)
-        self.assertGreater(vinst.speedup_faktor, 1.0)
+        tidsfaktor = float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        self.assertGreater(vinst.speedup_faktor, 1.0 / tidsfaktor)
 
     def test_ensemble_500_scenarier_benchmark_och_percentiler(self) -> None:
         graf = _bygg_syntetisk_24_nod_graf()
@@ -220,7 +222,8 @@ class TestEnhetssvarOchEnsemble(unittest.TestCase):
         ens = kor_ensemble(graf, scenarier, percentiler=(10.0, 50.0, 90.0))
         self.assertEqual(len(ens.scenarier), 500)
         self.assertLess(ens.max_volymfel_rel, 0.001)
-        self.assertLess(ens.total_kortid_s, 60.0)
+        grans_s = 60.0 * float(os.environ.get("FLODEN_TIDSFAKTOR", "1"))
+        self.assertLess(ens.total_kortid_s, grans_s)
 
         p10 = ens.max_djup_percentiler_m[10.0]
         p50 = ens.max_djup_percentiler_m[50.0]
