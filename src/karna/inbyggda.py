@@ -1532,6 +1532,21 @@ class TvadLokalTroghet(Analyslosare):
 
         try:
             if kor_1d:
+                if str(p["enhet"]) != "cpu":
+                    extra_varningar.append(
+                        f"1D-rännstenskoppling körs på CPU f64; enhet={p['enhet']!r} "
+                        "föll tillbaka till 'cpu'."
+                    )
+                if str(p["precision"]) != "f64":
+                    extra_varningar.append(
+                        f"1D-rännstenskoppling körs i f64; precision={p['precision']!r} "
+                        "föll tillbaka till 'f64'."
+                    )
+                if p["anvand_rust"] is True:
+                    extra_varningar.append(
+                        "1D-rännstenskoppling körs i Python CPU f64; anvand_rust=true "
+                        "stöds inte för kopplad 1D/2D och föll tillbaka till Python."
+                    )
                 lank_linjer = kantstenar_3d or [
                     b for b in brytlinjer if b.typ in ("kantsten", "sankt_kantsten")
                 ]
@@ -1543,6 +1558,11 @@ class TvadLokalTroghet(Analyslosare):
                     korbana_sida=str(p["rannsten_korbana_sida"]),
                     oppen_nedstroms=oppna_rander,
                 )
+                if lank.hoppade_segment > 0:
+                    extra_varningar.append(
+                        f"1D-rännstenskoppling hoppade över {lank.hoppade_segment} "
+                        "kantstenssegment utan aktiv körbanecell eller z_botten_rh2000."
+                    )
                 res_1d = kor_kopplad_1d_2d(
                     mark_z,
                     markslag,
@@ -1566,6 +1586,7 @@ class TvadLokalTroghet(Analyslosare):
                     "rannsten_1d_aktiv": True,
                     "rannsten_1d_fil": gj_fil.name,
                     "rannsten_1d_segment": lank.antal,
+                    "rannsten_1d_kedjor": lank.antal_kedjor,
                     "rannsten_1d_max_djup_m": float(np.max(res_1d.max_djup_1d_m)),
                     "rannsten_1d_overfall_sankt_m3": float(res_1d.overfall_sankt_m3),
                     "rannsten_1d_overfall_hog_m3": float(res_1d.overfall_hog_m3),
@@ -1589,6 +1610,7 @@ class TvadLokalTroghet(Analyslosare):
                     vattenniva_rh2000_m=p.get("vattenniva_rh2000_m"),
                     anvand_rust=p["anvand_rust"],
                 )
+                extra_varningar.extend(res.varningar)
         except (TvadFel, RannstenFel) as exc:
             raise LosarFel(f"{self.namn}: {exc}") from exc
 

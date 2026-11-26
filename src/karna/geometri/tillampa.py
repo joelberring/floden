@@ -373,7 +373,7 @@ def tillampa_pa_v2_ruta(
         veg1 = veg1.copy() if veg1 is veg0 else veg1
         veg1[r0:r1, k0:k1][mask] = np.float32(hojd)
     veg_andrad = (veg1 is not None) and (
-        veg0 is None or not np.array_equal(veg1, veg0)
+        veg0 is None or not np.array_equal(veg1, veg0, equal_nan=True)
     )
 
     # 4. mark.tif och markslag.tif ur terräng + register + öppningar (samma steg som bygget)
@@ -422,14 +422,14 @@ def tillampa_pa_v2_ruta(
         )
         mark2 = np.asarray(mark2, dtype=np.float32)
 
-    terrang_andrad = not np.array_equal(terrang1, terrang)
+    terrang_andrad = not np.array_equal(terrang1, terrang, equal_nan=True)
     andrat = (
         register_andrat
         or veg_andrad
         or terrang_andrad
-        or not np.array_equal(mark2, mark)
+        or not np.array_equal(mark2, mark, equal_nan=True)
         or not np.array_equal(slag2, slag)
-        or not np.array_equal(osak1, osak)
+        or not np.array_equal(osak1, osak, equal_nan=True)
         or list(bryt1) != list(bryt0)
         or list(opp1) != list(opp0)
     )
@@ -442,7 +442,7 @@ def tillampa_pa_v2_ruta(
     bbox = (geo.x_min, geo.y_min, geo.x_max, geo.y_max)
     skriv_raster(ut / "mark.tif", mark2, geo)
     skriv_raster(ut / "markslag.tif", slag2, geo)
-    if not np.array_equal(osak1, osak):
+    if not np.array_equal(osak1, osak, equal_nan=True):
         skriv_raster(ut / "osakerhet.tif", osak1, geo)
     if terrang_andrad:
         skriv_raster(ut / "terrang.tif", terrang1, geo)
@@ -454,6 +454,7 @@ def tillampa_pa_v2_ruta(
         skriv_brytlinjer_gpkg(ut / "brytlinjer.gpkg", bryt1, bbox_fallback=bbox)
         skriv_oppningar_gpkg(ut / "oppningar.gpkg", opp1, bbox_fallback=bbox)
     gamla = {p.byggnad_id: p for p in poster0}
+    mark_lika = (mark2 == mark) | (np.isnan(mark2) & np.isnan(mark))
     recept: dict[str, Any] = {
         "kontrakt": "K1+K9/v2",
         "k1_version": 2,
@@ -472,7 +473,7 @@ def tillampa_pa_v2_ruta(
         "byggnader_andrade": sorted(
             k for k in set(reg) & set(gamla) if reg[k] != gamla[k]
         ),
-        "antal_andrade_celler": int(np.count_nonzero(mark2 != mark)),
+        "antal_andrade_celler": int(np.count_nonzero(~mark_lika)),
     }
     (ut / "recept.json").write_text(
         json.dumps(recept, indent=2, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"

@@ -25,6 +25,7 @@ Basens K1-filer hittas via `vatten.registrera_bas`.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Mapping
 from pathlib import Path
@@ -228,7 +229,20 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         kor_1d = False
 
     rannsten_info: dict[str, Any] = {"rannsten_1d_aktiv": False}
+    varningar: list[str] = []
     if kor_1d:
+        enhet_begard = str(p.get("enhet", "cpu"))
+        precision_begard = str(p.get("precision", "f64"))
+        if enhet_begard != "cpu":
+            varningar.append(
+                f"1D-rännstenskoppling körs på CPU f64; enhet={enhet_begard!r} "
+                "föll tillbaka till 'cpu'."
+            )
+        if precision_begard != "f64":
+            varningar.append(
+                f"1D-rännstenskoppling körs i f64; precision={precision_begard!r} "
+                "föll tillbaka till 'f64'."
+            )
         lank_linjer = kantstenar_3d or [
             b for b in brytlinjer if b.typ in ("kantsten", "sankt_kantsten")
         ]
@@ -240,6 +254,13 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             korbana_sida=str(p.get("rannsten_korbana_sida", "vanster")),
             oppen_nedstroms=oppna_rander,
         )
+        if lank.hoppade_segment > 0:
+            varningar.append(
+                f"1D-rännstenskoppling hoppade över {lank.hoppade_segment} "
+                "kantstenssegment utan aktiv körbanecell eller z_botten_rh2000."
+            )
+        for v_txt in varningar:
+            logging.getLogger(__name__).warning(v_txt)
         res_1d = kor_kopplad_1d_2d(
             mark_z,
             markslag,
@@ -260,6 +281,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             "rannsten_1d_aktiv": True,
             "rannsten_1d_fil": gj_fil.name,
             "rannsten_1d_segment": lank.antal,
+            "rannsten_1d_kedjor": lank.antal_kedjor,
             "rannsten_1d_max_djup_m": float(np.max(res_1d.max_djup_1d_m)),
             "rannsten_1d_overfall_sankt_m3": res_1d.overfall_sankt_m3,
             "rannsten_1d_overfall_hog_m3": res_1d.overfall_hog_m3,
@@ -278,11 +300,12 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             precision=p.get("precision", "f64"),
             vattenniva_rh2000_m=vattenniva_f,
         )
+        varningar.extend(res.varningar)
 
     k6_param: dict[str, Any] = {"losare": "vatten.2d"}
     if vattenniva_f is not None:
         k6_param["vattenniva_rh2000_m"] = vattenniva_f
-    skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar=k6_param)
+    skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar=k6_param, varningar=varningar)
 
     return {
         "max_djup_m": float(np.nanmax(res.max_djup_m)),
@@ -303,6 +326,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         "sanktermer": termer.beskrivning(),
         **avt_info,
         **rannsten_info,
+        **({"varningar": list(varningar)} if varningar else {}),
         **(
             takvatten.sammanfattning()
             if takvatten is not None

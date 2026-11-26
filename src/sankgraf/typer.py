@@ -448,14 +448,18 @@ def volymbalans_dict(
     infiltrerat_m3: float,
     avtappat_m3: float,
     tak_ledning_m3: float,
+    rand_in_m3: float = 0.0,
 ) -> dict[str, float | bool]:
     """Gemensam volymbalans för vattnets lösare (`docs/VATTEN.md`).
 
-    `regn_totalt_m3` = regn på mark + tak. Ut ur balansen: lagrat, utflöde (över rutkant eller
-    slutsänkans hinder), infiltration, avtappning, takvatten till ledningsnät och, med takvatten
-    av, regnet på taken (räknas inte). `volymfel_rel` = |regn − summan| / regn.
+    `regn_totalt_m3` = regn på mark + tak; `rand_in_m3` = initial-/randvatten (t.ex. fast
+    `vattenniva_rh2000_m` eller `tvingat_djup`). Ut ur balansen: lagrat, utflöde (över rutkant
+    eller slutsänkans hinder), infiltration, avtappning, takvatten till ledningsnät och, med
+    takvatten av, regnet på taken (räknas inte). `volymfel_rel` = |in_totalt − summan| / in_totalt.
     """
     regn = float(regn_mark_m3) + float(regn_tak_m3)
+    rand_in = float(rand_in_m3)
+    totalt_in = regn + rand_in
     bortsett = 0.0 if takvatten else float(regn_tak_m3)
     summa = (
         float(lagrat_m3) + float(ut_m3) + float(infiltrerat_m3) + float(avtappat_m3)
@@ -465,6 +469,7 @@ def volymbalans_dict(
         "regn_totalt_m3": regn,
         "regn_mark_m3": float(regn_mark_m3),
         "regn_tak_m3": float(regn_tak_m3),
+        "rand_in_m3": rand_in,
         "takvatten": bool(takvatten),
         "tak_ej_raknat_m3": bortsett,
         "lagrat_m3": float(lagrat_m3),
@@ -472,7 +477,7 @@ def volymbalans_dict(
         "infiltrerat_m3": float(infiltrerat_m3),
         "avtappat_m3": float(avtappat_m3),
         "tak_till_ledning_m3": float(tak_ledning_m3),
-        "volymfel_rel": abs(regn - summa) / regn if regn > 0.0 else 0.0,
+        "volymfel_rel": abs(totalt_in - summa) / totalt_in if totalt_in > 0.0 else 0.0,
     }
 
 
@@ -590,6 +595,44 @@ def avkoda_gp_wkb_z(
     raise SankGrafFel(f"Ostödd WKB-geometrityp: {geom_type} (bas {bas_typ}).")
 
 
+def _tolka_z_botten_noder(
+    raw: Any,
+    antal_noder: int,
+    sokvag: str | Path,
+) -> tuple[float, ...] | None:
+    """Tolkar per-nod `z_botten_rh2000` ur JSON-kolumnen `z_botten_rh2000_noder`."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise SankGrafFel(
+                f"Ogiltig JSON i z_botten_rh2000_noder i {sokvag}: {exc}"
+            ) from exc
+    elif isinstance(raw, list | tuple):
+        data = raw
+    else:
+        raise SankGrafFel(
+            f"Ogiltig typ för z_botten_rh2000_noder i {sokvag}: {type(raw).__name__}."
+        )
+    if not isinstance(data, list | tuple) or len(data) != antal_noder:
+        raise SankGrafFel(
+            f"z_botten_rh2000_noder i {sokvag} har längd "
+            f"{len(data) if isinstance(data, list | tuple) else 'okänd'}, "
+            f"förväntade {antal_noder}."
+        )
+    varden: list[float] = []
+    for v in data:
+        if isinstance(v, bool) or not isinstance(v, int | float):
+            raise SankGrafFel(f"Ogiltigt z_botten_rh2000-värde {v!r} i {sokvag}.")
+        fv = float(v)
+        if not math.isfinite(fv):
+            raise SankGrafFel(f"Icke-ändligt z_botten_rh2000-värde {fv} i {sokvag}.")
+        varden.append(fv)
+    return tuple(varden)
+
+
 def las_brytlinjer_fran_gpkg(sokvag: str | Path) -> list[BrytlinjePost]:
     """Läser `brytlinjer.gpkg` inkl. valfria 3D-kolumner till `BrytlinjePost`."""
     _, rader = las_gpkg_tabell(sokvag, "brytlinjer")
@@ -599,6 +642,10 @@ def las_brytlinjer_fran_gpkg(sokvag: str | Path) -> list[BrytlinjePost]:
         if not isinstance(geom, bytes | bytearray):
             raise SankGrafFel(f"Brytlinjepost saknar giltig geometri i {sokvag}.")
         koord, z_kron = avkoda_gp_wkb_z(geom)
+        z_botten_raw = rad.get("z_botten_rh2000_noder")
+        if z_botten_raw is None and isinstance(rad.get("z_botten_rh2000"), str):
+            z_botten_raw = rad.get("z_botten_rh2000")
+        z_botten = _tolka_z_botten_noder(z_botten_raw, len(koord), sokvag)
         tvarfall_raw = rad.get("tvarfall")
         osak_raw = rad.get("osakerhet_m")
         kalla_raw = rad.get("kalla")
@@ -608,6 +655,7 @@ def las_brytlinjer_fran_gpkg(sokvag: str | Path) -> list[BrytlinjePost]:
                 hojd_m=float(rad["hojd_m"]),
                 koordinater=koord,
                 z_kron_rh2000=z_kron,
+                z_botten_rh2000=z_botten,
                 tvarfall=float(tvarfall_raw) if tvarfall_raw is not None else None,
                 kalla=str(kalla_raw) if kalla_raw is not None else None,
                 osakerhet_m=float(osak_raw) if osak_raw is not None else None,
