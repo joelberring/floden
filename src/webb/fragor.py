@@ -70,6 +70,16 @@ from webb.resultatlager import (
     teckenforklaring,
     varde_intervall,
 )
+from webb.subproc_kor import (
+    STANDARD_JOBB_MAX_RAM_MB,
+    STANDARD_JOBB_MAX_TID_S,
+    SubprocAvbrutenFel,
+    SubprocFel,
+    SubprocHanterare,
+    befintlig_sokvag,
+    kor_fraga_i_barnprocess,
+    las_framsteg,
+)
 
 _logg = logging.getLogger(__name__)
 _ID = re.compile(r"^[a-z0-9][a-z0-9_.\-]*$")
@@ -77,6 +87,69 @@ _FRAGEFEL = (FragaFel, LosarFel, ScenarioFel, CacheFel)
 MAX_TABELLRADER = 200
 LAGER_VERSION = 12
 STANDARD_MAX_KO = 16
+STANDARD_EXEKUTOR = "trad"
+STANDARD_MIN_LEDIG_DISK_MB = 500.0
+_GILTIGA_EXEKUTORER = frozenset({"trad", "process"})
+
+
+def las_exekutor_lage(varde: str | None = None) -> str:
+    """Läser exekutorläge (`'trad'` eller `'process'`): argument > `FLODEN_EXEKUTOR` > `'trad'`."""
+    raw = varde if varde is not None else os.environ.get("FLODEN_EXEKUTOR")
+    if raw is None or not raw.strip():
+        return STANDARD_EXEKUTOR
+    lage = raw.strip().lower()
+    if lage not in _GILTIGA_EXEKUTORER:
+        raise ValueError(
+            f"Ogiltigt värde för FLODEN_EXEKUTOR={raw!r}: förväntade 'trad' eller 'process'."
+        )
+    return lage
+
+
+def _las_positivt_tal_env(
+    varde: float | None,
+    env_namn: str,
+    standard: float,
+    *,
+    tillat_noll: bool = False,
+) -> float:
+    if varde is not None:
+        if isinstance(varde, bool):
+            raise ValueError(f"{env_namn} måste vara ett tal, inte bool.")
+        tal = float(varde)
+    else:
+        raw = os.environ.get(env_namn)
+        if raw is None or not raw.strip():
+            return float(standard)
+        try:
+            tal = float(raw.strip())
+        except ValueError as exc:
+            raise ValueError(f"Ogiltigt värde för {env_namn}={raw!r}: ange ett tal.") from exc
+    if not math.isfinite(tal) or (tal < 0.0 if tillat_noll else tal <= 0.0):
+        villkor = ">= 0" if tillat_noll else "> 0"
+        raise ValueError(
+            f"Ogiltigt värde för {env_namn}={tal!r}: måste vara ändligt och {villkor}."
+        )
+    return tal
+
+
+def las_jobb_max_ram_mb(varde: float | None = None) -> float:
+    """Läser RAM-gräns per K20-barnprocess i MB (`FLODEN_JOBB_MAX_RAM_MB`, standard 2200)."""
+    return _las_positivt_tal_env(varde, "FLODEN_JOBB_MAX_RAM_MB", STANDARD_JOBB_MAX_RAM_MB)
+
+
+def las_jobb_max_tid_s(varde: float | None = None) -> float:
+    """Läser tidsgräns per K20-barnprocess i sekunder (`FLODEN_JOBB_MAX_TID_S`, standard 300)."""
+    return _las_positivt_tal_env(varde, "FLODEN_JOBB_MAX_TID_S", STANDARD_JOBB_MAX_TID_S)
+
+
+def las_min_ledig_disk_mb(varde: float | None = None) -> float:
+    """Läser minsta lediga diskutrymme i MB (`FLODEN_MIN_LEDIG_DISK_MB`, standard 500)."""
+    return _las_positivt_tal_env(
+        varde,
+        "FLODEN_MIN_LEDIG_DISK_MB",
+        STANDARD_MIN_LEDIG_DISK_MB,
+        tillat_noll=True,
+    )
 
 
 class KoFullFel(FlodenWebbFel):
@@ -209,6 +282,10 @@ class FragaTjanst:
         demomapp: Path | None = None,
         projektrot: Path | None = None,
         max_ko: int = STANDARD_MAX_KO,
+        exekutor: str | None = None,
+        jobb_max_ram_mb: float | None = None,
+        jobb_max_tid_s: float | None = None,
+        min_ledig_disk_mb: float | None = None,
     ) -> None:
         if max_ko < 0:
             raise ValueError("max_ko måste vara >= 0.")
@@ -221,6 +298,10 @@ class FragaTjanst:
         self.cachemapp = cachemapp
         self.korningsmapp = korningsmapp
         self.max_ko = int(max_ko)
+        self.exekutor_lage = las_exekutor_lage(exekutor)
+        self.jobb_max_ram_mb = las_jobb_max_ram_mb(jobb_max_ram_mb)
+        self.jobb_max_tid_s = las_jobb_max_tid_s(jobb_max_tid_s)
+        self.min_ledig_disk_mb = las_min_ledig_disk_mb(min_ledig_disk_mb)
         self._cache: ResultatCache | None = None
         self._lock = threading.RLock()
         self._korningslas: dict[str, threading.RLock] = {}
@@ -231,6 +312,7 @@ class FragaTjanst:
         self._ko_snapshot: dict[str, int] = {"koade": 0, "pagaende": 0, "max_ko": self.max_ko}
         self._inlast = False
         self._mapp_stampel = -1
+        self._subproc = SubprocHanterare()
         self._exekutor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="floden-kor")
 
     def _uppdatera_ko_snapshot(self) -> None:
@@ -255,11 +337,13 @@ class FragaTjanst:
             return las
 
     def stang(self, *, vanta: bool = True) -> None:
-        """Stänger bakgrundsexekutorn rent (idempotent) och markerar ej startade köade jobb."""
+        """Stänger bakgrundsexekutorn och ev. barnprocesser rent (idempotent, inga zombies)."""
         with self._lock:
             if self._stangd:
                 return
             self._stangd = True
+        # Avbryt pågående barnprocesser FÖRE `shutdown(wait=True)` så arbetstråden inte hänger.
+        self._subproc.avbryt_alla()
         self._exekutor.shutdown(wait=vanta, cancel_futures=True)
         with self._lock:
             kvar = list(self._ko_ordning)
@@ -273,6 +357,25 @@ class FragaTjanst:
                     k.plan = None
                     self._skriv_status(k)
             self._uppdatera_ko_snapshot()
+
+    def _kontrollera_diskutrymme(self) -> None:
+        """Pre-flight diskvakt: avvisar nya körningar med HTTP 507 om ledig disk är för låg."""
+        if self.min_ledig_disk_mb <= 0.0:
+            return
+        sokvag = befintlig_sokvag(self.cachemapp)
+        try:
+            anvandning = shutil.disk_usage(sokvag)
+        except OSError as exc:
+            _logg.warning("Kunde inte kontrollera ledigt diskutrymme för %s: %s", sokvag, exc)
+            return
+        ledig_mb = anvandning.free / (1024.0 * 1024.0)
+        if ledig_mb < self.min_ledig_disk_mb:
+            raise FlodenWebbFel(
+                f"Serverns diskutrymme är för lågt ({ledig_mb:.0f} MB ledigt, "
+                f"kräver minst {self.min_ledig_disk_mb:.0f} MB). "
+                "Frigör diskutrymme eller rensa gammal cache innan ny beräkning startas.",
+                status_kod=507,
+            )
 
     # ------------------------------------------------------------------ hjälpfunktioner
 
@@ -610,6 +713,7 @@ class FragaTjanst:
             befintlig = self._hitta_pagande(ref, projekt_id)
             if befintlig is not None:
                 return {**self._status(befintlig), "ateranvand": True}
+        self._kontrollera_diskutrymme()
         plan = self._planera(fraga)  # tydligt fel direkt, innan något köas
         korning_id = (
             f"{fraga.fraga_id}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
@@ -677,6 +781,7 @@ class FragaTjanst:
                 and (gammal.utmapp / "sammanstallning.json").is_file()
             ):
                 return self._status(gammal), True
+            self._kontrollera_diskutrymme()
             mapp = self.korningsmapp / korning_id
             if mapp.exists():
                 shutil.rmtree(mapp)
@@ -740,10 +845,47 @@ class FragaTjanst:
 
     def _kor(self, k: Korning, fraga: KorbarFraga, plan: Plan) -> None:
         with self._lock:
+            if self._stangd:
+                k.status, k.slut = "fel", k.slut or _nu()
+                k.fel = "Körningen avbröts när servern stoppades."
+                k.plan = None
+                self._skriv_status(k)
+                return
             k.status, k.start = "kor", _nu()
             self._skriv_status(k)
         try:
-            kor_utredning(fraga, self.cache(), k.utmapp, plan=plan)
+            if self.exekutor_lage == "process":
+                fraga_fil = fraga.kalla
+                if fraga_fil is None:
+                    raise FlodenWebbFel(
+                        "Frågan saknar källfil och kan inte köras i separat barnprocess.",
+                        status_kod=500,
+                    )
+                kor_fraga_i_barnprocess(
+                    fraga_fil=fraga_fil,
+                    cachemapp=self.cachemapp,
+                    utmapp=k.utmapp,
+                    status_fil=k.mapp / "framsteg.json",
+                    max_ram_mb=self.jobb_max_ram_mb,
+                    max_tid_s=self.jobb_max_tid_s,
+                    hanterare=self._subproc,
+                )
+            else:
+                kor_utredning(fraga, self.cache(), k.utmapp, plan=plan)
+        except SubprocAvbrutenFel:
+            with self._lock:
+                k.status, k.slut = "fel", _nu()
+                k.fel = "Körningen avbröts när servern stoppades."
+                k.plan = None
+                self._skriv_status(k)
+            return
+        except SubprocFel as exc:
+            fel_typ = exc.ursprunglig_typ or type(exc).__name__
+            with self._lock:
+                k.status, k.slut, k.fel = "fel", _nu(), f"{fel_typ}: {exc}"
+                k.plan = None
+                self._skriv_status(k)
+            return
         except Exception as exc:  # noqa: BLE001 - felet sparas och visas, inget sväljs
             with self._lock:
                 k.status, k.slut, k.fel = "fel", _nu(), f"{type(exc).__name__}: {exc}"
@@ -784,11 +926,20 @@ class FragaTjanst:
             )
         if status == "klar":
             klara = jobb_totalt
-        elif plan is not None:
-            # Antal jobb vars nyckel nu finns i cachen: kärnans cache är facit för vad som är klart.
-            klara = sum(1 for j in plan.jobb if self.cache().finns("jobb", j.nyckel))
         else:
             klara = 0
+            if plan is not None:
+                # Antal jobb i cachen: kärnans cache är facit för vad som är klart.
+                klara = sum(1 for j in plan.jobb if self.cache().finns("jobb", j.nyckel))
+            framsteg = las_framsteg(k.mapp / "framsteg.json")
+            if framsteg is not None:
+                klara_fil = framsteg.get("klara")
+                if (
+                    isinstance(klara_fil, int)
+                    and not isinstance(klara_fil, bool)
+                    and klara_fil >= 0
+                ):
+                    klara = max(klara, min(klara_fil, jobb_totalt))
         ut: dict[str, Any] = {**bas, "framsteg": {"klara": klara, "totalt": jobb_totalt}}
         if status == "ko":
             ut["ko_plats"] = ko_plats
