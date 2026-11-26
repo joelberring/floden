@@ -100,6 +100,7 @@ class Jobb:
     i_cache: bool = False
     kortid_s: float | None = None
     utdata: dict[str, Any] = field(default_factory=dict)
+    rutor: tuple[Ruta, ...] = ()
 
     @property
     def etikett(self) -> str:
@@ -153,6 +154,12 @@ def _inom_fokus(ruta: Ruta, fokus: tuple[float, float, float, float] | None) -> 
     return x0 <= mx <= x1 and y0 <= my <= y1
 
 
+def _overlappar_fokus(ruta: Ruta, fokus: tuple[float, float, float, float]) -> bool:
+    """Sant om rutan har positivt ytöverlapp med analysens `fokus`."""
+    x0, y0, x1, y1 = fokus
+    return ruta.x_max > x0 and ruta.x_min < x1 and ruta.y_max > y0 and ruta.y_min < y1
+
+
 def planera(fraga: KorbarFraga, cache: ResultatCache) -> Plan:
     """Materialiserar scenarier och räknar fram alla jobbnycklar utan att köra lösarna."""
     scenarier = {sid: materialisera_scenario(spec, cache) for sid, spec in fraga.scenarier.items()}
@@ -174,18 +181,28 @@ def planera(fraga: KorbarFraga, cache: ResultatCache) -> Plan:
 
         for sid in analys.scenarier:
             scen = scenarier[sid]
-            enheter: list[tuple[Ruta | None, tuple[Ruta, ...]]]
+            enheter: list[tuple[Ruta | None, tuple[Ruta, ...], tuple[Ruta, ...]]]
             if radie is None:
-                enheter = [(None, ())]
+                if analys.fokus is None:
+                    globala_rutor = scen.rutor
+                else:
+                    globala_rutor = tuple(
+                        r for r in scen.rutor if _overlappar_fokus(r, analys.fokus)
+                    )
+                    if not globala_rutor:
+                        raise LosarFel(
+                            f"Analys '{analys.id}' ({losare.namn}): fokus "
+                            f"{list(analys.fokus)} överlappar ingen K1-ruta i scenariot '{sid}'."
+                        )
+                enheter = [(None, (), globala_rutor)]
             else:
                 enheter = [
-                    (r, scen.grannar(r, radie))
+                    (r, gr := scen.grannar(r, radie), (r, *gr))
                     for r in scen.rutor
                     if _inom_fokus(r, analys.fokus)
                 ]
 
-            for ruta, grannar in enheter:
-                rutor = scen.rutor if ruta is None else (ruta, *grannar)
+            for ruta, grannar, rutor in enheter:
                 rut_ids = {r.ruta_id for r in rutor}
                 ber: dict[str, list[tuple[str, str]]] = {}
                 for b in analys.beror_pa:
@@ -218,6 +235,7 @@ def planera(fraga: KorbarFraga, cache: ResultatCache) -> Plan:
                     nyckel_objekt=objekt,
                     nyckel=nyckel,
                     i_cache=cache.finns("jobb", nyckel),
+                    rutor=rutor,
                 )
                 jobb.append(j)
                 nycklar.setdefault((analys.id, sid), []).append(
@@ -247,13 +265,12 @@ def _kor_jobb(j: Jobb, cache: ResultatCache, plan: Plan) -> None:
     def skrivare(tmp: Path) -> dict[str, Any]:
         utmapp = tmp / "utdata"
         utmapp.mkdir()
-        # Rutvisa jobb ser bara rutorna i nyckeln, så att en lösare inte kan läsa en ruta
-        # vars ändring inte syns i nyckeln.
-        synligt = (
-            j.scenario
-            if j.ruta is None
-            else replace(j.scenario, rutor=(j.ruta, *j.grannar))
+        # Jobb ser bara rutorna i nyckeln, så att en lösare inte kan läsa en ruta
+        # vars ändring inte syns i nyckeln (både rutvisa jobb och globala jobb med fokus).
+        synliga_rutor = j.rutor or (
+            j.scenario.rutor if j.ruta is None else (j.ruta, *j.grannar)
         )
+        synligt = replace(j.scenario, rutor=synliga_rutor)
         kontext = LosarKontext(
             utmapp=utmapp,
             scenario=synligt,

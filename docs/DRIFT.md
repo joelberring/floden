@@ -14,7 +14,7 @@ Mönstret är lyft från O-Tid (github.com/joelberring/otid, MIT): `Dockerfile`,
 | --- | --- |
 | `Dockerfile` | Fyra steg: webbklienten (Node 24, `npm run build`), Rust-verktygen (`lasclip`, `tvad_karna`), LibreDWG `dwgread` 0.13.3 (statiskt länkad, GPL v3, `FLODEN_DWGREAD`), samt körning (Python 3.12, `pip install -e ".[konto,mcp,rapport,s3,server]"` inkl. `boto3` för S3 och `uvicorn` för ASGI). Kör som användare `floden` (uid 1000). |
 | `deploy/start.sh` | Vägrar starta om inloggningen är av (utom med `FLODEN_TILLAT_UTAN_INLOGGNING=1`), bygger demovärlden första gången om `data/demo/varld/demo.json` saknas (`FLODEN_DEMO=1`), startar `floden webb` på port 8765 i containern i serverläget `FLODEN_SERVER` (`asgi` som förval: uvicorn med `src/webb/asgi.py`, 25 MB kroppstak även vid chunked överföring, semafor på tunga beräknings-/rapport-/projekt-POST och kötak `max_ko` som svarar 503 med `Retry-After`, låsfri `/api/halsa` samt ren avstängning via `lifespan.shutdown`; `trad` är standardbibliotekets trådserver som reserv med stöd för `GET`/`POST`/`PUT`/`DELETE`). |
-| `docker-compose.prod.yml` | `floden` (ingen port utåt, minnestak 3 GB, miljövariabler för OAuth, nyckelhemlighet samt valfri S3-objektlagring och lokal LRU-cache: `FLODEN_S3_TYP`, `FLODEN_S3_ENDPOINT`, `FLODEN_S3_BUCKET`, `FLODEN_S3_REGION`, `FLODEN_S3_ACCESS_KEY`, `FLODEN_S3_SECRET_KEY`, `FLODEN_S3_PREFIX`, `FLODEN_LOKAL_CACHE_MAPP`, `FLODEN_LOKAL_CACHE_MAX_GB`) och `caddy` (`caddy:2.11.7`, HTTPS, HSTS, `noindex`, 25 MB-gräns). |
+| `docker-compose.prod.yml` | `floden` (ingen port utåt, konfigurerbart minnestak `FLODEN_MEM_LIMIT`, förval `3g`, fail-fast celltak `FLODEN_MAX_SANKGRAF_CELLER`, miljövariabler för OAuth, nyckelhemlighet samt valfri S3-objektlagring och lokal LRU-cache: `FLODEN_S3_TYP`, `FLODEN_S3_ENDPOINT`, `FLODEN_S3_BUCKET`, `FLODEN_S3_REGION`, `FLODEN_S3_ACCESS_KEY`, `FLODEN_S3_SECRET_KEY`, `FLODEN_S3_PREFIX`, `FLODEN_LOKAL_CACHE_MAPP`, `FLODEN_LOKAL_CACHE_MAX_GB`) och `caddy` (`caddy:2.11.7`, HTTPS, HSTS, `noindex`, 25 MB-gräns). |
 | `.github/workflows/avbildning.yml` | Bygger och röktestar avbildningen på grenar; efter grön CI på `main` läggs den upp som `ghcr.io/joelberring/floden:<sha>`, `:<kort sha>` och `:main`. |
 
 `FORWARDED_ALLOW_IPS` (satt till `*` i `docker-compose.prod.yml`, kan åsidosättas i `.env`): Uvicorn litar annars bara på `X-Forwarded-For` från 127.0.0.1, men Caddy kommer från Docker-nätet, så utan den ser Floden Caddys adress i stället för klientens. `*` är säkert eftersom Floden inte har någon port utåt; ta inte med den om containern någonsin exponeras direkt.
@@ -425,6 +425,50 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now floden-cache-stada.timer floden-konto-backup.timer
 systemctl list-timers 'floden-*'
 ```
+
+## Minneshantering och RAM-plan (CX23 → S5k)
+
+Basservern (Hetzner CX23, 4 GB RAM, varav `FLODEN_MEM_LIMIT=3g` för Floden-containern) kör webbserver, MCP, dagsljus och mindre skyfallskörningar i samma process. En hel mappad kommungeografi med 500 × 500 m-rutor och 686 m dagsljusbuffert (t.ex. `goteborg-test@v4` med 0,5 m höjdmodell) omfattar omkring 20–25 K1-rutor (~20–25 miljoner celler), vilket överskrider 3 GB RAM och utlöser cgroup OOM-kill om hela geografin laddas in i Python-sänkgrafen samtidigt.
+
+Minnesskyddet och uppskalningsplanen bygger på fyra lager:
+
+### Lager 1 — Ruturval med `fokus` (ladda bara berörda rutor)
+
+- **Nya projekt (`src/kommuner/projekt.py`):** `skapa_projekt` sätter `vatten_ruta_3011` till projektets avgränsning med tillrinningsmarginal (`kommun.lantmateriet.kontext_m`, klippt till geografins yttre gräns) och `skriv_fragor` skriver motsvarande `fokus = [...]` i `fragor/skyfall.toml`.
+- **Globala lösare i kärnan (`src/karna/korplan.py`):** när `radie is None` (t.ex. `vatten.statisk_fyllning`, `vatten.dynamik`, `vatten.2d`) och `analys.fokus` är angivet filtreras `scen.rutor` till de K1-rutor som har positivt ytöverlapp med `analys.fokus` (`ruta.x_max > x0 and ruta.x_min < x1 and ruta.y_max > y0 and ruta.y_min < y1`), så att projekt vid en rutgräns alltid får med angränsande ruta. Endast när `analys.fokus` saknas används samtliga rutor i scenariot; ett `fokus` som inte träffar någon ruta ger `LosarFel`.
+- **Befintliga projekt på servern (`src/webb/kartverktyg.py`):** när en äldre `skyfall.toml` saknar `fokus` läser kartverktyget automatiskt skyfallsfokus ur `projekt.json` (`vatten_ruta_3011` eller `avgransning_3011` med tillrinningsmarginal om `vatten_ruta_3011` tidigare sparats som hela geografin). En typisk projektkörning i `goteborg-test` krymper därmed från 20–25 rutor (~25 M celler) till 1–4 rutor (~1–4 M celler).
+
+### Lager 2 — Fail-fast celltak, cache-cellbudget och separat ämneskörning
+
+- **Konfigurerbart celltak (`FLODEN_MAX_SANKGRAF_CELLER` i `src/karna/inbyggda.py`):** standard är `4 500 000` celler (motsvarar en 2×2-mosaik av 500 m-rutor vid 0,5 m upplösning — säkert under 3 GB RAM på CX23). Tomt eller `0` ger standardvärdet; ogiltigt värde avvisas med `LosarFel` (inga tysta fel). Innan `bygg_sankgraf()` körs (redan mot GeoTIFF-huvudena) kontrolleras cellantalet och en för stor mosaik stoppas med ett tydligt svenskt `LosarFel` i stället för cgroup OOM-kill.
+- **Minnesbudget i sänkgrafcachen (`_SANKGRAF_CACHE`):** total cellbudget i RAM är begränsad till `1 500 000` celler (`_SANKGRAF_CACHE_MAX_CELLER`). Enskilda grafer över budgeten cachas inte, äldre poster rensas LRU-vis när summan överstiger taket, och `gc.collect()` körs efter stora flerrutsbyggen (`>= 500 000` celler) när temporära arrayer frigjorts.
+- **Separat ämneskörning i webben:** Dagsljus och Skyfall körs oberoende i arbetsflödet så att en dagsljusanalys aldrig startar en tung skyfallskörning i onödan, och ett skyfallsfel (t.ex. över celltaket) slänger inte bort lyckade dagsljusresultat.
+
+### Lager 3 — Konfigurerbart containertak (`FLODEN_MEM_LIMIT`) och kärnoptimering
+
+`docker-compose.prod.yml` läser både containertaket och celltaket ur `.env` så att en serveruppgradering hos Hetzner bara kräver två rader i `.env` + `docker compose -f docker-compose.prod.yml up -d`:
+
+| Hetzner-typ | Total RAM | `FLODEN_MEM_LIMIT` | `FLODEN_MAX_SANKGRAF_CELLER` | Rutor vid 0,5 m (500 m/ruta) |
+| --- | --- | --- | --- | --- |
+| CX23 (förval) | 4 GB | `3g` | `4500000` (förval) | upp till 2 × 2 (4 rutor) |
+| CX33 | 8 GB | `6g` | `9500000` | upp till 3 × 3 (9 rutor) |
+| CX43 | 16 GB | `12g` | `17000000` | upp till 4 × 4 (16 rutor) |
+
+```bash
+# Exempel i /srv/floden/.env efter uppgradering till CX33 (8 GB):
+FLODEN_MEM_LIMIT=6g
+FLODEN_MAX_SANKGRAF_CELLER=9500000
+```
+
+Nästa steg i beräkningskärnan för att sänka minnesbehovet per cell och isolera fel:
+- **Rust-sänkgraf:** flytta sänkgrafbygget från Python-objekt/dictar till en kompakt Rust-kärna (samma mönster som `tvad_karna`) för väsentligt lägre RAM-avtryck och snabbare flerrutsbyggen.
+- **Barnprocessisolering:** köra tunga lösarjobb i en avgränsad barnprocess (med eget RLIMIT/minnestak) så att ett enskilt avvikande jobb aldrig kan avsluta webbserverprocessen eller bryta pågående klientanslutningar.
+
+### Lager 4 — S3-förberäkning (`S4`) och elastisk pull-arbetare (`S5k`)
+
+För större kommungeografier, flerrutiga 2D-skyfall och hög samtidig belastning flyttas tunga körningar helt från basservern:
+- **Förberäkning till S3 (`S4`):** `floden forberakna` bygger och lagrar kommunvisa baslager i Hetzner Object Storage (se avsnittet *Lagring, cachestädning och backup (S4)* ovan) så att webbservern hämtar färdiga rutor via lokal LRU-cache.
+- **Elastisk pull-arbetare (`S5k`):** tunga jobb läggs i jobbkö och hämtas av tillfälliga Hetzner-arbetare (större CPU-/RAM-maskiner eller GPU) styrda av kostnadsbok och månadstak, medan basservern förblir liten och snabb för webb, konton, MCP och lättare projektkörningar.
 
 ## Kostnadskontroll
 

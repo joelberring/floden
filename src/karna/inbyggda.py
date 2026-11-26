@@ -20,8 +20,10 @@
 
 from __future__ import annotations
 
+import gc
 import json
 import math
+import os
 import threading
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
@@ -915,11 +917,117 @@ def _las_sammanfogade_rutor(
         )
     except SankGrafFel as exc:
         raise LosarFel(f"{namn}: kunde inte sammanfoga {len(rutor)} K1-rutor: {exc}") from exc
+    del rut_data
     return glob_geo, glob_mark, glob_osak, glob_slag, brytlinjer, oppningar
 
 
+STANDARD_MAX_SANKGRAF_CELLER = 4_500_000
+_FLODEN_MAX_SANKGRAF_CELLER_ENV = "FLODEN_MAX_SANKGRAF_CELLER"
 _SANKGRAF_CACHE_MAX = 16
+_SANKGRAF_CACHE_MAX_CELLER = 1_500_000
+_SANKGRAF_GC_TROSKEL_CELLER = 500_000
 _SANKGRAF_MAX_ANDRAD_ANDEL = 0.50
+
+
+def max_sankgraf_celler() -> int:
+    """Läser celltaket för sänkgrafbygge ur `FLODEN_MAX_SANKGRAF_CELLER`.
+
+    Tomt eller `0` ger standard (`STANDARD_MAX_SANKGRAF_CELLER` = 4 500 000 celler).
+    Ogiltigt värde (icke-heltal eller negativt) ger `LosarFel` (inga tysta fel).
+    """
+    raw = os.environ.get(_FLODEN_MAX_SANKGRAF_CELLER_ENV)
+    if raw is None or not raw.strip():
+        return STANDARD_MAX_SANKGRAF_CELLER
+    text = raw.strip()
+    try:
+        val = int(text)
+    except ValueError as exc:
+        raise LosarFel(
+            f"Ogiltigt värde i {_FLODEN_MAX_SANKGRAF_CELLER_ENV}={raw!r}: "
+            "ange ett icke-negativt heltal (0 eller tomt = standard)."
+        ) from exc
+    if val < 0:
+        raise LosarFel(
+            f"Ogiltigt värde i {_FLODEN_MAX_SANKGRAF_CELLER_ENV}={raw!r}: "
+            "värdet får inte vara negativt (0 eller tomt = standard)."
+        )
+    return STANDARD_MAX_SANKGRAF_CELLER if val == 0 else val
+
+
+def kontrollera_sankgraf_celler(
+    n_celler: int, antal_rutor: int, max_celler: int | None = None
+) -> None:
+    """Fail-fast kontroll av cellantalet innan `bygg_sankgraf()` körs (skydd mot cgroup OOM)."""
+    grans = max_sankgraf_celler() if max_celler is None else max_celler
+    if n_celler > grans:
+        rut_txt = "ruta" if antal_rutor == 1 else "rutor"
+        raise LosarFel(
+            f"Området omfattar {n_celler} celler ({antal_rutor} {rut_txt}), vilket överstiger "
+            f"serverns minnesgräns på {grans} celler ({_FLODEN_MAX_SANKGRAF_CELLER_ENV}). "
+            "Välj en mindre avgränsning eller kör på en maskin med mer RAM."
+        )
+
+
+def _uppskatta_mosaik_celler(rutor: Sequence[Any]) -> int | None:
+    """Beräknar exakt mosaikcellantal ur `mark.tif`-huvuden (O(1), utan pixelinläsning)."""
+    import rasterio
+
+    @dataclass(frozen=True)
+    class _HuvudGeo:
+        bredd: int
+        hojd: int
+        x_min: float
+        x_max: float
+        y_min: float
+        y_max: float
+        pixelstorlek_x: float
+        pixelstorlek_y: float
+
+    geos: list[_HuvudGeo] = []
+    for ruta in rutor:
+        fil = Path(ruta.mapp) / "mark.tif"
+        if not fil.is_file():
+            return None
+        try:
+            with rasterio.open(fil) as ds:
+                b = ds.bounds
+                px = abs(float(ds.transform.a))
+                py = abs(float(ds.transform.e))
+                geos.append(
+                    _HuvudGeo(
+                        bredd=int(ds.width),
+                        hojd=int(ds.height),
+                        x_min=float(b.left),
+                        x_max=float(b.right),
+                        y_min=float(b.bottom),
+                        y_max=float(b.top),
+                        pixelstorlek_x=px,
+                        pixelstorlek_y=py,
+                    )
+                )
+        except (OSError, rasterio.errors.RasterioError):
+            return None
+    if not geos:
+        return None
+    if len(geos) == 1:
+        return geos[0].hojd * geos[0].bredd
+    dx = geos[0].pixelstorlek_x
+    dy = geos[0].pixelstorlek_y
+    if dx <= 0.0 or dy <= 0.0:
+        return None
+    try:
+        overlapp_m = _bestam_overlapp_m(rutor, geos)
+    except LosarFel:
+        return None
+    inre_x_min = min(g.x_min + overlapp_m for g in geos)
+    inre_x_max = max(g.x_max - overlapp_m for g in geos)
+    inre_y_min = min(g.y_min + overlapp_m for g in geos)
+    inre_y_max = max(g.y_max - overlapp_m for g in geos)
+    if inre_x_max <= inre_x_min or inre_y_max <= inre_y_min:
+        return None
+    return max(1, round((inre_y_max - inre_y_min) / dy)) * max(
+        1, round((inre_x_max - inre_x_min) / dx)
+    )
 
 
 @dataclass(frozen=True)
@@ -929,6 +1037,7 @@ class _SankgrafCachePost:
     graf: Any
     brytlinjer: tuple[Any, ...]
     oppningar: tuple[Any, ...]
+    celler: int = 0
 
 
 @dataclass(frozen=True)
@@ -943,6 +1052,24 @@ class _SankgrafByggInfo:
 
 _SANKGRAF_LOCK = threading.Lock()
 _SANKGRAF_CACHE: OrderedDict[str, _SankgrafCachePost] = OrderedDict()
+
+
+def _sankgraf_cache_celler_locked() -> int:
+    """Totalt antal unika rasterceller i `_SANKGRAF_CACHE` (anropas med `_SANKGRAF_LOCK`)."""
+    sedda: set[int] = set()
+    totalt = 0
+    for post in _SANKGRAF_CACHE.values():
+        pid = id(post)
+        if pid not in sedda:
+            sedda.add(pid)
+            totalt += post.celler
+    return totalt
+
+
+def sankgraf_cache_celler() -> int:
+    """Totalt antal rasterceller som för närvarande hålls i `_SANKGRAF_CACHE`."""
+    with _SANKGRAF_LOCK:
+        return _sankgraf_cache_celler_locked()
 
 
 def rensa_sankgraf_cache() -> None:
@@ -1014,12 +1141,24 @@ def _hamta_bas_sankgraf(bas_nycklar: Sequence[str]) -> _SankgrafCachePost | None
 def _spara_sankgraf_i_cache(nycklar: Sequence[str], post: _SankgrafCachePost) -> None:
     if not nycklar:
         return
+    celler = post.celler
+    if celler <= 0 and hasattr(post.graf, "mark_z"):
+        celler = int(post.graf.mark_z.size)
+        post = replace(post, celler=celler)
+    if celler > _SANKGRAF_CACHE_MAX_CELLER:
+        return
     with _SANKGRAF_LOCK:
         for nyckel in nycklar:
             _SANKGRAF_CACHE[nyckel] = post
             _SANKGRAF_CACHE.move_to_end(nyckel)
-        while len(_SANKGRAF_CACHE) > _SANKGRAF_CACHE_MAX:
-            _SANKGRAF_CACHE.popitem(last=False)
+        while _SANKGRAF_CACHE and (
+            len(_SANKGRAF_CACHE) > _SANKGRAF_CACHE_MAX
+            or _sankgraf_cache_celler_locked() > _SANKGRAF_CACHE_MAX_CELLER
+        ):
+            _, borttagen = _SANKGRAF_CACHE.popitem(last=False)
+            bort_id = id(borttagen)
+            for alias in [k for k, v in _SANKGRAF_CACHE.items() if id(v) == bort_id]:
+                _SANKGRAF_CACHE.pop(alias, None)
 
 
 def _las_takpolygoner_for_rutor(rutor: Sequence[Any]) -> tuple[Any, ...]:
@@ -1054,6 +1193,11 @@ def _bygg_sankgraf_for_rutor(
     if not rutor:
         raise LosarFel(f"{namn}: scenariot saknar K1-rutor.")
 
+    max_celler = max_sankgraf_celler()
+    uppskattade = _uppskatta_mosaik_celler(rutor)
+    if uppskattade is not None:
+        kontrollera_sankgraf_celler(uppskattade, len(rutor), max_celler)
+
     if len(rutor) == 1:
         ruta = rutor[0]
         geo, mark_z, osak_z, markslag, brytlinjer, oppningar = _las_sammanfogade_rutor(
@@ -1063,7 +1207,8 @@ def _bygg_sankgraf_for_rutor(
         bas_post = _hamta_bas_sankgraf(bas_nycklar)
         bryt_tup = tuple(brytlinjer)
         opp_tup = tuple(oppningar)
-        n_celler = int(mark_z.size)
+        n_celler = int(mark_z.shape[0] * mark_z.shape[1])
+        kontrollera_sankgraf_celler(n_celler, 1, max_celler)
 
         graf_raw: Any = None
         info: _SankgrafByggInfo | None = None
@@ -1141,7 +1286,9 @@ def _bygg_sankgraf_for_rutor(
 
         _spara_sankgraf_i_cache(
             egna_nycklar,
-            _SankgrafCachePost(graf=graf_raw, brytlinjer=bryt_tup, oppningar=opp_tup),
+            _SankgrafCachePost(
+                graf=graf_raw, brytlinjer=bryt_tup, oppningar=opp_tup, celler=n_celler
+            ),
         )
 
         try:
@@ -1159,6 +1306,8 @@ def _bygg_sankgraf_for_rutor(
     glob_geo, glob_mark, glob_osak, glob_slag, brytlinjer, oppningar = _las_sammanfogade_rutor(
         namn, rutor
     )
+    n_celler_flerrut = int(glob_mark.shape[0] * glob_mark.shape[1])
+    kontrollera_sankgraf_celler(n_celler_flerrut, len(rutor), max_celler)
     try:
         graf = bygg_sankgraf(
             glob_mark,
@@ -1187,8 +1336,13 @@ def _bygg_sankgraf_for_rutor(
                 oppning_mask=oppning_mask if np.any(oppning_mask) else None,
             )
             graf = replace(graf, takvatten=tv)
+            del oppning_mask
     except SankGrafFel as exc:
         raise LosarFel(f"{namn}: {exc}") from exc
+    finally:
+        del glob_mark, glob_osak, glob_slag
+        if n_celler_flerrut >= _SANKGRAF_GC_TROSKEL_CELLER:
+            gc.collect()
     return (
         graf,
         glob_geo,
@@ -1196,7 +1350,7 @@ def _bygg_sankgraf_for_rutor(
             inkrementell=False,
             orsak="flerruta",
             ateranvanda_noder=0,
-            omraknade_celler=int(glob_mark.size),
+            omraknade_celler=n_celler_flerrut,
         ),
     )
 

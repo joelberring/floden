@@ -13,13 +13,15 @@ Ett projekt är en mapp `data/lokal/projekt/<id>/` med
 
 Samtliga analyser räknar direkt på geografins flerruts-K1-rutnät (innehållsadresserat lager som delas mellan
 projekt och versioner, dimensionerat efter geografins förberäknade tillrinningsområde `forberakningar.tillrinning`
-och dagsljusets påverkansradie). Dagsljus använder `fokus` på projektets avgränsning medan skyfall och ekologi
-räknar globalt över hela rutnätet så att tillrinning och habitatkontext utanför projektgränsen ingår.
+och dagsljusets påverkansradie). Dagsljus använder `fokus` på projektets avgränsning och skyfall använder `fokus`
+på projektets skyfallsområde (`vatten_ruta_3011` / avgränsning med tillrinningsmarginal, klippt till geografin)
+så att bara berörda K1-rutor laddas i minnet. Ekologi använder geografins NMD-lager och kontextbuffert.
 """
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -191,6 +193,74 @@ def _fokus(rutor: Sequence[tuple[str, Rektangel]], avgr: Rektangel, polygon: Pol
     return [min(mx) - 1.0, min(my) - 1.0, max(mx) + 1.0, max(my) + 1.0]
 
 
+def _giltig_rektangel(v: Any) -> Rektangel | None:
+    if not isinstance(v, list | tuple) or len(v) != 4:
+        return None
+    try:
+        x0, y0, x1, y1 = (float(c) for c in v)
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(c) for c in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
+        return None
+    return (x0, y0, x1, y1)
+
+
+def _vatten_ruta(avgransning: Rektangel, gransen: Rektangel, marginal_m: float) -> Rektangel:
+    """Skyfallsområde (EPSG:3011): projektets avgränsning med tillrinningsmarginal, klippt till geografin."""
+    m = max(0.0, float(marginal_m))
+    x0 = max(float(gransen[0]), avgransning[0] - m)
+    y0 = max(float(gransen[1]), avgransning[1] - m)
+    x1 = min(float(gransen[2]), avgransning[2] + m)
+    y1 = min(float(gransen[3]), avgransning[3] + m)
+    if x1 <= x0 or y1 <= y0:
+        return avgransning
+    return (x0, y0, x1, y1)
+
+
+def _fokus_for_skyfall(
+    rutor: Sequence[tuple[str, Rektangel]],
+    projekt: Mapping[str, Any],
+    kommun: KommunKonfig,
+    manifest: Mapping[str, Any],
+) -> list[float]:
+    """Fokusrektangel [x_min, y_min, x_max, y_max] (EPSG:3011) för `skyfall.toml`.
+
+    Använder projektets `vatten_ruta_3011` eller `avgransning_3011` med tillrinningsmarginal
+    (`kommun.lantmateriet.kontext_m`), klippt till geografin — inte hela kommungeografin.
+    Om ett äldre projekt sparade `vatten_ruta_3011 == gransen_3011` beräknas den snävare
+    marginalen ur `avgransning_3011` så att bara överlappande K1-rutor laddas.
+    """
+    avgr = _giltig_rektangel(projekt.get("avgransning_3011"))
+    if avgr is None:
+        raise SkapaFel("Projektet saknar giltig avgransning_3011.")
+    gransen = _giltig_rektangel(manifest.get("gransen_3011"))
+    v_ruta = _giltig_rektangel(projekt.get("vatten_ruta_3011"))
+    marginal = max(0.0, float(kommun.lantmateriet.kontext_m))
+
+    ar_hela_geografin = (
+        v_ruta is not None
+        and gransen is not None
+        and all(abs(a - b) <= 1e-3 for a, b in zip(v_ruta, gransen, strict=True))
+    )
+    if v_ruta is not None and not ar_hela_geografin:
+        kand = v_ruta
+    elif gransen is not None:
+        kand = _vatten_ruta(avgr, gransen, marginal)
+    else:
+        kand = (avgr[0] - marginal, avgr[1] - marginal, avgr[2] + marginal, avgr[3] + marginal)
+
+    def _har_overlapp(bb: Rektangel) -> bool:
+        x0, y0, x1, y1 = bb
+        return any(r[2] > x0 and r[0] < x1 and r[3] > y0 and r[1] < y1 for _, r in rutor)
+
+    if not _har_overlapp(kand):
+        if _har_overlapp(avgr):
+            kand = avgr
+        else:
+            raise SkapaFel("Skyfallsområdet ligger inte i någon K1-ruta i geografin.")
+    return [kand[0], kand[1], kand[2], kand[3]]
+
+
 def _rel(fran: Path, till: Path) -> str:
     return Path(os.path.relpath(till.resolve(), fran.resolve())).as_posix()
 
@@ -303,6 +373,7 @@ def skapa_projekt(
         ),
     )
 
+    vatten_ruta = _vatten_ruta(avgransning, gransen, kommun.lantmateriet.kontext_m)
     projekt = {
         "kontrakt": KONTRAKT_PROJEKT,
         "projekt_id": pid,
@@ -312,7 +383,7 @@ def skapa_projekt(
         "geografi_manifest_sha256": manifest_sha,
         "avgransning_3011": list(avgransning),
         **({"avgransning_polygon_3011": avgr_mod.till_geojson(polygon)} if polygon is not None else {}),
-        "vatten_ruta_3011": list(gransen),
+        "vatten_ruta_3011": list(vatten_ruta),
         "skapad": datetime.now(UTC).isoformat(timespec="seconds"),
         "skapad_av_konto": konto_id,
         "varningar": varningar,
@@ -465,11 +536,14 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
     fdir = mapp / "fragor"
     fdir.mkdir(parents=True, exist_ok=True)
     geo = _geo_k1(geo_rot, manifest)
-    fokus = _fokus(_rutor(geo), avgr, projekt_polygon(projekt))
+    rutor_k1 = _rutor(geo)
+    fokus = _fokus(rutor_k1, avgr, projekt_polygon(projekt))
+    fokus_skyfall = _fokus_for_skyfall(rutor_k1, projekt, kommun, manifest)
     par_v, regn_text = _skyfall_parametrar(kommun)
     d = kommun.dagsljus
     pid = str(projekt["projekt_id"])
     fok = "[" + ", ".join(f"{v:.1f}" for v in fokus) + "]"
+    fok_skyfall = "[" + ", ".join(f"{v:.1f}" for v in fokus_skyfall) + "]"
 
     def bas(sc: Path, gren: str) -> str:
         return f'bas = {_toml_str(_rel(fdir, sc))}\n'
@@ -497,7 +571,7 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
         k9_v = str(s.get("k9_vatten") or s["k9_dagsljus"])
         vatten += ["", f"[scenarier.{slugg}]", bas(geo, slugg).rstrip(), f'k9 = [{_toml_str(_rel(fdir, mapp / k9_v))}]']
         dag += ["", f"[scenarier.{slugg}]", bas(geo, slugg).rstrip(), f'k9 = [{_toml_str(_rel(fdir, mapp / s["k9_dagsljus"]))}]']
-    vatten += ["", "[[analyser]]", 'id = "skyfall"', 'losare = "vatten.statisk_fyllning"', f"parametrar = {{ {par_v} }}"]
+    vatten += ["", "[[analyser]]", 'id = "skyfall"', 'losare = "vatten.statisk_fyllning"', f"fokus = {fok_skyfall}", f"parametrar = {{ {par_v} }}"]
     dagpar = (
         f'datum = {json.dumps(list(d["datum"]))}, steg_min = {int(d["steg_min"])}, azimutriktningar = {int(d["azimutriktningar"])}, '
         f'cellstorlek_m = {d["cellstorlek_m"]}, hojd_max_m = {d["hojd_max_m"]}, h_min_grader = {d["h_min_grader"]}'
