@@ -2,6 +2,20 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-26 – Våg 4 (av 5) – Skarvfria flerpakets-vattenytor, batch-parallellitet & K1 v2 DSM, UX U5c/U5d, CAD-mått & `GET /api/analys/ekologi` (PR #159–#161)
+
+Gjort: Slutfört **Våg 4 av 5** i tre konfliktfria PR:er (0 % filöverlapp, 17 unika filer, +3498/−195), oberoende granskade och sammanslagna på `main` (`d4b717f`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `data/mcp/metodstatus.toml`, `nord2000_konform` och `kansighet` lämnades orörda:
+- **PR #159 (`84ee118`, `v4/webb-ux-u5cd-cad-och-ekologi-get`) — UX U5c, U5d, CAD-mått & `GET /api/analys/ekologi`:** Kopplade Ekologi-fliken i Steg 2 till skrivlösa `GET /api/analys/ekologi` (`webb/src/api.ts`, `arbetsyta.ts`) så rollen `lasare` läser ekologi utan HTTP 403; lade till U5c tangentbordsavläsning av kartcentrum (`#ar-las-centrum`, `Alt+I`, piltangenter + `#ar-centrum-sikte`, `aria-live="polite"` på `#ar-avl`), U5d hopfällbar ordlista (`#ar-ordlista`: RH 2000, SWEREF 99 18 00, SVF, VSC, ECA/dPC, MKN, NEN 8100, Skiss) med konsekvent domänterminologi, samt deterministisk numerisk CAD-måttinmatning (geodetisk bäring/längd och E, N i SWEREF 99 18 00) i `Ritverktyg`, `Linjeverktyg`, `panelhtml.ts` och `arbetsyta.ts`.
+- **PR #160 (`40f38c3`, `v4/batch-parallell-och-dsm-svf`) — K-B9 & D-B8:** Uppdaterade batch-dagsljus i `src/karna/batch.py` till att läsa K1 v2-ytmodell (DSM via `karna.geometri.las_ytmodell`, K1 v1 bakåtkompatibel) och maskera `NaN` deterministiskt (`z_min - 1000 m`, inga falska skuggor, `NaN` bevarade i `svf.tif` med manifestvarning, `BatchFel` vid 100 % `NaN`), samt införde `--max-arbetare` / `max_arbetare` med `ThreadPoolExecutor`, trådlås och atomisk `batch_status.json` (bitidentiskt SVF-utfall mot `max_arbetare=1`).
+- **PR #161 (`d4b717f`, `v4/geo-vattenytor-jamfor-bifurkation`) — K-B6 & K-B10:** Gjorde `las_strandlinjer` flerpaketssäker och lade till `vattenytor_for_rutor` i `src/kommuner/vattenytor.py` + `k1_filpaket.py` (Union-Find över öst–väst-/syd–nord-skarvar och överlapp → 0,000 m steg över rutskarv med global RH 2000-mediannivå per vattenyta); begränsade `r_max`/`r_min` i `src/karna/jamfor.py` strikt till `diff[giltig]` (NaN-säker); lade till valfri `brytlinjer`-vidarebefordran i `src/sankgraf/bifurkation.py` (`_graf_med_brytlinjer`).
+
+Mätt:
+- **GitHub CI:** **11/11 gröna** på samtliga tre PR:er (#159, #160, #161).
+- **3-vägs sammanslagning på `main` (`17` unika filer, 0 % överlapp):** `ruff check src tests testsvit` **0 fel**, `mypy --platform linux src` **0 fel** (383 filer), `floden testsvit` **18/18 GODKÄNDA** (0,0000 % volymfel), samlad `pytest` **132 passed, 1 skipped, 0 failed** (per PR: #160 **27 passed**, #161 **197 passed, 1 skipped**, #159 **465/465 TS**), `webb`: `npm test` **465/465 passed**, `npx tsc --noEmit` **0 fel**, `vite build` **127 moduler OK**.
+
+Öppet: Slutlig Våg 5 (Pass 4-kodgranskning, korsvågs-E2E-testsvit och synkning av `PLAN.md`, `docs/DRIFT.md`, `docs/RAPPORTER.md` och `STATUS.md`) samt skarp driftsättning/servermätning (`S4`, `S5 → S6`, `T09b`, `J1`, `L-c`, kvarvarande 4 Nord2000-fall + årsmedel).
+Nästa: Slutför Våg 5 och sammanfatta slutstatus på `main`.
+
 ## 2026-11-26 – Våg 3 (av 5) – Planeringsverktyg U7 (`floden geografi planera`), S4 SQLite-backup & driftskontroll, Dagsljus P1 & UX U5b/e/g (PR #155–#158)
 
 Gjort: Slutfört **Våg 3 av 5** i fyra konfliktfria PR:er (0 % filöverlapp, 25 unika filer, +5309/−236), oberoende granskade och sammanslagna på `main` (`cbfb4b4`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `data/mcp/metodstatus.toml`, `nord2000_konform` och `kansighet` lämnades orörda:
