@@ -118,8 +118,17 @@ def _json_svar(
     return status, json.loads(ut.decode("utf-8")) if ut else {}
 
 
+def _tidsfaktor() -> float:
+    """Skalningsfaktor för väggklockegränser på långsam CI-maskin (`FLODEN_TIDSFAKTOR`)."""
+    raw = os.environ.get("FLODEN_TIDSFAKTOR", "1")
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return 1.0
+
+
 def _vanta_slut(app: FlodenApiApp, korning_id: str, *, sekunder: float = 45.0) -> dict[str, Any]:
-    slut = time.monotonic() + sekunder
+    slut = time.monotonic() + sekunder * _tidsfaktor()
     while time.monotonic() < slut:
         status, data = _json_svar(app, "GET", f"/api/korningar/{korning_id}")
         assert status == 200, data
@@ -127,6 +136,16 @@ def _vanta_slut(app: FlodenApiApp, korning_id: str, *, sekunder: float = 45.0) -
             return data
         time.sleep(0.05)
     raise AssertionError(f"Körning {korning_id} avslutades inte inom {sekunder} s.")
+
+
+def _vanta_pagaende_noll(app: FlodenApiApp, *, sekunder: float = 3.0) -> None:
+    """Väntar tills arbetstrådens `finally`-block i `_kor_fran_ko` nollställt `ko_status()`."""
+    slut = time.monotonic() + sekunder * _tidsfaktor()
+    while time.monotonic() < slut:
+        if app.fragor.ko_status()["pagaende"] == 0:
+            return
+        time.sleep(0.01)
+    assert app.fragor.ko_status()["pagaende"] == 0
 
 
 def _pid_ar_dod(pid: int, *, vanta_s: float = 2.0) -> bool:
@@ -451,6 +470,7 @@ def test_e2e_oom_sigkill_och_ramvakt_i_barnprocess_och_aterhamtning(
         assert "mer minne än serverns gräns" in (slut_b["fel"] or "")
         assert slut_b["fel_forklaring"] is not None
         assert "arbetsminne" in slut_b["fel_forklaring"].lower()
+        _vanta_pagaende_noll(app)
         assert app.fragor._subproc.aktiva_pids() == []  # noqa: SLF001
 
         # /api/halsa svarar fortsatt 200 OK med giltig numerisk driftsdata och 0 PII.
@@ -507,7 +527,7 @@ def test_e2e_timeout_kill_processgrupp_och_zombiefri_stang(
     """Timeout dödar hela processgruppen (inkl. barnbarn) rent; `stang()` under aktiv
     körning + köat jobb avslutar direkt utan zombies och lämnar inga kvarvarande processer."""
     monkeypatch.setenv("FLODEN_EXEKUTOR", "process")
-    monkeypatch.setenv("FLODEN_JOBB_MAX_TID_S", "0.8")
+    monkeypatch.setenv("FLODEN_JOBB_MAX_TID_S", "1.2")
     monkeypatch.setenv("FLODEN_JOBB_MAX_RAM_MB", "1024")
 
     # Del A: Timeout-kill av barn + barnbarn i samma processgrupp.
@@ -543,12 +563,13 @@ def test_e2e_timeout_kill_processgrupp_och_zombiefri_stang(
         slut = _vanta_slut(app, str(start["korning_id"]), sekunder=10.0)
         dt = time.monotonic() - t0
 
-        assert dt < 6.0, f"Timeout dröjde för länge ({dt:.2f} s)"
+        assert dt < 6.0 * _tidsfaktor(), f"Timeout dröjde för länge ({dt:.2f} s)"
         assert slut["status"] == "fel", slut
         assert "SubprocTimeoutFel" in (slut["fel"] or "")
         assert "tidsgräns" in (slut["fel"] or "").lower()
         assert slut["fel_forklaring"] is not None
         assert "tidsgräns" in slut["fel_forklaring"].lower()
+        _vanta_pagaende_noll(app)
         assert app.fragor.ko_status()["pagaende"] == 0
         assert app.fragor._subproc.aktiva_pids() == []  # noqa: SLF001
 
@@ -610,7 +631,7 @@ def test_e2e_timeout_kill_processgrupp_och_zombiefri_stang(
         tjanst.stang(vanta=True)
         dt_stang = time.monotonic() - t_stang0
 
-        assert dt_stang < 5.0, f"FragaTjanst.stang() hängde i {dt_stang:.2f} s"
+        assert dt_stang < 5.0 * _tidsfaktor(), f"FragaTjanst.stang() hängde i {dt_stang:.2f} s"
         assert tjanst._subproc.aktiva_pids() == []  # noqa: SLF001
         assert _pid_ar_dod(int(pids_b["barn"])), (
             f"Barn {pids_b['barn']} lever/zombie efter stang()!"
@@ -914,7 +935,9 @@ def test_e2e_asgi_samtidighetstak_2_ger_503_och_halsa_200(
             h_st, _, h_kropp = await _anropa_asgi(asgi_app, "GET", "/api/halsa")
             dt_h = time.monotonic() - t_h0
             assert h_st == 200
-            assert dt_h < 1.5, f"/api/halsa tog för lång tid under belastning ({dt_h:.2f} s)"
+            assert dt_h < 1.5 * _tidsfaktor(), (
+                f"/api/halsa tog för lång tid under belastning ({dt_h:.2f} s)"
+            )
             h_data = json.loads(h_kropp.decode("utf-8"))
             assert h_data["status"] == "ok"
             assert h_data["exekutor"] == "process"
