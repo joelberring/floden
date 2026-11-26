@@ -5,7 +5,7 @@
  */
 import { esc } from "../sidor.ts";
 import { formatera, formateraHogst } from "../tal.ts";
-import type { RegnForval, RegnParam } from "../karta/kartapi.ts";
+import type { KorningPost, KorningRegnInfo, RegnForval, RegnParam } from "../karta/kartapi.ts";
 import type { RegnPost } from "./nyckeltal.ts";
 
 export type { RegnForval, RegnParam };
@@ -156,6 +156,85 @@ export function regnSignatur(val: RegnVal, avtappning: number | null): string {
     regntyp: effektivRegntyp(val),
     avtappning: avtappning ?? null,
   });
+}
+
+/**
+ * Återskapar ett `RegnVal` ur serverns faktiska körningsparametrar (`KorningPost.regn`, B5).
+ * Returnerar `null` om inga strukturerade regnparametrar finns på körningen.
+ */
+export function regnValFranServer(info: KorningRegnInfo | null | undefined): RegnVal | null {
+  if (!info || typeof info !== "object") return null;
+  const berakningstyp: Berakningstyp = info.berakningstyp === "dynamisk" ? "dynamisk" : "statisk";
+  const harAterkomst = typeof info.aterkomsttid_ar === "number" && Number.isFinite(info.aterkomsttid_ar);
+  const harMm = typeof info.regn_mm === "number" && Number.isFinite(info.regn_mm);
+  if (info.ar_standard) {
+    const regntyp: RegnTyp =
+      berakningstyp === "dynamisk"
+        ? info.regntyp === "block"
+          ? "block"
+          : "cds"
+        : STANDARD_REGNVAL.regntyp;
+    return {
+      ...STANDARD_REGNVAL,
+      forval: "standard",
+      berakningstyp,
+      regntyp,
+    };
+  }
+  if (harAterkomst) {
+    const ar = info.aterkomsttid_ar as number;
+    const varMin =
+      typeof info.varaktighet_min === "number" && Number.isFinite(info.varaktighet_min)
+        ? info.varaktighet_min
+        : 60;
+    const kf =
+      typeof info.klimatfaktor === "number" && Number.isFinite(info.klimatfaktor)
+        ? info.klimatfaktor
+        : 1.0;
+    const regntyp: RegnTyp = info.regntyp === "block" ? "block" : "cds";
+    return {
+      ...STANDARD_REGNVAL,
+      forval: "eget",
+      egetLage: "idf",
+      aterkomsttid_ar: ar,
+      varaktighet_min: varMin,
+      klimatfaktor: kf,
+      berakningstyp,
+      regntyp,
+    };
+  }
+  if (harMm) {
+    return {
+      ...STANDARD_REGNVAL,
+      forval: "eget",
+      egetLage: "mm",
+      regn_mm: info.regn_mm as number,
+      berakningstyp,
+      regntyp: "block",
+    };
+  }
+  return null;
+}
+
+/**
+ * Beräknar exakt regn+avtappningssignatur ur serverns klara körningar (aldrig ur klientens
+ * `sessionStorage`), så att ändrat regn före F5 alltid flaggas som utdaterat (B5).
+ */
+export function regnSignaturFranKorningar(
+  korningar: readonly KorningPost[] | undefined,
+): string | null {
+  if (!Array.isArray(korningar)) return null;
+  for (const k of korningar) {
+    if (k?.status?.status !== "klar") continue;
+    const val = regnValFranServer(k.regn);
+    if (!val) continue;
+    const avt =
+      typeof k.avtappning_mm_h === "number" && Number.isFinite(k.avtappning_mm_h)
+        ? k.avtappning_mm_h
+        : null;
+    return regnSignatur(val, avt);
+  }
+  return null;
 }
 
 /**

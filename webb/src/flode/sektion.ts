@@ -818,3 +818,24 @@ export function sektionTillCsv(data: SektionSvar, avgransare = ";"): string {
   }
   return rader.join("\n") + "\n";
 }
+
+/**
+ * Väljer vilka resultat-lager som får skickas som vattenlager till `POST .../sektion` (B11).
+ * Bara vattendjupslager (`roll === "max_djup"` och inte skillnadslager) får ritas som vattenyta;
+ * alla andra roller (soltimmar, ankomsttid, luft, ekologi m.fl.) ger `null` så ren mark- och
+ * byggnadsprofil ritas.
+ */
+export function sektionVattenLager(
+  lager: ReadonlyArray<{ id: string; roll: string; typ: string }> | null | undefined,
+  vy: { fore_lager?: string | null; efter_lager?: string | null } | null | undefined,
+): { fore_lager: string | null; efter_lager: string | null } {
+  const arVattenDjup = (id: string | null | undefined): string | null => {
+    if (!id || !lager) return null;
+    const post = lager.find((la) => la.id === id);
+    return post && post.roll === "max_djup" && post.typ !== "skillnad" ? id : null;
+  };
+  return {
+    fore_lager: arVattenDjup(vy?.fore_lager),
+    efter_lager: arVattenDjup(vy?.efter_lager),
+  };
+}

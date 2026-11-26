@@ -135,12 +135,43 @@ export interface PlanPost {
   };
 }
 
+/** Strukturerade regnparametrar ur en klar körning (additivt i `status` och `lage-idag/status`, B5). */
+export interface KorningRegnInfo {
+  aterkomsttid_ar: number | null;
+  varaktighet_min: number | null;
+  klimatfaktor: number | null;
+  regn_mm: number | null;
+  berakningstyp: "statisk" | "dynamisk";
+  regntyp: "cds" | "block" | null;
+  kalla: string | null;
+  ar_standard: boolean;
+}
+
+/** Strukturerade solparametrar ur en klar körning (additivt i `status` och `lage-idag/status`, B14). */
+export interface KorningSolInfo {
+  datum_iso: string | null;
+  start_timme: number | null;
+  slut_timme: number | null;
+  sammanhangande: boolean;
+  inkludera_vsc: boolean;
+  klockslag_utc: number | null;
+  ar_standard: boolean;
+}
+
 export interface KorningPost {
   mall: string;
   status: { status: string; [k: string]: unknown };
   vyer: ProjektVyLike[];
   /** Varningar från en klar körning (t.ex. slutna områden). */
   varningar?: string[];
+  /** Läsbar regntext ur körningens antaganden. */
+  regn_text?: string | null;
+  /** Strukturerade regnparametrar ur körningen (additivt). */
+  regn?: KorningRegnInfo | null;
+  /** Avtappning till ledningsnät i mm/h, eller null för standard (0 mm/h ej angiven). */
+  avtappning_mm_h?: number | null;
+  /** Strukturerade solparametrar ur körningen (additivt). */
+  sol?: KorningSolInfo | null;
 }
 
 export const hamtaProjektInfo = (p: string): Promise<ProjektInfo> => lasJson(`${BAS}/${encodeURIComponent(p)}`);

@@ -6,14 +6,15 @@ Ett projekt är en mapp `data/lokal/projekt/<id>/` med
   låser versionen), avgränsningen (EPSG:3011: `avgransning_3011` är rektangeln som rutnätet och bufferten
   utgår från, och `avgransning_polygon_3011` (valfritt, additivt) är den riktiga polygonen som avgör vad som
   räknas till projektet i resultat, nyckeltal och rapporter), varningar och skapare,
-- `k1_vatten/`: en K1-ruta beskuren ur geografins rådata (vattenlösaren tar en ruta),
 - `scenarier.json`: scenarier med `status` (`forslag` eller `planerat`; planerat läge förbereds i datamodellen,
   men räknas inte som bas än), K9-filer per bas i `k9/`,
-- `fragor/*.toml`: K20-frågor (skyfall och dagsljus) för nuläget och varje scenario.
+- `fragor/*.toml`: K20-frågor (skyfall, dagsljus och – när geografin har NMD-lager – ekologi) för nuläget och
+  varje scenario.
 
-Dagsljus räknar direkt på geografins K1-rutnät (innehållsadresserat lager, delas mellan projekt och versioner)
-med `fokus` på projektets avgränsning, så att grannrutor och buffert ger skuggor utifrån. Skyfall räknar på
-`k1_vatten` och ser därför inte tillrinning utanför rutan; det står i projektets varningar.
+Samtliga analyser räknar direkt på geografins flerruts-K1-rutnät (innehållsadresserat lager som delas mellan
+projekt och versioner, dimensionerat efter geografins förberäknade tillrinningsområde `forberakningar.tillrinning`
+och dagsljusets påverkansradie). Dagsljus använder `fokus` på projektets avgränsning medan skyfall och ekologi
+räknar globalt över hela rutnätet så att tillrinning och habitatkontext utanför projektgränsen ingår.
 """
 
 from __future__ import annotations
@@ -31,7 +32,14 @@ from shapely.geometry import Polygon, box
 
 from gemensamt import avgransning as avgr_mod
 from gemensamt.hash import sha256_fil
-from geografi.modell import GeografiFel, lager_mapp, las_manifest
+from geografi.modell import (
+    MANIFEST_NAMN,
+    GeografiFel,
+    lager_mapp,
+    las_manifest,
+    tolka_ref,
+    versionsmapp,
+)
 from kommuner.konfig import KommunKonfig
 from kommuner.skapa import (
     SkapaFel,
@@ -39,7 +47,6 @@ from kommuner.skapa import (
     _toml_str,
     _valj_organisation,
     regn_for_kommun,
-    skriv_omrade_gpkg,
     skriv_oppenhet_toml,
 )
 
@@ -212,9 +219,7 @@ def skapa_projekt(
     register: Any = None,
     polygon: Polygon | None = None,
 ) -> ProjektResultat:
-    from lantmateriet.bygg import bygg_omrade
     from lantmateriet.nycklar import inloggning_pa
-    from lantmateriet.omrade import las_omrade
 
     try:
         manifest, manifest_sha = las_manifest(geo_rot, ref)
@@ -265,44 +270,25 @@ def skapa_projekt(
         registrerat = _registrera(reg, org, konto_id, mapp, namn)
         return ProjektResultat(pid, mapp, False, list(gammal.get("varningar", [])), registrerat)
 
-    # K1-ruta för vattenlösaren: beskuren ur geografins rådata (lagret delas, kopieras inte).
-    kontext = kommun.lantmateriet.kontext_m
-    v = (avgransning[0] - kontext, avgransning[1] - kontext, avgransning[2] + kontext, avgransning[3] + kontext)
-    v = (max(v[0], gransen[0]), max(v[1], gransen[1]), min(v[2], gransen[2]), min(v[3], gransen[3]))
-    radata = _geo_radata(geo_rot, manifest)
-    k1_v = mapp / "k1_vatten"
-    omr = las_omrade(
-        skriv_omrade_gpkg(v, mapp / "omrade" / "vatten.gpkg"),
-        max_km2=max(25.0, (v[2] - v[0]) * (v[3] - v[1]) / 1e6 + 1.0),
-    )
-    bygg_fil = radata / "kommun" / "byggnader.gpkg"
-    skriv(f"Bygger skyfallsrutan ({v[2]-v[0]:.0f} x {v[3]-v[1]:.0f} m) ur geografins rådata ...")
-    klippt = radata / "hojd" / "hojdmodell_klippt.tif"
-    if klippt.is_file():  # geografin byggdes ur kommunens höjdmodell (filpaket)
-        from kommuner.hojdmodell import Hojdmodell
-        from kommuner.k1_filpaket import bygg_omrade_filpaket
-        from kommuner.vattenytor import las_strandlinjer_fil
-
-        sfil = radata / "kommun" / "strandlinjer.gpkg"
-        vk = kommun.filpaket.baskarta.vatten if kommun.filpaket and kommun.filpaket.baskarta else None
-        bygg_omrade_filpaket(
-            omr, k1_v, hojdmodell=Hojdmodell([klippt], epsg_antagen=3011), hojd_paket=[],
-            byggnader_fil=bygg_fil if bygg_fil.is_file() else None,
-            upplosning_m=kommun.lantmateriet.upplosning_m, en_ruta=True, skriv=skriv,
-            strandlinjer=las_strandlinjer_fil(sfil) if vk is not None and sfil.is_file() else (),
-            vatten_marginal_m=vk.marginal_m if vk else 0.2, vatten_max_avstand_m=vk.max_avstand_m if vk else 2.0,
-        )  # fmt: skip
-    else:
-        bygg_omrade(
-            omr, radata / "lantmateriet", k1_v,
-            byggnader_fil=bygg_fil if bygg_fil.is_file() else None,
-            en_ruta=True, upplosning_m=kommun.lantmateriet.upplosning_m,
-            anvand_orto="orto" in kommun.lantmateriet.produkter, skriv=skriv,
-        )  # fmt: skip
-    varningar.append(
-        "Skyfallsfrågan räknar på en ruta runt avgränsningen (statisk fyllning): tillrinning från högre mark "
-        "utanför rutan ingår inte. Geografins tillrinningsyta finns i manifestet (forberakningar.tillrinning)."
-    )
+    # Skyfall, dagsljus och (när NMD-lager finns) ekologi använder geografins flerruts-K1-rutnät
+    # (innehållsadresserat och dimensionerat efter förberäknad tillrinning i manifestet).
+    geo_k1 = _geo_k1(geo_rot, manifest)
+    if not _rutor(geo_k1):
+        raise SkapaFel(f"Geografin {ref} saknar K1-rutor i lagret k1_rutnat.")
+    raw_buffert = manifest.get("buffert")
+    buffert: Mapping[str, Any] = raw_buffert if isinstance(raw_buffert, Mapping) else {}
+    raw_forb = manifest.get("forberakningar")
+    forberakningar: Mapping[str, Any] = raw_forb if isinstance(raw_forb, Mapping) else {}
+    if bool(buffert.get("tillrinning_nar_kanten")):
+        varningar.append(
+            "Geografins förberäknade tillrinningsområde når kanten av det mappade området "
+            "(forberakningar.tillrinning): skyfallsresultat nära uppströmsgränsen kan sakna tillrinning."
+        )
+    elif not isinstance(forberakningar.get("tillrinning"), Mapping):
+        varningar.append(
+            "Geografin saknar förberäknad tillrinning i manifestet (forberakningar.tillrinning): "
+            "kontrollera att bufferten täcker uppströms avrinningsområde."
+        )
     # Byggnader ur en baskarta som inte är öppna data (kalla = lokal_fil) är alltid stängda, vad manifestet än säger.
     oppen = bool(manifest.get("oppen_for_mcp")) and not (manifest.get("kallor", {}).get("byggnader") or {}).get("stangd")
     oppen = oppen and (manifest.get("kallor", {}).get("byggnader") or {}).get("kalla") != "lokal_fil"
@@ -326,7 +312,7 @@ def skapa_projekt(
         "geografi_manifest_sha256": manifest_sha,
         "avgransning_3011": list(avgransning),
         **({"avgransning_polygon_3011": avgr_mod.till_geojson(polygon)} if polygon is not None else {}),
-        "vatten_ruta_3011": list(v),
+        "vatten_ruta_3011": list(gransen),
         "skapad": datetime.now(UTC).isoformat(timespec="seconds"),
         "skapad_av_konto": konto_id,
         "varningar": varningar,
@@ -364,6 +350,71 @@ def _registrera(reg: Any, org: str | None, konto_id: str | None, mapp: Path, nam
 # ------------------------------------------------------------------------------------- frågor
 
 
+def _skyfall_parametrar(kommun: KommunKonfig) -> tuple[str, str]:
+    """Returnerar `(toml_parametrar, lasbar_regn_text)` för projektets `skyfall.toml`.
+
+    Använder kommunens registrerade IDF-källa (t.ex. `stockholmsregn-2024` för Stockholm) när
+    regnförvalet hör till en registrerad IDF-tabell, och annars total regnmängd + varaktighet ur
+    `regn_for_kommun` (t.ex. Dahlström 2010 / P110 för övriga kommuner). `takvatten` följer
+    kommunfilens `[skyfall]`.
+    """
+    from gemensamt.regn import (
+        IDF_KALLOR,
+        IDF_STOCKHOLMSREGN_2024,
+        RegnFel,
+        hamta_regnforval,
+        skapa_regn_fran_idf_kalla,
+    )
+
+    takvatten = bool(kommun.skyfall.get("takvatten", True))
+    tak_toml = "true" if takvatten else "false"
+    try:
+        forval = hamta_regnforval(str(kommun.skyfall["regn_id"]))
+    except RegnFel as exc:
+        raise SkapaFel(f"[skyfall] regn_id i kommunfilen: {exc}") from exc
+    if forval.region == "Stockholm" and IDF_STOCKHOLMSREGN_2024 in IDF_KALLOR:
+        try:
+            serie = skapa_regn_fran_idf_kalla(
+                IDF_STOCKHOLMSREGN_2024,
+                forval.aterkomsttid_ar,
+                klimatfaktor=forval.klimatfaktor,
+                typ=forval.typ,
+                varaktighet_min=forval.varaktighet_min,
+            )
+        except RegnFel as exc:
+            raise SkapaFel(f"[skyfall] IDF-källa {IDF_STOCKHOLMSREGN_2024}: {exc}") from exc
+        kalla = IDF_KALLOR[IDF_STOCKHOLMSREGN_2024]
+        par = (
+            f"idf = {_toml_str(IDF_STOCKHOLMSREGN_2024)}, "
+            f"aterkomsttid_ar = {forval.aterkomsttid_ar:g}, "
+            f"varaktighet_min = {forval.varaktighet_min:g}, "
+            f"klimatfaktor = {forval.klimatfaktor:g}, "
+            f"regntyp = {_toml_str(forval.typ)}, "
+            f"takvatten = {tak_toml}"
+        )
+        text = (
+            f"{kalla.namn}, {forval.aterkomsttid_ar:g} år, {forval.varaktighet_min:g} min, "
+            f"klimatfaktor {forval.klimatfaktor:g} = {serie.total_djup_mm:.1f} mm"
+        )
+        return par, text
+    regn_mm, regn_text, var_min = regn_for_kommun(kommun)
+    par = f"regn_mm = {regn_mm:.3f}, varaktighet_min = {var_min:g}, takvatten = {tak_toml}"
+    return par, regn_text
+
+
+def _har_ekologi_underlag(manifest: Mapping[str, Any]) -> bool:
+    """Sant när geografin har NMD-lager (`lager.nmd`) för serverns ekologianalys."""
+    lager = manifest.get("lager")
+    return isinstance(lager, Mapping) and isinstance(lager.get("nmd"), Mapping)
+
+
+def _ekologi_natverk(kommun: KommunKonfig) -> str:
+    """Förvalt serverkörbart habitatnätverk (NMD) för kommunen."""
+    if kommun.ekologi is not None and kommun.ekologi.forval_server:
+        return str(kommun.ekologi.forval_server[0])
+    return "barrskog-nacka"
+
+
 def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapping[str, Any]) -> list[Path]:
     """(Åter)skriver projektets K20-frågor: nuläget och ett scenario per post i scenarier.json."""
     projekt = las_projekt(mapp)
@@ -373,23 +424,22 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
     fdir.mkdir(parents=True, exist_ok=True)
     geo = _geo_k1(geo_rot, manifest)
     fokus = _fokus(_rutor(geo), avgr, projekt_polygon(projekt))
-    regn_mm, regn_text, _ = regn_for_kommun(kommun)
+    par_v, regn_text = _skyfall_parametrar(kommun)
     d = kommun.dagsljus
     pid = str(projekt["projekt_id"])
     fok = "[" + ", ".join(f"{v:.1f}" for v in fokus) + "]"
-    k1v = mapp / "k1_vatten"
 
     def bas(sc: Path, gren: str) -> str:
         return f'bas = {_toml_str(_rel(fdir, sc))}\n'
 
     vatten = [
-        f'# Skyfall i projektet {pid}: nuläget och scenarier. Regn: {regn_text}. Statisk fyllning, grov markmodell.',
+        f"# Skyfall i projektet {pid} (geografin {projekt['geografi']}): nuläget och scenarier. Regn: {regn_text}.",
         'kontrakt = "K20/v1"',
         f'fraga_id = {_toml_str(pid + "-skyfall")}',
         f'beskrivning = {_toml_str("Blåytor (maxdjup) i " + pid + ": " + regn_text)}',
         "",
         "[scenarier.bas]",
-        bas(k1v, "bas").rstrip(),
+        bas(geo, "bas").rstrip(),
     ]
     dag = [
         f"# Dagsljus i projektet {pid} (geografin {projekt['geografi']}): nuläget och scenarier.",
@@ -402,9 +452,9 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
     ]
     for s in scen:
         slugg = str(s["slug"])
-        vatten += ["", f"[scenarier.{slugg}]", bas(k1v, slugg).rstrip(), f'k9 = [{_toml_str(_rel(fdir, mapp / s["k9_vatten"]))}]']
+        k9_v = str(s.get("k9_vatten") or s["k9_dagsljus"])
+        vatten += ["", f"[scenarier.{slugg}]", bas(geo, slugg).rstrip(), f'k9 = [{_toml_str(_rel(fdir, mapp / k9_v))}]']
         dag += ["", f"[scenarier.{slugg}]", bas(geo, slugg).rstrip(), f'k9 = [{_toml_str(_rel(fdir, mapp / s["k9_dagsljus"]))}]']
-    par_v = f'regn_mm = {regn_mm:.3f}'
     vatten += ["", "[[analyser]]", 'id = "skyfall"', 'losare = "vatten.statisk_fyllning"', f"parametrar = {{ {par_v} }}"]
     dagpar = (
         f'datum = {json.dumps(list(d["datum"]))}, steg_min = {int(d["steg_min"])}, azimutriktningar = {int(d["azimutriktningar"])}, '
@@ -425,7 +475,43 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
     fv, fd = fdir / "skyfall.toml", fdir / "dagsljus.toml"
     fv.write_text("\n".join(vatten) + "\n", encoding="utf-8")
     fd.write_text("\n".join(dag) + "\n", encoding="utf-8")
-    return [fv, fd]
+    skrivna = [fv, fd]
+    if _har_ekologi_underlag(manifest):
+        gid, gver = tolka_ref(str(projekt["geografi"]))
+        manifest_fil = versionsmapp(geo_rot, gid, gver) / MANIFEST_NAMN
+        natverk = _ekologi_natverk(kommun)
+        eko = [
+            f"# Ekologi i projektet {pid} (geografin {projekt['geografi']}): nuläget och scenarier.",
+            'kontrakt = "K20/v1"',
+            f'fraga_id = {_toml_str(pid + "-ekologi")}',
+            f'beskrivning = {_toml_str("Ekologisk konnektivitet (skiss) i " + pid)}',
+            "",
+            "[scenarier.bas]",
+            bas(geo, "bas").rstrip(),
+        ]
+        for s in scen:
+            slugg = str(s["slug"])
+            eko += ["", f"[scenarier.{slugg}]", bas(geo, slugg).rstrip(), f'k9 = [{_toml_str(_rel(fdir, mapp / s["k9_dagsljus"]))}]']
+        eko += [
+            "",
+            "[[analyser]]",
+            'id = "konnektivitet"',
+            'losare = "ekologi.konnektivitet"',
+            f"parametrar = {{ natverk = {_toml_str(natverk)} }}",
+            f"indata = {{ geografi = {_toml_str(_rel(fdir, manifest_fil))} }}",
+        ]
+        for s in scen:
+            slugg = str(s["slug"])
+            eko += [
+                "", "[[jamforelser]]", 'analys = "konnektivitet"', 'utdata = "stromtathet"',
+                'fore = "bas"', f'efter = "{slugg}"', "troskel = 0.01",
+                "", "[[jamforelser]]", 'analys = "konnektivitet"', 'utdata = "kansighet"',
+                'fore = "bas"', f'efter = "{slugg}"', "troskel = 0.01",
+            ]
+        fe = fdir / "ekologi.toml"
+        fe.write_text("\n".join(eko) + "\n", encoding="utf-8")
+        skrivna.append(fe)
+    return skrivna
 
 
 # ------------------------------------------------------------------------------------ scenario
@@ -464,26 +550,23 @@ def skapa_scenario_hus(
         "geometri": {"type": "Polygon", "coordinates": [ring]},
         "egenskaper": {"hojd_m": float(hojd_m), "namn": namn},
     }
-    rutor_d = [r for _, r in _rutor(_geo_k1(geo_rot, manifest))]
-    rutor_v = [r for _, r in _rutor(mapp / "k1_vatten")]
+    geo_k1 = _geo_k1(geo_rot, manifest)
+    rutor_geo = [r for _, r in _rutor(geo_k1)]
     try:
-        kontroll = kontrollera_andringar([andring], rutor_d)
-        kontrollera_andringar([andring], rutor_v)
+        kontroll = kontrollera_andringar([andring], rutor_geo)
     except RitatFel as exc:
         raise SkapaFel(str(exc)) from exc
 
     k9 = mapp / "k9"
     ut: dict[str, Any] = {}
-    skapade: dict[str, tuple[Planscenario, Planscenario]] = {}
-    for kort, k1 in (("dagsljus", _geo_k1(geo_rot, manifest)), ("vatten", mapp / "k1_vatten")):
-        recept = tuple(sha256_fil(r / "recept.json") for r in sorted(k1.glob("mm_*")) if (r / "recept.json").is_file())
-        if not recept:
-            raise SkapaFel(f"Basen {k1} saknar recept.json.")
-        nulage = Planscenario("nulage", recept, ())
-        sc = Planscenario(slugg, recept, (Andring.fran_dict(andring),), beskrivning=f"{namn} ({status})")
+    recept = tuple(sha256_fil(r / "recept.json") for r in sorted(geo_k1.glob("mm_*")) if (r / "recept.json").is_file())
+    if not recept:
+        raise SkapaFel(f"Basen {geo_k1} saknar recept.json.")
+    nulage = Planscenario("nulage", recept, ())
+    sc = Planscenario(slugg, recept, (Andring.fran_dict(andring),), beskrivning=f"{namn} ({status})")
+    for kort in ("dagsljus", "vatten"):
         skriv_scenario(sc, k9 / f"{slugg}_{kort}.json")
-        skapade[kort] = (nulage, sc)
-    diff = diff_scenarier(*skapade["dagsljus"])
+    diff = diff_scenarier(nulage, sc)
     post = {
         "slug": slugg, "namn": namn, "status": status,
         "k9_dagsljus": f"k9/{slugg}_dagsljus.json", "k9_vatten": f"k9/{slugg}_vatten.json",
@@ -514,7 +597,7 @@ def lista_scenarier(mapp: Path) -> list[dict[str, Any]]:
 def kor_projekt(
     mapp: Path, *, rot: Path, scenario: str | None = None, skriv: Skriv = print, tjanst: Any = None
 ) -> dict[str, dict[str, Any]]:
-    """Kör skyfall och dagsljus för nuläget och scenarierna (frågefilerna räknar allt i en körning)."""
+    """Kör skyfall, dagsljus (och ekologi när `ekologi.toml` finns) för nuläget och scenarierna."""
     from webb.api import STANDARD_CACHEMAPP, STANDARD_KORNINGSMAPP
     from webb.fragor import FragaTjanst
 
@@ -524,8 +607,11 @@ def kor_projekt(
         rot=rot, fragemappar=[mapp / "fragor"], cachemapp=rot / STANDARD_CACHEMAPP,
         korningsmapp=rot / STANDARD_KORNINGSMAPP, projektrot=mapp.parent,
     )  # fmt: skip
+    fragor = ["skyfall", "dagsljus"]
+    if (mapp / "fragor" / "ekologi.toml").is_file():
+        fragor.append("ekologi")
     resultat: dict[str, dict[str, Any]] = {}
-    for fraga in ("skyfall", "dagsljus"):
+    for fraga in fragor:
         ref = next((r for r in t._fragefiler() if r == fraga or r.startswith(fraga)), fraga)  # noqa: SLF001
         # Frågornas ref är filnamnet; flera projekt kan ha samma filnamn: -2, -3 läggs till av tjänsten.
         for r, f in t._fragefiler().items():  # noqa: SLF001

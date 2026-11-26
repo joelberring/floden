@@ -344,13 +344,20 @@ def karna_bbox(g: dict[str, Any]) -> tuple[float, float, float, float]:
 
 
 def test_projekt_i_geografin_laser_versionen_och_varnar_utanfor_karnan(geo: dict[str, Any]) -> None:
+    from karna.utredning import las_fraga
+
     k = karna_bbox(geo)
     inne = (k[0] + 10, k[1] + 10, k[2] - 10, k[3] - 10)
     res = kor_projekt_skapa(geo, inne)
     p = json.loads((res.mapp / "projekt.json").read_text(encoding="utf-8"))
     assert p["geografi"] == "goteborg-test@v1" and p["geografi_manifest_sha256"] == geo["res"].manifest_sha256
     assert not [v for v in res.varningar if "giltiga kärna" in v]
-    assert len(list((res.mapp / "k1_vatten").glob("mm_*/mark.tif"))) == 1
+    assert not [v for v in res.varningar if "räknar på en ruta" in v]
+    assert not (res.mapp / "k1_vatten").exists()
+    sky_fraga = las_fraga(res.mapp / "fragor" / "skyfall.toml")
+    dag_fraga = las_fraga(res.mapp / "fragor" / "dagsljus.toml")
+    assert sky_fraga.scenarier["bas"].bas.resolve() == dag_fraga.scenarier["bas"].bas.resolve()
+    assert len(list(sky_fraga.scenarier["bas"].bas.glob("mm_*/mark.tif"))) > 1
     # Delvis utanför kärnan: varning, inget fel.
     ut = (k[0] - 20, k[1] - 20, k[0] + 40, k[1] + 40)
     res2 = kor_projekt_skapa(geo, ut, namn="Kant")

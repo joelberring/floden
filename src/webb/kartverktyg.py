@@ -127,6 +127,7 @@ _STANDARDJAMFORELSE = {
     "dagsljus.soltimmar_mark": ("soltimmar", 0.1),
     "dagsljus.soltimmar_sammanhangande": ("sammanhangande_soltimmar", 0.5),
     "dagsljus.skuggmask_vid_klockslag": ("skuggmask", 0.5),
+    "ekologi.konnektivitet": ("stromtathet", 0.01),
 }
 """Lösare -> (utdata, tröskel) för jämförelsen före/efter när mallen saknar jämförelser (som `skriv_fragor`)."""
 
@@ -1634,6 +1635,10 @@ class KartverktygTjanst:
                     jamf.append(
                         {"analys": a.id, "utdata": utdata, "fore": "fore", "efter": "ritat", "troskel": troskel}
                     )
+                    if eff_losare == "ekologi.konnektivitet":
+                        jamf.append(
+                            {"analys": a.id, "utdata": "kansighet", "fore": "fore", "efter": "ritat", "troskel": troskel}
+                        )
         return {
             "kontrakt": "K20/v1",
             "fraga_id": fraga_id,
@@ -1948,22 +1953,316 @@ class KartverktygTjanst:
             return f"{', '.join(delar)} ({mm_txt})" if delar else mm_txt
         return ", ".join(delar) if delar else None
 
+    @staticmethod
+    def _tal_eller_none(v: Any) -> float | None:
+        if isinstance(v, bool) or not isinstance(v, int | float):
+            return None
+        f = float(v)
+        return f if math.isfinite(f) else None
+
+    def _forsta_jobb_manifest(
+        self, korning_id: str, losare_mangd: frozenset[str]
+    ) -> dict[str, Any] | None:
+        """Läser `run.json` för första jobbet med en lösare i `losare_mangd`, eller None."""
+        try:
+            k = self.fragor._hamta(korning_id)  # noqa: SLF001 - samma paket
+            s = self.fragor._sammanstallning(k)  # noqa: SLF001 - samma paket
+        except FlodenWebbFel:
+            return None
+        for j in s.get("jobb", []):
+            if str(j.get("losare")) not in losare_mangd:
+                continue
+            try:
+                m = json.loads(
+                    (self.fragor._jobbmapp(k, j) / "run.json").read_text(encoding="utf-8")  # noqa: SLF001
+                )
+            except (OSError, ValueError):
+                continue
+            if isinstance(m, dict):
+                return m
+        return None
+
+    def _regn_och_avtappning_fran_resultat(
+        self,
+        mallar: Mapping[str, Mall],
+        korning_id: str,
+        res: Mapping[str, Any],
+    ) -> tuple[dict[str, Any] | None, float | None]:
+        """Extraherar faktiska strukturerade regn- och avtappningsparametrar ur körningens K0/antaganden (B5)."""
+        antag = res.get("antaganden")
+        antag_m = antag if isinstance(antag, Mapping) else {}
+        analyser_raw = antag_m.get("analyser")
+        analyser = analyser_raw if isinstance(analyser_raw, list) else []
+        vatten_analys = next(
+            (a for a in analyser if isinstance(a, Mapping) and str(a.get("losare")) in _LOSARE_MED_REGN),
+            None,
+        )
+        regn_lista = antag_m.get("regn")
+        antag_regn = (
+            regn_lista[0]
+            if isinstance(regn_lista, list) and regn_lista and isinstance(regn_lista[0], Mapping)
+            else None
+        )
+        if vatten_analys is None and antag_regn is None:
+            return None, None
+
+        losare = str(vatten_analys.get("losare")) if vatten_analys is not None else "vatten.statisk_fyllning"
+        berakningstyp = "dynamisk" if losare == "vatten.dynamik" else "statisk"
+        manifest = self._forsta_jobb_manifest(korning_id, _LOSARE_MED_REGN)
+        job_par = manifest.get("parametrar", {}) if isinstance(manifest, Mapping) else {}
+        job_mv = manifest.get("matvarden", {}) if isinstance(manifest, Mapping) else {}
+        analys_par = (
+            vatten_analys.get("parametrar", {})
+            if vatten_analys is not None and isinstance(vatten_analys.get("parametrar"), Mapping)
+            else {}
+        )
+
+        aterkomst = self._tal_eller_none(
+            (antag_regn or {}).get("aterkomsttid_ar")
+            if (antag_regn or {}).get("aterkomsttid_ar") is not None
+            else job_par.get("aterkomsttid_ar")
+        )
+        var_min = self._tal_eller_none(
+            (antag_regn or {}).get("varaktighet_min")
+            if (antag_regn or {}).get("varaktighet_min") is not None
+            else job_par.get("varaktighet_min")
+        )
+        kf = self._tal_eller_none(
+            (antag_regn or {}).get("klimatfaktor")
+            if (antag_regn or {}).get("klimatfaktor") is not None
+            else (
+                job_par.get("klimatfaktor")
+                if job_par.get("klimatfaktor") is not None
+                else job_par.get("idf_klimatfaktor")
+            )
+        )
+        regn_mm = self._tal_eller_none(
+            (antag_regn or {}).get("regn_mm")
+            if (antag_regn or {}).get("regn_mm") is not None
+            else (job_mv.get("regn_mm") if job_mv.get("regn_mm") is not None else job_par.get("regn_mm"))
+        )
+        tider = job_par.get("regn_tid_s")
+        mm_h = job_par.get("regn_mm_h")
+        if isinstance(tider, list) and len(tider) >= 2:
+            if var_min is None:
+                t0 = self._tal_eller_none(tider[0])
+                t1 = self._tal_eller_none(tider[-1])
+                if t0 is not None and t1 is not None and t1 > t0:
+                    var_min = round((t1 - t0) / 60.0, 3)
+            if regn_mm is None and isinstance(mm_h, list) and len(mm_h) == len(tider):
+                tot_mm = 0.0
+                for idx in range(len(tider) - 1):
+                    ta = self._tal_eller_none(tider[idx])
+                    tb = self._tal_eller_none(tider[idx + 1])
+                    ia = self._tal_eller_none(mm_h[idx])
+                    ib = self._tal_eller_none(mm_h[idx + 1])
+                    if ta is not None and tb is not None and ia is not None and ib is not None and tb > ta:
+                        tot_mm += 0.5 * (ia + ib) * ((tb - ta) / 3600.0)
+                if tot_mm > 0.0:
+                    regn_mm = round(tot_mm, 3)
+
+        raw_kalla = (antag_regn or {}).get("kalla") or job_par.get("idf_kalla") or job_par.get("idf")
+        kalla = str(raw_kalla) if isinstance(raw_kalla, str) and raw_kalla else None
+        raw_regntyp = (antag_regn or {}).get("regntyp") or job_par.get("regntyp") or analys_par.get("regntyp")
+        regntyp: str | None = (
+            str(raw_regntyp)
+            if raw_regntyp in ("cds", "block")
+            else ("block" if aterkomst is None else None)
+        )
+
+        # Jämför körningens faktiska regn mot projektets förvalda skyfallsmall.
+        forval = self._regn_forval(mallar)
+        ar_standard = False
+        if forval is not None:
+            f_ar = self._tal_eller_none(forval.get("aterkomsttid_ar"))
+            f_var = self._tal_eller_none(forval.get("varaktighet_min"))
+            f_kf = self._tal_eller_none(forval.get("klimatfaktor"))
+            f_mm = self._tal_eller_none(forval.get("regn_mm"))
+            f_kalla = str(forval["kalla"]) if isinstance(forval.get("kalla"), str) and forval["kalla"] else None
+            if f_ar is not None:
+                ar_standard = (
+                    aterkomst is not None
+                    and abs(aterkomst - f_ar) < 1e-6
+                    and (f_var is None or (var_min is not None and abs(var_min - f_var) < 1e-6))
+                    and (f_kf is None or (kf is not None and abs(kf - f_kf) < 1e-6))
+                    and kalla == f_kalla
+                )
+            elif f_mm is not None:
+                ar_standard = (
+                    aterkomst is None
+                    and regn_mm is not None
+                    and abs(regn_mm - f_mm) < 1e-2
+                    and (f_var is None or var_min is None or abs(var_min - f_var) < 1e-3)
+                )
+
+        # Avtappning: skilj explicit angiven (även 0,0) från oangiven standard (None).
+        vatten_lista = antag_m.get("vatten")
+        antag_vatten = (
+            vatten_lista[0]
+            if isinstance(vatten_lista, list) and vatten_lista and isinstance(vatten_lista[0], Mapping)
+            else None
+        )
+        avt_val = self._tal_eller_none(
+            (antag_vatten or {}).get("avtappning_mm_h")
+            if (antag_vatten or {}).get("avtappning_mm_h") is not None
+            else (
+                job_par.get("avtappning_mm_h")
+                if job_par.get("avtappning_mm_h") is not None
+                else analys_par.get("avtappning_mm_h")
+            )
+        )
+        avt_angiven = job_par.get("avtappning_angiven")
+        if avt_angiven is None:
+            avt_angiven = analys_par.get("avtappning_angiven")
+        if avt_val is not None and avt_val > 0.0:
+            avtappning_mm_h: float | None = avt_val
+        elif avt_val is not None and avt_angiven is True:
+            avtappning_mm_h = avt_val
+        else:
+            avtappning_mm_h = None
+
+        regn_info: dict[str, Any] = {
+            "aterkomsttid_ar": aterkomst,
+            "varaktighet_min": var_min,
+            "klimatfaktor": kf,
+            "regn_mm": regn_mm,
+            "berakningstyp": berakningstyp,
+            "regntyp": regntyp,
+            "kalla": kalla,
+            "ar_standard": ar_standard,
+        }
+        return regn_info, avtappning_mm_h
+
+    def _sol_info_fran_resultat(
+        self,
+        mallar: Mapping[str, Mall],
+        korning_id: str,
+        res: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Extraherar faktiska strukturerade solparametrar ur körningens K0/antaganden (B14)."""
+        antag = res.get("antaganden")
+        antag_m = antag if isinstance(antag, Mapping) else {}
+        analyser_raw = antag_m.get("analyser")
+        analyser = analyser_raw if isinstance(analyser_raw, list) else []
+        sol_analys = next(
+            (a for a in analyser if isinstance(a, Mapping) and str(a.get("losare")) in _LOSARE_MED_SOL),
+            None,
+        )
+        if sol_analys is None:
+            return None
+        losare = str(sol_analys.get("losare"))
+        manifest = self._forsta_jobb_manifest(korning_id, _LOSARE_MED_SOL)
+        job_par = manifest.get("parametrar", {}) if isinstance(manifest, Mapping) else {}
+        analys_par = (
+            sol_analys.get("parametrar", {})
+            if isinstance(sol_analys.get("parametrar"), Mapping)
+            else {}
+        )
+        raw_datum = job_par.get("datum")
+        if isinstance(raw_datum, list) and raw_datum and isinstance(raw_datum[0], str):
+            datum_iso: str | None = raw_datum[0]
+        elif isinstance(raw_datum, str) and raw_datum:
+            datum_iso = raw_datum
+        elif isinstance(analys_par.get("datum"), str):
+            datum_iso = str(analys_par["datum"])
+        else:
+            datum_iso = None
+
+        sammanhangande = losare == "dagsljus.soltimmar_sammanhangande"
+        inkludera_vsc = any(
+            isinstance(a, Mapping) and str(a.get("losare")) == "dagsljus.vsc_fasad" for a in analyser
+        )
+        klockslag_utc: float | None = None
+        start_timme: float | None = None
+        slut_timme: float | None = None
+        if losare == "dagsljus.skuggmask_vid_klockslag":
+            raw_kl = job_par.get("klockslag")
+            if isinstance(raw_kl, list) and raw_kl:
+                kl0 = self._tal_eller_none(raw_kl[0])
+                off = self._tal_eller_none(job_par.get("utc_offset_h")) or 0.0
+                if kl0 is not None:
+                    klockslag_utc = round(kl0 - off, 6)
+        else:
+            st_val = self._tal_eller_none(
+                job_par.get("start_timme")
+                if job_par.get("start_timme") is not None
+                else analys_par.get("start_timme")
+            )
+            sl_val = self._tal_eller_none(
+                job_par.get("slut_timme")
+                if job_par.get("slut_timme") is not None
+                else analys_par.get("slut_timme")
+            )
+            if st_val is not None and st_val > 0.0:
+                start_timme = st_val
+            if sl_val is not None and sl_val < 24.0:
+                slut_timme = sl_val
+
+        # Jämför mot projektets förvalda dagsljusmall.
+        dag_mall = mallar.get("dagsljus")
+        mall_datum: str | None = None
+        if dag_mall is not None:
+            sol_m = next(
+                (a for a in dag_mall.fraga.analyser if a.losare == "dagsljus.soltimmar_mark"), None
+            )
+            if sol_m is not None:
+                md = sol_m.parametrar.get("datum")
+                if isinstance(md, list | tuple) and md:
+                    mall_datum = str(md[0])
+                elif isinstance(md, str):
+                    mall_datum = md
+        ar_standard = (
+            losare == "dagsljus.soltimmar_mark"
+            and not sammanhangande
+            and not inkludera_vsc
+            and klockslag_utc is None
+            and start_timme is None
+            and slut_timme is None
+            and (mall_datum is None or datum_iso == mall_datum)
+        )
+        return {
+            "datum_iso": datum_iso,
+            "start_timme": start_timme,
+            "slut_timme": slut_timme,
+            "sammanhangande": sammanhangande,
+            "inkludera_vsc": inkludera_vsc,
+            "klockslag_utc": klockslag_utc,
+            "ar_standard": ar_standard,
+        }
+
     def status_lage_idag(self, projekt: str) -> dict[str, Any]:
         """Körningarnas status för läget idag och, för klara, vyerna (bara före) för kartan."""
-        self._kravs_projekt(projekt)
+        mallar = self._kravs_projekt(projekt)
         ut: list[dict[str, Any]] = []
         for kort, k in self._las_lage(projekt).get("korningar", {}).items():
             try:
                 st = self.fragor.korning_status(k["korning_id"])
             except FlodenWebbFel:
                 continue
-            post: dict[str, Any] = {"mall": kort, "status": st, "vyer": [], "regn_text": None}
+            post: dict[str, Any] = {
+                "mall": kort,
+                "status": st,
+                "vyer": [],
+                "regn_text": None,
+                "regn": None,
+                "avtappning_mm_h": None,
+                "sol": None,
+            }
             if st["status"] == "klar":
                 try:
                     res = self.fragor.resultat(k["korning_id"])
                     post["vyer"] = self._lage_vyer(res, k["korning_id"])
                     post["varningar"] = [str(v["text"]) for v in res.get("varningar", [])]
-                    post["regn_text"] = self._regn_text_fran_resultat(res)
+                    regn_info, avt_mm_h = self._regn_och_avtappning_fran_resultat(
+                        mallar, k["korning_id"], res
+                    )
+                    post["regn"] = regn_info
+                    post["avtappning_mm_h"] = avt_mm_h
+                    regn_text = self._regn_text_fran_resultat(res)
+                    if regn_text is None and regn_info and regn_info.get("regn_mm") is not None:
+                        regn_text = f"{float(regn_info['regn_mm']):g} mm"
+                    post["regn_text"] = regn_text
+                    post["sol"] = self._sol_info_fran_resultat(mallar, k["korning_id"], res)
                 except FlodenWebbFel:
                     pass
             ut.append(post)
@@ -2010,55 +2309,69 @@ class KartverktygTjanst:
     ) -> dict[str, Any]:
         """Kör (eller återanvänder ur cachen) ekologianalysen före/efter synkront.
 
-        `namn_slug` är ett sparat scenario; utan det används projektets förslag (demons K9).
-        Körningen får ett id som beror på parametrarna och scenariots K9-nyckel, så samma anrop
-        ger samma körning. Fel i lösaren (t.ex. för många fläckar) kastas som 400.
+        `namn_slug` är ett sparat scenario; utan det används projektets förslag (K9 i mallen, eller
+        ett tomt nulägesscenario för geografiprojekt som ännu saknar sparat scenario). Körningen får
+        ett id som beror på projekt, parametrar och scenariots K9-nyckel, så samma anrop ger samma
+        körning. Fel i lösaren (t.ex. för många fläckar) kastas som 400.
         """
         import hashlib
 
-        mallar = self._kravs_projekt(projekt)
+        kalla = self.kalla(projekt)
+        mallar = dict(kalla.mallar)
         m = mallar.get("ekologi")
         if m is None:
             raise _fel(
                 "Projektet har ingen ekologianalys (kör `floden demo`)."
                 if projekt == _PROJEKT_ID
-                else "Ekologi körs inte i kartverktyget för projekt i en geografi än.",
+                else "Projektets geografi saknar ekologiunderlag (NMD-lager / ekologi.toml). "
+                "Mappa geografin med --nmd och skriv om projektets frågor.",
                 404,
             )
         analys = next((a.id for a in m.fraga.analyser if a.losare == "ekologi.konnektivitet"), None)
         if analys is None:
             raise _fel("Ekologimallen saknar lösaren ekologi.konnektivitet.", 500)
+        fragedir = kalla.fragedir or self.fragedir
+        proj_tag = f"-{kalla.fraga_infix}" if kalla.fraga_infix else ""
         over = {analys: dict(parametrar)}
         tag = hashlib.sha256(json.dumps(over, sort_keys=True).encode()).hexdigest()[:8]
         if namn_slug is None:
             k9 = next((s.k9 for s in m.fraga.scenarier.values() if s.k9), ())
-            if not k9:
-                raise _fel("Ekologimallen har inget förslag att jämföra med.", 500)
-            fraga_id = f"api-ekologi-{tag}"
-            fil = self.fragedir / f"{fraga_id}.json"
-            self.fragedir.mkdir(parents=True, exist_ok=True)
-            innehall = self._k20(m, fil, k9[-1], fraga_id, "projektets förslag", [analys],
-                                 parametrar_over=over)
-            scen_nyckel = sha256_fil(k9[-1])
+            if k9:
+                k9_fil = k9[-1]
+                sc_namn = "projektets förslag"
+            else:
+                recept = self._bas_recept(m)
+                if not recept:
+                    raise _fel(f"Basen {m.bas} saknar recept.json.", 500)
+                k9_fil = self.mapp / projekt / "k9" / "api-ekologi-nulage.json"
+                skriv_scenario(
+                    Planscenario("nulage", recept, (), beskrivning="Nuläge utan ändring"),
+                    k9_fil,
+                )
+                sc_namn = "nuläge"
+            fraga_id = f"api-ekologi{proj_tag}-{tag}"
+            fil = fragedir / f"{fraga_id}.json"
+            fragedir.mkdir(parents=True, exist_ok=True)
+            innehall = self._k20(
+                m, fil, k9_fil, fraga_id, sc_namn, [analys], parametrar_over=over
+            )
+            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
+            ref = self._ref_for(fil)
+            scen_nyckel = sha256_fil(k9_fil)
         else:
             poster = self._skriv_fragor(
                 projekt, namn_slug, [f"ekologi.{analys}"], prefix=f"api{tag}", parametrar_over=over
             )
             p = poster[0]
-            fil = self.fragedir / f"{p['fraga_id']}.json"
-            innehall = None
+            ref = str(p["ref"])
             scen_nyckel = str(p["k9_nyckel"])
-            fraga_id = str(p["fraga_id"])
-        if innehall is not None:
-            fil.write_text(json.dumps(innehall, indent=2, ensure_ascii=False) + "\n", "utf-8")
-        ref = self._ref_for(fil)
-        korning_id = f"api-ekologi-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
+        korning_id = f"api-ekologi{proj_tag}-{tag}-{hashlib.sha256(scen_nyckel.encode()).hexdigest()[:8]}"
         status, _ = self.fragor.kor_synkront(ref, korning_id, konto_projekt or projekt)
         return {"korning_id": korning_id, "status": status, "analys": analys, "ref": ref}
 
     def status(self, projekt: str, namn_slug: str) -> dict[str, Any]:
         """Körningarnas status och, för klara, vyerna (före, efter, skillnad) för kartan."""
-        self._kravs_projekt(projekt)
+        mallar = self._kravs_projekt(projekt)
         d = self._las(projekt, namn_slug)
         ut: list[dict[str, Any]] = []
         for kort, k in d.get("korningar", {}).items():
@@ -2066,12 +2379,30 @@ class KartverktygTjanst:
                 st = self.fragor.korning_status(k["korning_id"])
             except FlodenWebbFel:
                 continue
-            post: dict[str, Any] = {"mall": kort, "status": st, "vyer": []}
+            post: dict[str, Any] = {
+                "mall": kort,
+                "status": st,
+                "vyer": [],
+                "regn_text": None,
+                "regn": None,
+                "avtappning_mm_h": None,
+                "sol": None,
+            }
             if st["status"] == "klar":
                 try:
                     res = self.fragor.resultat(k["korning_id"])
                     post["vyer"] = self._vyer(res, d["namn"], k["korning_id"])
                     post["varningar"] = [str(v["text"]) for v in res.get("varningar", [])]
+                    regn_info, avt_mm_h = self._regn_och_avtappning_fran_resultat(
+                        mallar, k["korning_id"], res
+                    )
+                    post["regn"] = regn_info
+                    post["avtappning_mm_h"] = avt_mm_h
+                    regn_text = self._regn_text_fran_resultat(res)
+                    if regn_text is None and regn_info and regn_info.get("regn_mm") is not None:
+                        regn_text = f"{float(regn_info['regn_mm']):g} mm"
+                    post["regn_text"] = regn_text
+                    post["sol"] = self._sol_info_fran_resultat(mallar, k["korning_id"], res)
                 except FlodenWebbFel:
                     pass
             ut.append(post)
@@ -2569,6 +2900,14 @@ class KartverktygTjanst:
             la = lager_per_id.get(lager_id)
             if la is None:
                 raise _fel(f"Okänt lager '{lager_id}' i körningen '{kid}'.", 404)
+            roll = str(la.get("roll") or "")
+            typ = str(la.get("typ") or "")
+            if roll != "max_djup" or typ == "skillnad":
+                raise _fel(
+                    f"Lagret '{lager_id}' (roll '{roll}', typ '{typ}') kan inte användas som "
+                    "vattendjup i sektion; endast vattendjupslager ('max_djup') stöds.",
+                    400,
+                )
             npy_fil = k.mapp / "webb" / f"{lager_id}.npy"
             if not npy_fil.is_file():
                 raise _fel(f"Rasterdata saknas för lager '{lager_id}'.", 404)
