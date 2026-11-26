@@ -22,13 +22,16 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from sankgraf.hierarki import _berakna_kantbarriarer, bygg_sankgraf
+from sankgraf.persistens import filtrera_persistens
 from sankgraf.typer import (
     BYGGNAD_NOD_ID,
     HAV_NOD_ID,
+    MARKSLAG_BYGGNAD,
     SankGraf,
     SankGrafFel,
 )
-from testsvit.k1_io import EPSG_SWEREF99_1800, WKT_EPSG_3011, GeoTransformInfo
+from testsvit.k1_io import EPSG_SWEREF99_1800, WKT_EPSG_3011, BrytlinjePost, GeoTransformInfo
 
 STANDARD_K_SIGMA = 2.0
 STANDARD_REFERENSREGN_MM = 100.0
@@ -125,14 +128,65 @@ def _bygg_osakerhetsraster(
     return np.where(np.isfinite(arr) & (arr >= 0.0), arr, 0.0)
 
 
+def _graf_med_brytlinjer(
+    graf: SankGraf,
+    sigma: NDArray[np.float64],
+    brytlinjer: Sequence[BrytlinjePost] | None,
+) -> SankGraf:
+    """Säkerställer att sänkgrafens topologi respekterar angivna `brytlinjer`."""
+    bryt_seq = tuple(brytlinjer) if brytlinjer else ()
+    if not bryt_seq:
+        return graf
+    ny_graf = bygg_sankgraf(
+        graf.mark_z,
+        np.asarray(sigma, dtype=np.float32),
+        graf.markslag,
+        graf.geo,
+        brytlinjer=bryt_seq,
+    )
+    if graf.filtrerad and graf.persistens_faktor is not None:
+        ny_graf = filtrera_persistens(ny_graf, faktor=graf.persistens_faktor)
+    ny_graf.takvatten = graf.takvatten
+    if (
+        np.array_equal(graf.cell_till_nod, ny_graf.cell_till_nod)
+        and graf.noder.keys() == ny_graf.noder.keys()
+        and all(
+            graf.noder[nid].typ == ny_graf.noder[nid].typ
+            and graf.noder[nid].ut_till_id == ny_graf.noder[nid].ut_till_id
+            and graf.noder[nid].forald_id == ny_graf.noder[nid].forald_id
+            and math.isclose(
+                graf.noder[nid].overfall_rh2000,
+                ny_graf.noder[nid].overfall_rh2000,
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            )
+            for nid in graf.noder
+        )
+    ):
+        return graf
+    return ny_graf
+
+
 def _samla_lov_sadelkanter(
     graf: SankGraf,
     sigma: NDArray[np.float64],
+    brytlinjer: Sequence[BrytlinjePost] | None = None,
 ) -> list[_SadelKant]:
-    """Hittar lägsta 4-grannsadel mellan varje par av distinkta lövnoder (samt mot HAV)."""
+    """Hittar lägsta 4-grannsadel mellan varje par av distinkta lövnoder (samt mot HAV).
+
+    Om `brytlinjer` anges höjs korsade 4-grannekanter enligt `_berakna_kantbarriarer`
+    så att kantstenar och murar (2D och 3D) respekteras exakt som i `bygg_sankgraf`.
+    """
     ctn = graf.cell_till_nod
     z = np.asarray(graf.mark_z, dtype=np.float64)
     h, w = ctn.shape
+    kantbarriarer: dict[tuple[int, int], float] = {}
+    if brytlinjer:
+        aktiv = np.asarray(
+            (graf.markslag != MARKSLAG_BYGGNAD) & (ctn != BYGGNAD_NOD_ID) & np.isfinite(z),
+            dtype=np.bool_,
+        )
+        kantbarriarer = _berakna_kantbarriarer(z.ravel(), aktiv.ravel(), graf.geo, brytlinjer)
     basta: dict[tuple[int, int], tuple[float, float, float, float]] = {}
 
     def uppdatera(a: int, b: int, z_val: float, s_val: float, rad: float, kol: float) -> None:
@@ -166,6 +220,13 @@ def _samla_lov_sadelkanter(
                 z_s, s_s = zr, float(sigma[r_i, c_i + 1])
             else:
                 z_s, s_s = zl, max(float(sigma[r_i, c_i]), float(sigma[r_i, c_i + 1]))
+            if kantbarriarer:
+                u_idx = r_i * w + c_i
+                v_idx = u_idx + 1
+                b_z = kantbarriarer.get((u_idx, v_idx))
+                if b_z is not None and b_z > z_s:
+                    z_s = b_z
+                    s_s = max(float(sigma[r_i, c_i]), float(sigma[r_i, c_i + 1]))
             uppdatera(int(ctn[r_i, c_i]), int(ctn[r_i, c_i + 1]), z_s, s_s, r_i, c_i + 0.5)
 
     # Vertikala 4-grannar
@@ -191,6 +252,13 @@ def _samla_lov_sadelkanter(
                 z_s, s_s = zd, float(sigma[r_i + 1, c_i])
             else:
                 z_s, s_s = zu, max(float(sigma[r_i, c_i]), float(sigma[r_i + 1, c_i]))
+            if kantbarriarer:
+                u_idx = r_i * w + c_i
+                v_idx = (r_i + 1) * w + c_i
+                b_z = kantbarriarer.get((u_idx, v_idx))
+                if b_z is not None and b_z > z_s:
+                    z_s = b_z
+                    s_s = max(float(sigma[r_i, c_i]), float(sigma[r_i + 1, c_i]))
             uppdatera(int(ctn[r_i, c_i]), int(ctn[r_i + 1, c_i]), z_s, s_s, r_i + 0.5, c_i)
 
     # Rasterranden ut mot HAV_NOD_ID
@@ -298,6 +366,7 @@ def detektera_bifurkationer(
     k_sigma: float = STANDARD_K_SIGMA,
     referensregn_mm: float = STANDARD_REFERENSREGN_MM,
     inkludera_stabila: bool = False,
+    brytlinjer: Sequence[BrytlinjePost] | None = None,
 ) -> list[BifurkationsPunkt]:
     """Detekterar topologiskt instabila överfallspunkter inom höjdosäkerheten.
 
@@ -306,6 +375,9 @@ def detektera_bifurkationer(
     2. Beräknar marginalen `Δz = z_alt - z_öv`, kombinerad osäkerhet
        `σ_komb = sqrt(σ_öv² + σ_alt²)` och säkerhetsmarginalen `m = Δz / σ_komb`.
     3. Flaggar noden som topologiskt instabil (`instabil = True`) när `m <= k_sigma`.
+
+    Om `brytlinjer` anges vidarebefordras de till `bygg_sankgraf` och till
+    4-grannsadelkanterna så att kantstenar och barriärer respekteras fullt ut.
 
     Returnerar deterministiskt sorterad lista (högst påverkad volym först, därefter
     minsta säkerhetsmarginal och `nod_id`).
@@ -316,13 +388,14 @@ def detektera_bifurkationer(
         raise SankGrafFel(f"referensregn_mm måste vara >= 0, fick {referensregn_mm}.")
 
     sigma = _bygg_osakerhetsraster(graf, osakerhet_m)
-    sadelkanter = _samla_lov_sadelkanter(graf, sigma)
-    uppstroms_area = _berakna_uppstroms_avrinningsyta(graf)
-    lov_per_nod = {nid: set(graf.lov_under_nod(nid)) for nid in graf.noder}
+    eff_graf = _graf_med_brytlinjer(graf, sigma, brytlinjer)
+    sadelkanter = _samla_lov_sadelkanter(eff_graf, sigma, brytlinjer=brytlinjer)
+    uppstroms_area = _berakna_uppstroms_avrinningsyta(eff_graf)
+    lov_per_nod = {nid: set(eff_graf.lov_under_nod(nid)) for nid in eff_graf.noder}
 
     resultat: list[BifurkationsPunkt] = []
-    for nid in sorted(graf.noder):
-        nod = graf.noder[nid]
+    for nid in sorted(eff_graf.noder):
+        nod = eff_graf.noder[nid]
         if nod.ar_slutsanka:
             continue
         egna_lov = lov_per_nod[nid]
@@ -351,7 +424,7 @@ def detektera_bifurkationer(
                 if basta_primar is None or kant.hojd_m < basta_primar[0]:
                     basta_primar = (kant.hojd_m, kant.osakerhet_m)
             else:
-                alt_mal = _mal_nod_for_lov(graf, nid, yttre)
+                alt_mal = _mal_nod_for_lov(eff_graf, nid, yttre)
                 alt_kand = (kant.hojd_m, kant.osakerhet_m, alt_mal, kant.x, kant.y)
                 if basta_alt is None or (kant.hojd_m, kant.x, kant.y) < (
                     basta_alt[0],
@@ -560,6 +633,7 @@ def exportera_bifiltrering_json(
     utfil: str | Path,
     *,
     osakerhet_m: NDArray[np.float32] | NDArray[np.float64] | float | None = None,
+    brytlinjer: Sequence[BrytlinjePost] | None = None,
 ) -> Path:
     """Exporterar ett rent, GIS-fritt dataset för bigraderade k[x, y]-experiment (Q2).
 
@@ -567,7 +641,8 @@ def exportera_bifiltrering_json(
     hierarki) och alla 4-grannsadelkanter mellan lövnoder (och mot HAV = -1).
     """
     sigma = _bygg_osakerhetsraster(graf, osakerhet_m)
-    sadelkanter = _samla_lov_sadelkanter(graf, sigma)
+    eff_graf = _graf_med_brytlinjer(graf, sigma, brytlinjer)
+    sadelkanter = _samla_lov_sadelkanter(eff_graf, sigma, brytlinjer=brytlinjer)
 
     noder_ut = [
         {
@@ -584,7 +659,7 @@ def exportera_bifiltrering_json(
             "avrinningsyta_m2": float(nod.avrinningsyta_m2),
             "max_volym_m3": float(nod.max_volym_m3),
         }
-        for _, nod in sorted(graf.noder.items())
+        for _, nod in sorted(eff_graf.noder.items())
     ]
     kanter_ut = [
         {
@@ -599,7 +674,7 @@ def exportera_bifiltrering_json(
     ]
     data = {
         "format": "floden-bifiltrering/v1",
-        "epsg": int(graf.geo.epsg),
+        "epsg": int(eff_graf.geo.epsg),
         "hav_nod_id": int(HAV_NOD_ID),
         "antal_noder": len(noder_ut),
         "antal_sadelkanter": len(kanter_ut),

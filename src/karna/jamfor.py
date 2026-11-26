@@ -111,13 +111,19 @@ def kor_jamforelse(
         b = np.asarray(b_raw, dtype=np.float64)
         giltig = np.isfinite(a) & np.isfinite(b)
         diff = np.where(giltig, b - a, np.nan)
+        giltig &= np.isfinite(diff)
         cell_m2 = geo_a.pixelstorlek_x * geo_a.pixelstorlek_y
         if jf_e.ruta is not None:
             giltig = giltig & _agarmask(jf_e.ruta, jf_e.scenario.rutor, geo_a)
         upp = giltig & (diff > jf.troskel)
         ned = giltig & (diff < -jf.troskel)
-        r_max = float(np.nanmax(diff)) if np.any(giltig) else 0.0
-        r_min = float(np.nanmin(diff)) if np.any(giltig) else 0.0
+        if np.any(giltig):
+            giltiga_diff = diff[giltig]
+            r_max = float(np.max(giltiga_diff))
+            r_min = float(np.min(giltiga_diff))
+        else:
+            r_max = 0.0
+            r_min = 0.0
         per_ruta[rid] = {
             "max_okning": max(r_max, 0.0),
             "max_minskning": max(-r_min, 0.0),
