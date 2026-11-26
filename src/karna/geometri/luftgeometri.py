@@ -65,14 +65,17 @@ def markens_z0_m(
 
     Celler med markslag 0 (okänt) utelämnas. `None` om inga celler återstår.
     """
-    fri = (byggnadshojd_m <= 0.0) & (markslag != 0)
+    fri = np.isfinite(byggnadshojd_m) & (byggnadshojd_m <= 0.0) & (markslag != 0)
     if not bool(fri.any()):
         return None
     lut = np.full(256, np.nan)
     for kod in range(1, 10):
         lut[kod] = float(tabell.egenskaper_for(kod, "luft")["z0_m"])
     z0 = lut[markslag[fri]]
-    return float(math.exp(float(np.mean(np.log(z0)))))
+    giltig = np.isfinite(z0) & (z0 > 0.0)
+    if not bool(giltig.any()):
+        return None
+    return float(math.exp(float(np.nanmean(np.log(z0[giltig])))))
 
 
 def luft_geometri(
@@ -105,15 +108,31 @@ def luft_geometri(
         vegetation=vegetation,
         tillat_saknad_vegetation=tillat_saknad_vegetation,
     )
-    hogsta = float(m.byggnadshojd_m.max())
-    hogsta_veg = 0.0 if m.vegetation_hojd_m is None else float(m.vegetation_hojd_m.max())
+    if not bool(np.isfinite(m.terrang_rh2000_m).any()) or not bool(
+        np.isfinite(m.byggnadshojd_m).any()
+    ):
+        raise GeometriFel(
+            "Luftgeometrin saknar ändliga höjddata (hela domänen är NaN/Inf)."
+        )
+    hogsta = float(np.nanmax(m.byggnadshojd_m))
+    hogsta_veg = (
+        0.0
+        if m.vegetation_hojd_m is None or not bool(np.isfinite(m.vegetation_hojd_m).any())
+        else float(np.nanmax(m.vegetation_hojd_m))
+    )
     if hojd_doman_m is None:
         hojd_doman_m = max(2.0 * max(hogsta, hogsta_veg), 6.0 * dx_m)
         hojd_doman_m = math.ceil(hojd_doman_m / dx_m) * dx_m
     lad_raster, okant = lad_fran_markslag(m.markslag, tabell)
     veg = m.vegetation_hojd_m
+    bygg_ren = np.nan_to_num(np.asarray(m.byggnadshojd_m, dtype=np.float64), nan=0.0)
+    veg_ren = (
+        None
+        if veg is None
+        else np.nan_to_num(np.asarray(veg, dtype=np.float64), nan=0.0)
+    )
     spec = Domanspec(
-        hojd_over_mark_m=np.asarray(m.byggnadshojd_m, dtype=np.float64),
+        hojd_over_mark_m=bygg_ren,
         raster_dx_m=m.cell_m,
         raster_origo_x_m=m.x_min_m,
         raster_origo_y_m=m.y_max_m,
@@ -122,37 +141,40 @@ def luft_geometri(
         buffert_uppstroms_m=buffert_uppstroms_m,
         buffert_nedstroms_m=buffert_nedstroms_m,
         buffert_sidor_m=buffert_sidor_m,
-        vegetation_hojd_m=None if veg is None else np.asarray(veg, dtype=np.float64),
+        vegetation_hojd_m=veg_ren,
         lad_m2_m3=lad_raster,
     )
-    varningar: list[str] = []
-    if m.saknade_celler:
+    varningar: list[str] = list(m.varningar)
+    ej_tackta = max(0, m.saknade_celler - m.icke_andliga_celler)
+    if ej_tackta > 0:
         varningar.append(
-            f"{m.saknade_celler} rutnätsceller täcks inte av någon ruta och räknas som tom mark"
+            f"{ej_tackta} rutnätsceller täcks inte av någon ruta och räknas som tom mark"
         )
     if okant and veg is not None:
         varningar.append(
             f"{okant} celler har okänt markslag (kod 0): ingen vegetation antas där "
             "(flaggat, inte data)"
         )
-    if float(np.ptp(m.terrang_rh2000_m)) > 0.5 * dx_m:
+    terrang_variation_m = float(np.nanmax(m.terrang_rh2000_m) - np.nanmin(m.terrang_rh2000_m))
+    if terrang_variation_m > 0.5 * dx_m:
         varningar.append(
-            f"terrängen varierar {float(np.ptp(m.terrang_rh2000_m)):.1f} m i området men luftens "
+            f"terrängen varierar {terrang_variation_m:.1f} m i området men luftens "
             "rutnät har plan mark: byggnadshöjderna gäller över lokal mark"
         )
     matvarden = {
         "antal_rutor": float(m.antal_rutor),
-        "byggnadsceller": float(np.count_nonzero(m.byggnadshojd_m > 0)),
+        "byggnadsceller": float(np.count_nonzero(bygg_ren > 0)),
         "hogsta_byggnad_m": hogsta,
         "hojd_doman_m": float(hojd_doman_m),
         "saknade_celler": float(m.saknade_celler),
+        "icke_andliga_celler": float(m.icke_andliga_celler),
         "okant_markslag_celler": float(okant),
-        "terrang_variation_m": float(np.ptp(m.terrang_rh2000_m)),
+        "terrang_variation_m": terrang_variation_m,
     }
     return LuftGeometri(
         spec=spec,
         mosaik=m,
-        z0_markyta_m=markens_z0_m(m.markslag, m.byggnadshojd_m, tabell),
+        z0_markyta_m=markens_z0_m(m.markslag, bygg_ren, tabell),
         okant_markslag_celler=okant,
         varningar=tuple(varningar),
         matvarden=matvarden,

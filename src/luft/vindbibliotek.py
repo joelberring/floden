@@ -40,7 +40,7 @@ import numpy as np
 import numpy.typing as npt
 
 from gemensamt.hash import sha256_bytes, sha256_fil
-from luft.geometri import grid_meta
+from luft.geometri import RasterRuta, grid_meta
 from luft.typer import KONTRAKT_KL1, Inflode, LuftFel, Vindfalt, Voxelgrid
 
 FloatArray = npt.NDArray[np.float64]
@@ -409,6 +409,7 @@ class Fordelning:
     modellerad: BoolArray  # (n,)
     svag_vind: BoolArray  # (n,), giltig och U < u_min
     ogiltig: BoolArray  # (n,)
+    tid: tuple[str, ...] = ()
 
     @property
     def antal_timmar(self) -> int:
@@ -523,12 +524,113 @@ def fordela(
         modellerad=modellerad,
         svag_vind=svag,
         ogiltig=ogiltig,
+        tid=vaderserie.tid,
     )
 
 
 # ---------------------------------------------------------------------------
-# Statistik
+# Statistik och celltimserie
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CellTimserie:
+    """Timvis lokalt haltbidrag (µg/m³) i en cell eller namngiven receptorpunkt.
+
+    Timmar med `svag_vind=True` eller `ogiltig=True` ligger utanför modellen: de får
+    `halt_bidrag_ug_m3 = NaN` och flaggas uttryckligen i stället för att gissas.
+    """
+
+    rad: int
+    kolumn: int
+    timme: tuple[str, ...]
+    halt_bidrag_ug_m3: FloatArray
+    svag_vind: BoolArray
+    ogiltig: BoolArray
+    receptor: str | None = None
+
+    @property
+    def antal_timmar(self) -> int:
+        return len(self.timme)
+
+    @property
+    def antal_modellerade(self) -> int:
+        return int(np.count_nonzero(~(self.svag_vind | self.ogiltig)))
+
+    @property
+    def antal_svag_vind(self) -> int:
+        return int(np.count_nonzero(self.svag_vind))
+
+    @property
+    def antal_ogiltiga(self) -> int:
+        return int(np.count_nonzero(self.ogiltig))
+
+    def rader(self, *, inkludera_receptor: bool = False) -> list[dict[str, Any]]:
+        """Returnerar rader med nycklarna `timme`, `halt_bidrag_ug_m3`, `svag_vind`, `ogiltig`."""
+        ut: list[dict[str, Any]] = []
+        for t, h, sv, og in zip(
+            self.timme, self.halt_bidrag_ug_m3, self.svag_vind, self.ogiltig, strict=True
+        ):
+            rad: dict[str, Any] = {
+                "timme": t,
+                "halt_bidrag_ug_m3": float(h),
+                "svag_vind": bool(sv),
+                "ogiltig": bool(og),
+            }
+            if inkludera_receptor:
+                rad["receptor"] = self.receptor or f"cell_{self.rad}_{self.kolumn}"
+            ut.append(rad)
+        return ut
+
+    def skriv_csv(self, sokvag: str | Path, *, inkludera_receptor: bool = False) -> Path:
+        """Skriver timserien som CSV (`timme,halt_bidrag_ug_m3,svag_vind,ogiltig`)."""
+        return skriv_timserier_csv(sokvag, [self], inkludera_receptor=inkludera_receptor)
+
+
+def skriv_timserier_csv(
+    sokvag: str | Path,
+    serier: Sequence[CellTimserie],
+    *,
+    inkludera_receptor: bool | None = None,
+) -> Path:
+    """Skriver en eller flera `CellTimserie` till CSV med tids-, enhets- och flaggkolumner.
+
+    Kolumner: `timme,halt_bidrag_ug_m3,svag_vind,ogiltig` (samt `receptor` när flera serier
+    skrivs eller `inkludera_receptor=True`). Ej modellerade timmar (`svag_vind`/`ogiltig`)
+    eller `NaN`-halter skrivs som tom sträng i `halt_bidrag_ug_m3`.
+    """
+    med_rec = (
+        inkludera_receptor
+        if inkludera_receptor is not None
+        else (len(serier) > 1 or any(s.receptor is not None for s in serier))
+    )
+    kolumner = ["timme", "halt_bidrag_ug_m3", "svag_vind", "ogiltig"]
+    if med_rec:
+        kolumner.append("receptor")
+    mal = Path(sokvag)
+    mal.parent.mkdir(parents=True, exist_ok=True)
+    with mal.open("w", encoding="utf-8", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(kolumner)
+        for serie in serier:
+            rec_namn = serie.receptor or f"cell_{serie.rad}_{serie.kolumn}"
+            for t, h, sv, og in zip(
+                serie.timme,
+                serie.halt_bidrag_ug_m3,
+                serie.svag_vind,
+                serie.ogiltig,
+                strict=True,
+            ):
+                halt_txt = (
+                    ""
+                    if (bool(sv) or bool(og) or not math.isfinite(float(h)))
+                    else f"{float(h):.12g}"
+                )
+                rad_lista: list[Any] = [t, halt_txt, int(bool(sv)), int(bool(og))]
+                if med_rec:
+                    rad_lista.append(rec_namn)
+                w.writerow(rad_lista)
+    return mal
 
 
 class Haltstatistik:
@@ -609,6 +711,67 @@ class Haltstatistik:
         cb = self._c[self._idx[:, 1], sl]
         v: FloatArray = (self._f[:, None] * (self._w[:, 0:1] * ca + self._w[:, 1:2] * cb)).T
         return v
+
+    def timserie_for_cell(
+        self, r: int, c: int, *, receptor: str | None = None
+    ) -> CellTimserie:
+        """Timvis lokalt haltbidrag (µg/m³) för cell `(r, c)` över hela väderserien.
+
+        Timmar med svag vind (`U < u_min`) eller ogiltigt väder flaggas uttryckligen via
+        `svag_vind`/`ogiltig` och får `NaN` i `halt_bidrag_ug_m3` (gissas aldrig).
+        """
+        if len(self.form) != 2:
+            raise LuftFel(f"timserie_for_cell kräver 2D-haltfält, fick form {self.form}.")
+        rader, kolumner = self.form
+        if (
+            isinstance(r, bool)
+            or isinstance(c, bool)
+            or not (0 <= r < rader and 0 <= c < kolumner)
+        ):
+            raise LuftFel(f"Cell ({r}, {c}) ligger utanför haltfältets form {self.form}.")
+        flat = int(r) * kolumner + int(c)
+        mod_g_m3 = self._timvarden(slice(flat, flat + 1))[0]
+        n = self.fordelning.antal_timmar
+        bidrag_ug = np.full(n, np.nan, dtype=np.float64)
+        bidrag_ug[self.fordelning.modellerad] = mod_g_m3 * 1.0e6
+        tid = (
+            self.fordelning.tid
+            if len(self.fordelning.tid) == n
+            else tuple(str(i) for i in range(n))
+        )
+        return CellTimserie(
+            rad=int(r),
+            kolumn=int(c),
+            timme=tid,
+            halt_bidrag_ug_m3=bidrag_ug,
+            svag_vind=self.fordelning.svag_vind.copy(),
+            ogiltig=self.fordelning.ogiltig.copy(),
+            receptor=receptor,
+        )
+
+    def timserie_for_receptor(
+        self,
+        namn: str,
+        x_m: float,
+        y_m: float,
+        ruta: RasterRuta,
+    ) -> CellTimserie:
+        """Timvis lokalt haltbidrag (µg/m³) i en namngiven receptorpunkt (EPSG:3011)."""
+        if not isinstance(namn, str) or not namn.strip():
+            raise LuftFel("Receptornamn måste vara en icke-tom text.")
+        if not (math.isfinite(x_m) and math.isfinite(y_m)):
+            raise LuftFel(f"Receptor '{namn}' har ogiltiga koordinater ({x_m}, {y_m}).")
+        if ruta.form_rc != self.form:
+            raise LuftFel(
+                f"RasterRuta {ruta.form_rc} matchar inte haltfältets form {self.form}."
+            )
+        c = math.floor((x_m - ruta.origo_x_m) / ruta.dx_m)
+        r = math.floor((ruta.origo_y_m - y_m) / ruta.dx_m)
+        if not (0 <= r < ruta.rader and 0 <= c < ruta.kolumner):
+            raise LuftFel(
+                f"Receptor '{namn}' ({x_m:.1f}, {y_m:.1f}) ligger utanför utvärderingsrastret."
+            )
+        return self.timserie_for_cell(r, c, receptor=namn.strip())
 
     def antal_timmar_over(self, grans_g_m3: float) -> FloatArray:
         """Antal modellerade timmar med halt strikt över gränsen (float, NaN där halt saknas)."""

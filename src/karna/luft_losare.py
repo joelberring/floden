@@ -262,22 +262,23 @@ class LuftVindkomfort(Analyslosare):
 
 
 class LuftHalt(Analyslosare):
-    """Årsmedelhalt från vägar (linjekällor) på K1 v2-rutor."""
+    """Årsmedelhalt och timserie från vägar (linjekällor) på K1 v2-rutor."""
 
     namn: ClassVar[str] = "luft.halt"
     doman: ClassVar[str] = "luft"
-    version: ClassVar[str] = "1"
+    version: ClassVar[str] = "2"
     beskrivning: ClassVar[str] = (
-        "Årsmedelhalt på utvärderingshöjd ur LES + linjär spridning på K1 v2-geometrin; vägar som "
-        "GeoPackage med emission_g_m_s, väder som CSV."
+        "Årsmedelhalt och timserie på utvärderingshöjd ur LES + linjär spridning på K1 v2-geometrin; "
+        "vägar som GeoPackage med emission_g_m_s, väder som CSV."
     )
     indataroller: ClassVar[tuple[str, ...]] = ("vagar", "vader")
-    utdataroller: ClassVar[tuple[str, ...]] = ("arsmedel",)
+    utdataroller: ClassVar[tuple[str, ...]] = ("arsmedel", "timserie")
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
         _kontrollera_okanda(
             parametrar,
-            _GEMENSAMMA | {"amne", "deposition_m_s", "sedimentation_m_s", "utvardering_hojd_m"},
+            _GEMENSAMMA
+            | {"amne", "deposition_m_s", "sedimentation_m_s", "utvardering_hojd_m", "receptorer"},
             self.namn,
         )
         ut = _gemensamma(parametrar)
@@ -288,6 +289,34 @@ class LuftHalt(Analyslosare):
         ut["deposition_m_s"] = _tal(parametrar, "deposition_m_s", 0.0, minst=0.0)
         ut["sedimentation_m_s"] = _tal(parametrar, "sedimentation_m_s", 0.0, minst=0.0)
         ut["utvardering_hojd_m"] = _tal(parametrar, "utvardering_hojd_m", 2.0, over=0.0)
+        raw_rec = parametrar.get("receptorer", [])
+        if not isinstance(raw_rec, list):
+            raise LosarFel("Parametern 'receptorer' måste vara en lista av {namn, x_m, y_m}.")
+        receptorer: list[dict[str, Any]] = []
+        sedda_rec: set[str] = set()
+        for idx, post in enumerate(raw_rec):
+            if not isinstance(post, Mapping):
+                raise LosarFel(f"receptorer[{idx}] måste vara ett objekt med namn, x_m, y_m.")
+            _kontrollera_okanda(post, {"namn", "x_m", "y_m"}, f"{self.namn}.receptorer[{idx}]")
+            namn = post.get("namn")
+            if not isinstance(namn, str) or not namn.strip():
+                raise LosarFel(f"receptorer[{idx}].namn måste vara en icke-tom text.")
+            namn = namn.strip()
+            if namn == "maxcell":
+                raise LosarFel("receptorer: namnet 'maxcell' är reserverat.")
+            if namn in sedda_rec:
+                raise LosarFel(f"receptorer: duplicerat receptornamn '{namn}'.")
+            sedda_rec.add(namn)
+            if "x_m" not in post or "y_m" not in post:
+                raise LosarFel(f"receptorer[{idx}] ('{namn}') saknar x_m eller y_m.")
+            receptorer.append(
+                {
+                    "namn": namn,
+                    "x_m": _tal(post, "x_m", 0.0),
+                    "y_m": _tal(post, "y_m", 0.0),
+                }
+            )
+        ut["receptorer"] = receptorer
         return ut
 
     def paverkansradie_m(self, parametrar: Mapping[str, Any]) -> float | None:
@@ -298,7 +327,7 @@ class LuftHalt(Analyslosare):
         from luft.kedja import berakna_halter
         from luft.transport import Amne
         from luft.typer import LuftFel
-        from luft.vindbibliotek import Vaderserie
+        from luft.vindbibliotek import CellTimserie, Vaderserie, skriv_timserier_csv
 
         p = kontext.parametrar
         geom, bib, varningar = _bygg_bibliotek(kontext)
@@ -324,15 +353,55 @@ class LuftHalt(Analyslosare):
             skriv_halt_geotiff(
                 kontext.utmapp / "arsmedel.tif", arsmedel, res.ruta, f"Årsmedelhalt {amne.namn}"
             )
+            giltig_ars = np.isfinite(arsmedel)
+            har_receptorer = bool(p["receptorer"])
+            serier: list[CellTimserie] = []
+            max_arsmedel_ug_m3: float | None = None
+            maxcell_meta: dict[str, Any] = {}
+            if bool(giltig_ars.any()):
+                max_idx = int(np.nanargmax(arsmedel))
+                r_max, c_max = divmod(max_idx, arsmedel.shape[1])
+                max_arsmedel_ug_m3 = float(arsmedel[r_max, c_max] * 1e6)
+                maxcell_meta = {
+                    "maxcell_rad": int(r_max),
+                    "maxcell_kolumn": int(c_max),
+                    "maxcell_x_m": float(res.ruta.origo_x_m + (c_max + 0.5) * res.ruta.dx_m),
+                    "maxcell_y_m": float(res.ruta.origo_y_m - (r_max + 0.5) * res.ruta.dx_m),
+                }
+                serier.append(
+                    res.statistik.timserie_for_cell(
+                        r_max, c_max, receptor="maxcell" if har_receptorer else None
+                    )
+                )
+            else:
+                varningar.append(
+                    "Årsmedelhalten saknar ändliga celler i utvärderingsrastret (bara NaN); "
+                    "max_arsmedel_ug_m3 sätts till null och ingen maxcell-timserie kan beräknas."
+                )
+            for rec in p["receptorer"]:
+                serier.append(
+                    res.statistik.timserie_for_receptor(
+                        str(rec["namn"]),
+                        float(rec["x_m"]),
+                        float(rec["y_m"]),
+                        res.ruta,
+                    )
+                )
+            skriv_timserier_csv(
+                kontext.utmapp / "timserie.csv",
+                serier,
+                inkludera_receptor=har_receptorer,
+            )
         except LuftFel as exc:
             raise LosarFel(str(exc)) from exc
         matv: dict[str, Any] = dict(geom.matvarden)
         matv.update(res.matvarden)
-        matv["max_arsmedel_ug_m3"] = float(np.nanmax(arsmedel) * 1e6)
+        matv.update(maxcell_meta)
+        matv["max_arsmedel_ug_m3"] = max_arsmedel_ug_m3
         matv["antal_linjer"] = len(linjer)
         varningar += [v for rp in res.kallrapporter for v in rp.varningar]
         return LosarUtdata(
-            filer={"arsmedel": "arsmedel.tif"},
+            filer={"arsmedel": "arsmedel.tif", "timserie": "timserie.csv"},
             matvarden=matv,
             varningar=tuple(sorted(set(varningar))),
         )
@@ -341,6 +410,7 @@ class LuftHalt(Analyslosare):
 def _las_vagar(sokvag: Path) -> tuple[list[Any], list[float]]:
     """Linjekällor ur en GeoPackage med `emission_g_m_s` (EPSG:3011)."""
     import geopandas as gpd
+    from shapely.geometry import LineString, MultiLineString
 
     from luft.typer import LuftFel
 
@@ -349,34 +419,78 @@ def _las_vagar(sokvag: Path) -> tuple[list[Any], list[float]]:
         raise LuftFel(f"{sokvag}: vägarna ska ligga i EPSG:3011.")
     if "emission_g_m_s" not in df.columns:
         raise LuftFel(f"{sokvag}: fältet emission_g_m_s saknas.")
+    if len(df) == 0:
+        raise LuftFel(f"{sokvag}: väglagret innehåller inga vägar.")
     linjer: list[Any] = []
     emission: list[float] = []
-    for geom, e in zip(df.geometry, df["emission_g_m_s"], strict=True):
-        for g in getattr(geom, "geoms", [geom]):
-            linjer.append(np.asarray(g.coords, dtype=np.float64)[:, :2])
-            emission.append(float(e))
+    for rad_nr, (geom, e) in enumerate(zip(df.geometry, df["emission_g_m_s"], strict=True), start=1):
+        if e is None or isinstance(e, bool):
+            raise LuftFel(f"{sokvag} rad {rad_nr}: emission_g_m_s saknas eller är ogiltigt ({e!r}).")
+        try:
+            ef = float(e)
+        except (TypeError, ValueError) as exc:
+            raise LuftFel(
+                f"{sokvag} rad {rad_nr}: emission_g_m_s måste vara ett tal, fick {e!r}."
+            ) from exc
+        if not math.isfinite(ef) or ef < 0.0:
+            raise LuftFel(
+                f"{sokvag} rad {rad_nr}: emission_g_m_s måste vara ändligt och >= 0, fick {e!r}."
+            )
+        if geom is None or geom.is_empty:
+            raise LuftFel(f"{sokvag} rad {rad_nr}: väggeometrin är tom eller saknas.")
+        if isinstance(geom, LineString):
+            delar = [geom]
+        elif isinstance(geom, MultiLineString):
+            delar = list(geom.geoms)
+            if not delar or any(g.is_empty for g in delar):
+                raise LuftFel(
+                    f"{sokvag} rad {rad_nr}: MultiLineString saknar giltiga linjedelar."
+                )
+        else:
+            raise LuftFel(
+                f"{sokvag} rad {rad_nr}: väggeometrin måste vara LineString eller "
+                f"MultiLineString, fick {geom.geom_type}."
+            )
+        for g in delar:
+            coords = np.asarray(g.coords, dtype=np.float64)[:, :2]
+            if coords.shape[0] < 2 or not bool(np.all(np.isfinite(coords))):
+                raise LuftFel(
+                    f"{sokvag} rad {rad_nr}: väglinje måste ha minst två ändliga koordinater."
+                )
+            linjer.append(coords)
+            emission.append(ef)
+    if not linjer:
+        raise LuftFel(f"{sokvag}: inga giltiga väglinjer.")
     return linjer, emission
 
 
-class LuftMkn(Analyslosare):
-    """Monotont MKN-intervall (PM10, dygnsvärde) ur en given timserie av lokalt haltbidrag.
+def _tolka_bool_flagga(varde: str | None, kolumn: str, rad_nr: int) -> bool:
+    text = (varde or "").strip().lower()
+    if text in ("1", "true", "ja", "sant"):
+        return True
+    if text in ("0", "false", "nej", "falskt", ""):
+        return False
+    raise LosarFel(f"timserie rad {rad_nr}: ogiltigt värde {varde!r} i '{kolumn}'.")
 
-    Lösaren räknar inte fram haltbidraget: den tar en timserie (`timserie`, CSV) som någon annan modell har
-    räknat fram (till exempel spridningsberäkning i ett annat verktyg) och bakgrunden som parameter, och
-    skalar bidraget med källans och depositionens faktorintervall (`luft.kanslighet.kor_monoton_mkn_intervall`).
-    Intervallet är alltså en känslighet för två faktorer, inte en statistisk konfidens och inte en
-    spridningsberäkning. Allt som lösaren skriver kommer ur indata och parametrar, så körningen kan
-    ge belägg för rapporttal (K0-manifest med indatas sha256).
+
+class LuftMkn(Analyslosare):
+    """Monotont MKN-intervall (PM10, dygnsvärde) ur en timserie av lokalt haltbidrag.
+
+    Lösaren räknar inte fram spridningen själv: den tar antingen en given timserie (`indata.timserie`,
+    CSV) eller timserien från en `luft.halt`-analys (`beror_pa = ["halt"]`, `timserie.csv`) och
+    kräver alltid explicit `bakgrund_ug_m3 >= 0`. Bidraget skalas med källans och depositionens
+    faktorintervall (`luft.kanslighet.kor_monoton_mkn_intervall`).
     """
 
     namn: ClassVar[str] = "luft.mkn"
     doman: ClassVar[str] = "luft"
     version: ClassVar[str] = "1"
     beskrivning: ClassVar[str] = (
-        "Monotont MKN-intervall för PM10 (dygn över gräns, årsmedel, 90,4-percentil) ur en given "
-        "timserie av lokalt haltbidrag (CSV: tid,lokal_ug_m3) och en bakgrund; ingen spridningsberäkning."
+        "Monotont MKN-intervall för PM10 (dygn över gräns, årsmedel, 90,4-percentil) ur en "
+        "timserie av lokalt haltbidrag (indata.timserie eller beroende på luft.halt) och en explicit bakgrund."
     )
-    indataroller: ClassVar[tuple[str, ...]] = ("timserie",)
+    indataroller: ClassVar[tuple[str, ...]] = ()
+    valfria_indataroller: ClassVar[tuple[str, ...]] = ("timserie",)
     utdataroller: ClassVar[tuple[str, ...]] = ("mkn",)
 
     def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
@@ -388,6 +502,7 @@ class LuftMkn(Analyslosare):
                 "depositionsfaktor_intervall",
                 "grans_dygn_ug_m3",
                 "max_dygn_ar",
+                "receptor",
             },
             self.namn,
         )
@@ -401,6 +516,11 @@ class LuftMkn(Analyslosare):
             "grans_dygn_ug_m3": _tal(parametrar, "grans_dygn_ug_m3", 50.0, over=0.0),
             "max_dygn_ar": int(_tal(parametrar, "max_dygn_ar", 35.0, minst=0.0)),
         }
+        rec = parametrar.get("receptor")
+        if rec is not None:
+            if not isinstance(rec, str) or not rec.strip():
+                raise LosarFel(f"receptor måste vara en icke-tom text, fick {rec!r}.")
+            ut["receptor"] = rec.strip()
         for namn, standard in (
             ("emissionsfaktor_intervall", (0.8, 1.25)),
             ("depositionsfaktor_intervall", (0.8, 1.25)),
@@ -426,22 +546,126 @@ class LuftMkn(Analyslosare):
         from luft.typer import LuftFel
 
         p = kontext.parametrar
-        sokvag = kontext.indata["timserie"]
+        har_indata = "timserie" in kontext.indata
+        halt_ber = kontext.beroenden.get("halt")
+        if halt_ber is None:
+            kand = [b for b in kontext.beroenden.values() if b.losare == "luft.halt"]
+            if len(kand) == 1:
+                halt_ber = kand[0]
+            elif len(kand) > 1:
+                raise LosarFel(
+                    "luft.mkn: flera luft.halt-beroenden angivna; använd analys-id 'halt' "
+                    "eller exakt ett beroende."
+                )
+        if har_indata and halt_ber is not None:
+            raise LosarFel(
+                "luft.mkn: ange antingen indata.timserie eller beroende på luft.halt, inte båda."
+            )
+        if har_indata:
+            sokvag = kontext.indata["timserie"]
+        elif halt_ber is not None:
+            if halt_ber.mapp is None:
+                raise LosarFel(
+                    f"luft.mkn: beroendet '{halt_ber.analys_id}' saknar global utdatamapp."
+                )
+            sokvag = halt_ber.mapp / "timserie.csv"
+            if not sokvag.is_file():
+                raise LosarFel(
+                    f"luft.mkn: beroendet '{halt_ber.analys_id}' saknar timserie.csv ({sokvag})."
+                )
+        else:
+            raise LosarFel(
+                "luft.mkn kräver antingen indata 'timserie' (CSV) eller beroende på en "
+                "luft.halt-analys (t.ex. beror_pa = ['halt'])."
+            )
+
+        mal_receptor: str | None = p.get("receptor")
+        antal_svag_vind = 0
+        antal_ogiltiga = 0
+        nytt_format = False
         try:
             with sokvag.open(encoding="utf-8", newline="") as fh:
                 lasare = csv.DictReader(fh)
-                if "lokal_ug_m3" not in (lasare.fieldnames or []):
-                    raise LosarFel("timserie: kolumnen 'lokal_ug_m3' saknas (CSV: tid,lokal_ug_m3).")
-                varden: list[float] = []
-                for n, rad in enumerate(lasare, start=2):
-                    text = (rad.get("lokal_ug_m3") or "").strip()
-                    try:
-                        v = float(text)
-                    except ValueError as exc:
-                        raise LosarFel(f"timserie rad {n}: '{text}' är inget tal.") from exc
-                    if not math.isfinite(v):
-                        raise LosarFel(f"timserie rad {n}: värdet måste vara ändligt.")
-                    varden.append(v)
+                falt = lasare.fieldnames or []
+                if "halt_bidrag_ug_m3" in falt:
+                    nytt_format = True
+                    rader = list(lasare)
+                    har_rec_kol = "receptor" in falt
+                    if har_rec_kol:
+                        alla_rec = sorted({(r.get("receptor") or "").strip() for r in rader})
+                        if mal_receptor is not None:
+                            rader = [
+                                r for r in rader if (r.get("receptor") or "").strip() == mal_receptor
+                            ]
+                            if not rader:
+                                raise LosarFel(
+                                    f"timserie: receptorn '{mal_receptor}' saknas "
+                                    f"(tillgängliga: {alla_rec})."
+                                )
+                        elif "maxcell" in alla_rec:
+                            rader = [r for r in rader if (r.get("receptor") or "").strip() == "maxcell"]
+                        elif len(alla_rec) == 1:
+                            pass
+                        else:
+                            raise LosarFel(
+                                "timserie innehåller flera receptorer; ange parametern 'receptor' "
+                                f"(tillgängliga: {alla_rec})."
+                            )
+                    elif mal_receptor is not None and mal_receptor != "maxcell":
+                        raise LosarFel(
+                            f"Parametern receptor='{mal_receptor}' angavs, men timserien saknar "
+                            "kolumnen 'receptor'."
+                        )
+                    varden: list[float] = []
+                    for n, rad in enumerate(rader, start=2):
+                        svag = (
+                            _tolka_bool_flagga(rad.get("svag_vind"), "svag_vind", n)
+                            if "svag_vind" in falt
+                            else False
+                        )
+                        ogilt = (
+                            _tolka_bool_flagga(rad.get("ogiltig"), "ogiltig", n)
+                            if "ogiltig" in falt
+                            else False
+                        )
+                        if ogilt:
+                            antal_ogiltiga += 1
+                            continue
+                        if svag:
+                            antal_svag_vind += 1
+                            continue
+                        text = (rad.get("halt_bidrag_ug_m3") or "").strip()
+                        try:
+                            v = float(text)
+                        except ValueError as exc:
+                            raise LosarFel(
+                                f"timserie rad {n}: '{text}' i halt_bidrag_ug_m3 är inget tal."
+                            ) from exc
+                        if not math.isfinite(v) or v < 0.0:
+                            raise LosarFel(
+                                f"timserie rad {n}: halt_bidrag_ug_m3 måste vara ändligt och >= 0."
+                            )
+                        varden.append(v)
+                elif "lokal_ug_m3" in falt:
+                    if mal_receptor is not None:
+                        raise LosarFel(
+                            f"Parametern receptor='{mal_receptor}' stöds inte för enkel "
+                            "timserie utan kolumnen 'receptor'."
+                        )
+                    varden = []
+                    for n, rad in enumerate(lasare, start=2):
+                        text = (rad.get("lokal_ug_m3") or "").strip()
+                        try:
+                            v = float(text)
+                        except ValueError as exc:
+                            raise LosarFel(f"timserie rad {n}: '{text}' är inget tal.") from exc
+                        if not math.isfinite(v):
+                            raise LosarFel(f"timserie rad {n}: värdet måste vara ändligt.")
+                        varden.append(v)
+                else:
+                    raise LosarFel(
+                        "timserie: saknar kolumnen 'halt_bidrag_ug_m3' eller 'lokal_ug_m3'."
+                    )
         except OSError as exc:
             raise LosarFel(f"Kunde inte läsa timserien: {exc}") from exc
         serie = np.asarray(varden, dtype=np.float64)
@@ -464,6 +688,15 @@ class LuftMkn(Analyslosare):
             raise LosarFel(str(exc)) from exc
         n_dygn = serie.size // 24
         varningar: list[str] = []
+        if antal_svag_vind > 0:
+            varningar.append(
+                f"{antal_svag_vind} timmar med svag vind (utanför spridningsmodellen) är "
+                "exkluderade ur MKN-statistiken och inte antagna som noll."
+            )
+        if antal_ogiltiga > 0:
+            varningar.append(
+                f"{antal_ogiltiga} ogiltiga vädertimmar är exkluderade ur MKN-statistiken."
+            )
         if serie.size % 24:
             varningar.append(
                 f"Timserien har {serie.size} timmar; de {serie.size - n_dygn * 24} sista som inte "
@@ -493,6 +726,9 @@ class LuftMkn(Analyslosare):
             "depositionsfaktor_lagst": res.depositionsfaktor_intervall[0],
             "depositionsfaktor_hogst": res.depositionsfaktor_intervall[1],
         }
+        if nytt_format:
+            matv["antal_svag_vind_timmar"] = int(antal_svag_vind)
+            matv["antal_ogiltiga_timmar"] = int(antal_ogiltiga)
         (kontext.utmapp / "mkn.json").write_text(
             json.dumps({"format": "floden-luft-mkn/v1", "amne": "PM10", "matvarden": matv}, indent=1),
             encoding="utf-8",

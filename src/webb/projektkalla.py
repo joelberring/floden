@@ -55,8 +55,9 @@ _FRAGEFILER = (
     ("skyfall.toml", "vatten"),
     ("dagsljus.toml", "dagsljus"),
     ("ekologi.toml", "ekologi"),
+    ("luft.toml", "luft"),
 )
-"""Projektets egna frågefiler och mallens korta namn (samma som demons: `vatten`, `dagsljus`, `ekologi`)."""
+"""Projektets egna frågefiler och mallens korta namn (samma som demons: `vatten`, `dagsljus`, `ekologi`, `luft`)."""
 Rektangel = tuple[float, float, float, float]
 
 

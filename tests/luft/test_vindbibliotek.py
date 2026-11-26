@@ -9,15 +9,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luft.geometri import voxelisera
+from luft.geometri import RasterRuta, voxelisera
 from luft.typer import Inflode, LuftFel, Vindfalt
 from luft.vindbibliotek import (
     BIBLIOTEK_JSON,
+    CellTimserie,
     Haltstatistik,
     Vaderserie,
     Vindbibliotek,
     fordela,
     ladda_vindfalt,
+    skriv_timserier_csv,
     spara_vindfalt,
 )
 
@@ -251,3 +253,77 @@ def test_statistik_validerar_indata() -> None:
         Haltstatistik([np.zeros(3), np.zeros(4)], fd)
     with pytest.raises(LuftFel, match="negativa"):
         Haltstatistik([np.zeros(3), -np.ones(3)], fd)
+
+
+def test_timserie_for_cell_receptor_och_csv(tmp_path: Path) -> None:
+    import csv
+
+    tider = (
+        "2026-01-01T00:00",
+        "2026-01-01T01:00",
+        "2026-01-01T02:00",
+        "2026-01-01T03:00",
+    )
+    v = Vaderserie.skapa(
+        [0.0, 90.0, 0.0, 90.0],
+        [5.0, 0.2, 2.5, float("nan")],
+        tid=tider,
+    )
+    halter = [
+        np.array([[1.0e-6, 2.0e-6], [3.0e-6, 4.0e-6]]),
+        np.array([[5.0e-6, 6.0e-6], [7.0e-6, 8.0e-6]]),
+    ]
+    fd = fordela(v, [0.0, 90.0], U_REF, u_min_m_s=0.5)
+    stat = Haltstatistik(halter, fd)
+
+    ts = stat.timserie_for_cell(1, 0)
+    assert isinstance(ts, CellTimserie)
+    assert ts.timme == tider
+    assert ts.antal_timmar == 4
+    assert ts.antal_modellerade == 2
+    assert ts.antal_svag_vind == 1
+    assert ts.antal_ogiltiga == 1
+    assert ts.svag_vind.tolist() == [False, True, False, False]
+    assert ts.ogiltig.tolist() == [False, False, False, True]
+    assert ts.halt_bidrag_ug_m3[0] == pytest.approx(3.0, rel=1e-12)
+    assert np.isnan(ts.halt_bidrag_ug_m3[1])  # svag vind gissas inte som 0
+    assert ts.halt_bidrag_ug_m3[2] == pytest.approx(6.0, rel=1e-12)
+    assert np.isnan(ts.halt_bidrag_ug_m3[3])  # ogiltig timme gissas inte som 0
+
+    rader = ts.rader()
+    assert list(rader[0].keys()) == ["timme", "halt_bidrag_ug_m3", "svag_vind", "ogiltig"]
+
+    ruta = RasterRuta(origo_x_m=150_000.0, origo_y_m=6_580_000.0, dx_m=4.0, rader=2, kolumner=2)
+    rec = stat.timserie_for_receptor("fasad", 150_002.0, 6_579_994.0, ruta)
+    assert (rec.rad, rec.kolumn, rec.receptor) == (1, 0, "fasad")
+    np.testing.assert_allclose(rec.halt_bidrag_ug_m3, ts.halt_bidrag_ug_m3, equal_nan=True)
+
+    # CSV-export: enkel och med receptor
+    enkel_csv = ts.skriv_csv(tmp_path / "enkel.csv")
+    with enkel_csv.open(encoding="utf-8", newline="") as fh:
+        las = list(csv.DictReader(fh))
+    assert list(las[0].keys()) == ["timme", "halt_bidrag_ug_m3", "svag_vind", "ogiltig"]
+    assert len(las) == 4
+    assert float(las[0]["halt_bidrag_ug_m3"]) == pytest.approx(3.0)
+    assert las[1]["halt_bidrag_ug_m3"] == "" and las[1]["svag_vind"] == "1"
+    assert las[3]["halt_bidrag_ug_m3"] == "" and las[3]["ogiltig"] == "1"
+
+    rec_csv = skriv_timserier_csv(tmp_path / "rec.csv", [ts, rec])
+    with rec_csv.open(encoding="utf-8", newline="") as fh:
+        las_rec = list(csv.DictReader(fh))
+    assert list(las_rec[0].keys()) == [
+        "timme",
+        "halt_bidrag_ug_m3",
+        "svag_vind",
+        "ogiltig",
+        "receptor",
+    ]
+    assert len(las_rec) == 8
+
+    # Ogiltiga index / receptorer avvisas tydligt
+    with pytest.raises(LuftFel, match="utanför"):
+        stat.timserie_for_cell(2, 0)
+    with pytest.raises(LuftFel, match="utanför"):
+        stat.timserie_for_receptor("ute", 149_990.0, 6_579_994.0, ruta)
+    with pytest.raises(LuftFel, match="Receptornamn"):
+        stat.timserie_for_receptor("  ", 150_002.0, 6_579_994.0, ruta)
