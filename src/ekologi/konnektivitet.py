@@ -11,7 +11,7 @@ from scipy import sparse
 from scipy.sparse.csgraph import dijkstra
 
 from ekologi.habitat import extrahera_habitatflackar
-from ekologi.krets import los_kretspar
+from ekologi.krets import kontrollera_ekologi_celler, los_kretspar
 from ekologi.motstand import bygg_motstandsyta
 from ekologi.typer import (
     ArtProfil,
@@ -45,6 +45,7 @@ def berakna_kostnadsavstand(
     Avståndet från en fläck till sig själv är 0.0; oåtkomliga fläckar får `np.inf`.
     """
     m = len(habitat.flackar)
+    kontrollera_ekologi_celler(int(motstand.motstand.size))
     if m == 0:
         return np.zeros((0, 0), dtype=np.float64)
     if m == 1:
@@ -205,6 +206,7 @@ def berakna_konnektivitet(
     """Helhetsberäkning av ekologisk konnektivitet (PC, ECA, dPC och valfri flaskhalskarta)."""
     if not (math.isfinite(spridning_faktor) and spridning_faktor > 0.0):
         raise EkologiFel(f"spridning_faktor måste vara > 0, fick {spridning_faktor}.")
+    kontrollera_ekologi_celler(int(markslag.size))
 
     habitat = extrahera_habitatflackar(
         markslag,

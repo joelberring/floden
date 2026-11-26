@@ -11,6 +11,7 @@ import math
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,6 +36,9 @@ from testsvit.k1_io import BrytlinjePost, GeoTransformInfo, OppningPost
 # Intern markör i flow_to för celler på botten av en lövsänka (skiljs från HAV=-1 och BYGGNAD=-2)
 _BOTTEN_MARKOR = -3
 _SADEL_TIE_TOL_M = 1e-9
+_INT32_MAX = (1 << 31) - 1
+
+IndexArray = NDArray[np.signedinteger[Any]]
 
 
 def _supercover_celler(
@@ -308,38 +312,51 @@ def _berakna_avrinningsomraden(
     mark_z: NDArray[np.float32],
     aktiv: NDArray[np.bool_],
     kantbarriarer: dict[tuple[int, int], float],
-) -> tuple[NDArray[np.int64], NDArray[np.int64], int]:
+) -> tuple[IndexArray, IndexArray, int]:
     """Beräknar 4-granne-brantaste lutning, lövsänkor och `cell_till_nod`.
 
+    Använder `np.int32` internt när `n_celler < 2**31 - 1` för halverad minnesåtgång.
     Returnerar `(flow_to, cell_till_nod, antal_lov)`.
     """
     hojd, bredd = mark_z.shape
     n_celler = hojd * bredd
-    z64 = np.asarray(mark_z, dtype=np.float64)
-    z_flat = z64.ravel()
+    idx_dtype: type[np.int32] | type[np.int64] = np.int32 if n_celler < _INT32_MAX else np.int64
+
+    # Float32->float64 är strikt ordningsbevarande för ändliga tal: undvik onödig 8-byte z64-kopia
+    z_2d: NDArray[np.float32] | NDArray[np.float64] = (
+        mark_z if mark_z.dtype == np.float32 else np.asarray(mark_z, dtype=np.float64)
+    )
+    z_flat = z_2d.ravel()
     aktiv_flat = aktiv.ravel()
 
-    # Vektoriserad brantaste nedförsriktning i 4-grannskap (utan barriärer först)
-    basta_z = z64.copy()
-    flow_2d = np.full((hojd, bredd), BYGGNAD_NOD_ID, dtype=np.int64)
-    idx_2d = np.arange(n_celler, dtype=np.int64).reshape((hojd, bredd))
+    # Vektoriserad brantaste nedförsriktning i 4-grannskap (uint8-riktning i stället för idx_2d)
+    basta_z = z_2d.copy()
+    dir_2d = np.zeros((hojd, bredd), dtype=np.uint8)
 
-    # Kontrollera N, S, V, Ö i deterministisk ordning
-    skift = [
-        ((-1, 0), slice(1, hojd), slice(0, bredd), slice(0, hojd - 1), slice(0, bredd)),
-        ((1, 0), slice(0, hojd - 1), slice(0, bredd), slice(1, hojd), slice(0, bredd)),
-        ((0, -1), slice(0, hojd), slice(1, bredd), slice(0, hojd), slice(0, bredd - 1)),
-        ((0, 1), slice(0, hojd), slice(0, bredd - 1), slice(0, hojd), slice(1, bredd)),
-    ]
-    for _, sr_u, sc_u, sr_v, sc_v in skift:
+    # Kontrollera N (1), S (2), V (3), Ö (4) i deterministisk ordning
+    skift = (
+        (1, slice(1, hojd), slice(0, bredd), slice(0, hojd - 1), slice(0, bredd)),
+        (2, slice(0, hojd - 1), slice(0, bredd), slice(1, hojd), slice(0, bredd)),
+        (3, slice(0, hojd), slice(1, bredd), slice(0, hojd), slice(0, bredd - 1)),
+        (4, slice(0, hojd), slice(0, bredd - 1), slice(0, hojd), slice(1, bredd)),
+    )
+    for rikt_kod, sr_u, sc_u, sr_v, sc_v in skift:
         giltig = aktiv[sr_u, sc_u] & aktiv[sr_v, sc_v]
-        z_v = z64[sr_v, sc_v]
-        bättre = giltig & (z_v < basta_z[sr_u, sc_u])
-        basta_z[sr_u, sc_u] = np.where(bättre, z_v, basta_z[sr_u, sc_u])
-        flow_2d[sr_u, sc_u] = np.where(bättre, idx_2d[sr_v, sc_v], flow_2d[sr_u, sc_u])
+        z_v = z_2d[sr_v, sc_v]
+        basta_vy = basta_z[sr_u, sc_u]
+        battre = giltig & (z_v < basta_vy)
+        if np.any(battre):
+            basta_vy[battre] = z_v[battre]
+            dir_2d[sr_u, sc_u][battre] = rikt_kod
+    del basta_z
 
-    flow_to = flow_2d.ravel()
-    flow_to[~aktiv_flat] = BYGGNAD_NOD_ID
+    dir_flat = dir_2d.ravel()
+    del dir_2d
+    flow_to: IndexArray = np.arange(n_celler, dtype=idx_dtype)
+    steg_offset = np.array([0, -bredd, bredd, -1, 1], dtype=idx_dtype)
+    flow_to += steg_offset[dir_flat]
+    flow_to[dir_flat == 0] = BYGGNAD_NOD_ID
+    del dir_flat
 
     # Korrigera celler som gränsar till en kantbarriär
     if kantbarriarer:
@@ -370,7 +387,7 @@ def _berakna_avrinningsomraden(
             flow_to[u] = mal
 
     har_lagre = flow_to >= 0
-    cell_till_nod = np.full(n_celler, BYGGNAD_NOD_ID, dtype=np.int64)
+    cell_till_nod: IndexArray = np.full(n_celler, BYGGNAD_NOD_ID, dtype=idx_dtype)
     besokt_platt = np.zeros(n_celler, dtype=bool)
     antal_lov = 0
 
@@ -453,28 +470,245 @@ def _berakna_avrinningsomraden(
                             flow_to[nxt] = curr
                             bfs_ko.append(nxt)
 
-    # Tilldela alla kvarvarande aktiva celler sin lövsänka (eller HAV) via vägkompression
-    for u in range(n_celler):
-        if not aktiv_flat[u] or cell_till_nod[u] != BYGGNAD_NOD_ID:
-            continue
-        kedja: list[int] = []
-        curr = u
-        while curr >= 0 and cell_till_nod[curr] == BYGGNAD_NOD_ID:
-            kedja.append(curr)
-            nxt = int(flow_to[curr])
-            if nxt == HAV_NOD_ID:
-                cell_till_nod[curr] = HAV_NOD_ID
-                kedja.pop()
-                break
-            curr = nxt
-        mal_nod = int(cell_till_nod[curr]) if curr >= 0 else HAV_NOD_ID
-        for cell in kedja:
-            cell_till_nod[cell] = mal_nod
+    del besokt_platt, platt_kandidater, har_lagre
+
+    # Tilldela alla kvarvarande aktiva celler sin lövsänka (eller HAV) via vektoriserad
+    # pekarfördubbling på `ptr` (O(log(väglängd)) steg, bara en temporär int32-array).
+    ej_satt = aktiv_flat & (cell_till_nod == BYGGNAD_NOD_ID)
+    if np.any(ej_satt):
+        neg_flode = ej_satt & (flow_to < 0)
+        if np.any(neg_flode):
+            cell_till_nod[neg_flode] = HAV_NOD_ID
+            ej_satt &= ~neg_flode
+        del neg_flode
+        if np.any(ej_satt):
+            ptr: IndexArray = np.arange(n_celler, dtype=idx_dtype)
+            ptr[ej_satt] = flow_to[ej_satt]
+            max_steg = int(math.ceil(math.log2(max(n_celler, 2)))) + 2
+            for _ in range(max_steg):
+                ny_ptr = ptr[ptr]
+                if np.array_equal(ny_ptr, ptr):
+                    del ny_ptr
+                    break
+                ptr = ny_ptr
+            cell_till_nod[ej_satt] = cell_till_nod[ptr[ej_satt]]
+            del ptr
+    del ej_satt
 
     return (
-        np.asarray(flow_to.reshape((hojd, bredd)), dtype=np.int64),
-        np.asarray(cell_till_nod.reshape((hojd, bredd)), dtype=np.int64),
+        flow_to.reshape((hojd, bredd)),
+        cell_till_nod.reshape((hojd, bredd)),
         antal_lov,
+    )
+
+
+def _bygg_granspar(
+    catch_2d: IndexArray,
+    aktiv: NDArray[np.bool_],
+    eff_z: NDArray[np.float32],
+    kantbarriarer: dict[tuple[int, int], float],
+) -> tuple[
+    NDArray[np.float64],
+    IndexArray,
+    IndexArray,
+    NDArray[np.int64],
+    NDArray[np.int64],
+    IndexArray,
+    IndexArray,
+    IndexArray,
+    IndexArray,
+]:
+    """Vektoriserad gränsanalys mellan distinkta avrinningsområden (och mot HAV).
+
+    Ersätter cell-för-cell-Python-loopen och `par_kanter`-dict med kompakta NumPy-arrayer
+    sorterade med `np.lexsort` på `(c_lo, c_hi, w, u, v)`. Returnerar par sorterade i
+    stigande `(w_min, c_lo, c_hi)` för Kruskal-sammanslagningsträdet.
+    """
+    hojd, bredd = catch_2d.shape
+    n_celler = hojd * bredd
+    idx_dtype: type[np.int32] | type[np.int64] = np.int32 if n_celler < _INT32_MAX else np.int64
+
+    # Vertikala grannkanter där avrinningsområdena skiljer sig åt
+    v_diff = (catch_2d[:-1, :] != catch_2d[1:, :]) & aktiv[:-1, :] & aktiv[1:, :]
+    vr, vc = np.nonzero(v_diff)
+    del v_diff
+    vr_i: IndexArray = np.asarray(vr, dtype=idx_dtype)
+    vc_i: IndexArray = np.asarray(vc, dtype=idx_dtype)
+    u_v: IndexArray = vr_i * bredd + vc_i
+    v_v: IndexArray = u_v + bredd
+    cu_v: IndexArray = np.asarray(catch_2d[vr, vc], dtype=idx_dtype)
+    cv_v: IndexArray = np.asarray(catch_2d[vr + 1, vc], dtype=idx_dtype)
+    w_v = np.maximum(eff_z[vr, vc], eff_z[vr + 1, vc]).astype(np.float64)
+    del vr, vc, vr_i, vc_i
+
+    # Horisontella grannkanter där avrinningsområdena skiljer sig åt
+    h_diff = (catch_2d[:, :-1] != catch_2d[:, 1:]) & aktiv[:, :-1] & aktiv[:, 1:]
+    hr, hc = np.nonzero(h_diff)
+    del h_diff
+    hr_i: IndexArray = np.asarray(hr, dtype=idx_dtype)
+    hc_i: IndexArray = np.asarray(hc, dtype=idx_dtype)
+    u_h: IndexArray = hr_i * bredd + hc_i
+    v_h: IndexArray = u_h + 1
+    cu_h: IndexArray = np.asarray(catch_2d[hr, hc], dtype=idx_dtype)
+    cv_h: IndexArray = np.asarray(catch_2d[hr, hc + 1], dtype=idx_dtype)
+    w_h = np.maximum(eff_z[hr, hc], eff_z[hr, hc + 1]).astype(np.float64)
+    del hr, hc, hr_i, hc_i
+
+    u_vh: IndexArray = np.concatenate((u_v, u_h))
+    v_vh: IndexArray = np.concatenate((v_v, v_h))
+    cu_vh: IndexArray = np.concatenate((cu_v, cu_h))
+    cv_vh: IndexArray = np.concatenate((cv_v, cv_h))
+    w_vh = np.concatenate((w_v, w_h))
+    del u_v, v_v, cu_v, cv_v, w_v, u_h, v_h, cu_h, cv_h, w_h
+
+    # Lägg på eventuella 2D/3D-kantbarriärer på just de korsade gränskanterna
+    if kantbarriarer and u_vh.size > 0:
+        if n_celler < _INT32_MAX:
+            b_keys = np.fromiter(
+                ((int(bu) << 32) | int(bv) for bu, bv in kantbarriarer),
+                dtype=np.int64,
+                count=len(kantbarriarer),
+            )
+            b_vals = np.fromiter(
+                kantbarriarer.values(),
+                dtype=np.float64,
+                count=len(kantbarriarer),
+            )
+            b_ord = np.argsort(b_keys)
+            b_keys = b_keys[b_ord]
+            b_vals = b_vals[b_ord]
+            e_keys = (u_vh.astype(np.int64) << 32) | v_vh.astype(np.int64)
+            pos = np.searchsorted(b_keys, e_keys)
+            i_omf = pos < b_keys.size
+            traff = np.zeros(e_keys.size, dtype=np.bool_)
+            traff[i_omf] = b_keys[pos[i_omf]] == e_keys[i_omf]
+            if np.any(traff):
+                w_vh[traff] = b_vals[pos[traff]]
+            del b_keys, b_vals, b_ord, e_keys, pos, i_omf, traff
+        else:
+            for idx_k in range(int(u_vh.size)):
+                nyckel = (int(u_vh[idx_k]), int(v_vh[idx_k]))
+                if nyckel in kantbarriarer:
+                    w_vh[idx_k] = kantbarriarer[nyckel]
+
+    # Ytterrandskanter till HAV för randceller som dränerar inåt en sänka (utan 2D rand_mask)
+    r_delar: list[NDArray[np.intp]] = []
+    c_delar: list[NDArray[np.intp]] = []
+    if hojd > 0 and bredd > 0:
+        m_topp = aktiv[0, :] & (catch_2d[0, :] >= 0)
+        if np.any(m_topp):
+            cc_t = np.flatnonzero(m_topp)
+            r_delar.append(np.zeros(cc_t.size, dtype=np.intp))
+            c_delar.append(cc_t)
+        if hojd > 1:
+            m_bot = aktiv[hojd - 1, :] & (catch_2d[hojd - 1, :] >= 0)
+            if np.any(m_bot):
+                cc_b = np.flatnonzero(m_bot)
+                r_delar.append(np.full(cc_b.size, hojd - 1, dtype=np.intp))
+                c_delar.append(cc_b)
+        if hojd > 2:
+            m_van = aktiv[1 : hojd - 1, 0] & (catch_2d[1 : hojd - 1, 0] >= 0)
+            if np.any(m_van):
+                rr_v = np.flatnonzero(m_van) + 1
+                r_delar.append(rr_v)
+                c_delar.append(np.zeros(rr_v.size, dtype=np.intp))
+            if bredd > 1:
+                m_hog = aktiv[1 : hojd - 1, bredd - 1] & (catch_2d[1 : hojd - 1, bredd - 1] >= 0)
+                if np.any(m_hog):
+                    rr_h = np.flatnonzero(m_hog) + 1
+                    r_delar.append(rr_h)
+                    c_delar.append(np.full(rr_h.size, bredd - 1, dtype=np.intp))
+
+    if r_delar:
+        rr_r = np.concatenate(r_delar)
+        rc_r = np.concatenate(c_delar)
+        rr_ri: IndexArray = np.asarray(rr_r, dtype=idx_dtype)
+        rc_ri: IndexArray = np.asarray(rc_r, dtype=idx_dtype)
+        u_r: IndexArray = rr_ri * bredd + rc_ri
+        v_r: IndexArray = np.full(u_r.size, HAV_NOD_ID, dtype=idx_dtype)
+        cu_r: IndexArray = np.asarray(catch_2d[rr_r, rc_r], dtype=idx_dtype)
+        cv_r: IndexArray = np.full(u_r.size, HAV_NOD_ID, dtype=idx_dtype)
+        w_r = eff_z[rr_r, rc_r].astype(np.float64)
+        all_u: IndexArray = np.concatenate((u_vh, u_r))
+        all_v: IndexArray = np.concatenate((v_vh, v_r))
+        all_cu: IndexArray = np.concatenate((cu_vh, cu_r))
+        all_cv: IndexArray = np.concatenate((cv_vh, cv_r))
+        all_w = np.concatenate((w_vh, w_r))
+        del u_vh, v_vh, cu_vh, cv_vh, w_vh, u_r, v_r, cu_r, cv_r, w_r, rr_r, rc_r, rr_ri, rc_ri
+    else:
+        all_u, all_v, all_cu, all_cv, all_w = u_vh, v_vh, cu_vh, cv_vh, w_vh
+
+    if all_u.size == 0:
+        tom_i: IndexArray = np.empty(0, dtype=idx_dtype)
+        tom_i64 = np.empty(0, dtype=np.int64)
+        tom_f = np.empty(0, dtype=np.float64)
+        return tom_f, tom_i, tom_i, tom_i64, tom_i64, tom_i, tom_i, tom_i, tom_i
+
+    c_lo: IndexArray = np.minimum(all_cu, all_cv)
+    c_hi: IndexArray = np.maximum(all_cu, all_cv)
+    # Sortera på (c_lo, c_hi, w, u, v): lägsta sadelvikt först, deterministisk (u, v)-ordning
+    ordn = np.lexsort((all_v, all_u, all_w, c_hi, c_lo))
+    c_lo_s = c_lo[ordn]
+    c_hi_s = c_hi[ordn]
+    w_s = all_w[ordn]
+    u_s = all_u[ordn]
+    v_s = all_v[ordn]
+    cu_s = all_cu[ordn]
+    cv_s = all_cv[ordn]
+    del all_u, all_v, all_cu, all_cv, all_w, c_lo, c_hi, ordn
+
+    n_kanter = int(c_lo_s.size)
+    ny_grupp = np.empty(n_kanter, dtype=np.bool_)
+    ny_grupp[0] = True
+    ny_grupp[1:] = (c_lo_s[1:] != c_lo_s[:-1]) | (c_hi_s[1:] != c_hi_s[:-1])
+    grupp_start = np.flatnonzero(ny_grupp)
+    del ny_grupp
+
+    par_w = w_s[grupp_start]
+    par_c_lo = c_lo_s[grupp_start]
+    par_c_hi = c_hi_s[grupp_start]
+    del c_lo_s, c_hi_s
+
+    grupp_slut = np.empty_like(grupp_start)
+    grupp_slut[:-1] = grupp_start[1:]
+    grupp_slut[-1] = n_kanter
+    grupp_langd = grupp_slut - grupp_start
+    del grupp_slut
+
+    kant_w_min = np.repeat(par_w, grupp_langd)
+    del grupp_langd
+    behall = (w_s - kant_w_min) <= _SADEL_TIE_TOL_M
+    del kant_w_min, w_s
+
+    grupp_antal = np.add.reduceat(behall.astype(np.int64), grupp_start)
+    del grupp_start
+
+    f_u = u_s[behall]
+    f_v = v_s[behall]
+    f_cu = cu_s[behall]
+    f_cv = cv_s[behall]
+    del u_s, v_s, cu_s, cv_s, behall
+
+    n_par = int(par_w.size)
+    par_start = np.empty(n_par, dtype=np.int64)
+    par_start[0] = 0
+    if n_par > 1:
+        par_start[1:] = np.cumsum(grupp_antal[:-1], dtype=np.int64)
+    par_slut = par_start + grupp_antal
+    del grupp_antal
+
+    # Sortera paren i stigande (w_min, c_lo, c_hi) för Kruskal / Barnes (2020)
+    par_ordn = np.lexsort((par_c_hi, par_c_lo, par_w))
+    return (
+        par_w[par_ordn],
+        par_c_lo[par_ordn],
+        par_c_hi[par_ordn],
+        par_start[par_ordn],
+        par_slut[par_ordn],
+        f_u,
+        f_v,
+        f_cu,
+        f_cv,
     )
 
 
@@ -654,33 +888,46 @@ def bygg_sankgraf(
 
     eff_z, eff_slag = _applicera_oppningar(mark_z, markslag, geo, oppningar)
     aktiv = np.asarray((eff_slag != MARKSLAG_BYGGNAD) & np.isfinite(eff_z), dtype=np.bool_)
-    z_flat = np.asarray(eff_z, dtype=np.float64).ravel()
-    osak_flat = np.asarray(osakerhet_z, dtype=np.float64).ravel()
+    eff_z_flat = eff_z.ravel()
+    osak_flat = osakerhet_z.ravel()
     aktiv_flat = aktiv.ravel()
 
     # Områden som helt omges av byggnader blir slutsänkor (K2/v2); okänt hinder ger fel.
-    etiketter, slutna = slutna_omraden(eff_z, aktiv)
+    etiketter_tmp, slutna = slutna_omraden(eff_z, aktiv)
+    etiketter: NDArray[np.int32] | None = etiketter_tmp if slutna else None
+    del etiketter_tmp
 
-    kantbarriarer = _berakna_kantbarriarer(z_flat, aktiv_flat, geo, brytlinjer)
-    flow_to, cell_till_nod, antal_lov = _berakna_avrinningsomraden(eff_z, aktiv, kantbarriarer)
+    if brytlinjer:
+        z64_barriar = np.asarray(eff_z, dtype=np.float64).ravel()
+        kantbarriarer = _berakna_kantbarriarer(z64_barriar, aktiv_flat, geo, brytlinjer)
+        del z64_barriar
+    else:
+        kantbarriarer = {}
+
+    flow_to, cell_till_nod_int, antal_lov = _berakna_avrinningsomraden(eff_z, aktiv, kantbarriarer)
 
     dx = float(geo.pixelstorlek_x)
     dy = float(geo.pixelstorlek_y)
     cell_area_m2 = dx * dy
 
+    flow_to_i64 = np.asarray(flow_to, dtype=np.int64)
+    del flow_to
     flodesvagar = bygg_flodesvagar(
         eff_z,
         eff_slag,
-        flow_to,
-        cell_till_nod,
+        flow_to_i64,
+        np.asarray(cell_till_nod_int, dtype=np.int64),
         geo,
         referensdjup_m=referensdjup_m,
     )
+    del flow_to_i64
 
     if antal_lov == 0:
+        cell_till_nod_out = np.asarray(cell_till_nod_int, dtype=np.int64)
+        del cell_till_nod_int, aktiv, kantbarriarer, etiketter
         return SankGraf(
             noder={},
-            cell_till_nod=cell_till_nod,
+            cell_till_nod=cell_till_nod_out,
             flodesvagar=flodesvagar,
             geo=geo,
             filtrerad=False,
@@ -691,62 +938,14 @@ def bygg_sankgraf(
             overfall_celler={},
         )
 
-    # Samla lägsta kopplingskant (+ likvärdiga sadelkanter) mellan distinkta avrinningsområden
-    catch_2d = cell_till_nod
-    # par -> (w_min, lista av (u, v, cu, cv))
-    par_kanter: dict[tuple[int, int], tuple[float, list[tuple[int, int, int, int]]]] = {}
-
-    def _registrera_kant(u: int, v: int, cu: int, cv: int, w: float) -> None:
-        nyckel = (cu, cv) if cu < cv else (cv, cu)
-        bef = par_kanter.get(nyckel)
-        if bef is None or w < bef[0] - _SADEL_TIE_TOL_M:
-            par_kanter[nyckel] = (w, [(u, v, cu, cv)])
-        elif abs(w - bef[0]) <= _SADEL_TIE_TOL_M:
-            bef[1].append((u, v, cu, cv))
-
-    # Vertikala grannkanter där avrinningsområdena skiljer sig åt
-    v_diff = (catch_2d[:-1, :] != catch_2d[1:, :]) & aktiv[:-1, :] & aktiv[1:, :]
-    vr_arr, vc_arr = np.nonzero(v_diff)
-    for r_np, c_np in zip(vr_arr, vc_arr, strict=True):
-        r, c = int(r_np), int(c_np)
-        u = r * bredd + c
-        v = (r + 1) * bredd + c
-        cu = int(catch_2d[r, c])
-        cv = int(catch_2d[r + 1, c])
-        w = kantbarriarer.get((u, v), max(float(z_flat[u]), float(z_flat[v])))
-        _registrera_kant(u, v, cu, cv, w)
-
-    # Horisontella grannkanter där avrinningsområdena skiljer sig åt
-    h_diff = (catch_2d[:, :-1] != catch_2d[:, 1:]) & aktiv[:, :-1] & aktiv[:, 1:]
-    hr_arr, hc_arr = np.nonzero(h_diff)
-    for r_np, c_np in zip(hr_arr, hc_arr, strict=True):
-        r, c = int(r_np), int(c_np)
-        u = r * bredd + c
-        v = r * bredd + (c + 1)
-        cu = int(catch_2d[r, c])
-        cv = int(catch_2d[r, c + 1])
-        w = kantbarriarer.get((u, v), max(float(z_flat[u]), float(z_flat[v])))
-        _registrera_kant(u, v, cu, cv, w)
-
-    # Ytterrandskanter till HAV för randceller som dränerar inåt en sänka
-    rand_mask = np.zeros((hojd, bredd), dtype=bool)
-    rand_mask[0, :] = True
-    rand_mask[-1, :] = True
-    rand_mask[:, 0] = True
-    rand_mask[:, -1] = True
-    rand_intern = rand_mask & aktiv & (catch_2d >= 0)
-    rr_arr, rc_arr = np.nonzero(rand_intern)
-    for r_np, c_np in zip(rr_arr, rc_arr, strict=True):
-        r, c = int(r_np), int(c_np)
-        u = r * bredd + c
-        cu = int(catch_2d[r, c])
-        _registrera_kant(u, -1, cu, HAV_NOD_ID, float(z_flat[u]))
-
-    # Sortera alla par i stigande sadelhöjd för Kruskal / Barnes (2020) sammanslagningsträd
-    sorterade_par = sorted(
-        ((w_min, nyckel[0], nyckel[1], kanter) for nyckel, (w_min, kanter) in par_kanter.items()),
-        key=lambda item: (item[0], item[1], item[2]),
+    # Vektoriserad gränsanalys utan Python-`par_kanter`-dict
+    par_w, par_c_lo, par_c_hi, par_start, par_slut, f_u, f_v, f_cu, f_cv = _bygg_granspar(
+        cell_till_nod_int,
+        aktiv,
+        eff_z,
+        kantbarriarer,
     )
+    del aktiv, kantbarriarer
 
     # Union-Find över {HAV_NOD_ID (-1), 0, ..., antal_lov - 1} (skiftat med +1 -> 0..antal_lov)
     uf_parent = list(range(antal_lov + 1))
@@ -763,8 +962,8 @@ def bygg_sankgraf(
     def _sadel_cell(u: int, v: int) -> int:
         if v < 0:
             return u
-        zu = float(z_flat[u])
-        zv = float(z_flat[v])
+        zu = float(eff_z_flat[u])
+        zv = float(eff_z_flat[v])
         if zu > zv:
             return u
         if zv > zu:
@@ -783,28 +982,47 @@ def bygg_sankgraf(
 
     nasta_nod_id = antal_lov
 
-    for w_min, c_min, c_max, kanter in sorterade_par:
+    for p_idx in range(int(par_w.size)):
+        c_min = int(par_c_lo[p_idx])
+        c_max = int(par_c_hi[p_idx])
         ra = _uf_hitta(c_min + 1)
         rb = _uf_hitta(c_max + 1)
         if ra == rb:
             continue
 
-        kanter.sort(key=lambda e: (e[0], e[1]))
-        u_rep, v_rep, cu_rep, cv_rep = kanter[len(kanter) // 2]
-        sc_idx = _sadel_cell(u_rep, v_rep)
-        sr, sc = divmod(sc_idx, bredd)
+        w_min = float(par_w[p_idx])
+        s0 = int(par_start[p_idx])
+        s1 = int(par_slut[p_idx])
+        if s1 - s0 == 1:
+            u_rep = int(f_u[s0])
+            v_rep = int(f_v[s0])
+            cu_rep = int(f_cu[s0])
+            cv_rep = int(f_cv[s0])
+            sc_idx = _sadel_cell(u_rep, v_rep)
+            sr, sc = divmod(sc_idx, bredd)
+            sadel_rc_tup: tuple[tuple[int, int], ...] = ((sr, sc),)
+        else:
+            kanter = [
+                (int(f_u[i]), int(f_v[i]), int(f_cu[i]), int(f_cv[i]))
+                for i in range(s0, s1)
+            ]
+            kanter.sort(key=lambda e: (e[0], e[1]))
+            u_rep, v_rep, cu_rep, cv_rep = kanter[len(kanter) // 2]
+            sc_idx = _sadel_cell(u_rep, v_rep)
+            sr, sc = divmod(sc_idx, bredd)
+            sadel_rc_lista: list[tuple[int, int]] = []
+            sedda_rc: set[tuple[int, int]] = set()
+            for eu, ev, _, _ in kanter:
+                rc = divmod(_sadel_cell(eu, ev), bredd)
+                if rc not in sedda_rc:
+                    sedda_rc.add(rc)
+                    sadel_rc_lista.append(rc)
+            sadel_rc_tup = tuple(sadel_rc_lista)
+
         sadel_x = geo.x_min + (sc + 0.5) * dx
         sadel_y = geo.y_max - (sr + 0.5) * dy
-        sadel_osak = float(osak_flat[sc_idx]) if math.isfinite(float(osak_flat[sc_idx])) else 0.0
-
-        sadel_rc_lista: list[tuple[int, int]] = []
-        sedda_rc: set[tuple[int, int]] = set()
-        for eu, ev, _, _ in kanter:
-            rc = divmod(_sadel_cell(eu, ev), bredd)
-            if rc not in sedda_rc:
-                sedda_rc.add(rc)
-                sadel_rc_lista.append(rc)
-        sadel_rc_tup = tuple(sadel_rc_lista)
+        sadel_osak_val = float(osak_flat[sc_idx])
+        sadel_osak = sadel_osak_val if math.isfinite(sadel_osak_val) else 0.0
 
         if ar_hav[ra] or ar_hav[rb]:
             if ar_hav[ra]:
@@ -817,7 +1035,7 @@ def bygg_sankgraf(
             nod_id = topp_nod[r_int]
             ut_target = None if andra_lov == HAV_NOD_ID else int(andra_lov)
 
-            overfall_z_karta[nod_id] = float(w_min)
+            overfall_z_karta[nod_id] = w_min
             overfall_xy_karta[nod_id] = (sadel_x, sadel_y)
             osakerhet_karta[nod_id] = sadel_osak
             forald_karta[nod_id] = None
@@ -846,8 +1064,8 @@ def bygg_sankgraf(
 
             forald_karta[a_id] = p_id
             forald_karta[b_id] = p_id
-            overfall_z_karta[a_id] = float(w_min)
-            overfall_z_karta[b_id] = float(w_min)
+            overfall_z_karta[a_id] = w_min
+            overfall_z_karta[b_id] = w_min
             overfall_xy_karta[a_id] = (sadel_x, sadel_y)
             overfall_xy_karta[b_id] = (sadel_x, sadel_y)
             osakerhet_karta[a_id] = sadel_osak
@@ -862,11 +1080,13 @@ def bygg_sankgraf(
             uf_parent[rb] = ra
             topp_nod[ra] = p_id
 
+    del par_w, par_c_lo, par_c_hi, par_start, par_slut, f_u, f_v, f_cu, f_cv
+
     # Rotnoder som inte nått randen ligger i ett slutet område: de blir slutsänkor (K2/v2).
     slutsanka_hinder: dict[int, float] = {}
-    if slutna:
+    if slutna and etiketter is not None:
         etikett_till_omrade = {o.etikett: o for o in slutna}
-        ct_flat_tmp = cell_till_nod.ravel()
+        ct_flat_tmp = cell_till_nod_int.ravel()
         et_flat = etiketter.ravel()
         lov_etikett: dict[int, int] = {}
         i_slutna = np.flatnonzero(np.isin(et_flat, np.asarray(list(etikett_till_omrade))))
@@ -904,26 +1124,31 @@ def bygg_sankgraf(
             ut_lov_karta[nod_id] = None
             overfall_celler_karta[nod_id] = ((omr.hinder_rad, omr.hinder_kol),)
             slutsanka_hinder[nod_id] = hinder_z
+    del etiketter
 
-    # Samla cellhöjder per lövsänka i ett svep
-    catch_flat = cell_till_nod.ravel()
+    # Samla cellhöjder per lövsänka i ett svep (behåll float32 i sort_z, konvertera per nod)
+    catch_flat = cell_till_nod_int.ravel()
     lov_mask = catch_flat >= 0
     lov_ids_flat = catch_flat[lov_mask]
-    lov_z_flat = z_flat[lov_mask]
+    lov_z_flat = eff_z_flat[lov_mask]
+    del lov_mask
 
-    ordn = np.argsort(lov_ids_flat, kind="mergesort")
-    sort_ids = lov_ids_flat[ordn]
-    sort_z = lov_z_flat[ordn]
+    ordn_lov = np.argsort(lov_ids_flat, kind="mergesort")
+    sort_ids = lov_ids_flat[ordn_lov]
+    sort_z = lov_z_flat[ordn_lov]
+    del lov_ids_flat, lov_z_flat, ordn_lov
     unika_lov, start_idx, antal_per_lov = np.unique(
         sort_ids, return_index=True, return_counts=True
     )
+    del sort_ids
 
-    celler_per_lov: dict[int, NDArray[np.float64]] = {}
+    celler_per_lov: dict[int, NDArray[np.float32]] = {}
     for lid_np, s_np, cnt_np in zip(unika_lov, start_idx, antal_per_lov, strict=True):
         lid = int(lid_np)
         s = int(s_np)
         cnt = int(cnt_np)
         celler_per_lov[lid] = sort_z[s : s + cnt]
+    del unika_lov, start_idx, antal_per_lov
 
     # Bygg SankNod-objekt nedifrån och upp (löv först, sedan föräldrar)
     noder: dict[int, SankNod] = {}
@@ -933,12 +1158,17 @@ def bygg_sankgraf(
         barn = barn_karta[nid]
         if not barn:
             lov_i_deltrad[nid] = [nid]
-            z_arr = celler_per_lov.get(nid, np.empty(0, dtype=np.float64))
+            z_del = celler_per_lov.get(nid)
+            z_arr = (
+                np.asarray(z_del, dtype=np.float64)
+                if z_del is not None
+                else np.empty(0, dtype=np.float64)
+            )
             avrinning_m2 = float(z_arr.size) * cell_area_m2
         else:
             alla_lov: list[int] = []
             for b_id in barn:
-                alla_lov.extend(lov_i_deltrad[b_id])
+                alla_lov.extend(lov_i_deltrad.pop(b_id))
             lov_i_deltrad[nid] = alla_lov
             z_delar = [celler_per_lov[lid] for lid in alla_lov if lid in celler_per_lov]
             z_arr = (
@@ -976,9 +1206,13 @@ def bygg_sankgraf(
             hinder_rh2000=slutsanka_hinder.get(nid),
         )
 
+    del celler_per_lov, sort_z, lov_i_deltrad
+    cell_till_nod_out = np.asarray(cell_till_nod_int, dtype=np.int64)
+    del cell_till_nod_int
+
     return SankGraf(
         noder=noder,
-        cell_till_nod=cell_till_nod,
+        cell_till_nod=cell_till_nod_out,
         flodesvagar=flodesvagar,
         geo=geo,
         filtrerad=False,
