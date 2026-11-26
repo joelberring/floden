@@ -55,6 +55,9 @@ GRAVITATION_M_S2 = 9.81
 KONTRAKT_K6 = "K6/v1"
 FROUDE_MAX = 2.0
 MARKSLAG_VATTEN = 8
+RUST_MIN_CELLER = 20_000
+"""Minsta antal celler (höjd × bredd) för automatisk Rust-dispatch (`anvand_rust=None`).
+Under gränsen dominerar subprocess-start och `.npy`-I/O över tidsslingan."""
 _MIN_RAND_LUTNING = 1e-3
 _DT_MIN_S = 1e-4
 
@@ -99,6 +102,8 @@ class TvadResultat:
     0,0 = inte mätt (Rust-kärnan, SFINCS-import, hybrid)."""
     berakningsplats: str = "cpu_f64"
     """K0-etikett för beräkningsbackend och precision (`cpu_f64`, `cuda_f64`, `cuda_f32`)."""
+    anvande_rust: bool = False
+    """Sant om tidsslingan kördes i den bitidentiska Rust-kärnan (`rust/tvad_karna`)."""
 
     def volymbalans(self) -> dict[str, float | bool]:
         """Regn på hela rutan (mark + tak) mot lagrat, utflöde, infiltration, avtappning och
@@ -973,6 +978,7 @@ def kor_2d_lokal_troghet(
     enhet: str = "cpu",
     precision: Literal["f64", "f32"] = "f64",
     vattenniva_rh2000_m: float | None = None,
+    anvand_rust: bool | None = None,
 ) -> TvadResultat:
     """Kör 2D ytvattenberäkning med Bates m.fl. (2010) lokala tröghetsformulering.
 
@@ -1035,6 +1041,55 @@ def kor_2d_lokal_troghet(
     tider, intens_m_s, t_start, t_slut = validera_regnserie(
         regn_tid_s, regn_intensitet_mm_h, slut_tid_s
     )
+
+    # Automatisk dispatch till den bitidentiska Rust-kärnan (rust/tvad_karna):
+    # - `anvand_rust=True`: använd Rust oavsett rutnätsstorlek när kriterierna uppfylls.
+    # - `anvand_rust=None` (auto): använd Rust när `hojd_fin * bredd_fin >= RUST_MIN_CELLER`.
+    # - `anvand_rust=False`: kör alltid Python.
+    # Obs: utan `MARKSLAG_VATTEN` påverkar `vattenniva_rh2000_m` inte fysiken alls, så båda
+    # fallen väljer samma backend (garanterar bakåtkompatibilitet utan ULP-skillnader).
+    har_vatten = bool(np.any(markslag == MARKSLAG_VATTEN))
+    vill_anvanda_rust = (
+        anvand_rust is True
+        or (anvand_rust is None and hojd_fin * bredd_fin >= RUST_MIN_CELLER)
+    )
+    if (
+        vill_anvanda_rust
+        and subgrid_faktor == 1
+        and kalltermer is None
+        and not brytlinjer
+        and not har_vatten
+        and enhet == "cpu"
+        and precision == "f64"
+    ):
+        from tvad.rust_backend import hitta_tvad_karna, kor_2d_lokal_troghet_rust
+
+        try:
+            binar_sokvag: Path | None = hitta_tvad_karna()
+        except TvadFel:
+            binar_sokvag = None
+        if binar_sokvag is not None:
+            res_rust = kor_2d_lokal_troghet_rust(
+                mark_z,
+                markslag,
+                geo,
+                regn_tid_s,
+                regn_intensitet_mm_h,
+                slut_tid_s=slut_tid_s,
+                cfl=cfl,
+                min_djup_m=min_djup_m,
+                gles_front=gles_front,
+                subgrid_faktor=1,
+                oppna_rander=oppna_rander,
+                manning_tabell=manning_tabell,
+                dt_max_s=dt_max_s,
+                z_nivaer=z_nivaer,
+                theta=theta,
+                binar=binar_sokvag,
+                takvatten=takvatten,
+            )
+            res_rust.anvande_rust = True
+            return res_rust
 
     subgrid: SubgridTabell | None = None
     if subgrid_faktor > 1:

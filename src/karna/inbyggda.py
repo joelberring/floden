@@ -1,9 +1,12 @@
 """Inbyggda referenslösare för kärnan (T20).
 
-- `vatten.statisk_fyllning`: global; sänkgraf + statisk fyllning (T02) på en K1-ruta.
+- `vatten.statisk_fyllning`: global; sänkgraf + statisk fyllning (T02) på en eller flera K1-rutor.
   Finns som referens för hur en befintlig domänmodul kopplas in. Vattendomänen kan
   ersätta eller komplettera den med egna lösare i `<paket>/floden_losare.py`.
-- `vatten.dynamik`: global; händelsestyrd dynamik (T03) med takvatten och avtappning.
+- `vatten.dynamik`: global; händelsestyrd dynamik (T03) med takvatten och avtappning (en eller flera
+  K1-rutor).
+- `vatten.2d`: global; 2D lokal tröghet (Bates 2010 / de Almeida, T05) med automatisk Rust-dispatch
+  och valfri 1D-rännstenskoppling.
 - `luft.vindkomfort`, `luft.halt`: globala lösare på K1 v2 (`karna/luft_losare.py`; luftdelen är
   MIT).
 - `luft.mkn`: global; monotont MKN-intervall (PM10) ur en given timserie och en bakgrund
@@ -17,11 +20,13 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, ClassVar
 
 import numpy as np
+from numpy.typing import NDArray
 
 from karna.analyslosare import Analyslosare, LosarFel, LosarKontext, LosarUtdata
 from karna.ekologi_losare import LOSARE as _EKOLOGI_LOSARE
@@ -187,27 +192,24 @@ class StatiskFyllning(Analyslosare):
         }
 
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
-        from sankgraf.fyllning import kor_statisk_k1_mapp
+        from sankgraf.fyllning import statisk_fyllning
         from sankgraf.typer import slutsanka_matvarden, slutsanka_varningar
-        from testsvit.k1_io import las_geotiff, skriv_geotiff
+        from testsvit.k1_io import skriv_geotiff
 
         rutor = kontext.scenario.rutor
-        if len(rutor) != 1:
-            raise LosarFel(
-                f"{self.namn} stöder än så länge bara scenarier med en K1-ruta, fick {len(rutor)}."
-                " Sammanfogning över rutgränser (sankgraf.sammanfoga_rutor) är inte inkopplad."
-            )
-        ruta = rutor[0]
         p = kontext.parametrar
         regn_mm, regn_matvarden = self._regn_mm(p)
-        _, geo = las_geotiff(ruta.mapp / "mark.tif")
-        avt_raster, avt_info, varaktighet_s = avtappning_for_kontext(self.namn, kontext, geo)
-        graf, res = kor_statisk_k1_mapp(
-            ruta.mapp,
-            regn_m=regn_mm / 1000.0,
+        graf, geo = _bygg_sankgraf_for_rutor(
+            self.namn,
+            rutor,
             persistens_faktor=p["persistens_faktor"],
             takvatten=bool(p["takvatten"]),
             takvatten_andel_ledning=float(p["takvatten_andel_ledning"]),
+        )
+        avt_raster, avt_info, varaktighet_s = avtappning_for_kontext(self.namn, kontext, geo)
+        res = statisk_fyllning(
+            graf,
+            regn_mm / 1000.0,
             avtappning_mm_h=avt_raster,
             varaktighet_s=varaktighet_s,
         )
@@ -378,14 +380,10 @@ class Dynamik(Analyslosare):
     def kor(self, kontext: LosarKontext) -> LosarUtdata:
         from dynamik.handelsestyrd import kor_dynamik_handelsestyrd
         from dynamik.nodmodell import DynamikFel
-        from sankgraf.fyllning import kor_statisk_k1_mapp
         from sankgraf.typer import SLUTSANKA_VARNING
-        from testsvit.k1_io import las_geotiff, skriv_geotiff
+        from testsvit.k1_io import skriv_geotiff
 
         rutor = kontext.scenario.rutor
-        if len(rutor) != 1:
-            raise LosarFel(f"{self.namn} stöder bara scenarier med en K1-ruta, fick {len(rutor)}.")
-        ruta = rutor[0]
         p = kontext.parametrar
         if "idf" in p:
             from gemensamt.regn import RegnFel, skapa_regn_fran_idf_kalla
@@ -408,7 +406,13 @@ class Dynamik(Analyslosare):
             else:
                 regntyp = "block" if (max(mm_h) - min(mm_h)) <= 1e-9 else "anpassad"
             varaktighet_min = float(tider[-1] - tider[0]) / 60.0
-        _, geo = las_geotiff(ruta.mapp / "mark.tif")
+        graf, geo = _bygg_sankgraf_for_rutor(
+            self.namn,
+            rutor,
+            persistens_faktor=p["persistens_faktor"],
+            takvatten=bool(p["takvatten"]),
+            takvatten_andel_ledning=float(p["takvatten_andel_ledning"]),
+        )
         # Avtappningen i dynamiken behöver ingen varaktighet; den gäller hela förloppet.
         p_avt = dict(p)
         p_avt.setdefault("varaktighet_min", 1.0)
@@ -417,11 +421,6 @@ class Dynamik(Analyslosare):
                 utmapp=kontext.utmapp, scenario=kontext.scenario, parametrar=p_avt,
                 indata=kontext.indata, beroenden=kontext.beroenden,
             ), geo,
-        )
-        graf, _ = kor_statisk_k1_mapp(
-            ruta.mapp, regn_m=0.0, persistens_faktor=p["persistens_faktor"],
-            takvatten=bool(p["takvatten"]),
-            takvatten_andel_ledning=float(p["takvatten_andel_ledning"]),
         )
         try:
             res = kor_dynamik_handelsestyrd(
@@ -738,6 +737,590 @@ class Lutning(Analyslosare):
         )
 
 
+def _bestam_overlapp_m(rutor: Sequence[Any], geos: Sequence[Any]) -> float:
+    """Bestämmer gemensamt rutöverlapp (m) ur `recept.json` eller rutornas överlappande ränder."""
+    recept_varden: list[float] = []
+    for ruta in rutor:
+        recept = ruta.mapp / "recept.json"
+        if not recept.is_file():
+            continue
+        try:
+            data = json.loads(recept.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and "overlapp_m" in data:
+            ov = data["overlapp_m"]
+            if (
+                not isinstance(ov, bool)
+                and isinstance(ov, int | float)
+                and math.isfinite(float(ov))
+            ):
+                if float(ov) < 0.0:
+                    raise LosarFel(f"Ogiltigt overlapp_m ({ov}) i {recept}.")
+                recept_varden.append(float(ov))
+    if len(recept_varden) == len(rutor) and recept_varden:
+        for ov in recept_varden[1:]:
+            if not math.isclose(ov, recept_varden[0], rel_tol=0.0, abs_tol=1e-6):
+                raise LosarFel(
+                    f"Oförenliga overlapp_m i rutornas recept.json: {sorted(set(recept_varden))}."
+                )
+        return recept_varden[0]
+
+    kandidater: list[float] = []
+    tol = 1e-6
+    for i in range(len(geos)):
+        ga = geos[i]
+        for j in range(i + 1, len(geos)):
+            gb = geos[j]
+            if min(ga.y_max, gb.y_max) > max(ga.y_min, gb.y_min) + tol:
+                v, o = (ga, gb) if ga.x_min <= gb.x_min else (gb, ga)
+                if v.x_min < o.x_min - tol and v.x_max >= o.x_min - tol and v.x_max < o.x_max - tol:
+                    kandidater.append(max(0.0, 0.5 * (v.x_max - o.x_min)))
+            if min(ga.x_max, gb.x_max) > max(ga.x_min, gb.x_min) + tol:
+                s, n = (ga, gb) if ga.y_min <= gb.y_min else (gb, ga)
+                if s.y_min < n.y_min - tol and s.y_max >= n.y_min - tol and s.y_max < n.y_max - tol:
+                    kandidater.append(max(0.0, 0.5 * (s.y_max - n.y_min)))
+
+    if not kandidater:
+        return 0.0
+    for ov in kandidater[1:]:
+        if not math.isclose(ov, kandidater[0], rel_tol=0.0, abs_tol=1e-6):
+            raise LosarFel(
+                f"Oförenliga rutöverlapp mellan angränsande K1-rutor: {sorted(set(kandidater))}."
+            )
+    return kandidater[0]
+
+
+def _las_sammanfogade_rutor(
+    namn: str,
+    rutor: Sequence[Any],
+) -> tuple[
+    Any,
+    NDArray[np.float32],
+    NDArray[np.float32],
+    NDArray[np.uint8],
+    list[Any],
+    list[Any],
+]:
+    """Läser en eller flera K1-rutor och sammanfogar med `sankgraf.hierarki.sammanfoga_rutor`."""
+    from sankgraf.hierarki import sammanfoga_rutor
+    from sankgraf.typer import SankGrafFel, las_brytlinjer_fran_gpkg, las_oppningar_fran_gpkg
+    from testsvit.k1_io import las_geotiff
+
+    if not rutor:
+        raise LosarFel(f"{namn}: scenariot saknar K1-rutor.")
+
+    rut_data: list[tuple[Any, NDArray[np.float32], NDArray[np.float32], NDArray[np.uint8]]] = []
+    geos: list[Any] = []
+    brytlinjer: list[Any] = []
+    oppningar: list[Any] = []
+    sedda_bryt: set[Any] = set()
+    sedda_opp: set[Any] = set()
+
+    for ruta in rutor:
+        mark_raw, geo = las_geotiff(ruta.mapp / "mark.tif")
+        osak_raw, _ = las_geotiff(ruta.mapp / "osakerhet.tif")
+        slag_raw, _ = las_geotiff(ruta.mapp / "markslag.tif")
+        geos.append(geo)
+        rut_data.append(
+            (
+                geo,
+                np.asarray(mark_raw, dtype=np.float32),
+                np.asarray(osak_raw, dtype=np.float32),
+                np.asarray(slag_raw, dtype=np.uint8),
+            )
+        )
+        bryt_fil = ruta.mapp / "brytlinjer.gpkg"
+        if bryt_fil.is_file():
+            for b in las_brytlinjer_fran_gpkg(bryt_fil):
+                nyckel = (b.typ, b.hojd_m, tuple(b.koordinater), b.z_kron_rh2000)
+                if nyckel not in sedda_bryt:
+                    sedda_bryt.add(nyckel)
+                    brytlinjer.append(b)
+        opp_fil = ruta.mapp / "oppningar.gpkg"
+        if opp_fil.is_file():
+            for o in las_oppningar_fran_gpkg(opp_fil):
+                nyckel_o = (o.typ, o.bredd_m, o.botten_rh2000, tuple(o.koordinater))
+                if nyckel_o not in sedda_opp:
+                    sedda_opp.add(nyckel_o)
+                    oppningar.append(o)
+
+    if len(rut_data) == 1:
+        geo0, mz0, oz0, ms0 = rut_data[0]
+        return geo0, mz0, oz0, ms0, brytlinjer, oppningar
+
+    overlapp_m = _bestam_overlapp_m(rutor, geos)
+    try:
+        glob_geo, glob_mark, glob_osak, glob_slag = sammanfoga_rutor(
+            rut_data, overlapp_m=overlapp_m
+        )
+    except SankGrafFel as exc:
+        raise LosarFel(f"{namn}: kunde inte sammanfoga {len(rutor)} K1-rutor: {exc}") from exc
+    return glob_geo, glob_mark, glob_osak, glob_slag, brytlinjer, oppningar
+
+
+def _bygg_sankgraf_for_rutor(
+    namn: str,
+    rutor: Sequence[Any],
+    *,
+    persistens_faktor: float | None,
+    takvatten: bool,
+    takvatten_andel_ledning: float,
+) -> tuple[Any, Any]:
+    """Bygger en global `SankGraf` för en eller flera K1-rutor (via `sammanfoga_rutor`)."""
+    from sankgraf.fyllning import kor_statisk_k1_mapp
+    from sankgraf.hierarki import bygg_sankgraf
+    from sankgraf.persistens import filtrera_persistens
+    from sankgraf.takvatten import bygg_takvatten
+    from sankgraf.typer import SankGrafFel
+
+    if not rutor:
+        raise LosarFel(f"{namn}: scenariot saknar K1-rutor.")
+    if len(rutor) == 1:
+        graf, _ = kor_statisk_k1_mapp(
+            rutor[0].mapp,
+            regn_m=0.0,
+            persistens_faktor=persistens_faktor,
+            takvatten=takvatten,
+            takvatten_andel_ledning=takvatten_andel_ledning,
+        )
+        return graf, graf.geo
+
+    glob_geo, glob_mark, glob_osak, glob_slag, brytlinjer, oppningar = _las_sammanfogade_rutor(
+        namn, rutor
+    )
+    try:
+        graf = bygg_sankgraf(
+            glob_mark,
+            glob_osak,
+            glob_slag,
+            glob_geo,
+            brytlinjer=brytlinjer,
+            oppningar=oppningar,
+        )
+        if persistens_faktor is not None:
+            graf = filtrera_persistens(graf, faktor=persistens_faktor)
+        if takvatten:
+            tv = bygg_takvatten(
+                graf.mark_z,
+                graf.markslag,
+                graf.geo,
+                andel_ledning=takvatten_andel_ledning,
+            )
+            graf = replace(graf, takvatten=tv)
+    except SankGrafFel as exc:
+        raise LosarFel(f"{namn}: {exc}") from exc
+    return graf, glob_geo
+
+
+_TVAD_PARAMETRAR = (
+    {
+        "regn_mm",
+        "regn_tid_s",
+        "regn_mm_h",
+        "slut_tid_s",
+        "subgrid_faktor",
+        "oppna_rander",
+        "anvand_rust",
+        "enhet",
+        "precision",
+        "vattenniva_rh2000_m",
+        "brunnar_igensatta_andel",
+        "infiltration",
+        "rannsten_1d",
+        "rannstenar",
+        "rannsten_korbana_sida",
+        "idf",
+    }
+    | _IDF_PARAMETRAR
+    | _VATTEN_ANTAGANDEN
+)
+
+
+class TvadLokalTroghet(Analyslosare):
+    """2D lokal tröghet (Bates 2010 / de Almeida) med automatisk Rust-dispatch och 1D-rännsten."""
+
+    namn: ClassVar[str] = "vatten.2d"
+    doman: ClassVar[str] = "vatten"
+    version: ClassVar[str] = "1"
+    beskrivning: ClassVar[str] = (
+        "2D ytvattenberäkning med lokal tröghetsformulering (T05), automatisk bitidentisk "
+        "Rust-dispatch och valfri 1D-rännstenskoppling."
+    )
+    valfria_indataroller: ClassVar[tuple[str, ...]] = ("avtappning_omraden",)
+    utdataroller: ClassVar[tuple[str, ...]] = ("max_djup", "hastighet", "ankomsttid")
+
+    def validera_parametrar(self, parametrar: Mapping[str, Any]) -> dict[str, Any]:
+        okanda = sorted(set(parametrar) - _TVAD_PARAMETRAR)
+        if okanda:
+            raise LosarFel(f"{self.namn}: okända parametrar {okanda}.")
+        ut: dict[str, Any] = validera_vattenantaganden(self.namn, parametrar)
+
+        har_idf = "idf" in parametrar
+        har_mm = "regn_mm" in parametrar
+        har_serie = "regn_tid_s" in parametrar or "regn_mm_h" in parametrar
+        if sum((har_idf, har_mm, har_serie)) != 1:
+            raise LosarFel(
+                f"{self.namn}: ange exakt en regnkälla: 'idf', 'regn_mm' eller "
+                "'regn_tid_s'+'regn_mm_h'."
+            )
+        if har_idf:
+            idf = StatiskFyllning().validera_parametrar(
+                {k: v for k, v in parametrar.items() if k in _IDF_PARAMETRAR | {"idf"}}
+            )
+            for k in (
+                "takvatten",
+                "takvatten_andel_ledning",
+                "avtappning_mm_h",
+                "avtappning_angiven",
+                "persistens_faktor",
+            ):
+                idf.pop(k, None)
+            ut.update(idf)
+        elif har_mm:
+            fel_idf = sorted(set(parametrar) & (_IDF_PARAMETRAR - {"varaktighet_min"}))
+            if fel_idf:
+                raise LosarFel(f"{self.namn}: {fel_idf} kräver parametern 'idf'.")
+            ut["regn_mm"] = _tal(parametrar, "regn_mm", minst=0.0)
+            varakt = (
+                _tal(parametrar, "varaktighet_min", minst=0.0)
+                if "varaktighet_min" in parametrar
+                else 60.0
+            )
+            if varakt <= 0.0:
+                raise LosarFel(
+                    f"{self.namn}: 'varaktighet_min' måste vara > 0 vid regn_mm, fick {varakt}."
+                )
+            ut["varaktighet_min"] = varakt
+        else:
+            tider = parametrar.get("regn_tid_s")
+            mm_h = parametrar.get("regn_mm_h")
+            if not isinstance(tider, list | tuple) or not isinstance(mm_h, list | tuple):
+                raise LosarFel(f"{self.namn}: kräver listorna regn_tid_s och regn_mm_h.")
+            if len(tider) != len(mm_h) or len(tider) < 2:
+                raise LosarFel(
+                    f"{self.namn}: regn_tid_s och regn_mm_h måste vara lika långa (>= 2)."
+                )
+            ut["regn_tid_s"] = [_tal({"t": t}, "t", minst=0.0) for t in tider]
+            ut["regn_mm_h"] = [_tal({"i": i}, "i", minst=0.0) for i in mm_h]
+
+        if "slut_tid_s" in parametrar:
+            ut["slut_tid_s"] = _tal(parametrar, "slut_tid_s", minst=0.0)
+
+        subgrid = parametrar.get("subgrid_faktor", 1)
+        if isinstance(subgrid, bool) or not isinstance(subgrid, int) or subgrid < 1:
+            raise LosarFel(
+                f"{self.namn}: 'subgrid_faktor' måste vara ett heltal >= 1, fick {subgrid!r}."
+            )
+        ut["subgrid_faktor"] = subgrid
+
+        oppna = parametrar.get("oppna_rander", True)
+        if not isinstance(oppna, bool):
+            raise LosarFel(
+                f"{self.namn}: 'oppna_rander' måste vara true eller false, fick {oppna!r}."
+            )
+        ut["oppna_rander"] = oppna
+
+        rust_val = parametrar.get("anvand_rust", None)
+        if rust_val is not None and not isinstance(rust_val, bool):
+            raise LosarFel(
+                f"{self.namn}: 'anvand_rust' måste vara true, false eller null, fick {rust_val!r}."
+            )
+        ut["anvand_rust"] = rust_val
+
+        enhet = parametrar.get("enhet", "cpu")
+        if not isinstance(enhet, str) or enhet not in ("cpu", "cuda", "auto"):
+            raise LosarFel(
+                f"{self.namn}: 'enhet' måste vara 'cpu', 'cuda' eller 'auto', fick {enhet!r}."
+            )
+        ut["enhet"] = enhet
+
+        precision = parametrar.get("precision", "f64")
+        if precision not in ("f64", "f32"):
+            raise LosarFel(
+                f"{self.namn}: 'precision' måste vara 'f64' eller 'f32', fick {precision!r}."
+            )
+        ut["precision"] = precision
+
+        if "vattenniva_rh2000_m" in parametrar and parametrar["vattenniva_rh2000_m"] is not None:
+            ut["vattenniva_rh2000_m"] = _tal(parametrar, "vattenniva_rh2000_m")
+
+        brunnar = (
+            _tal(parametrar, "brunnar_igensatta_andel", minst=0.0)
+            if "brunnar_igensatta_andel" in parametrar
+            else 0.0
+        )
+        if brunnar > 1.0:
+            raise LosarFel(
+                f"{self.namn}: 'brunnar_igensatta_andel' måste ligga i [0, 1], fick {brunnar}."
+            )
+        ut["brunnar_igensatta_andel"] = brunnar
+
+        if "infiltration" in parametrar and parametrar["infiltration"] is not None:
+            inf = parametrar["infiltration"]
+            if not isinstance(inf, Mapping) or "jordart" not in inf or "initial_mm" not in inf:
+                raise LosarFel(
+                    f"{self.namn}: 'infiltration' måste vara ett objekt med 'jordart' och "
+                    "'initial_mm'."
+                )
+            ut["infiltration"] = {
+                "jordart": str(inf["jordart"]),
+                "initial_mm": _tal(inf, "initial_mm", minst=0.0),
+                "hog_markfukt": bool(inf.get("hog_markfukt", False)),
+                "tjale": bool(inf.get("tjale", False)),
+            }
+
+        rannsten_val = parametrar.get("rannstenar", parametrar.get("rannsten_1d", "auto"))
+        if (
+            "rannstenar" in parametrar
+            and "rannsten_1d" in parametrar
+            and parametrar["rannstenar"] != parametrar["rannsten_1d"]
+        ):
+            raise LosarFel(
+                f"{self.namn}: ange inte olika värden för 'rannstenar' och 'rannsten_1d'."
+            )
+        if rannsten_val not in ("auto", True, False):
+            raise LosarFel(
+                f"{self.namn}: 'rannsten_1d'/'rannstenar' måste vara 'auto', true eller false, "
+                f"fick {rannsten_val!r}."
+            )
+        ut["rannsten_1d"] = rannsten_val
+
+        sida = parametrar.get("rannsten_korbana_sida", "vanster")
+        if sida not in ("vanster", "hoger"):
+            raise LosarFel(
+                f"{self.namn}: 'rannsten_korbana_sida' måste vara 'vanster' eller 'hoger', "
+                f"fick {sida!r}."
+            )
+        ut["rannsten_korbana_sida"] = sida
+        return ut
+
+    def kor(self, kontext: LosarKontext) -> LosarUtdata:
+        from gemensamt.cog import skriv_komprimerad_cog
+        from sankgraf.hierarki import _applicera_oppningar
+        from sankgraf.takvatten import bygg_takvatten
+        from tvad.kalltermer import Avtappning, Infiltration2D, Kalltermer
+        from tvad.lokal_troghet import TvadFel, kor_2d_lokal_troghet
+        from tvad.rannsten_1d import (
+            diskretisera_rannsten_1d,
+            exportera_rannsten_flode_geojson,
+            kor_kopplad_1d_2d,
+        )
+
+        p = kontext.parametrar
+        geo, mark_z, _, markslag, brytlinjer, oppningar = _las_sammanfogade_rutor(
+            self.namn, kontext.scenario.rutor
+        )
+        if oppningar:
+            mark_z, markslag = _applicera_oppningar(mark_z, markslag, geo, oppningar)
+
+        regn_matvarden: dict[str, Any] = {}
+        if "idf" in p:
+            from gemensamt.regn import RegnFel, skapa_regn_fran_idf_kalla
+
+            try:
+                serie = skapa_regn_fran_idf_kalla(
+                    str(p["idf"]),
+                    float(p["aterkomsttid_ar"]),
+                    klimatfaktor=float(p["klimatfaktor"]),
+                    typ=str(p["regntyp"]),
+                    varaktighet_min=float(p["varaktighet_min"]),
+                )
+            except RegnFel as exc:
+                raise LosarFel(f"{self.namn}: {exc}") from exc
+            tider, mm_h = list(serie.tid_s), list(serie.intensitet_mm_h)
+            regn_matvarden = {
+                "regn_mm": float(serie.total_djup_mm),
+                "klimatfaktor": float(serie.klimatfaktor),
+                "aterkomsttid_ar": float(p["aterkomsttid_ar"]),
+                "varaktighet_min": float(p["varaktighet_min"]),
+            }
+        elif "regn_mm" in p:
+            regn_mm = float(p["regn_mm"])
+            varakt_min = float(p["varaktighet_min"])
+            intens = regn_mm / (varakt_min / 60.0)
+            tider = [0.0, varakt_min * 60.0]
+            mm_h = [intens, intens]
+            regn_matvarden = {"regn_mm": regn_mm, "varaktighet_min": varakt_min}
+        else:
+            tider = [float(t) for t in p["regn_tid_s"]]
+            mm_h = [float(i) for i in p["regn_mm_h"]]
+
+        p_avt = dict(p)
+        p_avt.setdefault("varaktighet_min", 1.0)
+        avt_raster, avt_info, _ = avtappning_for_kontext(
+            self.namn,
+            LosarKontext(
+                utmapp=kontext.utmapp,
+                scenario=kontext.scenario,
+                parametrar=p_avt,
+                indata=kontext.indata,
+                beroenden=kontext.beroenden,
+            ),
+            geo,
+        )
+        avtappning = None
+        if avt_raster is not None and np.any(avt_raster > 0.0):
+            avtappning = Avtappning(
+                avt_raster,
+                brunnar_igensatta_andel=float(p["brunnar_igensatta_andel"]),
+                kalla=str(avt_info["avtappning_kalla"]),
+            )
+
+        infiltration = None
+        if p.get("infiltration") is not None:
+            inf = p["infiltration"]
+            infiltration = Infiltration2D.fran_markslag(
+                markslag,
+                str(inf["jordart"]),
+                initial_mm=float(inf["initial_mm"]),
+                hog_markfukt=bool(inf.get("hog_markfukt", False)),
+                tjale=bool(inf.get("tjale", False)),
+            )
+
+        kalltermer = (
+            Kalltermer(avtappning=avtappning, infiltration=infiltration)
+            if (avtappning is not None or infiltration is not None)
+            else None
+        )
+        takvatten = (
+            bygg_takvatten(
+                mark_z,
+                markslag,
+                geo,
+                andel_ledning=float(p["takvatten_andel_ledning"]),
+            )
+            if bool(p["takvatten"])
+            else None
+        )
+
+        try:
+            res = kor_2d_lokal_troghet(
+                mark_z,
+                markslag,
+                geo,
+                tider,
+                mm_h,
+                slut_tid_s=p.get("slut_tid_s"),
+                subgrid_faktor=int(p["subgrid_faktor"]),
+                oppna_rander=bool(p["oppna_rander"]),
+                kalltermer=kalltermer,
+                takvatten=takvatten,
+                brytlinjer=brytlinjer,
+                enhet=str(p["enhet"]),
+                precision=p["precision"],
+                vattenniva_rh2000_m=p.get("vattenniva_rh2000_m"),
+                anvand_rust=p["anvand_rust"],
+            )
+        except TvadFel as exc:
+            raise LosarFel(f"{self.namn}: {exc}") from exc
+
+        skriv_komprimerad_cog(
+            kontext.utmapp / "max_djup.tif",
+            np.asarray(res.max_djup_m, dtype=np.float32),
+            x_min=geo.x_min,
+            y_max=geo.y_max,
+            pixelstorlek=geo.pixelstorlek_x,
+            epsg=geo.epsg,
+        )
+        skriv_komprimerad_cog(
+            kontext.utmapp / "hastighet.tif",
+            np.asarray(res.max_hastighet_m_s, dtype=np.float32),
+            x_min=geo.x_min,
+            y_max=geo.y_max,
+            pixelstorlek=geo.pixelstorlek_x,
+            epsg=geo.epsg,
+        )
+        skriv_komprimerad_cog(
+            kontext.utmapp / "ankomsttid.tif",
+            np.asarray(res.tid_till_0_1m_s, dtype=np.float32),
+            x_min=geo.x_min,
+            y_max=geo.y_max,
+            pixelstorlek=geo.pixelstorlek_x,
+            epsg=geo.epsg,
+            nodata=float("nan"),
+        )
+        filer: dict[str, str] = {
+            "max_djup": "max_djup.tif",
+            "hastighet": "hastighet.tif",
+            "ankomsttid": "ankomsttid.tif",
+        }
+
+        rannsten_lage = p["rannsten_1d"]
+        kantstenar_3d = [
+            b
+            for b in brytlinjer
+            if b.typ in ("kantsten", "sankt_kantsten") and b.z_kron_rh2000 is not None
+        ]
+        kor_1d = bool(
+            (
+                rannsten_lage is True
+                and any(b.typ in ("kantsten", "sankt_kantsten") for b in brytlinjer)
+            )
+            or (rannsten_lage == "auto" and kantstenar_3d)
+        )
+        rannsten_info: dict[str, Any] = {"rannsten_1d_aktiv": False}
+        if kor_1d:
+            lank_linjer = kantstenar_3d or [
+                b for b in brytlinjer if b.typ in ("kantsten", "sankt_kantsten")
+            ]
+            lank = diskretisera_rannsten_1d(
+                lank_linjer,
+                mark_z,
+                markslag,
+                geo,
+                korbana_sida=str(p["rannsten_korbana_sida"]),
+            )
+            res_1d = kor_kopplad_1d_2d(
+                mark_z,
+                markslag,
+                geo,
+                tider,
+                mm_h,
+                lank,
+                brytlinjer=brytlinjer,
+                slut_tid_s=p.get("slut_tid_s"),
+            )
+            gj_fil = exportera_rannsten_flode_geojson(
+                res_1d, kontext.utmapp / "rannsten_flode.geojson"
+            )
+            filer["rannsten_flode"] = gj_fil.name
+            rannsten_info = {
+                "rannsten_1d_aktiv": True,
+                "rannsten_1d_fil": gj_fil.name,
+                "rannsten_1d_segment": lank.antal,
+                "rannsten_1d_max_djup_m": float(np.max(res_1d.max_djup_1d_m)),
+                "rannsten_1d_overfall_sankt_m3": float(res_1d.overfall_sankt_m3),
+                "rannsten_1d_overfall_hog_m3": float(res_1d.overfall_hog_m3),
+                "rannsten_1d_volymfel_rel": float(res_1d.volymfel_rel),
+            }
+
+        return LosarUtdata(
+            filer=filer,
+            matvarden={
+                "max_djup_m": float(np.nanmax(res.max_djup_m)),
+                "max_hastighet_m_s": float(np.nanmax(res.max_hastighet_m_s)),
+                "max_fara_m2_s": float(np.nanmax(res.fara_m2_s)),
+                "massbalans_fel": float(res.volymfel_rel),
+                "volymfel_rel": float(res.volymfel_rel),
+                "in_m3": float(res.in_m3),
+                "lagrat_m3": float(res.lagrat_m3),
+                "ut_m3": float(res.ut_m3),
+                "avtappat_m3": float(res.avtappat_m3),
+                "infiltrerat_m3": float(res.infiltrerat_m3),
+                "initial_forlust_m3": float(res.initial_forlust_m3),
+                "antal_tidssteg": int(res.antal_tidssteg),
+                "anvande_rust": bool(res.anvande_rust),
+                "berakningsplats": str(res.berakningsplats),
+                **regn_matvarden,
+                **vattenantaganden_matvarden(takvatten, avt_info),
+                **rannsten_info,
+                "volymbalans": res.volymbalans(),
+            },
+            varningar=takvatten_varningar(takvatten),
+        )
+
+
 LOSARE: list[Analyslosare] = [
-    StatiskFyllning(), Dynamik(), Lutning(), *_LUFT_LOSARE, *_EKOLOGI_LOSARE
+    StatiskFyllning(), Dynamik(), TvadLokalTroghet(), Lutning(), *_LUFT_LOSARE, *_EKOLOGI_LOSARE
 ]
