@@ -1322,6 +1322,115 @@
   margin: 0;
 }
 
+/* ---------- Våg 7: GYF (U16) och Värmestress UTCI / T_mrt (U15) i Steg 2 ---------- */
+.ar-gyf-utci-plats {
+  margin-top: 8px;
+}
+.ar-gyf-utci {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ar-gyf-panel,
+.ar-vs-panel {
+  border: 1px solid var(--f-linje, #e5e5e5);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+}
+.ar-utci-gyf-summary {
+  min-height: var(--f-mal-yta, 44px);
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--f-yta-dampad, #f4f4f4);
+}
+.ar-utci-gyf-summary:focus-visible {
+  outline: 2px solid var(--f-accent, #111111);
+  outline-offset: -2px;
+}
+.ar-skiss-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--f-text, #111111);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+}
+.ar-utci-gyf-kropp {
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--f-linje, #e5e5e5);
+}
+.ar-gyf-kontroller {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ar-gyf-kontroller label {
+  flex: 1 1 130px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-vs-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.ar-vs-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-vs-grid input[type="text"] {
+  min-height: 36px;
+  font-variant-numeric: tabular-nums;
+}
+.ar-vs-atgarder {
+  display: flex;
+  gap: 8px;
+}
+.ar-vs-atgarder button {
+  width: 100%;
+}
+.ar-vs-lagerval {
+  margin-bottom: 6px;
+}
+.ar-gyf-tabell,
+.ar-vs-tabell {
+  font-variant-numeric: tabular-nums;
+}
+.ar-vs-stapel-cell {
+  width: 34%;
+  vertical-align: middle;
+}
+.ar-vs-stapel {
+  display: block;
+  height: 8px;
+  background: var(--f-text, #111111);
+  min-width: 2px;
+}
+.ar-gyf-tillagg {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-gyf-tillagg ul,
+.ar-gyf-varningar {
+  margin: 0;
+  padding-left: 16px;
+}
+
 @media (pointer: coarse) {
   .ar-zoomrad button,
   .ar-cad-lage button {

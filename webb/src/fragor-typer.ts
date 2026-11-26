@@ -324,7 +324,7 @@ export interface DemoSvar {
 }
 
 export interface VektorLagerRef {
-  id: string;
+  id?: string;
   analys: string;
   scenario: string;
   ruta: string | null;

@@ -7,8 +7,23 @@ import type { AtgardSvar, Skarvar } from "./skarv";
 import type { WmsSvar } from "./wms";
 import type { SektionSvar } from "../flode/sektion";
 import type { TidsserieSvar } from "../flode/tidsspelare";
+import {
+  gyfAnalysUrl,
+  varmestressAnalysUrl,
+  type GyfAnalysSvar,
+  type GyfProfilId,
+  type VarmestressAnalysSvar,
+  type VarmestressParam,
+} from "../flode/gyf-utci";
 
-export type { Utbredning };
+export type {
+  GyfAnalysSvar,
+  GyfProfilId,
+  Utbredning,
+  VarmestressAnalysSvar,
+  VarmestressParam,
+};
+export { gyfAnalysUrl, varmestressAnalysUrl };
 
 const BAS = "/api/kartverktyg";
 const post = <T>(url: string, kropp: unknown): Promise<T> =>
@@ -356,6 +371,33 @@ export const hamtaSvfIntervall = (
   antal_riktningar = 16,
 ): Promise<SvfIntervallSvar> =>
   post("/api/analys/svf-intervall", { omrade_id, osakerhet_byggnad_m, antal_riktningar });
+
+/** Läser Svensk Grönytefaktor (GYF, skiss) utan sidskrivning via `GET /api/analys/gyf`. */
+export const hamtaGyfAnalys = (
+  omrade_id: string,
+  profil: GyfProfilId = "stockholm",
+  scenario?: string | null,
+): Promise<GyfAnalysSvar> => lasJson(gyfAnalysUrl(omrade_id, profil, scenario));
+
+/** Beräknar Svensk Grönytefaktor (GYF, skiss) via `POST /api/analys/gyf`. */
+export const beraknaGyfAnalys = (begaran: {
+  omrade_id: string;
+  profil?: GyfProfilId;
+  scenario?: string | null;
+  tillagg?: Array<{ tillagg_id: string; area_m2: number; faktor?: number }>;
+}): Promise<GyfAnalysSvar> => post("/api/analys/gyf", begaran);
+
+/** Läser Värmestress UTCI/T_mrt (skiss) utan sidskrivning via `GET /api/analys/varmestress`. */
+export const hamtaVarmestressAnalys = (
+  omrade_id: string,
+  param: Partial<VarmestressParam> = {},
+  scenario?: string | null,
+): Promise<VarmestressAnalysSvar> => lasJson(varmestressAnalysUrl(omrade_id, param, scenario));
+
+/** Beräknar Värmestress UTCI/T_mrt (skiss) med explicita väderparametrar via `POST /api/analys/varmestress`. */
+export const beraknaVarmestressAnalys = (
+  begaran: { omrade_id: string; scenario?: string | null } & Partial<VarmestressParam>,
+): Promise<VarmestressAnalysSvar> => post("/api/analys/varmestress", begaran);
 
 /** Hämtar en rasterbild med utbredningen ur huvudet `X-Floden-Utbredning` och ger en objekt-URL. */
 export async function hamtaBildMedUtbredning(url: string): Promise<{ url: string; utbredning: Utbredning }> {

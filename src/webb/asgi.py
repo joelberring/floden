@@ -170,18 +170,21 @@ class FlodenAsgiApp:
     _TUNGA_EXAKTA: frozenset[str] = frozenset(
         {"/api/kor", "/api/risk", "/api/rapport", "/api/rutt", "/api/projekt"}
     )
+    _LATTA_ANALYS_POST: frozenset[str] = frozenset({"/api/analys/gyf"})
 
     @staticmethod
     def _ar_tung_berakning(metod: str, sokvag: str) -> bool:
         """Avgör om en HTTP-förfrågan är en tung beräknings- eller rapport-POST.
 
-        Snabba UI-POST:er (t.ex. `validera`, `sektion`, spara/döp om/ta bort scenario,
-        `plan`, WMS-lager, projektinställningar) hålls utanför semaforen så att de inte
-        svälts ut av samtidiga tunga beräkningar.
+        Snabba UI-POST:er (t.ex. `validera`, `sektion`, `gyf`, spara/döp om/ta bort scenario,
+        `plan`, WMS-lager, projektinställningar) samt alla `GET`-läsningar hålls utanför
+        semaforen så att de inte svälts ut av samtidiga tunga beräkningar.
         """
         if metod != "POST":
             return False
         ren = sokvag.rstrip("/") or "/"
+        if ren in FlodenAsgiApp._LATTA_ANALYS_POST:
+            return False
         if ren in FlodenAsgiApp._TUNGA_EXAKTA or ren.startswith("/api/analys/"):
             return True
         delar = [d for d in ren.split("/") if d]
