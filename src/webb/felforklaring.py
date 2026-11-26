@@ -18,7 +18,32 @@ INSTANGT_TEXT = (
     "vattnet tar vägen. Kontrollera markmodellen där."
 )
 
+SANKGRAF_CELLTAK_TEXT = (
+    "Området omfattar fler markceller än serverns maxgräns för sänkgrafen "
+    "(FLODEN_MAX_SANKGRAF_CELLER). Välj en mindre avgränsning eller kör på en maskin med mer RAM."
+)
+
+MINNE_TEXT = (
+    "Beräkningen krävde mer arbetsminne än serverns gräns och stoppades för att hålla servern "
+    "stabil. Välj en mindre avgränsning, kör ett ämne i taget eller kör på en maskin med mer RAM."
+)
+
+TIMEOUT_TEXT = (
+    "Beräkningen överskred serverns tidsgräns och avbröts automatiskt. Prova en mindre "
+    "avgränsning eller färre scenarier åt gången."
+)
+
 _INSTANGT_MARKORER = ("InstangtOmradeFel", "saknar utloppssadel")
+_SANKGRAF_CELLTAK_MARKORER = ("FLODEN_MAX_SANKGRAF_CELLER",)
+_MINNE_MARKORER = (
+    "SubprocMinneFel",
+    "MemoryError",
+    "mer minne än serverns gräns",
+)
+_TIMEOUT_MARKORER = (
+    "SubprocTimeoutFel",
+    "serverns tidsgräns",
+)
 
 
 def forklara_fel(teknisk_text: str | None) -> str | None:
@@ -27,4 +52,10 @@ def forklara_fel(teknisk_text: str | None) -> str | None:
         return None
     if any(m in teknisk_text for m in _INSTANGT_MARKORER):
         return INSTANGT_TEXT
+    if any(m in teknisk_text for m in _SANKGRAF_CELLTAK_MARKORER):
+        return SANKGRAF_CELLTAK_TEXT
+    if any(m in teknisk_text for m in _MINNE_MARKORER):
+        return MINNE_TEXT
+    if any(m in teknisk_text for m in _TIMEOUT_MARKORER):
+        return TIMEOUT_TEXT
     return None

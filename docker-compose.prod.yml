@@ -26,6 +26,16 @@ services:
       FLODEN_TILLAT_UTAN_INLOGGNING: ${FLODEN_TILLAT_UTAN_INLOGGNING:-0}
       FLODEN_DEMO: ${FLODEN_DEMO:-1}
       FLODEN_SERVER: ${FLODEN_SERVER:-asgi}
+      # S-O1 CX23-förval: isolerade barnprocesser med aktiv RSS-/tidsvakt, samtidighets- och diskvakt.
+      FLODEN_EXEKUTOR: ${FLODEN_EXEKUTOR:-process}
+      FLODEN_MAX_SAMTIDIGA_BERAKNINGAR: ${FLODEN_MAX_SAMTIDIGA_BERAKNINGAR:-2}
+      FLODEN_JOBB_MAX_RAM_MB: ${FLODEN_JOBB_MAX_RAM_MB:-2200}
+      FLODEN_JOBB_MAX_TID_S: ${FLODEN_JOBB_MAX_TID_S:-300}
+      FLODEN_MIN_LEDIG_DISK_MB: ${FLODEN_MIN_LEDIG_DISK_MB:-500}
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-1}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-1}
+      MKL_NUM_THREADS: ${MKL_NUM_THREADS:-1}
+      NUMEXPR_NUM_THREADS: ${NUMEXPR_NUM_THREADS:-1}
       # Fail-fast celltak för sänkgrafbygge i Python (förval 4 500 000 celler; 0/tomt = standard).
       FLODEN_MAX_SANKGRAF_CELLER: ${FLODEN_MAX_SANKGRAF_CELLER:-}
       # Uvicorn litar annars bara på X-Forwarded-For från 127.0.0.1, men Caddy kommer från Docker-nätet.

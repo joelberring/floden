@@ -134,7 +134,13 @@ from testsvit.k1_io import (
 from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
 from tvad.felindikator import berakna_2d_felindikator
 from webb.fel import FlodenWebbFel
-from webb.fragor import STANDARD_MAX_KO, FragaTjanst, skriv_atomiskt_text
+from webb.fragor import (
+    STANDARD_EXEKUTOR,
+    STANDARD_MAX_KO,
+    FragaTjanst,
+    las_exekutor_lage,
+    skriv_atomiskt_text,
+)
 from webb.kartverktyg import LAGE_IDAG_PREFIX, STANDARD_MAX_2D_CELLER, KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
@@ -158,6 +164,7 @@ from webb.rendering import (
     sankgraf_flodesvagar_till_geojson,
     sankgraf_noder_till_geojson,
 )
+from webb.subproc_kor import cgroup_minne_grans_mb, disk_ledig_gb, process_rss_mb
 from webb.vy3d import Vy3dTjanst
 
 if TYPE_CHECKING:
@@ -977,6 +984,19 @@ def _rapportmapp(konfig_fil: Path, rapportmapp: str | Path | None) -> Path:
     return p if p.is_absolute() else rot / p
 
 
+def _cachemapp_sokvag(konfig_fil: Path, cachemapp: str | Path | None) -> Path:
+    """Cachemappen: argument > `[webb] cachemapp` > data/cache/karna (utan att skapa katalog)."""
+    rot = konfig_fil.resolve().parent
+    if cachemapp is None:
+        webb: dict[str, Any] = {}
+        if konfig_fil.is_file():
+            with konfig_fil.open("rb") as fh:
+                webb = dict(tomllib.load(fh).get("webb", {}))
+        cachemapp = webb.get("cachemapp", STANDARD_CACHEMAPP)
+    p = Path(cachemapp)
+    return p if p.is_absolute() else rot / p
+
+
 def _skapa_fragetjanst(
     konfig_fil: Path,
     fragemappar: Sequence[str | Path] | None,
@@ -1127,6 +1147,7 @@ class FlodenApiApp:
         self.testsvit_rot = _testsvitrot(self.konfig_fil, testsvit_rot)
         self.konto = konto if konto is not None else _skapa_konto(self.konfig_fil)
         self.klientmapp = _klientmapp(self.konfig_fil, klientmapp)
+        self._cachemapp_sokvag = _cachemapp_sokvag(self.konfig_fil, cachemapp)
         self._fragekonfig = (fragemappar, cachemapp, korningsmapp)
         self._fragor: FragaTjanst | None = None
         self._lock = threading.Lock()
@@ -1498,6 +1519,14 @@ class FlodenApiApp:
             if fragor is not None
             else {"koade": 0, "pagaende": 0, "max_ko": STANDARD_MAX_KO}
         )
+        cachemapp = fragor.cachemapp if fragor is not None else self._cachemapp_sokvag
+        if fragor is not None:
+            exekutor_lage = fragor.exekutor_lage
+        else:
+            try:
+                exekutor_lage = las_exekutor_lage()
+            except ValueError:
+                exekutor_lage = STANDARD_EXEKUTOR
         return {
             "status": "ok",
             "version": API_VERSION,
@@ -1513,6 +1542,10 @@ class FlodenApiApp:
             "kallor": list(DEFAULT_KALLOR),
             "gatusektioner": list(sektioner),
             "ko": ko_status,
+            "minne_rss_mb": process_rss_mb(),
+            "minne_grans_mb": cgroup_minne_grans_mb(),
+            "disk_ledig_gb": disk_ledig_gb(cachemapp),
+            "exekutor": exekutor_lage,
         }
 
     def lista_omraden(self) -> dict[str, Any]:

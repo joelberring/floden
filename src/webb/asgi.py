@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -35,6 +36,28 @@ AsgiSend = Callable[[AsgiMessage], Awaitable[None]]
 STANDARD_MAX_KROPP_BYTES = 25 * 1024 * 1024
 STANDARD_MAX_SAMTIDIGA_BERAKNINGAR = 4
 STANDARD_KO_TIMEOUT_S = 0.25
+
+
+def las_max_samtidiga_berakningar(varde: int | None = None) -> int:
+    """Läser max antal samtidiga tunga beräkningar: argument > miljövariabel > standard (4)."""
+    if varde is not None:
+        if isinstance(varde, bool) or int(varde) <= 0:
+            raise ValueError("max_samtidiga_berakningar måste vara > 0.")
+        return int(varde)
+    raw = os.environ.get("FLODEN_MAX_SAMTIDIGA_BERAKNINGAR")
+    if raw is None or not raw.strip():
+        return STANDARD_MAX_SAMTIDIGA_BERAKNINGAR
+    try:
+        antal = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(
+            f"Ogiltigt värde i FLODEN_MAX_SAMTIDIGA_BERAKNINGAR={raw!r}: ange ett positivt heltal."
+        ) from exc
+    if antal <= 0:
+        raise ValueError(
+            f"Ogiltigt värde i FLODEN_MAX_SAMTIDIGA_BERAKNINGAR={raw!r}: måste vara > 0."
+        )
+    return antal
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -140,21 +163,20 @@ class FlodenAsgiApp:
         app: FlodenApiApp,
         *,
         max_kropp_bytes: int = STANDARD_MAX_KROPP_BYTES,
-        max_samtidiga_berakningar: int = STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
+        max_samtidiga_berakningar: int | None = None,
         ko_timeout_s: float = STANDARD_KO_TIMEOUT_S,
         mcp: Any = None,
     ) -> None:
         if max_kropp_bytes <= 0:
             raise ValueError("max_kropp_bytes måste vara > 0.")
-        if max_samtidiga_berakningar <= 0:
-            raise ValueError("max_samtidiga_berakningar måste vara > 0.")
+        eff_max_samtidiga = las_max_samtidiga_berakningar(max_samtidiga_berakningar)
         if ko_timeout_s < 0.0:
             raise ValueError("ko_timeout_s måste vara >= 0.")
         self.app = app
         self.mcp = mcp
         """`floden_mcp.montera.MonteradMcp` eller None: MCP:s Streamable HTTP på `/mcp`."""
         self.max_kropp_bytes = int(max_kropp_bytes)
-        self.max_samtidiga_berakningar = int(max_samtidiga_berakningar)
+        self.max_samtidiga_berakningar = eff_max_samtidiga
         self.ko_timeout_s = float(ko_timeout_s)
         self._semafor_per_loop: dict[int, asyncio.Semaphore] = {}
 
@@ -374,7 +396,7 @@ def skapa_asgi_app(
     klientmapp: str | Path | None = None,
     konto: KontoAdapter | None = None,
     max_kropp_bytes: int = STANDARD_MAX_KROPP_BYTES,
-    max_samtidiga_berakningar: int = STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
+    max_samtidiga_berakningar: int | None = None,
     ko_timeout_s: float = STANDARD_KO_TIMEOUT_S,
     mcp_host: str | None = None,
 ) -> FlodenAsgiApp:
@@ -412,5 +434,6 @@ __all__ = [
     "STANDARD_KO_TIMEOUT_S",
     "STANDARD_MAX_KROPP_BYTES",
     "STANDARD_MAX_SAMTIDIGA_BERAKNINGAR",
+    "las_max_samtidiga_berakningar",
     "skapa_asgi_app",
 ]

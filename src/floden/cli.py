@@ -1767,7 +1767,8 @@ def bygg_parser() -> argparse.ArgumentParser:
         "--max-samtidiga",
         type=int,
         default=None,
-        help="Bara --server asgi: högsta antal samtidiga tunga beräkningar (standard 4).",
+        help="Bara --server asgi: högsta antal samtidiga tunga beräkningar "
+        "(standard FLODEN_MAX_SAMTIDIGA_BERAKNINGAR eller 4).",
     )
 
     forberakna_parser = subparsers.add_parser(
@@ -1886,13 +1887,13 @@ def _kor_webb_asgi(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    from webb.asgi import STANDARD_MAX_SAMTIDIGA_BERAKNINGAR, skapa_asgi_app
+    from webb.asgi import skapa_asgi_app
 
     def _bygg(mcp_host: str | None) -> Any:
         return skapa_asgi_app(
             testsvit_rot=args.rot,
             konfig_fil=args.konfig,
-            max_samtidiga_berakningar=args.max_samtidiga or STANDARD_MAX_SAMTIDIGA_BERAKNINGAR,
+            max_samtidiga_berakningar=args.max_samtidiga,
             mcp_host=mcp_host,
         )
 
