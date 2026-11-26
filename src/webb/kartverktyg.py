@@ -1509,7 +1509,7 @@ class KartverktygTjanst:
     def _rel(fran: Path, till: Path) -> str:
         import os
 
-        return Path(os.path.relpath(till, fran.parent)).as_posix()
+        return Path(os.path.relpath(till.resolve(), fran.parent.resolve())).as_posix()
 
     @staticmethod
     def _valj_med_vsc(

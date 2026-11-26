@@ -597,3 +597,60 @@ def test_b7_geografiprojekt_flerruts_skyfall_idf_och_ekologi(tmp_path: Path) -> 
         "dagsljus": "klar",
         "ekologi": "klar",
     }
+
+
+def test_b7_kor_ekologi_med_symlankad_projekt_och_geografirot(tmp_path: Path) -> None:
+    """`kartverktyg._rel` löser symlänkar i både `projektrot` och `geo_rot` så `kor_ekologi` aldrig ger trasig relativsökväg."""
+    verklig = tmp_path / "verklig"
+    verklig.mkdir()
+    geo_rot, nmd_ref, karna = _bygg_syntetisk_flerruts_geografi_med_nmd(verklig)
+    projektrot = verklig / "projekt"
+    projektrot.mkdir()
+
+    # Symlänka både geo-rot och projekt-rot (motsvarar t.ex. /var -> /private/var eller symlänkad datavolym).
+    lank_mapp = tmp_path / "lank"
+    lank_mapp.mkdir()
+    geo_lank = lank_mapp / "geo"
+    projekt_lank = lank_mapp / "projekt"
+    geo_lank.symlink_to(geo_rot, target_is_directory=True)
+    projekt_lank.symlink_to(projektrot, target_is_directory=True)
+
+    sthlm = las_kommun("stockholm", rot=REPO)
+    avgr = (karna[0] + 4.0, karna[1] + 4.0, karna[2] - 4.0, karna[3] - 4.0)
+    res = skapa_projekt(
+        sthlm,
+        ref=nmd_ref,
+        avgransning=avgr,
+        namn="Symlank NMD",
+        konto_id=None,
+        geo_rot=geo_lank,
+        projektrot=projekt_lank,
+        konfig={},
+        konfig_fil=tmp_path / "config.toml",
+        skriv=lambda _: None,
+    )
+
+    app = FlodenApiApp(
+        testsvit_rot=REPO / "testsvit",
+        konfig_fil=tmp_path / "config.toml",
+        fragemappar=[tmp_path / "fragor"],
+        cachemapp=tmp_path / "cache",
+        korningsmapp=tmp_path / "korningar",
+        kartverktygsmapp=tmp_path / "kartverktyg",
+        geomapp=geo_lank,
+        projektmapp=projekt_lank,
+    )
+    k = app.kartverktyg.kor_ekologi(res.projekt_id, None, {})
+    assert k["status"]["status"] == "klar", k
+    svar = ekologi_svar(
+        app.fragor,
+        korning_id=k["korning_id"],
+        analys=k["analys"],
+        omrade_id=res.projekt_id,
+        scenario=None,
+        antal_flaskhalsar=5,
+        flaskhals_avstand_m=20.0,
+        max_flackar=40,
+    )
+    assert svar["fore"]["ECA_m2"] > 0.0
+
