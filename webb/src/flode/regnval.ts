@@ -5,10 +5,12 @@
  */
 import { esc } from "../sidor.ts";
 import { formatera, formateraHogst } from "../tal.ts";
-import type { KorningPost, KorningRegnInfo, RegnForval, RegnParam } from "../karta/kartapi.ts";
+import type { KorningPost, KorningRegnInfo, RegnForval, RegnParam, SkyfallMetod } from "../karta/kartapi.ts";
 import type { RegnPost } from "./nyckeltal.ts";
 
-export type { RegnForval, RegnParam };
+export type { RegnForval, RegnParam, SkyfallMetod };
+
+export const STANDARD_SKYFALL_METOD: SkyfallMetod = "graf";
 
 export type RegnForvalId = "standard" | "10ar" | "100ar" | "extrem" | "eget";
 export type EgetRegnLage = "idf" | "mm";
@@ -123,10 +125,28 @@ export function valideraRegnVal(val: RegnVal): string | null {
   return null;
 }
 
-/** Omvandlar regnvalet till JSON-kroppen `regn` för servern (`null` = projektets standard och statisk). */
-export function tillRegnParam(val: RegnVal): RegnParam | null {
-  const dyn = val.berakningstyp === "dynamisk";
+/** Omvandlar regnvalet till JSON-kroppen `regn` för servern (`null` = projektets standard och statisk, eller projektets standard i 2D). */
+export function tillRegnParam(val: RegnVal, skyfallMetod: SkyfallMetod = "graf"): RegnParam | null {
   const rtyp = effektivRegntyp(val);
+  if (skyfallMetod === "2d") {
+    if (val.forval === "standard") return null;
+    const snabb = REGN_SNABBVAL.find((x) => x.id === val.forval);
+    if (snabb?.param) {
+      return { ...snabb.param, regntyp: rtyp };
+    }
+    if (val.egetLage === "mm") {
+      return val.regn_mm !== null && Number.isFinite(val.regn_mm)
+        ? { regn_mm: val.regn_mm, regntyp: "block" }
+        : null;
+    }
+    return {
+      aterkomsttid_ar: val.aterkomsttid_ar,
+      varaktighet_min: val.varaktighet_min,
+      klimatfaktor: val.klimatfaktor,
+      regntyp: rtyp,
+    };
+  }
+  const dyn = val.berakningstyp === "dynamisk";
   if (val.forval === "standard") {
     return dyn ? { berakningstyp: "dynamisk", regntyp: rtyp } : null;
   }
@@ -148,10 +168,24 @@ export function tillRegnParam(val: RegnVal): RegnParam | null {
   };
 }
 
-/** Deterministisk signatur för valt regn, beräkningstyp, regntyp och avtappning. */
-export function regnSignatur(val: RegnVal, avtappning: number | null): string {
+/** Deterministisk signatur för valt regn, skyfallsmetod, beräkningstyp, regntyp och avtappning. */
+export function regnSignatur(
+  val: RegnVal,
+  avtappning: number | null,
+  skyfallMetod: SkyfallMetod = "graf",
+): string {
+  if (skyfallMetod === "2d") {
+    const regn = tillRegnParam(val, "2d");
+    return JSON.stringify({
+      skyfallMetod: "2d",
+      regn,
+      regntyp: regn ? effektivRegntyp(val) : null,
+      avtappning: avtappning ?? null,
+    });
+  }
   return JSON.stringify({
-    regn: tillRegnParam(val),
+    skyfallMetod: "graf",
+    regn: tillRegnParam(val, "graf"),
     berakningstyp: val.berakningstyp,
     regntyp: effektivRegntyp(val),
     avtappning: avtappning ?? null,
@@ -232,7 +266,8 @@ export function regnSignaturFranKorningar(
       typeof k.avtappning_mm_h === "number" && Number.isFinite(k.avtappning_mm_h)
         ? k.avtappning_mm_h
         : null;
-    return regnSignatur(val, avt);
+    const metod: SkyfallMetod = k.skyfall_metod === "2d" || k.regn?.skyfall_metod === "2d" ? "2d" : "graf";
+    return regnSignatur(val, avt, metod);
   }
   return null;
 }
@@ -264,17 +299,27 @@ export function regnEtikett(r: RegnPost | RegnForval | null | undefined): string
 }
 
 /** Kort 1-radig sammanfattning av den valda regninställningen (inför körning). */
-export function valdRegnText(val: RegnVal, forval: RegnForval | null | undefined, avtappning: number | null): string {
+export function valdRegnText(
+  val: RegnVal,
+  forval: RegnForval | null | undefined,
+  avtappning: number | null,
+  skyfallMetod: SkyfallMetod = "graf",
+): string {
   let bas: string;
   if (val.forval === "standard") {
     const f = regnEtikett(forval);
     bas = f ? `Standard (${f})` : "Standard (projektets förval)";
   } else {
-    bas = regnEtikett(tillRegnParam(val)) ?? "Eget regn";
+    bas = regnEtikett(tillRegnParam(val, skyfallMetod)) ?? "Eget regn";
   }
-  const dyn = val.berakningstyp === "dynamisk" ? ` · dynamisk (${effektivRegntyp(val) === "cds" ? "CDS" : "block"})` : "";
+  const metodDel =
+    skyfallMetod === "2d"
+      ? " · 2D lokal tröghet"
+      : val.berakningstyp === "dynamisk"
+        ? ` · dynamisk (${effektivRegntyp(val) === "cds" ? "CDS" : "block"})`
+        : "";
   const avt = avtappning !== null && avtappning > 0 ? ` · avtappning ${formatera(avtappning, 1)} mm/h` : "";
-  return `${bas}${dyn}${avt}`;
+  return `${bas}${metodDel}${avt}`;
 }
 
 /** Ren HTML för regnväljaren i sidopanelen. */
@@ -284,6 +329,7 @@ export function regnValHtml(
   avtappning: number | null,
   fel: string | null,
   avtappningFel: boolean,
+  skyfallMetod: SkyfallMetod = "graf",
 ): string {
   const knappar = REGN_SNABBVAL.map(
     (s) =>
@@ -292,21 +338,31 @@ export function regnValHtml(
   const numStr = (n: number | null, dec = 2): string => (n === null || !Number.isFinite(n) ? "" : formateraHogst(n, dec));
   const direktMm = arDirektMm(val);
   const rtyp = effektivRegntyp(val);
-  const dynamikDel = `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Beräkningstyp">
-      <button type="button" data-regn-berakningstyp="statisk" aria-pressed="${val.berakningstyp === "statisk"}">Maxdjup (statisk)</button>
-      <button type="button" data-regn-berakningstyp="dynamisk" aria-pressed="${val.berakningstyp === "dynamisk"}">Flöde i tid (dynamisk)</button>
+  const metodDel = `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Beräkningsmetod för skyfall">
+      <button type="button" data-skyfall-metod="graf" aria-pressed="${skyfallMetod === "graf"}">Graf (snabb)</button>
+      <button type="button" data-skyfall-metod="2d" aria-pressed="${skyfallMetod === "2d"}">2D lokal tröghet (fördjupad)</button>
     </div>${
-      val.berakningstyp === "dynamisk"
-        ? `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Regntyp">
+      skyfallMetod === "2d"
+        ? `<p class="flode-liten flode-dampad ar-regn-notis">2D lokal tröghet tar längre tid än sänkgrafen och inkluderar hastighet, fara (h·v) och 1D-rännsten (skiss).</p>`
+        : ""
+    }`;
+  const regntypDel = `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Regntyp">
             <button type="button" data-regn-regntyp="cds" aria-pressed="${rtyp === "cds"}"${direktMm ? ' disabled title="CDS-regn kräver återkomsttid"' : ""}>CDS-regn (topp)</button>
             <button type="button" data-regn-regntyp="block" aria-pressed="${rtyp === "block"}">Blockregn (jämnt)</button>
           </div>${
             direktMm
               ? `<p class="flode-liten flode-dampad ar-regn-notis">CDS-regn kräver återkomsttid; blockregn används för direkt regnmängd (mm).</p>`
               : ""
-          }`
+          }`;
+  const dynamikDel =
+    skyfallMetod === "2d"
+      ? val.forval !== "standard"
+        ? regntypDel
         : ""
-    }`;
+      : `<div class="flode-segment liten ar-regn-typ" role="group" aria-label="Beräkningstyp">
+      <button type="button" data-regn-berakningstyp="statisk" aria-pressed="${val.berakningstyp === "statisk"}">Maxdjup (statisk)</button>
+      <button type="button" data-regn-berakningstyp="dynamisk" aria-pressed="${val.berakningstyp === "dynamisk"}">Flöde i tid (dynamisk)</button>
+    </div>${val.berakningstyp === "dynamisk" ? regntypDel : ""}`;
   const egetDel =
     val.forval === "eget"
       ? `<div class="ar-regn-eget">
@@ -339,9 +395,10 @@ export function regnValHtml(
   return `<section class="ar-regn" aria-label="Regn">
     <div class="ar-sektion-rad">
       <span class="ar-sektion-rubrik">Regn</span>
-      <span class="ar-regn-sammanfattning flode-liten flode-dampad">${esc(valdRegnText(val, forval, avtappning))}</span>
+      <span class="ar-regn-sammanfattning flode-liten flode-dampad">${esc(valdRegnText(val, forval, avtappning, skyfallMetod))}</span>
     </div>
     <div class="flode-chips liten ar-regn-chips" role="group" aria-label="Snabbval för regn">${knappar}</div>
+    ${metodDel}
     ${dynamikDel}
     ${egetDel}
     ${felHtml}

@@ -10,6 +10,7 @@ ligger på eller under överfallsnivån, och cellerna förs ihop till polygoner.
 from __future__ import annotations
 
 import csv
+import json
 import math
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,7 @@ MAX_SANKOR = 400
 SAMMANSLAGEN_MAX_DJUP_M = 1.0
 """Sänkor som fylls ihop slås ihop till en enhet så länge den är högst så här djup vid fullt."""
 MAX_FASADPUNKTER = 20000
-SLAG = ("sankor", "flodesvagar", "vsc")
+SLAG = ("sankor", "flodesvagar", "rannsten_flode", "vsc")
 
 
 def _avrunda(v: float, n: int = 2) -> float:
@@ -206,4 +207,51 @@ def vsc_geojson(csv_fil: Path) -> dict[str, Any]:
         "type": "FeatureCollection",
         "features": poster,
         "meta": {"antal_totalt": totalt, "visade": len(poster)},
+    }
+
+
+def rannsten_flode_geojson(geojson_fil: Path) -> dict[str, Any]:
+    """Läser 1D-rännstensflödet (`rannsten_flode.geojson`, EPSG:3011) för kartans vektorlager."""
+    raw = json.loads(geojson_fil.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not isinstance(raw.get("features"), list):
+        raise ValueError(f"{geojson_fil.name} är inte en giltig GeoJSON FeatureCollection.")
+    poster: list[dict[str, Any]] = []
+    for idx, feat in enumerate(raw["features"]):
+        if not isinstance(feat, dict):
+            continue
+        geom = feat.get("geometry")
+        if not isinstance(geom, dict) or geom.get("type") != "LineString":
+            continue
+        coords = geom.get("coordinates")
+        if not isinstance(coords, list) or len(coords) < 2:
+            continue
+        rena_kord: list[list[float]] = []
+        giltig = True
+        for pt in coords:
+            if not isinstance(pt, list | tuple) or len(pt) < 2:
+                giltig = False
+                break
+            e, n = float(pt[0]), float(pt[1])
+            if not (math.isfinite(e) and math.isfinite(n)):
+                giltig = False
+                break
+            rena_kord.append([round(e, 3), round(n, 3)])
+        if not giltig or len(rena_kord) < 2:
+            continue
+        props_raw = feat.get("properties")
+        props: dict[str, Any] = dict(props_raw) if isinstance(props_raw, dict) else {}
+        if "langd_m" not in props and isinstance(props.get("ds_m"), int | float):
+            props["langd_m"] = round(float(props["ds_m"]), 3)
+        poster.append(
+            {
+                "type": "Feature",
+                "id": feat.get("id", f"rannsten-{props.get('segment_id', idx)}"),
+                "geometry": {"type": "LineString", "coordinates": rena_kord},
+                "properties": props,
+            }
+        )
+    return {
+        "type": "FeatureCollection",
+        "features": poster,
+        "meta": {"antal_totalt": len(poster), "visade": len(poster)},
     }

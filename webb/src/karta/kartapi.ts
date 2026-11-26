@@ -24,6 +24,9 @@ export interface RegnParam {
   regntyp?: "cds" | "block" | null;
 }
 
+/** Skyfallsmetod i `POST .../plan`, `POST .../kor` och statussvar (`"graf"` är standard). */
+export type SkyfallMetod = "graf" | "2d";
+
 /** Solparametrar i `POST .../plan` och `POST .../kor` (Våg 2: exakt backend-kontrakt). */
 export interface SolParam {
   datum_iso?: string | null;
@@ -145,6 +148,7 @@ export interface KorningRegnInfo {
   regntyp: "cds" | "block" | null;
   kalla: string | null;
   ar_standard: boolean;
+  skyfall_metod?: SkyfallMetod | null;
 }
 
 /** Strukturerade solparametrar ur en klar körning (additivt i `status` och `lage-idag/status`, B14). */
@@ -168,6 +172,8 @@ export interface KorningPost {
   regn_text?: string | null;
   /** Strukturerade regnparametrar ur körningen (additivt). */
   regn?: KorningRegnInfo | null;
+  /** Använd skyfallsmetod (`"graf"` eller `"2d"`) för vattenkörningen (additivt). */
+  skyfall_metod?: SkyfallMetod | null;
   /** Avtappning till ledningsnät i mm/h, eller null för standard (0 mm/h ej angiven). */
   avtappning_mm_h?: number | null;
   /** Strukturerade solparametrar ur körningen (additivt). */
@@ -186,7 +192,7 @@ export const bytScenarioNamn = (p: string, slug: string, namn: string): Promise<
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/byt-namn`, { namn });
 export const taBortScenario = (p: string, slug: string): Promise<{ borttaget: boolean }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/ta-bort`, {});
-/** `avtappning_mm_h` null = lösarens standard 0 mm/h (ledningsnätet antas fullt). `regn` / `sol` null = projektets förval. */
+/** `avtappning_mm_h` null = lösarens standard 0 mm/h (ledningsnätet antas fullt). `regn` / `sol` null = projektets förval. `skyfall_metod` null / `"graf"` = standard sänkgraf. */
 export const planeraScenario = (
   p: string,
   slug: string,
@@ -194,12 +200,14 @@ export const planeraScenario = (
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
   sol: SolParam | null = null,
+  skyfall_metod: SkyfallMetod | null = null,
 ): Promise<{ slug: string; fragor: PlanPost[] }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/plan`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
     ...(sol ? { sol } : {}),
+    ...(skyfall_metod && skyfall_metod !== "graf" ? { skyfall_metod } : {}),
   });
 export const korScenario = (
   p: string,
@@ -208,12 +216,14 @@ export const korScenario = (
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
   sol: SolParam | null = null,
+  skyfall_metod: SkyfallMetod | null = null,
 ): Promise<{ slug: string; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
   post(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/kor`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
     ...(sol ? { sol } : {}),
+    ...(skyfall_metod && skyfall_metod !== "graf" ? { skyfall_metod } : {}),
   });
 export const scenarioStatus = (p: string, slug: string): Promise<{ slug: string; korningar: KorningPost[] }> =>
   lasJson(`${BAS}/${encodeURIComponent(p)}/scenarier/${encodeURIComponent(slug)}/status`);
@@ -229,12 +239,14 @@ export const planeraLageIdag = (
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
   sol: SolParam | null = null,
+  skyfall_metod: SkyfallMetod | null = null,
 ): Promise<LagePlan> =>
   post(`${BAS}/${encodeURIComponent(p)}/lage-idag/plan`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
     ...(sol ? { sol } : {}),
+    ...(skyfall_metod && skyfall_metod !== "graf" ? { skyfall_metod } : {}),
   });
 export const korLageIdag = (
   p: string,
@@ -242,12 +254,14 @@ export const korLageIdag = (
   avtappning_mm_h: number | null = null,
   regn: RegnParam | null = null,
   sol: SolParam | null = null,
+  skyfall_metod: SkyfallMetod | null = null,
 ): Promise<{ lage: "idag"; fragor: Array<PlanPost & { korning: { korning_id: string } }> }> =>
   post(`${BAS}/${encodeURIComponent(p)}/lage-idag/kor`, {
     analyser,
     avtappning_mm_h,
     ...(regn ? { regn } : {}),
     ...(sol ? { sol } : {}),
+    ...(skyfall_metod && skyfall_metod !== "graf" ? { skyfall_metod } : {}),
   });
 export const lageIdagStatus = (p: string): Promise<{ lage: "idag"; korningar: KorningPost[] }> =>
   lasJson(`${BAS}/${encodeURIComponent(p)}/lage-idag/status`);

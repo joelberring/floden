@@ -124,6 +124,7 @@ LAGE_IDAG_PREFIX = "lage-idag-"
 _STANDARDJAMFORELSE = {
     "vatten.statisk_fyllning": ("max_djup", 0.01),
     "vatten.dynamik": ("max_djup", 0.01),
+    "vatten.2d": ("max_djup", 0.01),
     "dagsljus.soltimmar_mark": ("soltimmar", 0.1),
     "dagsljus.soltimmar_sammanhangande": ("sammanhangande_soltimmar", 0.5),
     "dagsljus.skuggmask_vid_klockslag": ("skuggmask", 0.5),
@@ -131,8 +132,13 @@ _STANDARDJAMFORELSE = {
 }
 """Lösare -> (utdata, tröskel) för jämförelsen före/efter när mallen saknar jämförelser (som `skriv_fragor`)."""
 
-_LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
-_LOSARE_MED_REGN = frozenset({"vatten.statisk_fyllning", "vatten.dynamik"})
+STANDARD_MAX_2D_CELLER = 250_000
+"""Standardgräns för antal rasterceller i en 2D-skyfallskörning via webben (förhindrar oavsiktligt gigantiska jobb)."""
+_GILTIGA_SKYFALL_METODER = frozenset({"graf", "2d"})
+_TVAD_EJ_STODDA_NYCKLAR = ("persistens_faktor", "idf_kalla", "idf_klimatfaktor")
+
+_LOSARE_MED_AVTAPPNING = frozenset({"vatten.statisk_fyllning", "vatten.dynamik", "vatten.2d"})
+_LOSARE_MED_REGN = frozenset({"vatten.statisk_fyllning", "vatten.dynamik", "vatten.2d"})
 _LOSARE_MED_SOL = frozenset(
     {
         "dagsljus.soltimmar_mark",
@@ -166,6 +172,67 @@ _IDF_NYCKLAR_ATT_RENSA = (
     "idf_kalla",
     "idf_klimatfaktor",
 )
+
+
+def _skyfall_metod(v: Any) -> str:
+    """Validerar valfri skyfallsmetod (`"graf"` eller `"2d"`, standard `"graf"`)."""
+    if v is None:
+        return "graf"
+    if not isinstance(v, str) or v not in _GILTIGA_SKYFALL_METODER:
+        raise _fel(f"Ogiltig skyfall_metod: {v!r}. Ange 'graf' eller '2d'.", 400)
+    return v
+
+
+def kontrollera_2d_cellgrans(
+    antal_celler: int, max_2d_celler: int = STANDARD_MAX_2D_CELLER
+) -> None:
+    """Kontrollerar att 2D-domänen inte överskrider tillåten cellgräns (annars tydligt ValueError)."""
+    if isinstance(max_2d_celler, bool) or not isinstance(max_2d_celler, int) or max_2d_celler < 1:
+        raise ValueError(f"max_2d_celler måste vara ett heltal >= 1, fick {max_2d_celler!r}.")
+    if antal_celler > max_2d_celler:
+        raise ValueError(
+            f"Området har {antal_celler} rasterceller, vilket överskrider webbgränsen för "
+            f"2D-skyfall ({max_2d_celler} celler). Välj metoden 'graf' eller ett mindre projektområde."
+        )
+
+
+def _berakna_2d_celler(mall: Mall) -> int:
+    """Beräknar antal rasterceller i 2D-domänen ur K1-rutornas `mark.tif`-huvuden (O(1) utan pixelinläsning)."""
+    import rasterio
+
+    if not mall.rutor:
+        return 0
+    geos: list[tuple[float, float, float, float, float, int, int]] = []
+    for r in mall.rutor:
+        fil = r.mapp / "mark.tif"
+        if not fil.is_file():
+            continue
+        with rasterio.open(fil) as ds:
+            px = abs(float(ds.transform.a))
+            b = ds.bounds
+            geos.append(
+                (
+                    float(b.left),
+                    float(b.bottom),
+                    float(b.right),
+                    float(b.top),
+                    px,
+                    int(ds.width),
+                    int(ds.height),
+                )
+            )
+    if not geos:
+        return 0
+    if len(geos) == 1:
+        return geos[0][5] * geos[0][6]
+    px0 = min(g[4] for g in geos)
+    if px0 <= 0.0:
+        return sum(g[5] * g[6] for g in geos)
+    x0 = min(g[0] for g in geos)
+    y0 = min(g[1] for g in geos)
+    x1 = max(g[2] for g in geos)
+    y1 = max(g[3] for g in geos)
+    return max(1, round((x1 - x0) / px0)) * max(1, round((y1 - y0) / px0))
 
 
 def _avtappning(v: Any) -> float | None:
@@ -264,7 +331,8 @@ def _tillampa_regn(
     *,
     avtappning_mm_h: float | None = None,
 ) -> None:
-    """Skriver in validerade regnparametrar på en skyfallslösare (`vatten.statisk_fyllning` eller `vatten.dynamik`).
+    """Skriver in validerade regnparametrar på en skyfallslösare (`vatten.statisk_fyllning`,
+    `vatten.dynamik` eller `vatten.2d`).
 
     Vid `regn is None` ändras ingenting (100 % oförändrat beteende).
     """
@@ -291,6 +359,15 @@ def _tillampa_regn(
             parametrar["regn_tid_s"] = [0.0, d_s]
             parametrar["regn_mm_h"] = [intens, intens]
             parametrar["regntyp"] = "block"
+            return
+        if losare == "vatten.2d":
+            parametrar.pop("regn_tid_s", None)
+            parametrar.pop("regn_mm_h", None)
+            parametrar["regn_mm"] = float(regn["regn_mm"])
+            if "varaktighet_min" in regn:
+                parametrar["varaktighet_min"] = float(regn["varaktighet_min"])
+            else:
+                parametrar.pop("varaktighet_min", None)
             return
         parametrar["regn_mm"] = float(regn["regn_mm"])
         if "varaktighet_min" in regn:
@@ -341,6 +418,14 @@ def _tillampa_regn(
                 parametrar["regn_tid_s"] = [0.0, d_s]
                 parametrar["regn_mm_h"] = [intens, intens]
                 parametrar["regntyp"] = "block"
+        elif losare == "vatten.2d":
+            if regn.get("regntyp") == "cds":
+                raise _fel(
+                    "CDS-regn kräver återkomsttid (IDF) när projektets skyfallsmall saknar IDF-källa.",
+                    400,
+                )
+            if "varaktighet_min" in regn and "regn_mm" in parametrar:
+                parametrar["varaktighet_min"] = float(regn["varaktighet_min"])
         elif "varaktighet_min" in regn and losare == "vatten.statisk_fyllning":
             parametrar["varaktighet_min"] = float(regn["varaktighet_min"])
         return
@@ -355,7 +440,7 @@ def _tillampa_regn(
     kf = float(regn.get("klimatfaktor", 1.0))
     regntyp = str(regn.get("regntyp", "block"))
     try:
-        if losare == "vatten.dynamik" and regntyp == "cds":
+        if losare in ("vatten.dynamik", "vatten.2d") and regntyp == "cds":
             serie = generera_cds_regn(
                 float(regn["aterkomsttid_ar"]),
                 klimatfaktor=kf,
@@ -375,6 +460,13 @@ def _tillampa_regn(
         parametrar["regn_tid_s"] = list(serie.tid_s)
         parametrar["regn_mm_h"] = list(serie.intensitet_mm_h)
         parametrar["regntyp"] = regntyp
+    elif losare == "vatten.2d":
+        parametrar.pop("regn_mm", None)
+        parametrar.pop("varaktighet_min", None)
+        for nyckel in _IDF_NYCKLAR_ATT_RENSA:
+            parametrar.pop(nyckel, None)
+        parametrar["regn_tid_s"] = list(serie.tid_s)
+        parametrar["regn_mm_h"] = list(serie.intensitet_mm_h)
     else:
         parametrar["regn_mm"] = round(float(serie.total_djup_mm), 3)
         parametrar["varaktighet_min"] = var_min
@@ -586,13 +678,17 @@ class KartverktygTjanst:
         projektrot: Path | None = None,
         kraver_registerid: bool = False,
         forberaknad_lager: ForberaknadKommunLager | None = None,
+        max_2d_celler: int = STANDARD_MAX_2D_CELLER,
     ) -> None:
+        if isinstance(max_2d_celler, bool) or not isinstance(max_2d_celler, int) or max_2d_celler < 1:
+            raise ValueError(f"max_2d_celler måste vara ett heltal >= 1, fick {max_2d_celler!r}.")
         self.fragor = fragor
         self.geomapp = geomapp
         self.projektrot = projektrot if projektrot is not None else fragor.projektrot
         self.kraver_registerid = kraver_registerid
         """Med inloggning på nås projekt i en geografi bara med registrets id (rollerna hänger på det)."""
         self.forberaknad_lager = forberaknad_lager
+        self.max_2d_celler = max_2d_celler
         self.mapp = mapp
         self.datamappar = list(datamappar)
         self.tillat_loopback = tillat_loopback
@@ -604,6 +700,14 @@ class KartverktygTjanst:
         self._kallor: dict[str, Projektkalla] = {}
         self._caps: dict[str, dict[str, Any]] = {}
         self._terrang: dict[str, tuple[Any, list[tuple[np.ndarray[Any, Any], Any]]]] = {}
+
+    def _kontrollera_2d_grans(self, mall: Mall) -> None:
+        """Stoppar för stora 2D-körningar innan K20 skrivs (`ValueError` -> HTTP 400)."""
+        antal = _berakna_2d_celler(mall)
+        try:
+            kontrollera_2d_cellgrans(antal, self.max_2d_celler)
+        except ValueError as exc:
+            raise _fel(str(exc), 400) from exc
 
     def glom_projekt(self, projekt_id: str) -> None:
         """Glömmer det som cachats i minnet för ett projekt som raderats."""
@@ -1427,6 +1531,7 @@ class KartverktygTjanst:
         parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str = "graf",
     ) -> list[dict[str, Any]]:
         """Skriver K9 (per bas) och K20 (per mall) för ett sparat scenario. Returnerar poster.
 
@@ -1467,6 +1572,7 @@ class KartverktygTjanst:
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
                 avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn, sol=sol,
+                skyfall_metod=skyfall_metod,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             ref = self._ref_for(fil)
@@ -1559,6 +1665,7 @@ class KartverktygTjanst:
         parametrar_over: Mapping[str, Mapping[str, Any]] | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str = "graf",
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
         valda, synt_vsc = self._valj_med_vsc(m, analyser, sol, ["fore", "ritat"])
@@ -1571,7 +1678,10 @@ class KartverktygTjanst:
         ut_analyser: list[dict[str, Any]] = []
         losare_per_analys: dict[str, str] = {}
         for a in valda:
-            if dynamisk and a.losare == "vatten.statisk_fyllning":
+            if skyfall_metod == "2d" and a.losare in ("vatten.statisk_fyllning", "vatten.dynamik"):
+                self._kontrollera_2d_grans(m)
+                losare = "vatten.2d"
+            elif dynamisk and a.losare == "vatten.statisk_fyllning":
                 losare = "vatten.dynamik"
             elif har_klockslag and a.losare == "dagsljus.soltimmar_mark":
                 losare = "dagsljus.skuggmask_vid_klockslag"
@@ -1588,6 +1698,13 @@ class KartverktygTjanst:
             }
             if parametrar_over and a.id in parametrar_over:
                 post["parametrar"] = {**post["parametrar"], **parametrar_over[a.id]}
+            if losare == "vatten.2d":
+                for k_rensa in _TVAD_EJ_STODDA_NYCKLAR:
+                    post["parametrar"].pop(k_rensa, None)
+                if "idf" not in post["parametrar"]:
+                    post["parametrar"].pop("regntyp", None)
+                post["parametrar"]["rannsten_1d"] = "auto"
+                post["parametrar"].setdefault("anvand_rust", None)
             if avtappning_mm_h is not None and losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
             _tillampa_regn(losare, post["parametrar"], regn, avtappning_mm_h=avtappning_mm_h)
@@ -1671,6 +1788,7 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str | None = None,
     ) -> dict[str, Any]:
         """Planen för att räkna före och efter: vad som räknas om, radie och uppskattad tid."""
         poster = self._skriv_fragor(
@@ -1680,6 +1798,7 @@ class KartverktygTjanst:
             avtappning_mm_h=_avtappning(avtappning_mm_h),
             regn=_regn(regn),
             sol=_sol(sol),
+            skyfall_metod=_skyfall_metod(skyfall_metod),
         )
         return {"slug": namn_slug, "fragor": self._planposter(poster)}
 
@@ -1722,10 +1841,13 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str | None = None,
     ) -> dict[str, Any]:
         """Startar körningen. `avtappning_mm_h` (valfri) gäller vattnets analyser i körningen;
         utan den gäller standard 0 mm/h (ledningsnätet antas fullt). `regn` (valfri) styr
-        regnparametrarna för skyfallslösarna; `sol` (valfri) styr dagsljusparametrarna."""
+        regnparametrarna för skyfallslösarna; `sol` (valfri) styr dagsljusparametrarna;
+        `skyfall_metod` (`"graf"` eller `"2d"`, standard `"graf"`) väljer skyfallsmetod."""
+        metod = _skyfall_metod(skyfall_metod)
         poster = self._skriv_fragor(
             projekt,
             namn_slug,
@@ -1733,17 +1855,21 @@ class KartverktygTjanst:
             avtappning_mm_h=_avtappning(avtappning_mm_h),
             regn=_regn(regn),
             sol=_sol(sol),
+            skyfall_metod=metod,
         )
         d = self._las(projekt, namn_slug)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
         ut: list[dict[str, Any]] = []
         for p in poster:
             svar = self.fragor.starta_korning(p["ref"], projekt)
-            korningar[p["mall"]] = {
+            post_k: dict[str, Any] = {
                 "korning_id": svar["korning_id"],
                 "ref": p["ref"],
                 "k9_nyckel": p["k9_nyckel"],
             }
+            if p["mall"] == "vatten":
+                post_k["skyfall_metod"] = metod
+            korningar[p["mall"]] = post_k
             ut.append({**p, "korning": svar})
         d["korningar"] = korningar
         fil = self._fil(projekt, namn_slug)
@@ -1774,6 +1900,7 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str = "graf",
     ) -> dict[str, Any]:
         """K20 för läget idag: ett enda scenario (`fore`, projektets befintliga läge), inga jämförelser."""
         bas = self._rel(fil, m.bas)
@@ -1786,7 +1913,10 @@ class KartverktygTjanst:
         har_klockslag = sol is not None and "klockslag_utc" in sol
         ut_analyser: list[dict[str, Any]] = []
         for a in valda:
-            if dynamisk and a.losare == "vatten.statisk_fyllning":
+            if skyfall_metod == "2d" and a.losare in ("vatten.statisk_fyllning", "vatten.dynamik"):
+                self._kontrollera_2d_grans(m)
+                losare = "vatten.2d"
+            elif dynamisk and a.losare == "vatten.statisk_fyllning":
                 losare = "vatten.dynamik"
             elif har_klockslag and a.losare == "dagsljus.soltimmar_mark":
                 losare = "dagsljus.skuggmask_vid_klockslag"
@@ -1800,6 +1930,13 @@ class KartverktygTjanst:
                 "scenarier": ["fore"],
                 "parametrar": dict(a.parametrar),
             }
+            if losare == "vatten.2d":
+                for k_rensa in _TVAD_EJ_STODDA_NYCKLAR:
+                    post["parametrar"].pop(k_rensa, None)
+                if "idf" not in post["parametrar"]:
+                    post["parametrar"].pop("regntyp", None)
+                post["parametrar"]["rannsten_1d"] = "auto"
+                post["parametrar"].setdefault("anvand_rust", None)
             if avtappning_mm_h is not None and losare in _LOSARE_MED_AVTAPPNING:
                 post["parametrar"]["avtappning_mm_h"] = float(avtappning_mm_h)
             _tillampa_regn(losare, post["parametrar"], regn, avtappning_mm_h=avtappning_mm_h)
@@ -1829,6 +1966,7 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str = "graf",
     ) -> list[dict[str, Any]]:
         """Skriver en K20 per mall (bara `fore`) för de valda analyserna. Returnerar poster som `_skriv_fragor`."""
         kalla = self.kalla(projekt)
@@ -1849,7 +1987,7 @@ class KartverktygTjanst:
             fraga_id = f"{LAGE_IDAG_PREFIX}{proj}-{kort}"
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._lage_k20(
-                mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol
+                mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol, skyfall_metod
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             poster.append(
@@ -1869,10 +2007,16 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str | None = None,
     ) -> dict[str, Any]:
         """Planen för läget idag (bara `fore`): jobb, vad som finns i cachen och uppskattad tid."""
         poster = self._skriv_lage_fragor(
-            projekt, valda, _avtappning(avtappning_mm_h), _regn(regn), _sol(sol)
+            projekt,
+            valda,
+            _avtappning(avtappning_mm_h),
+            _regn(regn),
+            _sol(sol),
+            _skyfall_metod(skyfall_metod),
         )
         fragor = self._planposter(poster)
         tider = [f["uppskattad_tid_s"] for f in fragor]
@@ -1891,24 +2035,34 @@ class KartverktygTjanst:
         avtappning_mm_h: float | None = None,
         regn: Mapping[str, Any] | None = None,
         sol: Mapping[str, Any] | None = None,
+        skyfall_metod: str | None = None,
     ) -> dict[str, Any]:
         """Startar körningen av läget idag och sparar den som projektets egen (`projekt_id` på körningen,
         och `<projekt>/lage-idag.json` pekar ut den senaste per mall). Samma körkö, samma cache och
         samma roll (utredare) som övriga körningar; en pågående körning av samma fråga återanvänds."""
+        metod = _skyfall_metod(skyfall_metod)
         poster = self._skriv_lage_fragor(
-            projekt, valda, _avtappning(avtappning_mm_h), _regn(regn), _sol(sol)
+            projekt,
+            valda,
+            _avtappning(avtappning_mm_h),
+            _regn(regn),
+            _sol(sol),
+            metod,
         )
         d = self._las_lage(projekt)
         korningar: dict[str, Any] = dict(d.get("korningar", {}))
         ut: list[dict[str, Any]] = []
         for p in poster:
             svar = self.fragor.starta_korning(p["ref"], projekt)
-            korningar[p["mall"]] = {
+            post_k: dict[str, Any] = {
                 "korning_id": svar["korning_id"],
                 "ref": p["ref"],
                 "fraga_id": p["fraga_id"],
                 "analyser": p["analyser"],
             }
+            if p["mall"] == "vatten":
+                post_k["skyfall_metod"] = metod
+            korningar[p["mall"]] = post_k
             ut.append({**p, "korning": svar})
         fil = self._lage_fil(projekt)
         skriv_atomiskt_text(
@@ -2003,7 +2157,8 @@ class KartverktygTjanst:
             return None, None
 
         losare = str(vatten_analys.get("losare")) if vatten_analys is not None else "vatten.statisk_fyllning"
-        berakningstyp = "dynamisk" if losare == "vatten.dynamik" else "statisk"
+        skyfall_metod = "2d" if losare == "vatten.2d" else "graf"
+        berakningstyp = "dynamisk" if losare in ("vatten.dynamik", "vatten.2d") else "statisk"
         manifest = self._forsta_jobb_manifest(korning_id, _LOSARE_MED_REGN)
         job_par = manifest.get("parametrar", {}) if isinstance(manifest, Mapping) else {}
         job_mv = manifest.get("matvarden", {}) if isinstance(manifest, Mapping) else {}
@@ -2126,6 +2281,7 @@ class KartverktygTjanst:
             "regntyp": regntyp,
             "kalla": kalla,
             "ar_standard": ar_standard,
+            "skyfall_metod": skyfall_metod,
         }
         return regn_info, avtappning_mm_h
 
@@ -2241,6 +2397,11 @@ class KartverktygTjanst:
                 "vyer": [],
                 "regn_text": None,
                 "regn": None,
+                "skyfall_metod": (
+                    k.get("skyfall_metod")
+                    if k.get("skyfall_metod") in _GILTIGA_SKYFALL_METODER
+                    else ("graf" if kort == "vatten" else None)
+                ),
                 "avtappning_mm_h": None,
                 "sol": None,
             }
@@ -2253,6 +2414,8 @@ class KartverktygTjanst:
                         mallar, k["korning_id"], res
                     )
                     post["regn"] = regn_info
+                    if regn_info is not None and regn_info.get("skyfall_metod") in _GILTIGA_SKYFALL_METODER:
+                        post["skyfall_metod"] = regn_info["skyfall_metod"]
                     post["avtappning_mm_h"] = avt_mm_h
                     regn_text = self._regn_text_fran_resultat(res)
                     if regn_text is None and regn_info and regn_info.get("regn_mm") is not None:
@@ -2450,6 +2613,11 @@ class KartverktygTjanst:
                 "vyer": [],
                 "regn_text": None,
                 "regn": None,
+                "skyfall_metod": (
+                    k.get("skyfall_metod")
+                    if k.get("skyfall_metod") in _GILTIGA_SKYFALL_METODER
+                    else ("graf" if kort == "vatten" else None)
+                ),
                 "avtappning_mm_h": None,
                 "sol": None,
             }
@@ -2462,6 +2630,8 @@ class KartverktygTjanst:
                         mallar, k["korning_id"], res
                     )
                     post["regn"] = regn_info
+                    if regn_info is not None and regn_info.get("skyfall_metod") in _GILTIGA_SKYFALL_METODER:
+                        post["skyfall_metod"] = regn_info["skyfall_metod"]
                     post["avtappning_mm_h"] = avt_mm_h
                     regn_text = self._regn_text_fran_resultat(res)
                     if regn_text is None and regn_info and regn_info.get("regn_mm") is not None:

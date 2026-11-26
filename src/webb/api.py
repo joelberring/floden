@@ -135,7 +135,7 @@ from testsvit.korare import Testfall, TestsvitFel, hitta_testfall
 from tvad.felindikator import berakna_2d_felindikator
 from webb.fel import FlodenWebbFel
 from webb.fragor import STANDARD_MAX_KO, FragaTjanst, skriv_atomiskt_text
-from webb.kartverktyg import LAGE_IDAG_PREFIX, KartverktygTjanst
+from webb.kartverktyg import LAGE_IDAG_PREFIX, STANDARD_MAX_2D_CELLER, KartverktygTjanst
 from webb.moduler import lista_moduler
 from webb.projekt import PROJEKT_ID as PROJEKT_ID_DEMO
 from webb.projekt import ProjektTjanst
@@ -1032,6 +1032,7 @@ def _skapa_kartverktyg(
     geomapp: Path | None = None,
     kraver_registerid: bool = False,
     forberaknad_lager: ForberaknadKommunLager | None = None,
+    max_2d_celler: int | None = None,
 ) -> KartverktygTjanst:
     """Kartverktyget: lokal mapp för scenarier och ritade frågor (inte i git) och datamappar."""
     rot = konfig_fil.resolve().parent
@@ -1051,6 +1052,11 @@ def _skapa_kartverktyg(
             if miljo
             else list(webb.get("datamappar", STANDARD_DATAMAPPAR))
         )
+    eff_max_2d = (
+        max_2d_celler
+        if max_2d_celler is not None
+        else int(webb.get("max_2d_celler", STANDARD_MAX_2D_CELLER))
+    )
     return KartverktygTjanst(
         fragor,
         abs_(mapp or webb.get("kartverktygsmapp", STANDARD_KARTVERKTYGSMAPP)),
@@ -1059,6 +1065,7 @@ def _skapa_kartverktyg(
         geomapp=geomapp,
         kraver_registerid=kraver_registerid,
         forberaknad_lager=forberaknad_lager,
+        max_2d_celler=eff_max_2d,
     )
 
 
@@ -1097,6 +1104,7 @@ class FlodenApiApp:
         geomapp: str | Path | None = None,
         projektmapp: str | Path | None = None,
         forberaknad_lager: ForberaknadKommunLager | None = None,
+        max_2d_celler: int | None = None,
     ) -> None:
         self.rapportmapp = _rapportmapp(Path(konfig_fil), rapportmapp)
         _rot = Path(konfig_fil).resolve().parent
@@ -1112,6 +1120,7 @@ class FlodenApiApp:
         self._projektinst: ProjektInstallningarTjanst | None = None
         self._rapportjobb: RapportJobbTjanst | None = None
         self._kartkonfig = (kartverktygsmapp, datamappar, tillat_loopback_underlag)
+        self._max_2d_celler = max_2d_celler
         self._kartverktyg: KartverktygTjanst | None = None
         self._vy3d: Vy3dTjanst | None = None
         self.konfig_fil = Path(konfig_fil)
@@ -1215,6 +1224,7 @@ class FlodenApiApp:
                     geomapp=self.geomapp,
                     kraver_registerid=self.konto.aktiv,
                     forberaknad_lager=forb,
+                    max_2d_celler=self._max_2d_celler,
                 )
             return self._kartverktyg
 
@@ -3623,10 +3633,15 @@ class FlodenApiApp:
             avt_l = kropp_l.get("avtappning_mm_h")
             regn_l = kropp_l.get("regn")
             sol_l = kropp_l.get("sol")
+            metod_l = kropp_l.get("skyfall_metod")
             if verb == "POST" and rest == ["lage-idag", "plan"]:
-                return _json_svar(200, kv.planera_lage_idag(projekt, valda_l, avt_l, regn_l, sol_l))
+                return _json_svar(
+                    200, kv.planera_lage_idag(projekt, valda_l, avt_l, regn_l, sol_l, metod_l)
+                )
             if verb == "POST" and rest == ["lage-idag", "kor"]:
-                return _json_svar(202, kv.kor_lage_idag(projekt, valda_l, avt_l, regn_l, sol_l))
+                return _json_svar(
+                    202, kv.kor_lage_idag(projekt, valda_l, avt_l, regn_l, sol_l, metod_l)
+                )
             if verb == "GET" and rest == ["lage-idag", "status"]:
                 return _json_svar(200, kv.status_lage_idag(projekt))
             return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})
@@ -3651,10 +3666,11 @@ class FlodenApiApp:
             avt = kropp_d.get("avtappning_mm_h")
             regn = kropp_d.get("regn")
             sol = kropp_d.get("sol")
+            metod_d = kropp_d.get("skyfall_metod")
             if verb == "POST" and tail == ["plan"]:
-                return _json_svar(200, kv.planera(projekt, namn, valda, avt, regn, sol))
+                return _json_svar(200, kv.planera(projekt, namn, valda, avt, regn, sol, metod_d))
             if verb == "POST" and tail == ["kor"]:
-                return _json_svar(202, kv.kor(projekt, namn, valda, avt, regn, sol))
+                return _json_svar(202, kv.kor(projekt, namn, valda, avt, regn, sol, metod_d))
             if verb == "GET" and tail == ["status"]:
                 return _json_svar(200, kv.status(projekt, namn))
         return _json_svar(404, {"fel": f"Okänd endpoint: {verb} {sokvag}", "status": 404})

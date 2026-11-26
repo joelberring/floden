@@ -13,7 +13,9 @@ import {
   regnSignatur,
   regnSignaturFranKorningar,
   STANDARD_REGNVAL,
+  STANDARD_SKYFALL_METOD,
   type RegnVal,
+  type SkyfallMetod,
 } from "./regnval.ts";
 import {
   lasSolVal,
@@ -70,6 +72,8 @@ export interface FlodeTillstand {
   avtappning: number | null;
   /** Vald regninställning (Standard, 10-årsregn, 100-årsregn, Extremregn eller Eget). */
   regn: RegnVal;
+  /** Vald skyfallsmetod (`"graf"` = sänkgraf standard, `"2d"` = fördjupad 2D lokal tröghet). */
+  skyfallMetod: SkyfallMetod;
   /** Vald solinställning (datum, brukstid, sammanhängande soltimmar, VSC). */
   sol: SolVal;
   /** Regn+avtappningssignatur för senaste klara körning av läget idag respektive förslag. */
@@ -95,6 +99,7 @@ interface Sparat {
   bestallning: Bestallning;
   avtappning?: number | null;
   regn?: RegnVal;
+  skyfallMetod?: SkyfallMetod;
   sol?: SolVal;
 }
 
@@ -118,6 +123,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
     bestallning: { ...FORVAL_BESTALLNING },
     avtappning: null,
     regn: { ...STANDARD_REGNVAL },
+    skyfallMetod: STANDARD_SKYFALL_METOD,
     sol: { ...STANDARD_SOLVAL },
     lageRegnSignatur: null,
     ritRegnSignatur: null,
@@ -136,6 +142,7 @@ export function tillstandFor(projekt: string): FlodeTillstand {
       t.bestallning = { ...FORVAL_BESTALLNING, ...s.bestallning };
       t.avtappning = typeof s.avtappning === "number" && Number.isFinite(s.avtappning) && s.avtappning >= 0 ? s.avtappning : null;
       t.regn = lasRegnVal(s.regn);
+      t.skyfallMetod = s.skyfallMetod === "2d" ? "2d" : STANDARD_SKYFALL_METOD;
       t.sol = lasSolVal(s.sol);
     }
   } catch {
@@ -154,6 +161,7 @@ export function sparaTillstand(t: FlodeTillstand): void {
       bestallning: t.bestallning,
       avtappning: t.avtappning,
       regn: t.regn,
+      skyfallMetod: t.skyfallMetod,
       sol: t.sol,
     };
     sessionStorage.setItem(NYCKEL + t.projekt, JSON.stringify(s));
@@ -314,11 +322,12 @@ export function bedomInstallningsStatus(
     | "ritRegnSignatur"
     | "lageSolSignatur"
     | "ritSolSignatur"
-  >,
+  > & { skyfallMetod?: SkyfallMetod },
   amne: string,
   projektVyer?: readonly Pick<ProjektVy, "avsnitt">[] | null,
 ): InstallningsStatus {
-  const regnSignNu = regnSignatur(t.regn, t.avtappning);
+  const skyfallMetod: SkyfallMetod = t.skyfallMetod === "2d" ? "2d" : "graf";
+  const regnSignNu = regnSignatur(t.regn, t.avtappning, skyfallMetod);
   const solSignNu = solSignatur(t.sol);
   const harProjektVatten = (projektVyer ?? []).some((v) => v.avsnitt === "vatten");
   const harProjektSol = (projektVyer ?? []).some((v) => v.avsnitt === "dagsljus");
@@ -328,7 +337,10 @@ export function bedomInstallningsStatus(
   const harRitSol = t.ritVyer.some((v) => v.avsnitt === "dagsljus");
 
   const arStandardRegn =
-    t.regn.forval === "standard" && t.regn.berakningstyp === "statisk" && t.avtappning === null;
+    skyfallMetod === "graf" &&
+    t.regn.forval === "standard" &&
+    t.regn.berakningstyp === "statisk" &&
+    t.avtappning === null;
   const harNulageForRegn =
     (harLageVatten && t.lageRegnSignatur === regnSignNu) ||
     (harRitVatten && t.ritRegnSignatur === regnSignNu) ||
@@ -350,7 +362,10 @@ export function bedomInstallningsStatus(
     varningText =
       "Valt regn och solinställning skiljer sig från visat resultat (eller saknar beräkning).";
   } else if (regnUtdaterat) {
-    varningText = "Valt regn skiljer sig från visat resultat (eller saknar beräkning).";
+    varningText =
+      skyfallMetod === "2d"
+        ? "Vald skyfallsmetod (2D) eller regn skiljer sig från visat resultat (eller saknar beräkning)."
+        : "Valt regn skiljer sig från visat resultat (eller saknar beräkning).";
   } else if (solUtdaterat) {
     varningText = "Vald solinställning skiljer sig från visat resultat (eller saknar beräkning).";
   }

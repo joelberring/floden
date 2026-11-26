@@ -323,6 +323,19 @@ export interface DemoSvar {
   };
 }
 
+export interface VektorLagerRef {
+  id: string;
+  analys: string;
+  scenario: string;
+  ruta: string | null;
+  roll: string;
+  etikett: string;
+  enhet: string;
+  fil: string;
+  url: string;
+  vektor_url: string;
+}
+
 export interface ResultatSvar {
   korning: KorningSvar;
   fraga_id: string;
@@ -333,6 +346,8 @@ export interface ResultatSvar {
   jamforelser: JamforelseResultat[];
   varningar: VarningPost[];
   lager: LagerPost[];
+  /** Additivt: GeoJSON-vektorutdata ur körningen (t.ex. `rannsten_flode`). */
+  vektorlager?: VektorLagerRef[];
   byggnader: ByggnaderSvar | null;
   /** Projektets polygon när projektet har en (mark och byggnader räknas bara inne i den), annars null. */
   projekt_avgransning?: ProjektAvgransning | null;
