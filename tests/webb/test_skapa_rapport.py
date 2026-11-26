@@ -123,18 +123,23 @@ def test_dagsljus_ger_rapport_med_beställning_for_mottagare(v: Varld) -> None:
     assert best["mottagare_roll"] == "byggaktor" and best["amnen"] == ["dagsljus", "sol"]
 
 
-def test_amnen_visar_vad_som_kan_skapas_och_varfor_ekologi_inte(v: Varld) -> None:
+def test_amnen_visar_alla_fyra_amnen_med_mall_och_ekologi_kan_skapas(v: Varld) -> None:
     s, d = v.json(v.anna, "GET", f"/api/projekt/{DEMO}/rapporter")
     assert s == 200
     per = {a["id"]: a for a in d["amnen"]}
+    assert [a["id"] for a in d["amnen"]] == ["skyfall", "dagsljus", "ekologi", "luft"]
     assert per["skyfall"]["kan_skapas"] and per["skyfall"]["forval_korning"] == "demo-vatten"
     assert per["dagsljus"]["kan_skapas"] and per["dagsljus"]["forval_korning"] == "demo-dagsljus"
-    eko = per["ekologi"]
-    assert not eko["kan_skapas"] and not eko["mall"] and "via MCP" in eko["forklaring"]
-    # Att försöka ändå ger 409 med samma förklaring, och inget jobb skapas.
-    s2, e = v.json(v.anna, "POST", f"/api/projekt/{DEMO}/rapporter", {"amne": "ekologi"})
-    assert s2 == 409 and "via MCP" in e["fel"]
-    assert not (v.rot / "rapporter" / "jobb").exists()
+    assert per["ekologi"]["kan_skapas"] and per["ekologi"]["mall"] and per["ekologi"]["forval_korning"] == "demo-ekologi"
+    assert per["luft"]["kan_skapas"] and per["luft"]["mall"] and per["luft"]["forval_korning"] == "demo-luft"
+    # Ekologi skapas numera i steg 3 utan 409 och exporterar PDF och Word.
+    s2, jobb = v.json(v.anna, "POST", f"/api/projekt/{DEMO}/rapporter", {"amne": "ekologi"})
+    assert s2 == 202, jobb
+    assert jobb["korning_id"] == "demo-ekologi"
+    slut = v.vanta(v.anna, jobb)
+    assert slut["status"] == "klar", slut
+    assert slut["kontroll"] == {"godkand": True, "antal_fel": 0, "exporterad": True}
+    assert set(slut["lankar"]) == {"pdf", "word"}
 
 
 def test_behorighet_csrf_och_indata(v: Varld) -> None:
@@ -149,7 +154,7 @@ def test_behorighet_csrf_och_indata(v: Varld) -> None:
     assert v.json(v.bo, "POST", url, {"amne": "skyfall"})[0] == 403
     v.miljo.adapter.konfig = replace(v.miljo.adapter.konfig, demoprojekt_roll="utredare")
     # Dålig indata.
-    assert v.json(v.anna, "POST", url, {"amne": "luft"})[0] == 400
+    assert v.json(v.anna, "POST", url, {"amne": "buller"})[0] == 400
     assert v.json(v.anna, "POST", url, {"amne": "skyfall", "extra": 1})[0] == 400
     assert v.json(v.anna, "POST", url, {"amne": "skyfall", "bestallning": {"okänt": 1}})[0] == 400
     assert v.json(v.anna, "POST", url, {"amne": "skyfall", "bestallning": {"syfte": "Mejla anna@example.test"}})[0] == 400  # personuppgift i syftet
@@ -206,8 +211,9 @@ def test_webbflodet_laser_scenarierna_ur_korningen_och_gissar_inga_mottagare() -
     r.korningar[0]["jamforelser"] = []
     with pytest.raises(ValueError, match="jämförelse"):
         skyfall_pastaenden(r, demo=False)  # type: ignore[arg-type]
-    assert saknad_mall("ekologi") and "R2" in (saknad_mall("ekologi") or "")
     assert saknad_mall("skyfall") is None and saknad_mall("dagsljus") is None
+    assert saknad_mall("ekologi") is None and saknad_mall("luft") is None
+    assert saknad_mall("okant") is not None
     assert callable(pastaenden_for)
 
 

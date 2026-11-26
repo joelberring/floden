@@ -21,7 +21,7 @@ import json
 import os
 import re
 import threading
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -410,6 +410,22 @@ def sammanfattning(rapport: Rapport, arkiv: RapportArkiv | None = None) -> dict[
     }
 
 
+@dataclass(frozen=True)
+class _ProjektOppenPolicy(Policy):
+    """Policy som slår upp projektets K38-öppenhet (`projekt_oppen`) när projektet saknar explicit projektklass."""
+
+    projekt_oppen: Callable[[str], bool | None] | None = None
+
+    def projektklass(self, projekt_id: str) -> DataKlass:
+        if projekt_id in self.projektklasser:
+            return self.projektklasser[projekt_id]
+        if self.projekt_oppen is not None:
+            oppet = self.projekt_oppen(projekt_id)
+            if oppet is not None:
+                return DataKlass.OPPET if oppet else DataKlass.INTERNT
+        return super().projektklass(projekt_id)
+
+
 class RapportTjanst:
     """Skapa rapporter, lägg till påståenden, kontrollera och exportera (enda vägen in)."""
 
@@ -419,6 +435,7 @@ class RapportTjanst:
         *,
         rapportmapp: str | Path | None = None,
         policy: Policy | None = None,
+        projekt_oppen: Callable[[str], bool | None] | None = None,
         katalog: Fragekatalog | None = None,
         korlogg: Korlogg | None = None,
         lokala_forval: Mapping[str, Any] | None = None,
@@ -436,7 +453,17 @@ class RapportTjanst:
         mapp = Path(rapportmapp) if rapportmapp is not None else _rapportmapp_for(tjanst)
         self.arkiv = RapportArkiv(mapp)
         self.bestallningar = BestallningArkiv(mapp / "bestallningar")
-        self.policy = policy or Policy()
+        bas_policy = policy or Policy()
+        oppen_fn = projekt_oppen if projekt_oppen is not None else getattr(tjanst, "projekt_oppen", None)
+        if callable(oppen_fn) and not isinstance(bas_policy, _ProjektOppenPolicy):
+            self.policy: Policy = _ProjektOppenPolicy(
+                standard=bas_policy.standard,
+                per_klient=bas_policy.per_klient,
+                projektklasser=bas_policy.projektklasser,
+                projekt_oppen=oppen_fn,
+            )
+        else:
+            self.policy = bas_policy
         self._katalog = katalog
         self.korlogg = korlogg
         self.kalla = FlodenBelaggKalla(tjanst)
@@ -609,8 +636,14 @@ class RapportTjanst:
                     utsnitt = kartutsnitt(res, j)
                     for typ, scen in (("bas", j["fore"]), ("scenario", j["efter"]), ("skillnad", j["efter"])):
                         if typ == "bas":
-                            # Före-kartan är densamma för alla alternativ med samma utsnitt: en bild.
-                            nyckel = (k["korning_id"], j["analys"], j["fore"], tuple(utsnitt or ()))
+                            # Före-kartan är densamma för alla alternativ med samma utdataroll och utsnitt: en bild.
+                            nyckel = (
+                                k["korning_id"],
+                                j["analys"],
+                                j["utdata"],
+                                j["fore"],
+                                tuple(utsnitt or ()),
+                            )
                             if nyckel in gjorda_bas:
                                 continue
                             gjorda_bas.add(nyckel)
@@ -621,6 +654,7 @@ class RapportTjanst:
                                 j["analys"],
                                 typ=typ,
                                 scenario=scen,
+                                roll=j["utdata"],
                                 utsnitt=utsnitt,
                                 max_px=KART_PX,
                                 rubrik=rubrik,
@@ -699,7 +733,7 @@ class RapportTjanst:
                     "efter": scen,
                 }
                 utsnitt = kartutsnitt(res, j_bas)
-                nyckel = (k["korning_id"], analys, scen, tuple(utsnitt or ()))
+                nyckel = (k["korning_id"], analys, roll, scen, tuple(utsnitt or ()))
                 if nyckel in gjorda_bas:
                     continue
                 gjorda_bas.add(nyckel)
@@ -710,6 +744,7 @@ class RapportTjanst:
                         analys,
                         typ=typ,
                         scenario=scen,
+                        roll=roll,
                         utsnitt=utsnitt,
                         max_px=KART_PX,
                         rubrik=rubrik,

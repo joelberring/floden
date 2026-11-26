@@ -55,8 +55,9 @@ def underlagstext(underlag: dict[str, Any] | None, sbk: bool = True) -> str:
 
 def korningar_for(rt: RapportTjanst, projekt: str, amne: str) -> list[dict[str, Any]]:
     """Klara körningar i projektet som rapporten om `amne` kan bygga på (ämnets analys med jämförelse, eller
-    projektets körning av läget idag när nulägesrapport stöds), i förvalsordning: användarens förslag, egna
-    körningar (med jämförelse före läget idag), demokörningen; nyast först inom varje grupp."""
+    projektets körning av läget idag när nulägesrapport stöds; för luft gäller lösaren `luft.mkn` utan
+    jämförelser), i förvalsordning: användarens förslag, egna körningar (med jämförelse före läget idag),
+    demokörningen; nyast först inom varje grupp."""
     app = rt.tjanst.app
     ut: list[dict[str, Any]] = []
     for k in app.fragor.lista_korningar()["korningar"]:
@@ -69,11 +70,14 @@ def korningar_for(rt: RapportTjanst, projekt: str, amne: str) -> list[dict[str, 
             continue
         u = app.korningsunderlag(kid)
         har_jamforelser = bool(post["jamforelser"])
+        # Luft (`luft.mkn`) har före och efter som separata analyser, aldrig [[jamforelser]].
         # Läget idag (nuläge utan ritförslag) stöds för ämnen som har nulägesrapport (skyfall, dagsljus m.fl.),
-        # men inte för ekologi vars kontroll kräver före, efter och skillnad.
-        if not har_jamforelser and (
+        # men inte för ekologi vars kontroll kräver före, efter och skillnad (samt giltig ekologi.json/nätverk).
+        if amne != "luft" and not har_jamforelser and (
             u["slag"] != "lage_idag" or not post["scenarier"] or amne == "ekologi"
         ):
+            continue
+        if amne == "ekologi" and "antaganden" in post and not post["antaganden"]:
             continue
         ut.append(
             {
@@ -127,6 +131,12 @@ def valj_korning(
         raise UnderlagFel(
             f"Förslaget '{scenario}' har ingen klar beräkning av {namn} med före och efter. "
             "Kör beräkningen i steg 2 (Karta & analys) först.",
+            409,
+        )
+    if amne == "luft":
+        raise UnderlagFel(
+            "Det finns ingen klar luftberäkning (luft.mkn) i projektet. "
+            "Ange timserie (CSV) och bakgrundshalt (µg/m³) för att skapa rapporten.",
             409,
         )
     raise UnderlagFel(
