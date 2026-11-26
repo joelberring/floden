@@ -599,9 +599,13 @@ def _skriv_dynamik_tidsserie_och_tidssteg(
     total_aktiv_area_m2, _, _ = berakna_doman_areor(graf)
 
     har_noder = bool(graf.noder) and bool(res.tider_s) and bool(har_nod.any())
+    res_t = (
+        np.asarray(res.tider_s, dtype=np.float64)
+        if res.tider_s
+        else np.zeros(0, dtype=np.float64)
+    )
     w_lov: np.ndarray[Any, Any] | None = None
     if har_noder:
-        res_t = np.asarray(res.tider_s, dtype=np.float64)
         max_nid = max(graf.noder)
         w_lov = np.full((len(samp_t), max_nid + 1), -np.inf, dtype=np.float64)
         for lov in graf.lovnoder():
@@ -611,6 +615,38 @@ def _skriv_dynamik_tidsserie_och_tidssteg(
                     samp_t, res_t, np.asarray(serie.niva_rh2000, dtype=np.float64)
                 )
 
+    in_serie = getattr(res, "in_kum_m3_serie", ())
+    lagrat_serie = getattr(res, "lagrat_m3_serie", ())
+    utflode_serie = getattr(res, "utflode_kum_m3_serie", ())
+    avtapp_serie = getattr(res, "avtappning_kum_m3_serie", ())
+    har_balans_serie = (
+        res_t.size > 0
+        and len(in_serie) == res_t.size
+        and len(lagrat_serie) == res_t.size
+        and len(utflode_serie) == res_t.size
+        and len(avtapp_serie) == res_t.size
+    )
+    in_kum_arr = (
+        np.interp(samp_t, res_t, np.asarray(in_serie, dtype=np.float64))
+        if har_balans_serie
+        else None
+    )
+    lagrat_arr = (
+        np.interp(samp_t, res_t, np.asarray(lagrat_serie, dtype=np.float64))
+        if har_balans_serie
+        else None
+    )
+    utflode_arr = (
+        np.interp(samp_t, res_t, np.asarray(utflode_serie, dtype=np.float64))
+        if har_balans_serie
+        else None
+    )
+    avtapp_arr = (
+        np.interp(samp_t, res_t, np.asarray(avtapp_serie, dtype=np.float64))
+        if har_balans_serie
+        else None
+    )
+
     punkter: list[dict[str, Any]] = []
     for i, t_val in enumerate(bas_t):
         i_mm_h, kum_mm = _regn_vid(t_val)
@@ -619,14 +655,28 @@ def _skriv_dynamik_tidsserie_och_tidssteg(
             max_djup_m = float(djup.max()) if djup.size else 0.0
             vat_01 = float(np.count_nonzero(djup >= 0.10)) * cell_area_m2
             vat_03 = float(np.count_nonzero(djup >= 0.30)) * cell_area_m2
-            volym_m3 = float(djup.sum()) * cell_area_m2
+            volym_raster_m3 = float(djup.sum()) * cell_area_m2
         else:
             max_djup_m = 0.0
             vat_01 = 0.0
             vat_03 = 0.0
-            volym_m3 = 0.0
-        in_kum_m3 = total_aktiv_area_m2 * (kum_mm / 1000.0)
-        utflode_kum_m3 = max(0.0, in_kum_m3 - volym_m3)
+            volym_raster_m3 = 0.0
+        if (
+            har_balans_serie
+            and in_kum_arr is not None
+            and lagrat_arr is not None
+            and utflode_arr is not None
+            and avtapp_arr is not None
+        ):
+            in_kum_m3 = float(in_kum_arr[i])
+            volym_m3 = float(lagrat_arr[i])
+            utflode_kum_m3 = float(utflode_arr[i])
+            avtappning_kum_m3 = float(avtapp_arr[i])
+        else:
+            in_kum_m3 = total_aktiv_area_m2 * (kum_mm / 1000.0)
+            volym_m3 = volym_raster_m3
+            avtappning_kum_m3 = 0.0
+            utflode_kum_m3 = max(0.0, in_kum_m3 - volym_m3)
         punkter.append(
             {
                 "tid_min": round(t_val / 60.0, 4),
@@ -635,8 +685,10 @@ def _skriv_dynamik_tidsserie_och_tidssteg(
                 "max_djup_m": round(max_djup_m, 4),
                 "vat_yta_01m_m2": round(vat_01, 2),
                 "vat_yta_03m_m2": round(vat_03, 2),
-                "volym_m3": round(volym_m3, 3),
-                "utflode_kum_m3": round(utflode_kum_m3, 3),
+                "in_kum_m3": round(in_kum_m3, 4),
+                "volym_m3": round(volym_m3, 4),
+                "utflode_kum_m3": round(utflode_kum_m3, 4),
+                "avtappning_kum_m3": round(avtappning_kum_m3, 4),
                 "max_hastighet_m_s": None,
             }
         )
@@ -967,6 +1019,19 @@ def _spara_sankgraf_i_cache(nycklar: Sequence[str], post: _SankgrafCachePost) ->
             _SANKGRAF_CACHE.popitem(last=False)
 
 
+def _las_takpolygoner_for_rutor(rutor: Sequence[Any]) -> tuple[Any, ...]:
+    """Läser och sammanfogar `byggnader.gpkg` över K1-rutor, deduplicerat på `byggnad_id`."""
+    from sankgraf.takvatten import las_takpolygoner
+
+    sedda: dict[str, Any] = {}
+    for ruta in rutor:
+        gpkg = Path(ruta.mapp) / "byggnader.gpkg"
+        if gpkg.is_file():
+            for tp in las_takpolygoner(gpkg):
+                sedda.setdefault(tp.byggnad_id, tp)
+    return tuple(sedda[bid] for bid in sorted(sedda))
+
+
 def _bygg_sankgraf_for_rutor(
     namn: str,
     rutor: Sequence[Any],
@@ -1103,11 +1168,20 @@ def _bygg_sankgraf_for_rutor(
         if persistens_faktor is not None:
             graf = filtrera_persistens(graf, faktor=persistens_faktor)
         if takvatten:
+            from sankgraf.typer import MARKSLAG_BYGGNAD
+
+            takpolygoner = _las_takpolygoner_for_rutor(rutor)
+            oppning_mask = np.asarray(
+                (glob_slag == MARKSLAG_BYGGNAD) & (graf.markslag != MARKSLAG_BYGGNAD),
+                dtype=np.bool_,
+            )
             tv = bygg_takvatten(
                 graf.mark_z,
                 graf.markslag,
                 graf.geo,
+                byggnader=takpolygoner,
                 andel_ledning=takvatten_andel_ledning,
+                oppning_mask=oppning_mask if np.any(oppning_mask) else None,
             )
             graf = replace(graf, takvatten=tv)
     except SankGrafFel as exc:
@@ -1310,9 +1384,11 @@ class TvadLokalTroghet(Analyslosare):
         from gemensamt.cog import skriv_komprimerad_cog
         from sankgraf.hierarki import _applicera_oppningar
         from sankgraf.takvatten import bygg_takvatten
+        from sankgraf.typer import MARKSLAG_BYGGNAD
         from tvad.kalltermer import Avtappning, Infiltration2D, Kalltermer
         from tvad.lokal_troghet import TvadFel, kor_2d_lokal_troghet
         from tvad.rannsten_1d import (
+            RannstenFel,
             diskretisera_rannsten_1d,
             exportera_rannsten_flode_geojson,
             kor_kopplad_1d_2d,
@@ -1322,6 +1398,7 @@ class TvadLokalTroghet(Analyslosare):
         geo, mark_z, _, markslag, brytlinjer, oppningar = _las_sammanfogade_rutor(
             self.namn, kontext.scenario.rutor
         )
+        raa_markslag = markslag
         if oppningar:
             mark_z, markslag = _applicera_oppningar(mark_z, markslag, geo, oppningar)
 
@@ -1394,36 +1471,125 @@ class TvadLokalTroghet(Analyslosare):
             if (avtappning is not None or infiltration is not None)
             else None
         )
-        takvatten = (
-            bygg_takvatten(
+        takvatten = None
+        if bool(p["takvatten"]):
+            takpolygoner = _las_takpolygoner_for_rutor(kontext.scenario.rutor)
+            oppning_mask = (
+                np.asarray(
+                    (raa_markslag == MARKSLAG_BYGGNAD) & (markslag != MARKSLAG_BYGGNAD),
+                    dtype=np.bool_,
+                )
+                if oppningar
+                else None
+            )
+            takvatten = bygg_takvatten(
                 mark_z,
                 markslag,
                 geo,
+                byggnader=takpolygoner,
                 andel_ledning=float(p["takvatten_andel_ledning"]),
+                oppning_mask=(
+                    oppning_mask
+                    if (oppning_mask is not None and np.any(oppning_mask))
+                    else None
+                ),
             )
-            if bool(p["takvatten"])
-            else None
+
+        rannsten_lage = p["rannsten_1d"]
+        kantstenar_3d = [
+            b
+            for b in brytlinjer
+            if b.typ in ("kantsten", "sankt_kantsten") and b.z_kron_rh2000 is not None
+        ]
+        kor_1d = bool(
+            (
+                rannsten_lage is True
+                and any(b.typ in ("kantsten", "sankt_kantsten") for b in brytlinjer)
+            )
+            or (rannsten_lage == "auto" and kantstenar_3d)
         )
+        subgrid_faktor = int(p["subgrid_faktor"])
+        extra_varningar: list[str] = []
+        if kor_1d and subgrid_faktor > 1:
+            if rannsten_lage is True:
+                raise LosarFel(
+                    f"{self.namn}: 1D-rännstenskoppling (rannsten_1d=true) kräver "
+                    f"subgrid_faktor=1, fick {subgrid_faktor}."
+                )
+            kor_1d = False
+            extra_varningar.append(
+                f"1D-rännstenskoppling ej tillgänglig med subgrid_faktor={subgrid_faktor}; "
+                "körde 2D utan 1D-rännsten."
+            )
+
+        filer: dict[str, str] = {
+            "max_djup": "max_djup.tif",
+            "hastighet": "hastighet.tif",
+            "ankomsttid": "ankomsttid.tif",
+        }
+        rannsten_info: dict[str, Any] = {"rannsten_1d_aktiv": False}
+        oppna_rander = bool(p["oppna_rander"])
 
         try:
-            res = kor_2d_lokal_troghet(
-                mark_z,
-                markslag,
-                geo,
-                tider,
-                mm_h,
-                slut_tid_s=p.get("slut_tid_s"),
-                subgrid_faktor=int(p["subgrid_faktor"]),
-                oppna_rander=bool(p["oppna_rander"]),
-                kalltermer=kalltermer,
-                takvatten=takvatten,
-                brytlinjer=brytlinjer,
-                enhet=str(p["enhet"]),
-                precision=p["precision"],
-                vattenniva_rh2000_m=p.get("vattenniva_rh2000_m"),
-                anvand_rust=p["anvand_rust"],
-            )
-        except TvadFel as exc:
+            if kor_1d:
+                lank_linjer = kantstenar_3d or [
+                    b for b in brytlinjer if b.typ in ("kantsten", "sankt_kantsten")
+                ]
+                lank = diskretisera_rannsten_1d(
+                    lank_linjer,
+                    mark_z,
+                    markslag,
+                    geo,
+                    korbana_sida=str(p["rannsten_korbana_sida"]),
+                    oppen_nedstroms=oppna_rander,
+                )
+                res_1d = kor_kopplad_1d_2d(
+                    mark_z,
+                    markslag,
+                    geo,
+                    tider,
+                    mm_h,
+                    lank,
+                    brytlinjer=brytlinjer,
+                    slut_tid_s=p.get("slut_tid_s"),
+                    oppna_rander=oppna_rander,
+                    kalltermer=kalltermer,
+                    takvatten=takvatten,
+                    vattenniva_rh2000_m=p.get("vattenniva_rh2000_m"),
+                )
+                res = res_1d.till_tvad_resultat()
+                gj_fil = exportera_rannsten_flode_geojson(
+                    res_1d, kontext.utmapp / "rannsten_flode.geojson"
+                )
+                filer["rannsten_flode"] = gj_fil.name
+                rannsten_info = {
+                    "rannsten_1d_aktiv": True,
+                    "rannsten_1d_fil": gj_fil.name,
+                    "rannsten_1d_segment": lank.antal,
+                    "rannsten_1d_max_djup_m": float(np.max(res_1d.max_djup_1d_m)),
+                    "rannsten_1d_overfall_sankt_m3": float(res_1d.overfall_sankt_m3),
+                    "rannsten_1d_overfall_hog_m3": float(res_1d.overfall_hog_m3),
+                    "rannsten_1d_volymfel_rel": float(res_1d.volymfel_rel),
+                }
+            else:
+                res = kor_2d_lokal_troghet(
+                    mark_z,
+                    markslag,
+                    geo,
+                    tider,
+                    mm_h,
+                    slut_tid_s=p.get("slut_tid_s"),
+                    subgrid_faktor=subgrid_faktor,
+                    oppna_rander=oppna_rander,
+                    kalltermer=kalltermer,
+                    takvatten=takvatten,
+                    brytlinjer=brytlinjer,
+                    enhet=str(p["enhet"]),
+                    precision=p["precision"],
+                    vattenniva_rh2000_m=p.get("vattenniva_rh2000_m"),
+                    anvand_rust=p["anvand_rust"],
+                )
+        except (TvadFel, RannstenFel) as exc:
             raise LosarFel(f"{self.namn}: {exc}") from exc
 
         skriv_komprimerad_cog(
@@ -1451,60 +1617,6 @@ class TvadLokalTroghet(Analyslosare):
             epsg=geo.epsg,
             nodata=float("nan"),
         )
-        filer: dict[str, str] = {
-            "max_djup": "max_djup.tif",
-            "hastighet": "hastighet.tif",
-            "ankomsttid": "ankomsttid.tif",
-        }
-
-        rannsten_lage = p["rannsten_1d"]
-        kantstenar_3d = [
-            b
-            for b in brytlinjer
-            if b.typ in ("kantsten", "sankt_kantsten") and b.z_kron_rh2000 is not None
-        ]
-        kor_1d = bool(
-            (
-                rannsten_lage is True
-                and any(b.typ in ("kantsten", "sankt_kantsten") for b in brytlinjer)
-            )
-            or (rannsten_lage == "auto" and kantstenar_3d)
-        )
-        rannsten_info: dict[str, Any] = {"rannsten_1d_aktiv": False}
-        if kor_1d:
-            lank_linjer = kantstenar_3d or [
-                b for b in brytlinjer if b.typ in ("kantsten", "sankt_kantsten")
-            ]
-            lank = diskretisera_rannsten_1d(
-                lank_linjer,
-                mark_z,
-                markslag,
-                geo,
-                korbana_sida=str(p["rannsten_korbana_sida"]),
-            )
-            res_1d = kor_kopplad_1d_2d(
-                mark_z,
-                markslag,
-                geo,
-                tider,
-                mm_h,
-                lank,
-                brytlinjer=brytlinjer,
-                slut_tid_s=p.get("slut_tid_s"),
-            )
-            gj_fil = exportera_rannsten_flode_geojson(
-                res_1d, kontext.utmapp / "rannsten_flode.geojson"
-            )
-            filer["rannsten_flode"] = gj_fil.name
-            rannsten_info = {
-                "rannsten_1d_aktiv": True,
-                "rannsten_1d_fil": gj_fil.name,
-                "rannsten_1d_segment": lank.antal,
-                "rannsten_1d_max_djup_m": float(np.max(res_1d.max_djup_1d_m)),
-                "rannsten_1d_overfall_sankt_m3": float(res_1d.overfall_sankt_m3),
-                "rannsten_1d_overfall_hog_m3": float(res_1d.overfall_hog_m3),
-                "rannsten_1d_volymfel_rel": float(res_1d.volymfel_rel),
-            }
 
         return LosarUtdata(
             filer=filer,
@@ -1528,7 +1640,7 @@ class TvadLokalTroghet(Analyslosare):
                 **rannsten_info,
                 "volymbalans": res.volymbalans(),
             },
-            varningar=takvatten_varningar(takvatten),
+            varningar=(*takvatten_varningar(takvatten), *extra_varningar),
         )
 
 

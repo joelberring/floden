@@ -40,7 +40,13 @@ from lapp.tillampa import tillampa_lapp
 from sankgraf.avtappning import avtappning_raster, validera_omraden
 from sankgraf.avtappning import beskrivning as avtappning_beskrivning
 from sankgraf.hierarki import _applicera_oppningar
-from sankgraf.takvatten import TAKVATTEN_AV_ANTAGANDE, bygg_takvatten
+from sankgraf.takvatten import (
+    TAKVATTEN_AV_ANTAGANDE,
+    TakPolygon,
+    bygg_takvatten,
+    las_takpolygoner,
+)
+from sankgraf.typer import MARKSLAG_BYGGNAD
 from tvad.kalltermer import Avtappning, Infiltration2D, Kalltermer
 from tvad.lokal_troghet import kor_2d_lokal_troghet, skriv_tvad_resultat_k6
 from tvad.rannsten_1d import (
@@ -55,12 +61,58 @@ from vatten.scenario_lapp import scenario_till_lapp
 ANALYSTYPER_2D = ("maxdjup_2d", "fara_2d", "tid_till_djup")
 _PARAMETRAR = {
     "regn_id", "regn_tid_s", "regn_mm_h", "slut_tid_s", "subgrid_faktor", "ignorera_typer",
+    "oppna_rander",
     "avtappning_mm_h", "brunnar_igensatta_andel", "infiltration",
     "avtappning_omraden", "takvatten", "takvatten_andel_ledning",
     "rannsten_1d", "rannsten_korbana_sida",
     "enhet", "precision",
     "vattenniva_rh2000_m",
 }
+
+
+def _las_takpolygoner_for_2d(
+    indata: Mapping[str, Path], p: Mapping[str, Any]
+) -> tuple[TakPolygon, ...]:
+    """Läser `byggnader.gpkg` (K1 v2) och ev. `byggnad_ny` ur planscenario, deduplicerat på id."""
+    sedda: dict[str, TakPolygon] = {}
+    bygg_fil = indata.get("byggnader")
+    if bygg_fil is None and "mark" in indata:
+        kandidat = Path(indata["mark"]).parent / "byggnader.gpkg"
+        if kandidat.is_file():
+            bygg_fil = kandidat
+    if bygg_fil is not None and Path(bygg_fil).is_file():
+        for tp in las_takpolygoner(bygg_fil):
+            sedda.setdefault(tp.byggnad_id, tp)
+    for a in p.get("andringar") or ():
+        if not isinstance(a, Mapping) or a.get("typ") != "byggnad_ny":
+            continue
+        geom = a.get("geometri")
+        if not isinstance(geom, Mapping) or geom.get("type") != "Polygon":
+            continue
+        coords = geom.get("coordinates")
+        if not isinstance(coords, list | tuple) or not coords:
+            continue
+        yttre = tuple((float(pt[0]), float(pt[1])) for pt in coords[0])
+        hal = tuple(tuple((float(pt[0]), float(pt[1])) for pt in ring) for ring in coords[1:])
+        eg_raw = a.get("egenskaper")
+        eg: Mapping[str, Any] = eg_raw if isinstance(eg_raw, Mapping) else {}
+        bid = str(a.get("andring_id", ""))
+        if bid and len(yttre) >= 3:
+            az_raw = eg.get("takfall_azimut_grader")
+            az = (
+                float(az_raw)
+                if isinstance(az_raw, int | float) and not isinstance(az_raw, bool)
+                else None
+            )
+            tf_raw = eg.get("takform")
+            sedda[bid] = TakPolygon(
+                byggnad_id=bid,
+                polygon=yttre,
+                hal=hal,
+                takform=str(tf_raw) if tf_raw is not None else None,
+                takfall_azimut_grader=az,
+            )
+    return tuple(sedda[bid] for bid in sorted(sedda))
 
 
 def _regn(p: Mapping[str, Any]) -> tuple[list[float], list[float]]:
@@ -96,6 +148,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         brytlinjer = list(t.alla_brytlinjer)  # basens (efter ev. borttag), gatornas och ritade
         oppningar = t.oppningar
         andrade = int(np.count_nonzero(t.andrad_mask))
+    raa_markslag = markslag
     if oppningar:
         mark_z, markslag = _applicera_oppningar(mark_z, markslag, k1.geo, oppningar)
 
@@ -112,13 +165,29 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             kalla=str(avt_info["avtappning_kalla"]),
         )
     tak = _tak(p)
-    takvatten = (
-        bygg_takvatten(
-            mark_z, markslag, k1.geo, andel_ledning=float(tak["takvatten_andel_ledning"])
+    takvatten = None
+    if tak["takvatten"]:
+        takpolygoner = _las_takpolygoner_for_2d(indata, p)
+        oppning_mask = (
+            np.asarray(
+                (raa_markslag == MARKSLAG_BYGGNAD) & (markslag != MARKSLAG_BYGGNAD),
+                dtype=np.bool_,
+            )
+            if oppningar
+            else None
         )
-        if tak["takvatten"]
-        else None
-    )
+        takvatten = bygg_takvatten(
+            mark_z,
+            markslag,
+            k1.geo,
+            byggnader=takpolygoner,
+            andel_ledning=float(tak["takvatten_andel_ledning"]),
+            oppning_mask=(
+                oppning_mask
+                if (oppning_mask is not None and np.any(oppning_mask))
+                else None
+            ),
+        )
     infiltration = None
     if p.get("infiltration") is not None:
         inf = p["infiltration"]
@@ -130,26 +199,16 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             tjale=bool(inf.get("tjale", False)),
         )
     termer = Kalltermer(avtappning=avtappning, infiltration=infiltration)
+    aktiva_termer = termer if (avtappning is not None or infiltration is not None) else None
     tider, mm_h = _regn(p)
     vattenniva = p.get("vattenniva_rh2000_m")
-    res = kor_2d_lokal_troghet(
-        mark_z, markslag, k1.geo, tider, mm_h,
-        slut_tid_s=p.get("slut_tid_s"),
-        subgrid_faktor=int(p.get("subgrid_faktor", 1)),
-        kalltermer=termer if (avtappning is not None or infiltration is not None) else None,
-        takvatten=takvatten,
-        brytlinjer=brytlinjer,
-        enhet=str(p.get("enhet", "cpu")),
-        precision=p.get("precision", "f64"),
-        vattenniva_rh2000_m=float(vattenniva) if vattenniva is not None else None,
-    )
-    k6_param: dict[str, Any] = {"losare": "vatten.2d"}
-    if vattenniva is not None:
-        k6_param["vattenniva_rh2000_m"] = float(vattenniva)
-    skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar=k6_param)
+    vattenniva_f = float(vattenniva) if vattenniva is not None else None
+    oppna_rander = bool(p.get("oppna_rander", True))
+    subgrid_faktor = int(p.get("subgrid_faktor", 1))
 
     # Valfri 1D-rännstenslänk längs 3D-kantstenar (`rannsten_1d="auto"` aktiveras automatiskt
-    # när K1 brytlinjer.gpkg innehåller 3D-kantstenar med `z_kron_rh2000`).
+    # när K1 brytlinjer.gpkg innehåller 3D-kantstenar med `z_kron_rh2000`). Körs som EN enda
+    # kopplad 1D/2D-simulering så att alla K6-raster och volymbalansen kommer ur samma fysik.
     rannsten_lage = p.get("rannsten_1d", "auto")
     kantstenar_3d = [
         b
@@ -160,6 +219,14 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
         (rannsten_lage is True and any(b.typ in ("kantsten", "sankt_kantsten") for b in brytlinjer))
         or (rannsten_lage == "auto" and kantstenar_3d)
     )
+    if kor_1d and subgrid_faktor > 1:
+        if rannsten_lage is True:
+            raise BlaytorFel(
+                f"1D-rännstenskoppling (rannsten_1d=True) kräver subgrid_faktor=1, "
+                f"fick {subgrid_faktor}."
+            )
+        kor_1d = False
+
     rannsten_info: dict[str, Any] = {"rannsten_1d_aktiv": False}
     if kor_1d:
         lank_linjer = kantstenar_3d or [
@@ -171,6 +238,7 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             markslag,
             k1.geo,
             korbana_sida=str(p.get("rannsten_korbana_sida", "vanster")),
+            oppen_nedstroms=oppna_rander,
         )
         res_1d = kor_kopplad_1d_2d(
             mark_z,
@@ -181,7 +249,12 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             lank,
             brytlinjer=brytlinjer,
             slut_tid_s=p.get("slut_tid_s"),
+            oppna_rander=oppna_rander,
+            kalltermer=aktiva_termer,
+            takvatten=takvatten,
+            vattenniva_rh2000_m=vattenniva_f,
         )
+        res = res_1d.till_tvad_resultat()
         gj_fil = exportera_rannsten_flode_geojson(res_1d, ut / "rannsten_flode.geojson")
         rannsten_info = {
             "rannsten_1d_aktiv": True,
@@ -192,6 +265,24 @@ def _kor_2d(indata: Mapping[str, Path], p: Mapping[str, Any], ut: Path) -> dict[
             "rannsten_1d_overfall_hog_m3": res_1d.overfall_hog_m3,
             "rannsten_1d_volymfel_rel": res_1d.volymfel_rel,
         }
+    else:
+        res = kor_2d_lokal_troghet(
+            mark_z, markslag, k1.geo, tider, mm_h,
+            slut_tid_s=p.get("slut_tid_s"),
+            subgrid_faktor=subgrid_faktor,
+            oppna_rander=oppna_rander,
+            kalltermer=aktiva_termer,
+            takvatten=takvatten,
+            brytlinjer=brytlinjer,
+            enhet=str(p.get("enhet", "cpu")),
+            precision=p.get("precision", "f64"),
+            vattenniva_rh2000_m=vattenniva_f,
+        )
+
+    k6_param: dict[str, Any] = {"losare": "vatten.2d"}
+    if vattenniva_f is not None:
+        k6_param["vattenniva_rh2000_m"] = vattenniva_f
+    skriv_tvad_resultat_k6(res, k1.geo, ut, parametrar=k6_param)
 
     return {
         "max_djup_m": float(np.nanmax(res.max_djup_m)),
@@ -241,6 +332,8 @@ def nod_2d(scenario: Planscenario, parametrar: Mapping[str, Any]) -> Nod:
         if isinstance(vn, bool) or not isinstance(vn, int | float) or not math.isfinite(float(vn)):
             raise BlaytorFel(f"vattenniva_rh2000_m måste vara ett ändligt tal, fick {vn!r}.")
         p["vattenniva_rh2000_m"] = float(vn)
+    if "oppna_rander" in p and not isinstance(p["oppna_rander"], bool):
+        raise BlaytorFel(f"oppna_rander måste vara true eller false, fick {p['oppna_rander']!r}.")
     p.update(_tak(p))
     p["avtappning_angiven"] = "avtappning_mm_h" in parametrar
     p["avtappning_mm_h"] = float(p.get("avtappning_mm_h", 0.0))
@@ -251,7 +344,12 @@ def nod_2d(scenario: Planscenario, parametrar: Mapping[str, Any]) -> Nod:
     p["andringar"] = sorted(
         (a.till_dict() for a in scenario.andringar), key=lambda d: d["andring_id"]
     )
-    return Nod(LOSARE_2D, dict(_BASER[bas]), p)
+    indata_nod = dict(_BASER[bas])
+    if "byggnader" not in indata_nod and "mark" in indata_nod:
+        bygg_fil = Path(indata_nod["mark"]).parent / "byggnader.gpkg"
+        if bygg_fil.is_file():
+            indata_nod["byggnader"] = bygg_fil
+    return Nod(LOSARE_2D, indata_nod, p)
 
 
 def _bygg(steg: AnalysSteg, scenario: Planscenario) -> Nod:

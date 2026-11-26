@@ -292,6 +292,34 @@ def _berakna_nod_ogonblicksbild(
     return niva_ut, vol_ut
 
 
+@dataclass(frozen=True)
+class _BalansHistorik:
+    """Exakt massbalans per loggad tidpunkt i `tider_hist`."""
+
+    in_kum_m3: list[float]
+    lagrat_m3: list[float]
+    utflode_kum_m3: list[float]
+    avtappning_kum_m3: list[float]
+
+
+def _kumulativt_regn_m(intervall: Sequence[RegnIntervall], t_val: float) -> float:
+    """Exakt integrerat regn (m) i `intervall` upp till `t_val`."""
+    kum = 0.0
+    for iv in intervall:
+        if t_val >= iv.t_slut_s:
+            kum += iv.regn_m
+            continue
+        if t_val <= iv.t_start_s:
+            break
+        u = t_val - iv.t_start_s
+        r0 = iv.intensitet_start_m_s
+        r1 = iv.intensitet_slut_m_s
+        lutn = (r1 - r0) / iv.dt_s if iv.dt_s > 0.0 else 0.0
+        kum += r0 * u + 0.5 * lutn * u * u
+        break
+    return kum
+
+
 def _kor_handelsestyrd_karna(
     graf: SankGraf,
     intervall: Sequence[RegnIntervall],
@@ -304,6 +332,7 @@ def _kor_handelsestyrd_karna(
     spara_tidsserie: bool,
     utdata_tider_s: Sequence[float] | None,
     avtappning_m3_s: dict[int, float] | None = None,
+    balans_ut: _BalansHistorik | None = None,
 ) -> tuple[
     HandelseKardinalResultat,
     list[float],
@@ -316,11 +345,39 @@ def _kor_handelsestyrd_karna(
     t_slut = intervall[-1].t_slut_s if intervall else t_start
 
     if not cache.sorterade_noder:
-        tider_tom = (
-            sorted({float(t) for t in utdata_tider_s if t_start <= float(t) <= t_slut})
-            if utdata_tider_s is not None
-            else ([t_start, t_slut] if t_slut > t_start else [t_start])
-        )
+        if utdata_tider_s is not None:
+            tider_tom = sorted(
+                {
+                    float(t)
+                    for t in utdata_tider_s
+                    if t_start - _TID_TOL_S <= float(t) <= t_slut + _TID_TOL_S
+                }
+            )
+            if not tider_tom:
+                tider_tom = [t_start, t_slut] if t_slut > t_start else [t_start]
+        elif spara_tidsserie:
+            tom_set: set[float] = {t_start, t_slut}
+            for iv in intervall:
+                tom_set.add(iv.t_start_s)
+                tom_set.add(iv.t_slut_s)
+            if t_slut > t_start:
+                steg_s = (t_slut - t_start) / _STANDARD_ANTAL_SAMPEL
+                for idx in range(1, _STANDARD_ANTAL_SAMPEL):
+                    tom_set.add(t_start + idx * steg_s)
+            tider_tom = sorted(tom_set)
+        else:
+            tider_tom = [t_start, t_slut] if t_slut > t_start else [t_start]
+        if balans_ut is not None:
+            for t in tider_tom:
+                in_t = (
+                    cache.total_aktiv_area_m2
+                    * _kumulativt_regn_m(intervall, t)
+                    * float(avrinning_faktor)
+                )
+                balans_ut.in_kum_m3.append(in_t)
+                balans_ut.lagrat_m3.append(0.0)
+                balans_ut.utflode_kum_m3.append(in_t)
+                balans_ut.avtappning_kum_m3.append(0.0)
         kortid = time.perf_counter() - t_wall_start
         return (
             HandelseKardinalResultat(
@@ -373,6 +430,8 @@ def _kor_handelsestyrd_karna(
             brunn_per_nod[nid] += d
     har_avdrag = brunnar_avdrag_m3_s > 0.0 or har_avtappning
     avtappat_m3 = 0.0
+    in_kum_cur = 0.0
+    ut_yta_m3 = 0.0
 
     # Förbered planerade sampeltider när full tidsserie begärs
     planerade_tider: list[float] = []
@@ -401,6 +460,16 @@ def _kor_handelsestyrd_karna(
     tider_hist: list[float] = []
     nod_niva_hist: dict[int, list[float]] = {nid: [] for nid in cache.sorterade_noder}
     nod_volym_hist: dict[int, list[float]] = {nid: [] for nid in cache.sorterade_noder}
+    balans_hist = (
+        balans_ut
+        if balans_ut is not None
+        else _BalansHistorik(
+            in_kum_m3=[],
+            lagrat_m3=[],
+            utflode_kum_m3=[],
+            avtappning_kum_m3=[],
+        )
+    )
     nasta_plan_idx = 0
 
     def _uppdatera_maxima(niva_nu: dict[int, float], vol_nu: dict[int, float]) -> None:
@@ -413,21 +482,37 @@ def _kor_handelsestyrd_karna(
             if vol_nu[lid] > 0.0:
                 lov_har_vatten[lid] = True
 
-    def _logga_punkt(t_val: float, vol_snapshot: dict[int, float]) -> None:
+    def _logga_punkt(
+        t_val: float,
+        vol_snapshot: dict[int, float],
+        *,
+        in_kum_val: float,
+        ut_yta_val: float,
+        avtapp_val: float,
+    ) -> None:
         niva_nu, vol_nu = _berakna_nod_ogonblicksbild(graf, cache, aktiv, mergad, vol_snapshot)
         _uppdatera_maxima(niva_nu, vol_nu)
         if not spara_tidsserie:
             return
+        lagrat_val = sum(vol_snapshot[nid] for nid in cache.sorterade_noder if aktiv[nid])
         if tider_hist and abs(t_val - tider_hist[-1]) <= 1e-9:
             tider_hist[-1] = t_val
             for nid in cache.sorterade_noder:
                 nod_niva_hist[nid][-1] = niva_nu[nid]
                 nod_volym_hist[nid][-1] = vol_nu[nid]
+            balans_hist.in_kum_m3[-1] = in_kum_val
+            balans_hist.lagrat_m3[-1] = lagrat_val
+            balans_hist.utflode_kum_m3[-1] = ut_yta_val
+            balans_hist.avtappning_kum_m3[-1] = avtapp_val
             return
         tider_hist.append(t_val)
         for nid in cache.sorterade_noder:
             nod_niva_hist[nid].append(niva_nu[nid])
             nod_volym_hist[nid].append(vol_nu[nid])
+        balans_hist.in_kum_m3.append(in_kum_val)
+        balans_hist.lagrat_m3.append(lagrat_val)
+        balans_hist.utflode_kum_m3.append(ut_yta_val)
+        balans_hist.avtappning_kum_m3.append(avtapp_val)
 
     def _hantera_fulla_och_sammanslagningar(t_nu: float, kandidater: list[int]) -> None:
         """Markerar noder som nått maxvolym, slår ihop fulla syskonpar rekursivt."""
@@ -500,10 +585,16 @@ def _kor_handelsestyrd_karna(
             nasta_plan_idx < len(planerade_tider)
             and planerade_tider[nasta_plan_idx] <= t_start + _TID_TOL_S
         ):
-            _logga_punkt(planerade_tider[nasta_plan_idx], volym)
+            _logga_punkt(
+                planerade_tider[nasta_plan_idx],
+                volym,
+                in_kum_val=0.0,
+                ut_yta_val=0.0,
+                avtapp_val=0.0,
+            )
             nasta_plan_idx += 1
         if utdata_tider_s is None and not tider_hist:
-            _logga_punkt(t_start, volym)
+            _logga_punkt(t_start, volym, in_kum_val=0.0, ut_yta_val=0.0, avtapp_val=0.0)
 
     ut_m3 = 0.0
     max_handelser = max(10_000, len(cache.sorterade_noder) * 50 + len(intervall) * 20)
@@ -583,25 +674,51 @@ def _kor_handelsestyrd_karna(
                     t_samp = planerade_tider[nasta_plan_idx]
                     u_s = t_samp - t_cur
                     dr_s = r_c * u_s + 0.5 * s_lutn * u_s * u_s
+                    in_samp = in_kum_cur + cache.total_aktiv_area_m2 * dr_s
+                    dv_avt_ut_s = (
+                        min(ut_area * dr_s, ut_drain_direkt * u_s)
+                        if ut_drain_direkt > 0.0
+                        else 0.0
+                    )
+                    ut_yta_samp = ut_yta_m3 + (ut_area * dr_s - dv_avt_ut_s)
+                    avtapp_samp = avtappat_m3 + dv_avt_ut_s
                     vol_samp = dict(volym)
                     for nid, a_eff in eff_area.items():
                         d_eff = eff_drain.get(nid, 0.0)
                         dv_r = a_eff * dr_s
                         if d_eff == 0.0:
-                            vol_samp[nid] = min(cache.max_volym_m3[nid], volym[nid] + dv_r)
+                            ny_v = volym[nid] + dv_r
+                            if ny_v > cache.max_volym_m3[nid]:
+                                ut_yta_samp += ny_v - cache.max_volym_m3[nid]
+                                ny_v = cache.max_volym_m3[nid]
+                            vol_samp[nid] = ny_v
                         else:
                             tillg = volym[nid] + dv_r
-                            vol_samp[nid] = min(
-                                cache.max_volym_m3[nid], max(0.0, tillg - d_eff * u_s)
-                            )
-                    _logga_punkt(t_samp, vol_samp)
+                            dv_b = min(tillg, d_eff * u_s)
+                            avtapp_samp += dv_b
+                            ny_v = tillg - dv_b
+                            if ny_v > cache.max_volym_m3[nid]:
+                                ut_yta_samp += ny_v - cache.max_volym_m3[nid]
+                                ny_v = cache.max_volym_m3[nid]
+                            vol_samp[nid] = ny_v
+                    _logga_punkt(
+                        t_samp,
+                        vol_samp,
+                        in_kum_val=in_samp,
+                        ut_yta_val=ut_yta_samp,
+                        avtapp_val=avtapp_samp,
+                    )
                     nasta_plan_idx += 1
 
             # Avancera till t_ny med exakt massbalans
             dr = r_c * u_min + 0.5 * s_lutn * u_min * u_min
+            in_kum_cur += cache.total_aktiv_area_m2 * dr
             ut_m3 += ut_area * dr
-            if ut_drain_direkt > 0.0:
-                avtappat_m3 += min(ut_area * dr, ut_drain_direkt * u_min)
+            dv_avt_ut = (
+                min(ut_area * dr, ut_drain_direkt * u_min) if ut_drain_direkt > 0.0 else 0.0
+            )
+            avtappat_m3 += dv_avt_ut
+            ut_yta_m3 += ut_area * dr - dv_avt_ut
 
             nyfulla: list[int] = []
             for nid, a_eff in eff_area.items():
@@ -624,6 +741,7 @@ def _kor_handelsestyrd_karna(
                         mott = hitta_mottagare(graf, aktiv, mergad, nid)
                         if mott is None:
                             ut_m3 += rest
+                            ut_yta_m3 += rest
                         else:
                             volym[mott] += rest
                     nyfulla.append(nid)
@@ -639,7 +757,13 @@ def _kor_handelsestyrd_karna(
             if spara_tidsserie:
                 if utdata_tider_s is None:
                     # Logga händelsetidpunkten och konsumera ev. matchande planerad tid
-                    _logga_punkt(t_ny, volym)
+                    _logga_punkt(
+                        t_ny,
+                        volym,
+                        in_kum_val=in_kum_cur,
+                        ut_yta_val=ut_yta_m3,
+                        avtapp_val=avtappat_m3,
+                    )
                     while (
                         nasta_plan_idx < len(planerade_tider)
                         and planerade_tider[nasta_plan_idx] <= t_ny + _TID_TOL_S
@@ -650,7 +774,13 @@ def _kor_handelsestyrd_karna(
                         nasta_plan_idx < len(planerade_tider)
                         and planerade_tider[nasta_plan_idx] <= t_ny + _TID_TOL_S
                     ):
-                        _logga_punkt(planerade_tider[nasta_plan_idx], volym)
+                        _logga_punkt(
+                            planerade_tider[nasta_plan_idx],
+                            volym,
+                            in_kum_val=in_kum_cur,
+                            ut_yta_val=ut_yta_m3,
+                            avtapp_val=avtappat_m3,
+                        )
                         nasta_plan_idx += 1
 
             t_cur = t_ny
@@ -661,7 +791,13 @@ def _kor_handelsestyrd_karna(
 
     if spara_tidsserie:
         while nasta_plan_idx < len(planerade_tider):
-            _logga_punkt(planerade_tider[nasta_plan_idx], volym)
+            _logga_punkt(
+                planerade_tider[nasta_plan_idx],
+                volym,
+                in_kum_val=in_kum_cur,
+                ut_yta_val=ut_yta_m3,
+                avtapp_val=avtappat_m3,
+            )
             nasta_plan_idx += 1
 
     lagrat_m3 = sum(volym[nid] for nid in cache.sorterade_noder if aktiv[nid])
@@ -762,6 +898,12 @@ def kor_dynamik_handelsestyrd(
     raw_iv, _ = skapa_regn_intervall(regn_tid_s, regn_intensitet_mm_h, slut_tid_s=slut_tid_s)
     netto_iv, netto_regn_m = applicera_initial_forlust(raw_iv, initial_forlust_mm)
     cache = bygg_graf_struktur_cache(graf)
+    balans_hist = _BalansHistorik(
+        in_kum_m3=[],
+        lagrat_m3=[],
+        utflode_kum_m3=[],
+        avtappning_kum_m3=[],
+    )
 
     kardinal, tider_hist, nod_niva_hist, nod_volym_hist = _kor_handelsestyrd_karna(
         graf,
@@ -774,6 +916,7 @@ def kor_dynamik_handelsestyrd(
         spara_tidsserie=True,
         utdata_tider_s=utdata_tider_s,
         avtappning_m3_s=avtappning_per_nod_m3_s(graf, cache, avtappning_mm_h),
+        balans_ut=balans_hist,
     )
 
     lov_niva_matris: dict[int, NDArray[np.float64]] = {
@@ -818,4 +961,8 @@ def kor_dynamik_handelsestyrd(
         regn_tak_m3=a_tak * r_eff,
         takvatten=graf.takvatten is not None,
         takvatten_till_ledning_m3=a_led * r_eff,
+        in_kum_m3_serie=tuple(balans_hist.in_kum_m3),
+        lagrat_m3_serie=tuple(balans_hist.lagrat_m3),
+        utflode_kum_m3_serie=tuple(balans_hist.utflode_kum_m3),
+        avtappning_kum_m3_serie=tuple(balans_hist.avtappning_kum_m3),
     )
