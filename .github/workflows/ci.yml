@@ -76,12 +76,18 @@ jobs:
           workspaces: |
             tools/lasclip
             rust/tvad_karna
+            rust/sankgraf_karna
 
       - name: Bygg lasclip (LAZ, lyft från O-Tid)
         run: cargo build --release --locked --manifest-path tools/lasclip/Cargo.toml
 
       - name: Bygg tvad_karna (2D-lösaren i Rust)
         run: cargo build --release --locked --manifest-path rust/tvad_karna/Cargo.toml
+
+      - name: Testa och bygg sankgraf_karna (SankGraf-kärnan i Rust)
+        run: |
+          RUSTFLAGS="-D warnings" cargo test --locked --manifest-path rust/sankgraf_karna/Cargo.toml
+          RUSTFLAGS="-D warnings" cargo build --release --locked --manifest-path rust/sankgraf_karna/Cargo.toml
 
       - name: Ladda upp Rust-binärer till testjobb
         uses: actions/upload-artifact@v4
@@ -91,6 +97,7 @@ jobs:
           path: |
             tools/lasclip/target/release/lasclip
             rust/tvad_karna/target/release/tvad_karna
+            rust/sankgraf_karna/target/release/sankgraf_karna
 
   tester-utan-rust:
     runs-on: ubuntu-latest
@@ -177,7 +184,11 @@ jobs:
           path: .
 
       - name: Gör Rust-binärer körbara
-        run: chmod +x tools/lasclip/target/release/lasclip rust/tvad_karna/target/release/tvad_karna
+        run: >-
+          chmod +x
+          tools/lasclip/target/release/lasclip
+          rust/tvad_karna/target/release/tvad_karna
+          rust/sankgraf_karna/target/release/sankgraf_karna
 
       - name: Installera Python 3.12
         uses: actions/setup-python@v5
@@ -192,6 +203,8 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Enhetstester (vatten, mark, data och testsvit)
+        env:
+          FLODEN_KRAV_RUST_SANKGRAF: "1"
         run: >-
           python -m pytest -n 2 --dist loadfile
           tests/tvad
@@ -207,6 +220,59 @@ jobs:
 
       - name: Kör testsvit grupp A
         run: floden testsvit --grupp A
+
+      - name: Kör hela testsviten med tvingad Rust-SankGraf (FLODEN_SANKGRAF_RUST=1)
+        env:
+          FLODEN_SANKGRAF_RUST: "1"
+        run: floden testsvit
+
+      - name: Mät 1000x1000 Rust vs Python SankGraf-prestanda och RSS
+        run: |
+          python -c '
+          import math, os, resource, time
+          import numpy as np
+          from scipy.ndimage import gaussian_filter
+          from sankgraf.hierarki import _berakna_avrinningsomraden, _bygg_granspar
+          from sankgraf.rust_brygga import kor_sankgraf_karna_rust, hitta_sankgraf_karna
+          print("Binär:", hitta_sankgraf_karna())
+          n = 1000
+          rng = np.random.default_rng(42)
+          y = np.linspace(0.0, 12.0 * math.pi, n, dtype=np.float32)
+          x = np.linspace(0.0, 12.0 * math.pi, n, dtype=np.float32)
+          yy, xx = np.meshgrid(y, x, indexing="ij")
+          brus = gaussian_filter(rng.normal(0.0, 1.0, size=(n, n)), sigma=4.0).astype(np.float32)
+          z = np.round(10.0 + 0.5*np.sin(xx)*np.cos(yy) + 0.25*np.sin(2.3*xx+0.7)*np.sin(1.9*yy) + 1.5*brus, 2).astype(np.float32)
+          aktiv = np.ones((n, n), dtype=np.bool_)
+          t0 = time.perf_counter()
+          f_py, c_py, l_py = _berakna_avrinningsomraden(z, aktiv, {})
+          gp_py = _bygg_granspar(c_py, aktiv, z, {})
+          t_py = time.perf_counter() - t0
+          t1 = time.perf_counter()
+          f_rs, c_rs, l_rs, gp_rs = kor_sankgraf_karna_rust(z, aktiv, {})
+          t_rs = time.perf_counter() - t1
+          assert l_py == l_rs
+          np.testing.assert_array_equal(f_py, f_rs)
+          np.testing.assert_array_equal(c_py, c_rs)
+          for a, b in zip(gp_py, gp_rs, strict=True):
+              np.testing.assert_array_equal(a, b)
+          rss_child_mb = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0
+          print(f"1000x1000 kuperad (1M celler, lov={l_rs}, par={gp_rs[0].size}): Python={t_py:.3f}s Rust={t_rs:.3f}s speedup={t_py/t_rs:.2f}x child_maxrss={rss_child_mb:.1f}MB ({rss_child_mb*1024*1024/1_000_000:.1f} B/cell)")
+          z_platt = np.round(10.0 + 0.4 * np.sin(xx * 0.5) * np.cos(yy * 0.5), 1).astype(np.float32)
+          t2 = time.perf_counter()
+          f_py2, c_py2, l_py2 = _berakna_avrinningsomraden(z_platt, aktiv, {})
+          gp_py2 = _bygg_granspar(c_py2, aktiv, z_platt, {})
+          t_py2 = time.perf_counter() - t2
+          t3 = time.perf_counter()
+          f_rs2, c_rs2, l_rs2, gp_rs2 = kor_sankgraf_karna_rust(z_platt, aktiv, {})
+          t_rs2 = time.perf_counter() - t3
+          assert l_py2 == l_rs2
+          np.testing.assert_array_equal(f_py2, f_rs2)
+          np.testing.assert_array_equal(c_py2, c_rs2)
+          for a, b in zip(gp_py2, gp_rs2, strict=True):
+              np.testing.assert_array_equal(a, b)
+          rss_child_mb2 = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0
+          print(f"1000x1000 platårik (1M celler, lov={l_rs2}, par={gp_rs2[0].size}): Python={t_py2:.3f}s Rust={t_rs2:.3f}s speedup={t_py2/t_rs2:.2f}x child_maxrss={rss_child_mb2:.1f}MB")
+          '
 
   # Sammanfattande statusjobb med samma id som tidigare för smidigt branch-skydd.
   kvalitet-och-tester:

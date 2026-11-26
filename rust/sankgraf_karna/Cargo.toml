@@ -1,0 +1,15 @@
+[package]
+name = "sankgraf_karna"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Flodens SankGraf-kärna (4-granne avrinning, platå-BFS och gränspar) i ren Rust"
+publish = false
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

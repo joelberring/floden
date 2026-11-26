@@ -17,6 +17,11 @@ import numpy as np
 from numpy.typing import NDArray
 
 from sankgraf.flodesvagar import STANDARD_REFERENSDJUP_M, bygg_flodesvagar
+from sankgraf.rust_brygga import (
+    GransparArrayer,
+    kor_sankgraf_karna_rust,
+    valj_sankgraf_karna,
+)
 from sankgraf.typer import (
     BYGGNAD_NOD_ID,
     HAV_NOD_ID,
@@ -873,6 +878,7 @@ def bygg_sankgraf(
     brytlinjer: Sequence[BrytlinjePost] = (),
     oppningar: Sequence[OppningPost] = (),
     referensdjup_m: float = STANDARD_REFERENSDJUP_M,
+    anvand_rust: bool | None = None,
 ) -> SankGraf:
     """Bygger en komplett, ofiltrerad K2-sänkgraf med Fill–Spill–Merge-hierarki."""
     if mark_z.ndim != 2 or osakerhet_z.shape != mark_z.shape or markslag.shape != mark_z.shape:
@@ -904,7 +910,21 @@ def bygg_sankgraf(
     else:
         kantbarriarer = {}
 
-    flow_to, cell_till_nod_int, antal_lov = _berakna_avrinningsomraden(eff_z, aktiv, kantbarriarer)
+    rust_program = valj_sankgraf_karna(hojd * bredd, anvand_rust=anvand_rust)
+    granspar_rust: GransparArrayer | None = None
+    if rust_program is not None:
+        flow_to: IndexArray
+        cell_till_nod_int: IndexArray
+        flow_to, cell_till_nod_int, antal_lov, granspar_rust = kor_sankgraf_karna_rust(
+            eff_z,
+            aktiv,
+            kantbarriarer,
+            binar=rust_program,
+        )
+    else:
+        flow_to, cell_till_nod_int, antal_lov = _berakna_avrinningsomraden(
+            eff_z, aktiv, kantbarriarer
+        )
 
     dx = float(geo.pixelstorlek_x)
     dy = float(geo.pixelstorlek_y)
@@ -924,7 +944,7 @@ def bygg_sankgraf(
 
     if antal_lov == 0:
         cell_till_nod_out = np.asarray(cell_till_nod_int, dtype=np.int64)
-        del cell_till_nod_int, aktiv, kantbarriarer, etiketter
+        del cell_till_nod_int, aktiv, kantbarriarer, etiketter, granspar_rust
         return SankGraf(
             noder={},
             cell_till_nod=cell_till_nod_out,
@@ -938,13 +958,17 @@ def bygg_sankgraf(
             overfall_celler={},
         )
 
-    # Vektoriserad gränsanalys utan Python-`par_kanter`-dict
-    par_w, par_c_lo, par_c_hi, par_start, par_slut, f_u, f_v, f_cu, f_cv = _bygg_granspar(
-        cell_till_nod_int,
-        aktiv,
-        eff_z,
-        kantbarriarer,
-    )
+    # Vektoriserad gränsanalys utan Python-`par_kanter`-dict (eller färdig från Rust)
+    if granspar_rust is not None:
+        par_w, par_c_lo, par_c_hi, par_start, par_slut, f_u, f_v, f_cu, f_cv = granspar_rust
+        del granspar_rust
+    else:
+        par_w, par_c_lo, par_c_hi, par_start, par_slut, f_u, f_v, f_cu, f_cv = _bygg_granspar(
+            cell_till_nod_int,
+            aktiv,
+            eff_z,
+            kantbarriarer,
+        )
     del aktiv, kantbarriarer
 
     # Union-Find över {HAV_NOD_ID (-1), 0, ..., antal_lov - 1} (skiftat med +1 -> 0..antal_lov)
