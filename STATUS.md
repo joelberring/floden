@@ -2,6 +2,21 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-26 – Våg 3 (av 5) – Planeringsverktyg U7 (`floden geografi planera`), S4 SQLite-backup & driftskontroll, Dagsljus P1 & UX U5b/e/g (PR #155–#158)
+
+Gjort: Slutfört **Våg 3 av 5** i fyra konfliktfria PR:er (0 % filöverlapp, 25 unika filer, +5309/−236), oberoende granskade och sammanslagna på `main` (`cbfb4b4`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `data/mcp/metodstatus.toml`, `nord2000_konform` och `kansighet` lämnades orörda:
+- **PR #157 (`6e5fcef`, `v3/geografi-planera-u7`) — Uppdrag 7 / S7:** Ny `src/geografi/planera.py` + `floden geografi planera <kommun> --avgransning <fil>` i `src/kommuner/cli.py` med exakt 500×500 m-ruträkning (`markmodell.rutnat.skapa_rutnat`), EPSG:3011-konvertering vid inläsning (GeoJSON/GPKG/bbox, WGS84/EPSG:3006), källbelagda uppskattningar (`uppskattning: True`, `#114`/`#120`/`#123`/`K37`/`ARKITEKTUR-DRIFT.md`) samt K38-dataklassnotis (`stockholm` `stangd` vs `goteborg` `oppen`).
+- **PR #156 (`babd373`, `v3/konto-backup-halsa-s4`) — S4 Backup & atomisk `korplan.py`:** Ny `src/konto/backup.py`, `src/konto/cli.py` + `floden konto backup|verifiera|halsa` (online `sqlite3.Connection.backup()`, `DELETE`-journal, `PRAGMA integrity_check`/`foreign_key_check`, SHA-256-manifest med 0 PII / 0 hemligheter, `0o600`/`0o700`, parvis rotation, verifierad S3-uppladdning), `deploy/floden-konto-backup.{service,timer}` (`WorkingDirectory=/srv/floden`, `UMask=0077`, `OnCalendar=hourly`) samt atomisk skrivning av `run.json` m.fl. i `src/karna/korplan.py`.
+- **PR #158 (`cbfb4b4`, `v3/dagsljus-svf-host-k21`) — P1 Dagsljus & K-B10:** K21 inkrementell horisont i `SvfMark` och `SoltimmarMark` (`atol <= 1e-6`, 0 dubbel horisontberäkning), K-B10 fasadvarningar i `SoltimmarFasad.kor` (`inuti_hinder`, `utanfor_data`, `trunk_ant`, `< 128` riktningar), höstdagjämning `"2026-09-22"` i `goteborg.toml`/`stockholm.toml` samt `dagsljus.svf_mark` i `src/kommuner/projekt.py`.
+- **PR #155 (`6c0a152`, `v3/webb-ux-u5beg-kort-status-org`) — UX U5b, U5e, U5g:** Responsiva kontokort (`.f-korttabell` + `data-etikett` + `@media (max-width: 720px)` med 44 px pekytor), synlig statustext bredvid färgprick i `rapport.ts` (`role="status"`), samt projektlista med orgnamn/roll/delning och användarvänlig inloggad tomtext.
+
+Mätt:
+- **GitHub CI:** **11/11 gröna** på samtliga fyra PR:er (#155–#158) + **`Avbildning/build` grön** på #156.
+- **4-vägs sammanslagning på `main` (`25` unika filer, 0 % överlapp):** `ruff` 0 fel, `mypy --platform linux src` 0 fel (383 filer), samlad `pytest` **128 passed, 0 failed** (per PR: #156 **216 passed**, #158 **186 passed**, #157 **117 passed**, #155 **456/456 TS**), `webb`: `npm test` **456/456**, `tsc --noEmit` 0, `vite build` **127 moduler OK**.
+
+Öppet: Återstående 2 utvecklingsvågor (Våg 4: skarvfria vattenytor/jamfor/bifurkation K-B6/K-B10, batch-parallellitet + K1 v2 DSM K-B9/D-B8, UX U5c/U5d/CAD-mått + `GET /api/analys/ekologi` i `arbetsyta.ts`; Våg 5: Pass 4-granskning + `PLAN.md`/`DRIFT.md`-synk & slutkontroll).
+Nästa: Starta Våg 4 omedelbart.
+
 ## 2026-11-26 – Våg 2 (av 5) – Webb-API-säkerhet/kö, Steg 3 Ekologi & Luft (Uppdrag 4), UI-fixar & intern luftkedja (PR #151–#154)
 
 Gjort: Slutfört **Våg 2 av 5** i fyra konfliktfria PR:er (0 % filöverlapp, 38 unika filer, +6296/−493), oberoende granskade och sammanslagna på `main` (`e8848ad`). `docs/BESLUT.md`, `docs/DATAKONTRAKT.md`, `data/mcp/metodstatus.toml`, `nord2000_konform` och `kansighet` lämnades orörda:
