@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PlanDok } from "./plandok.ts";
-import { Ritverktyg, type Meddelande, type Pekare, type Tangent } from "./ritverktyg.ts";
+import {
+  beraknaPunktFranLangdOchBaring,
+  Ritverktyg,
+  tolkaLangdOchBaring,
+  tolkaSwerefKoordinat,
+  type Meddelande,
+  type Pekare,
+  type Tangent,
+} from "./ritverktyg.ts";
 
 const mus: Pekare = { pekare: "mouse", ctrl: false, shift: false, alt: false };
 const tang = (key: string, extra: Partial<Tangent> = {}): Tangent => ({ key, code: key, shiftKey: false, ctrlKey: false, metaKey: false, altKey: false, ...extra });
@@ -171,4 +179,77 @@ test("pekskärm: ett drag i mitten av ett litet hus flyttar huset, inte en mittp
   const efter = dok.ny.get(skapade[0]!)!.ring;
   assert.equal(efter.length, forst.length); // inget nytt hörn
   assert.deepEqual(efter.map((p) => [Math.round(p.x), Math.round(p.y)]), [[230, 200], [250, 200], [250, 220], [230, 220]]);
+});
+
+test("CAD-mått: beraknaPunktFranLangdOchBaring ger exakt SWEREF-geometri och avvisar L <= 0 och NaN", () => {
+  const start = { x: 150000, y: 6580000 };
+  const L = 12.5;
+
+  const norr = beraknaPunktFranLangdOchBaring(start, L, 0);
+  assert.ok(Math.abs(norr.x - start.x) < 1e-9);
+  assert.ok(Math.abs(norr.y - (start.y + L)) < 1e-9);
+
+  const ost = beraknaPunktFranLangdOchBaring(start, L, 90);
+  assert.ok(Math.abs(ost.x - (start.x + L)) < 1e-9);
+  assert.ok(Math.abs(ost.y - start.y) < 1e-9);
+
+  const soder = beraknaPunktFranLangdOchBaring(start, L, 180);
+  assert.ok(Math.abs(soder.x - start.x) < 1e-9);
+  assert.ok(Math.abs(soder.y - (start.y - L)) < 1e-9);
+
+  const vast = beraknaPunktFranLangdOchBaring(start, L, 270);
+  assert.ok(Math.abs(vast.x - (start.x - L)) < 1e-9);
+  assert.ok(Math.abs(vast.y - start.y) < 1e-9);
+
+  const no = beraknaPunktFranLangdOchBaring(start, L, 45);
+  assert.ok(Math.abs(no.x - (start.x + L / Math.SQRT2)) < 1e-9);
+  assert.ok(Math.abs(no.y - (start.y + L / Math.SQRT2)) < 1e-9);
+
+  assert.throws(() => beraknaPunktFranLangdOchBaring(start, 0, 90), RangeError);
+  assert.throws(() => beraknaPunktFranLangdOchBaring(start, -5, 90), RangeError);
+  assert.throws(() => beraknaPunktFranLangdOchBaring(start, Number.NaN, 90), RangeError);
+  assert.throws(() => beraknaPunktFranLangdOchBaring(start, 10, Number.NaN), RangeError);
+  assert.throws(() => beraknaPunktFranLangdOchBaring({ x: Number.NaN, y: 0 }, 10, 0), RangeError);
+});
+
+test("CAD-mått: tolkaSwerefKoordinat och tolkaLangdOchBaring stöder komma/punkt och avvisar ogiltiga tal", () => {
+  const k1 = tolkaSwerefKoordinat("150 120,5", "6 580 450.25");
+  assert.equal(k1.ok, true);
+  if (k1.ok) assert.deepEqual(k1.varde, { x: 150120.5, y: 6580450.25 });
+
+  assert.equal(tolkaSwerefKoordinat("NaN", "6580000").ok, false);
+  assert.equal(tolkaSwerefKoordinat("", "6580000").ok, false);
+
+  const m1 = tolkaLangdOchBaring("12,5", "45,5");
+  assert.equal(m1.ok, true);
+  if (m1.ok) assert.deepEqual(m1.varde, { langd_m: 12.5, baring_grader: 45.5 });
+
+  assert.equal(tolkaLangdOchBaring("0", "90").ok, false);
+  assert.equal(tolkaLangdOchBaring("-12,5", "90").ok, false);
+  assert.equal(tolkaLangdOchBaring("NaN", "90").ok, false);
+  assert.equal(tolkaLangdOchBaring("10", "abc").ok, false);
+});
+
+test("CAD-mått: Ritverktyg ritar ett exakt 20 × 10 m hus programmatiskt via SWEREF + längd/bäring", () => {
+  const { r, dok, meddelanden, skapade } = skapa();
+  r.sattVerktyg("hus");
+  // Utan startpunkt avvisas längd + bäring
+  assert.equal(r.laggTillPunktMedMatt(20, 90), false);
+  assert.equal(meddelanden.at(-1)?.typ, "fel");
+
+  assert.equal(r.laggTillPunktSweref(200, 200), true);
+  assert.equal(r.laggTillPunktMedMatt(20, 90), true); // (220, 200)
+  assert.equal(r.laggTillPunktMedMatt(10, 0), true); // (220, 210)
+  assert.equal(r.laggTillPunktMedMatt(20, 270), true); // (200, 210)
+  // Ogiltiga mått avvisas utan att ändra utkastet
+  assert.equal(r.laggTillPunktMedMatt(0, 180), false);
+  assert.equal(r.laggTillPunktMedMatt(-4, 180), false);
+  assert.equal(r.laggTillPunktSweref(Number.NaN, 200), false);
+  assert.equal(r.utkast.length, 4);
+
+  assert.equal(r.avsluta(), true);
+  assert.equal(skapade.length, 1);
+  const hus = dok.ny.get(skapade[0]!)!;
+  assert.equal(hus.ring.length, 4);
+  assert.equal(r.mattAv(hus.ring, 12).yta_m2, 200);
 });

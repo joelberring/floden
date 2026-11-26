@@ -267,6 +267,28 @@ export function hamtaMarkhojd(projekt: string, e: number, n: number): Promise<Ma
   return lasJson<MarkhojdSvar>(`${API_BAS}/kartverktyg/${encodeURIComponent(projekt)}/hojd?${q}`);
 }
 
+export interface EkologiAnalysFraga {
+  omrade_id: string;
+  scenario?: string | null;
+  natverk?: string | null;
+  artprofil?: string | null;
+}
+
+/** Bygger query-URL för skrivlös `GET /api/analys/ekologi?...` (tillåten för `lasare` utan projektmutering). */
+export function ekologiAnalysUrl(fraga: EkologiAnalysFraga): string {
+  const q = new URLSearchParams();
+  q.set("omrade_id", fraga.omrade_id);
+  if (fraga.scenario) q.set("scenario", fraga.scenario);
+  if (fraga.natverk) q.set("natverk", fraga.natverk);
+  if (fraga.artprofil) q.set("artprofil", fraga.artprofil);
+  return `${API_BAS}/analys/ekologi?${q.toString()}`;
+}
+
+/** Läser ekologianalys utan projektmutering via `GET /api/analys/ekologi?...` (`lasare`-kompatibel). */
+export function hamtaEkologiAnalys<T = unknown>(fraga: EkologiAnalysFraga): Promise<T> {
+  return lasJson<T>(ekologiAnalysUrl(fraga));
+}
+
 /* ---------- Nycklar (/konto/nycklar): bara kontots egna, aldrig utläsbara ---------- */
 
 const JSON_HUVUD = { "Content-Type": "application/json" };

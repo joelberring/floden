@@ -3,6 +3,7 @@
  * escaping och att inget tal visas med decimalpunkt. `resultat.ts` sätter bara in resultatet.
  */
 import { esc } from "../sidor.ts";
+import { formatera } from "../tal.ts";
 import { OSAKERHET_NOT } from "./osakerhet.ts";
 import type { Stapel, Tal } from "./nyckeltal.ts";
 
@@ -72,4 +73,121 @@ export function kroppHtml(k: KroppIndata): string {
       ${k.kalla.length > 0 ? `<ul class="flode-liten flode-dampad" id="rs-eko-kalla">${k.kalla.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
       <p class="flode-liten flode-dampad">${esc(k.anmarkning)}</p>
       ${k.las ? `<details class="flode-detalj"><summary>Så läser du kartan</summary><p class="flode-liten flode-dampad">${esc(k.las)}</p></details>` : ""}`;
+}
+
+/* ---------- U5d: Kompakt ordlista för Steg 2 ---------- */
+
+export interface OrdlistaPost {
+  term: string;
+  forklaring: string;
+}
+
+/** Kompakt domänordlista för Steg 2 (U5d): centrala begrepp i skyfall, sol, ekologi och luft. */
+export const ORDLISTA_POSTER: readonly OrdlistaPost[] = [
+  {
+    term: "RH 2000",
+    forklaring: "Sveriges nationella höjdsystem i meter över havet (markhöjd, vattennivå och murkrön).",
+  },
+  {
+    term: "SWEREF 99 18 00",
+    forklaring: "Plant svenskt koordinatsystem i meter (EPSG:3011: E = öst, N = norr) för alla kartmått och ritningar.",
+  },
+  {
+    term: "SVF",
+    forklaring: "Sky View Factor – synlig himmelsandel (0–1) från en markpunkt; 0 är helt skymd himmel och 1 är helt fri horisont.",
+  },
+  {
+    term: "VSC",
+    forklaring: "Vertical Sky Component – procentandel av himmelns dagsljus som når en vertikal fasadpunkt.",
+  },
+  {
+    term: "ECA / dPC",
+    forklaring: "Ekologisk konnektivitet: ECA är effektiv sammanhängande habitatyta (ha) och dPC visar varje fläcks relativa bidrag (%) till spridning.",
+  },
+  {
+    term: "MKN",
+    forklaring: "Miljökvalitetsnorm för utomhusluft, exempelvis PM10 (dygns- och årsmedelvärden enligt luftkvalitetsförordningen).",
+  },
+  {
+    term: "NEN 8100",
+    forklaring: "Standard för vindkomfort på gånghöjd i klasserna A–E (från lugn sittplats till olämplig för gång) samt vindfara.",
+  },
+  {
+    term: "Skiss",
+    forklaring: "Metodstatus för en förenklad översiktsberäkning i tidigt skede – ger riktning men ersätter inte fördjupad utredning.",
+  },
+] as const;
+
+/** Hopfällbar svartvit ordlista (<details>) för Steg 2 (U5d). */
+export function ordlistaHtml(oppen = false): string {
+  const rader = ORDLISTA_POSTER.map(
+    (p) => `<div class="ar-ordlista-post"><dt>${esc(p.term)}</dt><dd>${esc(p.forklaring)}</dd></div>`,
+  ).join("");
+  return `<details class="flode-detalj ar-ordlista" id="ar-ordlista"${oppen ? " open" : ""}>
+    <summary>Ordlista och begrepp</summary>
+    <dl class="ar-ordlista-lista">${rader}</dl>
+  </details>`;
+}
+
+/* ---------- Numerisk CAD-måttinmatning i ritläget ---------- */
+
+export type CadInmatningsLage = "matt" | "sweref";
+
+export interface CadMattVisning {
+  /** Om ett ritverktyg för hörn/punkter är aktivt (hus, linje eller yta). */
+  synlig: boolean;
+  /** Om CAD-måttpanelen är utfälld. */
+  oppen: boolean;
+  /** Aktivt inmatningsläge: längd + bäring eller absoluta SWEREF-koordinater (E, N). */
+  lage: CadInmatningsLage;
+  /** Antal punkter i pågående utkast. */
+  antalPunkter: number;
+  /** Senaste utkastpunkten i SWEREF 99 18 00 (meter), eller null när utkastet är tomt. */
+  senastePunkt: { x: number; y: number } | null;
+  langdText: string;
+  baringText: string;
+  eText: string;
+  nText: string;
+  fel: string | null;
+}
+
+/** Kompakt, hopfällbar svartvit CAD-måttpanel för exakt ritning med längd + bäring eller E, N (SWEREF). */
+export function cadMattHtml(c: CadMattVisning): string {
+  if (!c.synlig) return "";
+  const status =
+    c.antalPunkter === 0
+      ? "Startpunkt"
+      : `${formatera(c.antalPunkter, 0)} ${c.antalPunkter === 1 ? "punkt" : "punkter"}`;
+  const refText =
+    c.lage === "matt"
+      ? c.senastePunkt
+        ? `Från punkt ${formatera(c.antalPunkter, 0)}: E ${formatera(c.senastePunkt.x, 2)}, N ${formatera(c.senastePunkt.y, 2)} · 0° = norr, 90° = öst`
+        : "Sätt första punkten i kartan eller byt till E, N (SWEREF)."
+      : "SWEREF 99 18 00 (meter). Decimalkomma eller decimalpunkt.";
+  const falt =
+    c.lage === "matt"
+      ? `<div class="ar-cad-falt">
+          <div class="flode-falt"><label for="ar-cad-langd">Längd (m)</label><input id="ar-cad-langd" name="langd" type="text" inputmode="decimal" autocomplete="off" placeholder="12,5" value="${esc(c.langdText)}" /></div>
+          <div class="flode-falt"><label for="ar-cad-baring">Bäring (°)</label><input id="ar-cad-baring" name="baring" type="text" inputmode="decimal" autocomplete="off" placeholder="90" value="${esc(c.baringText)}" /></div>
+        </div>`
+      : `<div class="ar-cad-falt">
+          <div class="flode-falt"><label for="ar-cad-e">E (SWEREF m)</label><input id="ar-cad-e" name="e" type="text" inputmode="decimal" autocomplete="off" placeholder="150120,5" value="${esc(c.eText)}" /></div>
+          <div class="flode-falt"><label for="ar-cad-n">N (SWEREF m)</label><input id="ar-cad-n" name="n" type="text" inputmode="decimal" autocomplete="off" placeholder="6580450,0" value="${esc(c.nText)}" /></div>
+        </div>`;
+  const felHtml = c.fel ? `<p class="flode-fel flode-liten ar-cad-fel" id="ar-cad-fel" role="alert">${esc(c.fel)}</p>` : "";
+  return `<details class="ar-cad" id="ar-cad"${c.oppen ? " open" : ""}>
+    <summary class="ar-cad-summary"><span>Exakta mått (CAD)</span><span class="ar-cad-status flode-liten flode-dampad">${esc(status)}</span></summary>
+    <div class="ar-cad-kropp">
+      <div class="flode-segment liten ar-cad-lage" role="group" aria-label="Inmatningssätt för exakta mått">
+        <button type="button" data-cad-lage="matt" aria-pressed="${c.lage === "matt"}">Längd + bäring</button>
+        <button type="button" data-cad-lage="sweref" aria-pressed="${c.lage === "sweref"}">E, N (SWEREF)</button>
+      </div>
+      <p class="flode-liten flode-dampad ar-cad-ref">${esc(refText)}</p>
+      <form class="ar-cad-form" id="ar-cad-form" novalidate>
+        ${falt}
+        <button type="submit" class="flode-knapp svart ar-cad-knapp" id="ar-cad-lagg-till">Lägg till punkt</button>
+      </form>
+      ${felHtml}
+    </div>
+  </details>`;
 }
