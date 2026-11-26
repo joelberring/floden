@@ -212,12 +212,6 @@ def rastrera_parametrisk_gata(
     ny_slag = np.array(markslag, dtype=np.uint8, copy=True)
     tackt = np.zeros((hojd, bredd), dtype=bool)
 
-    z_punkter: tuple[float, ...] = (
-        gata.profil_rh2000
-        if gata.profil_rh2000 is not None
-        else tuple(_sampla_markhojd(mark_z, geo, e, n) for e, n in gata.mittlinje)
-    )
-
     total_halv = 0.5 * sektion.total_bredd_m
     korbana_halv = 0.5 * sektion.korbana_bredd_m
     dx = float(geo.pixelstorlek_x)
@@ -230,24 +224,12 @@ def rastrera_parametrisk_gata(
     n_min = min(ys) - total_halv
     n_max = max(ys) + total_halv
 
-    brytlinjer: list[BrytlinjePost] = []
-    if sektion.kantsten_hojd_m > 0.0:
-        for tecken in (1.0, -1.0):
-            kant_linje = _skapa_offset_linje(gata.mittlinje, tecken * korbana_halv)
-            brytlinjer.append(
-                BrytlinjePost(
-                    typ="kantsten",
-                    hojd_m=float(sektion.kantsten_hojd_m),
-                    koordinater=kant_linje,
-                )
-            )
-
     if e_max < geo.x_min or e_min > geo.x_max or n_max < geo.y_min or n_min > geo.y_max:
         return GatuRastreringResultat(
             mark_z=ny_z,
             markslag=ny_slag,
             tackt_mask=np.asarray(tackt, dtype=np.bool_),
-            brytlinjer=tuple(brytlinjer),
+            brytlinjer=(),
         )
 
     kol0 = max(0, math.floor((e_min - geo.x_min) / dx))
@@ -259,7 +241,7 @@ def rastrera_parametrisk_gata(
             mark_z=ny_z,
             markslag=ny_slag,
             tackt_mask=np.asarray(tackt, dtype=np.bool_),
-            brytlinjer=tuple(brytlinjer),
+            brytlinjer=(),
         )
 
     e_vek = geo.x_min + (np.arange(kol0, kol1, dtype=np.float64) + 0.5) * dx
@@ -267,14 +249,13 @@ def rastrera_parametrisk_gata(
     sub_e, sub_n = np.meshgrid(e_vek, n_vek)
 
     basta_dist = np.full(sub_e.shape, math.inf, dtype=np.float64)
-    basta_z_mitt = np.full(sub_e.shape, np.nan, dtype=np.float64)
+    basta_seg = np.full(sub_e.shape, -1, dtype=np.int64)
+    basta_t = np.zeros(sub_e.shape, dtype=np.float64)
     n_seg = len(gata.mittlinje) - 1
 
     for idx in range(n_seg):
         e0, n0 = gata.mittlinje[idx]
         e1, n1 = gata.mittlinje[idx + 1]
-        z0 = float(z_punkter[idx])
-        z1 = float(z_punkter[idx + 1])
         de = e1 - e0
         dn = n1 - n0
         l2 = de * de + dn * dn
@@ -290,11 +271,11 @@ def rastrera_parametrisk_gata(
 
         t = np.clip(t_raw, 0.0, 1.0)
         dist = np.hypot(sub_e - (e0 + t * de), sub_n - (n0 + t * dn))
-        z_proj = z0 + t * (z1 - z0)
 
         battre = giltig & (dist < basta_dist)
         basta_dist = np.where(battre, dist, basta_dist)
-        basta_z_mitt = np.where(battre, z_proj, basta_z_mitt)
+        basta_seg = np.where(battre, idx, basta_seg)
+        basta_t = np.where(battre, t, basta_t)
 
     sub_tackt = np.asarray(basta_dist <= total_halv + _KANT_TOL_M, dtype=np.bool_)
     if not np.any(sub_tackt):
@@ -302,8 +283,41 @@ def rastrera_parametrisk_gata(
             mark_z=ny_z,
             markslag=ny_slag,
             tackt_mask=np.asarray(tackt, dtype=np.bool_),
-            brytlinjer=tuple(brytlinjer),
+            brytlinjer=(),
         )
+
+    z_punkter: tuple[float, ...] = (
+        gata.profil_rh2000
+        if gata.profil_rh2000 is not None
+        else tuple(_sampla_markhojd(mark_z, geo, e, n) for e, n in gata.mittlinje)
+    )
+    z_arr = np.asarray(z_punkter, dtype=np.float64)
+    basta_z_mitt = np.full(sub_e.shape, np.nan, dtype=np.float64)
+    s_idx = basta_seg[sub_tackt]
+    basta_z_mitt[sub_tackt] = z_arr[s_idx] + basta_t[sub_tackt] * (z_arr[s_idx + 1] - z_arr[s_idx])
+
+    brytlinjer: list[BrytlinjePost] = []
+    if sektion.kantsten_hojd_m > 0.0:
+        from shapely.geometry import LineString, box
+
+        ruta_box = box(geo.x_min, geo.y_min, geo.x_max, geo.y_max)
+        for tecken in (1.0, -1.0):
+            kant_linje = _skapa_offset_linje(gata.mittlinje, tecken * korbana_halv)
+            ls = LineString(kant_linje)
+            if not ls.intersects(ruta_box):
+                continue
+            if ls.covered_by(ruta_box):
+                brytlinjer.append(
+                    BrytlinjePost(
+                        typ="kantsten",
+                        hojd_m=float(sektion.kantsten_hojd_m),
+                        koordinater=kant_linje,
+                    )
+                )
+            else:
+                brytlinjer.extend(
+                    _delar(ls.intersection(ruta_box), "kantsten", float(sektion.kantsten_hojd_m))
+                )
 
     pa_korbana = sub_tackt & (basta_dist <= korbana_halv + _KANT_TOL_M)
     pa_gangbana = sub_tackt & ~pa_korbana
@@ -636,12 +650,34 @@ def tillampa_lapp(
     cell_area_m2 = float(bas_geo.pixelstorlek_x) * float(bas_geo.pixelstorlek_y)
     magasin_botten: dict[str, float] = {}
     for mag in lapp.magasin:
+        xs = [float(p[0]) for p in mag.polygon]
+        ys = [float(p[1]) for p in mag.polygon]
+        e_min, e_max = min(xs), max(xs)
+        n_min, n_max = min(ys), max(ys)
+        if (
+            e_max < bas_geo.x_min
+            or e_min > bas_geo.x_max
+            or n_max < bas_geo.y_min
+            or n_min > bas_geo.y_max
+        ):
+            continue
         mag_mask = _polygon_mask(mag.polygon, bas_geo)
         antal_celler = int(np.sum(mag_mask))
         if antal_celler == 0:
+            from shapely.geometry import Polygon, box
+
+            ruta_box = box(bas_geo.x_min, bas_geo.y_min, bas_geo.x_max, bas_geo.y_max)
+            if not Polygon(mag.polygon).intersects(ruta_box):
+                continue
             raise LappFel(
                 f"Magasin '{mag.magasin_id}' täcker inga celler inom rutnätet."
             )
+        korsar_rutgrans = (
+            e_min < bas_geo.x_min
+            or e_max > bas_geo.x_max
+            or n_min < bas_geo.y_min
+            or n_max > bas_geo.y_max
+        )
         if mag.botten_rh2000 is not None:
             z_botten = float(mag.botten_rh2000)
             ny_mark_z[mag_mask] = np.float32(z_botten)
@@ -649,6 +685,12 @@ def tillampa_lapp(
             ny_osakerhet_z[mag_mask] = np.float32(mag.osakerhet_m)
             magasin_botten[mag.magasin_id] = z_botten
         elif mag.volym_m3 > 0.0:
+            if korsar_rutgrans:
+                raise LappFel(
+                    f"Magasin '{mag.magasin_id}' (volym_m3={mag.volym_m3}) korsar rutans "
+                    "gräns utan explicit botten_rh2000; ange botten_rh2000 för flerrutsscenarier "
+                    "så att volymen inte grävs dubbelt över rutgränsen."
+                )
             rand = _rand_grannar_utanfor(mag_mask, ny_mark_z, ny_markslag)
             z_rim = (
                 float(np.min(ny_mark_z[rand]))

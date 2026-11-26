@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import time
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,6 +97,8 @@ class TvadResultat:
     takvatten: bool = False
     takvatten_ut_rand_m3: float = 0.0
     takvatten_till_ledning_m3: float = 0.0
+    rand_in_m3: float = 0.0
+    """Initial- och randvatten som tillförts via fast `vattenniva_rh2000_m` eller `tvingat_djup`."""
     courant_hast_max: float = 0.0
     """Diagnostik (Python-lösaren): största u_max · dt / dx över alla tidssteg, med den u_max
     (m/s) som tidssteget valdes med. CFL-steget garanterar att värdet är högst `cfl`.
@@ -104,11 +107,13 @@ class TvadResultat:
     """K0-etikett för beräkningsbackend och precision (`cpu_f64`, `cuda_f64`, `cuda_f32`)."""
     anvande_rust: bool = False
     """Sant om tidsslingan kördes i den bitidentiska Rust-kärnan (`rust/tvad_karna`)."""
+    varningar: tuple[str, ...] = ()
+    """Explicita körvarningar (t.ex. fallback från f32/auto-GPU till CPU f64)."""
 
     def volymbalans(self) -> dict[str, float | bool]:
-        """Regn på hela rutan (mark + tak) mot lagrat, utflöde, infiltration, avtappning och
+        """Regn + initial-/randvatten mot lagrat, utflöde, infiltration, avtappning och
         takvatten till ledningsnät (se `sankgraf.typer.volymbalans_dict`). Initial förlust
-        räknas som infiltration. Tvingat djup (randvillkor) ingår inte."""
+        räknas som infiltration."""
         from sankgraf.typer import volymbalans_dict
 
         return volymbalans_dict(
@@ -120,6 +125,7 @@ class TvadResultat:
             infiltrerat_m3=self.infiltrerat_m3 + self.initial_forlust_m3,
             avtappat_m3=self.avtappat_m3,
             tak_ledning_m3=self.takvatten_till_ledning_m3,
+            rand_in_m3=self.rand_in_m3,
         )
 
 
@@ -763,6 +769,7 @@ def _kor_lokal_troghet_xp(
     inv_dy = dtyp(1.0 / dy)
     min_dx = min(dx, dy)
     in_m3 = 0.0
+    rand_in_m3 = 0.0
     ut_m3 = 0.0
     regn_summa_m = 0.0
     antal_steg = 0
@@ -775,8 +782,10 @@ def _kor_lokal_troghet_xp(
         if init_v > 0.0:
             volym = xp.where(vatten_mask, vatten_mal_vol, volym)
             in_m3 += init_v
+            rand_in_m3 += init_v
             h_eff = xp.where(aktiv, volym / safe_area, noll)
             zs = z_bed + h_eff
+            max_djup = xp.maximum(max_djup, h_eff)
 
     while t_nu < t_slut - 1e-12:
         h_max = float(till_numpy(xp.max(h_eff))) if h_eff.size > 0 else 0.0
@@ -798,7 +807,9 @@ def _kor_lokal_troghet_xp(
             ut_m3 += tak_ut_m2 * regn_m
             if har_vatten_rand and vatten_mask is not None and vatten_mal_vol is not None:
                 diff_v = xp.where(vatten_mask, vatten_mal_vol - volym, noll)
-                in_m3 += float(till_numpy(xp.sum(xp.maximum(diff_v, noll))))
+                dv_in = float(till_numpy(xp.sum(xp.maximum(diff_v, noll))))
+                in_m3 += dv_in
+                rand_in_m3 += dv_in
                 ut_m3 += float(till_numpy(xp.sum(xp.maximum(-diff_v, noll))))
                 volym = xp.where(vatten_mask, vatten_mal_vol, volym)
             h_eff = xp.where(aktiv, volym / safe_area, noll)
@@ -885,7 +896,9 @@ def _kor_lokal_troghet_xp(
 
         if har_vatten_rand and vatten_mask is not None and vatten_mal_vol is not None:
             diff_v = xp.where(vatten_mask, vatten_mal_vol - volym, noll)
-            in_m3 += float(till_numpy(xp.sum(xp.maximum(diff_v, noll))))
+            dv_in = float(till_numpy(xp.sum(xp.maximum(diff_v, noll))))
+            in_m3 += dv_in
+            rand_in_m3 += dv_in
             ut_m3 += float(till_numpy(xp.sum(xp.maximum(-diff_v, noll))))
             volym = xp.where(vatten_mask, vatten_mal_vol, volym)
 
@@ -950,6 +963,7 @@ def _kor_lokal_troghet_xp(
         takvatten=takvatten_pa,
         takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
         takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
+        rand_in_m3=rand_in_m3,
         courant_hast_max=courant_hast_max,
         berakningsplats=berakningsplats(enhet_namn, dtyp),
     )
@@ -1182,6 +1196,7 @@ def kor_2d_lokal_troghet(
         else:
             vatten_mal_vol = np.zeros((hojd, bredd), dtype=np.float64)
 
+    kor_varningar: list[str] = []
     if ar_gpu_backend(xp) or precision == "f32":
         if subgrid is not None or kalltermer is not None:
             if enhet == "cuda":
@@ -1189,6 +1204,26 @@ def kor_2d_lokal_troghet(
                     "GPU-vägen i kor_2d_lokal_troghet stöder inte subgrid_faktor > 1 eller "
                     "kalltermer ännu; använd enhet='cpu' eller enhet='auto'."
                 )
+            orsaker: list[str] = []
+            if subgrid is not None:
+                orsaker.append(f"subgrid_faktor={subgrid_faktor}")
+            if kalltermer is not None:
+                orsaker.append("kalltermer")
+            orsak_txt = " och ".join(orsaker)
+            if precision == "f32":
+                v_txt = (
+                    f"precision='f32' stöds inte tillsammans med {orsak_txt} i "
+                    "kor_2d_lokal_troghet; föll tillbaka till CPU f64."
+                )
+                kor_varningar.append(v_txt)
+                warnings.warn(v_txt, UserWarning, stacklevel=2)
+            elif ar_gpu_backend(xp):
+                v_txt = (
+                    f"GPU-vägen stöds inte tillsammans med {orsak_txt} i "
+                    "kor_2d_lokal_troghet; föll tillbaka till CPU f64."
+                )
+                kor_varningar.append(v_txt)
+                warnings.warn(v_txt, UserWarning, stacklevel=2)
         else:
             return _kor_lokal_troghet_xp(
                 xp=xp,
@@ -1258,6 +1293,7 @@ def kor_2d_lokal_troghet(
         raise TvadFel(f"tvingat_djup.mask har form {tvingat.mask.shape}, lösaren {(hojd, bredd)}.")
 
     in_m3 = 0.0
+    rand_in_m3 = 0.0
     ut_m3 = 0.0
     antal_steg = 0
     sum_aktiv_andel = 0.0
@@ -1273,7 +1309,9 @@ def kor_2d_lokal_troghet(
 
     if har_vatten_rand and bool(np.any(vatten_mal_vol > 0.0)):
         volym = np.where(vatten_mask, vatten_mal_vol, volym)
-        in_m3 += float(np.sum(vatten_mal_vol))
+        init_v = float(np.sum(vatten_mal_vol))
+        in_m3 += init_v
+        rand_in_m3 += init_v
         if subgrid is not None:
             zs = vattenniva_fran_volym(volym, subgrid)
             h_eff = np.where(aktiv, volym / safe_area, 0.0)
@@ -1304,7 +1342,9 @@ def kor_2d_lokal_troghet(
             ut_m3 += tak_ut_m2 * regn_m
             if har_vatten_rand:
                 diff_v = np.where(vatten_mask, vatten_mal_vol - volym, 0.0)
-                in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+                dv_in = float(np.sum(np.maximum(diff_v, 0.0)))
+                in_m3 += dv_in
+                rand_in_m3 += dv_in
                 ut_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
                 volym = np.where(vatten_mask, vatten_mal_vol, volym)
             if subgrid is not None:
@@ -1503,14 +1543,18 @@ def kor_2d_lokal_troghet(
         if tvingat is not None:
             mal_v = np.where(tvingat.mask & aktiv, tvingat.djup_m(t_nu + dt) * aktiv_area, 0.0)
             diff = np.where(tvingat.mask & aktiv, mal_v - volym, 0.0)
-            in_m3 += float(np.sum(np.maximum(diff, 0.0)))
+            dv_in = float(np.sum(np.maximum(diff, 0.0)))
+            in_m3 += dv_in
+            rand_in_m3 += dv_in
             ut_m3 += float(np.sum(np.maximum(-diff, 0.0)))
             volym = np.where(tvingat.mask & aktiv, mal_v, volym)
 
         # 6c. Vattenyta (markslag == 8): dränerar överskott till ut_m3 eller håller vattennivån
         if har_vatten_rand:
             diff_v = np.where(vatten_mask, vatten_mal_vol - volym, 0.0)
-            in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+            dv_in = float(np.sum(np.maximum(diff_v, 0.0)))
+            in_m3 += dv_in
+            rand_in_m3 += dv_in
             ut_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
             volym = np.where(vatten_mask, vatten_mal_vol, volym)
 
@@ -1625,7 +1669,9 @@ def kor_2d_lokal_troghet(
         takvatten=takvatten is not None,
         takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
         takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
+        rand_in_m3=rand_in_m3,
         courant_hast_max=courant_hast_max,
+        varningar=tuple(kor_varningar),
     )
 
 
@@ -1638,6 +1684,7 @@ def skriv_tvad_resultat_k6(
     parametrar: Mapping[str, Any] | None = None,
     kodversion: str | None = None,
     start: str | None = None,
+    varningar: Sequence[str] | None = None,
 ) -> dict[str, Path]:
     """Skriver 2D- eller hybridresultat enligt kontrakt K6/v1 + K0/v1 (`run.json`)."""
     if resultat.niva not in ("full2d", "hybrid"):
@@ -1701,6 +1748,7 @@ def skriv_tvad_resultat_k6(
     )
     max_fara_val = float(np.nanmax(resultat.fara_m2_s)) if resultat.fara_m2_s.size > 0 else 0.0
 
+    alla_varningar = list(dict.fromkeys([*resultat.varningar, *(varningar or ())]))
     manifest = skapa_manifest(
         modul="tvad",
         indata=list(indata) if indata is not None else [],
@@ -1727,6 +1775,7 @@ def skriv_tvad_resultat_k6(
                 else {}
             ),
         },
+        varningar=alla_varningar,
         kodversion=kodversion,
         start=start,
     )

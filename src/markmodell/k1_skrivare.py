@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import sqlite3
 import struct
@@ -355,7 +356,8 @@ def skriv_brytlinjer_gpkg(
                 z_botten_rh2000 REAL,
                 tvarfall REAL,
                 kalla TEXT,
-                osakerhet_m REAL
+                osakerhet_m REAL,
+                z_botten_rh2000_noder TEXT
             );
             """
         )
@@ -388,12 +390,17 @@ def skriv_brytlinjer_gpkg(
                 if b.z_botten_rh2000 is not None
                 else None
             )
+            z_botten_noder_json = (
+                json.dumps([float(z) for z in b.z_botten_rh2000], separators=(",", ":"))
+                if b.z_botten_rh2000 is not None
+                else None
+            )
             conn.execute(
                 """
                 INSERT INTO brytlinjer (
                     geom, typ, hojd_m, z_kron_rh2000, z_botten_rh2000,
-                    tvarfall, kalla, osakerhet_m
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    tvarfall, kalla, osakerhet_m, z_botten_rh2000_noder
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     blob,
@@ -404,6 +411,7 @@ def skriv_brytlinjer_gpkg(
                     b.tvarfall,
                     b.kalla,
                     b.osakerhet_m,
+                    z_botten_noder_json,
                 ),
             )
         conn.commit()

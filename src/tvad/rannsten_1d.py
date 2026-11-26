@@ -64,6 +64,7 @@ OVERFALL_KOEFF_CW: float = 1.70  # Bredkrönat överfall: Q = Cw * b * dh^(3/2) 
 MAX_RANNSTEN_BREDD_M: float = 3.0
 STANDARD_RANNSTEN_MANNING: float = 0.015
 STANDARD_TVARFALL: float = 0.025
+_KEDJE_KOPPLING_TOL_M: float = 1e-2  # 1 cm anslutningstolerans mellan brytlinjeposter i samma kedja
 
 
 class RannstenFel(Exception):
@@ -86,6 +87,7 @@ class RannstenSegment:
     korbana_rc: tuple[int, int] | None
     gangbana_rc: tuple[int, int] | None
     korbana_celler: tuple[tuple[int, int], ...] = ()
+    kedje_id: int = 0
 
     @property
     def h_kant_m(self) -> float:
@@ -94,20 +96,36 @@ class RannstenSegment:
 
 @dataclass(frozen=True)
 class RannstenLank:
-    """En sammanhängande 1D-rännstenskanal diskretiserad längs 3D-kantstenen."""
+    """1D-rännstenskanaler diskretiserade längs 3D-kantstenar med explicita kedjegränser."""
 
     segment: tuple[RannstenSegment, ...]
     manning_n: float = STANDARD_RANNSTEN_MANNING
     max_bredd_m: float = MAX_RANNSTEN_BREDD_M
     oppen_nedstroms: bool = True
+    anslutna_par: tuple[tuple[int, int], ...] | None = None
+    hoppade_segment: int = 0
 
     @property
     def antal(self) -> int:
         return len(self.segment)
 
     @property
+    def antal_kedjor(self) -> int:
+        return len({s.kedje_id for s in self.segment})
+
+    @property
     def total_langd_m(self) -> float:
         return float(sum(s.ds_m for s in self.segment))
+
+    def effektiva_anslutna_par(self) -> tuple[tuple[int, int], ...]:
+        """Returnerar anslutna segmentpar `(u, v)` utan flödeskoppling mellan skilda kedjor."""
+        if self.anslutna_par is not None:
+            return self.anslutna_par
+        return tuple(
+            (i, i + 1)
+            for i in range(len(self.segment) - 1)
+            if self.segment[i].kedje_id == self.segment[i + 1].kedje_id
+        )
 
 
 @dataclass(frozen=True)
@@ -145,6 +163,7 @@ class Kopplad1D2DResultat:
     takvatten: bool = False
     takvatten_ut_rand_m3: float = 0.0
     takvatten_till_ledning_m3: float = 0.0
+    rand_in_m3: float = 0.0
     courant_hast_max: float = 0.0
     aktiv_cell_andel: float = 0.0
 
@@ -181,6 +200,7 @@ class Kopplad1D2DResultat:
             infiltrerat_m3=self.infiltrerat_m3 + self.initial_forlust_m3,
             avtappat_m3=self.avtappat_m3,
             tak_ledning_m3=self.takvatten_till_ledning_m3,
+            rand_in_m3=self.rand_in_m3,
         )
 
     def till_tvad_resultat(self) -> TvadResultat:
@@ -227,6 +247,7 @@ class Kopplad1D2DResultat:
             takvatten=self.takvatten,
             takvatten_ut_rand_m3=self.takvatten_ut_rand_m3,
             takvatten_till_ledning_m3=self.takvatten_till_ledning_m3,
+            rand_in_m3=self.rand_in_m3,
             courant_hast_max=self.courant_hast_max,
             berakningsplats="cpu_f64",
             anvande_rust=False,
@@ -310,7 +331,8 @@ def diskretisera_rannsten_1d(
     sid_tecken = 1.0 if korbana_sida == "vanster" else -1.0
 
     segment: list[RannstenSegment] = []
-    s_ack = 0.0
+    interna_par: list[tuple[int, int]] = []
+    hoppade_segment = 0
     seg_idx = 0
 
     for post in brytlinjer:
@@ -320,6 +342,7 @@ def diskretisera_rannsten_1d(
         tf = float(post.tvarfall) if post.tvarfall is not None else standard_tvarfall
         zk_seq = post.z_kron_rh2000
         zb_seq = post.z_botten_rh2000
+        prev_seg_idx: int | None = None
 
         for i in range(len(post.koordinater) - 1):
             e0, n0 = post.koordinater[i]
@@ -355,13 +378,34 @@ def diskretisera_rannsten_1d(
 
                 if zb_seq is not None and len(zb_seq) == len(post.koordinater):
                     zb = float(zb_seq[i]) + fm * (float(zb_seq[i + 1]) - float(zb_seq[i]))
+                    if not math.isfinite(zb):
+                        raise RannstenFel(
+                            f"Icke-ändligt z_botten_rh2000 ({zb}) i brytlinje '{post.typ}'."
+                        )
+                    utanfor_rutnat = (
+                        kor_rc is None
+                        and gang_rc is None
+                        and not (geo.x_min <= pem <= geo.x_max and geo.y_min <= pnm <= geo.y_max)
+                    )
+                    if utanfor_rutnat:
+                        hoppade_segment += 1
+                        prev_seg_idx = None
+                        continue
                 elif kor_rc is not None:
                     zb = float(mark_z[kor_rc[0], kor_rc[1]])
                 else:
-                    zb = 0.0
+                    # Saknar både explicit z_botten_rh2000 och aktiv körbanecell:
+                    # sätt aldrig tyst zb = 0.0 m RH 2000.
+                    hoppade_segment += 1
+                    prev_seg_idx = None
+                    continue
 
                 if zk_seq is not None and len(zk_seq) == len(post.koordinater):
                     zk = float(zk_seq[i]) + fm * (float(zk_seq[i + 1]) - float(zk_seq[i]))
+                    if not math.isfinite(zk):
+                        raise RannstenFel(
+                            f"Icke-ändligt z_kron_rh2000 ({zk}) i brytlinje '{post.typ}'."
+                        )
                 else:
                     zk = zb + float(post.hojd_m)
 
@@ -371,7 +415,7 @@ def diskretisera_rannsten_1d(
                         p0=(pe0, pn0),
                         p1=(pe1, pn1),
                         ds_m=ds,
-                        s_mitt_m=s_ack + 0.5 * ds,
+                        s_mitt_m=0.0,
                         z_botten_m=zb,
                         z_kron_m=zk,
                         tvarfall=tf,
@@ -380,11 +424,89 @@ def diskretisera_rannsten_1d(
                         gangbana_rc=gang_rc,
                     )
                 )
-                s_ack += ds
+                if prev_seg_idx is not None:
+                    interna_par.append((prev_seg_idx, seg_idx))
+                prev_seg_idx = seg_idx
                 seg_idx += 1
 
     if not segment:
-        raise RannstenFel("Inga giltiga 1D-rännstenssegment kunde skapas ur brytlinjerna.")
+        raise RannstenFel(
+            "Inga giltiga 1D-rännstenssegment kunde skapas ur brytlinjerna "
+            "(saknar aktiv körbanecell eller z_botten_rh2000)."
+        )
+
+    # Koppla samman brytlinjeposter vars ändpunkter möts inom 1 cm (t.ex. kantsten -> sänkt
+    # infart -> kantsten) men aldrig mellan geografiskt skilda kantstenskedjor.
+    har_ut: set[int] = {u for u, _ in interna_par}
+    har_in: set[int] = {v for _, v in interna_par}
+    fria_slut = [s.index for s in segment if s.index not in har_ut]
+    fria_start = [s.index for s in segment if s.index not in har_in]
+    anslutna_par: list[tuple[int, int]] = list(interna_par)
+    tagna_start: set[int] = set()
+    for u_idx in fria_slut:
+        ue, un = segment[u_idx].p1
+        basta_v: int | None = None
+        basta_d = _KEDJE_KOPPLING_TOL_M
+        for v_idx in fria_start:
+            if v_idx == u_idx or v_idx in tagna_start:
+                continue
+            ve, vn = segment[v_idx].p0
+            dist = math.hypot(ue - ve, un - vn)
+            if dist <= basta_d:
+                basta_d = dist
+                basta_v = v_idx
+        if basta_v is not None:
+            anslutna_par.append((u_idx, basta_v))
+            tagna_start.add(basta_v)
+
+    anslutna_par.sort()
+
+    # Tilldela deterministiskt kedje_id (union-find) och längdmätning s_mitt_m per kedja
+    n_seg = len(segment)
+    uf = list(range(n_seg))
+
+    def _uf_hitta(x: int) -> int:
+        while uf[x] != x:
+            uf[x] = uf[uf[x]]
+            x = uf[x]
+        return x
+
+    ut_karta: dict[int, int] = {}
+    in_karta: dict[int, int] = {}
+    for u_idx, v_idx in anslutna_par:
+        ut_karta[u_idx] = v_idx
+        in_karta[v_idx] = u_idx
+        ru, rv = _uf_hitta(u_idx), _uf_hitta(v_idx)
+        if ru != rv:
+            if ru < rv:
+                uf[rv] = ru
+            else:
+                uf[ru] = rv
+
+    rot_till_kedje: dict[int, int] = {}
+    kedje_per_seg = [0] * n_seg
+    komp_medlemmar: dict[int, list[int]] = {}
+    for idx in range(n_seg):
+        rot = _uf_hitta(idx)
+        kid = rot_till_kedje.get(rot)
+        if kid is None:
+            kid = len(rot_till_kedje)
+            rot_till_kedje[rot] = kid
+        kedje_per_seg[idx] = kid
+        komp_medlemmar.setdefault(kid, []).append(idx)
+
+    s_mitt_per_seg = [0.0] * n_seg
+    for medlemmar in komp_medlemmar.values():
+        starter = [idx for idx in medlemmar if idx not in in_karta]
+        curr: int | None = starter[0] if starter else medlemmar[0]
+        s_ack = 0.0
+        besokta: set[int] = set()
+        while curr is not None and curr not in besokta:
+            besokta.add(curr)
+            ds_c = segment[curr].ds_m
+            s_mitt_per_seg[curr] = s_ack + 0.5 * ds_c
+            s_ack += ds_c
+            curr = ut_karta.get(curr)
 
     # Koppla ALLA aktiva körbaneceller inom ett enhetligt band (2*cell, oberoende av vinkel)
     # längs rännstenskanten till sitt närmaste 1D-segment så att 0°, 20° och 45° får samma
@@ -440,7 +562,7 @@ def diskretisera_rannsten_1d(
                 p0=seg.p0,
                 p1=seg.p1,
                 ds_m=seg.ds_m,
-                s_mitt_m=seg.s_mitt_m,
+                s_mitt_m=s_mitt_per_seg[seg.index],
                 z_botten_m=seg.z_botten_m,
                 z_kron_m=seg.z_kron_m,
                 tvarfall=seg.tvarfall,
@@ -448,6 +570,7 @@ def diskretisera_rannsten_1d(
                 korbana_rc=seg.korbana_rc,
                 gangbana_rc=seg.gangbana_rc,
                 korbana_celler=kopplade,
+                kedje_id=kedje_per_seg[seg.index],
             )
         )
 
@@ -456,6 +579,8 @@ def diskretisera_rannsten_1d(
         manning_n=manning_n,
         max_bredd_m=max_bredd_m,
         oppen_nedstroms=oppen_nedstroms,
+        anslutna_par=tuple(anslutna_par),
+        hoppade_segment=hoppade_segment,
     )
 
 
@@ -594,22 +719,81 @@ def kor_kopplad_1d_2d(
     q_cell_x = np.zeros((hojd, bredd), dtype=np.float64)
     q_cell_y = np.zeros((hojd, bredd), dtype=np.float64)
 
-    # 1D-rännstensvektorer (exakta vektorlängder ds_m, oberoende av gatans vinkel)
+    # 1D-rännstensvektorer (exakta vektorlängder ds_m och explicita kedjegränser)
     n_seg = lank.antal
+    if n_seg == 0:
+        raise RannstenFel("RannstenLank saknar segment.")
     ds_1d = np.array([s.ds_m for s in lank.segment], dtype=np.float64)
     zb_1d = np.array([s.z_botten_m for s in lank.segment], dtype=np.float64)
     zk_1d = np.array([s.z_kron_m for s in lank.segment], dtype=np.float64)
     tf_1d = np.array([s.tvarfall for s in lank.segment], dtype=np.float64)
-    ds_face = 0.5 * (ds_1d[:-1] + ds_1d[1:]) if n_seg > 1 else np.zeros(0, dtype=np.float64)
-    z_face = np.maximum(zb_1d[:-1], zb_1d[1:]) if n_seg > 1 else np.zeros(0, dtype=np.float64)
-    tf_face = 0.5 * (tf_1d[:-1] + tf_1d[1:]) if n_seg > 1 else np.zeros(0, dtype=np.float64)
-    lutning_nedstroms = (
-        max(1e-4, (zb_1d[-2] - zb_1d[-1]) / max(ds_face[-1], 1e-6)) if n_seg > 1 else 0.01
+
+    par = lank.effektiva_anslutna_par()
+    for u_i, v_i in par:
+        if not (0 <= u_i < n_seg and 0 <= v_i < n_seg) or u_i == v_i:
+            raise RannstenFel(f"Ogiltigt anslutet segmentpar ({u_i}, {v_i}) för n_seg={n_seg}.")
+    n_face = len(par)
+    face_u = np.array([u_i for u_i, _ in par], dtype=np.intp)
+    face_v = np.array([v_i for _, v_i in par], dtype=np.intp)
+    ds_face = (
+        0.5 * (ds_1d[face_u] + ds_1d[face_v]) if n_face > 0 else np.zeros(0, dtype=np.float64)
     )
+    z_face = (
+        np.maximum(zb_1d[face_u], zb_1d[face_v]) if n_face > 0 else np.zeros(0, dtype=np.float64)
+    )
+    tf_face = (
+        0.5 * (tf_1d[face_u] + tf_1d[face_v]) if n_face > 0 else np.zeros(0, dtype=np.float64)
+    )
+
+    # Öppna nedströmsutlopp beräknas per kantstenskedja (aldrig enbart sista segmentet i arrayen)
+    ut_grannar: dict[int, list[int]] = {i: [] for i in range(n_seg)}
+    in_grannar: dict[int, list[int]] = {i: [] for i in range(n_seg)}
+    for u_i, v_i in par:
+        ut_grannar[u_i].append(v_i)
+        in_grannar[v_i].append(u_i)
+
+    kedjor: dict[int, list[int]] = {}
+    for i, s in enumerate(lank.segment):
+        kedjor.setdefault(s.kedje_id, []).append(i)
+
+    nedstroms_utlopp: list[tuple[int, float]] = []
+    for kid in sorted(kedjor):
+        segs = kedjor[kid]
+        if len(segs) == 1:
+            nedstroms_utlopp.append((segs[0], 0.01))
+            continue
+        slut_andar = [idx for idx in segs if not ut_grannar[idx]]
+        start_andar = [idx for idx in segs if not in_grannar[idx]]
+        kedje_utlopp: list[tuple[int, float]] = []
+        for end_idx in slut_andar:
+            if in_grannar[end_idx]:
+                nbr = in_grannar[end_idx][0]
+                ds_e = 0.5 * (float(ds_1d[nbr]) + float(ds_1d[end_idx]))
+                dz = float(zb_1d[nbr]) - float(zb_1d[end_idx])
+                if dz > 0.0:
+                    kedje_utlopp.append((end_idx, max(1e-4, dz / max(ds_e, 1e-6))))
+        for start_idx in start_andar:
+            if ut_grannar[start_idx]:
+                nbr = ut_grannar[start_idx][0]
+                ds_e = 0.5 * (float(ds_1d[nbr]) + float(ds_1d[start_idx]))
+                dz = float(zb_1d[nbr]) - float(zb_1d[start_idx])
+                if dz > 0.0:
+                    kedje_utlopp.append((start_idx, max(1e-4, dz / max(ds_e, 1e-6))))
+        if not kedje_utlopp and slut_andar:
+            for end_idx in slut_andar:
+                if in_grannar[end_idx]:
+                    nbr = in_grannar[end_idx][0]
+                    ds_e = 0.5 * (float(ds_1d[nbr]) + float(ds_1d[end_idx]))
+                    dz = float(zb_1d[nbr]) - float(zb_1d[end_idx])
+                    lut = max(1e-4, dz / max(ds_e, 1e-6))
+                else:
+                    lut = 0.01
+                kedje_utlopp.append((end_idx, lut))
+        nedstroms_utlopp.extend(kedje_utlopp)
 
     vol_1d = np.zeros(n_seg, dtype=np.float64)
     h_1d = np.zeros(n_seg, dtype=np.float64)
-    q_1d = np.zeros(max(0, n_seg - 1), dtype=np.float64)
+    q_1d = np.zeros(n_face, dtype=np.float64)
     max_h1d = np.zeros(n_seg, dtype=np.float64)
     max_q1d = np.zeros(n_seg, dtype=np.float64)
     overfall_gang = np.zeros(n_seg, dtype=np.float64)
@@ -635,6 +819,7 @@ def kor_kopplad_1d_2d(
     tid = t_regn_start
     antal_steg = 0
     in_m3 = 0.0
+    rand_in_m3 = 0.0
     total_regn_m3 = 0.0
     regn_summa_m = 0.0
     utflode_2d_m3 = 0.0
@@ -659,7 +844,9 @@ def kor_kopplad_1d_2d(
 
     if har_vatten_rand and bool(np.any(vatten_mal_vol > 0.0)):
         volym_2d = np.where(vatten_mask, vatten_mal_vol, volym_2d)
-        in_m3 += float(np.sum(vatten_mal_vol))
+        init_v = float(np.sum(vatten_mal_vol))
+        in_m3 += init_v
+        rand_in_m3 += init_v
         h2d = np.where(aktiv, volym_2d / cell_area, 0.0)
         np.maximum(max_h2d, h2d, out=max_h2d)
 
@@ -695,7 +882,9 @@ def kor_kopplad_1d_2d(
             utflode_2d_m3 += tak_ut_m2 * regn_m
             if har_vatten_rand:
                 diff_v = np.where(vatten_mask, vatten_mal_vol - volym_2d, 0.0)
-                in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+                dv_in = float(np.sum(np.maximum(diff_v, 0.0)))
+                in_m3 += dv_in
+                rand_in_m3 += dv_in
                 utflode_2d_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
                 volym_2d = np.where(vatten_mask, vatten_mal_vol, volym_2d)
             h2d = np.where(aktiv, volym_2d / cell_area, 0.0)
@@ -819,13 +1008,17 @@ def kor_kopplad_1d_2d(
         if tvingat is not None:
             mal_v = np.where(tvingat.mask & aktiv, tvingat.djup_m(tid + dt) * aktiv_area, 0.0)
             diff = np.where(tvingat.mask & aktiv, mal_v - volym_2d, 0.0)
-            in_m3 += float(np.sum(np.maximum(diff, 0.0)))
+            dv_in = float(np.sum(np.maximum(diff, 0.0)))
+            in_m3 += dv_in
+            rand_in_m3 += dv_in
             utflode_2d_m3 += float(np.sum(np.maximum(-diff, 0.0)))
             volym_2d = np.where(tvingat.mask & aktiv, mal_v, volym_2d)
 
         if har_vatten_rand:
             diff_v = np.where(vatten_mask, vatten_mal_vol - volym_2d, 0.0)
-            in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+            dv_in = float(np.sum(np.maximum(diff_v, 0.0)))
+            in_m3 += dv_in
+            rand_in_m3 += dv_in
             utflode_2d_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
             volym_2d = np.where(vatten_mask, vatten_mal_vol, volym_2d)
 
@@ -885,13 +1078,13 @@ def kor_kopplad_1d_2d(
         else:
             u_max_2d = u_max_kant
 
-        # 3. 1D-flöde längs rännstenen (exakta vektorlängder ds_m)
+        # 3. 1D-flöde längs rännstenen (exakta vektorlängder ds_m, strikt inom respektive kedja)
         eta_1d = zb_1d + h_1d
         u_max_1d = 0.0
-        if n_seg > 1:
-            hf_1d = np.maximum(eta_1d[:-1], eta_1d[1:]) - z_face
+        if n_face > 0:
+            hf_1d = np.maximum(eta_1d[face_u], eta_1d[face_v]) - z_face
             vat_1d = hf_1d > min_djup_m
-            s_1d = (eta_1d[:-1] - eta_1d[1:]) / ds_face
+            s_1d = (eta_1d[face_u] - eta_1d[face_v]) / ds_face
             area_f, rh_f = triangular_area_och_radie(
                 np.where(vat_1d, hf_1d, 0.0), tf_face, lank.max_bredd_m
             )
@@ -905,46 +1098,54 @@ def kor_kopplad_1d_2d(
 
             # Massbevarande utflödesbegränsning i 1D
             ut_1d = np.zeros(n_seg, dtype=np.float64)
-            ut_1d[:-1] += np.maximum(q_1d, 0.0) * dt
-            ut_1d[1:] += np.maximum(-q_1d, 0.0) * dt
+            np.add.at(ut_1d, face_u, np.maximum(q_1d, 0.0) * dt)
+            np.add.at(ut_1d, face_v, np.maximum(-q_1d, 0.0) * dt)
             sk_1d = np.where(ut_1d > vol_1d, vol_1d / np.maximum(ut_1d, 1e-18), 1.0)
-            q_1d = np.where(q_1d > 0.0, q_1d * sk_1d[:-1], q_1d * sk_1d[1:])
+            q_1d = np.where(q_1d > 0.0, q_1d * sk_1d[face_u], q_1d * sk_1d[face_v])
 
             dv_1d = q_1d * dt
-            vol_1d[:-1] -= dv_1d
-            vol_1d[1:] += dv_1d
+            np.add.at(vol_1d, face_u, -dv_1d)
+            np.add.at(vol_1d, face_v, dv_1d)
             vol_1d = np.maximum(0.0, vol_1d)
 
             vat_face_vel = vat_1d & (area_f > 1e-12)
             if bool(np.any(vat_face_vel)):
                 u_max_1d = float(np.max(np.abs(q_1d[vat_face_vel]) / area_f[vat_face_vel]))
 
-        q_end_eff = 0.0
-        if lank.oppen_nedstroms and h_1d[-1] > min_djup_m:
-            a_end, rh_end = triangular_area_och_radie(
-                np.array([h_1d[-1]]), np.array([tf_1d[-1]]), lank.max_bredd_m
-            )
-            q_end = (
-                (1.0 / lank.manning_n)
-                * float(a_end[0])
-                * (max(float(rh_end[0]), 1e-9) ** (2.0 / 3.0))
-                * math.sqrt(lutning_nedstroms)
-            )
-            dv_end = min(float(vol_1d[-1]), q_end * dt)
-            vol_1d[-1] = max(0.0, float(vol_1d[-1]) - dv_end)
-            utflode_1d_m3 += dv_end
-            q_end_eff = dv_end / dt if dt > 0.0 else 0.0
-            if float(a_end[0]) > 1e-12:
-                u_max_1d = max(u_max_1d, q_end_eff / float(a_end[0]))
+        end_q_eff: list[tuple[int, float]] = []
+        if lank.oppen_nedstroms:
+            for end_idx, lutning_end in nedstroms_utlopp:
+                if h_1d[end_idx] > min_djup_m:
+                    a_end, rh_end = triangular_area_och_radie(
+                        np.array([h_1d[end_idx]]),
+                        np.array([tf_1d[end_idx]]),
+                        lank.max_bredd_m,
+                    )
+                    q_end = (
+                        (1.0 / lank.manning_n)
+                        * float(a_end[0])
+                        * (max(float(rh_end[0]), 1e-9) ** (2.0 / 3.0))
+                        * math.sqrt(lutning_end)
+                    )
+                    dv_end = min(float(vol_1d[end_idx]), q_end * dt)
+                    vol_1d[end_idx] = max(0.0, float(vol_1d[end_idx]) - dv_end)
+                    utflode_1d_m3 += dv_end
+                    q_eff = dv_end / dt if dt > 0.0 else 0.0
+                    if q_eff > 0.0:
+                        end_q_eff.append((end_idx, q_eff))
+                    if float(a_end[0]) > 1e-12:
+                        u_max_1d = max(u_max_1d, q_eff / float(a_end[0]))
 
         h_1d = djup_fran_area(vol_1d / ds_1d, tf_1d, lank.max_bredd_m)
 
         q_seg = np.zeros(n_seg, dtype=np.float64)
-        if n_seg > 1:
-            q_seg[:-1] = np.maximum(q_seg[:-1], np.abs(q_1d))
-            q_seg[1:] = np.maximum(q_seg[1:], np.abs(q_1d))
-        if q_end_eff > 0.0:
-            q_seg[-1] = max(float(q_seg[-1]), q_end_eff)
+        if n_face > 0:
+            abs_q1d = np.abs(q_1d)
+            np.maximum.at(q_seg, face_u, abs_q1d)
+            np.maximum.at(q_seg, face_v, abs_q1d)
+        for end_idx, q_eff in end_q_eff:
+            if q_eff > float(q_seg[end_idx]):
+                q_seg[end_idx] = q_eff
 
         # 4. Lateral 1D <-> 2D koppling (exakt massbevarande!)
         # 4a. Körbanesidan: när 1D-rännstenen ligger under sin övre kant (z_tr_ut) är vattnet
@@ -1022,7 +1223,9 @@ def kor_kopplad_1d_2d(
 
         if har_vatten_rand:
             diff_v = np.where(vatten_mask, vatten_mal_vol - volym_2d, 0.0)
-            in_m3 += float(np.sum(np.maximum(diff_v, 0.0)))
+            dv_in = float(np.sum(np.maximum(diff_v, 0.0)))
+            in_m3 += dv_in
+            rand_in_m3 += dv_in
             utflode_2d_m3 += float(np.sum(np.maximum(-diff_v, 0.0)))
             volym_2d = np.where(vatten_mask, vatten_mal_vol, volym_2d)
             h2d = np.where(aktiv, volym_2d / cell_area, 0.0)
@@ -1090,6 +1293,7 @@ def kor_kopplad_1d_2d(
         takvatten=takvatten is not None,
         takvatten_ut_rand_m3=tak_ut_m2 * regn_summa_m,
         takvatten_till_ledning_m3=tak_ledning_m2 * regn_summa_m,
+        rand_in_m3=rand_in_m3,
         courant_hast_max=courant_hast_max,
         aktiv_cell_andel=aktiv_andel,
     )
@@ -1116,6 +1320,7 @@ def exportera_rannsten_flode_geojson(
                 },
                 "properties": {
                     "segment_id": seg.index,
+                    "kedje_id": seg.kedje_id,
                     "s_mitt_m": round(seg.s_mitt_m, 2),
                     "ds_m": round(seg.ds_m, 3),
                     "z_botten_rh2000": round(seg.z_botten_m, 3),

@@ -164,13 +164,23 @@ def _hitta_uppstroms_hav_celler(
     bredd: int,
     start_mask: NDArray[np.bool_],
 ) -> NDArray[np.bool_]:
-    """Hittar alla `HAV_NOD_ID`-celler som kan ha runnit genom `start_mask` (inkl. platåer)."""
+    """Hittar alla `HAV_NOD_ID`-celler som kan påverkas av `start_mask` (inkl. platåer/sänkning).
+
+    Seedas både direkt från aktiva `HAV_NOD_ID`-celler i `start_mask` (fångar grannar till sänkt
+    mark och rivna byggnader oavsett tidigare höjdrelation) och från 4-grannar i HAV med
+    `bas_z[nxt] >= bas_z[u]` kring övriga aktiva celler i `start_mask`.
+    """
     hav_besokt = np.zeros(hojd * bredd, dtype=bool)
     ko: deque[int] = deque()
 
     for idx_np in np.flatnonzero(start_mask.ravel()):
         idx = int(idx_np)
         if not bas_aktiv_flat[idx]:
+            continue
+        if int(bas_ct_flat[idx]) == HAV_NOD_ID:
+            if not hav_besokt[idx]:
+                hav_besokt[idx] = True
+                ko.append(idx)
             continue
         r, c = divmod(idx, bredd)
         z_u = float(bas_z_flat[idx])
@@ -423,10 +433,11 @@ def uppdatera_sankgraf_lokalt(
         return _full_omrakning("ny_slutsanka")
     if berorda_noder & slut_bas:
         return _full_omrakning("beror_slutsanka")
-    # Säkerställ att alla 4-grannar till eff_andrad som är HAV också ingår i initialt delområde
+    # Säkerställ att alla 4-grannar till eff_andrad som är HAV — samt alla deras uppströms
+    # HAV-celler — ingår i delområdet (fångar även marksänkning och byggnadsrivning).
     utvidgad_andrad = _utvidga_4grannar(eff_andrad)
     uppstroms_hav = _hitta_uppstroms_hav_celler(
-        bas_z_flat, bas_ct_flat, bas_aktiv_flat, hojd, bredd, eff_andrad
+        bas_z_flat, bas_ct_flat, bas_aktiv_flat, hojd, bredd, utvidgad_andrad
     )
 
     def _ar_rand(u_idx: int) -> bool:
@@ -655,6 +666,62 @@ def uppdatera_sankgraf_lokalt(
             for cell in kedja:
                 lokal_ct[cell] = mal_nod
 
+        # 3b. Fixpunktskontroll mot frysta HAV-celler: om en tidigare HAV-cell övergått till
+        # sänka/byggnad (eller en icke-HAV-cell delar likahöjdsplatå med fryst HAV), expandera
+        # uppströms HAV så att resultatet förblir identiskt med full `bygg_sankgraf`.
+        nya_uppstroms_hav_fro: list[int] = []
+        for u_np in omrakna_indices:
+            u = int(u_np)
+            if not aktiv_flat[u]:
+                continue
+            cu = int(lokal_ct[u])
+            if cu == HAV_NOD_ID:
+                continue
+            skiftade_fran_hav = int(bas_ct_flat[u]) == HAV_NOD_ID
+            zu = float(z_flat[u])
+            ur, uc = divmod(u, bredd)
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                vr, vc = ur + dr, uc + dc
+                if 0 <= vr < hojd and 0 <= vc < bredd:
+                    v = vr * bredd + vc
+                    if (
+                        not omrakna_flat[v]
+                        and aktiv_flat[v]
+                        and int(bas_ct_flat[v]) == HAV_NOD_ID
+                    ):
+                        zv = float(z_flat[v])
+                        if (skiftade_fran_hav and zv >= zu) or (
+                            zv == zu and _tillganglig_platt_kant(u, v, zu)
+                        ):
+                            nya_uppstroms_hav_fro.append(v)
+
+        if nya_uppstroms_hav_fro:
+            extra_flat = extra_hav_mask.ravel()
+            hav_ko: deque[int] = deque()
+            for fro_cell in nya_uppstroms_hav_fro:
+                if not extra_flat[fro_cell]:
+                    extra_flat[fro_cell] = True
+                    hav_ko.append(fro_cell)
+            while hav_ko:
+                hc = hav_ko.popleft()
+                hr, hcol = divmod(hc, bredd)
+                z_h = float(z_flat[hc])
+                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    nr, nc = hr + dr, hcol + dc
+                    if 0 <= nr < hojd and 0 <= nc < bredd:
+                        nxt = nr * bredd + nc
+                        if (
+                            aktiv_flat[nxt]
+                            and not extra_flat[nxt]
+                            and not omrakna_flat[nxt]
+                            and int(bas_ct_flat[nxt]) == HAV_NOD_ID
+                            and float(z_flat[nxt]) >= z_h
+                        ):
+                            extra_flat[nxt] = True
+                            hav_ko.append(nxt)
+            extra_hav_mask = np.asarray(extra_flat.reshape((hojd, bredd)), dtype=np.bool_)
+            continue
+
         # 4. Samla lokala sadelkanter + kontrollera sadelgräns mot bevarade komponenter
         par_kanter: dict[tuple[int, int], tuple[float, list[tuple[int, int, int, int]]]] = {}
         bevarat_lov_till_ext: dict[int, int] = {}
@@ -693,42 +760,48 @@ def uppdatera_sankgraf_lokalt(
             elif abs(w - bef[0]) <= _SADEL_TIE_TOL_M:
                 bef[1].append((u, v, cu, cv))
 
-        if antal_lokala_lov > 0:
-            for u_np in omrakna_indices:
-                u = int(u_np)
-                if not aktiv_flat[u]:
+        for u_np in omrakna_indices:
+            u = int(u_np)
+            if not aktiv_flat[u]:
+                continue
+            cu = int(lokal_ct[u])
+            ur, uc = divmod(u, bredd)
+
+            if antal_lokala_lov > 0 and cu >= 0 and _ar_rand(u):
+                _registrera_kant(u, -1, cu, HAV_NOD_ID, float(z_flat[u]))
+
+            for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                vr, vc = ur + dr, uc + dc
+                if not (0 <= vr < hojd and 0 <= vc < bredd):
                     continue
-                cu = int(lokal_ct[u])
-                ur, uc = divmod(u, bredd)
+                v = vr * bredd + vc
+                if not aktiv_flat[v]:
+                    continue
+                kant_nyckel = (u, v) if u < v else (v, u)
+                w = kantbarriarer.get(kant_nyckel, max(float(z_flat[u]), float(z_flat[v])))
 
-                if cu >= 0 and _ar_rand(u):
-                    _registrera_kant(u, -1, cu, HAV_NOD_ID, float(z_flat[u]))
-
-                for dr, dc in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    vr, vc = ur + dr, uc + dc
-                    if not (0 <= vr < hojd and 0 <= vc < bredd):
-                        continue
-                    v = vr * bredd + vc
-                    if not aktiv_flat[v]:
-                        continue
-                    kant_nyckel = (u, v) if u < v else (v, u)
-                    w = kantbarriarer.get(kant_nyckel, max(float(z_flat[u]), float(z_flat[v])))
-
-                    if omrakna_flat[v]:
-                        if u < v:
-                            cv = int(lokal_ct[v])
-                            if cu != cv:
-                                _registrera_kant(u, v, cu, cv, w)
-                    elif cu >= 0:
-                        bas_v_nod = int(bas_ct_flat[v])
-                        if bas_v_nod == HAV_NOD_ID:
-                            _registrera_kant(u, v, cu, HAV_NOD_ID, w)
-                        elif bas_v_nod in bevarade_noder:
-                            if w <= rot_overfall[bas_v_nod] + _SADEL_TIE_TOL_M:
-                                expanderade_komp.add(nod_till_komp[bas_v_nod])
-                            else:
-                                ext_v = _ext_id_for_bevarat_lov(bas_v_nod)
-                                _registrera_kant(u, v, cu, ext_v, w)
+                if omrakna_flat[v]:
+                    if antal_lokala_lov > 0 and u < v:
+                        cv = int(lokal_ct[v])
+                        if cu != cv:
+                            _registrera_kant(u, v, cu, cv, w)
+                elif cu >= 0:
+                    bas_v_nod = int(bas_ct_flat[v])
+                    if bas_v_nod == HAV_NOD_ID:
+                        _registrera_kant(u, v, cu, HAV_NOD_ID, w)
+                    elif bas_v_nod in bevarade_noder:
+                        if w <= rot_overfall[bas_v_nod] + _SADEL_TIE_TOL_M:
+                            expanderade_komp.add(nod_till_komp[bas_v_nod])
+                        else:
+                            ext_v = _ext_id_for_bevarat_lov(bas_v_nod)
+                            _registrera_kant(u, v, cu, ext_v, w)
+                elif int(bas_ct_flat[u]) != HAV_NOD_ID:
+                    bas_v_nod = int(bas_ct_flat[v])
+                    if (
+                        bas_v_nod in bevarade_noder
+                        and w <= rot_overfall[bas_v_nod] + _SADEL_TIE_TOL_M
+                    ):
+                        expanderade_komp.add(nod_till_komp[bas_v_nod])
 
         if expanderade_komp:
             for cid in expanderade_komp:
