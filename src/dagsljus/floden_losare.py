@@ -16,9 +16,11 @@ går högst så långt, så hinder som skymmer mindre än h_min bortom radien in
 from __future__ import annotations
 
 import csv
+import gc
 import hashlib
 import json
 import math
+import os
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
@@ -46,7 +48,14 @@ from dagsljus.matt import (
     tidsfonster_mask,
     vsc_fran_halvplansprofil,
 )
-from dagsljus.ruta import Mosaik, RutaFel, bygg_mosaik, fonster_koordinater, mitt_3011
+from dagsljus.ruta import (
+    Mosaik,
+    RutaFel,
+    bygg_mosaik,
+    fonster_koordinater,
+    mitt_3011,
+    uppskatta_mosaik_form,
+)
 from dagsljus.solposition import dygnsfonster_utc, lat_lon_fran_3011, solposition
 from gemensamt.gpu import ar_gpu_backend, berakningsplats, hamta_backend, till_enhet
 from karna.analyslosare import Analyslosare, LosarFel, LosarKontext, LosarUtdata
@@ -125,16 +134,27 @@ def _radie_m(p: Mapping[str, Any]) -> float:
 def _mosaik(k: LosarKontext) -> Mosaik:
     if k.ruta is None:
         raise LosarFel("Dagsljuslösare körs rutvis men fick ingen ruta.")
+    max_celler = max_dagsljus_celler()
+    grannar = tuple(g.mapp for g in k.grannar)
+    cell_m = float(k.parametrar["cellstorlek_m"])
+    antal_rutor = 1 + len(grannar)
     try:
-        return bygg_mosaik(
+        hojd, bredd = uppskatta_mosaik_form(k.ruta.mapp, grannar, cell_m)
+    except RutaFel as exc:
+        raise LosarFel(str(exc)) from exc
+    kontrollera_dagsljus_celler(hojd * bredd, antal_rutor, max_celler)
+    try:
+        mosaik = bygg_mosaik(
             k.ruta.mapp,
-            tuple(g.mapp for g in k.grannar),
-            float(k.parametrar["cellstorlek_m"]),
+            grannar,
+            cell_m,
             k.parametrar["omsampling"],
             vegetation=bool(k.parametrar["vegetation"]),
         )
     except RutaFel as exc:
         raise LosarFel(str(exc)) from exc
+    kontrollera_dagsljus_celler(int(mosaik.falt.z_m.size), antal_rutor, max_celler)
+    return mosaik
 
 
 def _gemensamma_varningar(k: LosarKontext, m: Mosaik) -> list[str]:
@@ -243,6 +263,9 @@ def _horisontpass(
             std += h0 != h
             for f in mottagare_utan_standard or []:
                 f(i, float(phi), h0)
+    del z_xp, z0_xp
+    if m.falt.z_m.size >= _DAGSLJUS_GC_TROSKEL_CELLER:
+        gc.collect()
     return _Pass(trunk, std, plats)
 
 
@@ -301,6 +324,85 @@ class _DagsljusLosare(Analyslosare):
 
 _HORISONT_CACHE_MAX = 16
 _HORISONT_MAX_ANDRAD_ANDEL = 0.25
+STANDARD_MAX_HORISONT_CACHE_MB = 128.0
+_FLODEN_MAX_HORISONT_CACHE_MB_ENV = "FLODEN_MAX_HORISONT_CACHE_MB"
+STANDARD_MAX_DAGSLJUS_CELLER = 4_500_000
+_FLODEN_MAX_DAGSLJUS_CELLER_ENV = "FLODEN_MAX_DAGSLJUS_CELLER"
+_DAGSLJUS_GC_TROSKEL_CELLER = 500_000
+
+
+def max_horisont_cache_mb() -> float:
+    """Läser bytebudget (MB) för `_HORISONT_CACHE` ur `FLODEN_MAX_HORISONT_CACHE_MB`.
+
+    Tomt ger standard (`STANDARD_MAX_HORISONT_CACHE_MB` = 128,0 MB). `0` inaktiverar
+    minnescachen helt. Ogiltigt värde (icke-tal, NaN/inf eller negativt) ger `LosarFel`.
+    """
+    raw = os.environ.get(_FLODEN_MAX_HORISONT_CACHE_MB_ENV)
+    if raw is None or not raw.strip():
+        return STANDARD_MAX_HORISONT_CACHE_MB
+    text = raw.strip()
+    try:
+        val = float(text)
+    except ValueError as exc:
+        raise LosarFel(
+            f"Ogiltigt värde i {_FLODEN_MAX_HORISONT_CACHE_MB_ENV}={raw!r}: "
+            "ange ett icke-negativt tal i MB (0 = inaktivera minnescache)."
+        ) from exc
+    if not math.isfinite(val) or val < 0.0:
+        raise LosarFel(
+            f"Ogiltigt värde i {_FLODEN_MAX_HORISONT_CACHE_MB_ENV}={raw!r}: "
+            "värdet måste vara ett ändligt tal >= 0 (0 = inaktivera minnescache)."
+        )
+    return val
+
+
+def max_horisont_cache_bytes() -> int:
+    """Bytebudget för `_HORISONT_CACHE` (0 innebär att minnescachen är avstängd)."""
+    mb = max_horisont_cache_mb()
+    if mb == 0.0:
+        return 0
+    return max(1, int(mb * 1024.0 * 1024.0))
+
+
+def max_dagsljus_celler() -> int:
+    """Läser celltaket för dagsljusmosaiken ur `FLODEN_MAX_DAGSLJUS_CELLER`.
+
+    Tomt eller `0` ger standard (`STANDARD_MAX_DAGSLJUS_CELLER` = 4 500 000 celler).
+    Ogiltigt värde (icke-heltal eller negativt) ger `LosarFel` (inga tysta fel).
+    """
+    raw = os.environ.get(_FLODEN_MAX_DAGSLJUS_CELLER_ENV)
+    if raw is None or not raw.strip():
+        return STANDARD_MAX_DAGSLJUS_CELLER
+    text = raw.strip()
+    try:
+        val = int(text)
+    except ValueError as exc:
+        raise LosarFel(
+            f"Ogiltigt värde i {_FLODEN_MAX_DAGSLJUS_CELLER_ENV}={raw!r}: "
+            "ange ett icke-negativt heltal (0 eller tomt = standard)."
+        ) from exc
+    if val < 0:
+        raise LosarFel(
+            f"Ogiltigt värde i {_FLODEN_MAX_DAGSLJUS_CELLER_ENV}={raw!r}: "
+            "värdet får inte vara negativt (0 eller tomt = standard)."
+        )
+    return STANDARD_MAX_DAGSLJUS_CELLER if val == 0 else val
+
+
+def kontrollera_dagsljus_celler(
+    n_celler: int, antal_rutor: int, max_celler: int | None = None
+) -> None:
+    """Fail-fast kontroll av dagsljusmosaikens cellantal före horisontberäkning."""
+    grans = max_dagsljus_celler() if max_celler is None else max_celler
+    if n_celler > grans:
+        rut_txt = "ruta" if antal_rutor == 1 else "rutor"
+        raise LosarFel(
+            f"Dagsljusmosaiken omfattar {n_celler} celler ({antal_rutor} {rut_txt}), vilket "
+            f"överstiger serverns minnesgräns på {grans} celler "
+            f"({_FLODEN_MAX_DAGSLJUS_CELLER_ENV}). "
+            "Öka cellstorlek_m, minska hojd_max_m/påverkansradien eller kör på en maskin med "
+            "mer RAM."
+        )
 
 
 @dataclass(frozen=True)
@@ -337,6 +439,40 @@ _HORISONT_LOCK = threading.Lock()
 _HORISONT_CACHE: OrderedDict[tuple[Any, ...], _HorisontCachePost] = OrderedDict()
 _HORISONT_RECEPT_INDEX: dict[tuple[Any, ...], tuple[Any, ...]] = {}
 _HORISONT_GRID_INDEX: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+
+
+def _horisont_post_bytes(post: _HorisontCachePost) -> int:
+    """Exakt storlek i byte (`nbytes`) för alla NumPy-arrayer i en cachad horisontpost."""
+    totalt = int(post.falt.z_m.nbytes) + int(post.h_rad.nbytes) + int(post.trunk.nbytes)
+    if post.falt_utan_standard is not None:
+        totalt += int(post.falt_utan_standard.z_m.nbytes)
+    if post.h0_rad is not None:
+        totalt += int(post.h0_rad.nbytes)
+    return totalt
+
+
+def _horisont_cache_bytes_locked() -> int:
+    """Total byte-storlek i `_HORISONT_CACHE` (anropas med `_HORISONT_LOCK`)."""
+    sedda: set[int] = set()
+    totalt = 0
+    for post in _HORISONT_CACHE.values():
+        pid = id(post)
+        if pid not in sedda:
+            sedda.add(pid)
+            totalt += _horisont_post_bytes(post)
+    return totalt
+
+
+def horisont_cache_bytes() -> int:
+    """Totalt antal NumPy-byte som för närvarande hålls i `_HORISONT_CACHE`."""
+    with _HORISONT_LOCK:
+        return _horisont_cache_bytes_locked()
+
+
+def _rensa_horisont_index_for_locked(bort_nyckel: tuple[Any, ...]) -> None:
+    for idx_karta in (_HORISONT_RECEPT_INDEX, _HORISONT_GRID_INDEX):
+        for k in [kk for kk, vv in idx_karta.items() if vv == bort_nyckel]:
+            del idx_karta[k]
 
 
 def rensa_horisont_cache() -> None:
@@ -384,6 +520,8 @@ def _ruta_recept_nycklar(ruta: Any) -> tuple[str, str]:
 
 
 def _hamta_exakt_horisont(primar_nyckel: tuple[Any, ...]) -> _HorisontCachePost | None:
+    if max_horisont_cache_bytes() <= 0:
+        return None
     with _HORISONT_LOCK:
         post = _HORISONT_CACHE.get(primar_nyckel)
         if post is not None:
@@ -398,6 +536,8 @@ def _hamta_bas_horisont(
     ar_andrad_fran_bas: bool,
     egen_dsm_sha: str,
 ) -> _HorisontCachePost | None:
+    if max_horisont_cache_bytes() <= 0:
+        return None
     with _HORISONT_LOCK:
         primar: tuple[Any, ...] | None = None
         if ar_andrad_fran_bas:
@@ -422,7 +562,13 @@ def _spara_horisont_i_cache(
     *,
     ar_andrad_fran_bas: bool,
 ) -> None:
+    budget_bytes = max_horisont_cache_bytes()
     with _HORISONT_LOCK:
+        if budget_bytes <= 0:
+            _HORISONT_CACHE.clear()
+            _HORISONT_RECEPT_INDEX.clear()
+            _HORISONT_GRID_INDEX.clear()
+            return
         befintlig = _HORISONT_CACHE.get(primar_nyckel)
         if befintlig is not None and not befintlig.giltiga_riktningar.issubset(
             post.giltiga_riktningar
@@ -448,16 +594,27 @@ def _spara_horisont_i_cache(
                 falt_utan_standard=post.falt_utan_standard,
                 h0_rad=h0_ihop,
             )
+        post_bytes = _horisont_post_bytes(post)
+        if post_bytes > budget_bytes:
+            # Cacha aldrig en enskild post som ensam överskrider budgeten.
+            if primar_nyckel in _HORISONT_CACHE:
+                del _HORISONT_CACHE[primar_nyckel]
+                _rensa_horisont_index_for_locked(primar_nyckel)
+            while _HORISONT_CACHE and _horisont_cache_bytes_locked() > budget_bytes:
+                bort_nyckel, _ = _HORISONT_CACHE.popitem(last=False)
+                _rensa_horisont_index_for_locked(bort_nyckel)
+            return
         _HORISONT_CACHE[primar_nyckel] = post
         _HORISONT_CACHE.move_to_end(primar_nyckel)
         _HORISONT_RECEPT_INDEX[recept_nyckel] = primar_nyckel
         if not ar_andrad_fran_bas or grid_nyckel not in _HORISONT_GRID_INDEX:
             _HORISONT_GRID_INDEX[grid_nyckel] = primar_nyckel
-        while len(_HORISONT_CACHE) > _HORISONT_CACHE_MAX:
+        while _HORISONT_CACHE and (
+            len(_HORISONT_CACHE) > _HORISONT_CACHE_MAX
+            or _horisont_cache_bytes_locked() > budget_bytes
+        ):
             bort_nyckel, _ = _HORISONT_CACHE.popitem(last=False)
-            for idx_karta in (_HORISONT_RECEPT_INDEX, _HORISONT_GRID_INDEX):
-                for k in [kk for kk, vv in idx_karta.items() if vv == bort_nyckel]:
-                    del idx_karta[k]
+            _rensa_horisont_index_for_locked(bort_nyckel)
 
 
 def _berakna_trunk(
@@ -550,6 +707,8 @@ def _berakna_horisont_kub(
     antal = int(kontext.parametrar["azimutriktningar"])
     radie = _radie_m(kontext.parametrar)
     enhet = str(kontext.parametrar.get("enhet", "cpu"))
+    # Validera cachebudget tidigt (inga tysta fel vid ogiltig FLODEN_MAX_HORISONT_CACHE_MB).
+    max_horisont_cache_bytes()
     xp, enhet_namn = hamta_backend(enhet)
     pa_gpu = ar_gpu_backend(xp)
     plats = berakningsplats(enhet_namn, np.float32)
@@ -685,6 +844,8 @@ def _berakna_horisont_kub(
             ),
             ar_andrad_fran_bas=ar_andrad_fran_bas,
         )
+        if not kvar and m.falt.z_m.size >= _DAGSLJUS_GC_TROSKEL_CELLER:
+            gc.collect()
         return _HorisontKubResultat(
             h_rad=h_ex,
             h0_rad=h0_ex,
@@ -773,6 +934,7 @@ def _berakna_horisont_kub(
                 inkrementell_orsak = "saknar_riktningar"
 
     # 3. Full beräkning (kall cache, GPU eller ändring som inte kvalificerar).
+    korde_horisontpass = False
     if not inkrementell or h_rad is None or trunk_res is None:
         h_rad = np.zeros((antal, r1 - r0, c1 - c0), dtype=np.float32)
         h0_rad = (
@@ -796,6 +958,7 @@ def _berakna_horisont_kub(
             [lagra_rad0] if h0_rad is not None else None,
             aktiva_riktningar=aktiva_riktningar,
         )
+        korde_horisontpass = True
         trunk_res = pas.trunk
         plats = pas.berakningsplats
 
@@ -818,6 +981,8 @@ def _berakna_horisont_kub(
         ),
         ar_andrad_fran_bas=ar_andrad_fran_bas,
     )
+    if not korde_horisontpass and m.falt.z_m.size >= _DAGSLJUS_GC_TROSKEL_CELLER:
+        gc.collect()
     return _HorisontKubResultat(
         h_rad=h_rad,
         h0_rad=h0_rad,
@@ -1498,6 +1663,9 @@ def _vsc_pa_falt(
                 status[int(idx)] = "inuti_hinder"
             else:
                 vsc[idx] = float(v[q])
+    del pyr
+    if falt.z_m.size >= _DAGSLJUS_GC_TROSKEL_CELLER:
+        gc.collect()
     return _VscResultat(vsc, trunk_ant, status)
 
 
@@ -1704,6 +1872,9 @@ def _sol_fasad_pa_falt(
             else:
                 sol_h_ut[idx] = float(tot_h[q])
                 sam_h_ut[idx] = float(sam_h[q])
+    del pyr
+    if falt.z_m.size >= _DAGSLJUS_GC_TROSKEL_CELLER:
+        gc.collect()
     return _SolFasadResultat(sol_h_ut, sam_h_ut, trunk_ant, status)
 
 

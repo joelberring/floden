@@ -16,9 +16,11 @@ Alla beräkningar är 100 % deterministiska i SWEREF 99 18 00 (EPSG:3011) och RH
 from __future__ import annotations
 
 import contextlib
+import gc
 import hashlib
 import json
 import math
+import os
 import re
 import threading
 import urllib.parse
@@ -40,7 +42,6 @@ from dagsljus.horisont import (
     horisont_riktning_ruta,
     horisont_ruta_iter,
 )
-from dagsljus.matt import svf_fran_horisont
 from ekologi.gyf import (
     K1_MARKSLAG_BYGGNAD,
     GyfResultat,
@@ -110,6 +111,114 @@ TRAD_HOJD_GRANS_M: Final[float] = 2.0
 BUSK_HOJD_MIN_M: Final[float] = 0.5
 MAX_VARMESTRESS_CELLER: Final[int] = 360_000
 
+STANDARD_MAX_WEBB_PNG_CACHE_MB: Final[float] = 32.0
+FLODEN_MAX_WEBB_PNG_CACHE_MB_ENV: Final[str] = "FLODEN_MAX_WEBB_PNG_CACHE_MB"
+STANDARD_MAX_WEBB_SVF_CACHE_MB: Final[float] = 32.0
+FLODEN_MAX_WEBB_SVF_CACHE_MB_ENV: Final[str] = "FLODEN_MAX_WEBB_SVF_CACHE_MB"
+STANDARD_MAX_GYF_CELLER: Final[int] = 4_000_000
+FLODEN_MAX_GYF_CELLER_ENV: Final[str] = "FLODEN_MAX_GYF_CELLER"
+STANDARD_MAX_VARMESTRESS_PROJEKT_CELLER: Final[int] = 4_000_000
+FLODEN_MAX_VARMESTRESS_CELLER_ENV: Final[str] = "FLODEN_MAX_VARMESTRESS_CELLER"
+_WEBB_GC_TROSKEL_CELLER: Final[int] = 500_000
+
+
+def _las_miljo_cache_bytes(env_namn: str, standard_mb: float) -> int:
+    """Läser cache-bytebudget (MB) ur en miljövariabel (`0` inaktiverar cachen helt)."""
+    raw = os.environ.get(env_namn)
+    if raw is None or not raw.strip():
+        return max(1, int(standard_mb * 1024.0 * 1024.0))
+    text = raw.strip()
+    try:
+        val = float(text)
+    except ValueError as exc:
+        raise FlodenWebbFel(
+            f"Ogiltigt värde i {env_namn}={raw!r}: ange ett icke-negativt tal i MB "
+            "(0 = inaktivera minnescache).",
+            status_kod=500,
+        ) from exc
+    if not math.isfinite(val) or val < 0.0:
+        raise FlodenWebbFel(
+            f"Ogiltigt värde i {env_namn}={raw!r}: värdet måste vara ett ändligt tal >= 0 "
+            "(0 = inaktivera minnescache).",
+            status_kod=500,
+        )
+    if val == 0.0:
+        return 0
+    return max(1, int(val * 1024.0 * 1024.0))
+
+
+def _las_miljo_grans_bytes(env_namn: str, standard_mb: float) -> int:
+    """Läser storleksgräns i MB ur en miljövariabel (`0` eller tomt = standard)."""
+    raw = os.environ.get(env_namn)
+    if raw is None or not raw.strip():
+        return max(1, int(standard_mb * 1024.0 * 1024.0))
+    text = raw.strip()
+    try:
+        val = float(text)
+    except ValueError as exc:
+        raise FlodenWebbFel(
+            f"Ogiltigt värde i {env_namn}={raw!r}: ange ett icke-negativt tal i MB "
+            "(0 eller tomt = standard).",
+            status_kod=500,
+        ) from exc
+    if not math.isfinite(val) or val < 0.0:
+        raise FlodenWebbFel(
+            f"Ogiltigt värde i {env_namn}={raw!r}: värdet måste vara ett ändligt tal >= 0 "
+            "(0 eller tomt = standard).",
+            status_kod=500,
+        )
+    eff_mb = standard_mb if val == 0.0 else val
+    return max(1, int(eff_mb * 1024.0 * 1024.0))
+
+
+def _las_miljo_celltak(env_namn: str, standard: int) -> int:
+    """Läser cell- eller objekttak ur en miljövariabel (`0` eller tomt = standard)."""
+    raw = os.environ.get(env_namn)
+    if raw is None or not raw.strip():
+        return standard
+    text = raw.strip()
+    try:
+        val = int(text)
+    except ValueError as exc:
+        raise FlodenWebbFel(
+            f"Ogiltigt värde i {env_namn}={raw!r}: ange ett icke-negativt heltal "
+            "(0 eller tomt = standard).",
+            status_kod=500,
+        ) from exc
+    if val < 0:
+        raise FlodenWebbFel(
+            f"Ogiltigt värde i {env_namn}={raw!r}: värdet får inte vara negativt "
+            "(0 eller tomt = standard).",
+            status_kod=500,
+        )
+    return standard if val == 0 else val
+
+
+def max_webb_png_cache_bytes() -> int:
+    """Konfigurerbar bytebudget per webb-PNG-cache (`FLODEN_MAX_WEBB_PNG_CACHE_MB`, 32 MB)."""
+    return _las_miljo_cache_bytes(
+        FLODEN_MAX_WEBB_PNG_CACHE_MB_ENV, STANDARD_MAX_WEBB_PNG_CACHE_MB
+    )
+
+
+def max_webb_svf_cache_bytes() -> int:
+    """Konfigurerbar bytebudget för webbens SVF-cache (`FLODEN_MAX_WEBB_SVF_CACHE_MB`, 32 MB)."""
+    return _las_miljo_cache_bytes(
+        FLODEN_MAX_WEBB_SVF_CACHE_MB_ENV, STANDARD_MAX_WEBB_SVF_CACHE_MB
+    )
+
+
+def max_gyf_celler() -> int:
+    """Fail-fast celltak för GYF-analys (`FLODEN_MAX_GYF_CELLER`, standard 4 000 000)."""
+    return _las_miljo_celltak(FLODEN_MAX_GYF_CELLER_ENV, STANDARD_MAX_GYF_CELLER)
+
+
+def max_varmestress_projekt_celler() -> int:
+    """Fail-fast projektcelltak för värmestress (`FLODEN_MAX_VARMESTRESS_CELLER`, 4 000 000)."""
+    return _las_miljo_celltak(
+        FLODEN_MAX_VARMESTRESS_CELLER_ENV, STANDARD_MAX_VARMESTRESS_PROJEKT_CELLER
+    )
+
 
 @dataclass(frozen=True)
 class _ProjektGeometri:
@@ -147,24 +256,70 @@ _LAGER_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_.\-]{0,120}
 
 
 class VarmestressLagerCache:
-    """Trådsäker, minnesbegränsad cache av värmestress-PNG:er per `(projekt_id, lager_id)`."""
+    """Trådsäker, bytebegränsad LRU-cache av värmestress-PNG:er per `(projekt_id, lager_id)`."""
 
-    def __init__(self, max_poster: int = 64) -> None:
+    def __init__(self, max_poster: int = 64, *, max_bytes: int | None = None) -> None:
         self._max_poster = max(1, int(max_poster))
+        if max_bytes is not None and (isinstance(max_bytes, bool) or int(max_bytes) < 0):
+            raise ValueError(f"max_bytes måste vara >= 0, fick {max_bytes!r}.")
+        self._max_bytes_fast: int | None = None if max_bytes is None else int(max_bytes)
         self._lock = threading.Lock()
         self._data: OrderedDict[tuple[str, str], tuple[bytes, Utbredning]] = OrderedDict()
+        self._total_bytes = 0
+
+    def _budget_bytes(self) -> int:
+        return (
+            self._max_bytes_fast
+            if self._max_bytes_fast is not None
+            else max_webb_png_cache_bytes()
+        )
+
+    @property
+    def antal_bytes(self) -> int:
+        with self._lock:
+            return self._total_bytes
+
+    @property
+    def antal_poster(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+    def rensa(self) -> None:
+        with self._lock:
+            self._data.clear()
+            self._total_bytes = 0
 
     def satt(self, projekt_id: str, lager_id: str, png: bytes, utbredning: Utbredning) -> None:
         nyckel = (projekt_id, lager_id)
+        budget = self._budget_bytes()
+        storlek = len(png)
         with self._lock:
+            gammal = self._data.pop(nyckel, None)
+            if gammal is not None:
+                self._total_bytes -= len(gammal[0])
+            if budget <= 0:
+                self._data.clear()
+                self._total_bytes = 0
+                return
+            if storlek > budget:
+                while self._data and self._total_bytes > budget:
+                    _, (bort_png, _) = self._data.popitem(last=False)
+                    self._total_bytes -= len(bort_png)
+                return
             self._data[nyckel] = (png, utbredning)
             self._data.move_to_end(nyckel)
-            while len(self._data) > self._max_poster:
-                self._data.popitem(last=False)
+            self._total_bytes += storlek
+            while self._data and (
+                len(self._data) > self._max_poster or self._total_bytes > budget
+            ):
+                _, (bort_png, _) = self._data.popitem(last=False)
+                self._total_bytes -= len(bort_png)
 
     def hamta(self, projekt_id: str, lager_id: str) -> tuple[bytes, Utbredning] | None:
         if not _LAGER_ID_RE.match(lager_id):
             raise FlodenWebbFel("Ogiltigt värmestresslager-id.", status_kod=400)
+        if self._budget_bytes() <= 0:
+            return None
         nyckel = (projekt_id, lager_id)
         with self._lock:
             post = self._data.get(nyckel)
@@ -174,14 +329,42 @@ class VarmestressLagerCache:
 
 
 class _SvfCache:
-    """Trådsäker LRU-cache för geometriberoende SVF-fält så väderjusteringar går på <0,1 s."""
+    """Trådsäker, bytebegränsad LRU-cache för geometriberoende SVF-fält."""
 
-    def __init__(self, max_poster: int = 16) -> None:
+    def __init__(self, max_poster: int = 16, *, max_bytes: int | None = None) -> None:
         self._max_poster = max(1, int(max_poster))
+        if max_bytes is not None and (isinstance(max_bytes, bool) or int(max_bytes) < 0):
+            raise ValueError(f"max_bytes måste vara >= 0, fick {max_bytes!r}.")
+        self._max_bytes_fast: int | None = None if max_bytes is None else int(max_bytes)
         self._lock = threading.Lock()
         self._data: OrderedDict[tuple[str, int, float], NDArray[np.float64]] = OrderedDict()
+        self._total_bytes = 0
+
+    def _budget_bytes(self) -> int:
+        return (
+            self._max_bytes_fast
+            if self._max_bytes_fast is not None
+            else max_webb_svf_cache_bytes()
+        )
+
+    @property
+    def antal_bytes(self) -> int:
+        with self._lock:
+            return self._total_bytes
+
+    @property
+    def antal_poster(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+    def rensa(self) -> None:
+        with self._lock:
+            self._data.clear()
+            self._total_bytes = 0
 
     def hamta(self, nyckel: tuple[str, int, float]) -> NDArray[np.float64] | None:
+        if self._budget_bytes() <= 0:
+            return None
         with self._lock:
             arr = self._data.get(nyckel)
             if arr is not None:
@@ -189,11 +372,29 @@ class _SvfCache:
             return arr
 
     def satt(self, nyckel: tuple[str, int, float], svf: NDArray[np.float64]) -> None:
+        budget = self._budget_bytes()
+        storlek = int(svf.nbytes)
         with self._lock:
+            gammal = self._data.pop(nyckel, None)
+            if gammal is not None:
+                self._total_bytes -= int(gammal.nbytes)
+            if budget <= 0:
+                self._data.clear()
+                self._total_bytes = 0
+                return
+            if storlek > budget:
+                while self._data and self._total_bytes > budget:
+                    _, bort_arr = self._data.popitem(last=False)
+                    self._total_bytes -= int(bort_arr.nbytes)
+                return
             self._data[nyckel] = svf
             self._data.move_to_end(nyckel)
-            while len(self._data) > self._max_poster:
-                self._data.popitem(last=False)
+            self._total_bytes += storlek
+            while self._data and (
+                len(self._data) > self._max_poster or self._total_bytes > budget
+            ):
+                _, bort_arr = self._data.popitem(last=False)
+                self._total_bytes -= int(bort_arr.nbytes)
 
 
 _GLOBAL_SVF_CACHE = _SvfCache()
@@ -433,10 +634,168 @@ def _brann_byggnader_mask(
     return ny_z, bygg_mask
 
 
+def _las_geotiff_huvud(fil: Path) -> GeoTransformInfo:
+    """Läser georeferens och dimensioner ur ett GeoTIFF-huvud utan att läsa pixlar."""
+    if not fil.is_file():
+        raise FlodenWebbFel(f"Saknar rasterfil: {fil.name} i {fil.parent.name}.", status_kod=400)
+    try:
+        import rasterio
+    except ImportError:  # pragma: no cover - rasterio är ett beroende
+        from testsvit.k1_io import las_geotiff
+
+        try:
+            _, geo = las_geotiff(fil)
+            return geo
+        except Exception as exc:  # noqa: BLE001
+            raise FlodenWebbFel(
+                f"Kunde inte läsa {fil.name} i {fil.parent.name}: {exc}", status_kod=400
+            ) from exc
+    try:
+        with rasterio.open(fil) as src:
+            t = src.transform
+            epsg = src.crs.to_epsg() if src.crs is not None else 0
+            return GeoTransformInfo(
+                bredd=int(src.width),
+                hojd=int(src.height),
+                x_min=float(t.c),
+                y_max=float(t.f),
+                pixelstorlek_x=float(t.a),
+                pixelstorlek_y=float(-t.e),
+                epsg=int(epsg or 0),
+                dtype=str(src.dtypes[0]),
+            )
+    except (OSError, rasterio.errors.RasterioError) as exc:
+        raise FlodenWebbFel(
+            f"Kunde inte läsa {fil.name} i {fil.parent.name}: {exc}", status_kod=400
+        ) from exc
+
+
+def _uppskatta_k1_mosaik_celler(
+    rutor: Sequence[Path],
+    *,
+    filnamn: str = "markslag.tif",
+    krav_samma_rutnat: bool = True,
+) -> tuple[int, int, float, float, float, list[GeoTransformInfo]]:
+    """Beräknar mosaikens `(hojd, bredd, x0, y1, px, geos)` ur TIFF-huvuden (O(1) RAM)."""
+    if not rutor:
+        raise FlodenWebbFel("Projektet saknar K1-rutor att analysera.", status_kod=404)
+    geos: list[GeoTransformInfo] = []
+    px: float | None = None
+    for mapp in rutor:
+        g = _las_geotiff_huvud(mapp / filnamn)
+        if abs(g.pixelstorlek_x - g.pixelstorlek_y) > 1e-9:
+            raise FlodenWebbFel("Icke-kvadratiska celler i K1-rutan stöds inte.", status_kod=400)
+        if px is None:
+            px = float(g.pixelstorlek_x)
+        elif abs(px - float(g.pixelstorlek_x)) > 1e-9:
+            if krav_samma_rutnat:
+                raise FlodenWebbFel(
+                    f"K1-rutorna har olika cellstorlek ({px} m och {g.pixelstorlek_x} m).",
+                    status_kod=400,
+                )
+            px = min(px, float(g.pixelstorlek_x))
+        geos.append(g)
+
+    assert px is not None
+    if len(geos) == 1:
+        g0 = geos[0]
+        return g0.hojd, g0.bredd, float(g0.x_min), float(g0.y_max), px, geos
+
+    x0 = min(float(g.x_min) for g in geos)
+    y1 = max(float(g.y_max) for g in geos)
+    x1 = max(float(g.x_min) + g.bredd * float(g.pixelstorlek_x) for g in geos)
+    y0 = min(float(g.y_max) - g.hojd * float(g.pixelstorlek_y) for g in geos)
+    bredd = max(1, round((x1 - x0) / px))
+    hojd = max(1, round((y1 - y0) / px))
+    if krav_samma_rutnat:
+        for g in geos:
+            c0f = (g.x_min - x0) / px
+            r0f = (y1 - g.y_max) / px
+            if abs(c0f - round(c0f)) > 1e-3 or abs(r0f - round(r0f)) > 1e-3:
+                raise FlodenWebbFel(
+                    "K1-rutorna ligger inte på samma cellrutnät.", status_kod=400
+                )
+    return hojd, bredd, x0, y1, px, geos
+
+
+def _kontrollera_webb_celltak(
+    n_celler: int,
+    antal_rutor: int,
+    max_celler: int | None,
+    *,
+    kontext: str,
+    env_namn: str | None = None,
+) -> None:
+    if max_celler is None or n_celler <= max_celler:
+        return
+    rut_txt = "ruta" if antal_rutor == 1 else "rutor"
+    env_del = f" ({env_namn})" if env_namn else ""
+    raise FlodenWebbFel(
+        f"Projektområdet omfattar {n_celler} celler ({antal_rutor} {rut_txt}), vilket "
+        f"överstiger serverns minnesgräns på {max_celler} celler för {kontext}{env_del}. "
+        "Välj ett mindre projektområde eller kör på en maskin med mer RAM.",
+        status_kod=400,
+    )
+
+
+def _las_en_k1_ruta_data(
+    mapp: Path,
+    *,
+    krav_v2_terrang: bool,
+    bygg_per_id: dict[str, ByggnadsPost],
+) -> tuple[NDArray[np.float32], NDArray[np.uint8], NDArray[np.float32], GeoTransformInfo]:
+    """Läser terräng, markslag, vegetation och byggnader för en enskild K1-ruta."""
+    try:
+        slag, geo_s = las_markslag(mapp)
+    except (GeometriFel, OSError, ValueError) as exc:
+        raise FlodenWebbFel(
+            f"Kunde inte läsa markslag.tif i {mapp.name}: {exc}", status_kod=400
+        ) from exc
+
+    if abs(geo_s.pixelstorlek_x - geo_s.pixelstorlek_y) > 1e-9:
+        raise FlodenWebbFel("Icke-kvadratiska celler i K1-rutan stöds inte.", status_kod=400)
+
+    try:
+        v = k1_version(mapp)
+        if v == 2 or krav_v2_terrang:
+            terr, geo_t = las_terrang(mapp)
+            for b in las_byggnader(mapp):
+                bygg_per_id.setdefault(b.byggnad_id, b)
+        elif (mapp / "terrang.tif").is_file():
+            terr, geo_t = las_terrang(mapp)
+        else:
+            from karna.geometri import las_mark
+
+            terr, geo_t = las_mark(mapp)
+    except (GeometriFel, OSError, ValueError) as exc:
+        raise FlodenWebbFel(
+            f"Kunde inte läsa K1 v2-geometri i {mapp.name}: {exc}", status_kod=400
+        ) from exc
+
+    if terr.shape != slag.shape or abs(geo_t.x_min - geo_s.x_min) > 1e-6:
+        raise FlodenWebbFel(
+            f"terrang.tif och markslag.tif matchar inte i {mapp.name}.", status_kod=400
+        )
+
+    veg_res = las_vegetation(mapp)
+    if veg_res is not None:
+        try:
+            veg_m = vegetation_pa_marknat(veg_res[0], veg_res[1], geo_s)
+        except GeometriFel:
+            veg_m = np.zeros(slag.shape, dtype=np.float32)
+    else:
+        veg_m = np.zeros(slag.shape, dtype=np.float32)
+    veg_m = np.where(np.isfinite(veg_m), np.maximum(veg_m, np.float32(0.0)), np.float32(0.0))
+    return np.asarray(terr, dtype=np.float32), slag, veg_m, geo_s
+
+
 def _sammanfoga_k1_rutor(
     rutor: Sequence[Path],
     *,
     krav_v2_terrang: bool,
+    max_celler: int | None = None,
+    max_celler_kontext: str = "analysen",
+    max_celler_env: str | None = None,
 ) -> tuple[
     GeoTransformInfo,
     NDArray[np.float32],
@@ -445,78 +804,25 @@ def _sammanfoga_k1_rutor(
     NDArray[np.float32],
     tuple[ByggnadsPost, ...],
 ]:
-    """Sammanfogar en eller flera K1-rutor med regeln 'djupast inne i rutan'."""
+    """Sammanfogar en eller flera K1-rutor med regeln 'djupast inne i rutan' (strömmande i RAM)."""
     if not rutor:
         raise FlodenWebbFel("Projektet saknar K1-rutor att analysera.", status_kod=404)
 
-    delar: list[
-        tuple[
-            NDArray[np.float32],
-            NDArray[np.uint8],
-            NDArray[np.float32],
-            GeoTransformInfo,
-        ]
-    ] = []
+    hojd, bredd, x0, y1, px, _ = _uppskatta_k1_mosaik_celler(rutor, filnamn="markslag.tif")
+    _kontrollera_webb_celltak(
+        hojd * bredd,
+        len(rutor),
+        max_celler,
+        kontext=max_celler_kontext,
+        env_namn=max_celler_env,
+    )
+
     bygg_per_id: dict[str, ByggnadsPost] = {}
-    px: float | None = None
-
-    for mapp in rutor:
-        try:
-            slag, geo_s = las_markslag(mapp)
-        except (GeometriFel, OSError, ValueError) as exc:
-            raise FlodenWebbFel(
-                f"Kunde inte läsa markslag.tif i {mapp.name}: {exc}", status_kod=400
-            ) from exc
-
-        if abs(geo_s.pixelstorlek_x - geo_s.pixelstorlek_y) > 1e-9:
-            raise FlodenWebbFel("Icke-kvadratiska celler i K1-rutan stöds inte.", status_kod=400)
-        if px is None:
-            px = float(geo_s.pixelstorlek_x)
-        elif abs(px - float(geo_s.pixelstorlek_x)) > 1e-9:
-            raise FlodenWebbFel(
-                f"K1-rutorna har olika cellstorlek ({px} m och {geo_s.pixelstorlek_x} m).",
-                status_kod=400,
-            )
-
-        try:
-            v = k1_version(mapp)
-            if v == 2 or krav_v2_terrang:
-                terr, geo_t = las_terrang(mapp)
-                for b in las_byggnader(mapp):
-                    bygg_per_id.setdefault(b.byggnad_id, b)
-            elif (mapp / "terrang.tif").is_file():
-                terr, geo_t = las_terrang(mapp)
-            else:
-                from karna.geometri import las_mark
-
-                terr, geo_t = las_mark(mapp)
-        except (GeometriFel, OSError, ValueError) as exc:
-            raise FlodenWebbFel(
-                f"Kunde inte läsa K1 v2-geometri i {mapp.name}: {exc}", status_kod=400
-            ) from exc
-
-        if terr.shape != slag.shape or abs(geo_t.x_min - geo_s.x_min) > 1e-6:
-            raise FlodenWebbFel(
-                f"terrang.tif och markslag.tif matchar inte i {mapp.name}.", status_kod=400
-            )
-
-        veg_res = las_vegetation(mapp)
-        if veg_res is not None:
-            try:
-                veg_m = vegetation_pa_marknat(veg_res[0], veg_res[1], geo_s)
-            except GeometriFel:
-                veg_m = np.zeros(slag.shape, dtype=np.float32)
-        else:
-            veg_m = np.zeros(slag.shape, dtype=np.float32)
-        veg_m = np.where(np.isfinite(veg_m), np.maximum(veg_m, np.float32(0.0)), np.float32(0.0))
-
-        delar.append((np.asarray(terr, dtype=np.float32), slag, veg_m, geo_s))
-
-    assert px is not None
-    byggnader = tuple(sorted(bygg_per_id.values(), key=lambda b: b.byggnad_id))
-
-    if len(delar) == 1:
-        terr0, slag0, veg0, geo0 = delar[0]
+    if len(rutor) == 1:
+        terr0, slag0, veg0, geo0 = _las_en_k1_ruta_data(
+            rutor[0], krav_v2_terrang=krav_v2_terrang, bygg_per_id=bygg_per_id
+        )
+        byggnader = tuple(sorted(bygg_per_id.values(), key=lambda b: b.byggnad_id))
         har_data = np.ones(slag0.shape, dtype=np.bool_)
         return (
             geo0,
@@ -527,20 +833,16 @@ def _sammanfoga_k1_rutor(
             byggnader,
         )
 
-    x0 = min(g.x_min for _, _, _, g in delar)
-    y1 = max(g.y_max for _, _, _, g in delar)
-    x1 = max(g.x_min + g.bredd * px for _, _, _, g in delar)
-    y0 = min(g.y_max - g.hojd * px for _, _, _, g in delar)
-    bredd = round((x1 - x0) / px)
-    hojd = round((y1 - y0) / px)
-
     terr_ut = np.full((hojd, bredd), np.nan, dtype=np.float32)
     slag_ut = np.full((hojd, bredd), np.nan, dtype=np.float64)
     veg_ut = np.zeros((hojd, bredd), dtype=np.float32)
     har_data = np.zeros((hojd, bredd), dtype=np.bool_)
     djupast = np.full((hojd, bredd), -np.inf, dtype=np.float32)
 
-    for terr, slag, veg, g in delar:
+    for mapp in rutor:
+        terr, slag, veg, g = _las_en_k1_ruta_data(
+            mapp, krav_v2_terrang=krav_v2_terrang, bygg_per_id=bygg_per_id
+        )
         c0f = (g.x_min - x0) / px
         r0f = (y1 - g.y_max) / px
         if abs(c0f - round(c0f)) > 1e-3 or abs(r0f - round(r0f)) > 1e-3:
@@ -560,7 +862,10 @@ def _sammanfoga_k1_rutor(
         veg_ut[fonster] = np.where(battre, veg, veg_ut[fonster])
         har_data[fonster] |= battre
         djupast[fonster] = np.where(battre, avst, djupast[fonster])
+        del terr, slag, veg, avst, battre
 
+    del djupast
+    byggnader = tuple(sorted(bygg_per_id.values(), key=lambda b: b.byggnad_id))
     geo_ut = GeoTransformInfo(
         bredd=bredd,
         hojd=hojd,
@@ -604,6 +909,9 @@ def _ladda_projekt_geometri(
     omrade_id: str,
     *,
     krav_v2_terrang: bool,
+    max_celler: int | None = None,
+    max_celler_kontext: str = "analysen",
+    max_celler_env: str | None = None,
 ) -> _ProjektGeometri:
     """Laddar projektets K1-geometri via `kartverktyg.kalla(omrade_id)` (både demo och geografi)."""
     kalla: Projektkalla | None = None
@@ -646,7 +954,11 @@ def _ladda_projekt_geometri(
                     stampel_delar.append(f"{mapp.name}/{filnamn}:{p.stat().st_mtime_ns}")
 
     geo, terrang_m, markslag, har_data, veg_m, byggnader = _sammanfoga_k1_rutor(
-        rutor, krav_v2_terrang=krav_v2_terrang
+        rutor,
+        krav_v2_terrang=krav_v2_terrang,
+        max_celler=max_celler,
+        max_celler_kontext=max_celler_kontext,
+        max_celler_env=max_celler_env,
     )
     tomt_mask = _tomt_mask_fran_form(form, geo, har_data)
     _, bygg_mask = _brann_byggnader_mask(
@@ -1085,7 +1397,13 @@ def kor_gyf_analys(
     extra_tillagg = _tolka_gyf_tillagg(payload.get("tillagg"))
 
     proj_geom = _ladda_projekt_geometri(
-        kartverktyg, projekt_tjanst, omrade_id, krav_v2_terrang=False
+        kartverktyg,
+        projekt_tjanst,
+        omrade_id,
+        krav_v2_terrang=False,
+        max_celler=max_gyf_celler(),
+        max_celler_kontext="GYF-analys",
+        max_celler_env=FLODEN_MAX_GYF_CELLER_ENV,
     )
     cell_m = float(proj_geom.geo.pixelstorlek_x)
     cell_area_m2 = cell_m * cell_m
@@ -1287,27 +1605,33 @@ def _berakna_verklig_svf_och_skugga(
             f"Ogiltigt höjdfält för värmestressanalys: {exc}", status_kod=400
         ) from exc
 
+    r0, r1, c0, c1 = fonster
     svf_key = (cache_nyckel_geo, int(antal_riktningar), float(max_avstand_m))
     svf_cachad = _GLOBAL_SVF_CACHE.hamta(svf_key)
     if svf_cachad is not None:
         svf = svf_cachad.copy()
     else:
+        summa = np.zeros((r1 - r0, c1 - c0), dtype=np.float64)
+        antal_iter = 0
         try:
-            horisonter = [
-                h
-                for _, _, h, _ in horisont_ruta_iter(
-                    falt,
-                    antal_riktningar,
-                    max_avstand_m,
-                    fonster=fonster,
-                )
-            ]
+            for _, _, h, _ in horisont_ruta_iter(
+                falt,
+                antal_riktningar,
+                max_avstand_m,
+                fonster=fonster,
+            ):
+                h64 = np.asarray(h, dtype=np.float64)
+                if h64.size and (h64.min() < -1e-12 or h64.max() > math.pi / 2 + 1e-12):
+                    raise HorisontFel("Horisontvinklar måste ligga i [0, pi/2].")
+                summa += np.sin(h64) ** 2
+                antal_iter += 1
         except HorisontFel as exc:
             raise FlodenWebbFel(f"Horisontberäkning misslyckades: {exc}", status_kod=400) from exc
-        svf = svf_fran_horisont(np.stack(horisonter, axis=0), axel=0)
+        if antal_iter == 0:
+            raise FlodenWebbFel("Horisontberäkning saknar riktningar.", status_kod=400)
+        svf = np.asarray(1.0 - summa / float(antal_iter), dtype=np.float64)
         _GLOBAL_SVF_CACHE.satt(svf_key, svf)
 
-    r0, r1, c0, c1 = fonster
     if solhojd_grad <= 0.0:
         skuggmask = np.zeros((r1 - r0, c1 - c0), dtype=np.float64)
     else:
@@ -1324,6 +1648,10 @@ def _berakna_verklig_svf_och_skugga(
             raise FlodenWebbFel(f"Skuggberäkning misslyckades: {exc}", status_kod=400) from exc
         skuggmask = np.asarray(sol_hojd_rad > h_sol.astype(np.float64), dtype=np.float64)
 
+    stor_mosaik = falt.z_m.size >= _WEBB_GC_TROSKEL_CELLER
+    del dsm_ren, falt
+    if stor_mosaik:
+        gc.collect()
     return svf, skuggmask
 
 
@@ -1479,7 +1807,13 @@ def kor_varmestress_analys(
         )
 
     proj_geom = _ladda_projekt_geometri(
-        kartverktyg, projekt_tjanst, omrade_id, krav_v2_terrang=True
+        kartverktyg,
+        projekt_tjanst,
+        omrade_id,
+        krav_v2_terrang=True,
+        max_celler=max_varmestress_projekt_celler(),
+        max_celler_kontext="värmestressanalys",
+        max_celler_env=FLODEN_MAX_VARMESTRESS_CELLER_ENV,
     )
     geo = proj_geom.geo
     r0, r1, c0, c1 = _fonster_for_mask(proj_geom.tomt_mask)

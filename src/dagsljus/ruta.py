@@ -125,6 +125,108 @@ def _lasa_tile(mapp: Path, vegetation: bool) -> _Tile:
     )
 
 
+def _las_tile_geo(mapp: Path) -> Any:
+    """Läser enbart K1 v2-georeferens för `mapp` ur `terrang.tif`-huvudet (utan pixelinläsning)."""
+    from karna.geometri import GeometriFel, k1_version
+    from testsvit.k1_io import GeoTransformInfo, las_geotiff
+
+    try:
+        version = k1_version(mapp)
+    except GeometriFel as exc:
+        raise RutaFel(str(exc)) from exc
+    if version != 2:
+        raise RutaFel(
+            f"Rutan {mapp.name} är K1 v1 (saknar byggnader.gpkg och terrang.tif). Dagsljus kräver "
+            "verkliga takhöjder: i v1 är byggnadscellerna i mark.tif en takhöjd eller en fast "
+            "hinderhöjd, och med en fast hinderhöjd blir soltimmar, SVF och VSC fel i proportion "
+            "utan att det syns. Bygg om rutan med K1 v2 (markmodellen skriver byggnadsregistret)."
+        )
+    sokvag = mapp / "terrang.tif"
+    if not sokvag.is_file():
+        raise RutaFel(f"Rutan {mapp.name}: Saknar rasterfil: {sokvag}")
+    try:
+        import rasterio
+    except ImportError:  # pragma: no cover - rasterio är ett beroende
+        try:
+            _, geo = las_geotiff(sokvag)
+        except Exception as exc:  # noqa: BLE001
+            raise RutaFel(f"Rutan {mapp.name}: {exc}") from exc
+    else:
+        try:
+            with rasterio.open(sokvag) as src:
+                t = src.transform
+                epsg = src.crs.to_epsg() if src.crs is not None else 0
+                geo = GeoTransformInfo(
+                    bredd=int(src.width),
+                    hojd=int(src.height),
+                    x_min=float(t.c),
+                    y_max=float(t.f),
+                    pixelstorlek_x=float(t.a),
+                    pixelstorlek_y=float(-t.e),
+                    epsg=int(epsg or 0),
+                    dtype=str(src.dtypes[0]),
+                )
+        except (OSError, rasterio.errors.RasterioError) as exc:
+            raise RutaFel(f"Rutan {mapp.name}: {exc}") from exc
+    if abs(geo.pixelstorlek_x - geo.pixelstorlek_y) > _TOL:
+        raise RutaFel(f"{sokvag}: icke-kvadratiska celler stöds inte.")
+    return geo
+
+
+def _planera_mosaik(
+    egen: Path,
+    grannar: tuple[Path, ...],
+    cell_m: float,
+) -> tuple[
+    tuple[Path, ...],
+    int,
+    float,
+    float,
+    int,
+    int,
+    tuple[tuple[int, int], ...],
+]:
+    """Validerar rutgeometri och beräknar mosaikens form och rutplaceringar utan pixelinläsning."""
+    mappar = (*grannar, egen)
+    geos = [_las_tile_geo(p) for p in mappar]
+    p0 = geos[0].pixelstorlek_x
+    faktor_f = cell_m / p0
+    if abs(faktor_f - round(faktor_f)) > _TOL or round(faktor_f) < 1:
+        raise RutaFel(
+            f"cellstorlek_m={cell_m} måste vara en heltalsmultipel av rutornas pixelstorlek {p0}."
+        )
+    faktor = round(faktor_f)
+    for g in geos:
+        if abs(g.pixelstorlek_x - p0) > _TOL:
+            raise RutaFel("Rutorna har olika pixelstorlek.")
+    x0 = min(g.x_min for g in geos)
+    y1 = max(g.y_max for g in geos)
+    x1 = max(g.x_max for g in geos)
+    y0 = min(g.y_min for g in geos)
+    bredd = round((x1 - x0) / cell_m)
+    hojd = round((y1 - y0) / cell_m)
+    if abs(bredd * cell_m - (x1 - x0)) > _TOL or abs(hojd * cell_m - (y1 - y0)) > _TOL:
+        raise RutaFel("Mosaikens utsträckning är inte en heltalsmultipel av cellstorleken.")
+    placeringar: list[tuple[int, int]] = []
+    for g in geos:
+        j0f, i0f = (g.x_min - x0) / cell_m, (y1 - g.y_max) / cell_m
+        j0, i0 = round(j0f), round(i0f)
+        if abs(j0f - j0) > _TOL or abs(i0f - i0) > _TOL:
+            raise RutaFel("En ruta ligger inte på mosaikens cellraster (förskjutning ej heltal).")
+        placeringar.append((i0, j0))
+    return mappar, faktor, x0, y1, bredd, hojd, tuple(placeringar)
+
+
+def uppskatta_mosaik_form(
+    egen: Path,
+    grannar: tuple[Path, ...],
+    cell_m: float,
+) -> tuple[int, int]:
+    """Returnerar mosaikens exakta `(hojd, bredd)` i celler ur GeoTIFF-huvuden (O(1) RAM)."""
+    _, _, _, _, bredd, hojd, _ = _planera_mosaik(egen, grannar, cell_m)
+    return hojd, bredd
+
+
 def bygg_mosaik(
     egen: Path,
     grannar: tuple[Path, ...],
@@ -135,42 +237,41 @@ def bygg_mosaik(
 ) -> Mosaik:
     """Sammanfogar `egen` (skrivs sist, så den vinner i överlapp) och `grannar` till ett fält
     med cellstorleken `cell_m`. Rutor som inte ligger på samma cellraster, och rutor som inte är
-    K1 v2, ger fel."""
-    tiles = [_lasa_tile(p, vegetation) for p in (*grannar, egen)]
-    p0 = tiles[0].geo.pixelstorlek_x
-    faktor_f = cell_m / p0
-    if abs(faktor_f - round(faktor_f)) > _TOL or round(faktor_f) < 1:
-        raise RutaFel(
-            f"cellstorlek_m={cell_m} måste vara en heltalsmultipel av rutornas pixelstorlek {p0}."
-        )
-    faktor = round(faktor_f)
-    for t in tiles:
-        if abs(t.geo.pixelstorlek_x - p0) > _TOL:
-            raise RutaFel("Rutorna har olika pixelstorlek.")
-    x0 = min(t.geo.x_min for t in tiles)
-    y1 = max(t.geo.y_max for t in tiles)
-    x1 = max(t.geo.x_max for t in tiles)
-    y0 = min(t.geo.y_min for t in tiles)
-    bredd = round((x1 - x0) / cell_m)
-    hojd = round((y1 - y0) / cell_m)
-    if abs(bredd * cell_m - (x1 - x0)) > _TOL or abs(hojd * cell_m - (y1 - y0)) > _TOL:
-        raise RutaFel("Mosaikens utsträckning är inte en heltalsmultipel av cellstorleken.")
+    K1 v2, ger fel.
+
+    Varje enskild `_Tile` läses en i taget och frigörs omedelbart efter att dess omsamplade
+    värden kopierats in i mosaiken, så toppminnet vid flerrutsbygge hålls nere.
+    """
+    mappar, faktor, x0, y1, bredd, hojd, placeringar = _planera_mosaik(egen, grannar, cell_m)
     z = np.full((hojd, bredd), np.nan)
-    har_standard = any(t.z_utan_standard is not None for t in tiles)
-    z_utan = np.full((hojd, bredd), np.nan) if har_standard else None
+    z_utan: NDArray[np.float64] | None = None
     fonster = (0, 0, 0, 0)
-    for t in tiles:
-        g = t.geo
-        j0f, i0f = (g.x_min - x0) / cell_m, (y1 - g.y_max) / cell_m
-        j0, i0 = round(j0f), round(i0f)
-        if abs(j0f - j0) > _TOL or abs(i0f - i0) > _TOL:
-            raise RutaFel("En ruta ligger inte på mosaikens cellraster (förskjutning ej heltal).")
+    alla_standard: set[str] = set()
+    egen_standard_antal = 0
+    sista_idx = len(mappar) - 1
+
+    for idx, (mapp, (i0, j0)) in enumerate(zip(mappar, placeringar, strict=True)):
+        t = _lasa_tile(mapp, vegetation)
         zc = omsampla(t.z, faktor, metod)
-        z[i0 : i0 + zc.shape[0], j0 : j0 + zc.shape[1]] = zc
-        if z_utan is not None:
-            zu = t.z if t.z_utan_standard is None else t.z_utan_standard
-            z_utan[i0 : i0 + zc.shape[0], j0 : j0 + zc.shape[1]] = omsampla(zu, faktor, metod)
-        fonster = (i0, i0 + zc.shape[0], j0, j0 + zc.shape[1])
+        h_c, b_c = zc.shape
+        if t.z_utan_standard is not None:
+            if z_utan is None:
+                # Föregående rutor saknade standardhöjd, så z_utan var identisk med z hittills.
+                z_utan = z.copy()
+            zuc = omsampla(t.z_utan_standard, faktor, metod)
+            z_utan[i0 : i0 + h_c, j0 : j0 + b_c] = zuc
+            del zuc
+        elif z_utan is not None:
+            z_utan[i0 : i0 + h_c, j0 : j0 + b_c] = zc
+        z[i0 : i0 + h_c, j0 : j0 + b_c] = zc
+        fonster = (i0, i0 + h_c, j0, j0 + b_c)
+        if t.standard_ids:
+            alla_standard.update(t.standard_ids)
+        if idx == sista_idx:
+            egen_standard_antal = len(t.standard_ids)
+        # Frigör tile-arrayerna direkt så max en tile + mosaiken lever i RAM samtidigt.
+        del zc, t
+
     saknas = ~np.isfinite(z)
     antal_saknas = int(saknas.sum())
     spann = float(np.nanmax(z) - np.nanmin(z))
@@ -179,14 +280,15 @@ def bygg_mosaik(
         z[saknas] = under
         if z_utan is not None:
             z_utan[~np.isfinite(z_utan)] = under
+    del saknas
     return Mosaik(
         Hojdfalt(z, cell_m, x0, y1),
         fonster,
         antal_saknas,
         spann,
         None if z_utan is None else Hojdfalt(z_utan, cell_m, x0, y1),
-        frozenset().union(*(t.standard_ids for t in tiles)),
-        len(tiles[-1].standard_ids),
+        frozenset(alla_standard),
+        egen_standard_antal,
         vegetation,
     )
 
