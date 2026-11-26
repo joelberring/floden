@@ -96,10 +96,16 @@ from lapp.landxml import las_landxml_tin
 from testsvit.k1_io import GeoTransformInfo, las_geotiff
 from webb.fel import FlodenWebbFel
 from webb.gyf_utci import (
+    FLODEN_MAX_WEBB_PNG_CACHE_MB_ENV,
+    STANDARD_MAX_WEBB_PNG_CACHE_MB,
     _fonster_for_mask,
     _ladda_projekt_geometri,
     _ladda_scenario_andringar,
+    _las_miljo_celltak,
+    _las_miljo_grans_bytes,
     _tillampa_scenario_i_minnet,
+    _uppskatta_k1_mosaik_celler,
+    max_webb_png_cache_bytes,
     tolka_json_kropp,
 )
 from webb.kartverktyg import KartverktygTjanst
@@ -126,6 +132,17 @@ ROLL_BULLER_LAEQ: Final[str] = "ekvivalent_ljudniva_dba"
 MAX_CAD_IMPORT_BYTES: Final[int] = 25 * 1024 * 1024
 MAX_EXPORT_TIN_CELLER: Final[int] = 10_000
 
+STANDARD_MAX_CAD_EXPORT_CELLER: Final[int] = 4_000_000
+FLODEN_MAX_CAD_EXPORT_CELLER_ENV: Final[str] = "FLODEN_MAX_CAD_EXPORT_CELLER"
+STANDARD_MAX_CAD_EXPORT_BYGGNADER: Final[int] = 5_000
+FLODEN_MAX_CAD_EXPORT_BYGGNADER_ENV: Final[str] = "FLODEN_MAX_CAD_EXPORT_BYGGNADER"
+STANDARD_MAX_CAD_EXPORT_MB: Final[float] = 50.0
+FLODEN_MAX_CAD_EXPORT_MB_ENV: Final[str] = "FLODEN_MAX_CAD_EXPORT_MB"
+STANDARD_MAX_BULLER_CELLER: Final[int] = 4_000_000
+FLODEN_MAX_BULLER_CELLER_ENV: Final[str] = "FLODEN_MAX_BULLER_CELLER"
+STANDARD_MAX_BULLER_RASTERCELLER: Final[int] = 10_000
+FLODEN_MAX_BULLER_RASTERCELLER_ENV: Final[str] = "FLODEN_MAX_BULLER_RASTERCELLER"
+
 _TILLATNA_IMPORT_ANDELSER: Final[frozenset[str]] = frozenset({".gpkg", ".dxf", ".ifc", ".xml"})
 _EXPORT_FORMAT_META: Final[dict[str, tuple[str, str]]] = {
     "gpkg": ("application/geopackage+sqlite3", ".gpkg"),
@@ -140,25 +157,100 @@ _BILD_ID_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_.\-]{0,120}$
 _FILNAMN_SANERING_RE: Final[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9_.\-]+")
 
 
-class BullerLagerCache:
-    """Trådsäker, projekt-nycklad LRU-cache för renderade buller-PNG:er."""
+def max_cad_export_celler() -> int:
+    """Fail-fast celltak för CAD/3D-export (`FLODEN_MAX_CAD_EXPORT_CELLER`, 4 000 000)."""
+    return _las_miljo_celltak(FLODEN_MAX_CAD_EXPORT_CELLER_ENV, STANDARD_MAX_CAD_EXPORT_CELLER)
 
-    def __init__(self, max_poster: int = 64) -> None:
+
+def max_cad_export_byggnader() -> int:
+    """Fail-fast byggnadstak för CAD/3D-export (`FLODEN_MAX_CAD_EXPORT_BYGGNADER`, 5 000)."""
+    return _las_miljo_celltak(
+        FLODEN_MAX_CAD_EXPORT_BYGGNADER_ENV, STANDARD_MAX_CAD_EXPORT_BYGGNADER
+    )
+
+
+def max_cad_export_bytes() -> int:
+    """Storlekstak för exporterad CAD/3D-fil (`FLODEN_MAX_CAD_EXPORT_MB`, 50 MB)."""
+    return _las_miljo_grans_bytes(FLODEN_MAX_CAD_EXPORT_MB_ENV, STANDARD_MAX_CAD_EXPORT_MB)
+
+
+def max_buller_celler() -> int:
+    """Fail-fast K1-celltak för bulleranalys (`FLODEN_MAX_BULLER_CELLER`, 4 000 000)."""
+    return _las_miljo_celltak(FLODEN_MAX_BULLER_CELLER_ENV, STANDARD_MAX_BULLER_CELLER)
+
+
+def max_buller_rasterceller() -> int:
+    """Fail-fast tak för akustiska mottagarceller (`FLODEN_MAX_BULLER_RASTERCELLER`, 10 000)."""
+    return _las_miljo_celltak(
+        FLODEN_MAX_BULLER_RASTERCELLER_ENV, STANDARD_MAX_BULLER_RASTERCELLER
+    )
+
+
+class BullerLagerCache:
+    """Trådsäker, projekt-nycklad och bytebegränsad LRU-cache för renderade buller-PNG:er."""
+
+    def __init__(self, max_poster: int = 64, *, max_bytes: int | None = None) -> None:
         self._max_poster = max(1, int(max_poster))
+        if max_bytes is not None and (isinstance(max_bytes, bool) or int(max_bytes) < 0):
+            raise ValueError(f"max_bytes måste vara >= 0, fick {max_bytes!r}.")
+        self._max_bytes_fast: int | None = None if max_bytes is None else int(max_bytes)
         self._lock = threading.Lock()
         self._data: OrderedDict[tuple[str, str], tuple[bytes, Utbredning]] = OrderedDict()
+        self._total_bytes = 0
+
+    def _budget_bytes(self) -> int:
+        return (
+            self._max_bytes_fast
+            if self._max_bytes_fast is not None
+            else max_webb_png_cache_bytes()
+        )
+
+    @property
+    def antal_bytes(self) -> int:
+        with self._lock:
+            return self._total_bytes
+
+    @property
+    def antal_poster(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+    def rensa(self) -> None:
+        with self._lock:
+            self._data.clear()
+            self._total_bytes = 0
 
     def satt(self, projekt_id: str, bild_id: str, png: bytes, utbredning: Utbredning) -> None:
         nyckel = (projekt_id.strip(), bild_id)
+        budget = self._budget_bytes()
+        storlek = len(png)
         with self._lock:
+            gammal = self._data.pop(nyckel, None)
+            if gammal is not None:
+                self._total_bytes -= len(gammal[0])
+            if budget <= 0:
+                self._data.clear()
+                self._total_bytes = 0
+                return
+            if storlek > budget:
+                while self._data and self._total_bytes > budget:
+                    _, (bort_png, _) = self._data.popitem(last=False)
+                    self._total_bytes -= len(bort_png)
+                return
             self._data[nyckel] = (png, utbredning)
             self._data.move_to_end(nyckel)
-            while len(self._data) > self._max_poster:
-                self._data.popitem(last=False)
+            self._total_bytes += storlek
+            while self._data and (
+                len(self._data) > self._max_poster or self._total_bytes > budget
+            ):
+                _, (bort_png, _) = self._data.popitem(last=False)
+                self._total_bytes -= len(bort_png)
 
     def hamta(self, projekt_id: str, bild_id: str) -> tuple[bytes, Utbredning] | None:
         if not _BILD_ID_RE.match(bild_id):
             raise FlodenWebbFel("Ogiltigt bullerlager-id.", status_kod=400)
+        if self._budget_bytes() <= 0:
+            return None
         nyckel = (projekt_id.strip(), bild_id)
         with self._lock:
             post = self._data.get(nyckel)
@@ -933,8 +1025,18 @@ def exportera_cad_fil(
     scenario: str | None = scenario_ra or None
     crs_mal = (query.get("crs") or [CRS_EPSG_3011])[0].strip() or CRS_EPSG_3011
 
+    max_celler = max_cad_export_celler()
+    max_bygg = max_cad_export_byggnader()
+    max_export_bytes = max_cad_export_bytes()
+
     proj_geom = _ladda_projekt_geometri(
-        kartverktyg, projekt_tjanst, pid, krav_v2_terrang=True
+        kartverktyg,
+        projekt_tjanst,
+        pid,
+        krav_v2_terrang=True,
+        max_celler=max_celler,
+        max_celler_kontext=f"CAD/3D-export ({fmt_ra})",
+        max_celler_env=FLODEN_MAX_CAD_EXPORT_CELLER_ENV,
     )
     sc_pack = _ladda_scenario_andringar(kartverktyg, proj_geom, scenario)
     andringar: list[dict[str, Any]] = []
@@ -946,6 +1048,14 @@ def exportera_cad_fil(
         st_efter = _tillampa_scenario_i_minnet(proj_geom, andringar, sc_nyckel)
         terrang_m = st_efter.terrang_m
         bygg_poster = st_efter.byggnader
+
+    if len(bygg_poster) > max_bygg:
+        raise FlodenWebbFel(
+            f"Projektet innehåller {len(bygg_poster)} byggnader, vilket överstiger "
+            f"serverns gräns på {max_bygg} byggnader för CAD/3D-export ({fmt_ra}, "
+            f"{FLODEN_MAX_CAD_EXPORT_BYGGNADER_ENV}). Välj ett mindre projektområde.",
+            status_kod=400,
+        )
 
     # Konvertera K1 v2 + scenario-byggnader till K50Byggnad i EPSG:3011 / RH 2000.
     k50_byggnader: list[K50Byggnad] = []
@@ -992,6 +1102,13 @@ def exportera_cad_fil(
     if terr_exp.shape[0] < 2 or terr_exp.shape[1] < 2:
         terr_exp = terr_win
         steg = 1
+    if fmt_ra in ("landxml", "xml", "obj", "glb") and terr_exp.size > MAX_EXPORT_TIN_CELLER * 4:
+        raise FlodenWebbFel(
+            f"Exporterad 3D/TIN-yta ({terr_exp.shape[0]}×{terr_exp.shape[1]} = "
+            f"{terr_exp.size} celler) överskrider serverns meshtak för '{fmt_ra}'. "
+            "Välj en mindre eller mer kompakt projektavgränsning.",
+            status_kod=400,
+        )
 
     geo_exp = GeoTransformInfo(
         bredd=int(terr_exp.shape[1]),
@@ -1071,6 +1188,14 @@ def exportera_cad_fil(
                 f"CAD/BIM-export ({fmt_ra}) misslyckades: {exc}",
                 status_kod=400,
             ) from exc
+        fil_storlek = ut_fil.stat().st_size
+        if fil_storlek > max_export_bytes:
+            raise FlodenWebbFel(
+                f"CAD/BIM-exporten ({fmt_ra}) blev {fil_storlek} byte, vilket överstiger "
+                f"serverns storleksgräns på {max_export_bytes} byte "
+                f"({FLODEN_MAX_CAD_EXPORT_MB_ENV}). Välj ett mindre projektområde.",
+                status_kod=400,
+            )
         data = ut_fil.read_bytes()
 
     return data, content_type, filnamn, extra_headers
@@ -1427,12 +1552,60 @@ def kor_buller_analys(
     except (BullerK21Fel, LosarFel, ValueError) as exc:
         raise FlodenWebbFel(str(exc), status_kod=400) from exc
 
+    max_k1_celler = max_buller_celler()
+    max_raster = max_buller_rasterceller()
+    if (
+        "max_rasterceller" in losar_param_in
+        and int(validerade_param["max_rasterceller"]) > max_raster
+    ):
+        raise FlodenWebbFel(
+            f"Begärt 'max_rasterceller' ({validerade_param['max_rasterceller']}) överstiger "
+            f"serverns gräns på {max_raster} mottagarceller "
+            f"({FLODEN_MAX_BULLER_RASTERCELLER_ENV}). "
+            "Minska max_rasterceller eller öka raster_cell_m.",
+            status_kod=400,
+        )
+    if int(validerade_param["max_rasterceller"]) > max_raster:
+        validerade_param["max_rasterceller"] = max_raster
+
     rutor = _projekt_k1_v2_rutor(kartverktyg, projekt_tjanst, omrade_id)
+
+    hojd_k1, bredd_k1, _, _, px_k1, _ = _uppskatta_k1_mosaik_celler(
+        rutor, filnamn="terrang.tif", krav_samma_rutnat=False
+    )
+    n_k1_celler = hojd_k1 * bredd_k1
+    if n_k1_celler > max_k1_celler:
+        rut_txt = "ruta" if len(rutor) == 1 else "rutor"
+        raise FlodenWebbFel(
+            f"Projektområdet omfattar {n_k1_celler} celler ({len(rutor)} {rut_txt}), vilket "
+            f"överstiger serverns minnesgräns på {max_k1_celler} celler för bulleranalys "
+            f"({FLODEN_MAX_BULLER_CELLER_ENV}). Välj ett mindre projektområde eller kör på en "
+            "maskin med mer RAM.",
+            status_kod=400,
+        )
+    if validerade_param["raster_cell_m"] is not None:
+        cell_beg = float(validerade_param["raster_cell_m"])
+        est_mott = max(1, math.ceil((bredd_k1 * px_k1) / cell_beg)) * max(
+            1, math.ceil((hojd_k1 * px_k1) / cell_beg)
+        )
+        if est_mott > max_raster:
+            raise FlodenWebbFel(
+                f"Vald raster_cell_m={cell_beg:g} m ger ca {est_mott} mottagarceller över "
+                f"projektområdet, vilket överstiger serverns gräns på {max_raster} mottagarceller "
+                f"({FLODEN_MAX_BULLER_RASTERCELLER_ENV}). Öka raster_cell_m eller minska området.",
+                status_kod=400,
+            )
 
     sc_pack: tuple[list[dict[str, Any]], str] | None = None
     if scenario is not None or inline_ritlager is not None or inline_andringar is not None:
         proj_geom = _ladda_projekt_geometri(
-            kartverktyg, projekt_tjanst, omrade_id, krav_v2_terrang=True
+            kartverktyg,
+            projekt_tjanst,
+            omrade_id,
+            krav_v2_terrang=True,
+            max_celler=max_k1_celler,
+            max_celler_kontext="bulleranalys",
+            max_celler_env=FLODEN_MAX_BULLER_CELLER_ENV,
         )
         sc_pack = _ladda_scenario_andringar(
             kartverktyg,
@@ -1582,12 +1755,29 @@ def kor_buller_analys(
 
 
 __all__ = [
+    "FLODEN_MAX_BULLER_CELLER_ENV",
+    "FLODEN_MAX_BULLER_RASTERCELLER_ENV",
+    "FLODEN_MAX_CAD_EXPORT_BYGGNADER_ENV",
+    "FLODEN_MAX_CAD_EXPORT_CELLER_ENV",
+    "FLODEN_MAX_CAD_EXPORT_MB_ENV",
+    "FLODEN_MAX_WEBB_PNG_CACHE_MB_ENV",
     "FORMAT_BULLER_WEBB",
     "FORMAT_CAD_IMPORT_WEBB",
     "MAX_CAD_IMPORT_BYTES",
     "ROLL_BULLER_LAEQ",
+    "STANDARD_MAX_BULLER_CELLER",
+    "STANDARD_MAX_BULLER_RASTERCELLER",
+    "STANDARD_MAX_CAD_EXPORT_BYGGNADER",
+    "STANDARD_MAX_CAD_EXPORT_CELLER",
+    "STANDARD_MAX_CAD_EXPORT_MB",
+    "STANDARD_MAX_WEBB_PNG_CACHE_MB",
     "BullerLagerCache",
     "exportera_cad_fil",
     "importera_cad_fil",
     "kor_buller_analys",
+    "max_buller_celler",
+    "max_buller_rasterceller",
+    "max_cad_export_byggnader",
+    "max_cad_export_bytes",
+    "max_cad_export_celler",
 ]
