@@ -1,4 +1,4 @@
-"""CLI-kommandon under `floden lagring` (S3-livscykelregler och lokal cachestädning)."""
+"""CLI-kommandon under `floden lagring` (S3-livscykelregler och lokal disk-/cachestädning)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ from typing import Any
 
 from gemensamt.konfig import KonfigFel, las_konfig
 from gemensamt.lokal_cache import LokalCacheFel, las_lokal_cache_konfig, stada_lokal_cache
+from gemensamt.lokal_diskstadare import (
+    LokalDiskStadareFel,
+    disk_utrymme_status,
+    las_lokal_disk_konfig,
+    stada_lokal_disk,
+)
 from gemensamt.objektlagring import ObjektLagringFel, S3Lagring, skapa_lagring
 from gemensamt.rensning import (
     STANDARD_MULTIPART_DAGAR,
@@ -24,7 +30,7 @@ def registrera(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
     """Registrerar kommandogruppen `floden lagring`."""
     lagring_parser = subparsers.add_parser(
         "lagring",
-        help="Hantera S3-objektlagring, livscykelregler (TTL) och lokal LRU-cache.",
+        help="Hantera S3-objektlagring, livscykelregler (TTL) och lokal disk-/cachestädning.",
     )
     lagring_sub = lagring_parser.add_subparsers(dest="lagring_kommando")
 
@@ -63,7 +69,8 @@ def registrera(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
 
     stada = lagring_sub.add_parser(
         "stada",
-        help="Städa lokal LRU-cache efter ålder och maxstorlek.",
+        aliases=["stada-cache"],
+        help="Städa lokal LRU-cache (och med --alla hela den lokala cachen utan krav på S3).",
     )
     stada.add_argument(
         "--konfig",
@@ -71,18 +78,67 @@ def registrera(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) 
         default=Path("config.toml"),
         help="Sökväg till config.toml (standard: config.toml).",
     )
-    stada.add_argument("--mapp", type=Path, default=None, help="Cachemapp (åsidosätter config).")
+    stada.add_argument(
+        "--alla",
+        action="store_true",
+        help=(
+            "Städa alla lokala cachespår (temp, webb/lager, gamla körningar, K22-cache och ev. "
+            "s3_lru) med atomiskt skydd av aktiva körningar, demo och projekt."
+        ),
+    )
+    stada.add_argument(
+        "--mapp",
+        type=Path,
+        default=None,
+        help="Cachemapp för enbart S3-LRU utan --alla (åsidosätter config).",
+    )
+    stada.add_argument(
+        "--cache-rot",
+        type=Path,
+        default=None,
+        help="Cache-rot för --alla (standard: [sokvagar].cache eller data/cache).",
+    )
+    stada.add_argument(
+        "--projekt-rot",
+        type=Path,
+        default=None,
+        help=(
+            "Projekt-/lokalrot för skydd av refererade körningar vid --alla "
+            "(standard: data/lokal)."
+        ),
+    )
+    stada.add_argument(
+        "--demo-rot",
+        type=Path,
+        default=None,
+        help=(
+            "Demomapp för skydd av demokörningar vid --alla "
+            "(standard: [webb].demomapp eller data/demo)."
+        ),
+    )
     stada.add_argument(
         "--max-gb",
         type=float,
         default=None,
-        help="Maxstorlek i GB innan LRU-eviction körs (åsidosätter config).",
+        help="Maxstorlek i GB innan LRU-eviction körs (åsidosätter config/miljövariabel).",
     )
     stada.add_argument(
         "--max-alder-dagar",
         type=float,
         default=None,
-        help="Maxålder i dagar för cachade filer (åsidosätter config).",
+        help="Maxålder i dagar för cachade poster (åsidosätter config/miljövariabel).",
+    )
+    stada.add_argument(
+        "--grace-minuter",
+        type=float,
+        default=None,
+        help="Skyddstid i minuter för nyligen ändrade filer/kataloger vid --alla (standard: 30).",
+    )
+    stada.add_argument(
+        "--lager-version",
+        type=str,
+        default=None,
+        help="Aktuell webb/lager-version vid --alla (t.ex. v12; annars högsta vN).",
     )
     stada.add_argument(
         "--torrkor",
@@ -130,7 +186,51 @@ def kor(args: argparse.Namespace) -> int:
         )
         return 0
 
-    if under == "stada":
+    if under in ("stada", "stada-cache"):
+        if getattr(args, "alla", False):
+            try:
+                konfig = _las_valfri_konfig(args.konfig)
+                disk_konfig = las_lokal_disk_konfig(
+                    konfig,
+                    cache_rot=args.cache_rot,
+                    projekt_rot=args.projekt_rot,
+                    demo_rot=args.demo_rot,
+                    max_gb=args.max_gb,
+                    max_alder_dagar=args.max_alder_dagar,
+                    grace_minuter=args.grace_minuter,
+                    aktuell_lager_version=args.lager_version,
+                )
+                disk_res = stada_lokal_disk(disk_konfig, torrkor=args.torrkor)
+                disk_status = disk_utrymme_status(disk_konfig.cache_rot)
+            except (KonfigFel, LokalCacheFel, LokalDiskStadareFel) as exc:
+                print(f"Fel vid lokal diskstädning: {exc}", file=sys.stderr)
+                return 2
+
+            if args.json:
+                payload = {
+                    **disk_res.som_dict(),
+                    "disk": {
+                        "ledig_gb": round(disk_status["ledig_gb"], 3),
+                        "total_gb": round(disk_status["total_gb"], 3),
+                        "anvand_pct": round(disk_status["anvand_pct"], 2),
+                        "cache_gb": round(disk_status["cache_gb"], 6),
+                    },
+                }
+                print(json.dumps(payload, indent=2, ensure_ascii=False))
+                return 0
+
+            prefix = "[TORRKÖRNING] Skulle radera" if disk_res.torrkor else "Raderade"
+            print(
+                f"{prefix} {disk_res.antal_raderade} poster ({disk_res.frigjorda_mb:.2f} MB; "
+                f"skyddade: {disk_res.antal_skyddade}). "
+                f"Före: {disk_res.fore_mb:.2f} MB, efter: {disk_res.efter_mb:.2f} MB. "
+                f"Ledigt på disk: {disk_status['ledig_gb']:.2f} GB "
+                f"({disk_status['anvand_pct']:.1f} % använt)."
+            )
+            for varning in disk_res.varningar:
+                print(f"Varning: {varning}", file=sys.stderr)
+            return 0
+
         try:
             konfig = _las_valfri_konfig(args.konfig)
             ck = las_lokal_cache_konfig(konfig)
@@ -171,5 +271,8 @@ def kor(args: argparse.Namespace) -> int:
         )
         return 0
 
-    print("Ange underkommando: 'installera-livscykel' eller 'stada'.", file=sys.stderr)
+    print(
+        "Ange underkommando: 'installera-livscykel' eller 'stada' (alias: 'stada-cache').",
+        file=sys.stderr,
+    )
     return 2
