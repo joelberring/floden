@@ -573,6 +573,24 @@ test("Uppdrag 4: Steg 3 bygger och skickar exakt payload { amnen: ['luft'], luft
     bakgrund_ug_m3: 14.5,
   });
 
+  // Bakgrundsfältet använder type="text" + inputmode="decimal" (inte type="number") så "12,5" bevaras vid omritning
+  const formHtml = skapaPanelHtml({
+    projekt: "p",
+    underlag: uNy,
+    amnen: [luftAmne],
+    valt: "luft",
+    best: FORVAL_BESTALLNING,
+    jobb: null,
+    fel: null,
+    luftForm: form,
+  });
+  const bakgInputMatch = formHtml.match(/<input[^>]*id="rp-luft-bakgrund"[^>]*>/);
+  assert.ok(bakgInputMatch, "Saknar #rp-luft-bakgrund i luftformuläret");
+  assert.match(bakgInputMatch[0], /type="text"/);
+  assert.match(bakgInputMatch[0], /inputmode="decimal"/);
+  assert.doesNotMatch(bakgInputMatch[0], /type="number"/);
+  assert.match(bakgInputMatch[0], /value="14,5"/);
+
   // XSS-escaping i luftformuläret
   const xssHtml = skapaPanelHtml({
     projekt: "p",

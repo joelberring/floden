@@ -355,7 +355,7 @@ export function luftFormHtml(
       </div>
       <div class="flode-falt">
         <label for="rp-luft-bakgrund">Bakgrundshalt (µg/m³, obligatorisk, minst 0)</label>
-        <input id="rp-luft-bakgrund" type="number" step="0.1" min="0" inputmode="decimal" class="flode-inmatning" data-rp-luft-falt="bakgrund_text" value="${esc(luftForm.bakgrund_text)}" placeholder="t.ex. 12,0" required${pagar ? " disabled" : ""} />
+        <input id="rp-luft-bakgrund" type="text" inputmode="decimal" autocomplete="off" class="flode-inmatning" data-rp-luft-falt="bakgrund_text" value="${esc(luftForm.bakgrund_text)}" placeholder="t.ex. 12,0" required${pagar ? " disabled" : ""} />
       </div>
       <p class="flode-fel flode-liten" id="rp-luft-fel" role="alert"${visaFel ? "" : " hidden"}>${esc(visaFel && luftFel ? luftFel : "")}</p>
     </fieldset>`;
