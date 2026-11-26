@@ -135,7 +135,7 @@ export const OM: OmData = {
           "id": "dagsljus.dozier_frew",
           "namn": "Dozier–Frew: horisont i linjär tid",
           "status": "skiss",
-          "flodeText": "Bara i API:t"
+          "flodeText": "I användarflödet"
         },
         {
           "id": "dagsljus.svf_intervall",
@@ -243,7 +243,7 @@ export const OM: OmData = {
           "id": "luft.mkn_intervall",
           "namn": "Monotona MKN-intervall",
           "status": "skiss",
-          "flodeText": "Bara i API:t"
+          "flodeText": "I användarflödet"
         }
       ],
       "kan": [
@@ -294,7 +294,7 @@ export const OM: OmData = {
           "id": "buller.celf",
           "namn": "CELF: submodulärt val av åtgärder",
           "status": "skiss",
-          "flodeText": "Bara i API:t"
+          "flodeText": "I användarflödet"
         }
       ],
       "kan": [

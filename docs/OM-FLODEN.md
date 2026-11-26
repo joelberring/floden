@@ -65,7 +65,7 @@ Uppdaterad 2026-11-25. Floden är en öppen modell som räknar skyfall, dagsljus
 | Metod | Metodstatus | Var den nås |
 | --- | --- | --- |
 | Horisont, soltimmar, SVF och VSC | skiss | I användarflödet |
-| Dozier–Frew: horisont i linjär tid | skiss | Bara i API:t |
+| Dozier–Frew: horisont i linjär tid | skiss | I användarflödet |
 | Monotona SVF-intervall | skiss | I användarflödet |
 
 **Testat**
@@ -120,7 +120,7 @@ Uppdaterad 2026-11-25. Floden är en öppen modell som räknar skyfall, dagsljus
 | --- | --- | --- |
 | Vindfält och spridning som M-matris | skiss | Kommandorad, MCP och testsvit |
 | Adjungerad känslighet och åtgärdsval | skiss | Fristående modul |
-| Monotona MKN-intervall | skiss | Bara i API:t |
+| Monotona MKN-intervall | skiss | I användarflödet |
 
 **Testat**
 
@@ -146,7 +146,7 @@ Uppdaterad 2026-11-25. Floden är en öppen modell som räknar skyfall, dagsljus
 | Metod | Metodstatus | Var den nås |
 | --- | --- | --- |
 | Nord2000 referenskärna | skiss | Kommandorad, MCP och testsvit |
-| CELF: submodulärt val av åtgärder | skiss | Bara i API:t |
+| CELF: submodulärt val av åtgärder | skiss | I användarflödet |
 
 **Testat**
 
