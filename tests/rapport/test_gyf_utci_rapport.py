@@ -237,6 +237,41 @@ def test_utci_belagg_fran_riktigt_varmestressresultat(
         k.hamta("utci.saknas.utci_medel_c", "demo-dagsljus", {})
 
 
+def test_gyf_utci_avvisar_sokvagsflykt_glob_och_symlank(
+    m: Miljo,
+    tmp_path: Path,
+    gyf_i_demo_ekologi: tuple[dict[str, object], dict[str, object]],
+    utci_i_demo_dagsljus: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    """Sökvägsflykt, glob-injektion och symlänkar utanför utmapp avvisas alltid med BelaggFel."""
+    k = m.rt.kalla
+
+    # Absoluta sökvägar och glob-wildcards avvisas som BelaggFel (aldrig ValueError eller filflykt)
+    for adress, kid in (
+        ("gyf./tmp/x.gyf", "demo-ekologi"),
+        ("gyf.*.gyf", "demo-ekologi"),
+        ("utci./tmp/x.utci_medel_c", "demo-dagsljus"),
+        ("utci.*.utci_medel_c", "demo-dagsljus"),
+    ):
+        with pytest.raises(BelaggFel):
+            k.hamta(adress, kid, {})
+
+    # Symlänk i utmapp som pekar utanför utmapp avvisas
+    extern_fil = tmp_path / "extern_gyf.json"
+    extern_fil.write_text(json.dumps(gyf_i_demo_ekologi[0]), encoding="utf-8")
+    lank_mapp = k.utmapp("demo-ekologi") / "gyf" / "lankad"
+    lank_mapp.mkdir(parents=True, exist_ok=True)
+    lank_fil = lank_mapp / "gyf.json"
+    lank_fil.symlink_to(extern_fil)
+    try:
+        with pytest.raises(BelaggFel, match="Ingen GYF-resultatfil"):
+            k.hamta("gyf.lankad.gyf", "demo-ekologi", {})
+    finally:
+        lank_fil.unlink(missing_ok=True)
+        if lank_mapp.exists():
+            shutil.rmtree(lank_mapp)
+
+
 # ------------------------------------------------------------------ 2. Rapport, kontroll, tamper, Word & PDF
 
 

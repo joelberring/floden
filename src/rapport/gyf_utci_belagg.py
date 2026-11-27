@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -38,6 +39,7 @@ UTCI_LOSARE: Final[str] = "mikroklimat.utci"
 GYF_FORMAT: Final[str] = "floden-gyf-resultat/v1"
 UTCI_FORMAT: Final[str] = "floden-mikroklimat/v1-skiss"
 METODSTATUS_SKISS: Final[str] = "skiss"
+_SCENARIO_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 _GYF_TID: Final[str] = "ingen tidsdimension (statisk kvartersmarksmodell: ett läge, inget förlopp)"
 _UTCI_TID: Final[str] = "givet väder- och soltillfälle (statisk 6-riktnings T_mrt och UTCI, metodstatus skiss)"
@@ -257,10 +259,21 @@ def _krav_skiss(dok: Mapping[str, Any], typ: str, fil_rel: str) -> None:
 # ---------------------------------------------------------------------- filsökning
 
 
+def _saker_fil_inom(fil: Path, utmapp_abs: Path) -> bool:
+    """Avvisar symlänkar och alla sökvägar som efter upplösning pekar utanför `utmapp_abs`."""
+    if fil.is_symlink() or not fil.is_file():
+        return False
+    try:
+        return fil.resolve().is_relative_to(utmapp_abs)
+    except OSError:
+        return False
+
+
 def hitta_gyf_fil(utmapp: Path, scenario: str) -> Path | None:
     """Hittar deterministisk GYF-resultatfil (`gyf.json` eller GYF-`run.json`) för ett scenario."""
-    if not utmapp.is_dir():
+    if not utmapp.is_dir() or not _SCENARIO_RE.fullmatch(scenario):
         return None
+    utmapp_abs = utmapp.resolve()
     kandidater: list[Path] = [
         utmapp / "gyf" / scenario / "gyf.json",
         utmapp / "gyf" / scenario / "run.json",
@@ -271,7 +284,7 @@ def hitta_gyf_fil(utmapp: Path, scenario: str) -> Path | None:
     ]
     sedda: set[Path] = set()
     for fil in kandidater:
-        if fil in sedda or not fil.is_file():
+        if fil in sedda or not _saker_fil_inom(fil, utmapp_abs):
             continue
         sedda.add(fil)
         dok = _las_json(fil)
@@ -282,8 +295,9 @@ def hitta_gyf_fil(utmapp: Path, scenario: str) -> Path | None:
 
 def hitta_utci_fil(utmapp: Path, scenario: str) -> Path | None:
     """Hittar deterministisk UTCI-resultatfil (`utci.json` eller UTCI-`run.json`) för ett scenario."""
-    if not utmapp.is_dir():
+    if not utmapp.is_dir() or not _SCENARIO_RE.fullmatch(scenario):
         return None
+    utmapp_abs = utmapp.resolve()
     kandidater: list[Path] = [
         utmapp / "utci" / scenario / "utci.json",
         utmapp / "utci" / scenario / "run.json",
@@ -296,7 +310,7 @@ def hitta_utci_fil(utmapp: Path, scenario: str) -> Path | None:
     ]
     sedda: set[Path] = set()
     for fil in kandidater:
-        if fil in sedda or not fil.is_file():
+        if fil in sedda or not _saker_fil_inom(fil, utmapp_abs):
             continue
         sedda.add(fil)
         dok = _las_json(fil)
@@ -309,10 +323,11 @@ def hitta_gyf_scenarier(utmapp: Path) -> dict[str, Path]:
     """Returnerar sorterat uppslag `scenario -> fil` för alla giltiga GYF-resultat i körningen."""
     if not utmapp.is_dir():
         return {}
+    utmapp_abs = utmapp.resolve()
     hittade: dict[str, Path] = {}
     for monster in ("gyf/*/gyf.json", "gyf/*/run.json", "*/gyf.json", "*/*/gyf.json", "*/*/*/gyf.json"):
         for fil in sorted(utmapp.glob(monster)):
-            if not fil.is_file():
+            if not _saker_fil_inom(fil, utmapp_abs):
                 continue
             dok = _las_json(fil)
             if not _ar_gyf_dok(dok):
@@ -321,14 +336,15 @@ def hitta_gyf_scenarier(utmapp: Path) -> dict[str, Path]:
             scen = rel[1] if len(rel) >= 3 and rel[0] == "gyf" else (rel[-2] if len(rel) >= 2 else "bas")
             if len(rel) == 4 and rel[-1] == "gyf.json":
                 scen = rel[1]
-            hittade.setdefault(scen, fil)
+            if _SCENARIO_RE.fullmatch(scen):
+                hittade.setdefault(scen, fil)
     for fil in sorted(utmapp.glob("gyf_*.json")):
-        if not fil.is_file():
+        if not _saker_fil_inom(fil, utmapp_abs):
             continue
         dok = _las_json(fil)
         if _ar_gyf_dok(dok):
             scen = fil.stem.removeprefix("gyf_")
-            if scen:
+            if _SCENARIO_RE.fullmatch(scen):
                 hittade.setdefault(scen, fil)
     return dict(sorted(hittade.items()))
 
@@ -337,6 +353,7 @@ def hitta_utci_scenarier(utmapp: Path) -> dict[str, Path]:
     """Returnerar sorterat uppslag `scenario -> fil` för alla giltiga UTCI-resultat i körningen."""
     if not utmapp.is_dir():
         return {}
+    utmapp_abs = utmapp.resolve()
     hittade: dict[str, Path] = {}
     for monster in (
         "utci/*/utci.json",
@@ -348,7 +365,7 @@ def hitta_utci_scenarier(utmapp: Path) -> dict[str, Path]:
         "*/*/*/utci.json",
     ):
         for fil in sorted(utmapp.glob(monster)):
-            if not fil.is_file():
+            if not _saker_fil_inom(fil, utmapp_abs):
                 continue
             dok = _las_json(fil)
             if not _ar_utci_dok(dok):
@@ -360,14 +377,15 @@ def hitta_utci_scenarier(utmapp: Path) -> dict[str, Path]:
                 scen = rel[1]
             else:
                 scen = rel[-2] if len(rel) >= 2 else "bas"
-            hittade.setdefault(scen, fil)
+            if _SCENARIO_RE.fullmatch(scen):
+                hittade.setdefault(scen, fil)
     for fil in sorted(utmapp.glob("utci_*.json")):
-        if not fil.is_file():
+        if not _saker_fil_inom(fil, utmapp_abs):
             continue
         dok = _las_json(fil)
         if _ar_utci_dok(dok):
             scen = fil.stem.removeprefix("utci_")
-            if scen:
+            if _SCENARIO_RE.fullmatch(scen):
                 hittade.setdefault(scen, fil)
     return dict(sorted(hittade.items()))
 
