@@ -39,6 +39,12 @@ from floden_mcp.dataklass import DataKlass, Policy, PolicyNekad, hogsta
 from floden_mcp.karna_api import PROJEKT_ID, FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, KorloggFel, hash_av, nu, rensa_text
 from floden_mcp.oppenhet import Oppenhet, OppenhetNekad
+from floden_mcp.utveckling import (
+    UTV_PREFIX,
+    redigera_text,
+    registrera_utvecklingsverktyg,
+    utvecklingslage_aktivt,
+)
 from rapport.bestallning import (
     BESTALLNINGSAMNEN,
     MOTTAGARROLLER,
@@ -288,9 +294,9 @@ def bygg_server(
     oppenhet = oppenhet or Oppenhet.for_tjanst(tjanst)
     tjanst.oppenhet = oppenhet
     logg = logg or Korlogg(tjanst.mcp_mapp / "korlogg.jsonl")
-    tillstand = Sessionstillstand(miljo)
+    env = os.environ if miljo is None else miljo
+    tillstand = Sessionstillstand(env)
     if tillatna_resursrotter is None:
-        env = os.environ if miljo is None else miljo
         ra_rotter = env.get("FLODEN_MCP_RESURSROTTER", "").strip()
         if ra_rotter:
             tillatna_resursrotter = [p for p in ra_rotter.split(os.pathsep) if p.strip()]
@@ -310,6 +316,7 @@ def bygg_server(
     # Verktygets dataklass (alla öppna i R0) och om det gäller ett projekt.
     klasser: dict[str, DataKlass] = {}
     utan_projekt = {"session_deklarera", "korlogg_hamta", "metoder_lista", "projekt_skapa"}
+    utv_verktyg: set[str] = set()
     explicit_projekt_var: ContextVar[bool] = ContextVar(
         f"floden_mcp_explicit_projekt_{id(server)}", default=False
     )
@@ -663,7 +670,30 @@ def bygg_server(
                 "dataklass": effektiv.value,
                 "rapport_id": rapporter_set,
             }
-            if behorighet is not None and ctx.method == "tools/call" and vilket not in UTAN_ROLLKRAV:
+            if ctx.method == "tools/call" and (vilket in utv_verktyg or vilket.startswith(UTV_PREFIX)):
+                if not utvecklingslage_aktivt(env):
+                    text = (
+                        "403 Nekad: MCP-utvecklingsläget (FLODEN_MCP_UTVECKLINGSLAGE=1) är avstängt. "
+                        f"{_FEL_PREFIX}403"
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, "utvecklingsläge avstängt", None, t0)
+                    return _result_fel(text)
+                if konto is None:
+                    text = (
+                        "401 Inloggning krävs: utvecklingsverktyg (utv_*) kräver ett inloggat "
+                        f"superadmin-konto. {_FEL_PREFIX}401"
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, "inget konto", None, t0)
+                    return _result_fel(text)
+                reg = tjanst.app.konto.register
+                if not (tjanst.app.konto.aktiv and reg is not None and reg.ar_superadmin(konto)):
+                    text = (
+                        "403 Nekad: utvecklingsverktyg (utv_*) kräver behörigheten superadmin. "
+                        f"{_FEL_PREFIX}403"
+                    )
+                    _skriv(logg, post, "nekad_behorighet", korningar, "403 kräver superadmin", None, t0)
+                    return _result_fel(text)
+            elif behorighet is not None and ctx.method == "tools/call" and vilket not in UTAN_ROLLKRAV:
                 minst = "utredare" if vilket in SKRIVVERKTYG else "lasare"
                 if konto is None:
                     text = (
@@ -840,13 +870,24 @@ def bygg_server(
                 _skriv(logg, post, "nekad_oppenhet", korningar, "icke-öppna data", None, t0)
                 return _neka_svar(ctx.method, str(exc))
             fel = bool(d.get("isError") or d.get("is_error"))
+            fel_text = _felrad(d) if fel else None
+            if fel_text and (vilket in utv_verktyg or vilket.startswith(UTV_PREFIX)):
+                fel_text = redigera_text(fel_text)
+            utfall = (
+                "nekad_oppenhet"
+                if fel
+                and fel_text
+                and (vilket in utv_verktyg or vilket.startswith(UTV_PREFIX))
+                and f"{_FEL_PREFIX}nekad_oppenhet" in fel_text
+                else ("fel" if fel else "ok")
+            )
             try:
                 _skriv(
                     logg,
                     post,
-                    "fel" if fel else "ok",
+                    utfall,
                     korningar,
-                    _felrad(d) if fel else None,
+                    fel_text,
                     d,
                     t0,
                 )
@@ -1262,6 +1303,17 @@ def bygg_server(
 
     _registrera_rapportverktyg(server, verktyg, rapporter, tillstand, behorighet, oppenhet)
     _registrera_resurser(server, tjanst)
+    if utvecklingslage_aktivt(env):
+        utv_namn = registrera_utvecklingsverktyg(
+            verktyg=verktyg,
+            tjanst=tjanst,
+            logg=logg,
+            tillstand=tillstand,
+            oppenhet=oppenhet,
+            miljo=env,
+        )
+        utv_verktyg.update(utv_namn)
+        utan_projekt.update(utv_namn)
     return server
 
 
