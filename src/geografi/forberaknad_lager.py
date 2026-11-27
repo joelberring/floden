@@ -49,6 +49,15 @@ STANDARD_RUTFILER: tuple[str, ...] = (
     "max_djup.tif",
     "run.json",
 )
+PRECOMPUTED_GPU_FILER: tuple[str, ...] = (
+    "vatten2d/max_djup.tif",
+    "dagsljus/svf.tif",
+    "run.json",
+)
+PRECOMPUTED_MODUL_FILER: Mapping[str, str] = {
+    "vatten2d": "max_djup.tif",
+    "dagsljus": "svf.tif",
+}
 STANDARD_RUTSTORLEK_M: float = 500.0
 STANDARD_NEGATIV_CACHE_TTL_S: float = 300.0
 STANDARD_FORBERAKNAT_DIR: Path = Path("data/forberaknat")
@@ -623,6 +632,8 @@ class ForberaknadKommunLager:
         for nyckel in nycklar:
             delar = nyckel.split("/")
             if len(delar) >= 4 and delar[0] == "geografi" and delar[1] and delar[2]:
+                if delar[3] == "k1":
+                    continue
                 if delar[1].lower() in _FORBJUDNA_DATAKLASS_SEGMENT:
                     continue
                 kommuner.add(delar[1])
@@ -646,6 +657,8 @@ class ForberaknadKommunLager:
         for nyckel in nycklar:
             delar = nyckel.split("/")
             if len(delar) >= 4 and delar[0] == "geografi" and delar[1] == ren_kommun and delar[2]:
+                if delar[3] == "k1":
+                    continue
                 if any(d.lower() in _FORBJUDNA_DATAKLASS_SEGMENT for d in delar[2:]):
                     continue
                 rutor.add(delar[2])
@@ -682,6 +695,11 @@ class ForberaknadKommunLager:
         self._kontrollera_cache_sokvag(
             ("geografi", ren_kommun, ren_ruta), sammanhang=f"{ren_kommun}/{ren_ruta}"
         )
+        for filnamn in normaliserade:
+            self._kontrollera_cache_sokvag(
+                ("geografi", ren_kommun, ren_ruta, *filnamn.split("/")),
+                sammanhang=f"{ren_kommun}/{ren_ruta}/{filnamn}",
+            )
         rutamapp = self._rutamapp(ren_kommun, ren_ruta)
         lokal_run = rutamapp / "run.json"
         eff_verifiera = bool(verifiera_geotiff or self._verifiera_geotiff)
@@ -820,6 +838,54 @@ class ForberaknadKommunLager:
                 f"Kunde inte läsa förberäknat raster {kommun}/{rut_id}/{ren_fil}: {exc}"
             ) from exc
 
+    def hamta_forberaknad_modul(
+        self,
+        kommun: str,
+        rut_id: str,
+        modul: str,
+        *,
+        filnamn: str | None = None,
+        verifiera_geotiff: bool = True,
+    ) -> Path:
+        """Hämtar nästlat förberäknat GPU-modulraster via LRU-cache (path-traversal-säkert).
+
+        Stöder modulerna i `PRECOMPUTED_MODUL_FILER` (`vatten2d` -> `vatten2d/max_djup.tif`,
+        `dagsljus` -> `dagsljus/svf.tif`) utan att ändra `STANDARD_RUTFILER`.
+        """
+        ren_kommun = _validera_segment(kommun, "kommun")
+        ren_ruta = _validera_segment(rut_id, "rut_id")
+        ren_modul = _validera_segment(modul, "modul")
+        if ren_modul not in PRECOMPUTED_MODUL_FILER:
+            tillatna = ", ".join(sorted(PRECOMPUTED_MODUL_FILER))
+            raise ForberaknadLagerFel(
+                f"Okänd förberäknad modul {modul!r}. Tillåtna moduler: {tillatna}."
+            )
+        vald_fil = (
+            PRECOMPUTED_MODUL_FILER[ren_modul]
+            if filnamn is None
+            else _validera_segment(filnamn, "filnamn")
+        )
+        rel_fil = _validera_rel_fil(f"{ren_modul}/{vald_fil}")
+        rutamapp = self.hamta_ruta(
+            ren_kommun,
+            ren_ruta,
+            filer=(rel_fil,),
+            verifiera_geotiff=verifiera_geotiff,
+        )
+        mal = rutamapp / rel_fil
+        try:
+            cache_abs = self._cache_rot.resolve()
+            mal_abs = mal.resolve()
+        except OSError as exc:
+            raise ForberaknadLagerFel(
+                f"Ogiltig cachesökväg för {ren_kommun}/{ren_ruta}/{rel_fil}: {exc}"
+            ) from exc
+        if not mal_abs.is_relative_to(cache_abs) or mal.is_symlink() or not mal.is_file():
+            raise ForberaknadLagerFel(
+                f"Förberäknad modulfil saknas eller är ogiltig: {ren_kommun}/{ren_ruta}/{rel_fil}."
+            )
+        return mal
+
     def hitta_rutor_for_utbredning(
         self,
         kommun: str,
@@ -926,17 +992,55 @@ def forberaknad_lager_fran_miljo(
     )
 
 
+def hamta_forberaknad_modul(
+    kommun: str,
+    rut_id: str,
+    modul: str,
+    *,
+    lager: ForberaknadKommunLager | None = None,
+    filnamn: str | None = None,
+    verifiera_geotiff: bool = True,
+    cache_rot: str | Path | None = None,
+    konfig: Mapping[str, Any] | None = None,
+    miljo: Mapping[str, str] | None = None,
+    bas_rot: str | Path | None = None,
+) -> Path:
+    """Hämtar en förberäknad GPU-modulfil (`vatten2d/max_djup.tif`, `dagsljus/svf.tif`)."""
+    eff_lager = lager
+    if eff_lager is None:
+        eff_lager = forberaknad_lager_fran_miljo(
+            cache_rot=cache_rot,
+            konfig=konfig,
+            miljo=miljo,
+            bas_rot=bas_rot,
+        )
+    if eff_lager is None:
+        raise ForberaknadLagerFel(
+            "Inget förberäknat lager (S3 eller lokal katalog) är konfigurerat."
+        )
+    return eff_lager.hamta_forberaknad_modul(
+        kommun,
+        rut_id,
+        modul,
+        filnamn=filnamn,
+        verifiera_geotiff=verifiera_geotiff,
+    )
+
+
 __all__ = [
     "DataskyddFel",
     "FLODEN_FORBERAKNAT_DIR_ENV",
     "ForberaknadKommunLager",
     "ForberaknadLagerFel",
     "ObjektLagringFel",
+    "PRECOMPUTED_GPU_FILER",
+    "PRECOMPUTED_MODUL_FILER",
     "STANDARD_FORBERAKNAT_DIR",
     "STANDARD_NEGATIV_CACHE_TTL_S",
     "STANDARD_RUTFILER",
     "STANDARD_RUTSTORLEK_M",
     "forberaknad_lager_fran_miljo",
+    "hamta_forberaknad_modul",
     "las_forberaknat_dir",
     "tolka_rut_bbox_3011",
     "validera_forberaknad_geotiff",

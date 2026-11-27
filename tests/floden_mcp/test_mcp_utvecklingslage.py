@@ -64,6 +64,7 @@ ALLA_UTV_VERKTYG = frozenset(
         "utv_geografi_mappa",
         "utv_lagring_lista",
         "utv_lagring_stada",
+        "utv_lagring_synka_k1",
         "utv_disk_stada",
         "utv_konto_backup",
         "utv_testsvit_kor",

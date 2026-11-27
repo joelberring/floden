@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -43,7 +44,7 @@ from gemensamt.manifest import (
     skapa_manifest,
     skriv_manifest,
 )
-from gemensamt.objektlagring import ObjektLagring, geografi_nyckel
+from gemensamt.objektlagring import ObjektLagring, ObjektLagringFel, geografi_nyckel
 from gemensamt.rensning import temporar_rutkatalog
 from markmodell.rutnat import Ruta, skapa_rutnat
 from testsvit.k1_io import GeoTransformInfo
@@ -592,6 +593,185 @@ def skapa_k1_rutkorare(
             matvarden=matvarden,
             varningar=tuple(varningar),
         )
+
+    return _kor
+
+
+_S3_K1_TILLATNA_FILER: frozenset[str] = frozenset(
+    {
+        "mark.tif",
+        "terrang.tif",
+        "markslag.tif",
+        "osakerhet.tif",
+        "byggnader.gpkg",
+        "recept.json",
+        "brytlinjer.gpkg",
+        "oppningar.gpkg",
+        "vegetation.tif",
+    }
+)
+_S3_K1_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
+_S3_K1_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_S3_K1_FORBJUDNA_SEGMENT: frozenset[str] = frozenset(
+    {"intern", "skyddad", "dataklass=intern", "dataklass=skyddad"}
+)
+
+
+def skapa_s3_k1_rutkorare(
+    objektlagring: ObjektLagring,
+    kommun: str,
+    *,
+    regn_tid_s: Sequence[float] = (0.0, 600.0),
+    regn_mm_h: Sequence[float] = (60.0, 60.0),
+    slut_tid_s: float | None = None,
+    azimutriktningar: int = 36,
+    dagsljus_radie_m: float = 100.0,
+    vegetation: bool = False,
+    tmp_rot: str | Path | None = None,
+) -> RutKorare:
+    """Skapar en rutkörare som hämtar öppna K1-rutor från objektlagring och kör vatten2d/dagsljus.
+
+    För varje ruta `mm_<E>_<N>`:
+    1. Laddar ner `geografi/<kommun>/<rut_id>/k1/k1_manifest.json` till en isolerad temporär mapp.
+    2. Verifierar `dataklass == "oppen"`, matchande `kommun`/`rut_id`, vitlistade filnamn samt
+       SHA-256 på samtliga K1-filer före beräkning (fail-closed mot icke-öppen eller korrupt data).
+    3. Kör `skapa_k1_rutkorare` på den temporära K1-mappen så att `vatten2d/max_djup.tif`,
+       `dagsljus/svf.tif` m.fl. skrivs till `arbetsmapp` (laddas upp till S3 av `kor_batch_rutor`).
+    4. Raderar alltid den temporära K1-katalogen i `finally` (även vid fel).
+    """
+    ren_kommun = kommun.strip()
+    if (
+        not ren_kommun
+        or "/" in ren_kommun
+        or "\\" in ren_kommun
+        or ".." in ren_kommun
+        or not _S3_K1_SEGMENT_RE.match(ren_kommun)
+        or ren_kommun.lower() in _S3_K1_FORBJUDNA_SEGMENT
+    ):
+        raise BatchFel(f"Ogiltig kommun för S3 K1-rutkörare: {kommun!r}.")
+
+    def _kor(ruta: Ruta, arbetsmapp: Path, konfig: BatchKonfig, plats: str) -> RutUtdata:
+        kontrollera_dataskydd(konfig.dataklass)
+        if konfig.dataklass != "oppen":
+            raise BatchFel(
+                f"Dataskyddsspärr: S3 K1-rutkörare tillåter endast dataklass='oppen', "
+                f"fick {konfig.dataklass!r}."
+            )
+        ren_ruta = ruta.namn.strip()
+        if not _S3_K1_SEGMENT_RE.match(ren_ruta) or ".." in ren_ruta:
+            raise BatchFel(f"Ogiltigt rut-id för S3 K1-hämtning: {ruta.namn!r}.")
+
+        bas_str: str | None = None
+        if tmp_rot is not None:
+            bas_p = Path(tmp_rot)
+            bas_p.mkdir(parents=True, exist_ok=True)
+            bas_str = str(bas_p)
+        k1_tmp_rot = Path(tempfile.mkdtemp(prefix=f"floden_s3k1_{ren_ruta}_", dir=bas_str))
+        try:
+            k1_mapp = k1_tmp_rot / ren_ruta
+            k1_mapp.mkdir(parents=True, exist_ok=True)
+            manifest_nyckel = geografi_nyckel(ren_kommun, ren_ruta, "k1/k1_manifest.json")
+            if not objektlagring.finns(manifest_nyckel):
+                raise BatchFel(
+                    f"K1-manifest saknas i objektlagring för {ren_kommun}/{ren_ruta}: "
+                    f"{manifest_nyckel}"
+                )
+            manifest_fil = k1_mapp / "k1_manifest.json"
+            try:
+                objektlagring.ladda_ner_fil(manifest_nyckel, manifest_fil)
+                manifest_data = json.loads(manifest_fil.read_text(encoding="utf-8"))
+            except (ObjektLagringFel, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise BatchFel(
+                    f"Kunde inte läsa K1-manifest {manifest_nyckel}: {exc}"
+                ) from exc
+
+            if not isinstance(manifest_data, Mapping):
+                raise BatchFel(f"Ogiltigt K1-manifest (ej JSON-objekt): {manifest_nyckel}")
+
+            dataklass = manifest_data.get("dataklass")
+            if str(dataklass).strip().lower() != "oppen":
+                raise BatchFel(
+                    f"Dataskyddsspärr: K1-manifest för {ren_kommun}/{ren_ruta} har "
+                    f"dataklass={dataklass!r}; endast 'oppen' tillåts."
+                )
+
+            man_kommun = manifest_data.get("kommun")
+            if man_kommun is not None and str(man_kommun).strip() != ren_kommun:
+                raise BatchFel(
+                    f"K1-manifestets kommun ({man_kommun!r}) stämmer inte med förväntad "
+                    f"kommun ({ren_kommun!r})."
+                )
+            man_ruta = manifest_data.get("rut_id")
+            if man_ruta is not None and str(man_ruta).strip() != ren_ruta:
+                raise BatchFel(
+                    f"K1-manifestets rut_id ({man_ruta!r}) stämmer inte med förväntad "
+                    f"ruta ({ren_ruta!r})."
+                )
+
+            filer_raw = manifest_data.get("filer")
+            if not isinstance(filer_raw, list) or not filer_raw:
+                raise BatchFel(f"K1-manifestet saknar fillista: {manifest_nyckel}")
+
+            k1_mapp_abs = k1_mapp.resolve()
+            nedladdade_namn: set[str] = set()
+            for post in filer_raw:
+                if not isinstance(post, Mapping):
+                    raise BatchFel(f"Ogiltig filpost i K1-manifest {manifest_nyckel}.")
+                filnamn = post.get("fil")
+                forvantad_sha = post.get("sha256")
+                if not isinstance(filnamn, str) or filnamn not in _S3_K1_TILLATNA_FILER:
+                    raise BatchFel(
+                        f"Otillåtet filnamn i K1-manifest {manifest_nyckel}: {filnamn!r}"
+                    )
+                if not isinstance(forvantad_sha, str) or not _S3_K1_SHA256_RE.match(
+                    forvantad_sha.strip()
+                ):
+                    raise BatchFel(
+                        f"Ogiltig SHA-256 i K1-manifest {manifest_nyckel} för {filnamn!r}."
+                    )
+                mal_fil = (k1_mapp / filnamn).resolve()
+                if not mal_fil.is_relative_to(k1_mapp_abs):
+                    raise BatchFel(f"Säkerhetsfel: ogiltig målsökväg för {filnamn!r}.")
+                fil_nyckel = geografi_nyckel(ren_kommun, ren_ruta, f"k1/{filnamn}")
+                try:
+                    objektlagring.ladda_ner_fil(fil_nyckel, mal_fil)
+                except ObjektLagringFel as exc:
+                    raise BatchFel(
+                        f"Kunde inte hämta K1-fil {fil_nyckel} från objektlagring: {exc}"
+                    ) from exc
+                faktisk_sha = sha256_fil(mal_fil).lower()
+                if faktisk_sha != forvantad_sha.strip().lower():
+                    raise BatchFel(
+                        f"SHA-256-avvikelse för K1-fil {fil_nyckel}: "
+                        f"förväntade {forvantad_sha[:12]}…, fick {faktisk_sha[:12]}…."
+                    )
+                nedladdade_namn.add(filnamn)
+
+            if "mark.tif" not in nedladdade_namn:
+                raise BatchFel(
+                    f"K1-manifestet för {ren_kommun}/{ren_ruta} saknar obligatorisk 'mark.tif'."
+                )
+
+            lokal_korare = skapa_k1_rutkorare(
+                k1_tmp_rot,
+                regn_tid_s=regn_tid_s,
+                regn_mm_h=regn_mm_h,
+                slut_tid_s=slut_tid_s,
+                azimutriktningar=azimutriktningar,
+                dagsljus_radie_m=dagsljus_radie_m,
+                vegetation=vegetation,
+            )
+            ut = lokal_korare(ruta, arbetsmapp, konfig, plats)
+            matvarden = dict(ut.matvarden)
+            matvarden["k1_kalla"] = "s3"
+            matvarden["k1_s3_manifest_sha256"] = sha256_fil(manifest_fil)
+            return RutUtdata(
+                utdata_filer=ut.utdata_filer,
+                matvarden=matvarden,
+                varningar=ut.varningar,
+            )
+        finally:
+            shutil.rmtree(k1_tmp_rot, ignore_errors=True)
 
     return _kor
 

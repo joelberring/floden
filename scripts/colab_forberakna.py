@@ -14,10 +14,11 @@ Exempel i en Colab-cell (med GPU aktiverad under Körtid -> Ändra körtidstyp -
         --upplosning-m 1.0 \\
         --utdata /content/drive/MyDrive/floden/cache_stockholm
 
-    # Eller direkt till S3 / Hetzner Object Storage (kräver FLODEN_S3_* i miljön):
+    # Eller direkt från & till S3 / Hetzner Object Storage (kräver FLODEN_S3_* i miljön):
     !python scripts/colab_forberakna.py \\
         --omrade /content/drive/MyDrive/floden/goteborg.geojson \\
         --moduler vatten2d,dagsljus \\
+        --k1-kalla s3 \\
         --lagring s3 \\
         --kommun goteborg \\
         --upplosning-m 1.0 \\
@@ -51,6 +52,7 @@ from karna.batch import (
     kontrollera_dataskydd,
     kor_batch_rutor,
     skapa_k1_rutkorare,
+    skapa_s3_k1_rutkorare,
 )
 
 
@@ -100,6 +102,15 @@ def bygg_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help="Rasterupplösning i meter (standard: 1.0).",
+    )
+    parser.add_argument(
+        "--k1-kalla",
+        choices=("lokal", "s3"),
+        default="lokal",
+        help=(
+            "Källa för K1-rutor: 'lokal' (--k1-rot, standard) eller 's3' "
+            "(geografi/<kommun>/<ruta>/k1/)."
+        ),
     )
     parser.add_argument(
         "--k1-rot",
@@ -205,10 +216,17 @@ def main(
 
         print(f"Genererade {len(rutor)} rutor för {args.omrade.name}. Startar förberäkning...")
         konfig = skapa_batch_konfig(args)
-        vald_lagring = objektlagring
-        if args.lagring == "s3" and vald_lagring is None:
-            vald_lagring = _skapa_s3_lagring(args.konfig)
-        rutkorare = skapa_k1_rutkorare(args.k1_rot) if args.k1_rot is not None else None
+        if args.k1_kalla == "s3" and args.k1_rot is not None:
+            raise BatchFel("--k1-rot kan inte kombineras med --k1-kalla s3.")
+        s3_lagring = objektlagring
+        if (args.lagring == "s3" or args.k1_kalla == "s3") and s3_lagring is None:
+            s3_lagring = _skapa_s3_lagring(args.konfig)
+        vald_lagring = s3_lagring if args.lagring == "s3" else None
+        if args.k1_kalla == "s3":
+            assert s3_lagring is not None
+            rutkorare = skapa_s3_k1_rutkorare(s3_lagring, args.kommun)
+        else:
+            rutkorare = skapa_k1_rutkorare(args.k1_rot) if args.k1_rot is not None else None
         status = kor_batch_rutor(
             rutor, konfig, rutkorare=rutkorare, objektlagring=vald_lagring
         )

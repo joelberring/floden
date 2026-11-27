@@ -25,7 +25,7 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Annotated, Any
@@ -69,6 +69,9 @@ _HEMLIG_KV_RE = re.compile(
 )
 _SAMMANFATTNING_RE = re.compile(r"(\d+)/(\d+)\s+(?:testfall\s+)?passerade")
 _VOLYMFEL_PCT_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*%")
+_RUT_PREFIX_RE = re.compile(r"^mm_-?\d+_-?\d+:\s*")
+_BYGGNAD_ID_PREFIX_RE = re.compile(r"^b_[0-9a-fA-F]{6,}:\s*")
+_TAL_RE = re.compile(r"-?\d+(?:[.,]\d+)?")
 
 Modell = Annotated[
     str | None,
@@ -116,6 +119,92 @@ def redigera_objekt(obj: Any, *, djup: int = 0) -> Any:
     if isinstance(obj, list):
         return [redigera_objekt(x, djup=djup + 1) for x in obj]
     return obj
+
+
+def _kategorisera_mappningsvarning(text: str) -> tuple[str, bool]:
+    """Returnerar `(kategori, ar_byggnadsvarning)` för en enskild mappningsvarning."""
+    utan_ruta = _RUT_PREFIX_RE.sub("", text.strip())
+    har_bygg_id = bool(_BYGGNAD_ID_PREFIX_RE.match(utan_ruta))
+    utan_id = _BYGGNAD_ID_PREFIX_RE.sub("", utan_ruta).strip()
+    low = utan_id.lower()
+
+    if "ingen markhöjd under eller kring byggnaden" in low:
+        return "byggnad_saknar_markhojd", True
+    if "ingen cellcentrum i byggnaden" in low:
+        return "byggnad_inget_cellcentrum", True
+    if "källans takhöjd ligger" in low and "ignorerad" in low:
+        return "byggnad_ogiltig_kalltakhojd", True
+    if "laserns takhöjd ligger" in low and "ignorerad" in low:
+        return "byggnad_ogiltig_lasertakhojd", True
+    if "byggnader saknade höjdkälla" in low or "byggnader saknar takhöjd" in low:
+        return "byggnad_standardhojd", True
+    if har_bygg_id:
+        norm = _TAL_RE.sub("<tal>", low)
+        return f"byggnad:{norm[:60]}", True
+    norm = _TAL_RE.sub("<tal>", low)
+    return f"varning:{norm[:80]}", False
+
+
+def sammanfatta_mappningsvarningar(
+    varningar: Sequence[str],
+    *,
+    max_exempel_per_kategori: int = 3,
+    max_enskilda: int = 20,
+) -> dict[str, Any]:
+    """Sammanfattar repetitiva byggnads- och rutvarningar kompakt per kategori med antal och exempel.
+
+    Håller MCP-svaret från `utv_geografi_mappa` kompakt (i stället för t.ex. 1 496 råa rader)
+    samtidigt som totalantal, kategoriuppdelning och toppexempel alltid bevaras.
+    """
+    max_ex = max(1, int(max_exempel_per_kategori))
+    max_ensk = max(1, int(max_enskilda))
+    rensade = [redigera_text(str(v).strip()) for v in varningar if str(v).strip()]
+    totalt = len(rensade)
+    if totalt == 0:
+        return {
+            "varningar": [],
+            "varningar_totalt": 0,
+            "varningar_sammanfattning": [],
+        }
+
+    grupper: dict[str, list[str]] = {}
+    ar_bygg: dict[str, bool] = {}
+    for rad in rensade:
+        kat, bygg = _kategorisera_mappningsvarning(rad)
+        grupper.setdefault(kat, []).append(rad)
+        ar_bygg[kat] = ar_bygg.get(kat, False) or bygg
+
+    sammanfattning: list[dict[str, Any]] = []
+    enskilda: list[str] = []
+    for kat, rader in sorted(grupper.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        if len(rader) >= 2:
+            exempel = rader[:max_ex]
+            sammanfattning.append(
+                {
+                    "kategori": kat,
+                    "antal": len(rader),
+                    "exempel": exempel,
+                }
+            )
+        else:
+            enskilda.extend(rader)
+
+    kompakta: list[str] = []
+    for post in sammanfattning:
+        kompakta.append(
+            f"[{post['kategori']}] {post['antal']} st (t.ex. {post['exempel'][0]})"
+        )
+    if len(enskilda) > max_ensk:
+        kompakta.extend(enskilda[:max_ensk])
+        kompakta.append(f"... samt {len(enskilda) - max_ensk} ytterligare unika varningar.")
+    else:
+        kompakta.extend(enskilda)
+
+    return {
+        "varningar": kompakta,
+        "varningar_totalt": totalt,
+        "varningar_sammanfattning": sammanfattning,
+    }
 
 
 def _las_app_konfig(konfig_fil: Path) -> dict[str, Any]:
@@ -630,12 +719,15 @@ def registrera_utvecklingsverktyg(
             )
         except (SkapaFel, GeografiFel) as exc:
             raise ToolError(f"{redigera_text(str(exc))} {_FEL_PREFIX}geografi_fel") from exc
+        varn_sam = sammanfatta_mappningsvarningar(res.varningar)
         return {
             "ref": res.ref,
             "manifest_sha256": res.manifest_sha256,
             "nytt": res.nytt,
             "oppen_for_mcp": res.oppen_for_mcp,
-            "varningar": [redigera_text(v) for v in res.varningar],
+            "varningar": varn_sam["varningar"],
+            "varningar_totalt": varn_sam["varningar_totalt"],
+            "varningar_sammanfattning": varn_sam["varningar_sammanfattning"],
             "logg": loggradder[-50:],
         }
 
@@ -784,6 +876,75 @@ def registrera_utvecklingsverktyg(
             "kvarvarande_mb": round(res.kvarvarande_mb, 3),
             "dolda_icke_oppna": dolda_filer,
             "raderade_filer": synliga_filer[:200],
+        }
+
+    @utv(
+        "utv_lagring_synka_k1",
+        "Superadmin-utvecklingsverktyg: synkroniserar en verifierat öppen K1 v2-geografi (K46) till "
+        "konfigurerad objektlagring under 'geografi/<kommun>/<rut_id>/k1/' med SHA-256-hopp och "
+        "K38 fail-closed-spärr. Stängda geografier/kommuner nekas alltid. Förval: torrkor=true.",
+    )
+    def utv_lagring_synka_k1(
+        geografi_ref: Annotated[
+            str,
+            Field(description="Geografireferens på formen '<id>@v<nummer>', t.ex. 'goteborg-test@v5'."),
+        ],
+        torrkor: Annotated[
+            bool, Field(description="Torrkörning utan att ladda upp några filer (förval: true).")
+        ] = True,
+        max_rutor: Annotated[
+            int, Field(description="Högst antal K1-rutor att synkronisera per anrop (1-256, förval: 64).")
+        ] = 64,
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        _krav_superadmin()
+        from gemensamt.objektlagring import ObjektLagringFel
+        from geografi.modell import GeografiFel
+        from geografi.s3_sync import (
+            K38SyncNekad,
+            S3SyncFel,
+            synka_k1_till_s3,
+            validera_oppen_geografi_for_s3,
+        )
+
+        if isinstance(max_rutor, bool) or int(max_rutor) < 1:
+            raise ToolError(f"max_rutor måste vara mellan 1 och 256. {_FEL_PREFIX}fel_indata")
+        grans = min(int(max_rutor), 256)
+        geomapp = tjanst.app.projekt_skapa.geomapp
+        try:
+            validera_oppen_geografi_for_s3(
+                geografi_ref,
+                geomapp,
+                oppenhet=oppenhet,
+                rot=tjanst.rot,
+            )
+        except K38SyncNekad as exc:
+            raise ToolError(f"{redigera_text(str(exc))} {_FEL_PREFIX}nekad_oppenhet") from exc
+        except (S3SyncFel, GeografiFel) as exc:
+            raise ToolError(f"{redigera_text(str(exc))} {_FEL_PREFIX}fel_indata") from exc
+
+        lk, lagring = _bygg_lagring()
+        try:
+            res = synka_k1_till_s3(
+                geografi_ref,
+                geomapp,
+                objektlagring=lagring,
+                torrkor=bool(torrkor),
+                max_rutor=grans,
+                oppenhet=oppenhet,
+                rot=tjanst.rot,
+            )
+        except K38SyncNekad as exc:
+            raise ToolError(f"{redigera_text(str(exc))} {_FEL_PREFIX}nekad_oppenhet") from exc
+        except (S3SyncFel, GeografiFel) as exc:
+            raise ToolError(f"{redigera_text(str(exc))} {_FEL_PREFIX}fel_indata") from exc
+        except ObjektLagringFel as exc:
+            raise ToolError(f"Lagringsfel: {redigera_text(str(exc))} {_FEL_PREFIX}lagring") from exc
+
+        return {
+            "typ": lk.typ,
+            **redigera_objekt(res.till_dict()),
         }
 
     @utv(
@@ -1152,5 +1313,6 @@ __all__ = [
     "redigera_objekt",
     "redigera_text",
     "registrera_utvecklingsverktyg",
+    "sammanfatta_mappningsvarningar",
     "utvecklingslage_aktivt",
 ]
