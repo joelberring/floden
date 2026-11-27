@@ -162,3 +162,39 @@ def test_vmi_klipps_pa_samma_utsnitt_och_krav_pa_lager(tmp_path: Path) -> None:
     utan_vmi = _geografi(tmp_path / "b", nmd, buffert_m=3000.0)
     with pytest.raises(GeografiFel, match="inget VMI-lager"):
         las_markunderlag(utan_vmi, karna, 3000.0, med_vmi=True)
+
+
+def test_auto_omsampling_vid_stor_nmd_kontextbuffert(demo: Demo, tmp_path: Path) -> None:
+    """Stor 3 km-buffrad NMD (> max_celler vid 10 m) omsamplas deterministiskt när cellstorlek_m ej angivits,
+    medan en uttryckligt begärd för fin cellstorlek_m fortfarande ger tydligt fel."""
+    # 651 x 651 celler vid 10 m (423 801 > 250 000), precis som 500 m-kärna + 3 km NMD-buffert i Göteborg.
+    klasser = np.full((651, 651), 42, dtype=np.uint8)
+    klasser[200:220, 200:220] = 111  # 4 ha barrskog
+    klasser[420:440, 420:440] = 111  # 4 ha barrskog
+    nmd = tmp_path / "stor_nmd.tif"
+    skriv_nmd(NmdLager(klasser, 148_000.0, 6_583_510.0, 10.0), nmd)
+    manifest = _geografi(tmp_path, nmd, buffert_m=3000.0)
+
+    # Utan cellstorlek_m: deterministisk auto-omsampling till 20 m (326 x 326 = 106 276 <= 250 000) + varning.
+    namn_auto = _fraga(demo, "geo-ekologi-auto-cell", f'geografi = "{manifest.as_posix()}"')
+    status, _ = demo.tjanst.kor_synkront(namn_auto, namn_auto)
+    assert status["status"] == "klar"
+    tab = _tabell(demo, namn_auto)
+    assert tab["fore"]["cellstorlek_m"] == 20.0
+    assert tab["fore"]["antal_flackar"] == 2
+    dok = json.loads(
+        (demo.tjanst.korningsmapp / namn_auto / "resultat" / "konnektivitet" / "fore" / "ekologi.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert any("omsamplades deterministiskt till 20 m" in v for v in dok["varningar"])
+
+    # Med uttrycklig cellstorlek_m = 10.0: ingen tyst omsampling — tydligt max_celler-fel kvarstår!
+    namn_fel = _fraga(
+        demo,
+        "geo-ekologi-expl-10m",
+        f'geografi = "{manifest.as_posix()}"',
+        parametrar='natverk = "barrskog-nacka", cellstorlek_m = 10.0',
+    )
+    with pytest.raises(Exception, match="max_celler=250000"):
+        demo.tjanst.kor_synkront(namn_fel, namn_fel)

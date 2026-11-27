@@ -634,3 +634,119 @@ def test_invarianter_validering_och_bitidentisk_reproducerbarhet(tmp_path: Path)
     assert mv1["metodstatus"] == "skiss"
     assert mv1["rapport_sparrad"] is True
     assert 0.0 <= sam1["andel_over_60_dba_pct"] <= sam1["andel_over_55_dba_pct"] <= 100.0
+
+
+def test_overlappande_byggnader_klipps_med_hojdforetrade_och_bullerscen_forblir_strikt(
+    tmp_path: Path,
+) -> None:
+    """Överlappande K1-takplan (t.ex. Göteborgs tät kvartersstad) klipps deterministiskt i
+    `buller.nord2000` med höjd-företräde och tydlig varning, medan `Bullerscen` förblir strikt."""
+    from buller.scen.bullerscen import Bullerscen
+    from buller.typer import BullerFel, Byggnad
+
+    # Två överlappande takvolymer (högre torn inuti/över lägre bas) + ett litet väggöverlapp.
+    bas_hus = ByggnadsPost(
+        byggnad_id="hus_bas",
+        polygon=(
+            (E0 + 18.0, N0 + 20.0),
+            (E0 + 42.0, N0 + 20.0),
+            (E0 + 42.0, N0 + 36.0),
+            (E0 + 18.0, N0 + 36.0),
+        ),
+        hojd_m=12.0,
+        markhojd_rh2000=10.0,
+        takhojd_rh2000=22.0,
+        kalla="test",
+    )
+    torn_hus = ByggnadsPost(
+        byggnad_id="hus_torn",
+        polygon=(
+            (E0 + 24.0, N0 + 24.0),
+            (E0 + 36.0, N0 + 24.0),
+            (E0 + 36.0, N0 + 32.0),
+            (E0 + 24.0, N0 + 32.0),
+        ),
+        hojd_m=24.0,
+        markhojd_rh2000=10.0,
+        takhojd_rh2000=34.0,
+        kalla="test",
+    )
+    granne_sliver = ByggnadsPost(
+        byggnad_id="hus_granne",
+        polygon=(
+            (E0 + 41.95, N0 + 20.0),
+            (E0 + 50.0, N0 + 20.0),
+            (E0 + 50.0, N0 + 36.0),
+            (E0 + 41.95, N0 + 36.0),
+        ),
+        hojd_m=10.0,
+        markhojd_rh2000=10.0,
+        takhojd_rh2000=20.0,
+        kalla="test",
+    )
+
+    # 1. Bullerscen ska fortfarande vara strikt och avvisa råa överlappande byggnader!
+    with pytest.raises(BullerFel, match="överlappar"):
+        Bullerscen(
+            terrang_rh2000_m=np.full((12, 12), 10.0, dtype=np.float64),
+            markslag=np.full((12, 12), 4, dtype=np.uint8),
+            e_min_m=E0,
+            n_max_m=N0 + 60.0,
+            cell_m=5.0,
+            byggnader=(
+                Byggnad(
+                    id="hus_bas",
+                    e_m=np.array([p[0] for p in bas_hus.polygon], dtype=np.float64),
+                    n_m=np.array([p[1] for p in bas_hus.polygon], dtype=np.float64),
+                    tak_rh2000_m=22.0,
+                ),
+                Byggnad(
+                    id="hus_torn",
+                    e_m=np.array([p[0] for p in torn_hus.polygon], dtype=np.float64),
+                    n_m=np.array([p[1] for p in torn_hus.polygon], dtype=np.float64),
+                    tak_rh2000_m=34.0,
+                ),
+            ),
+            vagar=(),
+        )
+
+    # 2. K21-lösaren buller.nord2000 ska klippa överlappen, varna öppet och räkna klart!
+    ruta_mapp, _ = _skapa_k1_v2_ruta(
+        tmp_path / "ruta_overlapp",
+        sida_m=60.0,
+        pixel_m=5.0,
+        byggnader=(bas_hus, torn_hus, granne_sliver),
+    )
+    fraga = fraga_fran_dict(
+        {
+            "kontrakt": "K20/v1",
+            "fraga_id": "buller-overlapp-kvarter",
+            "scenarier": {"bas": {"bas": str(ruta_mapp)}},
+            "analyser": [
+                {
+                    "id": "buller",
+                    "losare": "buller.nord2000",
+                    "parametrar": {
+                        "vagsegment": _standard_vag(10.0),
+                        "mottagarhojd_m": 2.0,
+                        "raster_cell_m": 5.0,
+                        "segment_langd_m": 15.0,
+                        "fasad_steg_m": 10.0,
+                        "max_vaningar": 1,
+                    },
+                }
+            ],
+        },
+        tmp_path,
+    )
+    kor_utredning(fraga, ResultatCache(tmp_path / "cache"), tmp_path / "ut")
+    sam = json.loads(
+        (tmp_path / "ut" / "buller" / "bas" / "buller_sammanfattning.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert sam["laeq_max_dba"] is not None
+    assert sam["nord2000_konform"] is False
+    assert sam["metodstatus"] == "skiss"
+    assert sam["rapport_sparrad"] is True
+    assert any("Överlappande byggnadspolygoner" in v for v in sam["varningar"])

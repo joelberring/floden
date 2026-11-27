@@ -217,9 +217,9 @@ export function tillampaBullerVagKlick(
 
 const arTal = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
-/** Tolkar decimaltal med svenskt komma eller punkt. */
+/** Tolkar decimaltal med svenskt komma, punkt samt ASCII- eller typografiskt minustecken. */
 export function tolkaBullerTal(text: string): number | null {
-  const ren = text.trim().replace(/\s+/g, "").replace(",", ".");
+  const ren = text.trim().replace(/\s+/g, "").replace(/[\u2212\u2013\u2014]/g, "-").replace(",", ".");
   if (!ren) return null;
   const v = Number(ren);
   return Number.isFinite(v) ? v : null;

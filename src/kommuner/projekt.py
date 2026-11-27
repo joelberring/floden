@@ -621,6 +621,7 @@ def skriv_fragor(mapp: Path, kommun: KommunKonfig, geo_rot: Path, manifest: Mapp
             "[[analyser]]",
             'id = "konnektivitet"',
             'losare = "ekologi.konnektivitet"',
+            f"fokus = {fok}",
             f"parametrar = {{ natverk = {_toml_str(natverk)} }}",
             f"indata = {{ geografi = {_toml_str(_rel(fdir, manifest_fil))} }}",
         ]

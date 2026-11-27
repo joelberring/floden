@@ -261,6 +261,9 @@ test("gyfAnalysUrl och varmestressAnalysUrl bygger korrekta GET-query-parametrar
 test("valideraVarmestressParam och tolkaSvensktTal validerar gränser och svenskt decimalkomma", () => {
   assert.equal(tolkaSvensktTal("1,5"), 1.5);
   assert.equal(tolkaSvensktTal(" 30.0 "), 30);
+  assert.equal(tolkaSvensktTal("−12,5"), -12.5);
+  assert.equal(tolkaSvensktTal("–5.2"), -5.2);
+  assert.equal(tolkaSvensktTal("—10"), -10);
   assert.equal(tolkaSvensktTal(""), null);
   assert.equal(valideraVarmestressParam({ ...STANDARD_VARMESTRESS_PARAM }), null);
   assert.match(valideraVarmestressParam({ ...STANDARD_VARMESTRESS_PARAM, relativ_fuktighet_pct: 120 }) ?? "", /0 och 100/);

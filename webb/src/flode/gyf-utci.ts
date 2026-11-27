@@ -307,9 +307,9 @@ export function varmestressAnalysUrl(
   return `/api/analys/varmestress?${q.toString()}`;
 }
 
-/** Tolkar decimaltal med svensk komma- eller punktnotation. */
+/** Tolkar decimaltal med svensk komma-/punktnotation samt ASCII- eller typografiskt minustecken. */
 export function tolkaSvensktTal(text: string): number | null {
-  const ren = text.trim().replace(/\s+/g, "").replace(",", ".");
+  const ren = text.trim().replace(/\s+/g, "").replace(/[\u2212\u2013\u2014]/g, "-").replace(",", ".");
   if (!ren) return null;
   const v = Number(ren);
   return Number.isFinite(v) ? v : null;

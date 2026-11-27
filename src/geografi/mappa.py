@@ -384,10 +384,29 @@ def mappa_geografi(
                 cache = geo_rot / "_filcache"
                 fk = kommun.filpaket
                 assert fk is not None
-                hoj, hpaket = hamta_hojdmodell(
-                    kommun, cache, extent, extra_urlar=hojdmodell_urlar, extra_filer=hojdmodell_filer,
-                    hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv,
-                )  # fmt: skip
+                # K1-rutorna snäpps utåt till hela 500 m-rutor (`rutor_for_omrade(..., 500.0)`),
+                # så höjdmodellen hämtas och klipps mot samma 500 m-rutnät + 5 m marginal när
+                # paketen täcker det (annars faller vi tillbaka till `extent`).
+                _rutsteg_m = 500.0
+                _hojd_marg_m = 5.0
+                hojd_extent = (
+                    math.floor(extent[0] / _rutsteg_m) * _rutsteg_m - _hojd_marg_m,
+                    math.floor(extent[1] / _rutsteg_m) * _rutsteg_m - _hojd_marg_m,
+                    math.ceil(extent[2] / _rutsteg_m) * _rutsteg_m + _hojd_marg_m,
+                    math.ceil(extent[3] / _rutsteg_m) * _rutsteg_m + _hojd_marg_m,
+                )
+                klipp_extent = hojd_extent
+                try:
+                    hoj, hpaket = hamta_hojdmodell(
+                        kommun, cache, hojd_extent, extra_urlar=hojdmodell_urlar, extra_filer=hojdmodell_filer,
+                        hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv,
+                    )  # fmt: skip
+                except KommunKallaFel:
+                    klipp_extent = extent
+                    hoj, hpaket = hamta_hojdmodell(
+                        kommun, cache, extent, extra_urlar=hojdmodell_urlar, extra_filer=hojdmodell_filer,
+                        hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv,
+                    )  # fmt: skip
                 bpaket: list[Any] = []
                 if kalla_bygg == "filpaket":
                     try:
@@ -481,7 +500,7 @@ def mappa_geografi(
                     x
                     for x in skriv_klippt_hojd(
                         hoj,
-                        extent,
+                        klipp_extent,
                         kommun.lantmateriet.upplosning_m,
                         klippt,
                         nan_varning_andel=nan_varning_andel,

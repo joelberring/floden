@@ -264,6 +264,10 @@ test("cadBimPanelHtml visar uppladdning, IFC-ursprung, varningar, ohämtade enti
 test("valideraBullerParam kräver uttrycklig trafik och vägsegment, byggBullerBegaran bygger korrekt payload", () => {
   assert.equal(BULLER_ANALYS_URL, "/api/analys/buller");
   assert.equal(tolkaBullerTal("10,5"), 10.5);
+  assert.equal(tolkaBullerTal("-210300"), -210300);
+  assert.equal(tolkaBullerTal("−210300,5"), -210300.5);
+  assert.equal(tolkaBullerTal("–210 300"), -210300);
+  assert.equal(tolkaBullerTal("—210300.25"), -210300.25);
   assert.match(valideraBullerParam({ ...STANDARD_BULLER_PARAM }) ?? "", /ÅDT/);
 
   const vag = foreslaVagKoordinater({ x_min: 150000, y_min: 6580000, x_max: 150100, y_max: 6580100 });
