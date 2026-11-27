@@ -58,8 +58,18 @@ from buller.losare_k21 import (
 from buller.losare_k21 import (
     METODSTATUS as BULLER_METODSTATUS,
 )
+from data_inlasning.trafikverket import TrafikLank
 from gemensamt.hash import sha256_fil
 from gemensamt.koordinater import EPSG_INTERN, HOJDSYSTEM, skapa_transformator_till_3011
+from geografi.modell import GeografiFel, tolka_ref, versionsmapp
+from geografi.trafik_lager import (
+    STANDARD_EGEN_KALLA,
+    ProjektTrafikJustering,
+    las_projekt_trafik_justeringar,
+    las_trafik_lager,
+    spara_projekt_trafik_justeringar,
+    validera_trafik_justering,
+)
 from karna.analyslosare import LosarFel, LosarKontext
 from karna.geometri import GeometriFel
 from karna.geometri.lasa import alla_byggnader
@@ -126,10 +136,12 @@ from webb.resultatlager import (
 
 FORMAT_CAD_IMPORT_WEBB: Final[str] = "floden-cad-import/v1"
 FORMAT_BULLER_WEBB: Final[str] = "floden-buller-webb/v1"
+FORMAT_PROJEKT_TRAFIK_WEBB: Final[str] = "floden-projekt-trafik/v1"
 KOORDINATSYSTEM_EPSG: Final[str] = CRS_EPSG_3011
 ROLL_BULLER_LAEQ: Final[str] = "ekvivalent_ljudniva_dba"
 
 MAX_CAD_IMPORT_BYTES: Final[int] = 25 * 1024 * 1024
+MAX_PROJEKT_TRAFIK_BYTES: Final[int] = 2 * 1024 * 1024
 MAX_EXPORT_TIN_CELLER: Final[int] = 10_000
 
 STANDARD_MAX_CAD_EXPORT_CELLER: Final[int] = 4_000_000
@@ -1754,6 +1766,355 @@ def kor_buller_analys(
     }
 
 
+# ----------------------------------------------------------------- 4. Projektets väglänkar & trafik
+
+
+def _klassificera_trafik_kallmarke(
+    adt_fordon_dygn: float | None,
+    adt_kalla: str | None,
+    *,
+    egen_justering: bool,
+    vaghallare: str | None = None,
+) -> str | None:
+    """Kort källmärke för UI: `'NVDB'`, `'Kommun'`, `'Egen'` eller `None` när ÅDT saknas."""
+    if adt_fordon_dygn is None:
+        return None
+    if egen_justering:
+        return "Egen"
+    k = (adt_kalla or "").strip().lower()
+    if "egen" in k:
+        return "Egen"
+    if any(ord_ in k for ord_ in ("nvdb", "trafikverket", "lastkajen", "statlig")):
+        return "NVDB"
+    if any(
+        ord_ in k
+        for ord_ in ("kommun", "göteborg", "goteborg", "stockholm", "åmvd", "amvd", "stad")
+    ):
+        return "Kommun"
+    if (vaghallare or "").strip().lower() == "statlig":
+        return "NVDB"
+    return "Kommun"
+
+
+def _losa_projekt_trafik_kontext(
+    projekt_mapp: Path,
+    *,
+    geo_rot: str | Path | None,
+    manifest_fil: str | Path | None,
+    bbox_3011: tuple[float, float, float, float] | None,
+) -> tuple[str, Path | None, tuple[float, float, float, float] | None, str | None]:
+    """Läser projektmetadata och löser upp geografimanifest + avgränsning i EPSG:3011."""
+    if not projekt_mapp.is_dir():
+        raise FlodenWebbFel(f"Projektmappen '{projekt_mapp.name}' finns inte.", status_kod=404)
+
+    projekt_id = projekt_mapp.name
+    geo_ref: str | None = None
+    eff_bbox = bbox_3011
+    eff_manifest: Path | None = Path(manifest_fil) if manifest_fil is not None else None
+
+    proj_fil = projekt_mapp / "projekt.json"
+    if proj_fil.is_file():
+        try:
+            proj = json.loads(proj_fil.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise FlodenWebbFel(
+                f"Projektfilen '{proj_fil.name}' kunde inte läsas: {exc}", status_kod=409
+            ) from exc
+        if isinstance(proj, Mapping):
+            rid = proj.get("register_id") or proj.get("projekt_id")
+            if isinstance(rid, str) and rid.strip():
+                projekt_id = rid.strip()
+            ref_ra = proj.get("geografi")
+            if isinstance(ref_ra, str) and ref_ra.strip():
+                geo_ref = ref_ra.strip()
+            if eff_bbox is None:
+                avgr_ra = proj.get("avgransning_3011")
+                if isinstance(avgr_ra, Sequence) and len(avgr_ra) == 4:
+                    try:
+                        vals = tuple(float(v) for v in avgr_ra)
+                        if (
+                            all(math.isfinite(v) for v in vals)
+                            and vals[0] < vals[2]
+                            and vals[1] < vals[3]
+                        ):
+                            eff_bbox = (vals[0], vals[1], vals[2], vals[3])
+                    except (TypeError, ValueError):
+                        pass
+            if eff_manifest is None and geo_ref is not None and geo_rot is not None:
+                try:
+                    gid, gver = tolka_ref(geo_ref)
+                except GeografiFel as exc:
+                    raise FlodenWebbFel(str(exc), status_kod=409) from exc
+                kandidat = versionsmapp(Path(geo_rot), gid, gver) / "manifest.json"
+                if kandidat.is_file():
+                    eff_manifest = kandidat
+            if eff_manifest is None:
+                mf_ra = proj.get("geografi_manifest")
+                if isinstance(mf_ra, str) and mf_ra.strip():
+                    kandidat = Path(mf_ra.strip())
+                    if kandidat.is_file():
+                        eff_manifest = kandidat
+
+    return projekt_id, eff_manifest, eff_bbox, geo_ref
+
+
+def hamta_projekt_trafik(
+    projekt_mapp: str | Path,
+    *,
+    geo_rot: str | Path | None = None,
+    manifest_fil: str | Path | None = None,
+    bbox_3011: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    """`GET /api/projekt/<id>/trafik`: returnerar projektets klippta väglänkar som GeoJSON.
+
+    Slår samman geografins SHA-256-verifierade `lager.trafik` med projektets egna sparade
+    trafikjusteringar (`trafik_justeringar.json`) utan att någonsin ändra geografins rådata eller
+    hitta på ÅDT där uppgift saknas.
+    """
+    mapp = Path(projekt_mapp)
+    projekt_id, eff_manifest, eff_bbox, geo_ref = _losa_projekt_trafik_kontext(
+        mapp, geo_rot=geo_rot, manifest_fil=manifest_fil, bbox_3011=bbox_3011
+    )
+
+    try:
+        justeringar = las_projekt_trafik_justeringar(mapp)
+    except GeografiFel as exc:
+        raise FlodenWebbFel(str(exc), status_kod=409) from exc
+
+    har_trafiklager = False
+    trafik_sha: str | None = None
+    lager_kalla: str | None = None
+    lager_licens: str | None = None
+    varningar: list[str] = []
+    bas_lankar: tuple[TrafikLank, ...] = ()
+
+    if eff_manifest is not None:
+        try:
+            mf_raw = json.loads(eff_manifest.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise FlodenWebbFel(
+                f"Geografimanifestet kunde inte läsas: {exc}", status_kod=409
+            ) from exc
+        if isinstance(mf_raw, Mapping) and "trafik" in (mf_raw.get("lager") or {}):
+            try:
+                lager = las_trafik_lager(eff_manifest, bbox_3011=eff_bbox)
+            except GeografiFel as exc:
+                raise FlodenWebbFel(str(exc), status_kod=409) from exc
+            har_trafiklager = True
+            geo_ref = lager.ref
+            trafik_sha = lager.trafik_sha256
+            lager_kalla = lager.kalla
+            lager_licens = lager.licens
+            bas_lankar = lager.lankar
+        else:
+            varningar.append(
+                "Projektets geografi saknar trafiklager (lager.trafik); rita väg manuellt eller "
+                "mappa om geografin med trafikdata."
+            )
+    else:
+        varningar.append(
+            "Inget geografimanifest med trafiklager kopplat till projektet; rita väg manuellt "
+            "på kartan."
+        )
+
+    features: list[dict[str, Any]] = []
+    antal_med_adt = 0
+    antal_med_prognos = 0
+    antal_egna = 0
+    antal_osakra = 0
+
+    for lk in bas_lankar:
+        just = justeringar.get(lk.lank_id)
+        egen_adt = just is not None and just.adt_fordon_dygn is not None
+        egen_prognos = just is not None and just.prognos_adt_fordon_dygn is not None
+        egen_hast = just is not None and just.hastighet_km_h is not None
+        egen_tung = just is not None and just.andel_tung_pct is not None
+        har_egen = bool(egen_adt or egen_prognos or egen_hast or egen_tung)
+
+        eff_adt = just.adt_fordon_dygn if (just is not None and egen_adt) else lk.adt_fordon_dygn
+        eff_prognos = just.prognos_adt_fordon_dygn if just is not None else None
+        eff_hast = just.hastighet_km_h if (just is not None and egen_hast) else lk.hastighet_km_h
+        eff_tung = just.andel_tung_pct if (just is not None and egen_tung) else lk.andel_tung_pct
+        if eff_adt is None and eff_prognos is None:
+            eff_tung = None
+            eff_kalla: str | None = None
+        elif har_egen:
+            eff_kalla = just.kalla if just is not None else STANDARD_EGEN_KALLA
+        else:
+            eff_kalla = lk.adt_kalla
+
+        eff_osaker = False if egen_adt else bool(lk.osaker)
+        kallmarke = _klassificera_trafik_kallmarke(
+            eff_adt if eff_adt is not None else eff_prognos,
+            eff_kalla,
+            egen_justering=har_egen,
+            vaghallare=lk.vaghallare,
+        )
+
+        if eff_adt is not None:
+            antal_med_adt += 1
+        if eff_prognos is not None:
+            antal_med_prognos += 1
+        if har_egen:
+            antal_egna += 1
+        if eff_osaker:
+            antal_osakra += 1
+
+        features.append(
+            {
+                "type": "Feature",
+                "id": lk.lank_id,
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[round(e, 3), round(n, 3)] for e, n in lk.koordinater_3011],
+                },
+                "properties": {
+                    "lank_id": lk.lank_id,
+                    "gatunamn": lk.gatunamn,
+                    "vagnummer": lk.vagnummer,
+                    "vaghallare": lk.vaghallare,
+                    "hastighet_km_h": eff_hast,
+                    "korfalt": lk.korfalt,
+                    "adt_fordon_dygn": eff_adt,
+                    "prognos_adt_fordon_dygn": eff_prognos,
+                    "andel_tung_pct": eff_tung,
+                    "matar": lk.matar,
+                    "adt_kalla": eff_kalla,
+                    "kallmarke": kallmarke,
+                    "osaker": eff_osaker,
+                    "har_adt": eff_adt is not None,
+                    "egen_justering": har_egen,
+                    "original_adt_fordon_dygn": lk.adt_fordon_dygn,
+                    "original_hastighet_km_h": lk.hastighet_km_h,
+                    "original_andel_tung_pct": lk.andel_tung_pct,
+                    "original_adt_kalla": lk.adt_kalla,
+                    "kommentar": just.kommentar if just is not None else None,
+                },
+            }
+        )
+
+    return {
+        "type": "FeatureCollection",
+        "format": FORMAT_PROJEKT_TRAFIK_WEBB,
+        "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::3011"}},
+        "koordinatsystem": KOORDINATSYSTEM_EPSG,
+        "projekt_id": projekt_id,
+        "har_trafiklager": har_trafiklager,
+        "geografi": geo_ref,
+        "trafik_lager_sha256": trafik_sha,
+        "kalla": lager_kalla,
+        "licens": lager_licens,
+        "sammanfattning": {
+            "antal_lankar": len(features),
+            "antal_med_adt": antal_med_adt,
+            "antal_utan_adt": len(features) - antal_med_adt,
+            "antal_med_prognos": antal_med_prognos,
+            "antal_egna_justeringar": antal_egna,
+            "antal_osakra": antal_osakra,
+        },
+        "features": features,
+        "varningar": varningar,
+    }
+
+
+def spara_projekt_trafik(
+    projekt_mapp: str | Path,
+    kropp: bytes | Mapping[str, Any],
+    *,
+    geo_rot: str | Path | None = None,
+    manifest_fil: str | Path | None = None,
+    bbox_3011: tuple[float, float, float, float] | None = None,
+) -> dict[str, Any]:
+    """`POST /api/projekt/<id>/trafik`: validerar och sparar projektets ÅDT-/prognosredigeringar.
+
+    Skriver enbart atomiskt till `<projekt_mapp>/trafik_justeringar.json` (rör aldrig geografins
+    rådata) och returnerar den uppdaterade GeoJSON FeatureCollection-vyn i EPSG:3011.
+    """
+    mapp = Path(projekt_mapp)
+    if not mapp.is_dir():
+        raise FlodenWebbFel(f"Projektmappen '{mapp.name}' finns inte.", status_kod=404)
+
+    if isinstance(kropp, bytes | bytearray):
+        if len(kropp) > MAX_PROJEKT_TRAFIK_BYTES:
+            raise FlodenWebbFel(
+                f"Trafikbegäran överskrider maxgränsen ({MAX_PROJEKT_TRAFIK_BYTES} byte).",
+                status_kod=413,
+            )
+        payload: Mapping[str, Any] = tolka_json_kropp(bytes(kropp))
+    elif isinstance(kropp, Mapping):
+        payload = kropp
+    else:
+        raise FlodenWebbFel("Begäranskroppen måste vara JSON.", status_kod=400)
+
+    poster_ra = payload.get("justeringar")
+    if poster_ra is None:
+        poster_ra = payload.get("poster")
+    if poster_ra is None:
+        poster_ra = payload.get("lankar")
+    if poster_ra is None:
+        raise FlodenWebbFel(
+            "Obligatoriskt fält 'justeringar' (lista eller objekt per lank_id) saknas.",
+            status_kod=400,
+        )
+
+    ersatt = bool(payload.get("ersatt", False))
+    try:
+        aktuella: dict[str, ProjektTrafikJustering] = (
+            {} if ersatt else las_projekt_trafik_justeringar(mapp)
+        )
+    except GeografiFel as exc:
+        raise FlodenWebbFel(str(exc), status_kod=409) from exc
+
+    def _hantera_en_post(obj: Any, fallback_id: str | None = None) -> None:
+        if not isinstance(obj, Mapping):
+            raise FlodenWebbFel("Varje trafikjustering måste vara ett JSON-objekt.", status_kod=400)
+        ta_bort = bool(obj.get("ta_bort", False))
+        lid_ra = obj.get("lank_id", fallback_id)
+        if not isinstance(lid_ra, str) or not lid_ra.strip():
+            raise FlodenWebbFel(
+                "Varje trafikjustering måste ha ett icke-tomt 'lank_id'.", status_kod=400
+            )
+        lid = lid_ra.strip()
+        if ta_bort:
+            aktuella.pop(lid, None)
+            return
+        try:
+            just = validera_trafik_justering(obj, fallback_lank_id=lid)
+        except GeografiFel as exc:
+            raise FlodenWebbFel(str(exc), status_kod=400) from exc
+        if (
+            just.adt_fordon_dygn is None
+            and just.prognos_adt_fordon_dygn is None
+            and just.hastighet_km_h is None
+            and just.andel_tung_pct is None
+            and just.kommentar is None
+        ):
+            aktuella.pop(just.lank_id, None)
+        else:
+            aktuella[just.lank_id] = just
+
+    if isinstance(poster_ra, Mapping):
+        for lid, obj in poster_ra.items():
+            _hantera_en_post(obj, fallback_id=str(lid))
+    elif isinstance(poster_ra, list):
+        for obj in poster_ra:
+            _hantera_en_post(obj)
+    else:
+        raise FlodenWebbFel(
+            "Fältet 'justeringar' måste vara en lista eller ett objekt per lank_id.",
+            status_kod=400,
+        )
+
+    try:
+        spara_projekt_trafik_justeringar(mapp, aktuella)
+    except GeografiFel as exc:
+        raise FlodenWebbFel(str(exc), status_kod=400) from exc
+
+    return hamta_projekt_trafik(
+        mapp, geo_rot=geo_rot, manifest_fil=manifest_fil, bbox_3011=bbox_3011
+    )
+
+
 __all__ = [
     "FLODEN_MAX_BULLER_CELLER_ENV",
     "FLODEN_MAX_BULLER_RASTERCELLER_ENV",
@@ -1763,7 +2124,9 @@ __all__ = [
     "FLODEN_MAX_WEBB_PNG_CACHE_MB_ENV",
     "FORMAT_BULLER_WEBB",
     "FORMAT_CAD_IMPORT_WEBB",
+    "FORMAT_PROJEKT_TRAFIK_WEBB",
     "MAX_CAD_IMPORT_BYTES",
+    "MAX_PROJEKT_TRAFIK_BYTES",
     "ROLL_BULLER_LAEQ",
     "STANDARD_MAX_BULLER_CELLER",
     "STANDARD_MAX_BULLER_RASTERCELLER",
@@ -1773,6 +2136,7 @@ __all__ = [
     "STANDARD_MAX_WEBB_PNG_CACHE_MB",
     "BullerLagerCache",
     "exportera_cad_fil",
+    "hamta_projekt_trafik",
     "importera_cad_fil",
     "kor_buller_analys",
     "max_buller_celler",
@@ -1780,4 +2144,5 @@ __all__ = [
     "max_cad_export_byggnader",
     "max_cad_export_bytes",
     "max_cad_export_celler",
+    "spara_projekt_trafik",
 ]
