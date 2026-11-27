@@ -588,7 +588,7 @@ def ekologi_pastaenden(
     Deduplicerar efter-scenarier när körningen har flera utdataroller (t.ex. `stromtathet` och
     `kansighet`), anpassar EK-14 när projektet inte är demokvarteret, och stöder även nuläge
     (`lage_idag` utan jämförelse) när sådant underlag skickas in direkt."""
-    from rapport.ekologibelagg import EKOLOGI_LOSARE, _forsta_dok
+    from rapport.ekologibelagg import EKOLOGI_LOSARE, _forsta_dok, skrivbord_pastaendeforslag
 
     k = r.korningar[0]
     analys = next((a["analys"] for a in k["analyser"] if a["losare"] == EKOLOGI_LOSARE), None)
@@ -647,10 +647,18 @@ def ekologi_pastaenden(
     def nv_adr(matt: str) -> str:
         return f"ekonatverk.{analys}.{fore}{ruta_sfx}.{matt}"
 
+    skrivbord_forslag: dict[str, dict[str, Any]] = {}
+    try:
+        skrivbord_forslag = skrivbord_pastaendeforslag(rt.kalla.utmapp(str(k["korning_id"])))
+    except Exception:  # noqa: BLE001 - saknad eller ogiltig skrivbordsmapp faller tillbaka rent
+        skrivbord_forslag = {}
+
     ut: list[Mapping[str, Any]] = []
     for p in pastaenden_ekologi(kontekst, r.fragor):
         d = dict(p)
         fid = str(d["fraga_id"])
+        if fid in skrivbord_forslag:
+            d = dict(skrivbord_forslag[fid])
         if not efter_par:
             if fid == "EK-08":
                 bel = [

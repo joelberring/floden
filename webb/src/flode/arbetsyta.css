@@ -1624,10 +1624,12 @@
 #ar-regn-plats[hidden],
 #ar-kor-block[hidden],
 #ar-innehall[hidden],
+.ar-ekologi-skrivbord-plats[hidden],
 .ar-gyf-utci-plats[hidden],
 .ar-buller-plats[hidden] {
   display: none;
 }
+.ar-ekologi-skrivbord-plats,
 .ar-gyf-utci-plats {
   margin-top: 10px;
 }
@@ -1907,6 +1909,246 @@
   font-family: var(--f-font-mono, ui-monospace, monospace);
   font-size: 11px;
   opacity: 0.75;
+}
+
+/* ---------- Steg 2-integrering: Trafiktabell, SMHI-vindros/Luft & Ekologi skrivbordskontroll ---------- */
+.ar-bl-trafik-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  background: var(--f-yta-dampad, #f4f4f4);
+}
+.ar-bl-trafik-huvud {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ar-bl-trafik-lista {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.ar-bl-trafik-chip {
+  padding: 4px 8px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ar-bl-trafik-chip[aria-pressed="true"] {
+  background: var(--f-accent, #111111);
+  border-color: var(--f-accent, #111111);
+  color: var(--f-bakgrund, #ffffff);
+}
+.ar-bl-trafik-tabell {
+  width: 100%;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ar-bl-trafik-tabell input[type="text"] {
+  width: 62px;
+  min-height: 26px;
+  padding: 2px 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.ar-kallmarke {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid var(--f-linje-stark, #111111);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  white-space: nowrap;
+}
+.ar-kallmarke-saknas {
+  border-style: dashed;
+  color: var(--f-text-dampad, #595959);
+}
+
+.ar-luft-steg2-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+.ar-luft-steg2-panel > p,
+.ar-luft-steg2-panel > .ar-luft-vindros-kort,
+.ar-luft-steg2-panel > .ar-luft-bakgrund-kort,
+.ar-luft-steg2-panel > .ar-luft-emission-kort,
+.ar-luft-steg2-panel > .ar-luft-kor-rad,
+.ar-luft-steg2-panel > #ar-luft-skiss-ut {
+  margin-left: 10px;
+  margin-right: 10px;
+}
+.ar-luft-vindros-kort,
+.ar-luft-bakgrund-kort,
+.ar-luft-emission-kort {
+  padding: 8px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  background: var(--f-yta, #ffffff);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ar-luft-vindros-kort svg {
+  display: block;
+  width: 100%;
+  max-width: 240px;
+  height: auto;
+  margin: 0 auto;
+}
+.ar-luft-emission-radio {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ar-luft-kor-rad {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ar-luft-skiss-resultat {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  background: var(--f-yta, #ffffff);
+  padding-bottom: 8px;
+}
+.ar-luft-skiss-resultat > p,
+.ar-luft-skiss-resultat > table,
+.ar-luft-skiss-resultat > ul {
+  margin-left: 8px;
+  margin-right: 8px;
+}
+.ar-luft-resultat-tabell,
+.ar-luft-segment-tabell {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ar-ekologi-skrivbord {
+  border: 1px solid var(--f-linje, #d9d9d9);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 10px;
+}
+.ar-skrivbord-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ar-skrivbord-rad {
+  padding: 6px 8px;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  border-left: 3px solid var(--f-linje-stark, #111111);
+  background: var(--f-yta-dampad, #f4f4f4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ar-skrivbord-rod {
+  border-left-color: #b42318;
+}
+.ar-skrivbord-gul {
+  border-left-color: #b45309;
+}
+.ar-skrivbord-gron {
+  border-left-color: #047857;
+}
+.ar-skrivbord-ej_hamtad {
+  border-left-color: var(--f-linje, #a3a3a3);
+}
+.ar-skrivbord-topp {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ar-skrivbord-lagerval {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ar-ljus-bricka {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border: 1px solid var(--f-linje-stark, #111111);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  white-space: nowrap;
+}
+.ar-ljus-rod {
+  border-color: #b42318;
+  color: #b42318;
+}
+.ar-ljus-gul {
+  border-color: #b45309;
+  color: #92400e;
+}
+.ar-ljus-gron {
+  border-color: #047857;
+  color: #047857;
+}
+.ar-ljus-ej_hamtad {
+  border-color: var(--f-linje, #a3a3a3);
+  color: var(--f-text-dampad, #595959);
+}
+.ar-osl-varning {
+  margin: 0 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.ar-skrivbord-checklista,
+.ar-faltlager-import {
+  margin: 0 10px;
+  padding-top: 6px;
+  border-top: 1px solid var(--f-linje, #d9d9d9);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ar-skrivbord-check-rad {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ar-skrivbord-export-grupp {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.ar-faltlager-import input[type="file"] {
+  font-size: 11px;
+  max-width: 100%;
 }
 
 @media (pointer: coarse) {

@@ -669,14 +669,52 @@ def registrera_utvecklingsverktyg(
 
     @utv(
         "utv_geografi_mappa",
-        "Superadmin-utvecklingsverktyg: bygger och registrerar en öppen geografi (K46) för en öppen kommun. "
-        "Kommuner med stängd/lokal baskarta nekas alltid (K38); inga lokala baskartesökvägar tillåts.",
+        "Superadmin-utvecklingsverktyg: bygger och registrerar en öppen geografi (K46) för en öppen kommun, "
+        "valfritt med de additiva K46-lagren trafik, väder/luft (SMHI), skyddad natur/Skogsstyrelsen/VMI "
+        "och publika rödlistefynd (SLU SOS med OSL-spärr). Kommuner med stängd/lokal baskarta nekas alltid "
+        "(K38); inga lokala filsökvägar tillåts.",
     )
     def utv_geografi_mappa(
         geografi: Annotated[str, Field(description="Geografi-id i öppen kommunfil, t.ex. 'goteborg-test'.")],
         version: Annotated[str, Field(description="Versionsnamn på formen v1, v2, ...")] = "v1",
         villkor_kontrollerade: Annotated[
             bool, Field(description="Bekräfta att kommunens och Lantmäteriets öppna villkor är kontrollerade.")
+        ] = False,
+        hamta_trafikverket: Annotated[
+            bool,
+            Field(
+                description="Valfritt: hämta NVDB-vägnät från Trafikverket Öppet API via kontots lagrade dataåtkomst."
+            ),
+        ] = False,
+        trafik_fran_baskarta: Annotated[
+            bool,
+            Field(
+                description="Valfritt: bygg klickbara väglänkar (utan påhittat ÅDT) ur kommunens baskarta gator.gpkg till lager.trafik."
+            ),
+        ] = False,
+        hamta_vader_luft: Annotated[
+            bool,
+            Field(
+                description="Valfritt: hämta SMHI MetObs/STRÅNG (vindros, UTCI-värmebölja, timserie) och urban bakgrundsluft till lager.vader_luft."
+            ),
+        ] = False,
+        hamta_skyddad_natur: Annotated[
+            bool,
+            Field(
+                description="Valfritt: hämta Naturvårdsverket WFS (Skyddad natur + Natura 2000), Skogsstyrelsen ArcGIS REST samt VMI läns-ZIP till lager.skyddad_natur."
+            ),
+        ] = False,
+        vmi_lan: Annotated[
+            str | None,
+            Field(
+                description="Valfritt: VMI-länskatalog på Naturvårdsverket (t.ex. 'O_Goteborg_Bohus'); standard hämtas ur kommunens [filpaket.vmi]."
+            ),
+        ] = None,
+        hamta_artfynd: Annotated[
+            bool,
+            Field(
+                description="Valfritt: hämta publika rödlistade/fridlysta artfynd via SLU Artdatabanken SOS med hård OSL-spärr."
+            ),
         ] = False,
         modell: Modell = None,
         roll: Roll = None,
@@ -692,6 +730,14 @@ def registrera_utvecklingsverktyg(
             raise ToolError(
                 f"Ogiltig version '{version}': förväntade format v1, v2, ... {_FEL_PREFIX}fel_indata"
             )
+        ren_vmi_lan: str | None = None
+        if vmi_lan is not None and str(vmi_lan).strip():
+            cand = str(vmi_lan).strip()
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", cand):
+                raise ToolError(
+                    f"Ogiltigt vmi_lan '{cand}': endast bokstäver, siffror, '_' och '-' tillåts. {_FEL_PREFIX}fel_indata"
+                )
+            ren_vmi_lan = cand
         try:
             kommun = hitta_kommun_for_geografi(geografi, rot=tjanst.rot)
         except KommunKonfigFel as exc:
@@ -704,6 +750,19 @@ def registrera_utvecklingsverktyg(
             )
         konfig = _las_app_konfig(tjanst.app.konfig_fil)
         loggradder: list[str] = []
+        extra_kwargs: dict[str, Any] = {}
+        if hamta_trafikverket:
+            extra_kwargs["hamta_trafikverket"] = True
+        if trafik_fran_baskarta:
+            extra_kwargs["trafik_fran_baskarta"] = True
+        if hamta_vader_luft:
+            extra_kwargs["hamta_vader_luft"] = True
+        if hamta_skyddad_natur:
+            extra_kwargs["hamta_skyddad_natur"] = True
+        if ren_vmi_lan is not None:
+            extra_kwargs["vmi_lan"] = ren_vmi_lan
+        if hamta_artfynd:
+            extra_kwargs["hamta_artfynd"] = True
         try:
             res = mappa_geografi(
                 kommun,
@@ -716,6 +775,7 @@ def registrera_utvecklingsverktyg(
                 villkor_kontrollerade=bool(villkor_kontrollerade),
                 register=tjanst.app.konto.register,
                 skriv=lambda rad: loggradder.append(redigera_text(rad)),
+                **extra_kwargs,
             )
         except (SkapaFel, GeografiFel) as exc:
             raise ToolError(f"{redigera_text(str(exc))} {_FEL_PREFIX}geografi_fel") from exc

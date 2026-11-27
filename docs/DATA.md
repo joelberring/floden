@@ -9,7 +9,12 @@
 | Ortofoto | Lantmäteriet | STAC / API | Öppen med villkor | T01 (förändringar), T06 |
 | Tätare laser | Stockholms stad | Fråga stadsmätningen | Okänd – behandla som intern | T01b |
 | Baskarta (DWG) | Stockholms stad | Intern | Intern; innehåller inga personuppgifter | T01, T01b |
-| Vägnät | Trafikverket NVDB | Öppet API med nyckel | Öppen | T07 |
+| Vägnät & ÅDT | Trafikverket NVDB / Öppet API (`TrafficFlow`), Lastkajen, kommunal baskarta | Öppet API med nyckel (`trafikverket`) / lokal fil / baskarta utan påhittat ÅDT | Öppen | T07, Buller/Luft (`lager.trafik`) |
+| Väder, vindros & solstrålning | SMHI MetObs + STRÅNG | Öppna data (CC BY 4.0) | Öppen | UTCI, Vind & Luft, NORTRIP (`lager.vader_luft`) |
+| Urban bakgrundsluft (NO₂, PM10, O₃) | SMHI Datavärdskap luftkvalitet / lokal CSV | Öppna data (CC0 / CC BY 4.0) / lokal fil | Öppen | Vind & Luft skiss (`lager.vader_luft`) |
+| Skyddad natur, Natura 2000 & VMI | Naturvårdsverket WFS (`ps-nvr`, `ps-n2k`) + VMI läns-ZIP | Öppna data (CC0) | Öppen | Ekologi skrivbordskontroll (`lager.skyddad_natur`, `lager.vmi`) |
+| Skogliga naturvärden | Skogsstyrelsen ArcGIS REST (nyckelbiotop, sumpskog m.fl.) | Öppna data (CC0) | Öppen | Ekologi skrivbordskontroll (`lager.skyddad_natur`) |
+| Publika rödlistade & fridlysta artfynd | SLU Artdatabanken SOS (`api.artdatabanken.se`) | Öppet API med prenumerationsnyckel (`artdatabanken`) | **Hård OSL 20 kap. 1 §-spärr** (0 skyddsklassade sparas) | Ekologi skrivbordskontroll (`lager.artfynd_publika`) |
 | Jordarter 1:25 000–1:100 000 | SGU | Öppna data (OGC API) | Öppen | T06 |
 | Grundvattennivåer | SGU, stadens observationsrör | Öppet / fråga staden | Öppen / intern | T06 |
 | Markfuktighet (DTW) | SLU / Skogsstyrelsen | Öppen | Öppen | T06 |
@@ -106,6 +111,17 @@ något annat sparas ingen höjd och byggnaden får standardhöjd (varning).
 
 Adresserna kan ändras med `LANTMATERIET_TOKEN_URL`, `LANTMATERIET_STAC_HOJD_URL`, `LANTMATERIET_STAC_BILD_URL` och
 `LANTMATERIET_STAC_VEKTOR_URL` (som O-Tids `OTID_LM_*`).
+
+### Övriga krypterade API-nycklar (`#/nycklar`)
+
+Utöver `"lantmateriet"` hanterar kontots Fernet-krypterade nyckelförråd (`src/konto/nycklar.py`, kategori `"data"`) två
+valfria API-nycklar för geografimappning, med samma 0-läckage-garanti (visas aldrig i klartext efter sparning och skrivs aldrig
+i loggar, manifest eller MCP-svar):
+
+| Nyckeltyp i `#/nycklar` | Miljövariabel | Källa och användning |
+| --- | --- | --- |
+| `trafikverket` | `TRAFIKVERKET_API_KEY` | Trafikverket Öppet API (`TrafficFlow` / NVDB) vid `floden geografi mappa --hamta-trafikverket`. Utan nyckel kan väglänkar ändå byggas ur lokal trafikfil eller baskartans `gator.gpkg` (med `ÅDT = null`, aldrig påhittat ÅDT). |
+| `artdatabanken` | `ARTDATABANKEN_API_KEY` | SLU Artdatabanken Species Observation System (`Ocp-Apim-Subscription-Key`) vid `floden geografi mappa --hamta-artfynd`. Hård spärr enligt OSL 20 kap. 1 §: skyddsklassade arter filtreras alltid bort direkt vid inläsning (0 koordinater, 0 artnamn, 0 observations-id). |
 
 ### Vad som finns och vad som hämtas
 

@@ -112,6 +112,8 @@ const PROJEKT_POLYGON = "projekt-polygon";
 const RIT = "rit";
 const OVERFALL = "overfall";
 const ANALYS = "analys";
+const TRAFIK = "trafik";
+const EKOLOGI_SKRIVBORD = "ekologi-skrivbord";
 const FLODE_PIL_IKON = "flode-pil";
 const SKARV = "skarv";
 const MAT = "mat";
@@ -128,6 +130,13 @@ const OVERLAGER = [
   "analys-linje",
   "analys-linje-pil",
   "analys-punkt",
+  "ekologi-skrivbord-fyll",
+  "ekologi-skrivbord-kant",
+  "ekologi-skrivbord-punkt",
+  "trafik-linje-halo",
+  "trafik-linje-fast",
+  "trafik-linje-streckad",
+  "trafik-linje-traff",
   "projekt-polygon-fyll",
   "projekt-polygon-kant",
   "overfall-punkter",
@@ -175,6 +184,62 @@ export interface AnalysVektor {
   etiketter: Array<{ lng: number; lat: number; text: string }>;
 }
 
+/** Klickbar väglänk ur projektets trafiklager (EPSG:3011). Heldragen = har ÅDT, streckad = saknar ÅDT. */
+export interface TrafikKartaLank {
+  lank_id: string;
+  koordinater: Array<[number, number]>;
+  har_adt: boolean;
+  vald: boolean;
+  beskrivning?: string;
+}
+
+function konverteraPosition3011(pt: readonly number[]): [number, number] | null {
+  if (pt.length < 2) return null;
+  const x = Number(pt[0]);
+  const y = Number(pt[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return ll([x, y]);
+}
+
+function konverteraGeometri3011TillWgs84(geom: GeoJSON.Geometry | null | undefined): GeoJSON.Geometry | null {
+  if (!geom) return null;
+  if (geom.type === "Point") {
+    const p = konverteraPosition3011(geom.coordinates);
+    return p ? { type: "Point", coordinates: p } : null;
+  }
+  if (geom.type === "MultiPoint") {
+    const pts = geom.coordinates.map(konverteraPosition3011).filter((p): p is [number, number] => p !== null);
+    return pts.length > 0 ? { type: "MultiPoint", coordinates: pts } : null;
+  }
+  if (geom.type === "LineString") {
+    const pts = geom.coordinates.map(konverteraPosition3011).filter((p): p is [number, number] => p !== null);
+    return pts.length >= 2 ? { type: "LineString", coordinates: pts } : null;
+  }
+  if (geom.type === "MultiLineString") {
+    const lines = geom.coordinates
+      .map((l) => l.map(konverteraPosition3011).filter((p): p is [number, number] => p !== null))
+      .filter((l) => l.length >= 2);
+    return lines.length > 0 ? { type: "MultiLineString", coordinates: lines } : null;
+  }
+  if (geom.type === "Polygon") {
+    const rings = geom.coordinates
+      .map((r) => r.map(konverteraPosition3011).filter((p): p is [number, number] => p !== null))
+      .filter((r) => r.length >= 4);
+    return rings.length > 0 ? { type: "Polygon", coordinates: rings } : null;
+  }
+  if (geom.type === "MultiPolygon") {
+    const polys = geom.coordinates
+      .map((poly) =>
+        poly
+          .map((r) => r.map(konverteraPosition3011).filter((p): p is [number, number] => p !== null))
+          .filter((r) => r.length >= 4),
+      )
+      .filter((poly) => poly.length > 0);
+    return polys.length > 0 ? { type: "MultiPolygon", coordinates: polys } : null;
+  }
+  return null;
+}
+
 export class Kartmotor {
   readonly karta: maplibregl.Map;
   private lager: RasterLager[] = [];
@@ -191,6 +256,10 @@ export class Kartmotor {
   private analys: AnalysVektor | null = null;
   private analysPopup: maplibregl.Popup | null = null;
   private analysMarkorer: maplibregl.Marker[] = [];
+  private trafikLankar: TrafikKartaLank[] = [];
+  private trafikPopup: maplibregl.Popup | null = null;
+  private ekologiSkrivbord: GeoJSON.FeatureCollection | null = null;
+  private ekologiSkrivbordPopup: maplibregl.Popup | null = null;
   private skarv: SkarvFigurer | null = null;
   private skarvForaldrad = false;
   private skarvMarkorer: maplibregl.Marker[] = [];
@@ -210,6 +279,8 @@ export class Kartmotor {
   onMarkor: ((e: number | null, n: number | null) => void) | null = null;
   /** Klick på kartan (SWEREF-meter), utöver ritverktygen: används för vattenytans mått. */
   onKlickPunkt: ((e: number, n: number) => void) | null = null;
+  /** Klick på en väglänk i trafiklagret (`lank_id`). Returnera `false` om klicket ska falla vidare till kartan (t.ex. vid manuell vägritning). */
+  onTrafikLankKlick: ((lankId: string) => boolean | void) | null = null;
   /** Anropas när användaren själv flyttat eller zoomat vyn. */
   onVyAndrad: (() => void) | null = null;
   /** Anropas när kartskalan (meter per pixel) ändras (även vid load, zoom och anpassa). */
@@ -266,6 +337,8 @@ export class Kartmotor {
       this.byggOverlager();
       this.kopplaOverfall();
       this.kopplaAnalys();
+      this.kopplaTrafik();
+      this.kopplaEkologiSkrivbord();
       this.klar = true;
       for (const f of this.vantande.splice(0)) f();
       this.synkaRaster();
@@ -290,6 +363,13 @@ export class Kartmotor {
       this.lyssnare?.lamnar();
     });
     this.karta.on("click", (e) => {
+      if (this.klar && this.onTrafikLankKlick && this.trafikLankar.length > 0 && this.karta.getLayer("trafik-linje-traff")) {
+        const traff = this.karta.queryRenderedFeatures(e.point, { layers: ["trafik-linje-traff"] });
+        const lid = traff[0]?.properties?.lank_id;
+        if (typeof lid === "string" && lid && this.onTrafikLankKlick(lid) !== false) {
+          return;
+        }
+      }
       this.lyssnare?.klick(sweref(e), pekare(e));
       const p = sweref(e);
       this.onKlickPunkt?.(p.x, p.y);
@@ -381,6 +461,8 @@ export class Kartmotor {
     this.karta.remove();
     this.overfallPopup?.remove();
     this.analysPopup?.remove();
+    this.trafikPopup?.remove();
+    this.ekologiSkrivbordPopup?.remove();
     for (const m of this.analysMarkorer) m.remove();
     this.skarvPopup?.remove();
     for (const m of this.skarvMarkorer) m.remove();
@@ -495,7 +577,7 @@ export class Kartmotor {
     const k = this.karta;
     const grov = arGrovPekare(); // pekskärm: större handtag
     this.registreraFlodePil();
-    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`, MAT, SEKTION, SEKTION_MARKOR]) {
+    for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, EKOLOGI_SKRIVBORD, TRAFIK, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`, MAT, SEKTION, SEKTION_MARKOR]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
     k.addLayer({
@@ -546,6 +628,75 @@ export class Kartmotor {
       paint: { "icon-opacity": 0.92 },
     });
     k.addLayer({ id: "analys-punkt", type: "circle", source: ANALYS, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 4, "circle-color": ["get", "farg"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
+    k.addLayer({
+      id: "ekologi-skrivbord-fyll",
+      type: "fill",
+      source: EKOLOGI_SKRIVBORD,
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": ["coalesce", ["get", "farg"], "#047857"], "fill-opacity": 0.22 },
+    });
+    k.addLayer({
+      id: "ekologi-skrivbord-kant",
+      type: "line",
+      source: EKOLOGI_SKRIVBORD,
+      filter: ["in", ["geometry-type"], ["literal", ["Polygon", "LineString"]]],
+      paint: { "line-color": ["coalesce", ["get", "farg"], "#047857"], "line-width": 2, "line-opacity": 0.9 },
+    });
+    k.addLayer({
+      id: "ekologi-skrivbord-punkt",
+      type: "circle",
+      source: EKOLOGI_SKRIVBORD,
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: {
+        "circle-radius": grov ? 7 : 5.5,
+        "circle-color": ["coalesce", ["get", "farg"], "#b91c1c"],
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 1.5,
+      },
+    });
+    k.addLayer({
+      id: "trafik-linje-halo",
+      type: "line",
+      source: TRAFIK,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": ["case", ["==", ["get", "vald"], true], 8, 5],
+        "line-opacity": 0.85,
+      },
+    });
+    k.addLayer({
+      id: "trafik-linje-fast",
+      type: "line",
+      source: TRAFIK,
+      filter: ["==", ["get", "har_adt"], true],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: {
+        "line-color": ["case", ["==", ["get", "vald"], true], "#111111", "#1d4ed8"],
+        "line-width": ["case", ["==", ["get", "vald"], true], 4.5, 2.75],
+        "line-opacity": 0.95,
+      },
+    });
+    k.addLayer({
+      id: "trafik-linje-streckad",
+      type: "line",
+      source: TRAFIK,
+      filter: ["!=", ["get", "har_adt"], true],
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": ["case", ["==", ["get", "vald"], true], "#111111", "#6b7280"],
+        "line-width": ["case", ["==", ["get", "vald"], true], 4, 2.25],
+        "line-dasharray": [4, 3],
+        "line-opacity": 0.9,
+      },
+    });
+    k.addLayer({
+      id: "trafik-linje-traff",
+      type: "line",
+      source: TRAFIK,
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#000000", "line-width": grov ? 20 : 14, "line-opacity": 0.001 },
+    });
     k.addLayer({ id: "projekt-polygon-fyll", type: "fill", source: PROJEKT_POLYGON, paint: { "fill-color": "#2f4a2c", "fill-opacity": 0.04 } });
     k.addLayer({ id: "projekt-polygon-kant", type: "line", source: PROJEKT_POLYGON, paint: { "line-color": "#2f4a2c", "line-width": 2.5, "line-opacity": 0.95 } });
     k.addLayer({
@@ -689,6 +840,125 @@ export class Kartmotor {
       el.textContent = e.text;
       this.analysMarkorer.push(new maplibregl.Marker({ element: el }).setLngLat([e.lng, e.lat]).addTo(this.karta));
     }
+  }
+
+  /** Klickbara väglänkar i SWEREF 99 18 00 (heldragen = har ÅDT, streckad = saknar ÅDT). */
+  settTrafikLankar(lankar: readonly TrafikKartaLank[]): void {
+    this.trafikLankar = [...lankar];
+    this.nar(() => this.synkaTrafik());
+  }
+
+  private kopplaTrafik(): void {
+    const k = this.karta;
+    k.on("mousemove", "trafik-linje-traff", (e) => {
+      if (this.trafikLankar.length === 0) return;
+      if (k.getCanvas().style.cursor !== "crosshair") {
+        k.getCanvas().style.cursor = "pointer";
+      }
+      const text = e.features?.[0]?.properties?.beskrivning;
+      if (typeof text !== "string" || !text) {
+        this.trafikPopup?.remove();
+        return;
+      }
+      const ruta = document.createElement("div");
+      ruta.textContent = text;
+      this.trafikPopup?.remove();
+      this.trafikPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 8,
+        className: "overfall-popup",
+      })
+        .setLngLat(e.lngLat)
+        .setDOMContent(ruta)
+        .addTo(k);
+    });
+    k.on("mouseleave", "trafik-linje-traff", () => {
+      if (k.getCanvas().style.cursor === "pointer") {
+        k.getCanvas().style.cursor = "";
+      }
+      this.trafikPopup?.remove();
+    });
+  }
+
+  private synkaTrafik(): void {
+    if (!this.klar || this.slut) return;
+    if (this.trafikLankar.length === 0) {
+      this.satt(TRAFIK, TOM);
+      this.trafikPopup?.remove();
+      return;
+    }
+    const features: Fc["features"] = [];
+    for (const l of this.trafikLankar) {
+      const coords = l.koordinater
+        .map((pt) => konverteraPosition3011(pt))
+        .filter((p): p is [number, number] => p !== null);
+      if (coords.length < 2) continue;
+      features.push({
+        type: "Feature",
+        properties: {
+          lank_id: l.lank_id,
+          har_adt: Boolean(l.har_adt),
+          vald: Boolean(l.vald),
+          beskrivning: l.beskrivning ?? l.lank_id,
+        },
+        geometry: { type: "LineString", coordinates: coords },
+      });
+    }
+    this.satt(TRAFIK, { type: "FeatureCollection", features });
+  }
+
+  /** Ekologiska skrivbordslager (skyddad natur, Skogsstyrelsen, VMI, publika artfynd, fältlager) i EPSG:3011. */
+  settEkologiSkrivbord(fc3011: GeoJSON.FeatureCollection | null): void {
+    this.ekologiSkrivbord = fc3011;
+    this.nar(() => this.synkaEkologiSkrivbord());
+  }
+
+  private kopplaEkologiSkrivbord(): void {
+    const k = this.karta;
+    const lager = ["ekologi-skrivbord-fyll", "ekologi-skrivbord-kant", "ekologi-skrivbord-punkt"];
+    const visa = (e: maplibregl.MapLayerMouseEvent): void => {
+      const text = e.features?.[0]?.properties?.beskrivning;
+      if (typeof text !== "string" || !text) return;
+      const ruta = document.createElement("div");
+      ruta.textContent = text;
+      this.ekologiSkrivbordPopup?.remove();
+      this.ekologiSkrivbordPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 8,
+        className: "overfall-popup",
+      })
+        .setLngLat(e.lngLat)
+        .setDOMContent(ruta)
+        .addTo(k);
+    };
+    for (const id of lager) {
+      k.on("mousemove", id, visa);
+      k.on("click", id, visa);
+      k.on("mouseleave", id, () => this.ekologiSkrivbordPopup?.remove());
+    }
+  }
+
+  private synkaEkologiSkrivbord(): void {
+    if (!this.klar || this.slut) return;
+    const src = this.ekologiSkrivbord;
+    if (!src || !Array.isArray(src.features) || src.features.length === 0) {
+      this.satt(EKOLOGI_SKRIVBORD, TOM);
+      this.ekologiSkrivbordPopup?.remove();
+      return;
+    }
+    const features: Fc["features"] = [];
+    for (const feat of src.features) {
+      const geom = konverteraGeometri3011TillWgs84(feat?.geometry);
+      if (!geom) continue;
+      features.push({
+        type: "Feature",
+        properties: { ...(feat.properties ?? {}) },
+        geometry: geom,
+      });
+    }
+    this.satt(EKOLOGI_SKRIVBORD, { type: "FeatureCollection", features });
   }
 
   /** Överfallspunkterna (SWEREF-meter, ur bifurkationsanalysen) som eget lager. */
@@ -916,6 +1186,8 @@ export class Kartmotor {
     );
     this.satt(OVERFALL, overfallTillGeoJson(this.overfall));
     this.synkaAnalys();
+    this.synkaTrafik();
+    this.synkaEkologiSkrivbord();
     this.synkaSkarv();
     const r = this.rit;
     this.satt(`${RIT}-hus`, {

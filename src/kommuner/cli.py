@@ -79,6 +79,38 @@ def registrera(subparsers: Any) -> None:
         help="Längsta spridningströskel (effektiva m) att pröva: NMD/VMI klipps med 2-5 km buffert runt kärnan.",
     )
     m.add_argument(
+        "--trafik-fil", default=None,
+        help="Trafikfil (Lastkajen GeoPackage/GeoJSON eller kommunal trafikfil/CSV) för lager.trafik.",
+    )
+    m.add_argument(
+        "--hamta-trafikverket", action="store_true",
+        help="Hämta NVDB-vägnät från Trafikverket Öppet API (kräver kontots 'trafikverket'-nyckel; faller tillbaka till baskarta om gator.gpkg finns).",
+    )
+    m.add_argument(
+        "--trafik-fran-baskarta", action="store_true",
+        help="Bygg klickbara väglänkar utan ÅDT ur baskartans gator.gpkg till lager.trafik (aldrig påhittat ÅDT).",
+    )
+    m.add_argument(
+        "--hamta-vader-luft", action="store_true",
+        help="Hämta SMHI MetObs/STRÅNG och urban bakgrundsluft (graciös fallback vid timeout) till lager.vader_luft.",
+    )
+    m.add_argument(
+        "--luft-bakgrund-fil", default=None,
+        help="Lokal luftkvalitetsfil (SMHI CSV eller Göteborg JSON) för urban bakgrundshalt i lager.vader_luft.",
+    )
+    m.add_argument(
+        "--hamta-skyddad-natur", action="store_true",
+        help="Hämta Naturvårdsverket WFS (Skyddad natur/N2000), Skogsstyrelsen ArcGIS REST och ev. VMI läns-ZIP till lager.skyddad_natur.",
+    )
+    m.add_argument(
+        "--vmi-lan", default=None,
+        help="VMI-länskatalog på Naturvårdsverket (t.ex. O_Goteborg_Bohus) när --vmi inte angivits lokalt.",
+    )
+    m.add_argument(
+        "--hamta-artfynd", action="store_true",
+        help="Hämta publika rödlistade/fridlysta artfynd från SLU Artdatabanken SOS med hård OSL-spärr (kräver kontots 'artdatabanken'-nyckel).",
+    )
+    m.add_argument(
         "--villkor-kontrollerade", action="store_true",
         help="Jag har läst Lantmäteriets och kommunens villkor: lagret öppnas för MCP (annars stängt).",
     )  # fmt: skip
@@ -234,6 +266,14 @@ def _kor_inre(args: argparse.Namespace, kommando: str) -> int:
             nmd_fil=_abs(rot, args.nmd) if args.nmd else None,
             vmi_fil=_abs(rot, args.vmi) if args.vmi else None, nmd_troskel_m=args.nmd_troskel_m,
             trad_fil=_abs(rot, args.trad) if args.trad else None, trad_natverk=args.trad_natverk,
+            trafik_fil=_abs(rot, args.trafik_fil) if args.trafik_fil else None,
+            hamta_trafikverket=bool(args.hamta_trafikverket),
+            trafik_fran_baskarta=bool(args.trafik_fran_baskarta),
+            hamta_vader_luft=bool(args.hamta_vader_luft),
+            luft_bakgrund_fil=_abs(rot, args.luft_bakgrund_fil) if args.luft_bakgrund_fil else None,
+            hamta_skyddad_natur=bool(args.hamta_skyddad_natur),
+            vmi_lan=args.vmi_lan,
+            hamta_artfynd=bool(args.hamta_artfynd),
         )  # fmt: skip
         return 0
     if kommando == "projekt skapa":

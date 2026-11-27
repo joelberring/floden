@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -128,6 +129,175 @@ def _tillrinning_for_kärna(
     }
 
 
+def _hamta_api_nyckel(
+    typ_id: str,
+    *,
+    explicit_nyckel: str | None,
+    konto_id: str | None,
+    konfig: Mapping[str, Any],
+    konfig_fil: Path,
+    register: Any,
+    nyckel_forrad: Any,
+) -> tuple[str | None, str | None]:
+    """Läser API-nyckel (`trafikverket` eller `artdatabanken`) ur explicit parameter, kontots
+    krypterade `NyckelForrad` eller (lokalt) miljö/`config.local.toml`. Läckagesäker (0 värden i varning)."""
+    from lantmateriet.nycklar import inloggning_pa
+
+    if explicit_nyckel is not None and explicit_nyckel.strip():
+        return explicit_nyckel.strip(), None
+
+    if nyckel_forrad is not None and konto_id:
+        if not getattr(nyckel_forrad, "paslagen", True):
+            return None, f"Nyckelhanteringen är avstängd på servern; kan inte läsa '{typ_id}'-nyckel."
+        try:
+            varden = nyckel_forrad.las(konto_id, typ_id)
+        except Exception as exc:  # noqa: BLE001 - texten är fri från nyckelvärden
+            return None, str(getattr(exc, "text", f"Nyckeln '{typ_id}' kunde inte läsas."))
+        if isinstance(varden, Mapping) and varden.get("nyckel"):
+            return str(varden["nyckel"]).strip(), None
+        return None, None
+
+    if inloggning_pa(konfig):
+        if not konto_id:
+            return None, None
+        from konto.nycklar import NyckelForrad
+
+        reg = register if register is not None else _oppna_register(konfig, konfig_fil.parent)
+        forrad = NyckelForrad(reg)
+        if not forrad.paslagen:
+            return None, forrad.avstangd_text()
+        try:
+            varden = forrad.las(konto_id, typ_id)
+        except Exception as exc:  # noqa: BLE001 - texten är fri från nyckelvärden
+            return None, str(getattr(exc, "text", f"Nyckeln '{typ_id}' kunde inte läsas."))
+        if isinstance(varden, Mapping) and varden.get("nyckel"):
+            return str(varden["nyckel"]).strip(), None
+        return None, None
+
+    if register is not None and konto_id:
+        from konto.nycklar import NyckelForrad
+
+        forrad = NyckelForrad(register)
+        if forrad.paslagen:
+            try:
+                varden = forrad.las(konto_id, typ_id)
+            except Exception as exc:  # noqa: BLE001 - texten är fri från nyckelvärden
+                return None, str(getattr(exc, "text", f"Nyckeln '{typ_id}' kunde inte läsas."))
+            if isinstance(varden, Mapping) and varden.get("nyckel"):
+                return str(varden["nyckel"]).strip(), None
+
+    env_map = {
+        "trafikverket": "TRAFIKVERKET_API_NYCKEL",
+        "artdatabanken": "ARTDATABANKEN_API_NYCKEL",
+    }
+    env_namn = env_map.get(typ_id)
+    if env_namn and os.environ.get(env_namn, "").strip():
+        return os.environ[env_namn].strip(), None
+    avsnitt = konfig.get(typ_id)
+    if isinstance(avsnitt, Mapping) and isinstance(avsnitt.get("nyckel"), str) and avsnitt["nyckel"].strip():
+        return avsnitt["nyckel"].strip(), None
+    return None, None
+
+
+def _lankar_fran_gator_gpkg(
+    gator_fil: Path,
+    bbox_3011: tuple[float, float, float, float],
+) -> list[Any]:
+    """Bygger klickbara `TrafikLank`-linjer ur baskartans `gator.gpkg` utan påhittat ÅDT."""
+    import geopandas as gpd
+    import shapely
+    from shapely.geometry import LineString, box
+
+    from data_inlasning.trafikverket import TrafikLank
+
+    try:
+        gdf = gpd.read_file(gator_fil, layer="gator")
+    except Exception:  # noqa: BLE001 - fallback till första lagret
+        gdf = gpd.read_file(gator_fil)
+    if gdf.empty:
+        return []
+    if gdf.crs is not None and gdf.crs.to_epsg() != 3011:
+        gdf = gdf.to_crs(epsg=3011)
+    if "kategori" in gdf.columns:
+        gdf = gdf[gdf["kategori"].astype(str).str.lower() == "gata"]
+    klipp = box(*bbox_3011)
+    linje_koordinater: list[tuple[tuple[float, float], ...]] = []
+    for geom in gdf.geometry:
+        if geom is None or geom.is_empty:
+            continue
+        snitt = geom.intersection(klipp)
+        if snitt.is_empty:
+            continue
+        for del_g in shapely.get_parts(snitt):
+            if isinstance(del_g, LineString) and float(del_g.length) > 1.0e-3:
+                pts = tuple((round(float(c[0]), 3), round(float(c[1]), 3)) for c in del_g.coords)
+                if len(pts) >= 2:
+                    linje_koordinater.append(pts)
+    linje_koordinater.sort()
+    return [
+        TrafikLank(
+            lank_id=f"baskarta_gata_{idx:04d}",
+            koordinater_3011=pts,
+            gatunamn=None,
+            vagnummer=None,
+            vaghallare="kommunal",
+            hastighet_km_h=None,
+            korfalt=None,
+            adt_fordon_dygn=None,
+            andel_tung_pct=None,
+            matar=None,
+            adt_kalla=None,
+            osaker=False,
+        )
+        for idx, pts in enumerate(linje_koordinater, start=1)
+    ]
+
+
+def _sammanfatta_vmi_fil(
+    vmi_fil: Path,
+    karna_3011: tuple[float, float, float, float],
+    *,
+    buffert_m: float = 1000.0,
+) -> dict[str, Any]:
+    """Beräknar deterministisk VMI-sammanfattning (antal polygoner, överlapp, minsta avstånd) mot kärnan."""
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    gdf = gpd.read_file(vmi_fil)
+    if gdf.empty:
+        return {
+            "tillganglig": True,
+            "antal_polygoner": 0,
+            "overlapp_karna_m2": 0.0,
+            "minsta_avstand_m": None,
+        }
+    if gdf.crs is not None and gdf.crs.to_epsg() != 3011:
+        gdf = gdf.to_crs(epsg=3011)
+    e0, n0, e1, n1 = karna_3011
+    karna_box = box(e0, n0, e1, n1)
+    sok_box = box(e0 - buffert_m, n0 - buffert_m, e1 + buffert_m, n1 + buffert_m)
+    antal = 0
+    overlapp_m2 = 0.0
+    min_avst: float | None = None
+    for geom in gdf.geometry:
+        if geom is None or geom.is_empty or not geom.intersects(sok_box):
+            continue
+        antal += 1
+        if geom.intersects(karna_box):
+            overlapp_m2 += float(geom.intersection(karna_box).area)
+            min_avst = 0.0
+        else:
+            avst = float(geom.distance(karna_box))
+            if min_avst is None or avst < min_avst:
+                min_avst = avst
+    return {
+        "tillganglig": True,
+        "antal_polygoner": antal,
+        "overlapp_karna_m2": round(overlapp_m2, 2),
+        "minsta_avstand_m": None if min_avst is None else round(min_avst, 2),
+    }
+
+
 def mappa_geografi(
     kommun: KommunKonfig,
     geografi_id: str,
@@ -157,6 +327,24 @@ def mappa_geografi(
     dwgread: str | None = None,
     nan_varning_andel: float = 0.20,
     forberaknad_lager: Any | None = None,
+    trafik_fil: Path | None = None,
+    hamta_trafikverket: bool = False,
+    trafik_fran_baskarta: bool = False,
+    hamta_vader_luft: bool = False,
+    luft_bakgrund_fil: Path | None = None,
+    hamta_skyddad_natur: bool = False,
+    vmi_lan: str | None = None,
+    hamta_artfynd: bool = False,
+    nyckel_forrad: Any | None = None,
+    trafikverket_nyckel: str | None = None,
+    trafikverket_hamtare: Any | None = None,
+    vader_hamtare: Any | None = None,
+    luft_hamtare: Any | None = None,
+    skyddad_natur_hamtare: Any | None = None,
+    skogsstyrelsen_hamtare: Any | None = None,
+    vmi_hamtare: Any | None = None,
+    artdatabanken_nyckel: str | None = None,
+    artdatabanken_hamtare: Any | None = None,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
     from kommuner.baskarta import (
@@ -209,7 +397,13 @@ def mappa_geografi(
             list(d.get("varningar", [])), bool(d.get("oppen_for_mcp")),
         )  # fmt: skip
 
-    for _f, _n in ((nmd_fil, "NMD"), (vmi_fil, "VMI"), (trad_fil, "Träd")):
+    for _f, _n in (
+        (nmd_fil, "NMD"),
+        (vmi_fil, "VMI"),
+        (trad_fil, "Träd"),
+        (trafik_fil, "Trafik"),
+        (luft_bakgrund_fil, "Bakgrundsluft"),
+    ):
         if _f is not None and not Path(_f).is_file():
             raise SkapaFel(f"{_n}-filen {_f} finns inte.")
     # 3. Höjdkälla. Kommunens filpaket kräver ingen nyckel; Lantmäteriets laser kräver kontots egen nyckel
@@ -662,14 +856,373 @@ def mappa_geografi(
         lm_manifest_sha = sha256_fil(lmf)
     lager_ra = lagra(geo_rot, bygge / "radata")
     lager_k1 = lagra(geo_rot, bygge / "k1_rutnat")
+    from data_inlasning.cache import DataInlasningFel
     from geografi.markunderlag import bygg_markunderlag
+
+    def _lagg_till_varning(v: str) -> None:
+        if v and v not in varningar:
+            varningar.append(v)
+
+    fk = kommun.filpaket
+    # VMI läns-ZIP (öppen CC0-data från Naturvårdsverket) när ingen lokal vmi_fil angivits
+    # och vmi_lan begärts eller [filpaket.vmi] finns vid hamta_skyddad_natur=True.
+    vmi_zip_sha: str | None = None
+    eff_vmi_lan = (vmi_lan or "").strip() or (
+        fk.vmi.vmi_lan if (hamta_skyddad_natur and fk is not None and fk.vmi is not None) else ""
+    )
+    if vmi_fil is None and eff_vmi_lan:
+        from data_inlasning.skyddad_natur import SkyddadNaturFel, hamta_vmi_lan_zip
+
+        vmi_filnamn = (
+            fk.vmi.filnamn
+            if (not vmi_lan and fk is not None and fk.vmi is not None and fk.vmi.filnamn)
+            else None
+        )
+        try:
+            vmi_post = hamta_vmi_lan_zip(
+                eff_vmi_lan,
+                geo_rot / "_filcache" / "vmi",
+                hamtare=vmi_hamtare if vmi_hamtare is not None else skyddad_natur_hamtare,
+                filnamn=vmi_filnamn,
+            )
+            vmi_zip_sha = vmi_post.sha256
+            if vmi_post.gis_fil is not None and vmi_post.gis_fil.is_file():
+                vmi_fil = vmi_post.gis_fil
+                skriv(f"VMI ({eff_vmi_lan}): hämtad/cachad ({vmi_post.sha256[:12]}).")
+            else:
+                _lagg_till_varning(
+                    f"VMI-paket för {eff_vmi_lan} innehöll ingen .gpkg/.shp-fil; hoppar över VMI-lager."
+                )
+        except (SkyddadNaturFel, DataInlasningFel, OSError) as exc:
+            _lagg_till_varning(f"VMI ({eff_vmi_lan}) kunde inte hämtas ({exc}); fortsätter utan VMI.")
+            skriv(f"VARNING: {varningar[-1]}")
 
     mark_lager, mark_kallor, mark_varn = bygg_markunderlag(
         geo_rot, bygge, karna, nmd_fil=nmd_fil, vmi_fil=vmi_fil, troskel_m=nmd_troskel_m,
         villkor_kontrollerade=villkor_kontrollerade, trad_fil=trad_fil, trad_natverk=trad_natverk,
     )  # fmt: skip
-    varningar.extend(mark_varn)
-    fk = kommun.filpaket
+    for mv in mark_varn:
+        _lagg_till_varning(mv)
+
+    extra_lager: dict[str, Any] = {}
+    extra_kallor: dict[str, Any] = {}
+
+    # 4a. Additivt K46-lager: lager.trafik (Trafikverket API, trafik_fil eller baskarta gator.gpkg utan påhittat ÅDT).
+    if trafik_fil is not None or hamta_trafikverket or trafik_fran_baskarta:
+        from data_inlasning.trafikverket import (
+            hamta_trafikverket_vagnat,
+            las_kommunal_trafik_fil,
+            las_lastkajen_trafik_gpkg,
+        )
+        from geografi.trafik_lager import bygg_trafik_lager
+
+        trafik_lankar: list[Any] = []
+        trafik_kallor_delar: list[str] = []
+        trafik_licenser: list[str] = []
+        har_trafik_underlag = False
+        gator_k1_fil = lager_k1.mapp / "gator.gpkg"
+        if not gator_k1_fil.is_file():
+            gator_k1_fil = lager_ra.mapp / "kommun" / "gator.gpkg"
+
+        if hamta_trafikverket:
+            tv_nyckel, tv_nyckel_varn = _hamta_api_nyckel(
+                "trafikverket",
+                explicit_nyckel=trafikverket_nyckel,
+                konto_id=konto_id,
+                konfig=konfig,
+                konfig_fil=konfig_fil,
+                register=reg,
+                nyckel_forrad=nyckel_forrad,
+            )
+            if tv_nyckel_varn:
+                _lagg_till_varning(tv_nyckel_varn)
+            if tv_nyckel is None:
+                _lagg_till_varning(
+                    "Trafikverket API-nyckel saknas (lägg in nyckeltyp 'trafikverket' på #/nycklar); "
+                    "hämtning från Trafikverket Öppet API hoppades över."
+                )
+                skriv(f"VARNING: {varningar[-1]}")
+            else:
+                try:
+                    trafik_lankar = hamta_trafikverket_vagnat(
+                        extent,
+                        api_nyckel=tv_nyckel,
+                        hamtare=trafikverket_hamtare,
+                    )
+                    trafik_kallor_delar.append("Trafikverket Öppet API (NVDB)")
+                    trafik_licenser.append("CC0-1.0")
+                    har_trafik_underlag = True
+                    skriv(f"Trafik (Trafikverket NVDB): {len(trafik_lankar)} väglänkar hämtade.")
+                except (DataInlasningFel, OSError) as exc:
+                    _lagg_till_varning(
+                        f"Trafikverket Öppet API misslyckades ({exc}); fortsätter utan NVDB-trafik."
+                    )
+                    skriv(f"VARNING: {varningar[-1]}")
+
+        if trafik_fil is not None:
+            tf_path = Path(trafik_fil)
+            try:
+                if tf_path.suffix.lower() == ".csv":
+                    if not trafik_lankar and gator_k1_fil.is_file():
+                        trafik_lankar = _lankar_fran_gator_gpkg(gator_k1_fil, extent)
+                    trafik_lankar = las_kommunal_trafik_fil(
+                        tf_path,
+                        vagnat_lankar=trafik_lankar if trafik_lankar else None,
+                        bbox_3011=extent,
+                        kall_epsg=kommun.publicering_epsg,
+                    )
+                elif trafik_lankar:
+                    trafik_lankar = las_kommunal_trafik_fil(
+                        tf_path,
+                        vagnat_lankar=trafik_lankar,
+                        bbox_3011=extent,
+                        kall_epsg=kommun.publicering_epsg,
+                    )
+                else:
+                    trafik_lankar = las_lastkajen_trafik_gpkg(
+                        tf_path,
+                        bbox_3011=extent,
+                        kall_epsg=kommun.publicering_epsg,
+                    )
+                trafik_kallor_delar.append(f"Trafikfil ({tf_path.name})")
+                trafik_licenser.append("intern" if stangd_baskarta else "CC0-1.0")
+                har_trafik_underlag = True
+                skriv(f"Trafikfil ({tf_path.name}): {len(trafik_lankar)} väglänkar inlästa.")
+            except (DataInlasningFel, OSError) as exc:
+                _lagg_till_varning(f"Trafikfilen '{tf_path.name}' kunde inte läsas ({exc}); fortsätter.")
+                skriv(f"VARNING: {varningar[-1]}")
+
+        if not trafik_lankar and (trafik_fran_baskarta or (gator_k1_fil.is_file() and hamta_trafikverket)):
+            if gator_k1_fil.is_file():
+                try:
+                    trafik_lankar = _lankar_fran_gator_gpkg(gator_k1_fil, extent)
+                    trafik_kallor_delar.append(f"{kommun.namn} baskarta (gator.gpkg, utan ÅDT)")
+                    bk_lic = (
+                        fk.baskarta.licens
+                        if (fk is not None and fk.baskarta is not None)
+                        else kommun.byggnader.licens
+                    )
+                    trafik_licenser.append("intern" if stangd_baskarta else bk_lic)
+                    har_trafik_underlag = True
+                    skriv(
+                        f"Trafik (baskarta gator.gpkg): {len(trafik_lankar)} klickbara väglänkar "
+                        "(ÅDT=null, aldrig påhittat)."
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _lagg_till_varning(f"Kunde inte bygga väglänkar ur gator.gpkg ({exc}).")
+            elif trafik_fran_baskarta:
+                _lagg_till_varning(
+                    "trafik_fran_baskarta begärdes men gator.gpkg saknas i geografin; inget trafiklager byggdes."
+                )
+
+        if har_trafik_underlag:
+            t_kalla_text = " + ".join(dict.fromkeys(trafik_kallor_delar)) or "Trafikunderlag"
+            t_licens = _strangaste_licens(trafik_licenser) if trafik_licenser else "CC0-1.0"
+            t_lager, t_kalla, t_varn = bygg_trafik_lager(
+                geo_rot,
+                bygge,
+                karna,
+                lankar=trafik_lankar,
+                kalla_beskrivning=t_kalla_text,
+                licens=t_licens,
+                villkor_kontrollerade=villkor_kontrollerade and not stangd_baskarta,
+                buffert_m=float(buffert),
+            )
+            extra_lager["trafik"] = t_lager
+            extra_kallor["trafik"] = t_kalla
+            for t_rad in t_varn:
+                _lagg_till_varning(t_rad)
+
+    # 4b. Additivt K46-lager: lager.vader_luft (SMHI MetObs + STRÅNG + urban bakgrundsluft med graciös timeout).
+    if hamta_vader_luft or luft_bakgrund_fil is not None:
+        from data_inlasning.smhi_luft_strang import (
+            SmhiLuftStrangFel,
+            hamta_datavardluft_bakgrund,
+            hamta_smhi_vaderpaket,
+            las_bakgrund_luft_fil,
+        )
+        from geografi.vader_lager import bygg_vader_lager
+
+        smhi_cache = geo_rot / "_filcache" / "smhi"
+        vader_paket: Any = None
+        try:
+            vader_paket = hamta_smhi_vaderpaket(
+                karna,
+                cache_mapp=smhi_cache,
+                hamtare=vader_hamtare,
+            )
+            skriv(
+                f"SMHI väderpaket: station {vader_paket.station_namn} ({vader_paket.station_id}, "
+                f"{vader_paket.station_avstand_km:.1f} km), år {vader_paket.ar}."
+            )
+            for pv in vader_paket.varningar:
+                _lagg_till_varning(pv)
+        except (SmhiLuftStrangFel, DataInlasningFel, OSError) as exc:
+            _lagg_till_varning(
+                f"SMHI väderpaket kunde inte hämtas ({exc}); fortsätter utan lager.vader_luft."
+            )
+            skriv(f"VARNING: {varningar[-1]}")
+
+        if vader_paket is not None:
+            bakgrund_res: Any = None
+            if luft_bakgrund_fil is not None:
+                try:
+                    bakgrund_res = las_bakgrund_luft_fil(luft_bakgrund_fil)
+                except (SmhiLuftStrangFel, DataInlasningFel, OSError) as exc:
+                    _lagg_till_varning(
+                        f"Bakgrundsluftfilen kunde inte läsas ({exc}); urban bakgrund utelämnas."
+                    )
+            else:
+                bakgrund_res = hamta_datavardluft_bakgrund(
+                    karna,
+                    cache_mapp=smhi_cache,
+                    hamtare=luft_hamtare if luft_hamtare is not None else vader_hamtare,
+                )
+            vl_lager, vl_kallor, vl_varn = bygg_vader_lager(
+                geo_rot,
+                bygge,
+                karna,
+                vindros=vader_paket.vindros,
+                utci_sommar=vader_paket.utci_sommar,
+                bakgrund_luft=bakgrund_res,
+                vader_timserie_csv=vader_paket.vader_timserie_csv,
+                villkor_kontrollerade=villkor_kontrollerade,
+                station_avstand_km=vader_paket.station_avstand_km,
+                ar=vader_paket.ar,
+                period=vader_paket.period,
+                strang=vader_paket.strang,
+                kallor_sha256=vader_paket.kallor_sha256,
+            )
+            extra_lager.update(vl_lager)
+            extra_kallor.update(vl_kallor)
+            for v_rad in vl_varn:
+                _lagg_till_varning(v_rad)
+
+    # 4c. Additivt K46-lager: lager.skyddad_natur (Naturvårdsverket WFS + Skogsstyrelsen ArcGIS REST + VMI).
+    if hamta_skyddad_natur:
+        from data_inlasning.skyddad_natur import (
+            SkyddadNaturFel,
+            hamta_skogsstyrelsen_naturvarden,
+            hamta_skyddad_natur_wfs,
+        )
+        from geografi.ekologi_skrivbord import bygg_skyddad_natur_lager
+
+        skydd_omraden: tuple[Any, ...] = ()
+        skog_objekt: tuple[Any, ...] = ()
+        sn_kallor_sha: dict[str, str] = {}
+        if vmi_zip_sha:
+            sn_kallor_sha["vmi_lan_zip"] = vmi_zip_sha
+
+        try:
+            nv_res = hamta_skyddad_natur_wfs(
+                karna,
+                buffert_m=1000.0,
+                hamtare=skyddad_natur_hamtare,
+            )
+            skydd_omraden = nv_res.omraden
+            sn_kallor_sha.update(nv_res.kallor_sha256)
+            for nv_v in nv_res.varningar:
+                _lagg_till_varning(nv_v)
+            skriv(f"Skyddad natur (NV WFS): {len(skydd_omraden)} skyddade områden inom 1000 m.")
+        except (SkyddadNaturFel, DataInlasningFel, OSError) as exc:
+            _lagg_till_varning(
+                f"Naturvårdsverket WFS (Skyddad natur/N2000) misslyckades ({exc}); fortsätter med tomt skyddslager."
+            )
+            skriv(f"VARNING: {varningar[-1]}")
+
+        try:
+            sks_res = hamta_skogsstyrelsen_naturvarden(
+                karna,
+                buffert_m=1000.0,
+                hamtare=skogsstyrelsen_hamtare if skogsstyrelsen_hamtare is not None else skyddad_natur_hamtare,
+            )
+            skog_objekt = sks_res.objekt
+            sn_kallor_sha.update(sks_res.kallor_sha256)
+            for sks_v in sks_res.varningar:
+                _lagg_till_varning(sks_v)
+            skriv(f"Skogsstyrelsen (ArcGIS REST): {len(skog_objekt)} skogliga naturvärden inom 1000 m.")
+        except (SkyddadNaturFel, DataInlasningFel, OSError) as exc:
+            _lagg_till_varning(
+                f"Skogsstyrelsen ArcGIS REST misslyckades ({exc}); fortsätter utan skogliga objekt."
+            )
+            skriv(f"VARNING: {varningar[-1]}")
+
+        vmi_sam: dict[str, Any] | None = None
+        if vmi_fil is not None and Path(vmi_fil).is_file():
+            try:
+                vmi_sam = _sammanfatta_vmi_fil(Path(vmi_fil), karna, buffert_m=1000.0)
+            except Exception as exc:  # noqa: BLE001
+                _lagg_till_varning(f"Kunde inte summera VMI mot kärnan ({exc}).")
+                vmi_sam = {"tillganglig": True, "antal_polygoner": 0, "overlapp_karna_m2": 0.0, "minsta_avstand_m": None}
+
+        sn_lager, sn_kalla, sn_varn = bygg_skyddad_natur_lager(
+            geo_rot,
+            bygge,
+            karna,
+            skyddade_omraden=skydd_omraden,
+            skogliga_varden=skog_objekt,
+            vmi_sammanfattning=vmi_sam,
+            buffert_m=1000.0,
+            kallor_sha256=sn_kallor_sha,
+            villkor_kontrollerade=villkor_kontrollerade,
+        )
+        extra_lager["skyddad_natur"] = sn_lager
+        extra_kallor["skyddad_natur"] = sn_kalla
+        for sv in sn_varn:
+            _lagg_till_varning(sv)
+
+    # 4d. Additivt K46-lager: lager.artfynd_publika (SLU Artdatabanken SOS med hård OSL 20 kap. 1 §-spärr).
+    if hamta_artfynd:
+        art_nyckel, art_nyckel_varn = _hamta_api_nyckel(
+            "artdatabanken",
+            explicit_nyckel=artdatabanken_nyckel,
+            konto_id=konto_id,
+            konfig=konfig,
+            konfig_fil=konfig_fil,
+            register=reg,
+            nyckel_forrad=nyckel_forrad,
+        )
+        if art_nyckel_varn:
+            _lagg_till_varning(art_nyckel_varn)
+        if art_nyckel is None:
+            _lagg_till_varning(
+                "SLU Artdatabanken API-nyckel saknas (lägg in nyckeltyp 'artdatabanken' på #/nycklar); "
+                "hoppar över publika rödlistefynd (lager.artfynd_publika)."
+            )
+            skriv(f"VARNING: {varningar[-1]}")
+        else:
+            from data_inlasning.artdatabanken import ArtdatabankenFel, hamta_publika_artfynd
+            from geografi.ekologi_skrivbord import bygg_artfynd_publika_lager
+
+            try:
+                art_res = hamta_publika_artfynd(
+                    karna,
+                    api_nyckel=art_nyckel,
+                    buffert_m=1000.0,
+                    hamtare=artdatabanken_hamtare,
+                )
+                art_lager, art_kalla, art_varn = bygg_artfynd_publika_lager(
+                    geo_rot,
+                    bygge,
+                    karna,
+                    resultat=art_res,
+                    villkor_kontrollerade=villkor_kontrollerade,
+                )
+                extra_lager["artfynd_publika"] = art_lager
+                extra_kallor["artfynd_publika"] = art_kalla
+                for av in art_varn:
+                    _lagg_till_varning(av)
+                skriv(
+                    f"SLU Artdatabanken (publika fynd): {len(art_res.fynd)} fynd, "
+                    f"{len(art_res.artlista)} arter ({art_res.antal_skyddsklassade_filtrerade} skyddsklassade filtrerade)."
+                )
+            except (ArtdatabankenFel, DataInlasningFel, OSError) as exc:
+                fel_txt = str(exc).replace(art_nyckel, "***")
+                _lagg_till_varning(
+                    f"SLU Artdatabanken SOS misslyckades ({fel_txt}); fortsätter utan lager.artfynd_publika."
+                )
+                skriv(f"VARNING: {varningar[-1]}")
+
     licenser = [kommun.lantmateriet.licens] if hojd_anvand == "lantmateriet" else []
     if hojd_anvand == "filpaket" and fk is not None and fk.hojdmodell is not None:
         licenser.append(fk.hojdmodell.licens)
@@ -752,6 +1305,7 @@ def mappa_geografi(
                 "filer": [{"fil": f, "sha256": s} for f, s in lager_ra.filer],
             },
             **mark_lager,
+            **extra_lager,
         },
         "forberakningar": {
             "terrang_karna": terr,
@@ -790,6 +1344,7 @@ def mappa_geografi(
                 else {"kalla": kalla_bygg, "licens": kommun.byggnader.licens, "anmarkning": kommun.byggnader.licens_anmarkning}
             ),
             **mark_kallor,
+            **extra_kallor,
         },
         "motivering_karna": omrade.motivering,
         "oppen_for_mcp": oppna_k1,

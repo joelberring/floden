@@ -180,6 +180,11 @@ epsg = 3006
 licens = "CC0-1.0"
 licens_anmarkning = "Naturvårdsverket, Nationella marktäckedata (NMD) 2018 basskikt 10 m, ogeneraliserad länsfil (O län, CC0)."
 
+[filpaket.vmi]
+vmi_lan = "O_Goteborg_Bohus"
+licens = "CC0-1.0"
+licens_anmarkning = "Naturvårdsverket, Våtmarksinventeringen (VMI, 1981–2005, äldre inventering, läns-ZIP O_Goteborg_Bohus, CC0)."
+
 # --- Lantmäteriet (höjddata) -------------------------------------------------------------------
 # Hämtas med kontots egen nyckel (sidan Nycklar), aldrig servernyckeln.
 [lantmateriet]

@@ -107,6 +107,31 @@ NYCKELTYPER: dict[str, NyckelTyp] = {
         identifierande="klient_id",
         kategori="data",
     ),
+    "trafikverket": NyckelTyp(
+        id="trafikverket",
+        namn="Trafikverket Öppet API (NVDB)",
+        beskrivning=(
+            "API-nyckel till Trafikverket Öppet API (api.trafikinfo.trafikverket.se) för att hämta "
+            "NVDB-vägnät och trafikmängder (ÅDT, hastighet, tung andel) vid geografimappning. "
+            "Sparas krypterad och visas aldrig igen efter sparning."
+        ),
+        falt=(NyckelFalt("nyckel", "API-nyckel"),),
+        identifierande="nyckel",
+        kategori="data",
+    ),
+    "artdatabanken": NyckelTyp(
+        id="artdatabanken",
+        namn="SLU Artdatabanken (SOS publika fynd)",
+        beskrivning=(
+            "Prenumerationsnyckel (Ocp-Apim-Subscription-Key) till SLU Artdatabanken Species "
+            "Observation System (api.artdatabanken.se) för publika rödlistade/fridlysta artfynd "
+            "vid geografimappning (skyddsklassade arter enligt OSL 20 kap. 1 § filtreras alltid "
+            "bort). Sparas krypterad och visas aldrig igen efter sparning."
+        ),
+        falt=(NyckelFalt("nyckel", "Prenumerationsnyckel (API-nyckel)"),),
+        identifierande="nyckel",
+        kategori="data",
+    ),
     "anthropic": NyckelTyp(
         id="anthropic",
         namn="Anthropic (Claude)",

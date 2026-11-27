@@ -166,12 +166,23 @@ class PaketKalla:
 
 
 @dataclass(frozen=True)
+class VmiFilpaketKonfig:
+    """Valfritt `[filpaket.vmi]` för Naturvårdsverkets läns-ZIP (VMI, CC0)."""
+
+    vmi_lan: str
+    filnamn: str = ""
+    licens: str = "CC0-1.0"
+    licens_anmarkning: str = "Naturvårdsverket, Våtmarksinventeringen (VMI, 1981–2005, CC0)."
+
+
+@dataclass(frozen=True)
 class FilpaketKonfig:
     tillatna_varddomaner: tuple[str, ...]
     max_gib: float
     baskarta: PaketKalla | None
     hojdmodell: PaketKalla | None
     nmd: PaketKalla | None = None
+    vmi: VmiFilpaketKonfig | None = None
 
 
 @dataclass(frozen=True)
@@ -533,7 +544,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
     if fp_raa is not None:
         if not isinstance(fp_raa, Mapping):
             raise KommunKonfigFel("[filpaket] ska vara en tabell.")
-        _stram(fp_raa, "[filpaket]", ("tillatna_varddomaner", "max_gib", "baskarta", "hojdmodell", "nmd"))
+        _stram(fp_raa, "[filpaket]", ("tillatna_varddomaner", "max_gib", "baskarta", "hojdmodell", "nmd", "vmi"))
         fdom = _textlista(fp_raa, "tillatna_varddomaner", "[filpaket]")
         if not fdom:
             raise KommunKonfigFel("[filpaket]: 'tillatna_varddomaner' får inte vara tom.")
@@ -696,12 +707,36 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
                 brytlinjer=tuple(brytlinjer_regler), vektorbakgrund=vektorbakgrund,
             )  # fmt: skip
 
+        vmi_paket: VmiFilpaketKonfig | None = None
+        if fp_raa.get("vmi") is not None:
+            vt = fp_raa["vmi"]
+            vvar = "[filpaket.vmi]"
+            if not isinstance(vt, Mapping):
+                raise KommunKonfigFel(f"{vvar} ska vara en tabell.")
+            _stram(vt, vvar, ("vmi_lan", "filnamn", "licens", "licens_anmarkning"))
+            vmi_lan_val = _text(vt, "vmi_lan", vvar)
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", vmi_lan_val):
+                raise KommunKonfigFel(
+                    f"{vvar}: ogiltigt 'vmi_lan' {vmi_lan_val!r} (tillåtet: bokstäver, siffror, _, -)."
+                )
+            vmi_paket = VmiFilpaketKonfig(
+                vmi_lan=vmi_lan_val,
+                filnamn=_text(vt, "filnamn", vvar, tom_ok=True) if "filnamn" in vt else "",
+                licens=_text(vt, "licens", vvar) if "licens" in vt else "CC0-1.0",
+                licens_anmarkning=(
+                    _text(vt, "licens_anmarkning", vvar)
+                    if "licens_anmarkning" in vt
+                    else "Naturvårdsverket, Våtmarksinventeringen (VMI, 1981–2005, CC0)."
+                ),
+            )
+
         filpaket = FilpaketKonfig(
             tillatna_varddomaner=fdom,
             max_gib=_tal(fp_raa, "max_gib", "[filpaket]", minst=0.1),
             baskarta=_paket("baskarta", True),
             hojdmodell=_paket("hojdmodell", False),
             nmd=_paket("nmd", False),
+            vmi=vmi_paket,
         )
 
     by = _tabell(

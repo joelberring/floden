@@ -40,7 +40,7 @@ import {
   type ScenarioPost,
   type Utbredning,
 } from "../karta/kartapi.ts";
-import { arGrovPekare, Kartmotor, TOM_RITVY, type AnalysVektor, type RasterLager, type RitVy, type VyByggnad } from "../karta/kartmotor.ts";
+import { arGrovPekare, Kartmotor, TOM_RITVY, type AnalysVektor, type RasterLager, type RitVy, type TrafikKartaLank, type VyByggnad } from "../karta/kartmotor.ts";
 import { LagerLista } from "../karta/lager.ts";
 import { monteraLagerpanel } from "../karta/lagerpanel.ts";
 import { langd } from "../karta/linje.ts";
@@ -88,9 +88,14 @@ import {
 } from "./berakningsomfang.ts";
 import {
   bullerLagerTeckenHtml,
+  effektivAdtForLank,
   kopplaBullerPanel,
+  projektTrafikUrl,
+  tolkaProjektTrafikGeoJson,
+  trafikKallmarkeEtikett,
   type BullerKontroller,
   type BullerLagerRef,
+  type TrafikLank,
 } from "./bullerflik.ts";
 import {
   kopplaCadBimPanel,
@@ -98,10 +103,23 @@ import {
   type CadBimKontroller,
 } from "./cadbim.ts";
 import {
+  ekologiSkrivbordPanelHtml,
+  exporteraFaltchecklistaCsv,
+  exporteraFaltchecklistaMarkdown,
+  standardSkrivbordLagerVal,
+  valideraFaltlagerFil,
+  type EkologiFaltchecklistaRad,
+  type EkologiFaltlagerOversikt,
+  type EkologiSkrivbordLagerId,
+  type EkologiSkrivbordSammanfattning,
+} from "./ekologi_skrivbord.ts";
+import {
   forvaldGyfProfilForKommun,
   kopplaGyfUtciPaneler,
   varmelagerTeckenHtml,
   type GyfUtciKontroller,
+  type PlatsensSmhiUtciForval,
+  type PlatsensVaderUtciInfo,
   type VarmestressLagerRef,
 } from "./gyf-utci.ts";
 import { felBeskedHtml, kopplaLaddaOm, sidFel } from "./felhandling.ts";
@@ -116,7 +134,17 @@ import {
 } from "./grundkartval.ts";
 import { BasLager, byggnaderMedForslag, skapaKarta } from "./kartdel.ts";
 import { arPagaende, senasteKlaraAvsnitt, startaKorning, startaLageIdag, vidKorning } from "./korning.ts";
-import { LUFT_AMNE, luftLagerVal, luftNyckeltal, luftPanelHtml, luftTomPanelHtml } from "./luftflik.ts";
+import {
+  LUFT_AMNE,
+  luftLagerVal,
+  luftNyckeltal,
+  luftPanelHtml,
+  luftSteg2PanelHtml,
+  luftTomPanelHtml,
+  type EmissionsKallaVal,
+  type LuftSkissAnalysSvar,
+  type ProjektVaderLuftData,
+} from "./luftflik.ts";
 import { BYGGNADER_ID, HOJDKURVOR_ID } from "./rasterlager.ts";
 import { markhojdAvlasning } from "./markhojd.ts";
 import { formateraDjupCm, kortMarkhojdText, MatVerktyg, skalstockHtml, skalstockMatt } from "./matverktyg.ts";
@@ -222,6 +250,58 @@ type EkologiMedLager = EkologiSvar & {
   };
 };
 
+interface ProjektVaderLuftApiSvar extends ProjektVaderLuftData {
+  lager_sha256?: string | null;
+  station?: {
+    id?: string | null;
+    namn?: string | null;
+    avstand_km?: number | null;
+    ar?: number | null;
+  } | null;
+  utci_forval?: {
+    platsens_smhi_p95?: PlatsensSmhiUtciForval | null;
+    platsens_smhi_p99?: PlatsensSmhiUtciForval | null;
+  } | null;
+}
+
+interface EkologiFaltlagerApiPost extends EkologiFaltlagerOversikt {
+  geojson?: GeoJSON.FeatureCollection | null;
+}
+
+interface ProjektEkologiSkrivbordApiSvar {
+  projekt_id: string;
+  har_skrivbord: boolean;
+  sammanfattning: EkologiSkrivbordSammanfattning;
+  skyddade_omraden?: GeoJSON.FeatureCollection | null;
+  skogliga_varden?: GeoJSON.FeatureCollection | null;
+  publika_fynd?: GeoJSON.FeatureCollection | null;
+  vmi?: GeoJSON.FeatureCollection | null;
+  faltchecklista?: EkologiFaltchecklistaRad[];
+  faltlager?: EkologiFaltlagerApiPost | null;
+}
+
+function bytesTillBase64(bytes: Uint8Array): string {
+  const delar: string[] = [];
+  const steg = 0x8000;
+  for (let i = 0; i < bytes.length; i += steg) {
+    delar.push(String.fromCharCode(...bytes.subarray(i, i + steg)));
+  }
+  return btoa(delar.join(""));
+}
+
+async function sha256HexAvText(text: string): Promise<string | null> {
+  try {
+    if (typeof crypto === "undefined" || !crypto.subtle) return null;
+    const buf = new TextEncoder().encode(text);
+    const dig = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(dig))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return null;
+  }
+}
+
 type Kalla = "ritat" | "projekt" | "lage";
 export type PlaneringsDoman = Amne | typeof LUFT_AMNE | "mikroklimat" | "buller";
 type ResultatAmne = PlaneringsDoman;
@@ -274,7 +354,7 @@ export const OSAKERHET_KNAPP_ID = "rs-osakerhet";
 
 /** Delegerad klickselektor i arbetsytan (Steg 2). */
 export const ARBETSYTA_KLICK_SELEKTOR =
-  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-skyfall-metod],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-kor-alla,#ar-rita-forslag,#ar-skikt-vaxla,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
+  "[data-lage],[data-amne],[data-kalla],[data-vy],[data-lager-val],[data-eko-lager],[data-vektor-knapp],[data-regn-forval],[data-regn-eget],[data-skyfall-metod],[data-regn-berakningstyp],[data-regn-regntyp],[data-sol-lage],[data-sol-datum],[data-sol-brukstid],[data-grundkarta],[data-grundkarta-vaxla],[data-dock-flik],[data-sektion-handling],[data-tid-handling],[data-hv],[data-friyta-roll],[data-v],[data-mark-delta],[data-cad-lage],[data-ekologi-checklista-export],#ar-luft-skiss-kor,#rs-osakerhet,#ar-kor-nulage,#ar-tom-kor-nulage,#ar-kor-forslag,#ar-kor-alla,#ar-rita-forslag,#ar-skikt-vaxla,#ar-tecken-vaxla,#ar-sanka-stang,#ar-panel-vaxla,#ar-mat-knapp,#ar-sektion-knapp,#ar-las-centrum,#ar-redigera-3d-knapp,#ar-redigera-3d-stang,#ar-riv-knapp,#ar-in,#ar-ut,#ar-anpassa,#ar-spara";
 
 /** Mappar ett analys-id (`"vatten.skyfall"`, `"dagsljus.sol"`, …) eller mallnamn till arbetsytans ämne. */
 export function amneForAnalysId(analysId: string, mall?: string | null): ResultatAmne | null {
@@ -976,6 +1056,19 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let ekologiFel: string | null = null;
   let aktivtVarmelager: VarmestressLagerRef | null = null;
   let aktivtBullerlager: BullerLagerRef | null = null;
+  let trafikLankar: TrafikLank[] = [];
+  let vaderLuftData: ProjektVaderLuftApiSvar | null = null;
+  let luftEmissionsVal: EmissionsKallaVal = { lage: "egen_tabell" };
+  let luftEmissionText: string | null = null;
+  let luftEmissionFormat: "csv" | "toml" | null = null;
+  let luftSkissSvar: LuftSkissAnalysSvar | null = null;
+  let luftSkissLaddar = false;
+  let luftSkissFel: string | null = null;
+  let luftSkissSeq = 0;
+  let ekologiSkrivbordData: ProjektEkologiSkrivbordApiSvar | null = null;
+  let ekologiSkrivbordLagerVal: Record<EkologiSkrivbordLagerId, boolean> = standardSkrivbordLagerVal(null, null);
+  let ekologiSkrivbordLaddar = false;
+  let ekologiSkrivbordFel: string | null = null;
   let natverkLista: Array<{ natverk_id: string; visningsnamn: string; korbar: boolean; lokalt: boolean }> = [];
   let valtNatverk: string | null = null;
   let lage: ArbetsLage = initialtLage;
@@ -1207,6 +1300,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
 
         <div id="ar-analys-del">
           <div id="ar-innehall" class="flode-panelinnehall"><p class="flode-dampad">Hämtar underlag …</p></div>
+          <div id="ar-ekologi-skrivbord-plats" class="ar-ekologi-skrivbord-plats" hidden></div>
           <div id="ar-gyf-utci-plats" class="ar-gyf-utci-plats" hidden></div>
           <div id="ar-buller-plats" class="ar-buller-plats" hidden></div>
         </div>
@@ -1290,8 +1384,10 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let bullerKontroller: BullerKontroller | null = null;
   let ritaSkiktPanel = (): void => {};
   let synkaMatOchBullerLinje = (): void => {};
+  let synkaTrafikKartaRef = (): void => {};
   let synkaMarkorStilRef = (): void => {};
   let visaHjalpRef = (): void => {};
+  let ritaAnalysPanelRef = (): void => {};
   const gyfUtciKontroller: GyfUtciKontroller = kopplaGyfUtciPaneler(el("ar-gyf-utci-plats"), {
     projekt,
     hamtaScenario: () => (kalla === "ritat" && t.scenario ? t.scenario.slug : null),
@@ -1325,6 +1421,20 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       visaHjalpRef();
     },
     onVagLinjeAndrad: () => synkaMatOchBullerLinje(),
+    onValdaTrafikAndrade: () => {
+      synkaTrafikKartaRef();
+      if (amne === LUFT_AMNE) ritaAnalysPanelRef();
+    },
+    onSparaTrafik: async (payload) => {
+      const svar = await lasJson<unknown>(projektTrafikUrl(projekt), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      trafikLankar = tolkaProjektTrafikGeoJson(svar);
+      synkaTrafikKartaRef();
+      return trafikLankar;
+    },
     onStatusAndrad: () => ritaSkiktPanel(),
     signal: ac.signal,
   });
@@ -2236,6 +2346,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     a.settSektionLinje(sekLinje);
     b?.settSektionLinje(sekLinje);
     sattVektorer();
+    synkaTrafikKarta();
+    synkaEkologiSkrivbordKarta();
     ritaTecken();
     ritaVaxel();
     ritaRegnOchKor();
@@ -2243,6 +2355,196 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     vy3d?.uppdatera?.();
     vy3dDock?.uppdatera?.();
     if (vektorPa.size > 0 || (lage === "redigera" && visaFlodeUnder)) void laddaVektorer();
+  };
+
+  const synkaTrafikKarta = (): void => {
+    if (avslutad || !a) return;
+    if (lage === "redigera" || lage === "3d" || (amne !== "buller" && amne !== LUFT_AMNE) || trafikLankar.length === 0) {
+      a.settTrafikLankar([]);
+      return;
+    }
+    const valdaIds = new Set((bullerKontroller?.valdaTrafikLankar() ?? []).map((v) => v.lank_id));
+    const kartLankar: TrafikKartaLank[] = trafikLankar.map((l) => {
+      const etikett = l.gatunamn ?? l.lank_id;
+      const harAdt = l.adt_fordon_dygn !== null || l.prognos_adt_fordon_dygn !== null;
+      const adtText =
+        l.adt_fordon_dygn !== null
+          ? `${formatera(l.adt_fordon_dygn, 0)} f/d (${trafikKallmarkeEtikett(l)})`
+          : l.prognos_adt_fordon_dygn !== null
+            ? `Prognos ${formatera(l.prognos_adt_fordon_dygn, 0)} f/d`
+            : "ÅDT saknas (klicka för att välja/ange)";
+      return {
+        lank_id: l.lank_id,
+        koordinater: l.koordinater,
+        har_adt: harAdt,
+        vald: valdaIds.has(l.lank_id),
+        beskrivning: `${etikett} · ${adtText}`,
+      };
+    });
+    a.settTrafikLankar(kartLankar);
+  };
+  synkaTrafikKartaRef = synkaTrafikKarta;
+
+  const synkaEkologiSkrivbordKarta = (): void => {
+    if (avslutad || !a) return;
+    if (amne !== "ekologi" || lage === "redigera" || lage === "3d" || !ekologiSkrivbordData) {
+      a.settEkologiSkrivbord(null);
+      return;
+    }
+    const features: GeoJSON.Feature[] = [];
+    const laggTill = (
+      fc: GeoJSON.FeatureCollection | null | undefined,
+      farg: string,
+      beskriv: (props: Record<string, unknown>) => string,
+    ): void => {
+      if (!fc || !Array.isArray(fc.features)) return;
+      for (const feat of fc.features) {
+        if (!feat || !feat.geometry) continue;
+        const props = (feat.properties && typeof feat.properties === "object" ? feat.properties : {}) as Record<string, unknown>;
+        features.push({
+          type: "Feature",
+          properties: {
+            ...props,
+            farg,
+            beskrivning: beskriv(props),
+          },
+          geometry: feat.geometry,
+        });
+      }
+    };
+    if (ekologiSkrivbordLagerVal.skyddade_omraden) {
+      laggTill(ekologiSkrivbordData.skyddade_omraden, "#047857", (p) => {
+        const namn = String(p.namn ?? p.objekt_id ?? "Skyddat område");
+        const form = String(p.skyddsform_namn ?? p.skyddsform ?? "");
+        return form ? `${namn} (${form})` : namn;
+      });
+    }
+    if (ekologiSkrivbordLagerVal.skogliga_varden) {
+      laggTill(ekologiSkrivbordData.skogliga_varden, "#b45309", (p) => {
+        const namn = String(p.namn ?? p.objekt_id ?? "Skogligt naturvärde");
+        const kat = String(p.kategori_namn ?? p.kategori ?? "");
+        return kat ? `${namn} (${kat})` : namn;
+      });
+    }
+    if (ekologiSkrivbordLagerVal.vmi) {
+      laggTill(ekologiSkrivbordData.vmi, "#0284c7", (p) => String(p.namn ?? "VMI våtmark (1981–2005)"));
+    }
+    if (ekologiSkrivbordLagerVal.publika_fynd) {
+      laggTill(ekologiSkrivbordData.publika_fynd, "#b91c1c", (p) => {
+        const art = String(p.svenskt_namn || p.vetenskapligt_namn || "Publikt artfynd");
+        const rl = p.rodlistekategori ? ` · ${String(p.rodlistekategori)}` : "";
+        const ar = p.ar ? ` (${String(p.ar)})` : "";
+        return `${art}${rl}${ar}`;
+      });
+    }
+    if (ekologiSkrivbordLagerVal.faltlager) {
+      laggTill(ekologiSkrivbordData.faltlager?.geojson, "#6d28d9", (p) => {
+        const typ = String(p.objekttyp ?? "Fältobjekt");
+        const nvi = p.nvi_klass ? ` · NVI klass ${String(p.nvi_klass)}` : "";
+        const extra = p.biotop ? ` · ${String(p.biotop)}` : p.tradslag ? ` · ${String(p.tradslag)}` : "";
+        return `${typ}${nvi}${extra}`;
+      });
+    }
+    a.settEkologiSkrivbord(features.length > 0 ? { type: "FeatureCollection", features } : null);
+  };
+
+  const ritaEkologiSkrivbord = (): void => {
+    const plats = el("ar-ekologi-skrivbord-plats");
+    if (amne !== "ekologi" || lage === "redigera") {
+      plats.hidden = true;
+      plats.innerHTML = "";
+      return;
+    }
+    plats.hidden = false;
+    plats.innerHTML = ekologiSkrivbordPanelHtml({
+      sammanfattning: ekologiSkrivbordData?.sammanfattning ?? null,
+      faltlager: ekologiSkrivbordData?.faltlager ?? null,
+      faltchecklista: ekologiSkrivbordData?.faltchecklista ?? [],
+      lagerVal: ekologiSkrivbordLagerVal,
+      laddar: ekologiSkrivbordLaddar,
+      felmeddelande: ekologiSkrivbordFel,
+      projektNamn: info?.namn ?? projekt,
+    });
+  };
+
+  const korLuftSkissNu = async (): Promise<void> => {
+    const valda = bullerKontroller?.valdaTrafikLankar() ?? [];
+    const tLage = bullerKontroller?.trafikLage() ?? "nulage";
+    if (valda.length === 0) {
+      luftSkissFel = "Välj minst en väglänk på kartan (eller under Buller) innan du kör luftskiss.";
+      ritaAnalysPanel();
+      return;
+    }
+    const vagsegment: Array<Record<string, unknown>> = [];
+    for (const lank of valda) {
+      const etikett = lank.gatunamn ?? lank.lank_id;
+      const adt = effektivAdtForLank(lank, tLage);
+      if (adt === null || !Number.isFinite(adt) || adt < 0) {
+        luftSkissFel = `ÅDT saknas för "${etikett}" — ange ÅDT under Buller eller välj en länk med ÅDT.`;
+        ritaAnalysPanel();
+        return;
+      }
+      if (lank.hastighet_km_h === null || !Number.isFinite(lank.hastighet_km_h) || lank.hastighet_km_h <= 0) {
+        luftSkissFel = `Skyltad hastighet saknas för "${etikett}" — ange hastighet (km/h).`;
+        ritaAnalysPanel();
+        return;
+      }
+      if (lank.andel_tung_pct === null || !Number.isFinite(lank.andel_tung_pct)) {
+        luftSkissFel = `Andel tung trafik saknas för "${etikett}" — ange tung andel (%).`;
+        ritaAnalysPanel();
+        return;
+      }
+      vagsegment.push({
+        id: lank.lank_id,
+        gatunamn: etikett,
+        koordinater: lank.koordinater,
+        adt_fordon_dygn: adt,
+        hastighet_km_h: lank.hastighet_km_h,
+        andel_tung_pct: lank.andel_tung_pct,
+      });
+    }
+    if (luftEmissionsVal.lage === "egen_tabell" && !luftEmissionText) {
+      luftSkissFel = "Välj en emissionsfaktortabell (.csv eller .toml) eller växla till publikt skiss-schablonset.";
+      ritaAnalysPanel();
+      return;
+    }
+    if (luftEmissionsVal.lage === "skiss_schablon" && !luftEmissionsVal.schablonBekraftad) {
+      luftSkissFel = "Bekräfta aktivt val av publikt skiss-schablonset innan du kör luftskiss.";
+      ritaAnalysPanel();
+      return;
+    }
+    const nr = ++luftSkissSeq;
+    luftSkissLaddar = true;
+    luftSkissFel = null;
+    ritaAnalysPanel();
+    try {
+      const payload: Record<string, unknown> = {
+        omrade_id: projekt,
+        vagsegment,
+        ...(luftEmissionsVal.lage === "skiss_schablon"
+          ? { anvand_skiss_schablon: true }
+          : luftEmissionFormat === "toml"
+            ? { emissionsfaktorer_toml: luftEmissionText }
+            : { emissionsfaktorer_csv: luftEmissionText }),
+      };
+      const svar = await lasJson<LuftSkissAnalysSvar>("/api/analys/luft_skiss", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (nr !== luftSkissSeq || avslutad) return;
+      luftSkissSvar = svar;
+      luftSkissFel = null;
+    } catch (e) {
+      if (nr !== luftSkissSeq || avslutad) return;
+      luftSkissFel = e instanceof Error ? e.message : String(e);
+    } finally {
+      if (nr === luftSkissSeq && !avslutad) {
+        luftSkissLaddar = false;
+        ritaAnalysPanel();
+        ritaSkiktPanel();
+      }
+    }
   };
 
   const ritaVaxel = (): void => {
@@ -2471,6 +2773,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     for (const v of [...(projektSvar?.vyer ?? []), ...t.ritVyer, ...t.lageVyer]) {
       if (v?.avsnitt) s.add(v.avsnitt);
     }
+    if (luftSkissSvar !== null) s.add(LUFT_AMNE);
     return s;
   };
 
@@ -2575,6 +2878,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     ritaSkiktPanel();
     gyfUtciKontroller.sattAktivDoman(amne);
     bullerKontroller?.sattAktivDoman(amne);
+    ritaEkologiSkrivbord();
     const inne = el("ar-innehall");
     if (amne === "mikroklimat" || amne === "buller") {
       inne.hidden = true;
@@ -2598,12 +2902,29 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         : "";
     if (!vy || !r) {
       if (amne === LUFT_AMNE) {
+        const antalValda = (bullerKontroller?.valdaTrafikLankar() ?? []).length;
         inne.innerHTML = pagar
           ? `<h1 class="flode-h" id="ar-rubrik">Beräknar …</h1><p class="flode-dampad" role="status">${esc(t.korning?.text ?? "")}</p>`
-          : luftTomPanelHtml({
-              harMall: aktivaAnalyser().length > 0,
-              rapportHref: flodeAdress(projekt, "rapport"),
-            });
+          : vaderLuftData?.har_vader_luft && vaderLuftData.vindros
+            ? luftSteg2PanelHtml({
+                vaderLuft: vaderLuftData,
+                emissionsVal: luftEmissionsVal,
+                skissResultat: luftSkissSvar,
+                antalVaglankar: antalValda,
+                laddar: luftSkissLaddar,
+                fel: luftSkissFel,
+                harMall: aktivaAnalyser().length > 0,
+                rapportHref: flodeAdress(projekt, "rapport"),
+              })
+            : luftTomPanelHtml({
+                harMall: aktivaAnalyser().length > 0,
+                rapportHref: flodeAdress(projekt, "rapport"),
+                vaderLuft: vaderLuftData,
+                emissionsVal: luftEmissionsVal,
+                skissResultat: luftSkissSvar,
+                laddar: luftSkissLaddar,
+                fel: luftSkissFel,
+              });
         return;
       }
       if (amne === "ekologi") {
@@ -2663,13 +2984,26 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (amne === LUFT_AMNE) {
       const foreScen = lagerPost(r, vy.fore_lager)?.scenario;
       const efterScen = lagerPost(r, vy.efter_lager)?.scenario;
+      const steg2Extra =
+        vaderLuftData?.har_vader_luft && vaderLuftData.vindros
+          ? luftSteg2PanelHtml({
+              vaderLuft: vaderLuftData,
+              emissionsVal: luftEmissionsVal,
+              skissResultat: luftSkissSvar,
+              antalVaglankar: (bullerKontroller?.valdaTrafikLankar() ?? []).length,
+              laddar: luftSkissLaddar,
+              fel: luftSkissFel,
+              harMall: aktivaAnalyser().length > 0,
+              rapportHref: flodeAdress(projekt, "rapport"),
+            })
+          : "";
       inne.innerHTML = `${kallVal}${lagerBlock}${luftPanelHtml({
         korningId: vy.korning_id,
         roller: rollerNu(),
         tal: luftNyckeltal(r.tabeller, foreScen, efterScen),
         las: lasKartanForAmne(amne, vy, kartLageForAnalys(), info?.paahittat !== false),
         lageIdag: kalla === "lage",
-      })}`;
+      })}${steg2Extra}`;
       return;
     }
 
@@ -2738,6 +3072,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       las: lasKartanForAmne(amne, vy, kartLageForAnalys(), info?.paahittat !== false),
     })}${dpcTabellHtml()}`;
   };
+  ritaAnalysPanelRef = ritaAnalysPanel;
 
   // ---------- Laddning av resultatvy ----------
   const valjVy = async (ny: ProjektVy | null): Promise<void> => {
@@ -3517,6 +3852,28 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const m = target.closest<HTMLElement>(ARBETSYTA_KLICK_SELEKTOR);
     if (!m) return;
 
+    if (m.id === "ar-luft-skiss-kor") {
+      void korLuftSkissNu();
+      return;
+    }
+    if (m.dataset.ekologiChecklistaExport) {
+      const fmt = m.dataset.ekologiChecklistaExport;
+      const rader = ekologiSkrivbordData?.faltchecklista ?? [];
+      if (fmt === "md") {
+        laddaNerFil(
+          exporteraFaltchecklistaMarkdown(rader, info?.namn ?? projekt),
+          `nvi-checklista-${projekt}.md`,
+          "text/markdown;charset=utf-8",
+        );
+      } else if (fmt === "csv") {
+        laddaNerFil(
+          exporteraFaltchecklistaCsv(rader),
+          `nvi-checklista-${projekt}.csv`,
+          "text/csv;charset=utf-8",
+        );
+      }
+      return;
+    }
     if (m.id === "ar-skikt-vaxla") {
       skiktHopfalld = !skiktHopfalld;
       ritaSkiktPanel();
@@ -3936,6 +4293,108 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
 
   lyssna(rot, "change", (h) => {
     const m = h.target as HTMLInputElement | HTMLSelectElement;
+    if (m instanceof HTMLInputElement && m.name === "ar-luft-emissionskalla") {
+      luftEmissionsVal = {
+        ...luftEmissionsVal,
+        lage: m.value === "skiss_schablon" ? "skiss_schablon" : "egen_tabell",
+      };
+      luftSkissFel = null;
+      ritaAnalysPanel();
+      return;
+    }
+    if (m.id === "ar-luft-schablon-bekrafta" && m instanceof HTMLInputElement) {
+      luftEmissionsVal = { ...luftEmissionsVal, schablonBekraftad: m.checked };
+      luftSkissFel = null;
+      ritaAnalysPanel();
+      return;
+    }
+    if (m.id === "ar-luft-emission-fil" && m instanceof HTMLInputElement) {
+      const fil = m.files?.[0];
+      m.value = "";
+      if (!fil) return;
+      const arToml = fil.name.toLowerCase().endsWith(".toml");
+      void fil.text().then(async (text) => {
+        if (avslutad) return;
+        luftEmissionText = text;
+        luftEmissionFormat = arToml ? "toml" : "csv";
+        const sha = await sha256HexAvText(text);
+        if (avslutad) return;
+        luftEmissionsVal = {
+          ...luftEmissionsVal,
+          lage: "egen_tabell",
+          egenFilnamn: fil.name,
+          egenSha256: sha,
+        };
+        luftSkissFel = null;
+        ritaAnalysPanel();
+      });
+      return;
+    }
+    if (m.dataset.ekologiSkrivbordLager && m instanceof HTMLInputElement) {
+      const id = m.dataset.ekologiSkrivbordLager as EkologiSkrivbordLagerId;
+      ekologiSkrivbordLagerVal = { ...ekologiSkrivbordLagerVal, [id]: m.checked };
+      synkaEkologiSkrivbordKarta();
+      return;
+    }
+    if (m.dataset.ekologiFaltlagerFil !== undefined && m instanceof HTMLInputElement) {
+      const fil = m.files?.[0];
+      m.value = "";
+      if (!fil) return;
+      const check = valideraFaltlagerFil(fil.name, fil.size);
+      if (!check.ok) {
+        ekologiSkrivbordFel = check.fel;
+        ritaEkologiSkrivbord();
+        return;
+      }
+      ekologiSkrivbordLaddar = true;
+      ekologiSkrivbordFel = null;
+      ritaEkologiSkrivbord();
+      void fil
+        .arrayBuffer()
+        .then((buf) =>
+          lasJson<EkologiFaltlagerApiPost>(`/api/projekt/${encodeURIComponent(projekt)}/ekologi/faltlager`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filnamn: fil.name,
+              innehall_base64: bytesTillBase64(new Uint8Array(buf)),
+            }),
+          }),
+        )
+        .then((svar) => {
+          if (avslutad) return;
+          if (ekologiSkrivbordData) {
+            ekologiSkrivbordData = { ...ekologiSkrivbordData, faltlager: svar };
+          } else {
+            ekologiSkrivbordData = {
+              projekt_id: projekt,
+              har_skrivbord: false,
+              sammanfattning: {
+                skyddad_natur_tillganglig: false,
+                artfynd_tillganglig: false,
+                skyddade_omraden: { antal: 0, antal_overlappar_karna: 0, overlapp_karna_m2: 0, minsta_avstand_m: null },
+                skogliga_varden: { antal: 0, antal_overlappar_karna: 0, overlapp_karna_m2: 0, minsta_avstand_m: null, antal_nyckelbiotoper: 0, antal_sumpskogar: 0 },
+                vmi: { tillganglig: false, antal_polygoner: 0, overlapp_karna_m2: 0 },
+                artfynd_publika: null,
+              },
+              faltlager: svar,
+            };
+          }
+          ekologiSkrivbordLagerVal = { ...ekologiSkrivbordLagerVal, faltlager: svar.antal_objekt > 0 };
+          ekologiSkrivbordFel = null;
+        })
+        .catch((e: unknown) => {
+          if (avslutad) return;
+          ekologiSkrivbordFel = e instanceof Error ? e.message : String(e);
+        })
+        .finally(() => {
+          if (avslutad) return;
+          ekologiSkrivbordLaddar = false;
+          ritaEkologiSkrivbord();
+          synkaEkologiSkrivbordKarta();
+        });
+      return;
+    }
     if (m.dataset.skiktBas) {
       kartLager.sattSynlig(m.dataset.skiktBas, (m as HTMLInputElement).checked);
       basLagerListan = bas?.lagerListan() ?? [];
@@ -4435,6 +4894,63 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       }
       visaSanka(e, n);
     };
+    a.onTrafikLankKlick = (lankId) => {
+      if (lage === "redigera" || lage === "3d") return false;
+      if (amne === "buller" && bullerKontroller?.arRitarVag()) return false;
+      if (amne !== "buller" && amne !== LUFT_AMNE) return false;
+      return bullerKontroller?.klickaTrafikLank(lankId) ?? false;
+    };
+
+    // Ladda projektets K46-tilläggslager parallellt utan att blockera kartstart (0 konsolfel)
+    void lasJson<unknown>(projektTrafikUrl(projekt), { signal: ac.signal })
+      .then((svar) => {
+        if (avslutad) return;
+        trafikLankar = tolkaProjektTrafikGeoJson(svar);
+        bullerKontroller?.sattTrafikLankar(trafikLankar);
+        synkaTrafikKarta();
+      })
+      .catch(() => undefined);
+
+    void lasJson<ProjektVaderLuftApiSvar>(`/api/projekt/${encodeURIComponent(projekt)}/vader_luft`, {
+      signal: ac.signal,
+    })
+      .then((svar) => {
+        if (avslutad) return;
+        vaderLuftData = svar;
+        if (svar.har_vader_luft && svar.utci_forval) {
+          const pv: PlatsensVaderUtciInfo = {
+            station_id: svar.station?.id ?? null,
+            station_namn: svar.station?.namn ?? null,
+            station_avstand_km: svar.station?.avstand_km ?? null,
+            ar: svar.station?.ar ?? null,
+            kalla: svar.kalla ?? null,
+            kalla_text: svar.kalla_text ?? null,
+            lager_sha256: svar.lager_sha256 ?? null,
+            forval: {
+              platsens_smhi_p95: svar.utci_forval.platsens_smhi_p95 ?? null,
+              platsens_smhi_p99: svar.utci_forval.platsens_smhi_p99 ?? null,
+            },
+          };
+          gyfUtciKontroller.sattPlatsensVader?.(pv);
+        }
+        if (amne === LUFT_AMNE) ritaAnalysPanel();
+      })
+      .catch(() => undefined);
+
+    void lasJson<ProjektEkologiSkrivbordApiSvar>(
+      `/api/projekt/${encodeURIComponent(projekt)}/ekologi/skrivbord`,
+      { signal: ac.signal },
+    )
+      .then((svar) => {
+        if (avslutad) return;
+        ekologiSkrivbordData = svar;
+        ekologiSkrivbordLagerVal = standardSkrivbordLagerVal(svar.sammanfattning, svar.faltlager ?? null);
+        if (amne === "ekologi") {
+          ritaEkologiSkrivbord();
+          synkaEkologiSkrivbordKarta();
+        }
+      })
+      .catch(() => undefined);
 
     bas = new BasLager(a, info, kartLager);
     bas.registrera(projekt);
