@@ -503,8 +503,68 @@ class RapportTjanst:
 
     # ------------------------------------------------------------------ skapa
 
+    def _geografi_koordinater(
+        self, korning_id: str, projekt: str | None = None
+    ) -> dict[str, Any] | None:
+        """Läser geografimanifestets `koordinater` (publicering_epsg, skalfel) för projektet om tillgängligt."""
+        fragor = getattr(self.tjanst, "fragor", None)
+        app = getattr(self.tjanst, "app", None)
+        projektrot = getattr(fragor, "projektrot", None) if fragor is not None else None
+        geomapp = getattr(app, "geomapp", None) if app is not None else None
+        if projektrot is None or geomapp is None:
+            return None
+        proj_rot = Path(projektrot)
+        geo_rot = Path(geomapp)
+        if not proj_rot.is_dir() or not geo_rot.is_dir():
+            return None
+        projekt_id: str | None = None
+        if fragor is not None and hasattr(fragor, "korning_eller_none"):
+            try:
+                k_obj = fragor.korning_eller_none(korning_id)
+                if k_obj is not None and getattr(k_obj, "projekt_id", None):
+                    projekt_id = str(k_obj.projekt_id)
+            except Exception:  # noqa: BLE001
+                projekt_id = None
+        if not projekt_id:
+            projekt_id = projekt
+        if not projekt_id:
+            return None
+        for fil in sorted(proj_rot.glob("*/projekt.json")):
+            try:
+                d = json.loads(fil.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(d, dict):
+                continue
+            pid = d.get("register_id") or d.get("projekt_id")
+            if pid != projekt_id and fil.parent.name != projekt_id:
+                continue
+            ref = d.get("geografi")
+            if not isinstance(ref, str) or not ref:
+                return None
+            if "@" not in ref:
+                return None
+            gid, ver = ref.split("@", 1)
+            manifest_fil = geo_rot / gid / ver / "manifest.json"
+            if not manifest_fil.is_file():
+                return None
+            try:
+                g_manifest = json.loads(manifest_fil.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
+            koord = g_manifest.get("koordinater") if isinstance(g_manifest, dict) else None
+            if isinstance(koord, Mapping) and koord.get("publicering_epsg") is not None:
+                return dict(koord)
+            return None
+        return None
+
     def _korningspost(
-        self, korning_id: str, amne: str, scenario: Mapping[str, Any] | None = None
+        self,
+        korning_id: str,
+        amne: str,
+        scenario: Mapping[str, Any] | None = None,
+        *,
+        projekt: str | None = None,
     ) -> dict[str, Any]:
         try:
             status = self.tjanst.korning_status(korning_id)
@@ -558,7 +618,8 @@ class RapportTjanst:
                     f"{', '.join(scenario['efter'])} mot {scenario['fore']} (beställningens "
                     "scenario). Jämförelser anges i frågan ([[jamforelser]], K20)."
                 )
-        antaganden = _antaganden(res, [t["analys"] for t in analyser])
+        koord = self._geografi_koordinater(korning_id, projekt=projekt)
+        antaganden = _antaganden(res, [t["analys"] for t in analyser], koordinater=koord)
         if amne == "ekologi":
             from rapport.ekologibelagg import ekologiantaganden
 
@@ -571,6 +632,9 @@ class RapportTjanst:
                     if t["losare"] == "ekologi.konnektivitet"
                 },
             )
+            skalnot = _skalfelsantagande(koord)
+            if skalnot and skalnot not in antaganden:
+                antaganden = [*antaganden, skalnot]
         if amne == "luft":
             from rapport.luftbelagg import luftantaganden
 
@@ -579,6 +643,9 @@ class RapportTjanst:
                 korning_id,
                 {t["analys"]: sorted({r["scenario"] for r in t["rader"]}) for t in analyser},
             )
+            skalnot = _skalfelsantagande(koord)
+            if skalnot and skalnot not in antaganden:
+                antaganden = [*antaganden, skalnot]
         return {
             "korning_id": korning_id,
             "fraga_id": res["fraga_id"],
@@ -890,7 +957,7 @@ class RapportTjanst:
         if not valda:
             raise RapportFel("Inga frågor ur katalogen matchar urvalet.")
         posts = [
-            self._korningspost(k, amne, None if best is None else best.scenario)
+            self._korningspost(k, amne, None if best is None else best.scenario, projekt=projekt)
             for k in dict.fromkeys(korningar)
         ]
         underlag_fn = getattr(self.tjanst.app, "korningsunderlag", None)
@@ -1255,10 +1322,42 @@ class RapportTjanst:
                 ut.append(rad)
         return ut
 
+    def _tillgangliga_matvarden(
+        self, korning_id: str, analys: str, scenario: str, kandidater: Sequence[str]
+    ) -> list[str]:
+        """Filtrerar mätvärdesnycklar till sådana som faktiskt finns som tal i körningen."""
+        from rapport.belaggskalla import REGN_PARAMETRAR
+
+        try:
+            svar = self.tjanst.resultat_sammanfattning(
+                korning_id, analys=analys, scenario=scenario, ruta=None, max_rader=500
+            )
+            rader = [r for t in svar["matvarden"] for r in t["rader"]]
+        except Exception:  # noqa: BLE001
+            return list(kandidater)
+        if not rader:
+            return []
+        varden = rader[0].get("varden", {})
+        par: Mapping[str, Any] = {}
+        try:
+            par = self.kalla.jobbparametrar(korning_id, analys, scenario)
+        except Exception:  # noqa: BLE001
+            par = {}
+
+        def _ar_tal(val: Any) -> bool:
+            return isinstance(val, int | float) and not isinstance(val, bool)
+
+        ut: list[str] = []
+        for n in kandidater:
+            if _ar_tal(varden.get(n)) or (n in REGN_PARAMETRAR and _ar_tal(par.get(n))):
+                ut.append(n)
+        return ut
+
     def adresser(self, r: Rapport) -> list[str]:
         """Beläggsadresser som går att använda i rapporten (jämförelser, mätvärden, mottagare)."""
         from rapport.belaggskalla import (
             JAMFORELSEMATT,
+            MATTKATALOG,
             OMRADESSTATISTIK,
             VATTEN_MATVARDEN,
         )
@@ -1274,8 +1373,18 @@ class RapportTjanst:
             for j in k["jamforelser"]:
                 ut += [f"jamforelse.{j['namn']}.{m}" for m in JAMFORELSEMATT]
             for a in k["analyser"]:
+                losare = str(a.get("losare", ""))
+                katalog_nycklar = [
+                    n.removeprefix("matvarde:")
+                    for (los, n) in MATTKATALOG
+                    if los == losare and n.startswith("matvarde:")
+                ]
+                kandidater = katalog_nycklar or list(VATTEN_MATVARDEN)
                 for s in a["scenarier"]:
-                    ut += [f"matvarde.{a['analys']}.{s}.{n}" for n in VATTEN_MATVARDEN]
+                    giltiga = self._tillgangliga_matvarden(
+                        str(k["korning_id"]), str(a["analys"]), str(s), kandidater
+                    )
+                    ut += [f"matvarde.{a['analys']}.{s}.{n}" for n in giltiga]
             for m in r.mottagare:
                 for j in k["jamforelser"]:
                     for s in (j["fore"], j["efter"]):
@@ -1413,7 +1522,82 @@ def _rapportmapp_for(tjanst: FlodenTjanst) -> Path:
     return tjanst.rot / STANDARD_RAPPORTMAPP
 
 
-def _antaganden(res: Mapping[str, Any], analyser: Iterable[str]) -> list[str]:
+def _regnantagande(r: Mapping[str, Any]) -> str:
+    """Formaterar ett regnantagande ur körningen utan att någonsin skriva 'None'."""
+    delar: list[str] = []
+    rapport = r.get("rapport")
+    kalla = r.get("kalla")
+    tabell = r.get("tabell")
+    if rapport or kalla:
+        namn = str(rapport or kalla)
+        if tabell:
+            namn += f" ({tabell})"
+        delar.append(namn)
+        if r.get("aterkomsttid_ar") is not None:
+            delar.append(f"återkomsttid {_sv(r['aterkomsttid_ar'])} år")
+        if r.get("varaktighet_min") is not None:
+            delar.append(f"varaktighet {_sv(r['varaktighet_min'])} min")
+        if r.get("regntyp"):
+            delar.append(f"{r['regntyp']}regn")
+        if r.get("klimatfaktor") is not None:
+            delar.append(f"klimatfaktor {_sv(r['klimatfaktor'])} (uttrycklig parameter)")
+        if r.get("regn_mm") is not None:
+            delar.append(f"{_sv(round(float(r['regn_mm']), 1))} mm")
+    else:
+        if r.get("regn_mm") is not None:
+            delar.append(f"angiven regnmängd {_sv(round(float(r['regn_mm']), 1))} mm")
+        else:
+            delar.append("angivet regn")
+        if r.get("varaktighet_min") is not None:
+            delar.append(f"varaktighet {_sv(r['varaktighet_min'])} min")
+        if r.get("regntyp"):
+            delar.append(f"{r['regntyp']}regn")
+        if r.get("klimatfaktor") is not None:
+            delar.append(f"klimatfaktor {_sv(r['klimatfaktor'])} (uttrycklig parameter)")
+    return "Regn: " + ", ".join(delar) + "."
+
+
+def _skalfelsantagande(koordinater: Mapping[str, Any] | None) -> str | None:
+    """Deterministisk skalfelsnot när kommunen publicerar i annat EPSG än internt EPSG:3011."""
+    if not isinstance(koordinater, Mapping):
+        return None
+    pub = koordinater.get("publicering_epsg")
+    if pub is None:
+        return None
+    try:
+        pub_int = int(pub)
+        intern_int = int(koordinater.get("intern_epsg", 3011))
+    except (TypeError, ValueError):
+        return None
+    if pub_int == intern_int:
+        return None
+    langd = koordinater.get("skalfel_langd_procent")
+    yta = koordinater.get("skalfel_yta_procent")
+    if (
+        isinstance(langd, int | float)
+        and not isinstance(langd, bool)
+        and isinstance(yta, int | float)
+        and not isinstance(yta, bool)
+    ):
+        langd_s = f"{float(langd):.2f}".replace(".", ",")
+        yta_s = f"{float(yta):.2f}".replace(".", ",")
+        return (
+            f"Koordinatsystem och skalfel: kommunen publicerar i EPSG:{pub_int}, "
+            f"Floden räknar i EPSG:{intern_int} (SWEREF 99 18 00). "
+            f"Projektionens skalfel i området är {langd_s} % för längder och {yta_s} % för ytor."
+        )
+    return (
+        f"Koordinatsystem: kommunen publicerar i EPSG:{pub_int}, "
+        f"Floden räknar i EPSG:{intern_int} (SWEREF 99 18 00)."
+    )
+
+
+def _antaganden(
+    res: Mapping[str, Any],
+    analyser: Iterable[str],
+    *,
+    koordinater: Mapping[str, Any] | None = None,
+) -> list[str]:
     """Antaganden som Floden själv har skrivit (regn, takvatten, avtappning; för dagsljus datum,
     tidssteg och avgränsningar ur lösarnas parametrar) för analyserna."""
     valda = set(analyser)
@@ -1423,17 +1607,16 @@ def _antaganden(res: Mapping[str, Any], analyser: Iterable[str]) -> list[str]:
             ut.append(_dagsljusantagande(a))
     for r in res.get("antaganden", {}).get("regn", []):
         if r.get("analys") in valda:
-            ut.append(
-                f"Regn: {r.get('rapport')} ({r.get('tabell')}), återkomsttid "
-                f"{_sv(r.get('aterkomsttid_ar'))} år, varaktighet {_sv(r.get('varaktighet_min'))} "
-                f"min, {r.get('regntyp')}regn, klimatfaktor {_sv(r.get('klimatfaktor'))} "
-                f"(uttrycklig parameter), {_sv(round(float(r.get('regn_mm', 0.0)), 1))} mm."
-            )
+            ut.append(_regnantagande(r))
     for v in res.get("antaganden", {}).get("vatten", []):
         if v.get("analys") in valda:
             for nyckel in ("takvatten_text", "avtappning_text"):
                 if v.get(nyckel):
                     ut.append(str(v[nyckel]) + ".")
+    koord = koordinater or res.get("koordinater") or res.get("antaganden", {}).get("koordinater")
+    skalnot = _skalfelsantagande(koord)
+    if skalnot:
+        ut.append(skalnot)
     return list(dict.fromkeys(ut))
 
 

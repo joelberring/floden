@@ -43,14 +43,21 @@ def _m(adress: str, opt: str = "") -> str:
     return "{{matt:" + adress + (f"|{opt}" if opt else "") + "}}"
 
 
-def pastaenden(analys: str = "skyfall", sprakprofil: str = "sbk") -> list[Mapping[str, Any]]:
+def pastaenden(
+    analys: str = "skyfall",
+    sprakprofil: str = "sbk",
+    *,
+    regnkalla: str = "Stockholmsregn 2024 (Tabell 7)",
+    regntyp: str | None = "block",
+) -> list[Mapping[str, Any]]:
     """De fasta påståendena (argument till `RapportTjanst.lagg_till_pastaende`)."""
     if sprakprofil == "sbk":
-        return _pastaenden_sbk(analys)
+        return _pastaenden_sbk(analys, regnkalla=regnkalla, regntyp=regntyp)
     if sprakprofil != "neutral":
         raise ValueError(f"Okänd språkprofil '{sprakprofil}'.")
     mv = f"matvarde.{analys}"
     jf = f"jamforelse.{JFR}"
+    regntyp_sfx = f", som {regntyp}regn" if regntyp else ""
     return [
         {
             "fraga_id": "SK-01",
@@ -69,11 +76,11 @@ def pastaenden(analys: str = "skyfall", sprakprofil: str = "sbk") -> list[Mappin
             "fraga_id": "SK-02",
             "status": "villkorat",
             "fordjupning": "ja",
-            "text": "Sållningen är gjord med Stockholmsregn 2024 (Tabell 7): återkomsttid "
+            "text": f"Sållningen är gjord med {regnkalla}: återkomsttid "
             f"{_m(mv + '.efter.aterkomsttid_ar')}, varaktighet "
             f"{_m(mv + '.efter.varaktighet_min')}, klimatfaktor "
             f"{_m(mv + '.efter.klimatfaktor', 'avrundning=0,1')} och regnmängd "
-            f"{_m(mv + '.efter.regn_mm', 'avrundning=1')}, som blockregn.",
+            f"{_m(mv + '.efter.regn_mm', 'avrundning=1')}{regntyp_sfx}.",
             "belagg": [
                 f"{mv}.efter.aterkomsttid_ar",
                 f"{mv}.efter.varaktighet_min",
@@ -232,10 +239,16 @@ def pastaenden(analys: str = "skyfall", sprakprofil: str = "sbk") -> list[Mappin
     ]
 
 
-def _pastaenden_sbk(analys: str) -> list[Mapping[str, Any]]:
+def _pastaenden_sbk(
+    analys: str,
+    *,
+    regnkalla: str = "Stockholmsregn 2024 (Tabell 7)",
+    regntyp: str | None = "block",
+) -> list[Mapping[str, Any]]:
     """Språkprofilen "sbk": samma frågor, status, belägg och platshållare, i utredningsprosa."""
     mv = f"matvarde.{analys}"
     jf = f"jamforelse.{JFR}"
+    regntyp_del = f" som {regntyp}regn" if regntyp else ""
     return [
         {
             "fraga_id": "SK-01",
@@ -256,7 +269,7 @@ def _pastaenden_sbk(analys: str) -> list[Mapping[str, Any]]:
             "fraga_id": "SK-02",
             "status": "villkorat",
             "fordjupning": "ja",
-            "text": "Sållningen är gjord med Stockholmsregn 2024 (Tabell 7) som blockregn: "
+            "text": f"Sållningen är gjord med {regnkalla}{regntyp_del}: "
             f"återkomsttid {_m(mv + '.efter.aterkomsttid_ar')}, varaktighet "
             f"{_m(mv + '.efter.varaktighet_min')}, klimatfaktor "
             f"{_m(mv + '.efter.klimatfaktor', 'avrundning=0,1')} och regnmängd "
