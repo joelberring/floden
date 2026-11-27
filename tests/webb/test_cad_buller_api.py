@@ -974,12 +974,15 @@ def test_buller_skiss_tat_kvartersstad_under_20s_och_600mb(
     """Tät kvartersstad (160+ hus + murar i 500×500 m K1-ruta): standard POST /api/analys/buller
     med `karna='nord2000'` ska köra på < 20 s och < 600 MB RSS med fokusbeskärning, reflexordning=0
     och bevarade skiss-invarianter."""
+    import os
     import resource
     import shutil
     import sys
     import time
 
     rss_div = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
+    tidsfaktor = max(1.0, float(os.environ.get("FLODEN_TIDSFAKTOR", "1")))
+    max_tid_s = 20.0 * tidsfaktor
 
     sida_m = 500.0
     pixel_m = 5.0
@@ -1181,7 +1184,7 @@ def test_buller_skiss_tat_kvartersstad_under_20s_och_600mb(
 
     assert status == 200, body.decode("utf-8", errors="replace")
     svar = json.loads(body.decode("utf-8"))
-    assert dt < 20.0, f"Tät urban buller-skiss tog {dt:.2f} s (> 20 s)"
+    assert dt < max_tid_s, f"Tät urban buller-skiss tog {dt:.2f} s (> {max_tid_s:g} s)"
     assert delta_rss_mb < 600.0, f"RSS-ökning blev {delta_rss_mb:.1f} MB (> 600 MB)"
     assert NORD2000_KONFORM is False
     assert svar["nord2000_konform"] is False

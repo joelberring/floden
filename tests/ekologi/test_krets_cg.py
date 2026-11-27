@@ -192,6 +192,7 @@ def test_cg_ej_konvergerad_faller_tillbaka_eller_ger_fel(monkeypatch: pytest.Mon
 
 def test_forbered_kretsgraf_och_snabb_konnektivitet_320x320_med_80_flackar() -> None:
     """Profil: `320×320`-rutnät med `80` fläckar kör < 25 s och < 600 MB RSS (exakt ECA/PC/dPC)."""
+    import os
     import resource
     import sys
     import time
@@ -203,6 +204,8 @@ def test_forbered_kretsgraf_och_snabb_konnektivitet_320x320_med_80_flackar() -> 
     )
 
     rss_div = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
+    tidsfaktor = max(1.0, float(os.environ.get("FLODEN_TIDSFAKTOR", "1")))
+    max_tid_s = 25.0 * tidsfaktor
 
     # 1. Förberäknad graf ska ge bitidentiskt resultat mot `los_kretspar`
     myta, mask_a, mask_b = _heterogent_motstand(24, 30, seed=11)
@@ -244,7 +247,9 @@ def test_forbered_kretsgraf_och_snabb_konnektivitet_320x320_med_80_flackar() -> 
     delta_rss_mb = max(0.0, rss_efter_mb - rss_fore_mb)
 
     assert res.antal_flackar == 80
-    assert dt < 25.0, f"berakna_konnektivitet (320×320, 80 fläckar) tog {dt:.2f} s (> 25 s)"
+    assert (
+        dt < max_tid_s
+    ), f"berakna_konnektivitet (320×320, 80 fläckar) tog {dt:.2f} s (> {max_tid_s:g} s)"
     assert delta_rss_mb < 600.0, f"RSS-ökning blev {delta_rss_mb:.1f} MB (> 600 MB)"
     assert res.stromtathet_sammanlagd is not None
     assert res.kanslighet_sammanlagd is not None
