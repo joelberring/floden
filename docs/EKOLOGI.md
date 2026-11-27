@@ -138,7 +138,32 @@ Ett hus med ändligt högt motstånd minskar ECA (`tests/ekologi/test_natverk.py
 
 Våtmarksinventeringen (Naturvårdsverket, inventerad 1981–2005) läses som lagret `kand_vatmark` (`data_inlasning/vmi.py`,
 märkt som äldre). Det visas och används som kvalitetsinformation, och med parametern `anvand_vmi` kan det väljas som habitat för
-nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt.
+nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt. Kommuner kan ange ett förvalt läns-ZIP-paket under
+`[filpaket.vmi]` (t.ex. `vmi_lan = "O_Goteborg_Bohus"` i `data/kommuner/goteborg.toml`) så att `floden geografi mappa
+--hamta-skyddad-natur` (eller `--vmi-lan <kod>`) automatiskt hämtar och bygger `lager.vmi`.
+
+## Skrivbordskontroll: skyddad natur, Skogsstyrelsen, publika artfynd och fältlager
+
+Utöver ekologisk konnektivitet (NMD + kretsteori) kan geografimappningen (K46, `floden-geografi/v1`, valfria additiva lager)
+hämta och SHA-256-låsa öppna register för ekologisk skrivbordskontroll:
+
+- **Skyddad natur & Natura 2000** (`lager.skyddad_natur`, `src/data_inlasning/skyddad_natur.py`): Naturvårdsverkets öppna
+  WFS-tjänster `ps-nvr` (nationalpark, naturreservat, biotopskydd m.fl.) och `ps-n2k` (Natura 2000 SCI/SPA), CC0.
+- **Skogliga naturvärden** (`lager.skyddad_natur`): Skogsstyrelsens öppna ArcGIS REST-tjänster för nyckelbiotoper,
+  naturvärden, sumpskogar, biotopskydd och naturvårdsavtal, CC0.
+- **Publika rödlistade och fridlysta artfynd** (`lager.artfynd_publika`, `src/data_inlasning/artdatabanken.py`): SLU
+  Artdatabanken Species Observation System (`api.artdatabanken.se`), kräver krypterad kontonyckel av typ `"artdatabanken"`
+  under `#/nycklar` (eller `ARTDATABANKEN_API_KEY`). **Hård OSL 20 kap. 1 §-spärr:** skyddsklassade arter kastas omedelbart i
+  hämtaren — 0 koordinater, 0 artnamn och 0 observations-id sparas, loggas eller visas någonsin. Enbart ett aggregerat antal
+  filtrerade poster samt en obligatorisk OSL-varning följer med till Steg 2, fältchecklistan och ekologirapporter.
+- **Ekologens fältlager** (`POST /api/projekt/<id>/ekologi/faltlager`, `src/geografi/ekologi_skrivbord.py`): uppladdning av
+  GeoPackage eller GeoJSON (max 10 MB, valfritt CRS → EPSG:3011) med strikt dataminimering (0 PII: bara geometri, objekttyp,
+  NVI-klass, biotop/trädslag och stamomkrets sparas).
+- **Webb, NVI-checklista & rapport:** `GET /api/projekt/<id>/ekologi/skrivbord` levererar verifierade lager, trafikljusstatus
+  och exportbar fältchecklista (Markdown/CSV) till Steg 2 under *Ekologi & GYF*. Standardtaket för habitatfläckar i
+  konnektivitetslösaren och `POST /api/analys/ekologi` är `STANDARD_MAX_FLACKAR = 120` (`src/karna/ekologi_losare.py`). När
+  en ekologirapport skapas via `RapportTjanst` eller Steg 3 förses den automatiskt med verifierade `ekoskrivbord.*`-belägg ur
+  geografins `lager.skyddad_natur` och `lager.artfynd_publika` (`src/rapport/ekologibelagg.py`).
 
 ## Begränsningar
 
@@ -150,7 +175,9 @@ nätverk med `vmi_klass` (groddjur, lokalt). Lagret kan vara inaktuellt.
 - **Rastrering.** NMD är 10 m; hus och smala hinder kan försvinna eller bli för breda.
 - **Inte verifierat mot fältdata**, inte jämfört med Nackas eller Stockholms egna körningar, och NMD och VMI är inte hämtade i
   den här miljön (inläsarna är testade mot syntetiska raster och vektorer). Demokvarteret och dess NMD-lager är påhittade.
-- **Artskydd.** Inga artfynd används; skyddsklassade fynd får aldrig förekomma i indata, resultat eller rapporter.
+- **Artskydd & OSL 20 kap. 1 §.** Konnektivitetsmodellen använder inga artfynd. Skrivbordskontrollen kan enbart visa publika
+  artfynd ur SLU Artdatabanken SOS; sekretessprövade skyddsklassade arter filtreras alltid bort vid inläsning och får aldrig
+  förekomma i indata, kartlager, resultat eller rapporter — kontrollera alltid via behörig ekolog eller Länsstyrelsen.
 
 ## Användning
 

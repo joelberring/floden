@@ -398,3 +398,78 @@ def test_flera_ai_leverantorer_och_val_av_primar_ai(miljo: Miljo) -> None:
     # Ogiltig AI-leverantör ger 400
     assert _skriv(webb, "PUT", "/konto/nycklar/primar-ai", {"typ": "okand-ai"})[0] == 400
 
+
+def test_trafikverket_och_artdatabanken_nycklar_krypteras_och_lacker_aldrig(
+    miljo: Miljo, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Datanycklarna trafikverket och artdatabanken krypteras med Fernet, listas som kategori='data'
+    och läcker aldrig i klartext till DB/WAL, HTTP-svar, loggar, händelser eller felmeddelanden."""
+    _slå_på(miljo)
+    caplog.set_level(logging.DEBUG)
+    anna, anna_id = _inloggad(miljo, ANNA)
+    bo, bo_id = _inloggad(miljo, BO)
+    forrad = miljo.adapter.nycklar
+    assert forrad is not None
+
+    tv_nyckel = "tv-hemlig-nvdb-nyckel-7711"
+    art_nyckel = "slu-sos-sub-nyckel-8822"
+
+    st_ov, ov, _ = _las(anna, "/konto/nycklar")
+    assert st_ov == 200
+    typer_map = {t["typ"]: t for t in ov["typer"]}
+    assert "trafikverket" in typer_map and typer_map["trafikverket"]["kategori"] == "data"
+    assert typer_map["trafikverket"]["namn"] == "Trafikverket Öppet API (NVDB)"
+    assert [f["id"] for f in typer_map["trafikverket"]["falt"]] == ["nyckel"]
+    assert "artdatabanken" in typer_map and typer_map["artdatabanken"]["kategori"] == "data"
+    assert typer_map["artdatabanken"]["namn"] == "SLU Artdatabanken (SOS publika fynd)"
+    assert [f["id"] for f in typer_map["artdatabanken"]["falt"]] == ["nyckel"]
+
+    # CSRF krävs
+    assert _skriv(anna, "PUT", "/konto/nycklar/trafikverket", {"nyckel": tv_nyckel}, csrf=False)[0] == 403
+    assert _skriv(anna, "PUT", "/konto/nycklar/artdatabanken", {"nyckel": art_nyckel}, csrf=False)[0] == 403
+
+    # Spara båda nycklarna
+    st_tv, sv_tv = _skriv(anna, "PUT", "/konto/nycklar/trafikverket", {"nyckel": tv_nyckel})
+    st_art, sv_art = _skriv(anna, "PUT", "/konto/nycklar/artdatabanken", {"nyckel": art_nyckel})
+    assert st_tv == 200 and sv_tv["status"] == "sparad" and sv_tv["slutar_pa"] == "7711"
+    assert st_art == 200 and sv_art["status"] == "sparad" and sv_art["slutar_pa"] == "8822"
+
+    # Serverkod kan dekryptera för ägaren men inte för annat konto
+    assert forrad.las(anna_id, "trafikverket") == {"nyckel": tv_nyckel}
+    assert forrad.las(anna_id, "artdatabanken") == {"nyckel": art_nyckel}
+    assert forrad.las(bo_id, "trafikverket") is None
+    assert forrad.las(bo_id, "artdatabanken") is None
+    assert _las(bo, "/konto/nycklar/trafikverket")[1]["sparad"] is None
+    assert _las(bo, "/konto/nycklar/artdatabanken")[1]["sparad"] is None
+
+    # Inte AI-nycklar: kan inte väljas som primar_ai
+    assert _skriv(anna, "PUT", "/konto/nycklar/primar-ai", {"typ": "trafikverket"})[0] == 400
+    assert _skriv(anna, "PUT", "/konto/nycklar/primar-ai", {"typ": "artdatabanken"})[0] == 400
+
+    # 0 läckage i DB/WAL, HTTP-svar, felmeddelanden, loggar och händelser
+    assert hemligt_filen_saknar(miljo, (tv_nyckel, art_nyckel))
+    st_fel, sv_fel = _skriv(anna, "PUT", "/konto/nycklar/trafikverket", {"nyckel": tv_nyckel + " fel"})
+    assert st_fel == 400
+    st_fel2, sv_fel2 = _skriv(anna, "PUT", "/konto/nycklar/artdatabanken", {"nyckel": art_nyckel, art_nyckel: "x"})
+    assert st_fel2 == 400
+    _, _, rak_tv = _las(anna, "/konto/nycklar/trafikverket")
+    _, _, rak_art = _las(anna, "/konto/nycklar/artdatabanken")
+    _, _, rak_ov = _las(anna, "/konto/nycklar")
+    samlat = (
+        caplog.text
+        + json.dumps([sv_tv, sv_art, sv_fel, sv_fel2])
+        + rak_tv.decode()
+        + rak_art.decode()
+        + rak_ov.decode()
+    )
+    with miljo.register.db.lasning() as c:
+        samlat += json.dumps([tuple(r) for r in c.execute("SELECT * FROM handelse").fetchall()])
+    assert tv_nyckel not in samlat and art_nyckel not in samlat
+
+    # Ta bort båda
+    assert _skriv(anna, "DELETE", "/konto/nycklar/trafikverket")[1]["status"] == "borttagen"
+    assert _skriv(anna, "DELETE", "/konto/nycklar/artdatabanken")[1]["status"] == "borttagen"
+    assert forrad.las(anna_id, "trafikverket") is None
+    assert forrad.las(anna_id, "artdatabanken") is None
+
+

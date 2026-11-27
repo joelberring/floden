@@ -584,6 +584,147 @@ class RapportTjanst:
             return "Planprojekt"
         return projekt
 
+    def _hitta_geografi_manifest_for_korning(
+        self, korning_id: str, projekt: str | None = None
+    ) -> tuple[Path | None, tuple[float, float, float, float] | None]:
+        """Löser upp projektets K46-geografimanifest och ev. avgränsning (EPSG:3011) för en körning."""
+        fragor = getattr(self.tjanst, "fragor", None)
+        app = getattr(self.tjanst, "app", None)
+        proj_rotter: list[Path] = []
+        for kand in (
+            getattr(fragor, "projektrot", None) if fragor is not None else None,
+            getattr(app, "projektmapp", None) if app is not None else None,
+        ):
+            if kand is not None:
+                p = Path(kand)
+                if p.is_dir() and p not in proj_rotter:
+                    proj_rotter.append(p)
+        if not proj_rotter:
+            return None, None
+
+        geo_rotter: list[Path] = []
+        for gk in (
+            getattr(app, "geomapp", None) if app is not None else None,
+            getattr(getattr(app, "_projektskapa", None), "geomapp", None) if app is not None else None,
+        ):
+            if gk is not None:
+                gp = Path(gk)
+                if gp.is_dir() and gp not in geo_rotter:
+                    geo_rotter.append(gp)
+
+        projekt_id: str | None = None
+        if fragor is not None and hasattr(fragor, "korning_eller_none"):
+            try:
+                k_obj = fragor.korning_eller_none(korning_id)
+                if k_obj is not None and getattr(k_obj, "projekt_id", None):
+                    projekt_id = str(k_obj.projekt_id)
+            except Exception:  # noqa: BLE001
+                projekt_id = None
+        if not projekt_id:
+            projekt_id = projekt
+        if not projekt_id:
+            return None, None
+
+        for proj_rot in proj_rotter:
+            for fil in sorted(proj_rot.glob("*/projekt.json")):
+                try:
+                    d = json.loads(fil.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                pid = d.get("register_id") or d.get("projekt_id")
+                if pid != projekt_id and d.get("projekt_id") != projekt_id and fil.parent.name != projekt_id:
+                    continue
+                avgr: tuple[float, float, float, float] | None = None
+                avgr_ra = d.get("avgransning_3011")
+                if isinstance(avgr_ra, list) and len(avgr_ra) == 4:
+                    try:
+                        vals = tuple(float(v) for v in avgr_ra)
+                        if all(math.isfinite(v) for v in vals) and vals[0] < vals[2] and vals[1] < vals[3]:
+                            avgr = (vals[0], vals[1], vals[2], vals[3])
+                    except (TypeError, ValueError):
+                        avgr = None
+                mf_expl = d.get("geografi_manifest")
+                if isinstance(mf_expl, str) and mf_expl.strip():
+                    mf_p = Path(mf_expl.strip())
+                    if mf_p.is_file():
+                        return mf_p, avgr
+                ref = d.get("geografi")
+                if isinstance(ref, str) and "@" in ref:
+                    gid, ver = ref.split("@", 1)
+                    kand_geo = [*geo_rotter, proj_rot.parent / "geo"]
+                    for gr in kand_geo:
+                        mf_p = gr / gid / ver / "manifest.json"
+                        if mf_p.is_file():
+                            return mf_p, avgr
+                return None, avgr
+        return None, None
+
+    def _forbered_ekologi_skrivbord(
+        self, korning_id: str, utmapp: Path, *, projekt: str | None = None
+    ) -> None:
+        """Förser ekologikörningens utmapp med SHA-256-verifierade skrivbordslager ur projektets geografi."""
+        from geografi.ekologi_skrivbord import (
+            ARTLISTA_FIL,
+            FORMAT_SKYDDAD_NATUR,
+            SKRIVBORD_SAMMANFATTNING_FIL,
+            las_ekologi_skrivbord,
+        )
+        from geografi.modell import GeografiFel, lager_mapp
+
+        if not utmapp.is_dir():
+            return
+        skrivbord_mapp = utmapp / "ekologi_skrivbord"
+        skydd_mal = skrivbord_mapp / SKRIVBORD_SAMMANFATTNING_FIL
+        art_mal = skrivbord_mapp / ARTLISTA_FIL
+        if skydd_mal.is_file() and art_mal.is_file():
+            return
+
+        manifest_fil, avgr = self._hitta_geografi_manifest_for_korning(korning_id, projekt=projekt)
+        if manifest_fil is None:
+            return
+        try:
+            underlag = las_ekologi_skrivbord(manifest_fil, karna_3011=avgr)
+        except (GeografiFel, OSError, ValueError):
+            return
+        if underlag.skyddad_natur_sha256 is None and underlag.artfynd_sha256 is None:
+            return
+
+        geo_rot = manifest_fil.resolve().parents[2]
+        try:
+            skrivbord_mapp.mkdir(parents=True, exist_ok=True)
+            if underlag.skyddad_natur_sha256 is not None and not skydd_mal.is_file():
+                lagrad_fil = lager_mapp(geo_rot, underlag.skyddad_natur_sha256) / SKRIVBORD_SAMMANFATTNING_FIL
+                bas_dok: dict[str, Any] = {}
+                if lagrad_fil.is_file():
+                    ra = json.loads(lagrad_fil.read_text(encoding="utf-8"))
+                    if isinstance(ra, dict):
+                        bas_dok = dict(ra)
+                sam_dok: dict[str, Any] = {
+                    **bas_dok,
+                    "format": FORMAT_SKYDDAD_NATUR,
+                    "epsg": 3011,
+                    "buffert_m": float(bas_dok.get("buffert_m", 1000.0)),
+                    "skyddade_omraden": underlag.sammanfattning.get("skyddade_omraden") or {},
+                    "skogliga_varden": underlag.sammanfattning.get("skogliga_varden") or {},
+                    "vmi": underlag.sammanfattning.get("vmi") or {},
+                    "geografi": underlag.ref,
+                    "manifest_sha256": underlag.manifest_sha256,
+                    "lager_sha256": underlag.skyddad_natur_sha256,
+                }
+                skydd_mal.write_text(
+                    json.dumps(sam_dok, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            if underlag.artfynd_sha256 is not None and underlag.artlista is not None and not art_mal.is_file():
+                art_mal.write_text(
+                    json.dumps(underlag.artlista, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+        except OSError:
+            return
+
     def _geografi_koordinater(
         self, korning_id: str, projekt: str | None = None
     ) -> dict[str, Any] | None:
@@ -702,9 +843,10 @@ class RapportTjanst:
         koord = self._geografi_koordinater(korning_id, projekt=projekt)
         antaganden = _antaganden(res, [t["analys"] for t in analyser], koordinater=koord)
         if amne == "ekologi":
-            from rapport.ekologibelagg import ekologiantaganden
+            from rapport.ekologibelagg import ekologiantaganden, skrivbord_antaganden
             from rapport.gyf_utci_belagg import gyf_antaganden
 
+            self._forbered_ekologi_skrivbord(korning_id, utmapp, projekt=projekt)
             antaganden = ekologiantaganden(
                 self.kalla,
                 korning_id,
@@ -714,7 +856,9 @@ class RapportTjanst:
                     if t["losare"] == "ekologi.konnektivitet"
                 },
             )
-            antaganden = list(dict.fromkeys([*antaganden, *gyf_antaganden(utmapp)]))
+            antaganden = list(
+                dict.fromkeys([*antaganden, *gyf_antaganden(utmapp), *skrivbord_antaganden(utmapp)])
+            )
             skalnot = _skalfelsantagande(koord)
             if skalnot and skalnot not in antaganden:
                 antaganden = [*antaganden, skalnot]
@@ -1571,7 +1715,7 @@ class RapportTjanst:
     def _adresser_ekologi(self, r: Rapport) -> list[str]:
         """Beläggsadresser för ekologi (se `rapport.ekologibelagg`, `rapport.gyf_utci_belagg` och `belaggskalla.EKOLOGI_MATT`)."""
         from rapport.belaggskalla import EKOLOGI_MATT
-        from rapport.ekologibelagg import DELTAMATT, NATVERKSPARAMETRAR
+        from rapport.ekologibelagg import DELTAMATT, NATVERKSPARAMETRAR, skrivbord_adresser
         from rapport.gyf_utci_belagg import gyf_adresser
 
         mv = [n.removeprefix("matvarde:") for (_l, n) in EKOLOGI_MATT if n.startswith("matvarde:")]
@@ -1589,7 +1733,9 @@ class RapportTjanst:
                             f"ekojamforelse.{a['analys']}.{j['fore']}.{j['efter']}.{m}" for m in DELTAMATT
                         ]
             with contextlib.suppress(BelaggFel):
-                ut += gyf_adresser(self.kalla.utmapp(str(k["korning_id"])))
+                kmapp = self.kalla.utmapp(str(k["korning_id"]))
+                ut += gyf_adresser(kmapp)
+                ut += skrivbord_adresser(kmapp)
         return list(dict.fromkeys(ut))
 
     def _adresser_dagsljus(self, r: Rapport) -> list[str]:

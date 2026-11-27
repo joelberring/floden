@@ -1957,7 +1957,9 @@ class FlodenApiApp:
         if scenario is not None and (not isinstance(scenario, str) or not scenario.strip()):
             raise FlodenWebbFel("Fältet 'scenario' ska vara ett sparat scenarios id (text).")
 
-        max_flackar = _tolka_heltal(payload, "max_flackar", 40, 2, 200)
+        from karna.ekologi_losare import STANDARD_MAX_FLACKAR
+
+        max_flackar = _tolka_heltal(payload, "max_flackar", STANDARD_MAX_FLACKAR, 2, 500)
         antal_flaskhalsar = _tolka_heltal(payload, "antal_flaskhalsar", 5, 1, 20)
         cell_m = _tolka_tal(payload, "cellstorlek_m", 4.0)
         if not 0.25 <= cell_m <= 100.0:
@@ -2627,6 +2629,7 @@ class FlodenApiApp:
             (
                 "omrade_id",
                 "scenario",
+                "forval",
                 "t_luft_c",
                 "relativ_fuktighet_pct",
                 "vind_10m_m_s",
@@ -2713,6 +2716,315 @@ class FlodenApiApp:
             )
         png, u = post
         return png, {"X-Floden-Utbredning": f"{u.x_min},{u.y_min},{u.x_max},{u.y_max}"}
+
+    def _projekt_mapp_eller_fel(
+        self, projekt_id: str, *, kraver_skrivbar: bool = False
+    ) -> Path | None:
+        """Löser projektmappen på disk (None bara för skrivlös läsning av `demokvarteret`)."""
+        pid = projekt_id.strip()
+        if not pid:
+            raise FlodenWebbFel("Projekt-id saknas eller är tomt.", status_kod=400)
+        if pid == PROJEKT_ID_DEMO:
+            if kraver_skrivbar:
+                raise FlodenWebbFel(
+                    "Demokvarteret är skrivskyddat och kan inte ändras.", status_kod=403
+                )
+            return None
+        pm = self.kartverktyg.projektmapp(pid)
+        if pm is None or not pm.is_dir():
+            raise FlodenWebbFel(f"Okänt projekt '{pid}'.", status_kod=404)
+        return pm
+
+    def hamta_projekt_trafik_endpoint(self, projekt_id: str) -> dict[str, Any]:
+        """`GET /api/projekt/<id>/trafik`: klippta väglänkar i EPSG:3011 med projektjusteringar."""
+        from webb.cad_buller_api import (
+            FORMAT_PROJEKT_TRAFIK_WEBB,
+            KOORDINATSYSTEM_EPSG,
+            hamta_projekt_trafik,
+        )
+
+        pm = self._projekt_mapp_eller_fel(projekt_id, kraver_skrivbar=False)
+        if pm is None:
+            return {
+                "type": "FeatureCollection",
+                "format": FORMAT_PROJEKT_TRAFIK_WEBB,
+                "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::3011"}},
+                "koordinatsystem": KOORDINATSYSTEM_EPSG,
+                "projekt_id": PROJEKT_ID_DEMO,
+                "har_trafiklager": False,
+                "geografi": None,
+                "trafik_lager_sha256": None,
+                "kalla": None,
+                "licens": None,
+                "sammanfattning": {
+                    "antal_lankar": 0,
+                    "antal_med_adt": 0,
+                    "antal_utan_adt": 0,
+                    "antal_med_prognos": 0,
+                    "antal_egna_justeringar": 0,
+                    "antal_osakra": 0,
+                },
+                "features": [],
+                "varningar": [
+                    "Demokvarteret saknar trafiklager (lager.trafik); rita väg manuellt på kartan."
+                ],
+            }
+        return hamta_projekt_trafik(pm, geo_rot=self.geomapp)
+
+    def spara_projekt_trafik_endpoint(
+        self, projekt_id: str, kropp_bytes: bytes
+    ) -> dict[str, Any]:
+        """`POST /api/projekt/<id>/trafik`: sparar projektets egna ÅDT-/prognosredigeringar."""
+        from webb.cad_buller_api import spara_projekt_trafik
+
+        pm = self._projekt_mapp_eller_fel(projekt_id, kraver_skrivbar=True)
+        assert pm is not None
+        return spara_projekt_trafik(pm, kropp_bytes, geo_rot=self.geomapp)
+
+    def hamta_projekt_vader_luft_endpoint(self, projekt_id: str) -> dict[str, Any]:
+        """`GET /api/projekt/<id>/vader_luft`: SMHI-vindros, UTCI-värmebölja och bakgrundsluft."""
+        from webb.gyf_utci import hamta_projekt_vader_luft
+
+        pm = self._projekt_mapp_eller_fel(projekt_id, kraver_skrivbar=False)
+        return hamta_projekt_vader_luft(pm, geo_rot=self.geomapp)
+
+    def kor_luft_skiss_analys_endpoint(self, kropp_bytes: bytes) -> dict[str, Any]:
+        """`POST /api/analys/luft_skiss`: deterministisk Luft-skissanalys (SMHI + 3A)."""
+        from webb.gyf_utci import kor_luft_skiss_analys, tolka_json_kropp
+
+        payload = tolka_json_kropp(kropp_bytes)
+        pid_ra = payload.get("omrade_id") or payload.get("projekt_id")
+        pm: Path | None = None
+        if isinstance(pid_ra, str) and pid_ra.strip():
+            pm = self._projekt_mapp_eller_fel(pid_ra.strip(), kraver_skrivbar=False)
+        return kor_luft_skiss_analys(pm, payload, geo_rot=self.geomapp)
+
+    def hamta_projekt_ekologi_skrivbord_endpoint(self, projekt_id: str) -> dict[str, Any]:
+        """`GET /api/projekt/<id>/ekologi/skrivbord`: verifierat skrivbordsunderlag + fältlager."""
+        from data_inlasning.artdatabanken import OSL_VARNING
+        from geografi.ekologi_skrivbord import (
+            bygg_nvi_faltchecklista,
+            las_ekologi_faltlager,
+            las_ekologi_skrivbord,
+        )
+        from geografi.modell import GeografiFel
+        from webb.gyf_utci import _hitta_geografi_manifest
+
+        pm = self._projekt_mapp_eller_fel(projekt_id, kraver_skrivbar=False)
+        faltlager_dict: dict[str, Any] | None = None
+        avgr: tuple[float, float, float, float] | None = None
+        if pm is not None:
+            try:
+                falt = las_ekologi_faltlager(pm)
+            except GeografiFel as exc:
+                raise FlodenWebbFel(str(exc), status_kod=409) from exc
+            faltlager_dict = falt.som_dict() if falt is not None else None
+            pfil = pm / "projekt.json"
+            if pfil.is_file():
+                try:
+                    pdok = json.loads(pfil.read_text(encoding="utf-8"))
+                    av_ra = pdok.get("avgransning_3011") if isinstance(pdok, Mapping) else None
+                    if isinstance(av_ra, list) and len(av_ra) == 4:
+                        vals = tuple(float(v) for v in av_ra)
+                        if (
+                            all(math.isfinite(v) for v in vals)
+                            and vals[0] < vals[2]
+                            and vals[1] < vals[3]
+                        ):
+                            avgr = (vals[0], vals[1], vals[2], vals[3])
+                except (OSError, ValueError, TypeError):
+                    avgr = None
+
+        manifest_fil = (
+            _hitta_geografi_manifest(pm, geo_rot=self.geomapp) if pm is not None else None
+        )
+        if manifest_fil is not None:
+            try:
+                underlag = las_ekologi_skrivbord(manifest_fil, karna_3011=avgr)
+            except GeografiFel as exc:
+                raise FlodenWebbFel(str(exc), status_kod=409) from exc
+            return {
+                "projekt_id": projekt_id,
+                "har_skrivbord": bool(
+                    underlag.skyddad_natur_sha256
+                    or underlag.artfynd_sha256
+                    or underlag.vmi_sha256
+                    or underlag.trad_sha256
+                ),
+                **underlag.som_dict(),
+                "faltlager": faltlager_dict,
+            }
+
+        tom_sam: dict[str, Any] = {
+            "skyddad_natur_tillganglig": False,
+            "artfynd_tillganglig": False,
+            "vmi_tillganglig": False,
+            "tradpunkter_tillganglig": False,
+            "skyddade_omraden": {
+                "antal": 0,
+                "antal_overlappar_karna": 0,
+                "overlapp_karna_m2": 0.0,
+                "minsta_avstand_m": None,
+                "per_skyddsform": {},
+                "antal_natura2000": 0,
+                "narmaste": None,
+            },
+            "skogliga_varden": {
+                "antal": 0,
+                "antal_overlappar_karna": 0,
+                "overlapp_karna_m2": 0.0,
+                "minsta_avstand_m": None,
+                "per_kategori": {},
+                "antal_nyckelbiotoper": 0,
+                "antal_naturvarden": 0,
+                "antal_sumpskogar": 0,
+                "antal_biotopskydd": 0,
+                "antal_naturvardsavtal": 0,
+                "narmaste": None,
+            },
+            "vmi": {
+                "tillganglig": False,
+                "antal_polygoner": 0,
+                "overlapp_karna_m2": 0.0,
+                "minsta_avstand_m": None,
+            },
+            "artfynd_publika": None,
+            "osl_varning": OSL_VARNING,
+        }
+        tom_fc: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+        return {
+            "projekt_id": projekt_id,
+            "har_skrivbord": False,
+            "geografi": None,
+            "manifest_sha256": None,
+            "karna_3011": list(avgr) if avgr is not None else None,
+            "lager_sha256": {
+                "skyddad_natur": None,
+                "artfynd_publika": None,
+                "vmi": None,
+                "tradpunkter": None,
+            },
+            "sammanfattning": tom_sam,
+            "skyddade_omraden": tom_fc,
+            "skogliga_varden": tom_fc,
+            "publika_fynd": tom_fc,
+            "artlista": None,
+            "faltchecklista": list(bygg_nvi_faltchecklista(tom_sam)),
+            "osl_varning": OSL_VARNING,
+            "faltlager": faltlager_dict,
+        }
+
+    def importera_projekt_ekologi_faltlager_endpoint(
+        self,
+        projekt_id: str,
+        kropp_bytes: bytes,
+        query: Mapping[str, list[str]],
+    ) -> dict[str, Any]:
+        """`POST /api/projekt/<id>/ekologi/faltlager`: importerar NVI-/trädlager (0 PII, 10 MB)."""
+        import base64
+        import binascii
+
+        from geografi.ekologi_skrivbord import MAX_FALTLAGER_BYTES, importera_ekologi_faltlager
+        from geografi.modell import GeografiFel
+        from webb.gyf_utci import tolka_json_kropp
+
+        pm = self._projekt_mapp_eller_fel(projekt_id, kraver_skrivbar=True)
+        assert pm is not None
+
+        if len(kropp_bytes) > MAX_FALTLAGER_BYTES * 2:
+            raise FlodenWebbFel(
+                f"Uppladdningen överstiger maxgränsen ({MAX_FALTLAGER_BYTES} byte).",
+                status_kod=413,
+            )
+
+        query_filnamn = (query.get("filnamn") or [""])[0].strip()
+        filnamn: str
+        fil_bytes: bytes
+
+        ser_ut_som_json = kropp_bytes.lstrip().startswith(b"{")
+        payload_ok: dict[str, Any] | None = None
+        if not query_filnamn or ser_ut_som_json:
+            try:
+                cand = tolka_json_kropp(kropp_bytes)
+                json_nycklar = (
+                    "filnamn",
+                    "innehall_base64",
+                    "data_base64",
+                    "fil_base64",
+                    "innehall_text",
+                    "text",
+                )
+                if any(k in cand for k in json_nycklar):
+                    payload_ok = cand
+            except FlodenWebbFel:
+                if not query_filnamn:
+                    raise
+
+        if payload_ok is not None:
+            filnamn_ra = payload_ok.get("filnamn") or query_filnamn
+            if not isinstance(filnamn_ra, str) or not filnamn_ra.strip():
+                raise FlodenWebbFel(
+                    "Obligatoriskt fält 'filnamn' saknas (.gpkg eller .geojson).", status_kod=400
+                )
+            filnamn = filnamn_ra.strip()
+            b64_ra = (
+                payload_ok.get("innehall_base64")
+                if payload_ok.get("innehall_base64") is not None
+                else payload_ok.get("data_base64")
+                if payload_ok.get("data_base64") is not None
+                else payload_ok.get("fil_base64")
+            )
+            text_ra = (
+                payload_ok.get("innehall_text")
+                if payload_ok.get("innehall_text") is not None
+                else payload_ok.get("text")
+            )
+            if b64_ra is not None:
+                if not isinstance(b64_ra, str) or not b64_ra.strip():
+                    raise FlodenWebbFel(
+                        "Fältet 'innehall_base64' måste vara en base64-sträng.", status_kod=400
+                    )
+                if len(b64_ra) > ((MAX_FALTLAGER_BYTES * 4) // 3 + 16):
+                    raise FlodenWebbFel(
+                        f"Fältlagerfilen överstiger maxgränsen ({MAX_FALTLAGER_BYTES} byte).",
+                        status_kod=413,
+                    )
+                try:
+                    fil_bytes = base64.b64decode(b64_ra.strip(), validate=True)
+                except (binascii.Error, ValueError) as exc:
+                    raise FlodenWebbFel(f"Ogiltig base64-kodning: {exc}", status_kod=400) from exc
+            elif text_ra is not None:
+                if not isinstance(text_ra, str) or not text_ra:
+                    raise FlodenWebbFel(
+                        "Fältet 'innehall_text' måste vara en textsträng.", status_kod=400
+                    )
+                fil_bytes = text_ra.encode("utf-8")
+            else:
+                raise FlodenWebbFel(
+                    "Filinnehåll saknas: ange 'innehall_base64' eller 'innehall_text' "
+                    "(eller skicka rå fil med ?filnamn=...).",
+                    status_kod=400,
+                )
+        else:
+            if not query_filnamn:
+                raise FlodenWebbFel(
+                    "Obligatoriskt fält 'filnamn' saknas.", status_kod=400
+                )
+            filnamn = query_filnamn
+            fil_bytes = kropp_bytes
+
+        if len(fil_bytes) > MAX_FALTLAGER_BYTES:
+            raise FlodenWebbFel(
+                f"Fältlagerfilen ({len(fil_bytes)} byte) överstiger maxgränsen "
+                f"({MAX_FALTLAGER_BYTES} byte).",
+                status_kod=413,
+            )
+        try:
+            post = importera_ekologi_faltlager(pm, filnamn, fil_bytes)
+        except GeografiFel as exc:
+            kod = 413 if "maxgränsen" in str(exc).lower() else 400
+            raise FlodenWebbFel(str(exc), status_kod=kod) from exc
+        return post.som_dict()
 
     def kor_simulering(self, kropp_bytes: bytes) -> dict[str, Any]:
         """Svar för `POST /api/kor`: kör före/efter + ensemble och returnerar manifest."""
@@ -4146,6 +4458,18 @@ class FlodenApiApp:
                 delar_p = [urllib.parse.unquote(d) for d in ren_sokvag.split("/") if d][2:]
                 if verb == "POST" and len(delar_p) == 2 and delar_p[1] == "rapporter":
                     return _json_svar(202, self.rapportjobb.starta(delar_p[0], kropp))
+                if verb == "POST" and len(delar_p) == 2 and delar_p[1] == "trafik":
+                    return _json_svar(200, self.spara_projekt_trafik_endpoint(delar_p[0], kropp))
+                if (
+                    verb == "POST"
+                    and len(delar_p) == 3
+                    and delar_p[1] == "ekologi"
+                    and delar_p[2] == "faltlager"
+                ):
+                    return _json_svar(
+                        200,
+                        self.importera_projekt_ekologi_faltlager_endpoint(delar_p[0], kropp, query),
+                    )
                 if (
                     verb == "POST"
                     and len(delar_p) == 3
@@ -4162,6 +4486,12 @@ class FlodenApiApp:
                     svar = self.projekt.hamta(delar[0])
                     svar["rapporter"] = self.rapporter_for(delar[0])
                     return _json_svar(200, svar)
+                if len(delar) == 2 and delar[1] == "trafik":
+                    return _json_svar(200, self.hamta_projekt_trafik_endpoint(delar[0]))
+                if len(delar) == 2 and delar[1] == "vader_luft":
+                    return _json_svar(200, self.hamta_projekt_vader_luft_endpoint(delar[0]))
+                if len(delar) == 3 and delar[1] == "ekologi" and delar[2] == "skrivbord":
+                    return _json_svar(200, self.hamta_projekt_ekologi_skrivbord_endpoint(delar[0]))
                 if len(delar) == 3 and delar[1] == "cad" and delar[2] == "exportera":
                     return self.exportera_cad(delar[0], query)
                 if len(delar) == 2 and delar[1] == "rapporter":
@@ -4249,6 +4579,9 @@ class FlodenApiApp:
 
             if verb == "POST" and ren_sokvag == "/api/analys/luft-atgarder":
                 return _json_svar(200, self.kor_luft_atgarder_celf(kropp))
+
+            if verb == "POST" and ren_sokvag == "/api/analys/luft_skiss":
+                return _json_svar(200, self.kor_luft_skiss_analys_endpoint(kropp))
 
             if verb == "GET" and ren_sokvag == "/api/analys/gyf":
                 return _json_svar(200, self.hamta_gyf_analys(query))
@@ -4594,7 +4927,8 @@ class FlodenApiApp:
                 minst_roll = (
                     "utredare"
                     if verb == "POST"
-                    and ren_analys in ("/api/analys/ekologi", "/api/analys/buller")
+                    and ren_analys
+                    in ("/api/analys/ekologi", "/api/analys/buller", "/api/analys/luft_skiss")
                     else "lasare"
                 )
                 kontroll = self.konto.kraver_projektbehorighet(
@@ -4695,6 +5029,7 @@ class FlodenApiApp:
             "/api/analys/gyf",
             "/api/analys/varmestress",
             "/api/analys/buller",
+            "/api/analys/luft_skiss",
             *BERAKNINGS_SOKVAGAR,
         ):
             try:
@@ -4703,7 +5038,10 @@ class FlodenApiApp:
                 return None
             if isinstance(payload, Mapping):
                 omrade_id = payload.get("omrade_id")
-                if (omrade_id is None or omrade_id == "") and ren == "/api/analys/buller":
+                if (omrade_id is None or omrade_id == "") and ren in (
+                    "/api/analys/buller",
+                    "/api/analys/luft_skiss",
+                ):
                     omrade_id = payload.get("projekt_id")
             else:
                 omrade_id = None
