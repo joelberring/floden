@@ -44,6 +44,7 @@ from gemensamt.hash import sha256_fil
 from gemensamt.objektlagring import ObjektLagringFel
 from geografi.forberaknad_lager import (
     STANDARD_RUTSTORLEK_M,
+    DataskyddFel,
     ForberaknadKommunLager,
     ForberaknadLagerFel,
     tolka_rut_bbox_3011,
@@ -1009,14 +1010,9 @@ class KartverktygTjanst:
             "kalla": kalla,
         }
 
-    def _forberaknad_bas(
-        self,
-        kalla: Projektkalla,
-        utbredning: tuple[float, float, float, float],
-    ) -> dict[str, Any] | None:
-        """Returnerar metadata om förberäknade rutor i `ForberaknadKommunLager` för projektet, annars None."""
-        lager = self.forberaknad_lager
-        if lager is None or not kalla.geografi:
+    def _kommun_for_kalla(self, kalla: Projektkalla) -> str | None:
+        """Hämtar kommun-id för ett geografiprojekt via lokalt manifest eller geografireferens."""
+        if not kalla.geografi:
             return None
         kommun: str | None = None
         if self.geomapp is not None:
@@ -1029,6 +1025,18 @@ class KartverktygTjanst:
                 pass
         if kommun is None:
             kommun = kalla.geografi.split("@", 1)[0].strip()
+        return kommun or None
+
+    def _forberaknad_bas(
+        self,
+        kalla: Projektkalla,
+        utbredning: tuple[float, float, float, float],
+    ) -> dict[str, Any] | None:
+        """Returnerar metadata om förberäknade rutor i `ForberaknadKommunLager` för projektet, annars None."""
+        lager = self.forberaknad_lager
+        if lager is None:
+            return None
+        kommun = self._kommun_for_kalla(kalla)
         if not kommun:
             return None
         bbox = kalla.avgransning if kalla.avgransning is not None else utbredning
@@ -1046,6 +1054,116 @@ class KartverktygTjanst:
             "kommun": kommun,
             "antal_rutor": len(rutor),
         }
+
+    def _hamta_forberaknad_raster(
+        self,
+        kalla: Projektkalla,
+        modul: str,
+        *,
+        utbredning: tuple[float, float, float, float] | None = None,
+        filnamn: str | None = None,
+    ) -> list[tuple[np.ndarray[Any, Any], dict[str, Any]]]:
+        """Strömmar förberäknade GPU-raster via `forberaknad_lager` LRU-cache med mjuk fallback.
+
+        Returnerar en lista av `(array, metadata)` för matchande rutor när `forberaknad_lager`
+        har modulen (`vatten2d/max_djup.tif` eller `dagsljus/svf.tif`), annars en tom lista.
+        Icke-öppna rutor (`DataskyddFel`) lämnas aldrig ut.
+        """
+        lager = self.forberaknad_lager
+        if lager is None:
+            return []
+        kommun = self._kommun_for_kalla(kalla)
+        if not kommun:
+            return []
+        bbox = utbredning if utbredning is not None else kalla.avgransning
+        if bbox is None:
+            rutor_alla = self._rutor_alla(kalla.mallar)
+            if not rutor_alla:
+                return []
+            bbox = (
+                min(r[0] for r in rutor_alla),
+                min(r[1] for r in rutor_alla),
+                max(r[2] for r in rutor_alla),
+                max(r[3] for r in rutor_alla),
+            )
+        try:
+            rut_ids = lager.hitta_rutor_for_utbredning(kommun, bbox)
+        except (ForberaknadLagerFel, ObjektLagringFel) as exc:
+            logging.getLogger(__name__).warning(
+                "Kunde inte lista förberäknade rutor för kommun %s (%s): %s", kommun, modul, exc
+            )
+            return []
+        if not rut_ids:
+            return []
+
+        try:
+            import rasterio
+        except ImportError:
+            logging.getLogger(__name__).warning(
+                "Kan inte läsa förberäknat raster (%s): 'rasterio' saknas.", modul
+            )
+            return []
+
+        resultat: list[tuple[np.ndarray[Any, Any], dict[str, Any]]] = []
+        for rut_id in rut_ids:
+            try:
+                lokal_fil = lager.hamta_forberaknad_modul(
+                    kommun,
+                    rut_id,
+                    modul,
+                    filnamn=filnamn,
+                    verifiera_geotiff=True,
+                )
+            except DataskyddFel as exc:
+                logging.getLogger(__name__).warning(
+                    "Blockerade icke-öppen förberäknad ruta %s/%s (%s): %s",
+                    kommun,
+                    rut_id,
+                    modul,
+                    exc,
+                )
+                continue
+            except (ForberaknadLagerFel, ObjektLagringFel) as exc:
+                logging.getLogger(__name__).debug(
+                    "Förberäknat raster %s saknas för %s/%s (faller tillbaka): %s",
+                    modul,
+                    kommun,
+                    rut_id,
+                    exc,
+                )
+                continue
+
+            try:
+                with rasterio.open(lokal_fil) as ds:
+                    arr = np.asarray(ds.read(1))
+                    meta: dict[str, Any] = {
+                        "kommun": kommun,
+                        "rut_id": rut_id,
+                        "modul": modul,
+                        "fil": str(lokal_fil),
+                        "kalla": lager.kalla_typ,
+                        "bredd": int(ds.width),
+                        "hojd": int(ds.height),
+                        "crs": str(ds.crs) if ds.crs is not None else None,
+                        "bounds": (
+                            float(ds.bounds.left),
+                            float(ds.bounds.bottom),
+                            float(ds.bounds.right),
+                            float(ds.bounds.top),
+                        ),
+                        "nodata": ds.nodata,
+                    }
+            except Exception as exc:  # noqa: BLE001 - mjuk fallback om rasterfilen inte kan öppnas
+                logging.getLogger(__name__).warning(
+                    "Kunde inte avkoda förberäknat raster %s/%s (%s): %s",
+                    kommun,
+                    rut_id,
+                    modul,
+                    exc,
+                )
+                continue
+            resultat.append((arr, meta))
+        return resultat
 
     @staticmethod
     def _las_max_sankgraf_celler() -> int:
@@ -1785,6 +1903,15 @@ class KartverktygTjanst:
 
     # ------------------------------------------------------------------ frågor och körning
 
+    @staticmethod
+    def _tillatna_analysnamn(mallar: Mapping[str, Mall]) -> list[str]:
+        """Returnerar sorterad lista över tillåtna analysnamn på formen '<mall>.<analys_id>'."""
+        return sorted(
+            f"{kort}.{a.id}"
+            for kort, mall in mallar.items()
+            for a in mall.fraga.analyser
+        )
+
     def _skriv_fragor(
         self,
         projekt: str,
@@ -1811,7 +1938,9 @@ class KartverktygTjanst:
         for v in valda:
             kort, _, aid = v.partition(".")
             if kort not in mallar or aid not in {a.id for a in mallar[kort].fraga.analyser}:
-                raise _fel(f"Okänd analys '{v}'.", 400)
+                tillatna = self._tillatna_analysnamn(mallar)
+                hint = f" Tillåtna: {', '.join(tillatna)}." if tillatna else ""
+                raise _fel(f"Okänd analys '{v}'.{hint}", 400)
             urval.setdefault(kort, []).append(aid)
         if not urval:
             raise _fel("Välj minst en analys att räkna.", 400)
@@ -2248,7 +2377,9 @@ class KartverktygTjanst:
         for v in valda:
             kort, _, aid = v.partition(".")
             if kort not in mallar or aid not in {a.id for a in mallar[kort].fraga.analyser}:
-                raise _fel(f"Okänd analys '{v}'.", 400)
+                tillatna = self._tillatna_analysnamn(mallar)
+                hint = f" Tillåtna: {', '.join(tillatna)}." if tillatna else ""
+                raise _fel(f"Okänd analys '{v}'.{hint}", 400)
             urval.setdefault(kort, []).append(aid)
         if not urval:
             raise _fel("Välj minst en analys att räkna.", 400)
