@@ -371,6 +371,70 @@ docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compo
 
 `FLODEN_TAG` i `.env` låser en version (en commit-sha).
 
+### Kontrollerad automatisk uppdatering (systemd pull-timer)
+
+I stället för manuell `pull` + `up -d` efter varje sammanslagning till `main` kan servern köra en kontrollerad systemd-timer som var tredje minut kontrollerar om en ny grön avbildning finns på `ghcr.io/joelberring/floden:${FLODEN_TAG:-main}`:
+
+- **Skript:** `deploy/floden-auto-uppdatera.sh` (exklusivt `flock -n`-lås, noll hårdkodade hemligheter, stöder `--torrkor`).
+- **Systemd-enheter:** `deploy/floden-auto-uppdatera.service` (`Type=oneshot`, `WorkingDirectory=/srv/floden`, `EnvironmentFile=-/srv/floden/.env`) och `deploy/floden-auto-uppdatera.timer` (`OnBootSec=2min`, `OnUnitActiveSec=3min`, `RandomizedDelaySec=15s`, `Persistent=false`).
+
+**Installation på servern (`/srv/floden`):**
+
+```bash
+cd /srv/floden
+mkdir -p deploy
+curl -fsSL -o deploy/floden-auto-uppdatera.sh https://raw.githubusercontent.com/joelberring/floden/main/deploy/floden-auto-uppdatera.sh
+curl -fsSL -o deploy/floden-auto-uppdatera.service https://raw.githubusercontent.com/joelberring/floden/main/deploy/floden-auto-uppdatera.service
+curl -fsSL -o deploy/floden-auto-uppdatera.timer https://raw.githubusercontent.com/joelberring/floden/main/deploy/floden-auto-uppdatera.timer
+chmod +x deploy/floden-auto-uppdatera.sh
+
+# Provkör säkert utan backup eller omstart
+/srv/floden/deploy/floden-auto-uppdatera.sh --torrkor
+
+# Installera och aktivera timern
+sudo cp /srv/floden/deploy/floden-auto-uppdatera.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now floden-auto-uppdatera.timer
+systemctl list-timers 'floden-*'
+```
+
+**Så fungerar uppgradering och automatisk återställning (rollback):**
+
+1. **Lås och ingen onödig omstart:** skriptet tar ett icke-blockerande lås med `flock -n` (`FLODEN_LASFIL`, förval `/tmp/floden-auto-uppdatera.lock`) så överlappande körningar avslutar rent med slutkod `0`. Körande containers avbildnings-ID och digest jämförs mot `ghcr.io/joelberring/floden:${FLODEN_TAG:-main}` efter `docker compose pull -q floden`; är avbildningen oförändrad sker ingen omstart.
+2. **Obligatorisk backup före uppgradering:** vid ny avbildning körs först en online-säker SQLite-backup (`docker compose -f docker-compose.prod.yml exec -T floden floden konto backup --ut data/lokal/backup/konto --behall-antal 48 --behall-dagar 14`, samt `--s3 --s3-prefix backup/konto` när `FLODEN_S3_TYP=s3` är satt i `.env`). Om backupen misslyckas avbryts driftsättningen helt — `floden` startas aldrig om utan färsk backup.
+3. **Återställningsankare och isolerad omstart:** föregående körande avbildnings-ID taggas lokalt som `floden-rollback:senaste`, varefter enbart tjänsten `floden` startas om (`docker compose -f docker-compose.prod.yml up -d --no-deps floden`; Caddy förblir orörd).
+4. **Hälsokontroll inifrån containern och automatisk rollback:** eftersom `floden` inte exponerar port 8765 på värden pollas `http://127.0.0.1:8765/api/halsa` (`FLODEN_HALSA_URL`) inifrån containern i upp till `FLODEN_HALSA_TIMEOUT_S` sekunder (förval `30`). Om svaret inte ger `"status": "ok"` inom tidsgränsen återtaggar skriptet automatiskt `floden-rollback:senaste` tillbaka till målavbildningen, startar om `floden` på föregående version, verifierar återställd hälsa, loggar tydligt fel till `stderr`/`journalctl` och avslutar med slutkod skild från `0`.
+
+Konfigurerbara miljövariabler i `.env`: `FLODEN_COMPOSE_FIL`, `FLODEN_IMAGE`, `FLODEN_TAG`, `FLODEN_HALSA_URL`, `FLODEN_HALSA_TIMEOUT_S`, `FLODEN_LASFIL` och `FLODEN_S3_TYP`. Loggar läses med:
+
+```bash
+journalctl -u floden-auto-uppdatera.service -n 50 --no-pager
+```
+
+**Stäng av automatisk uppdatering med ett kommando:**
+
+```bash
+sudo systemctl disable --now floden-auto-uppdatera.timer
+```
+
+Vill du behålla timern aktiv men frysa en viss version sätter du `FLODEN_TAG=<commit-sha>` i `/srv/floden/.env`.
+
+### Växla MCP-utvecklingsläge (`FLODEN_MCP_UTVECKLINGSLAGE`)
+
+Superadmin-utvecklingsläget på `/mcp` (`utv_*`-verktyg, se `docs/MCP.md`) är **avstängt som förval** (`FLODEN_MCP_UTVECKLINGSLAGE=0`). För att slå på eller av det på servern, ändra raden i `/srv/floden/.env` och starta om enbart `floden`:
+
+```bash
+# Slå på utvecklingsläget (kräver både flaggan och inloggat superadmin-konto):
+#   FLODEN_MCP_UTVECKLINGSLAGE=1   i /srv/floden/.env
+docker compose -f docker-compose.prod.yml up -d --no-deps floden
+
+# Slå av utvecklingsläget igen (standard för normal drift):
+#   FLODEN_MCP_UTVECKLINGSLAGE=0   i /srv/floden/.env (eller ta bort raden)
+docker compose -f docker-compose.prod.yml up -d --no-deps floden
+```
+
+Aktivt läge syns i `GET /api/halsa` (`"mcp_utvecklingslage": true/false`). Hemligheter, API-nycklar, personuppgifter och stängda data (K38) är alltid spärrade även när läget är på.
+
 ## Prova lokalt
 
 ```bash
