@@ -19,11 +19,13 @@ manifestet anmärker det.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
@@ -34,6 +36,39 @@ from kommuner.wfs import KommunKallaFel
 from markmodell.rutnat import Ruta
 
 Linje = NDArray[np.float64]  # (n, 3): E, N (EPSG:3011), z (RH 2000)
+
+_LOGG = logging.getLogger(__name__)
+
+# Trösklar för rimlighetskontroll av vattenkomponenter (P1-7).
+STANDARD_MAX_OVERHOJD_OVER_OMGIVNING_M = 15.0
+"""Om en föreslagen vattenyta ligger mer än så här många meter ÖVER omgivande torr mark (median)
+avvisas komponenten som ett uppenbart felaktigt z-värde i strandlinjen. Giltiga bergsdammar ligger
+i eller under omgivande marknivå och berörs inte."""
+
+_MAX_OVERHOJD_UTAN_OMGIVNING_M = 50.0
+"""Fallback-gräns när en komponent täcker hela rutan och saknar torr omgivning."""
+
+_HOG_VATTENNIVA_LOGG_M = 20.0
+"""Komponenter med godkänd nivå >= denna höjd (RH 2000) loggas separat för spårbarhet."""
+
+
+@dataclass(frozen=True)
+class VattenKomponentDiagnos:
+    """Per-komponent-diagnostik från `vattenytor_for_rutor` (RH 2000)."""
+
+    komponent_id: int
+    antal_celler: int
+    yta_m2: float
+    niva_median_m: float
+    strand_z_min_m: float
+    strand_z_max_m: float
+    antal_strandceller: int
+    komponent_z_min_m: float
+    komponent_z_max_m: float
+    omgivning_z_median_m: float | None
+    overhojd_over_omgivning_m: float | None
+    status: Literal["godkand", "avvisad_outlier"]
+    skal: str = ""
 
 
 def las_strandlinjer(
@@ -170,15 +205,29 @@ def vattenytor_for_rutor(
     *,
     marginal_m: float,
     max_avstand_m: float,
+    max_overhojd_over_omgivning_m: float | None = STANDARD_MAX_OVERHOJD_OVER_OMGIVNING_M,
+    diagnostik: list[VattenKomponentDiagnos] | None = None,
 ) -> list[tuple[NDArray[np.bool_], NDArray[np.float32]]]:
     """Beräknar vattenmask och global plan RH 2000-nivå skarvlöst över en eller flera rutor.
 
     Sammanhängande vattenytor som korsar rutgränser eller överlapp slås ihop till en gemensam
     komponent över hela mappningsområdet och får en enda global mediannivå (RH 2000) från
     alla unika strandnära celler längs vattenytan, så att grannrutor får exakt samma nivå (0 m steg).
+
+    Om `max_overhojd_over_omgivning_m` anges (förval 15,0 m) avvisas uppenbart korrupta
+    strandlinje-outliers vars mediannivå ligger mer än gränsen över omgivande torr mark (p90),
+    medan giltiga högt belägna dammar (där omgivande mark ligger vid eller över vattenytan)
+    bevaras och loggas. Per-komponent-diagnostik skrivs till `diagnostik` om en lista ges.
     """
     from scipy import ndimage
     from scipy.spatial import cKDTree
+
+    if max_overhojd_over_omgivning_m is not None and (
+        not math.isfinite(max_overhojd_over_omgivning_m) or max_overhojd_over_omgivning_m <= 0.0
+    ):
+        raise ValueError(
+            "max_overhojd_over_omgivning_m måste vara ett ändligt positivt tal eller None."
+        )
 
     if not rutor_och_z:
         return []
@@ -349,16 +398,159 @@ def vattenytor_for_rutor(
             rot = _hitta(off_ti + int(c_id) - 1)
             strand_per_rot.setdefault(rot, {})[(int(e_i), int(n_i))] = float(z_v)
 
+    if not strand_per_rot:
+        return tomma
+
     global_niva: dict[int, np.float32] = {
         rot: np.float32(np.median(np.fromiter(celler.values(), dtype=np.float64, count=len(celler))))
         for rot, celler in strand_per_rot.items()
     }
 
+    # Per-komponent-diagnostik och rimlighetskontroll mot omgivande torr DTM (P1-7).
+    rot_till_idx = {rot: idx for idx, rot in enumerate(sorted(global_niva))}
+    n_rot = len(rot_till_idx)
+    komp_celler = np.zeros(n_rot, dtype=np.int64)
+    komp_z_min = np.full(n_rot, np.inf, dtype=np.float64)
+    komp_z_max = np.full(n_rot, -np.inf, dtype=np.float64)
+    omgivning_z: list[list[NDArray[np.float32]]] = [[] for _ in range(n_rot)]
+
+    for ti, (ruta, z) in enumerate(rutor_och_z):
+        antal = antal_lista[ti]
+        if antal == 0:
+            continue
+        delar = delar_lista[ti]
+        off_ti = offset_lista[ti]
+        lut_idx = np.full(antal + 1, -1, dtype=np.int32)
+        for c_id in range(1, antal + 1):
+            rot = _hitta(off_ti + c_id - 1)
+            r_idx = rot_till_idx.get(rot)
+            if r_idx is not None:
+                lut_idx[c_id] = r_idx
+        idx_karta = lut_idx[delar]
+
+        # Räkna celler och markhöjdsintervall i rutans inre del (undvik dubbelräkning av överlapp).
+        o = int(round(ruta.overlapp_m / px))
+        inre_idx = idx_karta[o : idx_karta.shape[0] - o, o : idx_karta.shape[1] - o] if o else idx_karta
+        inre_z = z[o : z.shape[0] - o, o : z.shape[1] - o] if o else z
+        aktiva = inre_idx >= 0
+        if np.any(aktiva):
+            akt_idx = inre_idx[aktiva]
+            akt_z = inre_z[aktiva].astype(np.float64, copy=False)
+            komp_celler += np.bincount(akt_idx, minlength=n_rot)
+            np.minimum.at(komp_z_min, akt_idx, akt_z)
+            np.maximum.at(komp_z_max, akt_idx, akt_z)
+
+        # Samla torr omgivning (4-grannar som ligger utanför vattenkomponenterna).
+        torr = (idx_karta < 0) & np.isfinite(z)
+        if np.any(torr) and np.any(idx_karta >= 0):
+            for src_sl, dst_sl in (
+                ((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+                ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
+                ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
+                ((slice(None), slice(1, None)), (slice(None), slice(None, -1))),
+            ):
+                granne_idx = idx_karta[src_sl]
+                traff = torr[dst_sl] & (granne_idx >= 0)
+                if np.any(traff):
+                    g_ids = granne_idx[traff]
+                    g_z = z[dst_sl][traff]
+                    for u_id in np.unique(g_ids).tolist():
+                        omgivning_z[int(u_id)].append(g_z[g_ids == u_id])
+
+    godkanda_rotter: dict[int, np.float32] = {}
+    diagnos_lista: list[VattenKomponentDiagnos] = []
+    cell_yta_m2 = px * px
+
+    for rot, r_idx in rot_till_idx.items():
+        strand_varden = np.fromiter(
+            strand_per_rot[rot].values(), dtype=np.float64, count=len(strand_per_rot[rot])
+        )
+        niva_m = float(global_niva[rot])
+        n_cell = int(komp_celler[r_idx])
+        yta_m2 = float(n_cell) * cell_yta_m2
+        kz_min = float(komp_z_min[r_idx]) if math.isfinite(float(komp_z_min[r_idx])) else niva_m
+        kz_max = float(komp_z_max[r_idx]) if math.isfinite(float(komp_z_max[r_idx])) else niva_m
+
+        omg_median: float | None = None
+        overhojd: float | None = None
+        if omgivning_z[r_idx]:
+            omg_alla = np.concatenate(omgivning_z[r_idx]).astype(np.float64, copy=False)
+            omg_median = float(np.median(omg_alla))
+            overhojd = niva_m - omg_median
+
+        status: Literal["godkand", "avvisad_outlier"] = "godkand"
+        skal = ""
+        if max_overhojd_over_omgivning_m is not None:
+            if overhojd is not None and overhojd > max_overhojd_over_omgivning_m:
+                status = "avvisad_outlier"
+                skal = (
+                    f"Vattennivå {niva_m:.2f} m RH 2000 ligger {overhojd:.2f} m över omgivande "
+                    f"torr mark (median={omg_median:.2f} m, gräns {max_overhojd_over_omgivning_m:.1f} m)."
+                )
+            elif overhojd is None and (niva_m - kz_max) > max(
+                _MAX_OVERHOJD_UTAN_OMGIVNING_M, max_overhojd_over_omgivning_m
+            ):
+                status = "avvisad_outlier"
+                skal = (
+                    f"Vattennivå {niva_m:.2f} m RH 2000 saknar torr omgivning och ligger "
+                    f"{niva_m - kz_max:.2f} m över högsta cell i komponenten ({kz_max:.2f} m)."
+                )
+
+        diag = VattenKomponentDiagnos(
+            komponent_id=int(rot),
+            antal_celler=n_cell,
+            yta_m2=yta_m2,
+            niva_median_m=niva_m,
+            strand_z_min_m=float(np.min(strand_varden)),
+            strand_z_max_m=float(np.max(strand_varden)),
+            antal_strandceller=int(strand_varden.size),
+            komponent_z_min_m=kz_min,
+            komponent_z_max_m=kz_max,
+            omgivning_z_median_m=omg_median,
+            overhojd_over_omgivning_m=overhojd,
+            status=status,
+            skal=skal,
+        )
+        diagnos_lista.append(diag)
+        if status == "godkand":
+            godkanda_rotter[rot] = global_niva[rot]
+            if niva_m >= _HOG_VATTENNIVA_LOGG_M:
+                _LOGG.info(
+                    "Vattenyta på hög nivå (komponent %d): %.0f m² vid %.2f m RH 2000 "
+                    "(omgivning median=%s m, strand %.2f–%.2f m).",
+                    diag.komponent_id,
+                    diag.yta_m2,
+                    diag.niva_median_m,
+                    f"{diag.omgivning_z_median_m:.2f}" if diag.omgivning_z_median_m is not None else "okänd",
+                    diag.strand_z_min_m,
+                    diag.strand_z_max_m,
+                )
+        else:
+            _LOGG.warning(
+                "Avvisar misstänkt strandlinje-outlier (komponent %d, %.0f m²): %s",
+                diag.komponent_id,
+                diag.yta_m2,
+                diag.skal,
+            )
+
+    if diagnostik is not None:
+        diagnostik.extend(diagnos_lista)
+
+    if godkanda_rotter:
+        nivaer = [float(v) for v in godkanda_rotter.values()]
+        _LOGG.info(
+            "Vattenytor: %d godkända komponenter (avvisade outliers: %d), nivå %.2f–%.2f m RH 2000.",
+            len(godkanda_rotter),
+            len(diagnos_lista) - len(godkanda_rotter),
+            min(nivaer),
+            max(nivaer),
+        )
+
     resultat: list[tuple[NDArray[np.bool_], NDArray[np.float32]]] = []
     for ti in range(n_rutor):
         antal = antal_lista[ti]
         delar = delar_lista[ti]
-        if antal == 0 or not global_niva:
+        if antal == 0 or not godkanda_rotter:
             resultat.append(tomma[ti])
             continue
         off_ti = offset_lista[ti]
@@ -366,11 +558,32 @@ def vattenytor_for_rutor(
         lut_niva = np.full(antal + 1, np.nan, dtype=np.float32)
         for c_id in range(1, antal + 1):
             rot = _hitta(off_ti + c_id - 1)
-            if rot in global_niva:
+            if rot in godkanda_rotter:
                 lut_mask[c_id] = True
-                lut_niva[c_id] = global_niva[rot]
+                lut_niva[c_id] = godkanda_rotter[rot]
         resultat.append((lut_mask[delar], lut_niva[delar]))
     return resultat
+
+
+def vattenytor_for_rutor_med_diagnos(
+    rutor_och_z: Sequence[tuple[Ruta, NDArray[np.float32]]],
+    linjer: Sequence[Linje],
+    *,
+    marginal_m: float,
+    max_avstand_m: float,
+    max_overhojd_over_omgivning_m: float | None = STANDARD_MAX_OVERHOJD_OVER_OMGIVNING_M,
+) -> tuple[list[tuple[NDArray[np.bool_], NDArray[np.float32]]], list[VattenKomponentDiagnos]]:
+    """Som `vattenytor_for_rutor`, men returnerar även per-komponent-diagnostik."""
+    diagnostik: list[VattenKomponentDiagnos] = []
+    resultat = vattenytor_for_rutor(
+        rutor_och_z,
+        linjer,
+        marginal_m=marginal_m,
+        max_avstand_m=max_avstand_m,
+        max_overhojd_over_omgivning_m=max_overhojd_over_omgivning_m,
+        diagnostik=diagnostik,
+    )
+    return resultat, diagnostik
 
 
 def vattenytor_i_ruta(

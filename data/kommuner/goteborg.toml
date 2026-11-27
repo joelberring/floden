@@ -43,6 +43,27 @@ lågpunkt. TERRÄNGEN ÄR INTE KONTROLLERAD mot höjddata (ingen nätåtkomst vi
 mäter höjdspann och lägsta punkt i markmodellen och skriver dem i geografins manifest \
 (forberakningar.terrang_karna), så att valet kan bytas om området visar sig vara platt."""
 
+[omraden.lindholmen]
+namn = "Lindholmen och Karlastaden"
+beskrivning = "Lindholmen / Karlastaden / Plejadgatan / Lindholmsallén, 500 x 500 m (EPSG:3007)"
+bbox = [146100.0, 6398500.0, 146600.0, 6399000.0]
+motivering = """\
+Låglänt älvstrandsförtätning med extrem höjd- och dagsljuskontrast (Karlastaden/Karlatornet) samt \
+älvnära skyfallsdynamik. Referensunderlag finns i Göteborgs Stads (Kretslopp och vatten, 2025-02-27) \
+offentliga handling 'Dagvatten- och skyfallsutredning: Detaljplan för skola, bostäder vid Plejadgatan \
+(Lindholmen 6:9 m fl)' med verifierade 100-årsdjup vid Utvecklingsgatan, planområdet och amfiteatern."""
+
+[omraden.guldheden]
+namn = "Guldheden (Doktor Allards gata och Guldhedsgatan)"
+beskrivning = "Södra och norra Guldheden inkl. Doktor Allards gata och Guldhedsgatan, 1000 x 1000 m (EPSG:3007)"
+bbox = [147800.0, 6395900.0, 148800.0, 6396900.0]
+motivering = """\
+Brant kuperad urbergsplatå (+35 till +60 m RH 2000) med hög grönyteandel och kraftig ytavrinning mot \
+Chalmers/Sven Hultins gata och Sahlgrenska. Täcker båda de offentliga referensutredningarna från \
+Göteborgs Stad (Kretslopp och vatten): 'Dagvatten- och skyfallsutredning: Doktor Allards gata' \
+(2021-09-23, rev. 2022-10-19) och 'Guldhedsgatan – Dagvatten- och skyfalls-PM för del av Guldheden 754:4' \
+(2021-12-15)."""
+
 # --- Geografier (floden geografi mappa <id>) -----------------------------------------------------
 # En geografi är ett mappat område med giltig kärna och buffert (docs/DATAKONTRAKT.md, kontrakt K46).
 # Kärnan är ett av testområdena ovan. Bufferten tar kärnans skyfall (hela tillrinningsområdet uppströms,
@@ -52,6 +73,18 @@ namn = "Göteborg, provområde (Haga)"
 omrade = "haga"
 tillrinning_cell_m = 2.0     # cellstorlek för tillrinningsberäkningen (nedsamplad höjdmodell)
 max_buffert_m = 1500.0       # största buffert: tillrinning som når längre ger en varning
+
+[geografier.goteborg-lindholmen]
+namn = "Göteborg, jämförelseområde (Lindholmen)"
+omrade = "lindholmen"
+tillrinning_cell_m = 2.0
+max_buffert_m = 1500.0
+
+[geografier.goteborg-guldheden]
+namn = "Göteborg, jämförelseområde (Guldheden)"
+omrade = "guldheden"
+tillrinning_cell_m = 2.0
+max_buffert_m = 1500.0
 
 # --- Höjd ---------------------------------------------------------------------------------------
 # kalla = "filpaket": kommunens höjdmodell (öppen, ingen nyckel). reserv_lantmateriet: om den fallerar och

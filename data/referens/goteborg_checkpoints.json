@@ -1,0 +1,245 @@
+{
+  "schema_version": "floden-referens-punkter/v1",
+  "kommun": "goteborg",
+  "beskrivning": "Verifierade kommunala skyfallskontrollpunkter, SMHI 2026 metodparametrar och Länsstyrelsen Västra Götaland (LstO) WMS-lager för Göteborgs jämförelseområden (Haga, Lindholmen, Guldheden). Endast öppna offentliga handlingar och organisationer; 0 personuppgifter.",
+  "koordinatsystem": "EPSG:3007",
+  "hojd_system": "RH 2000",
+  "smhi_skyfallskartering_2026": {
+    "kalla": "SMHI Riskkartering för skyfall",
+    "url": "https://www.smhi.se/tema/hantera-vatten-och-klimat/hantera-oversvamning-till-foljd-av-skyfall/riskkartering-oversvamningskansliga-omraden-vid-skyfall",
+    "webbtjanst_url": "https://vattenplanera.smhi.se/riskkartering/oversvamning",
+    "publicerad": "2026-10-13",
+    "uppdaterad": "2026-11-25",
+    "modell": "LISFLOOD-FP v8.2.1",
+    "upplosning_m": 10.0,
+    "simuleringstid_h": 24.0,
+    "regntid_h": 6.0,
+    "avrinningstid_h": 18.0,
+    "bortklippt_djup_under_m": 0.1,
+    "extremregn_kalla": "Olsson et al. (2018)",
+    "varaktigheter_h": [1, 3, 6],
+    "aterkomsttider_ar": [10, 100],
+    "klimatfaktorer": {
+      "referens": 1.0,
+      "rcp45": 1.2,
+      "rcp85": 1.4
+    },
+    "schablonavdrag_hardgjort_mm": 18.0,
+    "schablonavdrag_mm_h": 3.0,
+    "infiltration": "Green-Ampt"
+  },
+  "lsto_wms": {
+    "organisation": "Länsstyrelsen Västra Götaland",
+    "rest_url": "https://ext-geodata-lokala-visning.lansstyrelsen.se/arcgis/rest/services/LSTO/lsto_ytavrinning_lagpunkter_EXT/MapServer",
+    "wms_url": "https://ext-geodata-lokala-visning.lansstyrelsen.se/arcgis/services/LSTO/lsto_ytavrinning_lagpunkter_EXT/MapServer/WMSServer?request=GetCapabilities&service=WMS",
+    "lager_goteborg": [
+      {
+        "id_lagpunkter": 15,
+        "id_ytavrinning": 16,
+        "namn": "Göta älv"
+      },
+      {
+        "id_lagpunkter": 30,
+        "id_ytavrinning": 31,
+        "namn": "Kusten Tjörn Stenungsund Öckerö Gbg del av Kungälvs kommun"
+      },
+      {
+        "id_lagpunkter": 39,
+        "id_ytavrinning": 40,
+        "namn": "Mölndalsån"
+      },
+      {
+        "id_lagpunkter": 48,
+        "id_ytavrinning": 49,
+        "namn": "Säveån"
+      }
+    ]
+  },
+  "omraden": {
+    "haga": {
+      "geografi_id": "goteborg-test",
+      "namn": "Haga och östra Linnéstaden",
+      "epsg": 3007,
+      "bbox": [147400.0, 6397500.0, 147900.0, 6398000.0],
+      "kallor": [
+        {
+          "organisation": "Göteborgs Stad",
+          "dokument": "Öppen höjdmodell 2022 (CC0) och öppen baskarta hydrografi_l (CC0)"
+        }
+      ]
+    },
+    "lindholmen": {
+      "geografi_id": "goteborg-lindholmen",
+      "namn": "Lindholmen och Karlastaden",
+      "epsg": 3007,
+      "bbox": [146100.0, 6398500.0, 146600.0, 6399000.0],
+      "kallor": [
+        {
+          "organisation": "Göteborgs Stad, Kretslopp och vatten",
+          "dokument": "Dagvatten- och skyfallsutredning: Detaljplan för skola, bostäder vid Plejadgatan (Lindholmen 6:9 m fl)",
+          "datum": "2025-02-27",
+          "url": "https://www5.goteborg.se/prod/fastighetskontoret/etjanst/planobygg.nsf/vyFiler/Lindholmen%20-%20skola%20och%20bost%C3%A4der%20vid%20Plejadgatan%20(Lindholmen%206%3A9%20m%20fl)-Plan%20standardf%C3%B6rfarande%20-%20samr%C3%A5d-10%20Dagvatten%20och%20skyfallsutredning/$File/10%20Dagvatten%20och%20skyfallsutredning.pdf?OpenElement"
+        }
+      ]
+    },
+    "guldheden": {
+      "geografi_id": "goteborg-guldheden",
+      "namn": "Guldheden (Doktor Allards gata och Guldhedsgatan)",
+      "epsg": 3007,
+      "bbox": [147800.0, 6395900.0, 148800.0, 6396900.0],
+      "kallor": [
+        {
+          "organisation": "Göteborgs Stad, Kretslopp och vatten",
+          "dokument": "Dagvatten- och skyfallsutredning: Doktor Allards gata",
+          "datum": "2021-09-23 (rev. 2022-10-19)",
+          "url": "https://www5.goteborg.se/prod/fastighetskontoret/etjanst/planobygg.nsf/vyFiler/Guldheden%20-%20%C3%84ldreboende%20med%20mera%20vid%20Doktor%20Allards%20Gata-Plan%20ut%C3%B6kat%20f%C3%B6rfarande%20-%20samr%C3%A5d-Dagvatten-%20och%20skyfallsutredning/$File/18.%20Dagvatten-%20och%20skyfallsutredning.pdf?OpenElement"
+        },
+        {
+          "organisation": "Göteborgs Stad, Kretslopp och vatten",
+          "dokument": "Guldhedsgatan – Dagvatten- och skyfalls-PM för del av Guldheden 754:4",
+          "datum": "2021-12-15",
+          "url": "https://www5.goteborg.se/prod/fastighetskontoret/etjanst/planobygg.nsf/vyFiler/Guldheden%20-%20F%C3%B6rskola%20och%20bost%C3%A4der%20vid%20Guldhedsgatan-Plan%20standardf%C3%B6rfarande%20-%20granskning-Dagvatten-%20och%20skyfallsutredning/$File/3.%20Dagvatten-%20och%20skyfalls-PM.pdf?OpenElement"
+        }
+      ]
+    }
+  },
+  "punkter": [
+    {
+      "id": "lindholmen_utvecklingsgatan",
+      "omrade": "lindholmen",
+      "namn": "Utvecklingsgatan / Plejadgatan",
+      "typ": "skyfallsdjup",
+      "epsg": 3007,
+      "e_m": 146304.0,
+      "n_m": 6398819.0,
+      "ref_djup_m": null,
+      "ref_djup_min_m": 0.2,
+      "ref_djup_max_m": 0.3,
+      "framkomlighetsgrans_m": 0.2,
+      "scenario": "Klimatanpassat 100-årsregn (stadens modell + Scalgo Live)",
+      "kalla_organisation": "Göteborgs Stad, Kretslopp och vatten",
+      "kalla_dokument": "Dagvatten- och skyfallsutredning: Detaljplan för skola, bostäder vid Plejadgatan (Lindholmen 6:9 m fl) (2025-02-27)",
+      "kalla_sida": 19,
+      "anmarkning": "Max vattendjup vid Utvecklingsgatan 0,2–0,3 m; framkomlighetsgräns 0,20 m."
+    },
+    {
+      "id": "lindholmen_planomrade_max",
+      "omrade": "lindholmen",
+      "namn": "Planområde Plejadgatan / Lindholmsallén (max)",
+      "typ": "skyfallsdjup",
+      "epsg": 3007,
+      "e_m": 146334.0,
+      "n_m": 6398640.0,
+      "ref_djup_m": null,
+      "ref_djup_min_m": 0.3,
+      "ref_djup_max_m": 0.4,
+      "framkomlighetsgrans_m": 0.2,
+      "scenario": "Klimatanpassat 100-årsregn (stadens modell + Scalgo Live)",
+      "kalla_organisation": "Göteborgs Stad, Kretslopp och vatten",
+      "kalla_dokument": "Dagvatten- och skyfallsutredning: Detaljplan för skola, bostäder vid Plejadgatan (Lindholmen 6:9 m fl) (2025-02-27)",
+      "kalla_sida": 19,
+      "anmarkning": "Maximalt vattendjup inom planområdet 0,3–0,4 m; 10 min intensitet 181 l/(s·ha) (5 år) och 228 l/(s·ha) (10 år) (s. 26)."
+    },
+    {
+      "id": "lindholmen_amfiteater_lagpunkt",
+      "omrade": "lindholmen",
+      "namn": "Amfiteaterns lågpunkt (Karlastaden / Plejadgatan)",
+      "typ": "skyfallsdjup",
+      "epsg": 3007,
+      "e_m": 146358.0,
+      "n_m": 6398952.0,
+      "ref_djup_m": 0.12,
+      "ref_djup_min_m": 0.1,
+      "ref_djup_max_m": 0.15,
+      "framkomlighetsgrans_m": 0.2,
+      "scenario": "Klimatanpassat 100-årsregn (Scalgo Live)",
+      "kalla_organisation": "Göteborgs Stad, Kretslopp och vatten",
+      "kalla_dokument": "Dagvatten- och skyfallsutredning: Detaljplan för skola, bostäder vid Plejadgatan (Lindholmen 6:9 m fl) (2025-02-27)",
+      "kalla_sida": 19,
+      "anmarkning": "Amfiteaterns lågpunkt angiven till 12 cm (0,12 m) i Scalgo Live."
+    },
+    {
+      "id": "guldheden_dr_allards_gata",
+      "omrade": "guldheden",
+      "namn": "Doktor Allards gata",
+      "typ": "skyfallsdjup",
+      "epsg": 3007,
+      "e_m": 148210.4,
+      "n_m": 6396088.6,
+      "ref_djup_m": null,
+      "ref_djup_min_m": 0.1,
+      "ref_djup_max_m": 0.2,
+      "framkomlighetsgrans_m": 0.2,
+      "scenario": "100-årsregn (stadens 4x4 m-modell & Scalgo 2x2 m, kf 1,25 enl. P110)",
+      "kalla_organisation": "Göteborgs Stad, Kretslopp och vatten",
+      "kalla_dokument": "Dagvatten- och skyfallsutredning: Doktor Allards gata (2021-09-23, rev. 2022-10-19)",
+      "kalla_sida": 17,
+      "anmarkning": "Gata vid Doktor Allards gata 0,1–0,2 m; flödesväg mot Alexandraskolans parkering, Viggeliden och Sven Hultins gata (s. 14–16)."
+    },
+    {
+      "id": "guldheden_guldhedsgatan",
+      "omrade": "guldheden",
+      "namn": "Guldhedsgatan (brant lutning)",
+      "typ": "skyfallsdjup",
+      "epsg": 3007,
+      "e_m": 148061.6,
+      "n_m": 6396812.6,
+      "ref_djup_m": 0.0,
+      "ref_djup_min_m": 0.0,
+      "ref_djup_max_m": 0.05,
+      "framkomlighetsgrans_m": 0.2,
+      "scenario": "100-årsregn (stadens modell & Scalgo Live)",
+      "kalla_organisation": "Göteborgs Stad, Kretslopp och vatten",
+      "kalla_dokument": "Guldhedsgatan – Dagvatten- och skyfalls-PM för del av Guldheden 754:4 (2021-12-15)",
+      "kalla_sida": 19,
+      "anmarkning": "0,0 m stående vatten på Guldhedsgatan på grund av kraftig marklutning."
+    },
+    {
+      "id": "guldheden_guldhedsgatan_innergard",
+      "omrade": "guldheden",
+      "namn": "Guldhedsgatan innergård",
+      "typ": "skyfallsdjup",
+      "epsg": 3007,
+      "e_m": 148080.0,
+      "n_m": 6396800.0,
+      "ref_djup_m": null,
+      "ref_djup_min_m": 0.2,
+      "ref_djup_max_m": null,
+      "framkomlighetsgrans_m": 0.2,
+      "scenario": "100-årsregn (stadens modell & Scalgo Live)",
+      "kalla_organisation": "Göteborgs Stad, Kretslopp och vatten",
+      "kalla_dokument": "Guldhedsgatan – Dagvatten- och skyfalls-PM för del av Guldheden 754:4 (2021-12-15)",
+      "kalla_sida": 19,
+      "anmarkning": "Innergård vid Guldhedsgatan redovisar stående vattendjup > 0,20 m; planerad regional skyfallsyta ca 7 000 m² / ca 4 000 m³ (s. 20)."
+    },
+    {
+      "id": "haga_vastlanken_schakt",
+      "omrade": "haga",
+      "namn": "Västlänken Station Haga (öppet schakt i 2022 års DTM)",
+      "typ": "terrangnotering",
+      "epsg": 3007,
+      "e_m": 147682.57,
+      "n_m": 6397801.93,
+      "markniva_rh2000_m": -7.063,
+      "kalla_organisation": "Göteborgs Stad",
+      "kalla_dokument": "Höjdmodell 2022 (CC0, 0,5 m DTM, RH 2000)",
+      "kalla_sida": null,
+      "anmarkning": "Lägsta marknivå i goteborg-test@v5 (-7,063 m RH 2000) ca 75 m NV om Hagakyrkan: Västlänkens öppna schakt under byggtid, inte Rosenlundskanalen."
+    },
+    {
+      "id": "haga_rosenlundskanalen",
+      "omrade": "haga",
+      "namn": "Rosenlundskanalen (plan vattenyta)",
+      "typ": "referensniva",
+      "epsg": 3007,
+      "e_m": 147650.0,
+      "n_m": 6397920.0,
+      "vattenniva_min_rh2000_m": -0.0,
+      "vattenniva_max_rh2000_m": 0.2,
+      "kalla_organisation": "Göteborgs Stad",
+      "kalla_dokument": "Öppen baskarta hydrografi_l (CC0, Strandlinje, RH 2000)",
+      "kalla_sida": null,
+      "anmarkning": "Kanalvattenyta utplanad vid -0,0–0,2 m RH 2000 (markslag 8) i goteborg-test@v5; ska exkluderas via --mask-vatten vid skyfallsjämförelse."
+    }
+  ]
+}
