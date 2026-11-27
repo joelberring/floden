@@ -24,6 +24,7 @@ import os
 import re
 import threading
 import urllib.parse
+import warnings
 from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -93,7 +94,19 @@ from webb.resultatlager import (
 
 FORMAT_GYF_WEBB: Final[str] = "floden-gyf-webb/v1"
 FORMAT_VARMESTRESS_WEBB: Final[str] = "floden-varmestress-webb/v1"
+FORMAT_VADER_LUFT_WEBB: Final[str] = "floden-vader-luft-webb/v1"
+FORMAT_LUFT_SKISS_WEBB: Final[str] = "floden-luft-skiss-webb/v1"
 KOORDINATSYSTEM_EPSG: Final[str] = "EPSG:3011"
+
+STANDARD_MAX_LUFT_SKISS_SEGMENT: Final[int] = 200
+FLODEN_MAX_LUFT_SKISS_SEGMENT_ENV: Final[str] = "FLODEN_MAX_LUFT_SKISS_SEGMENT"
+STANDARD_MAX_LUFT_SKISS_TIMMAR: Final[int] = 8784
+FLODEN_MAX_LUFT_SKISS_TIMMAR_ENV: Final[str] = "FLODEN_MAX_LUFT_SKISS_TIMMAR"
+_MKN_NO2_ARSMEDEL_UG_M3: Final[float] = 40.0
+_MKN_PM10_ARSMEDEL_UG_M3: Final[float] = 40.0
+_MKN_PM10_DYGN_90_4_UG_M3: Final[float] = 50.0
+_K_NO_O3_STANDARD_PPB_1_S: Final[float] = 4.4e-4
+_J_NO2_STANDARD_DAG_1_S: Final[float] = 5.0e-3
 
 STANDARD_GYF_PROFIL: Final[str] = "stockholm"
 
@@ -1765,24 +1778,104 @@ def kor_varmestress_analys(
         raise FlodenWebbFel("Obligatoriskt fält 'omrade_id' saknas eller är tomt.", status_kod=400)
     omrade_id = omrade_id.strip()
 
+    forval_ra = payload.get("forval")
+    forval_id: str | None = None
+    if forval_ra is not None and forval_ra != "":
+        if not isinstance(forval_ra, str) or not forval_ra.strip():
+            raise FlodenWebbFel("Fältet 'forval' måste vara en textsträng.", status_kod=400)
+        forval_id = forval_ra.strip()
+
+    # Läs valfritt SMHI-väderlager (`lager.vader_luft`) om projektet hör till en geografi.
+    projekt_mapp = kartverktyg.projektmapp(omrade_id)
+    vader_info: dict[str, Any] | None = None
+    if projekt_mapp is not None:
+        with contextlib.suppress(FlodenWebbFel):
+            vader_info = hamta_projekt_vader_luft(projekt_mapp, geo_rot=kartverktyg.geomapp)
+
+    platsens_vader_ut: dict[str, Any] | None = None
+    if vader_info is not None and vader_info.get("har_vader_luft"):
+        st = vader_info.get("station") or {}
+        platsens_vader_ut = {
+            "station_id": st.get("id"),
+            "station_namn": st.get("namn"),
+            "station_avstand_km": st.get("avstand_km"),
+            "ar": st.get("ar"),
+            "kalla": vader_info.get("kalla"),
+            "kalla_text": vader_info.get("kalla_text"),
+            "lager_sha256": vader_info.get("lager_sha256"),
+            "forval": vader_info.get("utci_forval") or {},
+        }
+
+    # Standardparametrar, eventuellt förifyllda från platsens SMHI-värmebölja (p95 / p99).
+    std_t_luft = STANDARD_T_LUFT_C
+    std_rh = STANDARD_RH_PCT
+    std_vind = STANDARD_VIND_10M_M_S
+    std_sol_dir = STANDARD_SOL_DIREKT_W_M2
+    std_sol_diff = STANDARD_SOL_DIFFUS_W_M2
+    std_solhojd = STANDARD_SOLHOJD_GRAD
+    std_solaz = STANDARD_SOLAZIMUT_GRAD
+    forval_varningar: list[str] = []
+
+    if forval_id in ("platsens_smhi_p95", "platsens_smhi_p99"):
+        smhi_forval = (
+            platsens_vader_ut["forval"].get(forval_id)
+            if platsens_vader_ut is not None
+            else None
+        )
+        if not isinstance(smhi_forval, Mapping):
+            raise FlodenWebbFel(
+                f"Projektet '{omrade_id}' saknar SMHI-väderlagret (lager.vader_luft) för "
+                f"förvalet '{forval_id}'.",
+                status_kod=400,
+            )
+        std_t_luft = float(smhi_forval["t_luft_c"])
+        if smhi_forval.get("relativ_fuktighet_pct") is not None:
+            std_rh = float(smhi_forval["relativ_fuktighet_pct"])
+        elif payload.get("relativ_fuktighet_pct") in (None, ""):
+            forval_varningar.append(
+                f"SMHI-förvalet {forval_id} saknade samtida relativ luftfuktighet; "
+                f"standardvärdet {STANDARD_RH_PCT:g} % användes."
+            )
+        if smhi_forval.get("vind_10m_m_s") is not None:
+            std_vind = float(smhi_forval["vind_10m_m_s"])
+        elif payload.get("vind_10m_m_s") in (None, ""):
+            forval_varningar.append(
+                f"SMHI-förvalet {forval_id} saknade samtida 10 m-vind; "
+                f"standardvärdet {STANDARD_VIND_10M_M_S:g} m/s användes."
+            )
+        if smhi_forval.get("sol_direkt_w_m2") is not None:
+            std_sol_dir = float(smhi_forval["sol_direkt_w_m2"])
+        if smhi_forval.get("sol_diffus_w_m2") is not None:
+            std_sol_diff = float(smhi_forval["sol_diffus_w_m2"])
+        if smhi_forval.get("solhojd_grad") is not None:
+            std_solhojd = float(smhi_forval["solhojd_grad"])
+        if smhi_forval.get("solazimut_grad") is not None:
+            std_solaz = float(smhi_forval["solazimut_grad"])
+    elif forval_id is not None and forval_id not in ("varmebolja", "sommardag", "anpassa"):
+        raise FlodenWebbFel(
+            f"Okänt UTCI-förval '{forval_id}'. Giltiga förval: varmebolja, sommardag, "
+            "platsens_smhi_p95, platsens_smhi_p99, anpassa.",
+            status_kod=400,
+        )
+
     t_luft_c = _tolka_andligt_tal(
-        payload, "t_luft_c", STANDARD_T_LUFT_C, min_v=-273.15, strikt_min=True
+        payload, "t_luft_c", std_t_luft, min_v=-273.15, strikt_min=True
     )
     relativ_fuktighet_pct = _tolka_andligt_tal(
-        payload, "relativ_fuktighet_pct", STANDARD_RH_PCT, min_v=0.0, max_v=100.0
+        payload, "relativ_fuktighet_pct", std_rh, min_v=0.0, max_v=100.0
     )
-    vind_10m_m_s = _tolka_andligt_tal(payload, "vind_10m_m_s", STANDARD_VIND_10M_M_S, min_v=0.0)
+    vind_10m_m_s = _tolka_andligt_tal(payload, "vind_10m_m_s", std_vind, min_v=0.0)
     sol_direkt_w_m2 = _tolka_andligt_tal(
-        payload, "sol_direkt_w_m2", STANDARD_SOL_DIREKT_W_M2, min_v=0.0
+        payload, "sol_direkt_w_m2", std_sol_dir, min_v=0.0
     )
     sol_diffus_w_m2 = _tolka_andligt_tal(
-        payload, "sol_diffus_w_m2", STANDARD_SOL_DIFFUS_W_M2, min_v=0.0
+        payload, "sol_diffus_w_m2", std_sol_diff, min_v=0.0
     )
     solhojd_grad = _tolka_andligt_tal(
-        payload, "solhojd_grad", STANDARD_SOLHOJD_GRAD, min_v=-90.0, max_v=90.0
+        payload, "solhojd_grad", std_solhojd, min_v=-90.0, max_v=90.0
     )
     solazimut_grad = _tolka_andligt_tal(
-        payload, "solazimut_grad", STANDARD_SOLAZIMUT_GRAD, min_v=0.0, max_v=360.0
+        payload, "solazimut_grad", std_solaz, min_v=0.0, max_v=360.0
     )
     antal_riktningar = _tolka_heltal(
         payload, "antal_riktningar", STANDARD_ANTAL_RIKTNINGAR, min_v=8, max_v=180
@@ -2153,11 +2246,13 @@ def kor_varmestress_analys(
         )
 
     aktiv = efter_block if efter_block is not None else fore_block
+    varningar = [*forval_varningar, *varningar]
     return {
         "format": FORMAT_VARMESTRESS_WEBB,
         "koordinatsystem": KOORDINATSYSTEM_EPSG,
         "omrade_id": omrade_id,
         "scenario": scenario,
+        "forval": forval_id,
         "metodstatus": res_fore.metodstatus,
         "parametrar": {
             "t_luft_c": float(t_luft_c),
@@ -2169,6 +2264,7 @@ def kor_varmestress_analys(
             "solazimut_grad": float(solazimut_grad),
             "antal_riktningar": int(antal_riktningar),
         },
+        "platsens_vader": platsens_vader_ut,
         "geometri": {
             "cellstorlek_m": float(cell_eff_m),
             "utbredning": utbredning.som_dict(),
@@ -2191,5 +2287,704 @@ def kor_varmestress_analys(
         "efter": efter_block,
         "jamforelse": jfr_block,
         "lager": lager,
+        "varningar": list(dict.fromkeys(varningar)),
+    }
+
+
+# ------------------------------------------------------------------ Väderlager & Luft-skisskedja
+
+
+def max_luft_skiss_segment() -> int:
+    """Fail-fast tak för antal vägsegment i Luft-skissanalys (`FLODEN_MAX_LUFT_SKISS_SEGMENT`)."""
+    return _las_miljo_celltak(FLODEN_MAX_LUFT_SKISS_SEGMENT_ENV, STANDARD_MAX_LUFT_SKISS_SEGMENT)
+
+
+def max_luft_skiss_timmar() -> int:
+    """Fail-fast tak för antal timmar i NORTRIP-skisskörning (`FLODEN_MAX_LUFT_SKISS_TIMMAR`)."""
+    return _las_miljo_celltak(FLODEN_MAX_LUFT_SKISS_TIMMAR_ENV, STANDARD_MAX_LUFT_SKISS_TIMMAR)
+
+
+def _hitta_geografi_manifest(
+    projekt_mapp: Path | str | None,
+    *,
+    geo_rot: Path | str | None = None,
+    manifest_fil: Path | str | None = None,
+) -> Path | None:
+    """Löser upp geografins K46-`manifest.json` för en projektmapp (eller `None` om saknas)."""
+    from geografi.modell import MANIFEST_NAMN, STANDARD_GEOROT, GeografiFel, tolka_ref, versionsmapp
+
+    if manifest_fil is not None:
+        mf = Path(manifest_fil)
+        return mf if mf.is_file() else None
+    if projekt_mapp is None:
+        return None
+    pm = Path(projekt_mapp)
+    pfil = pm / "projekt.json"
+    if not pfil.is_file():
+        return None
+    try:
+        pdok = json.loads(pfil.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(pdok, Mapping):
+        return None
+
+    expl_mf = pdok.get("geografi_manifest")
+    if isinstance(expl_mf, str) and expl_mf.strip():
+        cand_mf = Path(expl_mf)
+        if cand_mf.is_file():
+            return cand_mf
+
+    ref = pdok.get("geografi")
+    if not isinstance(ref, str) or "@" not in ref:
+        return None
+    try:
+        gid, ver = tolka_ref(ref)
+    except GeografiFel:
+        return None
+
+    kandidater: list[Path] = []
+    if geo_rot is not None:
+        kandidater.append(Path(geo_rot))
+    kandidater.append(pm.parent.parent / "geo")
+    kandidater.append(Path(STANDARD_GEOROT))
+
+    for rot in kandidater:
+        cand = versionsmapp(rot, gid, ver) / MANIFEST_NAMN
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _ladda_projekt_vader_lager(
+    projekt_mapp: Path | str | None,
+    *,
+    geo_rot: Path | str | None = None,
+    manifest_fil: Path | str | None = None,
+) -> Any | None:
+    from geografi.modell import GeografiFel
+    from geografi.vader_lager import las_vader_lager
+
+    mf = _hitta_geografi_manifest(projekt_mapp, geo_rot=geo_rot, manifest_fil=manifest_fil)
+    if mf is None:
+        return None
+    try:
+        return las_vader_lager(mf)
+    except GeografiFel as exc:
+        raise FlodenWebbFel(f"Geografins väderlager är ogiltigt: {exc}", status_kod=409) from exc
+
+
+def hamta_projekt_vader_luft(
+    projekt_mapp: Path | str | None,
+    *,
+    geo_rot: Path | str | None = None,
+    manifest_fil: Path | str | None = None,
+) -> dict[str, Any]:
+    """Läser SHA-256-verifierat `lager.vader_luft` för ett projekt (vindros, UTCI-förval, bakgrund).
+
+    Returnerar alltid ett deterministiskt JSON-objekt utan påhittade värden. Saknar projektet
+    eller dess geografi `lager.vader_luft` returneras `har_vader_luft = False`.
+    """
+    vl = _ladda_projekt_vader_lager(projekt_mapp, geo_rot=geo_rot, manifest_fil=manifest_fil)
+    if vl is None:
+        return {
+            "format": FORMAT_VADER_LUFT_WEBB,
+            "har_vader_luft": False,
+            "geografi": None,
+            "manifest_sha256": None,
+            "lager_sha256": None,
+            "station": None,
+            "kalla_text": None,
+            "kalla": None,
+            "licens": None,
+            "vindros": None,
+            "utci_forval": None,
+            "bakgrund_luft": None,
+            "har_vader_timserie": False,
+            "varningar": [
+                "Projektets geografi saknar SMHI-väderlagret (lager.vader_luft). "
+                "Vindros, platsens värmebölja och bakgrundsluft saknas."
+            ],
+        }
+
+    return {
+        "format": FORMAT_VADER_LUFT_WEBB,
+        "har_vader_luft": True,
+        "geografi": vl.ref,
+        "manifest_sha256": vl.manifest_sha256,
+        "lager_sha256": vl.lager_sha256,
+        "station": {
+            "id": vl.station_id,
+            "namn": vl.station_namn,
+            "avstand_km": vl.station_avstand_km,
+            "ar": vl.ar,
+        },
+        "kalla_text": vl.kalla_text_kort(),
+        "kalla": vl.kalla,
+        "licens": vl.licens,
+        "vindros": vl.vindros,
+        "utci_forval": vl.utci_forval(),
+        "bakgrund_luft": vl.bakgrund_luft,
+        "har_vader_timserie": vl.har_vader_timserie,
+        "varningar": list(vl.varningar),
+    }
+
+
+def _langd_fran_segment_dict(seg: Mapping[str, Any], ctx: str) -> float:
+    raw_l = seg.get("langd_m")
+    if raw_l is not None and raw_l != "":
+        return _tolka_andligt_tal(seg, "langd_m", 0.0, min_v=0.0, strikt_min=True)
+    koord = seg.get("koordinater")
+    if isinstance(koord, Sequence) and not isinstance(koord, str | bytes) and len(koord) >= 2:
+        tot = 0.0
+        prev: tuple[float, float] | None = None
+        for pt in koord:
+            if not isinstance(pt, Sequence) or len(pt) < 2:
+                raise FlodenWebbFel(f"{ctx}: ogiltig koordinat i 'koordinater'.", status_kod=400)
+            e_v, n_v = float(pt[0]), float(pt[1])
+            if not (math.isfinite(e_v) and math.isfinite(n_v)):
+                raise FlodenWebbFel(f"{ctx}: koordinat måste vara ändlig.", status_kod=400)
+            if prev is not None:
+                tot += math.hypot(e_v - prev[0], n_v - prev[1])
+            prev = (e_v, n_v)
+        if tot > 0.0:
+            return tot
+    raise FlodenWebbFel(
+        f"{ctx}: ange antingen 'langd_m' (> 0) eller 'koordinater' i EPSG:3011.",
+        status_kod=400,
+    )
+
+
+def _extrahera_vindros_param(vindros: Mapping[str, Any]) -> dict[str, Any]:
+    sektorer = vindros.get("sektorer")
+    if not isinstance(sektorer, Sequence) or len(sektorer) != 16:
+        raise FlodenWebbFel("Ogiltig vindros: exakt 16 sektorer krävs.", status_kod=400)
+    medel_ra = vindros.get("medelvind_m_s")
+    if (
+        isinstance(medel_ra, bool)
+        or not isinstance(medel_ra, int | float)
+        or not math.isfinite(float(medel_ra))
+    ):
+        raise FlodenWebbFel("Vindros saknar ändligt fält 'medelvind_m_s'.", status_kod=400)
+    medelvind = float(medel_ra)
+    if medelvind <= 0.0:
+        raise FlodenWebbFel("Vindrosens 'medelvind_m_s' måste vara > 0.", status_kod=400)
+
+    p95_ra = vindros.get("p95_vind_m_s")
+    p95 = (
+        float(p95_ra)
+        if isinstance(p95_ra, int | float) and math.isfinite(float(p95_ra))
+        else None
+    )
+    svag_ra = vindros.get("andel_svag_vind_pct", 0.0)
+    svag_pct = (
+        float(svag_ra)
+        if isinstance(svag_ra, int | float) and math.isfinite(float(svag_ra))
+        else 0.0
+    )
+
+    # Harmoniskt viktad effektiv vindhastighet över 16 sektorer (ger fysisk vikt åt låg vind).
+    sum_w = 0.0
+    sum_w_inv_u = 0.0
+    dom_namn = None
+    dom_pct = -1.0
+    for s in sektorer:
+        if not isinstance(s, Mapping):
+            continue
+        andel = float(s.get("andel_pct", 0.0) or 0.0)
+        if andel > dom_pct:
+            dom_pct = andel
+            dom_namn = str(s.get("namn", ""))
+        u_s = s.get("medelvind_m_s")
+        if (
+            andel > 0.0
+            and isinstance(u_s, int | float)
+            and math.isfinite(float(u_s))
+            and float(u_s) > 0.0
+        ):
+            sum_w += andel
+            sum_w_inv_u += andel / max(float(u_s), 1.0)
+    if svag_pct > 0.0:
+        sum_w += svag_pct
+        sum_w_inv_u += svag_pct / 1.0
+
+    eff_vind = (sum_w / sum_w_inv_u) if sum_w > 0.0 and sum_w_inv_u > 0.0 else max(medelvind, 1.0)
+    # Lågvindsfaktor för höga dygn (90,4-percentil dygn) ur svagvindandel och effektiv vind.
+    lag_bas = 0.55 * medelvind + 0.45 * (1.0 - min(svag_pct, 50.0) / 100.0)
+    lag_vind = max(1.0, min(eff_vind, lag_bas))
+    return {
+        "station_id": vindros.get("station_id"),
+        "station_namn": vindros.get("station_namn"),
+        "ar": vindros.get("ar"),
+        "medelvind_m_s": round(medelvind, 3),
+        "p95_vind_m_s": round(p95, 3) if p95 is not None else None,
+        "andel_svag_vind_pct": round(svag_pct, 2),
+        "dominerande_sektor": dom_namn,
+        "dominerande_sektor_pct": round(dom_pct, 2) if dom_pct >= 0.0 else None,
+        "effektiv_vind_m_s": round(eff_vind, 3),
+        "dygn_lagvind_m_s": round(lag_vind, 3),
+    }
+
+
+def _las_bakgrund_varde(
+    expl: Mapping[str, Any] | None,
+    lager_bakg: Mapping[str, Any] | None,
+    amne: str,
+    expl_nyckel: str,
+    stat_nyckel: str = "arsmedel_ug_m3",
+) -> tuple[float | None, str | None]:
+    if expl is not None and expl.get(expl_nyckel) not in (None, ""):
+        val = _tolka_andligt_tal(expl, expl_nyckel, 0.0, min_v=0.0)
+        return val, "explicit"
+    if isinstance(lager_bakg, Mapping) and lager_bakg.get("tillganglig"):
+        amnen = lager_bakg.get("amnen")
+        if isinstance(amnen, Mapping):
+            post = amnen.get(amne)
+            if isinstance(post, Mapping):
+                ra = post.get(stat_nyckel)
+                if (
+                    isinstance(ra, int | float)
+                    and not isinstance(ra, bool)
+                    and math.isfinite(float(ra))
+                    and float(ra) >= 0.0
+                ):
+                    kalla_lbl = str(
+                        lager_bakg.get("station_namn")
+                        or lager_bakg.get("kalla")
+                        or "lager.vader_luft"
+                    )
+                    return float(ra), kalla_lbl
+    return None, None
+
+
+def kor_luft_skiss_analys(
+    projekt_mapp: Path | str | None,
+    kropp: Mapping[str, Any],
+    *,
+    geo_rot: Path | str | None = None,
+    manifest_fil: Path | str | None = None,
+) -> dict[str, Any]:
+    """Deterministisk Luft-skissanalys som kopplar väglänkar, SMHI-vindros, bakgrund och emission.
+
+    Följer val 3A och `AGENTS.md`:
+    - `0` påhittade värden: saknad ÅDT/hastighet/tung %, saknad vindros eller saknad emissionskälla
+      (utan uttryckligt `anvand_skiss_schablon=True`) ger alltid tydligt 400-fel.
+    - Kör riktig NORTRIP (`luft.emission.berakna_emission`) när timvis väderserie finns och
+      fotostationär `NO₂`-kemi (`luft.kemi.no2_fotostationar`) när urban `NO₂`+`O₃`-bakgrund finns.
+    - Respekterar CX23-tak (`max_luft_skiss_segment`, `max_luft_skiss_timmar`).
+    - Märker alltid resultatet `metodstatus = "skiss"`.
+    """
+    from data_inlasning.smhi_luft_strang import SmhiLuftStrangFel, las_vaderserie_csv
+    from luft.emission import Trafikprofil, Vagavsnitt, berakna_emission, testparametrar
+    from luft.kemi import no2_fotostationar
+    from luft.skiss_emissionsfaktorer import hamta_emissionsfaktorer
+    from luft.typer import LuftFel
+
+    if not isinstance(kropp, Mapping):
+        raise FlodenWebbFel("Förfrågningskroppen måste vara ett JSON-objekt.", status_kod=400)
+
+    # 1. Validera vägsegment (aldrig påhittad trafikdata, strikt CX23-tak).
+    ra_seg = kropp.get("vagsegment")
+    if not isinstance(ra_seg, list) or len(ra_seg) == 0:
+        raise FlodenWebbFel(
+            "Obligatoriskt fält 'vagsegment' saknas eller är tomt — Floden hittar aldrig "
+            "på trafikdata.",
+            status_kod=400,
+        )
+    max_seg = max_luft_skiss_segment()
+    if len(ra_seg) > max_seg:
+        raise FlodenWebbFel(
+            f"Antal vägsegment ({len(ra_seg)}) överstiger serverns gräns på {max_seg} "
+            f"({FLODEN_MAX_LUFT_SKISS_SEGMENT_ENV}).",
+            status_kod=400,
+        )
+
+    segment_lista: list[dict[str, Any]] = []
+    sedda_id: set[str] = set()
+    for idx, post in enumerate(ra_seg):
+        ctx = f"vagsegment[{idx}]"
+        if not isinstance(post, Mapping):
+            raise FlodenWebbFel(f"{ctx} måste vara ett JSON-objekt.", status_kod=400)
+        seg_id = str(post.get("id") or post.get("lank_id") or f"vag_{idx + 1}").strip()
+        if not seg_id or seg_id in sedda_id:
+            raise FlodenWebbFel(f"{ctx}: unikt icke-tomt segment-id krävs.", status_kod=400)
+        sedda_id.add(seg_id)
+
+        if post.get("adt_fordon_dygn") is None or post.get("adt_fordon_dygn") == "":
+            raise FlodenWebbFel(
+                f"{ctx} ('{seg_id}'): ÅDT ('adt_fordon_dygn') saknas — Floden hittar aldrig "
+                "på ÅDT.",
+                status_kod=400,
+            )
+        if post.get("hastighet_km_h") is None or post.get("hastighet_km_h") == "":
+            raise FlodenWebbFel(
+                f"{ctx} ('{seg_id}'): skyltad hastighet ('hastighet_km_h') saknas.",
+                status_kod=400,
+            )
+        adt = _tolka_andligt_tal(post, "adt_fordon_dygn", 0.0, min_v=0.0, max_v=500_000.0)
+        hast = _tolka_andligt_tal(post, "hastighet_km_h", 0.0, min_v=5.0, max_v=130.0)
+        if post.get("andel_tung_pct") not in (None, ""):
+            tung_pct = _tolka_andligt_tal(post, "andel_tung_pct", 0.0, min_v=0.0, max_v=100.0)
+        elif post.get("andel_tung") not in (None, ""):
+            tung_pct = 100.0 * _tolka_andligt_tal(post, "andel_tung", 0.0, min_v=0.0, max_v=1.0)
+        else:
+            raise FlodenWebbFel(
+                f"{ctx} ('{seg_id}'): tung andel ('andel_tung_pct') saknas.",
+                status_kod=400,
+            )
+        langd_m = _langd_fran_segment_dict(post, ctx)
+        korfalt = _tolka_heltal(post, "antal_korfalt", 2, min_v=1, max_v=12)
+        vagbredd_m = _tolka_andligt_tal(
+            post, "vagbredd_m", float(korfalt) * 3.5, min_v=2.0, max_v=60.0
+        )
+        avstand_m = _tolka_andligt_tal(post, "avstand_m", 10.0, min_v=2.0, max_v=500.0)
+        gaturum_kvot = _tolka_andligt_tal(post, "gaturum_kvot", 0.5, min_v=0.0, max_v=4.0)
+        dubb_l = _tolka_andligt_tal(post, "andel_dubbdack_latt", 0.0, min_v=0.0, max_v=1.0)
+        dubb_t = _tolka_andligt_tal(post, "andel_dubbdack_tung", 0.0, min_v=0.0, max_v=1.0)
+
+        segment_lista.append(
+            {
+                "id": seg_id,
+                "gatunamn": str(post.get("gatunamn") or seg_id),
+                "langd_m": langd_m,
+                "adt_fordon_dygn": adt,
+                "hastighet_km_h": hast,
+                "andel_tung_pct": tung_pct,
+                "andel_tung": tung_pct / 100.0,
+                "antal_korfalt": korfalt,
+                "vagbredd_m": vagbredd_m,
+                "avstand_m": avstand_m,
+                "gaturum_kvot": gaturum_kvot,
+                "andel_dubbdack_latt": dubb_l,
+                "andel_dubbdack_tung": dubb_t,
+            }
+        )
+
+    # 2. Ladda emissionsfaktorer (val 3A: lokal CSV/TOML eller aktivt skiss-schablonval).
+    anvand_schablon = kropp.get("anvand_skiss_schablon") is True
+    ef_fil = kropp.get("emissionsfaktorer_fil")
+    ef_csv = kropp.get("emissionsfaktorer_csv")
+    ef_toml = kropp.get("emissionsfaktorer_toml")
+    ef_sha = kropp.get("emissionsfaktorer_sha256")
+    try:
+        ef_tabell = hamta_emissionsfaktorer(
+            fil=str(ef_fil) if isinstance(ef_fil, str) and ef_fil.strip() else None,
+            csv_text=str(ef_csv) if isinstance(ef_csv, str) and ef_csv.strip() else None,
+            toml_text=str(ef_toml) if isinstance(ef_toml, str) and ef_toml.strip() else None,
+            forvantad_sha256=str(ef_sha) if isinstance(ef_sha, str) and ef_sha.strip() else None,
+            anvand_skiss_schablon=anvand_schablon,
+        )
+    except LuftFel as exc:
+        raise FlodenWebbFel(str(exc), status_kod=400) from exc
+
+    # 3. Ladda väderlager (`lager.vader_luft`) eller explicit vindros.
+    vl = _ladda_projekt_vader_lager(projekt_mapp, geo_rot=geo_rot, manifest_fil=manifest_fil)
+    vindros_obj: Mapping[str, Any] | None = None
+    if isinstance(kropp.get("vindros"), Mapping):
+        vindros_obj = kropp["vindros"]
+    elif vl is not None:
+        vindros_obj = vl.vindros
+    if vindros_obj is None:
+        raise FlodenWebbFel(
+            "SMHI-vindros saknas (varken lager.vader_luft i projektets geografi eller explicit "
+            "'vindros' angiven) — Floden hittar aldrig på väderdata.",
+            status_kod=400,
+        )
+    vind_param = _extrahera_vindros_param(vindros_obj)
+
+    varningar: list[str] = [
+        "Metodstatus: skiss. Tidig planeringsuppskattning baserad på linjekällespridning, "
+        "SMHI-vindros och valda emissionsfaktorer; ersätter inte 3D-CFD/LES eller MKN-prövning."
+    ]
+    if ef_tabell.ar_schablon and ef_tabell.varning:
+        varningar.append(ef_tabell.varning)
+
+    # 4. Valfri timvis NORTRIP-körning för PM10-vägdamm om timserie finns.
+    timserie_ra: str | None = None
+    if isinstance(kropp.get("vader_timserie_csv"), str) and kropp["vader_timserie_csv"].strip():
+        timserie_ra = kropp["vader_timserie_csv"]
+    elif vl is not None and vl.har_vader_timserie:
+        timserie_ra = vl.las_vader_timserie_csv()
+
+    nortrip_per_seg: dict[str, dict[str, Any]] = {}
+    nortrip_kord = False
+    nortrip_antal_timmar = 0
+    if timserie_ra is not None:
+        try:
+            vader_serie = las_vaderserie_csv(timserie_ra)
+        except (SmhiLuftStrangFel, LuftFel, ValueError) as exc:
+            raise FlodenWebbFel(
+                f"Ogiltig vädertimserie för NORTRIP: {exc}", status_kod=400
+            ) from exc
+        max_tim = max_luft_skiss_timmar()
+        if vader_serie.antal_timmar > max_tim:
+            raise FlodenWebbFel(
+                f"Vädertimserien har {vader_serie.antal_timmar} timmar, vilket överstiger gränsen "
+                f"på {max_tim} timmar ({FLODEN_MAX_LUFT_SKISS_TIMMAR_ENV}).",
+                status_kod=400,
+            )
+        # Kör NORTRIP med tabellens genomsnittliga avgasfaktorer + referensparametrar för vägdamm.
+        ef_l_ref = ef_tabell.hamta_faktor("latt", segment_lista[0]["hastighet_km_h"])
+        ef_t_ref = ef_tabell.hamta_faktor("tung", segment_lista[0]["hastighet_km_h"])
+        nortrip_param = replace(
+            testparametrar(),
+            nox_latt_g_km=ef_l_ref.nox_g_km,
+            nox_tung_g_km=ef_t_ref.nox_g_km,
+            pm_avgas_latt_g_km=ef_l_ref.pm10_avgas_g_km,
+            pm_avgas_tung_g_km=ef_t_ref.pm10_avgas_g_km,
+            ar_testvarde=True,
+        )
+        vag_obj = [
+            Vagavsnitt(
+                id=s["id"],
+                langd_m=s["langd_m"],
+                adt_fordon_dygn=s["adt_fordon_dygn"],
+                andel_tung=s["andel_tung"],
+                andel_dubbdack_latt=s["andel_dubbdack_latt"],
+                andel_dubbdack_tung=s["andel_dubbdack_tung"],
+                hastighet_km_h=s["hastighet_km_h"],
+                antal_korfalt=s["antal_korfalt"],
+                vagbredd_m=s["vagbredd_m"],
+            )
+            for s in segment_lista
+        ]
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            em_res = berakna_emission(vag_obj, vader_serie, Trafikprofil.jamn(), nortrip_param)
+        sam_em = em_res.sammanfattning()
+        nortrip_kord = True
+        nortrip_antal_timmar = em_res.antal_timmar
+        for rad_av in sam_em["avsnitt"]:
+            nortrip_per_seg[str(rad_av["id"])] = rad_av
+        varningar.append(
+            f"NORTRIP-vägdamm kördes timvis över {nortrip_antal_timmar} timmar med "
+            "referensparametrar (v12) för vägslitage/fukt (metodstatus: skiss)."
+        )
+    else:
+        varningar.append(
+            "Timvis SMHI-väderserie saknas: PM10-slitage beräknas från "
+            "emissionsfaktortabellen utan timvis NORTRIP-vägfuktmodell."
+        )
+
+    # 5. Deterministisk utsläpps- och linjekällespridning per segment.
+    u_eff = float(vind_param["effektiv_vind_m_s"])
+    u_lag = float(vind_param["dygn_lagvind_m_s"])
+    dygn_faktor = u_eff / max(u_lag, 0.5)
+    sqrt_2_pi = math.sqrt(2.0 / math.pi)
+
+    per_segment_ut: list[dict[str, Any]] = []
+    tot_nox_tillskott_ar = 0.0
+    tot_nox_tillskott_dygn = 0.0
+    tot_pm10_tillskott_ar = 0.0
+    tot_pm10_tillskott_dygn = 0.0
+    viktad_no2_andel_num = 0.0
+
+    for seg in segment_lista:
+        ef_l = ef_tabell.hamta_faktor("latt", seg["hastighet_km_h"])
+        ef_t = ef_tabell.hamta_faktor("tung", seg["hastighet_km_h"])
+        f_t = seg["andel_tung"]
+        f_l = 1.0 - f_t
+        fordon_per_s = seg["adt_fordon_dygn"] / 86_400.0
+
+        ef_nox_g_km = f_l * ef_l.nox_g_km + f_t * ef_t.nox_g_km
+        ef_pm10_avgas_g_km = f_l * ef_l.pm10_avgas_g_km + f_t * ef_t.pm10_avgas_g_km
+        ef_pm10_slitage_g_km = f_l * ef_l.pm10_slitage_g_km + f_t * ef_t.pm10_slitage_g_km
+        q_nox_g_m_s = fordon_per_s * ef_nox_g_km / 1000.0
+
+        nt_post = nortrip_per_seg.get(seg["id"])
+        if nt_post is not None:
+            q_pm10_g_m_s = float(nt_post["arsmedel_pm10_g_m_s"])
+            pm10_kalla = "nortrip_timvis"
+        else:
+            q_pm10_g_m_s = fordon_per_s * (ef_pm10_avgas_g_km + ef_pm10_slitage_g_km) / 1000.0
+            pm10_kalla = "emissionsfaktortabell"
+
+        # Direkt NO2-andel viktad på NOx-bidraget från lätta respektive tunga fordon.
+        nox_l = f_l * ef_l.nox_g_km
+        nox_t = f_t * ef_t.nox_g_km
+        direkt_no2 = (
+            (nox_l * ef_l.direkt_no2_andel + nox_t * ef_t.direkt_no2_andel) / (nox_l + nox_t)
+            if (nox_l + nox_t) > 0.0
+            else 0.0
+        )
+
+        # Gaussisk linjekälleskiss (neutral klass D + initial trafikblandning + gaturumsfaktor).
+        d_m = seg["avstand_m"]
+        sigma_z_d = 0.06 * d_m / math.sqrt(1.0 + 0.0015 * d_m)
+        sigma_z_eff = math.hypot(1.5, sigma_z_d)
+        canyon_faktor = 1.0 + seg["gaturum_kvot"]
+        # µg/m³ per g/(m·s)
+        sprid_faktor = canyon_faktor * sqrt_2_pi / (u_eff * sigma_z_eff) * 1.0e6
+
+        c_nox_ar = q_nox_g_m_s * sprid_faktor
+        c_nox_dygn = c_nox_ar * dygn_faktor
+        c_pm10_ar = q_pm10_g_m_s * sprid_faktor
+        c_pm10_dygn = c_pm10_ar * dygn_faktor
+
+        tot_nox_tillskott_ar += c_nox_ar
+        tot_nox_tillskott_dygn += c_nox_dygn
+        tot_pm10_tillskott_ar += c_pm10_ar
+        tot_pm10_tillskott_dygn += c_pm10_dygn
+        viktad_no2_andel_num += c_nox_ar * direkt_no2
+
+        seg_rad: dict[str, Any] = {
+            "id": seg["id"],
+            "gatunamn": seg["gatunamn"],
+            "langd_m": round(seg["langd_m"], 2),
+            "adt_fordon_dygn": round(seg["adt_fordon_dygn"], 1),
+            "hastighet_km_h": round(seg["hastighet_km_h"], 1),
+            "andel_tung_pct": round(seg["andel_tung_pct"], 2),
+            "avstand_m": round(d_m, 1),
+            "emission_nox_g_m_s": round(q_nox_g_m_s, 8),
+            "emission_pm10_g_m_s": round(q_pm10_g_m_s, 8),
+            "pm10_berakning": pm10_kalla,
+            "direkt_no2_andel": round(direkt_no2, 4),
+            "lokalt_tillskott_nox_arsmedel_ug_m3": round(c_nox_ar, 3),
+            "lokalt_tillskott_nox_dygn_ug_m3": round(c_nox_dygn, 3),
+            "lokalt_tillskott_pm10_arsmedel_ug_m3": round(c_pm10_ar, 3),
+            "lokalt_tillskott_pm10_dygn_ug_m3": round(c_pm10_dygn, 3),
+        }
+        if nt_post is not None:
+            seg_rad["nortrip"] = {
+                "andel_uppvirvling_pm10": round(float(nt_post["andel_uppvirvling_pm10"]), 4),
+                "andel_vata_timmar": round(float(nt_post["andel_vata_timmar"]), 4),
+                "utslapp_pm10_kg_ar": round(float(nt_post["utslapp_pm10_kg_ar"]), 3),
+            }
+        per_segment_ut.append(seg_rad)
+
+    eff_direkt_no2 = (
+        viktad_no2_andel_num / tot_nox_tillskott_ar if tot_nox_tillskott_ar > 0.0 else 0.0
+    )
+
+    # 6. Koppla urban bakgrundshalt (explicit eller från lager.vader_luft — aldrig påhittad!).
+    expl_bakg = kropp.get("bakgrund") if isinstance(kropp.get("bakgrund"), Mapping) else None
+    lager_bakg = vl.bakgrund_luft if vl is not None else None
+    no2_b_ar, no2_b_kalla = _las_bakgrund_varde(expl_bakg, lager_bakg, "NO2", "no2_arsmedel_ug_m3")
+    pm10_b_ar, pm10_b_kalla = _las_bakgrund_varde(
+        expl_bakg, lager_bakg, "PM10", "pm10_arsmedel_ug_m3"
+    )
+    pm10_b_p90, _ = _las_bakgrund_varde(
+        expl_bakg, lager_bakg, "PM10", "pm10_p90_4_ug_m3", stat_nyckel="percentil_90_4_ug_m3"
+    )
+    o3_b_ar, o3_b_kalla = _las_bakgrund_varde(expl_bakg, lager_bakg, "O3", "o3_arsmedel_ug_m3")
+
+    # Fotostationär NO2-kemi när både NO2- och O3-bakgrund finns (annars varning + direkt NO2).
+    strang_glob_w: float | None = None
+    if vl is not None and isinstance(vl.utci_sommar.get("strang"), Mapping):
+        g_ra = vl.utci_sommar["strang"].get("global_p95_dag_w_m2")
+        if isinstance(g_ra, int | float) and math.isfinite(float(g_ra)) and float(g_ra) > 0.0:
+            strang_glob_w = float(g_ra)
+    j_no2 = (
+        min(1.0e-2, max(1.0e-3, 1.0e-5 * strang_glob_w))
+        if strang_glob_w is not None
+        else _J_NO2_STANDARD_DAG_1_S
+    )
+
+    no2_tot_ar: float | None = None
+    no2_tillskott_ar: float | None = None
+    no2_tillskott_dygn: float | None = None
+    no2_kemi_metod: str
+    if no2_b_ar is not None and o3_b_ar is not None:
+        no2_tot_ar = round(
+            float(
+                no2_fotostationar(
+                    tot_nox_tillskott_ar,
+                    no2_b_ar,
+                    o3_b_ar,
+                    eff_direkt_no2,
+                    j_no2,
+                    _K_NO_O3_STANDARD_PPB_1_S,
+                )
+            ),
+            3,
+        )
+        no2_tot_dygn = float(
+            no2_fotostationar(
+                tot_nox_tillskott_dygn,
+                no2_b_ar,
+                o3_b_ar,
+                eff_direkt_no2,
+                j_no2,
+                _K_NO_O3_STANDARD_PPB_1_S,
+            )
+        )
+        no2_tillskott_ar = round(max(0.0, no2_tot_ar - no2_b_ar), 3)
+        no2_tillskott_dygn = round(max(0.0, no2_tot_dygn - no2_b_ar), 3)
+        no2_kemi_metod = "fotostationar_no_o3_no2"
+    else:
+        no2_tillskott_ar = round(tot_nox_tillskott_ar * eff_direkt_no2, 3)
+        no2_tillskott_dygn = round(tot_nox_tillskott_dygn * eff_direkt_no2, 3)
+        no2_kemi_metod = "endast_direkt_no2_saknar_o3_eller_no2_bakgrund"
+        varningar.append(
+            "Urban bakgrund för NO₂ och/eller O₃ saknas: fotostationär NO₂-kemi kunde inte "
+            "beräkna total NO₂-halt (visar enbart lokalt NOx- och direkt NO₂-tillskott)."
+        )
+
+    pm10_tot_ar = (
+        round(pm10_b_ar + tot_pm10_tillskott_ar, 3) if pm10_b_ar is not None else None
+    )
+    pm10_tot_p90 = (
+        round(pm10_b_p90 + tot_pm10_tillskott_dygn, 3) if pm10_b_p90 is not None else None
+    )
+    if pm10_b_ar is None:
+        varningar.append(
+            "Urban bakgrund för PM₁₀ saknas: visar enbart lokalt trafiktillskott utan totalhalt."
+        )
+
+    return {
+        "format": FORMAT_LUFT_SKISS_WEBB,
+        "metodstatus": "skiss",
+        "ar_schablon": ef_tabell.ar_schablon,
+        "emissionskalla": {
+            "kalla": ef_tabell.kalla,
+            "ar": ef_tabell.ar,
+            "sha256": ef_tabell.sha256,
+            "ar_schablon": ef_tabell.ar_schablon,
+            "filnamn": ef_tabell.filnamn,
+            "metodstatus": ef_tabell.metodstatus,
+            "varning": ef_tabell.varning,
+        },
+        "nortrip_kord": nortrip_kord,
+        "nortrip_antal_timmar": nortrip_antal_timmar,
+        "vindros_param": vind_param,
+        "no2_kemi_metod": no2_kemi_metod,
+        "lokalt_tillskott": {
+            "nox_arsmedel_ug_m3": round(tot_nox_tillskott_ar, 3),
+            "nox_dygn_ug_m3": round(tot_nox_tillskott_dygn, 3),
+            "no2_arsmedel_ug_m3": no2_tillskott_ar,
+            "no2_dygn_ug_m3": no2_tillskott_dygn,
+            "pm10_arsmedel_ug_m3": round(tot_pm10_tillskott_ar, 3),
+            "pm10_dygn_ug_m3": round(tot_pm10_tillskott_dygn, 3),
+        },
+        "bakgrund": {
+            "no2_arsmedel_ug_m3": no2_b_ar,
+            "no2_kalla": no2_b_kalla,
+            "pm10_arsmedel_ug_m3": pm10_b_ar,
+            "pm10_p90_4_ug_m3": pm10_b_p90,
+            "pm10_kalla": pm10_b_kalla,
+            "o3_arsmedel_ug_m3": o3_b_ar,
+            "o3_kalla": o3_b_kalla,
+        },
+        "totalt": {
+            "no2_arsmedel_ug_m3": no2_tot_ar,
+            "pm10_arsmedel_ug_m3": pm10_tot_ar,
+            "pm10_dygn_90_4_ug_m3": pm10_tot_p90,
+        },
+        "mkn_jamforelse": {
+            "no2_arsmedel_grans_ug_m3": _MKN_NO2_ARSMEDEL_UG_M3,
+            "no2_arsmedel_klarar_skiss": (
+                no2_tot_ar <= _MKN_NO2_ARSMEDEL_UG_M3 if no2_tot_ar is not None else None
+            ),
+            "pm10_arsmedel_grans_ug_m3": _MKN_PM10_ARSMEDEL_UG_M3,
+            "pm10_arsmedel_klarar_skiss": (
+                pm10_tot_ar <= _MKN_PM10_ARSMEDEL_UG_M3 if pm10_tot_ar is not None else None
+            ),
+            "pm10_dygn_90_4_grans_ug_m3": _MKN_PM10_DYGN_90_4_UG_M3,
+            "pm10_dygn_90_4_klarar_skiss": (
+                pm10_tot_p90 <= _MKN_PM10_DYGN_90_4_UG_M3 if pm10_tot_p90 is not None else None
+            ),
+        },
+        "antal_segment": len(per_segment_ut),
+        "per_segment": per_segment_ut,
         "varningar": list(dict.fromkeys(varningar)),
     }

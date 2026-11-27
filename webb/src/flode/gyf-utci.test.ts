@@ -13,6 +13,8 @@ import {
   gyfAnalysUrl,
   gyfPanelHtml,
   gyfUtciPanelerHtml,
+  smhiForvalTillParam,
+  smhiKallaText,
   tolkaSvensktTal,
   valideraVarmestressParam,
   valjVarmestressLager,
@@ -20,6 +22,7 @@ import {
   varmestressAnalysUrl,
   varmestressPanelHtml,
   type GyfAnalysSvar,
+  type PlatsensVaderUtciInfo,
   type VarmestressAnalysSvar,
   type VarmestressLagerRef,
 } from "./gyf-utci.ts";
@@ -367,4 +370,75 @@ test("analyslager har varme-palett och etiketter för utci_c/t_mrt_c; VektorLage
     vektor_url: "/api/v",
   };
   assert.equal(vref.id, undefined);
+});
+
+test("varmestressPanelHtml visar fjärde UTCI-förvalet Platsens SMHI-värmebölja (p95 / p99) med synlig källa", () => {
+  const platsensVader: PlatsensVaderUtciInfo = {
+    station_id: "71420",
+    station_namn: "Göteborg A",
+    station_avstand_km: 2.1,
+    ar: 2024,
+    kalla: "SMHI Öppna data (MetObs, STRÅNG). © SMHI.",
+    forval: {
+      platsens_smhi_p95: {
+        id: "platsens_smhi_p95",
+        percentil: 95,
+        etikett: "Platsens SMHI-värmebölja (p95) · 29,4 °C",
+        station_id: "71420",
+        station_namn: "Göteborg A",
+        station_avstand_km: 2.1,
+        ar: 2024,
+        t_luft_c: 29.4,
+        relativ_fuktighet_pct: 42.0,
+        vind_10m_m_s: 2.3,
+        globalstralning_w_m2: 740,
+        sol_direkt_w_m2: 790,
+        sol_diffus_w_m2: 135,
+        solhojd_grad: 50,
+        solazimut_grad: 180,
+      },
+      platsens_smhi_p99: {
+        id: "platsens_smhi_p99",
+        percentil: 99,
+        etikett: "Platsens SMHI-värmebölja (p99) · 31,8 °C",
+        station_id: "71420",
+        station_namn: "Göteborg A",
+        station_avstand_km: 2.1,
+        ar: 2024,
+        t_luft_c: 31.8,
+        relativ_fuktighet_pct: 36.0,
+        vind_10m_m_s: 1.9,
+        globalstralning_w_m2: 810,
+        sol_direkt_w_m2: 840,
+        sol_diffus_w_m2: 145,
+        solhojd_grad: 50,
+        solazimut_grad: 180,
+      },
+    },
+  };
+
+  assert.equal(smhiKallaText(platsensVader), "SMHI Göteborg A, 2,1 km, 2024");
+  const paramP95 = smhiForvalTillParam(platsensVader.forval.platsens_smhi_p95!);
+  assert.equal(paramP95.t_luft_c, 29.4);
+  assert.equal(paramP95.sol_direkt_w_m2, 790);
+
+  const html = varmestressPanelHtml({
+    param: paramP95,
+    laddar: false,
+    fel: null,
+    svar: null,
+    scenario: null,
+    aktivtLagerRoll: null,
+    forval: "platsens_smhi_p95",
+    platsensVader,
+  });
+  assert.match(html, /data-vs-forval="platsens_smhi_p95" aria-pressed="true"/);
+  assert.match(html, /Platsens SMHI-värmebölja \(p95\) · 29,4 °C/);
+  assert.match(html, /data-vs-forval="platsens_smhi_p99" aria-pressed="false"/);
+  assert.match(html, /Platsens SMHI-värmebölja \(p99\) · 31,8 °C/);
+  assert.match(html, /SMHI Göteborg A, 2,1 km, 2024/);
+  assert.match(html, /STRÅNG 740 W\/m²/);
+
+  const url = new URL(varmestressAnalysUrl("haga", paramP95, null, "platsens_smhi_p95"), "http://localhost");
+  assert.equal(url.searchParams.get("forval"), "platsens_smhi_p95");
 });
