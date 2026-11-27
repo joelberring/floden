@@ -131,15 +131,33 @@ def _radie_m(p: Mapping[str, Any]) -> float:
     return dagsljus_paverkansradie_m(float(p["hojd_max_m"]), float(p["h_min_grader"]))
 
 
+def _mosaik_klippradie_m(p: Mapping[str, Any]) -> float:
+    """Beskärningsradie för mosaiken runt den egna rutan (bevarar strålfysiken bitidentiskt)."""
+    radie_m = _radie_m(p)
+    if "utanfor_m" in p:
+        cell_m = float(p["cellstorlek_m"])
+        ut_max_m = max(
+            float(p["utanfor_m"]),
+            0.5 * (1.0 + 1e-6) * math.sqrt(2.0) * cell_m,
+        )
+        # Fasadpunkter kan ligga vid rutgränsen och förskjutas utåt med ut_eff; en extra
+        # cell garanterar att även slutcellen (floor(ox + rmax + TIE_TOL)) alltid ingår.
+        return radie_m + ut_max_m + cell_m
+    return radie_m
+
+
 def _mosaik(k: LosarKontext) -> Mosaik:
     if k.ruta is None:
         raise LosarFel("Dagsljuslösare körs rutvis men fick ingen ruta.")
     max_celler = max_dagsljus_celler()
     grannar = tuple(g.mapp for g in k.grannar)
     cell_m = float(k.parametrar["cellstorlek_m"])
+    klipp_radie_m = _mosaik_klippradie_m(k.parametrar)
     antal_rutor = 1 + len(grannar)
     try:
-        hojd, bredd = uppskatta_mosaik_form(k.ruta.mapp, grannar, cell_m)
+        hojd, bredd = uppskatta_mosaik_form(
+            k.ruta.mapp, grannar, cell_m, radie_m=klipp_radie_m
+        )
     except RutaFel as exc:
         raise LosarFel(str(exc)) from exc
     kontrollera_dagsljus_celler(hojd * bredd, antal_rutor, max_celler)
@@ -150,6 +168,7 @@ def _mosaik(k: LosarKontext) -> Mosaik:
             cell_m,
             k.parametrar["omsampling"],
             vegetation=bool(k.parametrar["vegetation"]),
+            radie_m=klipp_radie_m,
         )
     except RutaFel as exc:
         raise LosarFel(str(exc)) from exc
