@@ -81,6 +81,10 @@ import {
   type VektorSlag,
   type VektorSvar,
 } from "./analyslager.ts";
+import {
+  berakningsomfangHtml,
+  type BerakningsomfangInfo,
+} from "./berakningsomfang.ts";
 import { extraAnalyserHtml, kopplaExtraAnalyser } from "./extranalyser.ts";
 import {
   bullerLagerTeckenHtml,
@@ -1394,7 +1398,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           ? `<p class="flode-liten flode-dampad">${esc(aktivVarning)}</p>`
           : "";
 
-    el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${allaKnapp}${status}${forberaknadBasRad()}`;
+    const omfangInfo =
+      (info as (ProjektInfo & { berakningsomfang?: BerakningsomfangInfo | null }) | null)?.berakningsomfang ?? null;
+    const omfangHtml = berakningsomfangHtml(omfangInfo);
+
+    el("ar-kor-block").innerHTML = `<div class="ar-kor-knappar">${knappar}</div>${allaKnapp}${omfangHtml}${status}${forberaknadBasRad()}`;
 
     // Tom-kort mitt på kartan när nuläget inte är beräknat än
     const tomKort = el("ar-tom-kort");
@@ -1409,8 +1417,10 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
             : amne === "ekologi"
               ? "Kör en nulägesberäkning för projektets befintliga läge så visas ekologisk konnektivitet direkt på kartan."
               : "Kör en nulägesberäkning för projektets befintliga läge så visas vindkomfort och luftresultat direkt på kartan.";
+      const tomOmfang = berakningsomfangHtml(omfangInfo, { medId: false });
       tomKort.innerHTML = `<h2>Nuläget är inte beräknat än</h2>
         <p>${tomBeskrivning}</p>
+        ${tomOmfang}
         <button type="button" class="flode-knapp svart stor" id="ar-tom-kor-nulage"${kanKoraAktivt ? "" : " disabled"}>${esc(etiketter.nulage)}</button>`;
     }
   };

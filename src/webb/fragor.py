@@ -963,11 +963,16 @@ class FragaTjanst:
         if k.status != "klar":
             raise FlodenWebbFel(f"Körningen är inte klar (status: {k.status}).", status_kod=409)
         try:
-            data: dict[str, Any] = json.loads(
+            data = json.loads(
                 (k.utmapp / "sammanstallning.json").read_text(encoding="utf-8")
             )
         except (OSError, ValueError) as exc:
             raise FlodenWebbFel(f"Resultatet kan inte läsas: {exc}", status_kod=500) from exc
+        if not isinstance(data, dict):
+            raise FlodenWebbFel(
+                "Resultatet kan inte läsas: sammanstallning.json är inte ett JSON-objekt.",
+                status_kod=500,
+            )
         return data
 
     def _jobbmapp(self, k: Korning, j: dict[str, Any]) -> Path:
@@ -1829,7 +1834,12 @@ class FragaTjanst:
         run_fil = self._jobbmapp(k, jobb) / "run.json"
         try:
             run_data = json.loads(run_fil.read_text(encoding="utf-8"))
-            par = dict(run_data["parametrar"])
+            if not isinstance(run_data, dict):
+                raise TypeError("run.json är inte ett JSON-objekt")
+            par_raw = run_data["parametrar"]
+            if not isinstance(par_raw, dict):
+                raise TypeError("parametrar i run.json är inte ett JSON-objekt")
+            par = dict(par_raw)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             _logg.warning(
                 "run.json saknas eller går inte att läsa i _sankgraf_vektor för körning %s: %s",
@@ -1841,9 +1851,11 @@ class FragaTjanst:
                 "för sänkor och flödesvägar.",
                 status_kod=409,
             ) from exc
+        indata_raw = run_data.get("indata", [])
+        indata_lista = indata_raw if isinstance(indata_raw, list) else []
         ruta_ids = [
             str(p["fil"])
-            for p in run_data.get("indata", [])
+            for p in indata_lista
             if isinstance(p, dict)
             and isinstance(p.get("roll"), str)
             and p["roll"].startswith("ruta:")
@@ -2006,8 +2018,18 @@ class FragaTjanst:
                 m = json.loads((self._jobbmapp(k, j) / "run.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            par: dict[str, Any] = dict(m.get("parametrar", {}))
-            mv: dict[str, Any] = dict(m.get("matvarden", {}))
+            if not isinstance(m, dict):
+                _logg.warning(
+                    "run.json har ogiltigt format i _antaganden för körning %s (%s/%s)",
+                    k.korning_id,
+                    j.get("analys"),
+                    j.get("scenario"),
+                )
+                continue
+            par_raw = m.get("parametrar")
+            mv_raw = m.get("matvarden")
+            par: dict[str, Any] = dict(par_raw) if isinstance(par_raw, dict) else {}
+            mv: dict[str, Any] = dict(mv_raw) if isinstance(mv_raw, dict) else {}
             enkla = {
                 n: v
                 for n, v in par.items()
@@ -2206,11 +2228,15 @@ class FragaTjanst:
         """sha256 för en resultatfil: ur K0-manifestet bredvid den, annars räknad."""
         run = fil.parent / "run.json"
         try:
-            for p in json.loads(run.read_text(encoding="utf-8")).get("utdata", []):
-                if p.get("fil") == fil.name and p.get("sha256"):
-                    return str(p["sha256"])
+            m = json.loads(run.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            pass
+            m = None
+        if isinstance(m, dict):
+            utdata = m.get("utdata")
+            if isinstance(utdata, list):
+                for p in utdata:
+                    if isinstance(p, dict) and p.get("fil") == fil.name and p.get("sha256"):
+                        return str(p["sha256"])
         return sha256_fil(fil)
 
     def lager_raster(self, korning_id: str, lager_id: str) -> dict[str, Any]:

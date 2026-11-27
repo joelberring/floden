@@ -42,7 +42,12 @@ from shapely.geometry import Polygon
 from gemensamt import avgransning as avgr_mod
 from gemensamt.hash import sha256_fil
 from gemensamt.objektlagring import ObjektLagringFel
-from geografi.forberaknad_lager import ForberaknadKommunLager, ForberaknadLagerFel
+from geografi.forberaknad_lager import (
+    STANDARD_RUTSTORLEK_M,
+    ForberaknadKommunLager,
+    ForberaknadLagerFel,
+    tolka_rut_bbox_3011,
+)
 from geografi.modell import GeografiFel
 from geografi.modell import las_manifest as las_geo_manifest
 from karna import ritlager as ritl
@@ -134,6 +139,10 @@ _STANDARDJAMFORELSE = {
 
 STANDARD_MAX_2D_CELLER = 250_000
 """Standardgräns för antal rasterceller i en 2D-skyfallskörning via webben (förhindrar oavsiktligt gigantiska jobb)."""
+BERAKNINGSOMFANG_VARNING_ANDEL = 0.75
+"""Andel av `FLODEN_MAX_SANKGRAF_CELLER` från vilken Steg 2 visar lugn förvarning före körning."""
+_STANDARD_RUT_OVERLAPP_M = 25.0
+"""Standardöverlapp per sida för K1-rutor (m) vid O(1)-uppskattning ur geografimanifest."""
 _STANDARD_SKYFALL_FOKUS_MARGINAL_M = 100.0
 """Standardmarginal (m) runt projektets avgränsning för automatiskt skyfallsfokus på äldre projekt."""
 _GILTIGA_SKYFALL_METODER = frozenset({"graf", "2d"})
@@ -1039,6 +1048,197 @@ class KartverktygTjanst:
             "antal_rutor": len(rutor),
         }
 
+    @staticmethod
+    def _las_max_sankgraf_celler() -> int:
+        """Läser aktuellt sänkgraf-celltak ur `FLODEN_MAX_SANKGRAF_CELLER` utan att krascha status/UI."""
+        from karna.analyslosare import LosarFel
+        from karna.inbyggda import STANDARD_MAX_SANKGRAF_CELLER, max_sankgraf_celler
+
+        try:
+            return int(max_sankgraf_celler())
+        except LosarFel as exc:
+            logging.getLogger(__name__).warning(
+                "Ogiltigt värde i FLODEN_MAX_SANKGRAF_CELLER (%s); faller tillbaka på standard %d.",
+                exc,
+                STANDARD_MAX_SANKGRAF_CELLER,
+            )
+            return int(STANDARD_MAX_SANKGRAF_CELLER)
+
+    @staticmethod
+    def _formatera_celler_sv(celler: int, max_celler: int) -> tuple[str, str, str]:
+        if max_celler >= 100_000:
+            c_txt = f"{celler / 1_000_000:.1f}".replace(".", ",")
+            m_txt = f"{max_celler / 1_000_000:.1f}".replace(".", ",")
+            return c_txt, m_txt, "M celler"
+        return (
+            f"{celler:,}".replace(",", " "),
+            f"{max_celler:,}".replace(",", " "),
+            "celler",
+        )
+
+    def _berakningsomfang(self, kalla: Projektkalla) -> dict[str, Any] | None:
+        """O(1)-uppskattning av antal berörda rutor och rasterceller för skyfall utan pixelinläsning.
+
+        Använder enbart geografimanifestets metadata (`parametrar.upplosning_m`, `ruta_storlek_m`,
+        `lager.k1_rutnat.rutor`), projektets skyfallsfokus/rutlista och `FLODEN_MAX_SANKGRAF_CELLER`.
+        Returnerar `None` för projekt utan geografi (t.ex. `demokvarteret`) eller utan läsbart manifest.
+        """
+        if kalla.slag != "geografi" or not kalla.geografi or self.geomapp is None:
+            return None
+        try:
+            manifest, _ = las_geo_manifest(self.geomapp, kalla.geografi, verifiera=False)
+        except GeografiFel:
+            return None
+
+        par = manifest.get("parametrar")
+        par_m: Mapping[str, Any] = par if isinstance(par, Mapping) else {}
+        upplosning_m = self._tal_eller_none(par_m.get("upplosning_m"))
+        if upplosning_m is None or upplosning_m <= 0.0:
+            upplosning_m = self._tal_eller_none(manifest.get("upplosning_m"))
+        if upplosning_m is None or upplosning_m <= 0.0:
+            upplosning_m = 1.0
+
+        ruta_storlek_m = self._tal_eller_none(par_m.get("ruta_storlek_m"))
+        if ruta_storlek_m is None or ruta_storlek_m <= 0.0:
+            ruta_storlek_m = STANDARD_RUTSTORLEK_M
+
+        overlapp_m = self._tal_eller_none(par_m.get("overlapp_m"))
+        if overlapp_m is None or overlapp_m < 0.0:
+            overlapp_m = _STANDARD_RUT_OVERLAPP_M
+
+        # Hämta skyfallsfokus i samma ordning som `_k20`/`_lage_k20` (utan rasterläsning).
+        fokus: tuple[float, float, float, float] | None = None
+        vatten_mall = kalla.mallar.get("vatten")
+        if vatten_mall is not None:
+            for a in vatten_mall.fraga.analyser:
+                if a.losare in _LOSARE_MED_REGN and a.fokus is not None and len(a.fokus) == 4:
+                    fx0, fy0, fx1, fy1 = (float(c) for c in a.fokus)
+                    if all(math.isfinite(c) for c in (fx0, fy0, fx1, fy1)) and fx1 > fx0 and fy1 > fy0:
+                        fokus = (fx0, fy0, fx1, fy1)
+                        break
+        if fokus is None:
+            fb = self._fallback_vatten_fokus(kalla)
+            if fb is not None and len(fb) == 4:
+                fokus = (float(fb[0]), float(fb[1]), float(fb[2]), float(fb[3]))
+        if fokus is None and kalla.avgransning is not None:
+            fokus = kalla.avgransning
+
+        # 1. Primärt: rutor ur geografimanifestets `lager.k1_rutnat.rutor` (O(1) på rut-ID).
+        lager_raw = manifest.get("lager")
+        k1_raw = lager_raw.get("k1_rutnat") if isinstance(lager_raw, Mapping) else None
+        rut_ids_raw = k1_raw.get("rutor") if isinstance(k1_raw, Mapping) else None
+        rut_bboxes: list[tuple[float, float, float, float]] = []
+        if isinstance(rut_ids_raw, list):
+            for rid in rut_ids_raw:
+                if not isinstance(rid, str):
+                    continue
+                bbox = tolka_rut_bbox_3011(rid, rutstorlek_m=ruta_storlek_m)
+                if bbox is not None:
+                    rut_bboxes.append(bbox)
+
+        antal_rutor = 0
+        uppskattade_celler = 0
+        if rut_bboxes:
+            if fokus is not None:
+                fx0, fy0, fx1, fy1 = fokus
+                valda = [
+                    b
+                    for b in rut_bboxes
+                    if (b[0] - overlapp_m) < fx1
+                    and (b[2] + overlapp_m) > fx0
+                    and (b[1] - overlapp_m) < fy1
+                    and (b[3] + overlapp_m) > fy0
+                ]
+                if not valda:
+                    valda = rut_bboxes
+            else:
+                valda = rut_bboxes
+            antal_rutor = len(valda)
+            if antal_rutor == 1:
+                sida_m = ruta_storlek_m + 2.0 * overlapp_m
+                n_sida = max(1, round(sida_m / upplosning_m))
+                uppskattade_celler = n_sida * n_sida
+            else:
+                x_min = min(b[0] for b in valda)
+                y_min = min(b[1] for b in valda)
+                x_max = max(b[2] for b in valda)
+                y_max = max(b[3] for b in valda)
+                uppskattade_celler = max(1, round((x_max - x_min) / upplosning_m)) * max(
+                    1, round((y_max - y_min) / upplosning_m)
+                )
+        else:
+            # 2. Reserv: projektmallens redan inlästa `Ruta`-utbredningar (inga rasterpixlar läses).
+            mall_kandidat = vatten_mall or next(iter(kalla.mallar.values()), None)
+            if mall_kandidat is not None and mall_kandidat.rutor:
+                rutor_m = mall_kandidat.rutor
+                antal_rutor = len(rutor_m)
+                if antal_rutor == 1:
+                    r0 = rutor_m[0]
+                    uppskattade_celler = max(
+                        1, round((float(r0.x_max) - float(r0.x_min)) / upplosning_m)
+                    ) * max(1, round((float(r0.y_max) - float(r0.y_min)) / upplosning_m))
+                else:
+                    x_min = min(float(r.x_min) for r in rutor_m)
+                    y_min = min(float(r.y_min) for r in rutor_m)
+                    x_max = max(float(r.x_max) for r in rutor_m)
+                    y_max = max(float(r.y_max) for r in rutor_m)
+                    b_m = max(upplosning_m, (x_max - x_min) - 2.0 * overlapp_m)
+                    h_m = max(upplosning_m, (y_max - y_min) - 2.0 * overlapp_m)
+                    uppskattade_celler = max(1, round(b_m / upplosning_m)) * max(
+                        1, round(h_m / upplosning_m)
+                    )
+            else:
+                box_reserv = fokus
+                if box_reserv is None:
+                    g_raw = manifest.get("gransen_3011")
+                    if isinstance(g_raw, list) and len(g_raw) == 4:
+                        vals = [self._tal_eller_none(c) for c in g_raw]
+                        if all(v is not None for v in vals):
+                            gx0, gy0, gx1, gy1 = (float(v) for v in vals if v is not None)
+                            if gx1 > gx0 and gy1 > gy0:
+                                box_reserv = (gx0, gy0, gx1, gy1)
+                if box_reserv is None:
+                    return None
+                bx0, by0, bx1, by1 = box_reserv
+                antal_rutor = max(
+                    1,
+                    math.ceil((bx1 - bx0) / ruta_storlek_m)
+                    * math.ceil((by1 - by0) / ruta_storlek_m),
+                )
+                uppskattade_celler = max(1, round((bx1 - bx0) / upplosning_m)) * max(
+                    1, round((by1 - by0) / upplosning_m)
+                )
+
+        max_celler = self._las_max_sankgraf_celler()
+        andel = uppskattade_celler / max_celler
+        if uppskattade_celler > max_celler:
+            niva = "over_tak"
+            c_txt, m_txt, enhet = self._formatera_celler_sv(uppskattade_celler, max_celler)
+            meddelande: str | None = (
+                f"Området överstiger serverns cellgräns ({c_txt} / {m_txt} {enhet}). "
+                "Rita en mindre avgränsning eller kör ett ämne i taget."
+            )
+        elif andel >= BERAKNINGSOMFANG_VARNING_ANDEL:
+            niva = "varning"
+            c_txt, m_txt, enhet = self._formatera_celler_sv(uppskattade_celler, max_celler)
+            meddelande = (
+                f"Området är nära serverns cellgräns ({c_txt} / {m_txt} {enhet}). "
+                "Rita en mindre avgränsning eller kör ett ämne i taget."
+            )
+        else:
+            niva = "ok"
+            meddelande = None
+
+        return {
+            "antal_rutor": int(antal_rutor),
+            "uppskattade_celler": int(uppskattade_celler),
+            "max_sankgraf_celler": int(max_celler),
+            "andel_av_tak": round(float(andel), 4),
+            "upplosning_m": float(upplosning_m),
+            "niva": niva,
+            "meddelande": meddelande,
+        }
+
     def projektinfo(self, projekt: str) -> dict[str, Any]:
         kalla = self.kalla(projekt)
         mallar = dict(kalla.mallar)
@@ -1060,6 +1260,7 @@ class KartverktygTjanst:
             "namn": kalla.namn,
             "geografi": kalla.geografi,
             "forberaknad_bas": self._forberaknad_bas(kalla, utbr),
+            "berakningsomfang": self._berakningsomfang(kalla),
             "avgransning_3011": list(kalla.avgransning) if kalla.avgransning else None,
             "avgransning_polygon_3011": (
                 avgr_mod.till_geojson(kalla.polygon) if kalla.polygon is not None else None
@@ -2458,7 +2659,8 @@ class KartverktygTjanst:
 
     def status_lage_idag(self, projekt: str) -> dict[str, Any]:
         """Körningarnas status för läget idag och, för klara, vyerna (bara före) för kartan."""
-        mallar = self._kravs_projekt(projekt)
+        kalla = self.kalla(projekt)
+        mallar = dict(kalla.mallar)
         ut: list[dict[str, Any]] = []
         for kort, k in self._las_lage(projekt).get("korningar", {}).items():
             try:
@@ -2499,7 +2701,11 @@ class KartverktygTjanst:
                 except FlodenWebbFel:
                     pass
             ut.append(post)
-        return {"lage": "idag", "korningar": ut}
+        return {
+            "lage": "idag",
+            "korningar": ut,
+            "berakningsomfang": self._berakningsomfang(kalla),
+        }
 
     def lage_idag_korningar(self, projekt: str) -> list[str]:
         """Körnings-id för projektets senaste körning av läget idag per mall."""
@@ -2673,7 +2879,8 @@ class KartverktygTjanst:
 
     def status(self, projekt: str, namn_slug: str) -> dict[str, Any]:
         """Körningarnas status och, för klara, vyerna (före, efter, skillnad) för kartan."""
-        mallar = self._kravs_projekt(projekt)
+        kalla = self.kalla(projekt)
+        mallar = dict(kalla.mallar)
         d = self._las(projekt, namn_slug)
         ut: list[dict[str, Any]] = []
         for kort, k in d.get("korningar", {}).items():
@@ -2715,7 +2922,11 @@ class KartverktygTjanst:
                 except FlodenWebbFel:
                     pass
             ut.append(post)
-        return {"slug": namn_slug, "korningar": ut}
+        return {
+            "slug": namn_slug,
+            "korningar": ut,
+            "berakningsomfang": self._berakningsomfang(kalla),
+        }
 
     @staticmethod
     def _vyer(res: Mapping[str, Any], namn: str, korning_id: str) -> list[dict[str, Any]]:
