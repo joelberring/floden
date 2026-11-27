@@ -2,6 +2,25 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-27 – Våg 11 (`#183–#186`) – Rust-SankGraf (`16–18 B/cell`), lokal förberäkning utan S3, PNG ≤ 2048 px, GPU/CPU-arbetare, auto-diskstädare & stress-E2E (`Uppdrag 20b–21` klara)
+
+Gjort: Slutfört hela serveroptimeringsplanen **S-O1–S-O5** (**Våg 11**, 4 konfliktfria PR:er `#183–#186`, 32 unika filer, `+8 922/−136`, 0 % filöverlapp; totalt **44 verifierade PR:er `#143–#186`** under passet) så att `floden.berring.se` klarar ensam VPS (CX23 4 GB / 40 GB SSD) utan GPU och utan S3, med sömlös `.env`-växling till Hetzner S3 och GPU-arbetare senare:
+- **PR `#185` (`befcef1`, `Uppdrag 20` del B / S-O3b):** Ren zero-dependency Rust-kärna `rust/sankgraf_karna` (`Cargo.lock` v4, 0 externa crates, IEEE CRC-32 `.flsg`-I/O, `i32::MAX`-gränskontroll) + `src/sankgraf/rust_brygga.py` (`FLODEN_SANKGRAF_RUST=auto|1|0`, `finally`-städning av tempkatalog) + integration i `Dockerfile` (`/usr/local/bin/sankgraf_karna`) och CI (`bygg-rust` + `vatten-och-rust` med `FLODEN_KRAV_RUST_SANKGRAF=1`).
+- **PR `#186` (`cadf8a4`, `Uppdrag 21` / S-O4 + `fragor.py`-fix):** Lokal läsning av förberäknade ZSTD-COG-rutor (`data/forberaknat/`, `FLODEN_FORBERAKNAT_DIR`) utan S3 med path-traversal-/symlänksskydd; deterministisk block-max/absmax PNG-nedskalning (`FLODEN_MAX_PNG_PIXLAR=2048`, rå GeoTIFF & pekar-`.npy` i full upplösning); O(1) `berakningsomfang` i `kartverktyg.py` + förvarning i Steg 2 (`webb/src/flode/berakningsomfang.ts`); samt `isinstance(..., dict)`-skydd i `src/webb/fragor.py` mot icke-dict `run.json` (`"[]"`/`"null"`).
+- **PR `#184` (`70bd32e`, `Uppdrag 21` / S-O5):** Enhetlig pull-arbetare `floden drift arbetare` (`src/drift/arbetare_cli.py`, `--lagring lokal|s3`, `--enhet auto|cpu|cuda` med fail-fast på `cuda` utan CuPy, `SIGTERM`/`SIGINT` graceful shutdown + omedelbar lease-release, lease-heartbeat med garanterad `finally`-stopp, giftigt-jobb-isolering, 0 PII); in-container `AutoDiskStadare` (`src/drift/auto_stadare.py`, `FLODEN_AUTO_STADA_DISK=1` i `docker-compose.prod.yml`, `stoppa()` `< 0,2 s`); `floden drift stada-disk`; samt komplett driftmatris Profil A/B/C + `/api/halsa`/`507`/`503`-felsökning i `docs/DRIFT.md`.
+- **PR `#183` (`f66c335`, stress-E2E + `PLAN`/`STATUS`):** 6 integrerade feltillstånds-/stress-E2E-tester (`tests/e2e/test_v10_server_stabilitet.py`) och synk av `PLAN.md`/`STATUS.md` för Våg 9–10.
+
+Mätt:
+- **GitHub CI:** **11/11 gröna** på samtliga 4 PR:er (`#183–#186`) + **`Avbildning/build` grön** på `#185` (`45911092760`, byggde `sankgraf_karna --release --locked` i `rust:1-bookworm`, verifierade `sankgraf_karna 0.1.0` och `/api/halsa` `200 OK`).
+- **Rust-bevis ur GitHub Actions (`#185`, run `45912565396`):** `RUSTFLAGS="-D warnings" cargo test --locked` **8/8 passed (0 warnings)**; `vatten-och-rust` med `FLODEN_KRAV_RUST_SANKGRAF=1` **461 passed, 0 skippade SankGraf-tester**; `FLODEN_SANKGRAF_RUST=1 floden testsvit` **18/18 godkända (0,0000 % volymfel)**.
+- **Uppmätt RAM & prestanda (Våg 11):**
+  - *Rust `sankgraf_karna` på `1000×1000` (1M celler, bitidentisk paritet):* kuperad `0,218 → 0,070 s` (**3,11×**, isolerad Rust-RSS **15,5 MB = `16,3 B/cell`** vs Python `25,8 MB`); platårik `1,503 → 0,081 s` (**18,63×**, isolerad Rust-RSS **17,5 MB = `18,3 B/cell`** vs Python `55,8 MB`).
+  - *Block-max PNG ≤ 2048 px på `3000×3000` (`#186`):* PNG-filstorlek **−23,8 %**, RGBA-buffert **−53,4 %**, peak RAM **−43,0 %**, 1-px översvämmad gata bevarad, GeoTIFF & pekaravläsning i 100 % full upplösning.
+- **4-vägs sammanslagning på `main` (`8c92ca4`, 32 filer, 0 konflikter):** `ruff` **0 fel**, `mypy --platform linux` **0 fel (402 källfiler)**, `floden testsvit` **18/18 (0,0000 % volymfel)**, samlad V11-`pytest` **824 passed, 5 skipped, 0 failed**, `webb`: `npm test` **503/503 passed**, `tsc --noEmit` **0 fel**, `vite build` OK (`4,08 s`).
+
+Öppet: Live-driftsättning och verifiering på `floden.berring.se` (dra hem nya `docker-compose.prod.yml` + `ghcr.io/joelberring/floden:main`, kolla `/api/halsa` samt kör Dagsljus + Skyfall på `goteborg-test@v4` med `RestartCount=0`); valfritt koppla in Hetzner S3 (`floden-oppen-eu`) och on-demand GPU-arbetare (`floden drift arbetare --lagring s3 --enhet cuda`) när behov uppstår.
+Nästa: Uppdatera `floden.berring.se` när `CI` + `Avbildning (publish)` på `main` är grön.
+
 ## 2026-11-26 – Våg 9–10 (`#177–#182`) & Våg 11 stress-E2E – Serverstabilitet, processisolering, lokal diskstädning, RAM-optimering & `PLAN.md`-synk (`Uppdrag 19–21`)
 
 Gjort: Sammanfattat och synkat **`PLAN.md`** (`Uppdrag 19–21` motsvarande serveroptimeringsplanen `S-O1–S-O5`) med **Våg 9 (`9be7b44`, PR `#177–#178`)** och **Våg 10 (`26faa19`, PR `#179–#182`)** samt byggt den integrerade stress- och feltillstånds-E2E-sviten `tests/e2e/test_v10_server_stabilitet.py` mot riktig Våg 9–10-kod utan nätverksanrop:
