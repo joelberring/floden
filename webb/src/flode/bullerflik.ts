@@ -135,6 +135,14 @@ export interface BullerAnalysSvar {
   varningar: string[];
 }
 
+export interface BullerVagLinjeVy {
+  a: { x: number; y: number };
+  b: { x: number; y: number };
+  meter: number;
+  text: string;
+  klar: boolean;
+}
+
 export interface BullerPanelTillstand {
   param: BullerParam;
   laddar: boolean;
@@ -142,6 +150,69 @@ export interface BullerPanelTillstand {
   svar: BullerAnalysSvar | null;
   scenario: string | null;
   visaLager: boolean;
+  ritarVag?: boolean;
+  ritadPunkt1?: { e: number; n: number } | null;
+  aktivtLage?: string;
+}
+
+const avrunda01 = (v: number): number => Math.round(v * 10) / 10;
+
+/** Bygger mät-/förhandslinje för buller-vägsegment på kartan (kompatibel med `Kartmotor.settMatLinje`). */
+export function byggBullerVagLinje(
+  e1: number,
+  n1: number,
+  e2: number,
+  n2: number,
+  klar: boolean,
+): BullerVagLinjeVy {
+  const meter = Math.hypot(e2 - e1, n2 - n1);
+  const dec = meter >= 100 ? 0 : 1;
+  return {
+    a: { x: e1, y: n1 },
+    b: { x: e2, y: n2 },
+    meter,
+    text: `Väg: ${formatera(meter, dec)} m`,
+    klar,
+  };
+}
+
+/** Applicerar ett kartklick (steg 1 = startpunkt, steg 2 = slutpunkt) under "Rita väg på kartan". */
+export function tillampaBullerVagKlick(
+  param: BullerParam,
+  ritadPunkt1: { e: number; n: number } | null,
+  e: number,
+  n: number,
+):
+  | { klar: false; ritadPunkt1: { e: number; n: number }; fel: null }
+  | { klar: true; param: BullerParam; ritadPunkt1: null; fel: null; linje: BullerVagLinjeVy }
+  | { klar: false; ritadPunkt1: { e: number; n: number }; fel: string } {
+  const pe = avrunda01(e);
+  const pn = avrunda01(n);
+  if (!ritadPunkt1) {
+    return { klar: false, ritadPunkt1: { e: pe, n: pn }, fel: null };
+  }
+  const langd = Math.hypot(pe - ritadPunkt1.e, pn - ritadPunkt1.n);
+  if (langd < 0.1) {
+    return {
+      klar: false,
+      ritadPunkt1,
+      fel: "Vägsegmentets start- och slutpunkt får inte sammanfalla — klicka en punkt längre bort.",
+    };
+  }
+  const nyParam: BullerParam = {
+    ...param,
+    vag_start_e: ritadPunkt1.e,
+    vag_start_n: ritadPunkt1.n,
+    vag_slut_e: pe,
+    vag_slut_n: pn,
+  };
+  return {
+    klar: true,
+    param: nyParam,
+    ritadPunkt1: null,
+    fel: null,
+    linje: byggBullerVagLinje(ritadPunkt1.e, ritadPunkt1.n, pe, pn, true),
+  };
 }
 
 const arTal = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -274,7 +345,24 @@ export function bullerPanelHtml(t: BullerPanelTillstand): string {
   const s = t.svar;
   const sam = s?.sammanfattning ?? null;
 
-  let kropp = `<p class="flode-liten flode-dampad">Ange vägsegment och trafikflöde (ÅDT) för att räkna en skisskarta för vägtrafikbuller (L<sub>Aeq,24h</sub>)${t.scenario ? ` för nuläge och förslag <strong>${esc(t.scenario)}</strong>` : ""}.</p>`;
+  const aktivtLager = valjBullerLager(s, t.visaLager, t.aktivtLage ?? "nulage");
+  const ritarVag = Boolean(t.ritarVag);
+  const harVag =
+    arTal(p.vag_start_e) && arTal(p.vag_start_n) && arTal(p.vag_slut_e) && arTal(p.vag_slut_n);
+  const vagLangdM = harVag
+    ? Math.hypot((p.vag_slut_e as number) - (p.vag_start_e as number), (p.vag_slut_n as number) - (p.vag_start_n as number))
+    : null;
+
+  let vagStatusHtml = `<p class="flode-liten flode-dampad" id="ar-bl-vag-status">Inget vägsegment valt ännu — klicka <strong>Rita väg på kartan</strong> (2 punkter).</p>`;
+  if (ritarVag && !t.ritadPunkt1) {
+    vagStatusHtml = `<p class="flode-liten ar-bl-vag-aktiv" id="ar-bl-vag-status" role="status">Klicka vägens <strong>startpunkt</strong> direkt på kartan (Esc avbryter).</p>`;
+  } else if (ritarVag && t.ritadPunkt1) {
+    vagStatusHtml = `<p class="flode-liten ar-bl-vag-aktiv" id="ar-bl-vag-status" role="status">Startpunkt satt (E ${esc(formatera(t.ritadPunkt1.e, 0))}, N ${esc(formatera(t.ritadPunkt1.n, 0))}) — klicka vägens <strong>slutpunkt</strong> på kartan.</p>`;
+  } else if (harVag && vagLangdM !== null) {
+    vagStatusHtml = `<p class="flode-liten" id="ar-bl-vag-status"><strong>Vägsegment: ${esc(formatera(vagLangdM, vagLangdM >= 100 ? 0 : 1))} m</strong> <span class="flode-dampad">(ritat på kartan)</span></p>`;
+  }
+
+  let kropp = `<p class="flode-liten flode-dampad">Rita väg på kartan och ange trafikflöde (ÅDT) för att räkna en skisskarta för vägtrafikbuller (L<sub>Aeq,24h</sub>)${t.scenario ? ` för nuläge och förslag <strong>${esc(t.scenario)}</strong>` : ""}.</p>`;
   if (t.laddar) {
     kropp = `<p class="flode-liten flode-dampad" role="status">Beräknar vägtrafikbuller (buller.nord2000 skiss) …</p>`;
   } else if (t.fel) {
@@ -319,11 +407,16 @@ export function bullerPanelHtml(t: BullerPanelTillstand): string {
         ? `<ul class="flode-liten flode-dampad ar-gyf-varningar">${s.varningar.map((v) => `<li>${esc(v)}</li>`).join("")}</ul>`
         : "";
 
+    const inlineLegendHtml = aktivtLager
+      ? `<div class="ar-inline-legend" aria-label="Teckenförklaring för buller">${bullerLagerTeckenHtml(aktivtLager)}</div>`
+      : "";
+
     kropp = `
       <div class="flode-segment liten ar-vs-lagerval" role="group" aria-label="Visa bullerlager på kartan">
         <button type="button" data-bl-lager="visa" aria-pressed="${t.visaLager}">Visa L<sub>Aeq</sub> dB(A)</button>
         <button type="button" data-bl-lager="av" aria-pressed="${!t.visaLager}">Dölj</button>
       </div>
+      ${inlineLegendHtml}
       <dl class="flode-tal ar-buller-tal">
         <div><dt>L<sub>Aeq</sub> max / medel</dt><dd><strong>${esc(laeqMax)}</strong> <span class="flode-dampad">/ ${esc(laeqMedel)}</span></dd></div>
         <div><dt>Andel &gt; 55 dB(A) / &gt; 60 dB(A)</dt><dd><strong>${esc(over55)}</strong> <span class="flode-dampad">/ ${esc(over60)}</span></dd></div>
@@ -335,16 +428,21 @@ export function bullerPanelHtml(t: BullerPanelTillstand): string {
   }
 
   return `
-    <details class="flode-detalj ar-buller-panel" id="ar-buller-panel">
-      <summary class="ar-utci-gyf-summary">
-        <span>Buller (vägtrafik L<sub>Aeq</sub>)</span>
+    <section class="ar-doman-kort ar-buller-panel" id="ar-buller-panel" aria-label="Buller skissanalys">
+      <div class="ar-doman-huvud">
+        <h2 class="ar-doman-rubrik">Buller (vägtrafik L<sub>Aeq</sub>)</h2>
         <span class="ar-skiss-badge" title="Ej Nord2000-konform — formell bullerrapport spärrad">SKISS</span>
-      </summary>
+      </div>
       <div class="ar-utci-gyf-kropp">
         <div class="ar-buller-banner" role="note" aria-label="Buller skissvarning">
           <strong>${esc(BULLER_SKISS_BANNER)}</strong>
           <span>Skissverktyg ovanpå <code>buller.nord2000</code> (<code>nord2000_konform = false</code>). Ej för myndighetsbeslut.</span>
         </div>
+        <div class="ar-buller-atgarder">
+          <button type="button" class="flode-knapp liten${ritarVag ? " svart" : ""}" id="ar-bl-rita-vag" aria-pressed="${ritarVag}">${ritarVag ? "Avbryt vägritning" : "Rita väg på kartan"}</button>
+          <button type="button" class="flode-knapp liten" id="ar-bl-fyll-vag">Fyll väg längs projektkant</button>
+        </div>
+        ${vagStatusHtml}
         <div class="ar-vs-grid">
           <label class="flode-liten">ÅDT (fordon/dygn)
             <input id="ar-bl-adt" type="text" inputmode="decimal" value="${esc(fmtInput(p.adt_fordon_dygn, 0))}" placeholder="t.ex. 8000" />
@@ -359,27 +457,29 @@ export function bullerPanelHtml(t: BullerPanelTillstand): string {
             <input id="ar-bl-hojd" type="text" inputmode="decimal" value="${esc(fmtInput(p.mottagarhojd_m, 1))}" />
           </label>
         </div>
-        <div class="ar-vs-grid">
-          <label class="flode-liten">Väg start E (3011)
-            <input id="ar-bl-e1" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_start_e, 1))}" placeholder="E1" />
-          </label>
-          <label class="flode-liten">Väg start N (3011)
-            <input id="ar-bl-n1" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_start_n, 1))}" placeholder="N1" />
-          </label>
-          <label class="flode-liten">Väg slut E (3011)
-            <input id="ar-bl-e2" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_slut_e, 1))}" placeholder="E2" />
-          </label>
-          <label class="flode-liten">Väg slut N (3011)
-            <input id="ar-bl-n2" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_slut_n, 1))}" placeholder="N2" />
-          </label>
-        </div>
-        <div class="ar-buller-atgarder">
-          <button type="button" class="flode-knapp liten" id="ar-bl-fyll-vag">Fyll väg längs projektkant</button>
-          <button type="button" class="flode-knapp liten" id="ar-bl-kor"${t.laddar ? " disabled" : ""}>Beräkna bullerskiss</button>
+        <details class="flode-detalj ar-bl-koord-detalj">
+          <summary class="flode-liten">Justera koordinater manuellt (SWEREF 99 18 00)</summary>
+          <div class="ar-vs-grid">
+            <label class="flode-liten">Väg start E (3011)
+              <input id="ar-bl-e1" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_start_e, 1))}" placeholder="E1" />
+            </label>
+            <label class="flode-liten">Väg start N (3011)
+              <input id="ar-bl-n1" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_start_n, 1))}" placeholder="N1" />
+            </label>
+            <label class="flode-liten">Väg slut E (3011)
+              <input id="ar-bl-e2" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_slut_e, 1))}" placeholder="E2" />
+            </label>
+            <label class="flode-liten">Väg slut N (3011)
+              <input id="ar-bl-n2" type="text" inputmode="decimal" value="${esc(fmtInput(p.vag_slut_n, 1))}" placeholder="N2" />
+            </label>
+          </div>
+        </details>
+        <div class="ar-vs-atgarder">
+          <button type="button" class="flode-knapp svart liten" id="ar-bl-kor"${t.laddar ? " disabled" : ""}>${t.laddar ? "Beräknar …" : "Beräkna bullerskiss"}</button>
         </div>
         <div id="ar-bl-ut">${kropp}</div>
       </div>
-    </details>`;
+    </section>`;
 }
 
 export interface BullerKopplingOpts {
@@ -389,12 +489,30 @@ export interface BullerKopplingOpts {
   hamtaUtbredning(): Utbredning | null;
   onBullerlagerAndrat(lager: BullerLagerRef | null): void;
   signal: AbortSignal;
+  hamtaAktivDoman?: () => string;
+  onRitaVagAndrad?: (aktiv: boolean) => void;
+  onVagLinjeAndrad?: (linje: BullerVagLinjeVy | null) => void;
+  onStatusAndrad?: () => void;
+}
+
+export interface BullerStatus {
+  laddar: boolean;
+  harSvar: boolean;
+  ritarVag: boolean;
 }
 
 export interface BullerKontroller {
   uppdateraKontext(): void;
   synkaBullerlager(): void;
   rensaBullerlager(): void;
+  sattAktivDoman(doman: string): void;
+  hanteraKartKlick(e: number, n: number): boolean;
+  uppdateraForhandPunkt(e: number | null, n: number | null): void;
+  avbrytVagRitning(): boolean;
+  arRitarVag(): boolean;
+  vagLinje(): BullerVagLinjeVy | null;
+  hjalpText(): string;
+  status(): BullerStatus;
 }
 
 /** Kopplar Buller-skisspanelen i Steg 2 mot `POST /api/analys/buller` och kartan. */
@@ -409,21 +527,54 @@ export function kopplaBullerPanel(
     svar: null,
     scenario: opts.hamtaScenario(),
     visaLager: false,
+    ritarVag: false,
+    ritadPunkt1: null,
+    aktivtLage: opts.hamtaLage(),
   };
 
-  let oppen = false;
+  let aktivDoman: string | null = opts.hamtaAktivDoman ? opts.hamtaAktivDoman() : null;
+  let forhandPunkt: { e: number; n: number } | null = null;
   let seq = 0;
 
+  const vagLinje = (): BullerVagLinjeVy | null => {
+    if (state.ritarVag && state.ritadPunkt1 && forhandPunkt) {
+      return byggBullerVagLinje(
+        state.ritadPunkt1.e,
+        state.ritadPunkt1.n,
+        forhandPunkt.e,
+        forhandPunkt.n,
+        false,
+      );
+    }
+    const p = state.param;
+    if (arTal(p.vag_start_e) && arTal(p.vag_start_n) && arTal(p.vag_slut_e) && arTal(p.vag_slut_n)) {
+      return byggBullerVagLinje(p.vag_start_e, p.vag_start_n, p.vag_slut_e, p.vag_slut_n, true);
+    }
+    return null;
+  };
+
+  const synkaLinje = (): void => {
+    opts.onVagLinjeAndrad?.(aktivDoman === null || aktivDoman === "buller" ? vagLinje() : null);
+  };
+
   const rita = (): void => {
-    const nu = behallare.querySelector<HTMLDetailsElement>("#ar-buller-panel");
-    if (nu) oppen = nu.open;
+    state.aktivtLage = opts.hamtaLage();
+    if (aktivDoman !== null && aktivDoman !== "buller") {
+      behallare.hidden = true;
+      behallare.innerHTML = "";
+      return;
+    }
+    const koordDetalj = behallare.querySelector<HTMLDetailsElement>(".ar-bl-koord-detalj");
+    const koordOppen = Boolean(koordDetalj?.open);
+    behallare.hidden = false;
     behallare.innerHTML = bullerPanelHtml(state);
-    const ny = behallare.querySelector<HTMLDetailsElement>("#ar-buller-panel");
-    if (ny) ny.open = oppen;
+    const nyKoord = behallare.querySelector<HTMLDetailsElement>(".ar-bl-koord-detalj");
+    if (nyKoord && koordOppen) nyKoord.open = true;
   };
 
   const synkaBullerlager = (): void => {
-    opts.onBullerlagerAndrat(valjBullerLager(state.svar, state.visaLager, opts.hamtaLage()));
+    state.aktivtLage = opts.hamtaLage();
+    opts.onBullerlagerAndrat(valjBullerLager(state.svar, state.visaLager, state.aktivtLage));
   };
 
   const lasParamUrForm = (): BullerParam => ({
@@ -443,17 +594,20 @@ export function kopplaBullerPanel(
     state.param = lasParamUrForm();
     const fel = valideraBullerParam(state.param);
     if (fel) {
-      oppen = true;
       state.fel = fel;
       rita();
       return;
     }
     const nr = ++seq;
-    oppen = true;
+    state.ritarVag = false;
+    state.ritadPunkt1 = null;
+    forhandPunkt = null;
+    opts.onRitaVagAndrad?.(false);
     state.scenario = opts.hamtaScenario();
     state.laddar = true;
     state.fel = null;
     rita();
+    opts.onStatusAndrad?.();
     try {
       const { lasJson } = await import("../api.ts");
       const begaran = byggBullerBegaran(opts.projekt, state.param, state.scenario);
@@ -474,17 +628,51 @@ export function kopplaBullerPanel(
       if (nr === seq) {
         state.laddar = false;
         rita();
+        synkaLinje();
+        opts.onStatusAndrad?.();
       }
     }
+  };
+
+  const avbrytVagRitning = (): boolean => {
+    if (!state.ritarVag) return false;
+    state.ritarVag = false;
+    state.ritadPunkt1 = null;
+    forhandPunkt = null;
+    opts.onRitaVagAndrad?.(false);
+    rita();
+    synkaLinje();
+    return true;
   };
 
   behallare.addEventListener(
     "click",
     (h) => {
-      const m = (h.target as Element).closest<HTMLElement>("#ar-bl-kor,#ar-bl-fyll-vag,[data-bl-lager]");
+      const m = (h.target as Element).closest<HTMLElement>(
+        "#ar-bl-kor,#ar-bl-fyll-vag,#ar-bl-rita-vag,[data-bl-lager]",
+      );
       if (!m) return;
+      if (m.id === "ar-bl-rita-vag") {
+        state.param = lasParamUrForm();
+        if (state.ritarVag) {
+          avbrytVagRitning();
+          return;
+        }
+        state.ritarVag = true;
+        state.ritadPunkt1 = null;
+        forhandPunkt = null;
+        state.fel = null;
+        opts.onRitaVagAndrad?.(true);
+        rita();
+        synkaLinje();
+        return;
+      }
       if (m.id === "ar-bl-fyll-vag") {
         state.param = lasParamUrForm();
+        state.ritarVag = false;
+        state.ritadPunkt1 = null;
+        forhandPunkt = null;
+        opts.onRitaVagAndrad?.(false);
         const u = opts.hamtaUtbredning();
         if (u) {
           state.param = { ...state.param, ...foreslaVagKoordinater(u) };
@@ -492,8 +680,8 @@ export function kopplaBullerPanel(
         } else {
           state.fel = "Projektets utbredning har inte laddats ännu.";
         }
-        oppen = true;
         rita();
+        synkaLinje();
         return;
       }
       if (m.id === "ar-bl-kor") {
@@ -519,8 +707,10 @@ export function kopplaBullerPanel(
   return {
     uppdateraKontext: () => {
       const nySc = opts.hamtaScenario();
-      if (nySc !== state.scenario) {
+      const nyLage = opts.hamtaLage();
+      if (nySc !== state.scenario || nyLage !== state.aktivtLage) {
         state.scenario = nySc;
+        state.aktivtLage = nyLage;
         rita();
       }
       synkaBullerlager();
@@ -533,5 +723,53 @@ export function kopplaBullerPanel(
         rita();
       }
     },
+    sattAktivDoman: (doman: string) => {
+      if (doman !== "buller" && state.ritarVag) {
+        state.ritarVag = false;
+        state.ritadPunkt1 = null;
+        forhandPunkt = null;
+        opts.onRitaVagAndrad?.(false);
+      }
+      aktivDoman = doman;
+      rita();
+      synkaLinje();
+    },
+    hanteraKartKlick: (e: number, n: number): boolean => {
+      if (!state.ritarVag) return false;
+      state.param = lasParamUrForm();
+      const res = tillampaBullerVagKlick(state.param, state.ritadPunkt1 ?? null, e, n);
+      if (res.klar) {
+        state.param = res.param;
+        state.ritarVag = false;
+        state.ritadPunkt1 = null;
+        forhandPunkt = null;
+        state.fel = null;
+        opts.onRitaVagAndrad?.(false);
+      } else {
+        state.ritadPunkt1 = res.ritadPunkt1;
+        state.fel = res.fel;
+      }
+      rita();
+      synkaLinje();
+      return true;
+    },
+    uppdateraForhandPunkt: (e: number | null, n: number | null): void => {
+      if (!state.ritarVag || !state.ritadPunkt1) return;
+      forhandPunkt = e !== null && n !== null ? { e: avrunda01(e), n: avrunda01(n) } : null;
+      synkaLinje();
+    },
+    avbrytVagRitning,
+    arRitarVag: () => Boolean(state.ritarVag),
+    vagLinje,
+    hjalpText: () => {
+      if (!state.ritarVag) return "";
+      if (!state.ritadPunkt1) return "Rita väg (Buller): klicka vägens startpunkt på kartan (Esc avbryter).";
+      return "Rita väg (Buller): klicka vägens slutpunkt på kartan (Esc avbryter).";
+    },
+    status: () => ({
+      laddar: state.laddar,
+      harSvar: state.svar !== null,
+      ritarVag: Boolean(state.ritarVag),
+    }),
   };
 }

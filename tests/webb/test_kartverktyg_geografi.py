@@ -56,6 +56,10 @@ def test_projektinfo_for_ett_projekt_i_geografin(v: Varld) -> None:
     assert info["id"] == pid and info["slag"] == "geografi" and info["paahittat"] is False and info["epsg"] == 3011
     assert info["geografi"] == "goteborg-test@v1" and info["avgransning_3011"] == d["avgransning_3011"]
     assert info["avgransning_polygon_3011"] is None
+    # Etapp 2: additiv kommun, har_nmd och har_brytlinjer för GYF-förval och ärlig Ekologi-status.
+    assert info["kommun"] == "goteborg"
+    assert info["har_nmd"] is False
+    assert info["har_brytlinjer"] is bool(info["brytlinjer"])
     # Lantmäteriets härledda data är stängda tills villkoren kontrollerats (K38): projektet är det.
     assert info["oppen"] is False
     assert set(info["baser"]) == {"vatten", "dagsljus"}

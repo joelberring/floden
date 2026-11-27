@@ -111,6 +111,10 @@ export interface ProjektInfo {
   /** Additivt (R3): basens brytlinjer (fästmål och visning). */
   brytlinjer?: Array<{ typ: string; hojd_m: number; koordinater: Array<[number, number]> }>;
   brytlinjer_trunkerade?: boolean;
+  /** Additivt (Etapp 2): kommun-id (t.ex. "goteborg", "stockholm"), NMD-tillgång och brytlinjeflagga. */
+  kommun?: string | null;
+  har_nmd?: boolean;
+  har_brytlinjer?: boolean;
 }
 
 export interface ScenarioPost {

@@ -19,6 +19,18 @@ export const GYF_PROFILER: ReadonlyArray<{ id: GyfProfilId; namn: string; kommun
   { id: "malmo", namn: "Malmö", kommun: "Malmö stad" },
 ];
 
+/** Väljer kommunprofil för GYF automatiskt ur projektets `kommun` eller geografireferens. */
+export function forvaldGyfProfilForKommun(
+  kommun?: string | null,
+  geografi?: string | null,
+): GyfProfilId {
+  const raw = (kommun || geografi || "").trim().toLowerCase();
+  if (raw.startsWith("goteborg") || raw.includes("göteborg")) return "goteborg";
+  if (raw.startsWith("malmo") || raw.includes("malmö")) return "malmo";
+  if (raw.startsWith("stockholm")) return "stockholm";
+  return "stockholm";
+}
+
 export interface GyfDelfaktorPost {
   faktor_id: string;
   namn: string;
@@ -117,6 +129,36 @@ export const STANDARD_VARMESTRESS_PARAM: Readonly<VarmestressParam> = {
   solhojd_grad: 50.0,
   solazimut_grad: 180.0,
 };
+
+export type VarmestressForvalId = "varmebolja" | "sommardag" | "anpassa";
+
+export interface VarmestressForvalPost {
+  id: Exclude<VarmestressForvalId, "anpassa">;
+  etikett: string;
+  param: Readonly<VarmestressParam>;
+}
+
+/** En-klicks väderförval för Mikroklimat (UTCI / T_mrt) i Steg 2. */
+export const VARMESTRESS_FORVAL: ReadonlyArray<VarmestressForvalPost> = [
+  {
+    id: "varmebolja",
+    etikett: "Värmebölja · 30 °C, 21 juli kl. 14",
+    param: { ...STANDARD_VARMESTRESS_PARAM },
+  },
+  {
+    id: "sommardag",
+    etikett: "Sommardag · 25 °C",
+    param: {
+      t_luft_c: 25.0,
+      relativ_fuktighet_pct: 50.0,
+      vind_10m_m_s: 2.5,
+      sol_direkt_w_m2: 650.0,
+      sol_diffus_w_m2: 110.0,
+      solhojd_grad: 48.0,
+      solazimut_grad: 180.0,
+    },
+  },
+];
 
 export type VarmestressLagerRoll = "utci_c" | "t_mrt_c";
 
@@ -226,6 +268,8 @@ export interface VarmestressPanelTillstand {
   svar: VarmestressAnalysSvar | null;
   scenario: string | null;
   aktivtLagerRoll: VarmestressLagerRoll | null;
+  forval?: VarmestressForvalId;
+  aktivtLage?: string;
 }
 
 const arTal = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -374,29 +418,31 @@ export function gyfPanelHtml(t: GyfPanelTillstand): string {
   }
 
   return `
-    <details class="flode-detalj ar-gyf-panel" id="ar-gyf-panel">
-      <summary class="ar-utci-gyf-summary">
-        <span>Grönytefaktor (GYF)</span>
+    <section class="ar-doman-kort ar-gyf-panel" id="ar-gyf-panel" aria-label="Grönytefaktor (GYF)">
+      <div class="ar-doman-huvud">
+        <h2 class="ar-doman-rubrik">Grönytefaktor (GYF)</h2>
         <span class="ar-skiss-badge" title="Metodstatus: skiss (schablonvikter i data/gyf/profiler.toml)">SKISS</span>
-      </summary>
+      </div>
       <div class="ar-utci-gyf-kropp">
         <div class="ar-gyf-kontroller">
           <label class="flode-liten">Kommunprofil
             <select id="ar-gyf-profil" aria-label="GYF-kommunprofil">${profilOptions}</select>
           </label>
-          <button type="button" class="flode-knapp liten" id="ar-gyf-kor"${t.laddar ? " disabled" : ""}>Beräkna GYF</button>
+          <button type="button" class="flode-knapp svart liten" id="ar-gyf-kor"${t.laddar ? " disabled" : ""}>${t.laddar ? "Beräknar …" : "Beräkna GYF"}</button>
         </div>
         <div id="ar-gyf-ut">${kropp}</div>
       </div>
-    </details>`;
+    </section>`;
 }
 
 /** Renderar Värmestress-panelen (UTCI / T_mrt, Steg 2) i stram svartvit UI-krom med `SKISS`-märkning. */
 export function varmestressPanelHtml(t: VarmestressPanelTillstand): string {
   const s = t.svar;
   const p = t.param;
+  const forval: VarmestressForvalId = t.forval ?? "varmebolja";
+  const aktivtLager = valjVarmestressLager(s, t.aktivtLagerRoll, t.aktivtLage ?? "nulage");
 
-  let kropp = `<p class="flode-liten flode-dampad">Beräknar 6-riktnings T<sub>mrt</sub> och UTCI ur projektets K1 v2-geometri (verklig SVF och skugga)${t.scenario ? ` för nuläge och förslag <strong>${esc(t.scenario)}</strong>` : ""}.</p>`;
+  let kropp = `<p class="flode-liten flode-dampad">Välj ett väderförval ovan för att beräkna 6-riktnings T<sub>mrt</sub> och UTCI ur projektets K1 v2-geometri (verklig SVF och skugga)${t.scenario ? ` för nuläge och förslag <strong>${esc(t.scenario)}</strong>` : ""}.</p>`;
   if (t.laddar) {
     kropp = `<p class="flode-liten flode-dampad" role="status">Beräknar SVF, skugga, T<sub>mrt</sub> och UTCI …</p>`;
   } else if (t.fel) {
@@ -444,12 +490,17 @@ export function varmestressPanelHtml(t: VarmestressPanelTillstand): string {
       ? `<p class="flode-liten flode-dampad">Geometri: medel-SVF ${esc(formatera(s.geometri.svf_medel_fore, 2))}, solbelyst mark ${esc(formatera(s.geometri.solbelyst_andel_fore_pct, 0))} %${s.geometri.trad_andel_fore_pct > 0 ? `, trädkrontäckning ${esc(formatera(s.geometri.trad_andel_fore_pct, 1))} %` : ""}.</p>`
       : "";
 
+    const inlineLegendHtml = aktivtLager
+      ? `<div class="ar-inline-legend" aria-label="Teckenförklaring för värmestress">${varmelagerTeckenHtml(aktivtLager)}</div>`
+      : "";
+
     kropp = `
       <div class="flode-segment liten ar-vs-lagerval" role="group" aria-label="Visa värmestresslager på kartan">
-        <button type="button" data-vs-lager="utci_c" aria-pressed="${t.aktivtLagerRoll === "utci_c"}">Visa UTCI (°C)</button>
-        <button type="button" data-vs-lager="t_mrt_c" aria-pressed="${t.aktivtLagerRoll === "t_mrt_c"}">Visa T_mrt (°C)</button>
+        <button type="button" data-vs-lager="utci_c" aria-pressed="${t.aktivtLagerRoll === "utci_c"}">UTCI °C</button>
+        <button type="button" data-vs-lager="t_mrt_c" aria-pressed="${t.aktivtLagerRoll === "t_mrt_c"}">T_mrt °C</button>
         <button type="button" data-vs-lager="av" aria-pressed="${t.aktivtLagerRoll === null}">Dölj</button>
       </div>
+      ${inlineLegendHtml}
       <dl class="flode-tal ar-vs-tal">
         <div><dt>UTCI (medel / max)</dt><dd><strong>${esc(utciMedel)}</strong> <span class="flode-dampad">/ ${esc(utciMax)}</span></dd></div>
         <div><dt>T<sub>mrt</sub> (medel / max)</dt><dd><strong>${esc(tmrtMedel)}</strong> <span class="flode-dampad">/ ${esc(tmrtMax)}</span></dd></div>
@@ -464,14 +515,29 @@ export function varmestressPanelHtml(t: VarmestressPanelTillstand): string {
       ${varningHtml}`;
   }
 
+  const forvalKnappar = [
+    ...VARMESTRESS_FORVAL.map(
+      (f) =>
+        `<button type="button" data-vs-forval="${f.id}" aria-pressed="${forval === f.id}"${t.laddar ? " disabled" : ""}>${esc(f.etikett)}</button>`,
+    ),
+    `<button type="button" data-vs-forval="anpassa" aria-pressed="${forval === "anpassa"}">Anpassa själv</button>`,
+  ].join("");
+
+  const paramSamman =
+    forval !== "anpassa"
+      ? `<p class="flode-liten flode-dampad ar-vs-paramrad">${esc(formateraHogst(p.t_luft_c, 1))} °C · ${esc(formateraHogst(p.relativ_fuktighet_pct, 0))} % RH · vind ${esc(formateraHogst(p.vind_10m_m_s, 1))} m/s · solhöjd ${esc(formateraHogst(p.solhojd_grad, 0))}°</p>`
+      : "";
+
   return `
-    <details class="flode-detalj ar-vs-panel" id="ar-vs-panel">
-      <summary class="ar-utci-gyf-summary">
-        <span>Värmestress (UTCI / T<sub>mrt</sub>)</span>
+    <section class="ar-doman-kort ar-vs-panel" id="ar-vs-panel" aria-label="Mikroklimat och värmestress">
+      <div class="ar-doman-huvud">
+        <h2 class="ar-doman-rubrik">Mikroklimat · Värmestress (UTCI / T<sub>mrt</sub>)</h2>
         <span class="ar-skiss-badge" title="Metodstatus: skiss (Bröde 2012 + 6-riktnings T_mrt)">SKISS</span>
-      </summary>
+      </div>
       <div class="ar-utci-gyf-kropp">
-        <div class="ar-vs-grid">
+        <div class="ar-vs-forval" role="group" aria-label="Väderförval för värmestress">${forvalKnappar}</div>
+        ${paramSamman}
+        <div class="ar-vs-grid"${forval === "anpassa" ? "" : " hidden"}>
           <label class="flode-liten">Lufttemp (°C)
             <input id="ar-vs-tluft" type="text" inputmode="decimal" value="${esc(formateraHogst(p.t_luft_c, 1))}" />
           </label>
@@ -486,11 +552,11 @@ export function varmestressPanelHtml(t: VarmestressPanelTillstand): string {
           </label>
         </div>
         <div class="ar-vs-atgarder">
-          <button type="button" class="flode-knapp liten" id="ar-vs-kor"${t.laddar ? " disabled" : ""}>Beräkna &amp; visa värmestress</button>
+          <button type="button" class="flode-knapp svart liten" id="ar-vs-kor"${t.laddar ? " disabled" : ""}>${t.laddar ? "Beräknar …" : "Beräkna &amp; visa värmestress"}</button>
         </div>
         <div id="ar-vs-ut">${kropp}</div>
       </div>
-    </details>`;
+    </section>`;
 }
 
 /** Teckenförklaring för ett aktivt värmestresslager (`utci_c` eller `t_mrt_c`). */
@@ -526,12 +592,25 @@ export interface GyfUtciKopplingOpts {
   hamtaLage(): string;
   onVarmelagerAndrat(lager: VarmestressLagerRef | null): void;
   signal: AbortSignal;
+  initialProfil?: GyfProfilId;
+  hamtaAktivDoman?: () => string;
+  onStatusAndrad?: () => void;
+}
+
+export interface GyfUtciStatus {
+  gyfLaddar: boolean;
+  gyfHarSvar: boolean;
+  vsLaddar: boolean;
+  vsHarSvar: boolean;
 }
 
 export interface GyfUtciKontroller {
   uppdateraKontext(): void;
   synkaVarmelager(): void;
   rensaVarmelager(): void;
+  sattStandardProfil(profil: GyfProfilId): void;
+  sattAktivDoman(doman: string): void;
+  status(): GyfUtciStatus;
 }
 
 /** Kopplar GYF- och Värmestress-panelerna i Steg 2 mot backend-API och karta. */
@@ -540,7 +619,7 @@ export function kopplaGyfUtciPaneler(
   opts: GyfUtciKopplingOpts,
 ): GyfUtciKontroller {
   const gyfState: GyfPanelTillstand = {
-    profil: "stockholm",
+    profil: opts.initialProfil ?? "stockholm",
     laddar: false,
     fel: null,
     svar: null,
@@ -553,28 +632,45 @@ export function kopplaGyfUtciPaneler(
     svar: null,
     scenario: opts.hamtaScenario(),
     aktivtLagerRoll: null,
+    forval: "varmebolja",
+    aktivtLage: opts.hamtaLage(),
   };
 
-  let gyfOppen = false;
-  let vsOppen = false;
+  let manuelltProfilVal = false;
+  let aktivDoman: string | null = opts.hamtaAktivDoman ? opts.hamtaAktivDoman() : null;
   let gyfSeq = 0;
   let vsSeq = 0;
 
   const rita = (): void => {
-    const gEl = behallare.querySelector<HTMLDetailsElement>("#ar-gyf-panel");
-    const vEl = behallare.querySelector<HTMLDetailsElement>("#ar-vs-panel");
-    if (gEl) gyfOppen = gEl.open;
-    if (vEl) vsOppen = vEl.open;
+    vsState.aktivtLage = opts.hamtaLage();
+    if (aktivDoman === null) {
+      behallare.hidden = false;
+      behallare.innerHTML = gyfUtciPanelerHtml(gyfState, vsState);
+      return;
+    }
+    if (aktivDoman === "ekologi") {
+      behallare.hidden = false;
+      behallare.innerHTML = `<section class="ar-gyf-utci" aria-label="Svensk Grönytefaktor">${gyfPanelHtml(gyfState)}</section>`;
+      return;
+    }
+    if (aktivDoman === "mikroklimat") {
+      behallare.hidden = false;
+      behallare.innerHTML = `<section class="ar-gyf-utci" aria-label="Mikroklimat och värmestress">${varmestressPanelHtml(vsState)}</section>`;
+      return;
+    }
+    behallare.hidden = true;
+    behallare.innerHTML = "";
+  };
 
-    behallare.innerHTML = gyfUtciPanelerHtml(gyfState, vsState);
-
-    const gNy = behallare.querySelector<HTMLDetailsElement>("#ar-gyf-panel");
-    const vNy = behallare.querySelector<HTMLDetailsElement>("#ar-vs-panel");
-    if (gNy) gNy.open = gyfOppen;
-    if (vNy) vNy.open = vsOppen;
+  const meddelaStatus = (): void => {
+    opts.onStatusAndrad?.();
   };
 
   const lasVsParam = (): VarmestressParam | string => {
+    if (vsState.forval !== "anpassa") {
+      const fel = valideraVarmestressParam(vsState.param);
+      return fel ?? { ...vsState.param };
+    }
     const tLuft = tolkaSvensktTal(behallare.querySelector<HTMLInputElement>("#ar-vs-tluft")?.value ?? "");
     const rh = tolkaSvensktTal(behallare.querySelector<HTMLInputElement>("#ar-vs-rh")?.value ?? "");
     const vind = tolkaSvensktTal(behallare.querySelector<HTMLInputElement>("#ar-vs-vind")?.value ?? "");
@@ -595,11 +691,11 @@ export function kopplaGyfUtciPaneler(
 
   const korGyf = async (): Promise<void> => {
     const nr = ++gyfSeq;
-    gyfOppen = true;
     gyfState.scenario = opts.hamtaScenario();
     gyfState.laddar = true;
     gyfState.fel = null;
     rita();
+    meddelaStatus();
     try {
       const { lasJson } = await import("../api.ts");
       const svar = await lasJson<GyfAnalysSvar>(
@@ -615,12 +711,14 @@ export function kopplaGyfUtciPaneler(
       if (nr === gyfSeq) {
         gyfState.laddar = false;
         rita();
+        meddelaStatus();
       }
     }
   };
 
   const synkaVarmelager = (): void => {
-    opts.onVarmelagerAndrat(valjVarmestressLager(vsState.svar, vsState.aktivtLagerRoll, opts.hamtaLage()));
+    vsState.aktivtLage = opts.hamtaLage();
+    opts.onVarmelagerAndrat(valjVarmestressLager(vsState.svar, vsState.aktivtLagerRoll, vsState.aktivtLage));
   };
 
   const korVarmestress = async (): Promise<void> => {
@@ -631,12 +729,12 @@ export function kopplaGyfUtciPaneler(
       return;
     }
     const nr = ++vsSeq;
-    vsOppen = true;
     vsState.param = tolkad;
     vsState.scenario = opts.hamtaScenario();
     vsState.laddar = true;
     vsState.fel = null;
     rita();
+    meddelaStatus();
     try {
       const { lasJson } = await import("../api.ts");
       const svar = await lasJson<VarmestressAnalysSvar>(
@@ -654,6 +752,7 @@ export function kopplaGyfUtciPaneler(
       if (nr === vsSeq) {
         vsState.laddar = false;
         rita();
+        meddelaStatus();
       }
     }
   };
@@ -665,6 +764,7 @@ export function kopplaGyfUtciPaneler(
       if (el.id === "ar-gyf-profil") {
         const val = (el as HTMLSelectElement).value as GyfProfilId;
         if (GYF_PROFILER.some((p) => p.id === val)) {
+          manuelltProfilVal = true;
           gyfState.profil = val;
           if (gyfState.svar) void korGyf();
         }
@@ -676,7 +776,7 @@ export function kopplaGyfUtciPaneler(
   behallare.addEventListener(
     "click",
     (h) => {
-      const m = (h.target as Element).closest<HTMLElement>("#ar-gyf-kor,#ar-vs-kor,[data-vs-lager]");
+      const m = (h.target as Element).closest<HTMLElement>("#ar-gyf-kor,#ar-vs-kor,[data-vs-lager],[data-vs-forval]");
       if (!m) return;
       if (m.id === "ar-gyf-kor") {
         void korGyf();
@@ -684,6 +784,22 @@ export function kopplaGyfUtciPaneler(
       }
       if (m.id === "ar-vs-kor") {
         void korVarmestress();
+        return;
+      }
+      const fv = m.dataset.vsForval as VarmestressForvalId | undefined;
+      if (fv) {
+        vsState.forval = fv;
+        vsState.fel = null;
+        if (fv === "anpassa") {
+          rita();
+          behallare.querySelector<HTMLInputElement>("#ar-vs-tluft")?.focus();
+          return;
+        }
+        const post = VARMESTRESS_FORVAL.find((x) => x.id === fv);
+        if (post) {
+          vsState.param = { ...post.param };
+          void korVarmestress();
+        }
         return;
       }
       const lag = m.dataset.vsLager;
@@ -705,9 +821,11 @@ export function kopplaGyfUtciPaneler(
   return {
     uppdateraKontext: () => {
       const nySc = opts.hamtaScenario();
-      const andrad = nySc !== gyfState.scenario || nySc !== vsState.scenario;
+      const nyLage = opts.hamtaLage();
+      const andrad = nySc !== gyfState.scenario || nySc !== vsState.scenario || nyLage !== vsState.aktivtLage;
       gyfState.scenario = nySc;
       vsState.scenario = nySc;
+      vsState.aktivtLage = nyLage;
       if (andrad) rita();
       synkaVarmelager();
     },
@@ -719,5 +837,20 @@ export function kopplaGyfUtciPaneler(
         rita();
       }
     },
+    sattStandardProfil: (profil: GyfProfilId) => {
+      if (manuelltProfilVal || gyfState.profil === profil) return;
+      gyfState.profil = profil;
+      rita();
+    },
+    sattAktivDoman: (doman: string) => {
+      aktivDoman = doman;
+      rita();
+    },
+    status: () => ({
+      gyfLaddar: gyfState.laddar,
+      gyfHarSvar: gyfState.svar !== null,
+      vsLaddar: vsState.laddar,
+      vsHarSvar: vsState.svar !== null,
+    }),
   };
 }

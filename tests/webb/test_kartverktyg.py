@@ -117,6 +117,9 @@ def test_projektinfo_ger_utbredning_byggnader_och_analyser(kv: Kv) -> None:
     assert u["x_max"] > u["x_min"] and u["y_max"] > u["y_min"]
     assert len(info["byggnader"]) > 0
     assert {a["id"] for a in info["analyser"]} >= {"dagsljus.sol", "vatten.skyfall"}
+    assert info["kommun"] is None
+    assert info["har_nmd"] is True
+    assert isinstance(info["har_brytlinjer"], bool)
     assert info["ortofoto"] == {"finns": False}
     assert kv.json("GET", "/api/kartverktyg/finns-inte")[0] == 404
 
