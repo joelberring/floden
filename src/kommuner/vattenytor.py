@@ -67,8 +67,96 @@ class VattenKomponentDiagnos:
     komponent_z_max_m: float
     omgivning_z_median_m: float | None
     overhojd_over_omgivning_m: float | None
-    status: Literal["godkand", "avvisad_outlier"]
+    status: Literal["godkand", "avvisad_outlier", "avvisad_land"]
     skal: str = ""
+
+
+_NMD_EXPLOATERAD_KODER = (51, 52, 53)
+_NMD_VATTEN_KODER = (61, 62)
+
+
+def las_barriarlinjer(
+    paket: Sequence[Path],
+    vatten: VattenKonfig,
+    *,
+    bbox_publicering: tuple[float, float, float, float],
+    epsg_publicering: int,
+) -> list[Linje]:
+    """Läser kaj- och strandbarriärlinjer (2D eller 3D) ur baskartan i EPSG:3011 för att hindra vattenläckage in på land."""
+    if not vatten.barriar_monster:
+        return []
+    import pyogrio
+    from pyproj import Transformer
+
+    monster = re.compile(vatten.lager_monster)
+    barriar_re = re.compile(vatten.barriar_monster)
+    tr = Transformer.from_crs(epsg_publicering, 3011, always_xy=True)
+    linjer: list[Linje] = []
+    for p in paket:
+        hittat_i_paket = False
+        for andelse in (".gpkg", ".shp"):
+            for m in zip_medlemmar(p, (andelse,)):
+                sokv = vsizip(p, m)
+                if andelse == ".gpkg":
+                    lager: list[str | None] = [
+                        str(r[0]) for r in pyogrio.list_layers(sokv) if monster.search(str(r[0]))
+                    ]
+                else:
+                    lager = [None] if monster.search(Path(m).stem) else []
+                for lg in lager:
+                    hittat_i_paket = True
+                    kw: dict[str, Any] = {"bbox": bbox_publicering, "columns": [vatten.objekt_falt]}
+                    gdf = pyogrio.read_dataframe(sokv, layer=lg, **kw) if lg else pyogrio.read_dataframe(sokv, **kw)
+                    if vatten.objekt_falt not in gdf.columns:
+                        continue
+                    varden = gdf[vatten.objekt_falt].astype(str)
+                    valda = varden.map(lambda x: bool(barriar_re.search(x)))
+                    for g in gdf.geometry[valda.to_numpy()]:
+                        if g is None or g.is_empty:
+                            continue
+                        for d in (list(g.geoms) if hasattr(g, "geoms") else [g]):
+                            if d.geom_type not in ("LineString", "LinearRing"):
+                                continue
+                            c = np.asarray(d.coords, dtype=np.float64)
+                            if len(c) < 2:
+                                continue
+                            e, n = tr.transform(c[:, 0], c[:, 1])
+                            z_col = c[:, 2] if c.shape[1] > 2 else np.zeros(len(c), dtype=np.float64)
+                            linjer.append(np.column_stack([e, n, z_col]))
+            if hittat_i_paket:
+                break
+    return linjer
+
+
+def _rasterisera_barriar(linjer: Sequence[Linje], ruta: Ruta) -> NDArray[np.bool_]:
+    """Rasteriserar barriärlinjer (kajkant/strandlinje) 4-sammanhängande på rutans rutnät."""
+    from markmodell.brytlinjer import _supercover_segment
+
+    rader, kol = ruta.form_rc
+    mask = np.zeros((rader, kol), dtype=bool)
+    if not linjer:
+        return mask
+    e0, n0, e1, n1 = ruta.yttre_bbox
+    px = float(ruta.upplosning_m)
+    for arr in linjer:
+        if len(arr) < 2:
+            continue
+        if (
+            float(np.max(arr[:, 0])) < e0 - px
+            or float(np.min(arr[:, 0])) > e1 + px
+            or float(np.max(arr[:, 1])) < n0 - px
+            or float(np.min(arr[:, 1])) > n1 + px
+        ):
+            continue
+        for i in range(len(arr) - 1):
+            x0, y0 = float(arr[i, 0]), float(arr[i, 1])
+            x1, y1 = float(arr[i + 1, 0]), float(arr[i + 1, 1])
+            if not (math.isfinite(x0) and math.isfinite(y0) and math.isfinite(x1) and math.isfinite(y1)):
+                continue
+            for rr, cc in _supercover_segment(x0, y0, x1, y1, ruta):
+                if 0 <= rr < rader and 0 <= cc < kol:
+                    mask[rr, cc] = True
+    return mask
 
 
 def las_strandlinjer(
@@ -207,6 +295,8 @@ def vattenytor_for_rutor(
     max_avstand_m: float,
     max_overhojd_over_omgivning_m: float | None = STANDARD_MAX_OVERHOJD_OVER_OMGIVNING_M,
     diagnostik: list[VattenKomponentDiagnos] | None = None,
+    barriar_linjer: Sequence[Linje] = (),
+    nmd_per_ruta: Sequence[NDArray[np.uint8] | None] | None = None,
 ) -> list[tuple[NDArray[np.bool_], NDArray[np.float32]]]:
     """Beräknar vattenmask och global plan RH 2000-nivå skarvlöst över en eller flera rutor.
 
@@ -276,7 +366,7 @@ def vattenytor_for_rutor(
     strand_prover: list[tuple[NDArray[np.int32], NDArray[np.int64], NDArray[np.int64], NDArray[np.float64]]] = []
     tot_komp = 0
 
-    for ruta, z in rutor_och_z:
+    for ti, (ruta, z) in enumerate(rutor_och_z):
         e0, _, _, n1 = ruta.yttre_bbox
         rader, kol = z.shape
         ex = e0 + (np.arange(kol, dtype=np.float64) + 0.5) * px
@@ -287,6 +377,17 @@ def vattenytor_for_rutor(
         lokal_niva = punkter[np.asarray(idx, dtype=np.intp), 2].reshape(z.shape)
         with np.errstate(invalid="ignore"):
             kandidat = np.isfinite(z) & (z < lokal_niva - marginal_m)
+        if barriar_linjer:
+            barriar_mask = _rasterisera_barriar(barriar_linjer, ruta)
+            kandidat &= ~barriar_mask
+        if nmd_per_ruta is not None and ti < len(nmd_per_ruta) and nmd_per_ruta[ti] is not None:
+            nmd_arr = np.asarray(nmd_per_ruta[ti], dtype=np.uint8)
+            if nmd_arr.shape != z.shape:
+                raise ValueError(
+                    f"NMD-raster för {ruta.namn} har form {nmd_arr.shape}, förväntade {z.shape}."
+                )
+            exploaterad = np.isin(nmd_arr, _NMD_EXPLOATERAD_KODER)
+            kandidat &= ~exploaterad
         delar_ra, antal_ra = ndimage.label(kandidat)  # 4-sammanhängande
         delar = np.asarray(delar_ra, dtype=np.int32)
         antal = int(antal_ra)
@@ -410,6 +511,8 @@ def vattenytor_for_rutor(
     rot_till_idx = {rot: idx for idx, rot in enumerate(sorted(global_niva))}
     n_rot = len(rot_till_idx)
     komp_celler = np.zeros(n_rot, dtype=np.int64)
+    komp_nmd_vatten = np.zeros(n_rot, dtype=np.int64)
+    komp_nmd_giltig = np.zeros(n_rot, dtype=np.int64)
     komp_z_min = np.full(n_rot, np.inf, dtype=np.float64)
     komp_z_max = np.full(n_rot, -np.inf, dtype=np.float64)
     omgivning_z: list[list[NDArray[np.float32]]] = [[] for _ in range(n_rot)]
@@ -439,6 +542,16 @@ def vattenytor_for_rutor(
             komp_celler += np.bincount(akt_idx, minlength=n_rot)
             np.minimum.at(komp_z_min, akt_idx, akt_z)
             np.maximum.at(komp_z_max, akt_idx, akt_z)
+            if nmd_per_ruta is not None and ti < len(nmd_per_ruta) and nmd_per_ruta[ti] is not None:
+                nmd_arr = np.asarray(nmd_per_ruta[ti], dtype=np.uint8)
+                inre_nmd = nmd_arr[o : nmd_arr.shape[0] - o, o : nmd_arr.shape[1] - o] if o else nmd_arr
+                akt_nmd = inre_nmd[aktiva]
+                gilt_nmd = akt_nmd > 0
+                if np.any(gilt_nmd):
+                    komp_nmd_giltig += np.bincount(akt_idx[gilt_nmd], minlength=n_rot)
+                vat_nmd = np.isin(akt_nmd, _NMD_VATTEN_KODER)
+                if np.any(vat_nmd):
+                    komp_nmd_vatten += np.bincount(akt_idx[vat_nmd], minlength=n_rot)
 
         # Samla torr omgivning (4-grannar som ligger utanför vattenkomponenterna).
         torr = (idx_karta < 0) & np.isfinite(z)
@@ -478,9 +591,15 @@ def vattenytor_for_rutor(
             omg_median = float(np.median(omg_alla))
             overhojd = niva_m - omg_median
 
-        status: Literal["godkand", "avvisad_outlier"] = "godkand"
+        status: Literal["godkand", "avvisad_outlier", "avvisad_land"] = "godkand"
         skal = ""
-        if max_overhojd_over_omgivning_m is not None:
+        if komp_nmd_giltig[r_idx] > 0 and komp_nmd_vatten[r_idx] == 0:
+            status = "avvisad_land"
+            skal = (
+                f"Komponent ({yta_m2:.0f} m²) saknar stöd av NMD-vatten (kod 61/62) bland "
+                f"{int(komp_nmd_giltig[r_idx])} NMD-celler; avvisas som låglänt land bakom kaj/strand."
+            )
+        elif max_overhojd_over_omgivning_m is not None:
             if overhojd is not None and overhojd > max_overhojd_over_omgivning_m:
                 status = "avvisad_outlier"
                 skal = (
@@ -572,6 +691,8 @@ def vattenytor_for_rutor_med_diagnos(
     marginal_m: float,
     max_avstand_m: float,
     max_overhojd_over_omgivning_m: float | None = STANDARD_MAX_OVERHOJD_OVER_OMGIVNING_M,
+    barriar_linjer: Sequence[Linje] = (),
+    nmd_per_ruta: Sequence[NDArray[np.uint8] | None] | None = None,
 ) -> tuple[list[tuple[NDArray[np.bool_], NDArray[np.float32]]], list[VattenKomponentDiagnos]]:
     """Som `vattenytor_for_rutor`, men returnerar även per-komponent-diagnostik."""
     diagnostik: list[VattenKomponentDiagnos] = []
@@ -582,6 +703,8 @@ def vattenytor_for_rutor_med_diagnos(
         max_avstand_m=max_avstand_m,
         max_overhojd_over_omgivning_m=max_overhojd_over_omgivning_m,
         diagnostik=diagnostik,
+        barriar_linjer=barriar_linjer,
+        nmd_per_ruta=nmd_per_ruta,
     )
     return resultat, diagnostik
 

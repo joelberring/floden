@@ -12,6 +12,8 @@ Höjdmodellen är en markmodell (ingen DSM): byggnadshöjd kommer ur baskartans 
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -316,12 +318,16 @@ class Hojdmodell:
         self.fyll_max_m = float(fyll_max_m)
         self.nan_varning_andel = float(nan_varning_andel)
 
-    def tackning(self, bbox_3011: tuple[float, float, float, float]) -> list[Platta]:
+    def tackning(self, bbox_3011: tuple[float, float, float, float], *, marginal_m: float = 2.0) -> list[Platta]:
         from rasterio.warp import transform_bounds
 
         ut = []
+        omvandlade: dict[int, tuple[float, float, float, float]] = {}
         for pl in self.plattor:
-            e0, n0, e1, n1 = transform_bounds(3011, pl.epsg, *bbox_3011)
+            if pl.epsg not in omvandlade:
+                e0, n0, e1, n1 = transform_bounds(3011, pl.epsg, *bbox_3011, densify_pts=21)
+                omvandlade[pl.epsg] = (e0 - marginal_m, n0 - marginal_m, e1 + marginal_m, n1 + marginal_m)
+            e0, n0, e1, n1 = omvandlade[pl.epsg]
             b = pl.bounds
             if not (b[2] < e0 or b[0] > e1 or b[3] < n0 or b[1] > n1):
                 ut.append(pl)
@@ -406,6 +412,57 @@ class Hojdmodell:
         """Markhöjd (RH 2000, m) för rutans yttre raster; NaN där plattor/stora hål saknas. Plus varningar."""
         ut, varn, _ = self.grund_z_med_diagnos(ruta, vatten_mask=vatten_mask)
         return ut, varn
+
+
+_RUT_10KM_RE = re.compile(r"(?:^|[_-])(\d{3})_(\d{2})\.zip$", re.IGNORECASE)
+_RUT_5KM_RE = re.compile(r"(?:^|[_-])(\d{4})_(\d{3})\.zip$", re.IGNORECASE)
+
+
+def _rut_bbox_fran_filnamn(url_eller_namn: str) -> tuple[float, float, float, float] | None:
+    """Tolkar 5 km- eller 10 km-rutans utbredning i käll-EPSG ur ett svenskt ZIP-filnamn (t.ex. `..._639_14.zip` eller `..._6395_145.zip`)."""
+    namn = url_eller_namn.rsplit("/", 1)[-1]
+    m5 = _RUT_5KM_RE.search(namn)
+    if m5:
+        n_km, e_km = int(m5.group(1)), int(m5.group(2))
+        steg = 5000.0 if (n_km % 5 == 0 and e_km % 5 == 0) else 1000.0
+        n0, e0 = n_km * 1000.0, e_km * 1000.0
+        return (e0, n0, e0 + steg, n0 + steg)
+    m10 = _RUT_10KM_RE.search(namn)
+    if m10:
+        n_10, e_10 = int(m10.group(1)), int(m10.group(2))
+        n0, e0 = n_10 * 10_000.0, e_10 * 10_000.0
+        return (e0, n0, e0 + 10_000.0, n0 + 10_000.0)
+    return None
+
+
+def valj_overlappande_paket_urlar(
+    urlar: Sequence[str],
+    extent_3011: tuple[float, float, float, float],
+    *,
+    epsg_antagen: int,
+    marginal_m: float = 100.0,
+) -> list[str]:
+    """Väljer och prioriterar alla 5 km-/10 km-höjdpaket vars ruta överlappar hela `extent_3011` (inkl. buffert).
+
+    Paket vars filnamn inte följer rutmönstret behålls sist i listan så att anpassade URL:er aldrig tappas.
+    """
+    from rasterio.warp import transform_bounds
+
+    e0, n0, e1, n1 = transform_bounds(3011, epsg_antagen, *extent_3011, densify_pts=21)
+    e0 -= marginal_m
+    n0 -= marginal_m
+    e1 += marginal_m
+    n1 += marginal_m
+
+    traffar: list[str] = []
+    ovriga: list[str] = []
+    for u in urlar:
+        rb = _rut_bbox_fran_filnamn(u)
+        if rb is None:
+            ovriga.append(u)
+        elif not (rb[2] < e0 or rb[0] > e1 or rb[3] < n0 or rb[1] > n1):
+            traffar.append(u)
+    return traffar + ovriga
 
 
 def hojdmodell_for(paket: list[Path], epsg: int) -> Hojdmodell:

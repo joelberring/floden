@@ -105,6 +105,47 @@ class VattenKonfig:
     objekt_monster: str     # uttryck mot objekt_falt, t.ex. "(?i)^strandlinje"
     marginal_m: float = 0.2      # cellen ska ligga minst så här mycket under strandlinjens nivå
     max_avstand_m: float = 2.0   # cellen (frön) ska ligga högst så här långt från en strandlinje
+    barriar_monster: str = ""    # valfritt uttryck mot objekt_falt för kaj/strandbarriärer som hindrar läckage in på land
+
+
+@dataclass(frozen=True)
+class BrytlinjeRegel:
+    """En regel under `[[filpaket.baskarta.brytlinjer]]` för 3D-brytlinjer (t.ex. kantsten, mur)."""
+
+    lager_monster: str
+    objekt_falt: str
+    objekt_monster: str
+    roll: str
+    standard_m: float
+
+
+@dataclass(frozen=True)
+class GatorRegel:
+    """En regel under `[[filpaket.baskarta.vektorbakgrund.gator]]` för vektorbakgrund (`gator.gpkg`)."""
+
+    lager_monster: str
+    objekt_falt: str
+    objekt_monster: str
+    kategori: str
+
+
+@dataclass(frozen=True)
+class TradKonfig:
+    """Trädpunkter under `[filpaket.baskarta.vektorbakgrund.trad]` för valfri `vegetation.tif`."""
+
+    lager_monster: str
+    objekt_falt: str
+    objekt_monster: str
+    kronradie_m: float = 3.5
+    antagen_hojd_m: float = 8.0
+
+
+@dataclass(frozen=True)
+class VektorbakgrundKonfig:
+    """Valfritt `[filpaket.baskarta.vektorbakgrund]` för gatuvektorer och trädpunkter."""
+
+    gator: tuple[GatorRegel, ...] = ()
+    trad: TradKonfig | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +161,8 @@ class PaketKalla:
     objekt_falt: str = ""   # bara baskartan (GeoPackage/Shapefile): attribut som väljer objekt, t.ex. "typ"
     objekt_monster: str = ""  # uttryck mot objekt_falt, t.ex. "(?i)^tak"; tomt = alla objekt i lagret
     vatten: VattenKonfig | None = None  # bara baskartan: strandlinjer som vattenytor (valfritt)
+    brytlinjer: tuple[BrytlinjeRegel, ...] = ()  # bara baskartan: 3D-brytlinjer (kantsten, mur)
+    vektorbakgrund: VektorbakgrundKonfig | None = None  # bara baskartan: gator & träd
 
 
 @dataclass(frozen=True)
@@ -128,6 +171,7 @@ class FilpaketKonfig:
     max_gib: float
     baskarta: PaketKalla | None
     hojdmodell: PaketKalla | None
+    nmd: PaketKalla | None = None
 
 
 @dataclass(frozen=True)
@@ -489,7 +533,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
     if fp_raa is not None:
         if not isinstance(fp_raa, Mapping):
             raise KommunKonfigFel("[filpaket] ska vara en tabell.")
-        _stram(fp_raa, "[filpaket]", ("tillatna_varddomaner", "max_gib", "baskarta", "hojdmodell"))
+        _stram(fp_raa, "[filpaket]", ("tillatna_varddomaner", "max_gib", "baskarta", "hojdmodell", "nmd"))
         fdom = _textlista(fp_raa, "tillatna_varddomaner", "[filpaket]")
         if not fdom:
             raise KommunKonfigFel("[filpaket]: 'tillatna_varddomaner' får inte vara tom.")
@@ -505,7 +549,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
                 t, var,
                 (
                     "urlar", "index_url", "epsg", "lager_monster", "licens", "licens_anmarkning", "objekt_falt",
-                    "objekt_monster", *(("vatten",) if med_lager else ()),
+                    "objekt_monster", *(("vatten", "brytlinjer", "vektorbakgrund") if med_lager else ()),
                 ),
             )  # fmt: skip
             urlar = _textlista(t, "urlar", var)
@@ -533,23 +577,123 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
                 vvar = f"{var}.vatten"
                 if not isinstance(vt, Mapping):
                     raise KommunKonfigFel(f"{vvar} ska vara en tabell.")
-                _stram(vt, vvar, ("lager_monster", "objekt_falt", "objekt_monster", "marginal_m", "max_avstand_m"))
+                _stram(
+                    vt, vvar,
+                    ("lager_monster", "objekt_falt", "objekt_monster", "marginal_m", "max_avstand_m", "barriar_monster"),
+                )
                 vm = {k: _text(vt, k, vvar) for k in ("lager_monster", "objekt_falt", "objekt_monster")}
                 for k in ("lager_monster", "objekt_monster"):
                     try:
                         re.compile(vm[k])
                     except re.error as exc:
                         raise KommunKonfigFel(f"{vvar}: '{k}' är inte ett giltigt uttryck: {exc}") from exc
+                barriar_m = _text(vt, "barriar_monster", vvar, tom_ok=True) if "barriar_monster" in vt else ""
+                if barriar_m:
+                    try:
+                        re.compile(barriar_m)
+                    except re.error as exc:
+                        raise KommunKonfigFel(f"{vvar}: 'barriar_monster' är inte ett giltigt uttryck: {exc}") from exc
                 vatten = VattenKonfig(
                     **vm,
                     marginal_m=_tal(vt, "marginal_m", vvar) if "marginal_m" in vt else 0.2,
                     max_avstand_m=_tal(vt, "max_avstand_m", vvar, minst=0.1) if "max_avstand_m" in vt else 2.0,
+                    barriar_monster=barriar_m,
                 )  # fmt: skip
+            brytlinjer_regler: list[BrytlinjeRegel] = []
+            if med_lager and t.get("brytlinjer") is not None:
+                bl_raa = t["brytlinjer"]
+                bvar = f"{var}.brytlinjer"
+                if not isinstance(bl_raa, list):
+                    raise KommunKonfigFel(f"{bvar} ska vara en lista av tabeller ([[{bvar}]]).")
+                for i, br in enumerate(bl_raa):
+                    ivar = f"{bvar}[{i}]"
+                    if not isinstance(br, Mapping):
+                        raise KommunKonfigFel(f"{ivar} ska vara en tabell.")
+                    _stram(br, ivar, ("lager_monster", "objekt_falt", "objekt_monster", "roll", "standard_m"))
+                    lm_s = _text(br, "lager_monster", ivar)
+                    of_s = _text(br, "objekt_falt", ivar)
+                    om_s = _text(br, "objekt_monster", ivar)
+                    for k, expr in (("lager_monster", lm_s), ("objekt_monster", om_s)):
+                        try:
+                            re.compile(expr)
+                        except re.error as exc:
+                            raise KommunKonfigFel(f"{ivar}: '{k}' är inte ett giltigt uttryck: {exc}") from exc
+                    roll_s = _text(br, "roll", ivar)
+                    std_m = _tal(br, "standard_m", ivar, minst=0.0)
+                    brytlinjer_regler.append(
+                        BrytlinjeRegel(
+                            lager_monster=lm_s,
+                            objekt_falt=of_s,
+                            objekt_monster=om_s,
+                            roll=roll_s,
+                            standard_m=std_m,
+                        )
+                    )
+            vektorbakgrund: VektorbakgrundKonfig | None = None
+            if med_lager and t.get("vektorbakgrund") is not None:
+                vb = t["vektorbakgrund"]
+                vbvar = f"{var}.vektorbakgrund"
+                if not isinstance(vb, Mapping):
+                    raise KommunKonfigFel(f"{vbvar} ska vara en tabell.")
+                _stram(vb, vbvar, ("gator", "trad"))
+                gator_regler: list[GatorRegel] = []
+                if vb.get("gator") is not None:
+                    g_raa = vb["gator"]
+                    if not isinstance(g_raa, list):
+                        raise KommunKonfigFel(f"{vbvar}.gator ska vara en lista av tabeller.")
+                    for i, gr in enumerate(g_raa):
+                        gvar = f"{vbvar}.gator[{i}]"
+                        if not isinstance(gr, Mapping):
+                            raise KommunKonfigFel(f"{gvar} ska vara en tabell.")
+                        _stram(gr, gvar, ("lager_monster", "objekt_falt", "objekt_monster", "kategori"))
+                        lm_s = _text(gr, "lager_monster", gvar)
+                        of_s = _text(gr, "objekt_falt", gvar)
+                        om_s = _text(gr, "objekt_monster", gvar)
+                        for k, expr in (("lager_monster", lm_s), ("objekt_monster", om_s)):
+                            try:
+                                re.compile(expr)
+                            except re.error as exc:
+                                raise KommunKonfigFel(f"{gvar}: '{k}' är inte ett giltigt uttryck: {exc}") from exc
+                        gator_regler.append(
+                            GatorRegel(
+                                lager_monster=lm_s,
+                                objekt_falt=of_s,
+                                objekt_monster=om_s,
+                                kategori=_text(gr, "kategori", gvar),
+                            )
+                        )
+                trad_konfig: TradKonfig | None = None
+                if vb.get("trad") is not None:
+                    tr_raa = vb["trad"]
+                    tvar = f"{vbvar}.trad"
+                    if not isinstance(tr_raa, Mapping):
+                        raise KommunKonfigFel(f"{tvar} ska vara en tabell.")
+                    _stram(
+                        tr_raa, tvar,
+                        ("lager_monster", "objekt_falt", "objekt_monster", "kronradie_m", "antagen_hojd_m"),
+                    )
+                    lm_s = _text(tr_raa, "lager_monster", tvar)
+                    of_s = _text(tr_raa, "objekt_falt", tvar)
+                    om_s = _text(tr_raa, "objekt_monster", tvar)
+                    for k, expr in (("lager_monster", lm_s), ("objekt_monster", om_s)):
+                        try:
+                            re.compile(expr)
+                        except re.error as exc:
+                            raise KommunKonfigFel(f"{tvar}: '{k}' är inte ett giltigt uttryck: {exc}") from exc
+                    trad_konfig = TradKonfig(
+                        lager_monster=lm_s,
+                        objekt_falt=of_s,
+                        objekt_monster=om_s,
+                        kronradie_m=_tal(tr_raa, "kronradie_m", tvar, minst=0.5) if "kronradie_m" in tr_raa else 3.5,
+                        antagen_hojd_m=_tal(tr_raa, "antagen_hojd_m", tvar, minst=0.5) if "antagen_hojd_m" in tr_raa else 8.0,
+                    )
+                vektorbakgrund = VektorbakgrundKonfig(gator=tuple(gator_regler), trad=trad_konfig)
             return PaketKalla(
                 urlar=urlar, index_url=index_url, epsg=int(_tal(t, "epsg", var, minst=1.0)),
                 lager_monster=monster_p, licens=_text(t, "licens", var),
                 licens_anmarkning=_text(t, "licens_anmarkning", var),
                 objekt_falt=objekt_falt, objekt_monster=objekt_monster, vatten=vatten,
+                brytlinjer=tuple(brytlinjer_regler), vektorbakgrund=vektorbakgrund,
             )  # fmt: skip
 
         filpaket = FilpaketKonfig(
@@ -557,6 +701,7 @@ def tolka_kommun(data: Mapping[str, Any], fil: Path = Path(".")) -> KommunKonfig
             max_gib=_tal(fp_raa, "max_gib", "[filpaket]", minst=0.1),
             baskarta=_paket("baskarta", True),
             hojdmodell=_paket("hojdmodell", False),
+            nmd=_paket("nmd", False),
         )
 
     by = _tabell(

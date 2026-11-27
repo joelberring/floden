@@ -96,7 +96,7 @@ reserv_lantmateriet = true
 # --- Filpaket (ZIP) --------------------------------------------------------------------------------
 # Hämtas en gång till en cache (geo/_filcache, sha256 per paket) och klipps till geografins område.
 [filpaket]
-tillatna_varddomaner = ["opengeodata.goteborg.se"]
+tillatna_varddomaner = ["opengeodata.goteborg.se", "geodata.naturvardsverket.se"]
 max_gib = 8.0
 
 [filpaket.baskarta]
@@ -123,8 +123,46 @@ licens_anmarkning = "Göteborgs Stads öppna baskarta (CC0), filpaket baskarta_s
 lager_monster = "(?i)^hydrografi_l$"
 objekt_falt = "typ"
 objekt_monster = "(?i)^strandlinje"
+barriar_monster = "(?i)^(kaj|strandlinje)"
 marginal_m = 0.2
 max_avstand_m = 2.0
+
+# 3D-brytlinjer ur baskartan (kantstenar och murar) bränns in i K1-markmodellen och skrivs till brytlinjer.gpkg.
+[[filpaket.baskarta.brytlinjer]]
+lager_monster = "(?i)^kommunikation$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^vägkant, med kantsten$"
+roll = "kantsten"
+standard_m = 0.12
+
+[[filpaket.baskarta.brytlinjer]]
+lager_monster = "(?i)^markdetaljer$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^mur$"
+roll = "mur"
+standard_m = 1.0
+
+# Vektorbakgrund (gator/spår/kajer till gator.gpkg) och träd (markanvandning_p till vegetation.tif).
+[filpaket.baskarta.vektorbakgrund]
+
+[[filpaket.baskarta.vektorbakgrund.gator]]
+lager_monster = "(?i)^kommunikation$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^(vägkant|spårbunden trafik)"
+kategori = "gata"
+
+[[filpaket.baskarta.vektorbakgrund.gator]]
+lager_monster = "(?i)^hydrografi_l$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^(kaj|strandlinje)"
+kategori = "kaj"
+
+[filpaket.baskarta.vektorbakgrund.trad]
+lager_monster = "(?i)^markanvandning_p$"
+objekt_falt = "typ"
+objekt_monster = "(?i)^(barrträd|lövträd)$"
+kronradie_m = 3.5
+antagen_hojd_m = 8.0
 
 [filpaket.hojdmodell]
 urlar = []
@@ -134,6 +172,13 @@ index_url = "https://opengeodata.goteborg.se/files/hojdmodell/2022/hojdmodell_20
 epsg = 3007
 licens = "CC0-1.0"
 licens_anmarkning = "Göteborgs Stads höjdmodell 2022 (CC0), markmodell (DTM) 0,5 m, RH 2000."
+
+[filpaket.nmd]
+urlar = ["https://geodata.naturvardsverket.se/nedladdning/marktacke/NMD2018/bas_lan_ogen/O_lan_nmd2018bas_ogeneraliserad_v1_1.zip"]
+index_url = ""
+epsg = 3006
+licens = "CC0-1.0"
+licens_anmarkning = "Naturvårdsverket, Nationella marktäckedata (NMD) 2018 basskikt 10 m, ogeneraliserad länsfil (O län, CC0)."
 
 # --- Lantmäteriet (höjddata) -------------------------------------------------------------------
 # Hämtas med kontots egen nyckel (sidan Nycklar), aldrig servernyckeln.

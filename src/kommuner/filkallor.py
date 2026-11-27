@@ -9,8 +9,15 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from kommuner.filpaket import FilHamtare, Filpaket, hamta_filpaket, lokalt_filpaket
-from kommuner.hojdmodell import Hojdmodell
+from kommuner.filpaket import (
+    FilHamtare,
+    Filpaket,
+    hamta_filpaket,
+    lokalt_filpaket,
+    packa_upp_medlem,
+    zip_medlemmar,
+)
+from kommuner.hojdmodell import Hojdmodell, valj_overlappande_paket_urlar
 from kommuner.konfig import KommunKonfig, PaketKalla
 from kommuner.wfs import Hamtare, KommunKallaFel, kontrollera_url, standard_hamtare
 
@@ -53,13 +60,66 @@ def paket_urlar(p: PaketKalla, tillatna: Sequence[str], hamta_bytes: Hamtare | N
     return ut
 
 
-def _tacker(hoj: Hojdmodell, extent: tuple[float, float, float, float]) -> bool:
+def _tacker(
+    hoj: Hojdmodell,
+    extent: tuple[float, float, float, float],
+    *,
+    exakt: bool = True,
+) -> bool:
+    from pyproj import Transformer
     from rasterio.warp import transform_bounds
-    from shapely.geometry import box
+    from shapely.geometry import Polygon, box
     from shapely.ops import unary_union
 
-    boxar = [box(*transform_bounds(pl.epsg, 3011, *pl.bounds)) for pl in hoj.tackning(extent)]
-    return bool(boxar) and unary_union(boxar).buffer(1.0).covers(box(*extent))
+    tr_cache: dict[int, Transformer] = {}
+    polyer: list[Polygon] = []
+    for pl in hoj.tackning(extent):
+        if pl.epsg == 3011:
+            polyer.append(box(*pl.bounds))
+            continue
+        if not exakt:
+            polyer.append(box(*transform_bounds(pl.epsg, 3011, *pl.bounds)))
+            continue
+        tr = tr_cache.get(pl.epsg)
+        if tr is None:
+            tr = Transformer.from_crs(pl.epsg, 3011, always_xy=True)
+            tr_cache[pl.epsg] = tr
+        x0, y0, x1, y1 = pl.bounds
+        xs, ys = tr.transform([x0, x1, x1, x0], [y0, y0, y1, y1])
+        polyer.append(Polygon(zip(xs, ys, strict=True)))
+    return bool(polyer) and unary_union(polyer).buffer(1.0).covers(box(*extent))
+
+
+def hamta_nmd(
+    kommun: KommunKonfig,
+    cache: Path,
+    *,
+    hamtare: FilHamtare | None = None,
+    hamta_bytes: Hamtare | None = None,
+    skriv: Callable[[str], None] = print,
+) -> tuple[Path, Filpaket]:
+    """Hämtar (en gång) kommunens öppna NMD-filpaket (CC0) till cachen och packar upp GeoTIFF-filen."""
+    fp = kommun.filpaket
+    assert fp is not None and fp.nmd is not None
+    urlar = paket_urlar(fp.nmd, fp.tillatna_varddomaner, hamta_bytes)
+    u = urlar[0]
+    skriv(f"NMD (CC0): {u}")
+    p = hamta_filpaket(u, cache, fp.tillatna_varddomaner, hamtare=hamtare)
+    skriv(
+        f"  {p.namn}: {p.storlek / 1e6:.0f} MB, sha256 {p.sha256[:12]}"
+        + (" (hämtad nu)" if p.hamtad_nu else " (ur cachen)")
+    )
+    if p.fil.suffix.lower() in (".tif", ".tiff"):
+        return p.fil, p
+    medlemmar = zip_medlemmar(p.fil, (".tif", ".tiff"))
+    if not medlemmar:
+        raise KommunKallaFel(f"NMD-paketet {p.namn} innehåller ingen GeoTIFF (.tif/.tiff).")
+    vald = medlemmar[0]
+    mal = p.fil.parent / Path(vald)
+    if not mal.is_file():
+        skriv(f"  Packar upp {Path(vald).name} till filcachen ...")
+        mal = packa_upp_medlem(p.fil, vald, p.fil.parent)
+    return mal, p
 
 
 def hamta_baskarta(
@@ -92,6 +152,7 @@ def hamta_hojdmodell(
         urlar = list(extra_urlar)
     else:
         urlar = paket_urlar(hm, fp.tillatna_varddomaner, hamta_bytes)
+    urlar = valj_overlappande_paket_urlar(urlar, extent_3011, epsg_antagen=hm.epsg)
     hoj: Hojdmodell | None = Hojdmodell([p.fil for p in paket], epsg_antagen=hm.epsg) if paket else None
     for u in urlar:
         if hoj is not None and _tacker(hoj, extent_3011):
@@ -104,7 +165,7 @@ def hamta_hojdmodell(
             hoj = Hojdmodell([q.fil for q in paket], epsg_antagen=hm.epsg)
         except KommunKallaFel:
             hoj = None
-    if hoj is None or not _tacker(hoj, extent_3011):
+    if hoj is None or not _tacker(hoj, extent_3011, exakt=False):
         raise KommunKallaFel(
             "Höjdmodellens paket täcker inte hela området (E "
             f"{extent_3011[0]:.0f}-{extent_3011[2]:.0f}, N {extent_3011[1]:.0f}-{extent_3011[3]:.0f}, EPSG:3011)."

@@ -159,8 +159,14 @@ def mappa_geografi(
     forberaknad_lager: Any | None = None,
 ) -> MappaResultat:
     from karna.paverkan import dagsljus_paverkansradie_m
-    from kommuner.baskarta import byggnader_ur_lokala_filer, tak_till_gpkg
-    from kommuner.filkallor import hamta_baskarta, hamta_hojdmodell
+    from kommuner.baskarta import (
+        brytlinjer_till_gpkg,
+        byggnader_ur_lokala_filer,
+        gator_till_gpkg,
+        tak_till_gpkg,
+        trad_fran_baskarta,
+    )
+    from kommuner.filkallor import hamta_baskarta, hamta_hojdmodell, hamta_nmd
     from kommuner.hojdmodell import Hojdmodell, skriv_klippt_hojd
     from kommuner.k1_filpaket import bygg_omrade_filpaket
     from lantmateriet.bygg import bygg_omrade
@@ -254,6 +260,28 @@ def mappa_geografi(
     hojd_anvand = "lantmateriet"
     buffert = math.ceil(r_dagsljus)
     skriv(f"Buffert (dagsljus): {r_dagsljus:.0f} m = {hojd_max:g} / tan({h_min:g} grader).")
+
+    # Automatiskt öppet läns-NMD (CC0) ur [filpaket.nmd] vid filpaket-mappning om användaren inte angav --nmd.
+    nmd_paket: Any = None
+    if fil_hojd and nmd_fil is None and kommun.filpaket is not None and kommun.filpaket.nmd is not None:
+        nmd_urlar = kommun.filpaket.nmd.urlar
+        mock_saknar_nmd = (
+            filhamtare is not None
+            and hasattr(filhamtare, "filer")
+            and isinstance(filhamtare.filer, Mapping)
+            and bool(nmd_urlar)
+            and nmd_urlar[0] not in filhamtare.filer
+        )
+        if mock_saknar_nmd:
+            varningar.append("NMD (CC0) hoppades över: filhämtaren tillhandahåller inte NMD-paketet.")
+        else:
+            try:
+                nmd_fil, nmd_paket = hamta_nmd(
+                    kommun, geo_rot / "_filcache", hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv
+                )
+            except (KommunKallaFel, OSError, KeyError) as exc:
+                varningar.append(f"NMD (CC0) kunde inte hämtas ({exc}); fortsätter utan NMD.")
+                skriv(f"VARNING: {varningar[-1]}")
 
     for _varv in range(4):
         extent = (karna[0] - buffert, karna[1] - buffert, karna[2] + buffert, karna[3] + buffert)
@@ -377,15 +405,25 @@ def mappa_geografi(
                 elif kalla_bygg == "lantmateriet":
                     bygg_fil = _lm_byggnader()
                 strandlinjer: list[Any] = []
+                barriarlinjer: list[Any] = []
                 vk = fk.baskarta.vatten if fk.baskarta is not None else None
                 if vk is not None:
-                    from kommuner.vattenytor import las_strandlinjer, skriv_strandlinjer
+                    from kommuner.vattenytor import (
+                        las_barriarlinjer,
+                        las_strandlinjer,
+                        skriv_strandlinjer,
+                    )
 
                     if not bpaket:
                         bpaket = hamta_baskarta(kommun, cache, hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv)
+                    v_bbox = tuple(m + s * 50.0 for m, s in zip(wfs_bbox, (-1, -1, 1, 1), strict=True))
                     try:
                         strandlinjer, vv = las_strandlinjer(
-                            [q.fil for q in bpaket], vk, bbox_publicering=tuple(m + s * 50.0 for m, s in zip(wfs_bbox, (-1, -1, 1, 1), strict=True)),  # type: ignore[arg-type]
+                            [q.fil for q in bpaket], vk, bbox_publicering=v_bbox,  # type: ignore[arg-type]
+                            epsg_publicering=fk.baskarta.epsg,  # type: ignore[union-attr]
+                        )
+                        barriarlinjer = las_barriarlinjer(
+                            [q.fil for q in bpaket], vk, bbox_publicering=v_bbox,  # type: ignore[arg-type]
                             epsg_publicering=fk.baskarta.epsg,  # type: ignore[union-attr]
                         )
                     except KommunKallaFel as exc:
@@ -394,6 +432,50 @@ def mappa_geografi(
                     skriv(f"Strandlinjer: {len(strandlinjer)} ur baskartan.")
                     if strandlinjer:
                         skriv_strandlinjer(strandlinjer, ra / "kommun" / "strandlinjer.gpkg")
+
+                brytlinjer: list[Any] = []
+                gator_fil: Path | None = None
+                trad_punkter: list[tuple[float, float, str]] = []
+                trad_kronradie_m = 3.5
+                trad_hojd_m = 8.0
+                if fk.baskarta is not None and (fk.baskarta.brytlinjer or fk.baskarta.vektorbakgrund):
+                    if not bpaket:
+                        bpaket = hamta_baskarta(kommun, cache, hamtare=filhamtare, hamta_bytes=hamta_bytes, skriv=skriv)
+                    if fk.baskarta.brytlinjer:
+                        _, brytlinjer, bv = brytlinjer_till_gpkg(
+                            [q.fil for q in bpaket],
+                            regler=fk.baskarta.brytlinjer,
+                            bbox_publicering=wfs_bbox,
+                            epsg_publicering=fk.baskarta.epsg,
+                            ut=ra / "kommun" / "brytlinjer.gpkg",
+                        )
+                        varningar.extend(x for x in bv if x not in varningar)
+                        skriv(f"Brytlinjer: {len(brytlinjer)} ur baskartan.")
+                    vb = fk.baskarta.vektorbakgrund
+                    if vb is not None:
+                        if vb.gator:
+                            gator_fil, n_gator, gv = gator_till_gpkg(
+                                [q.fil for q in bpaket],
+                                regler=vb.gator,
+                                bbox_publicering=wfs_bbox,
+                                epsg_publicering=fk.baskarta.epsg,
+                                ut=ra / "kommun" / "gator.gpkg",
+                            )
+                            varningar.extend(x for x in gv if x not in varningar)
+                            skriv(f"Gatuvektorer: {n_gator} linjer ur baskartan.")
+                        if vb.trad is not None:
+                            trad_punkter, tv = trad_fran_baskarta(
+                                [q.fil for q in bpaket],
+                                trad_konfig=vb.trad,
+                                bbox_publicering=wfs_bbox,
+                                epsg_publicering=fk.baskarta.epsg,
+                            )
+                            trad_kronradie_m = vb.trad.kronradie_m
+                            trad_hojd_m = vb.trad.antagen_hojd_m
+                            varningar.extend(x for x in tv if x not in varningar)
+                            if trad_punkter:
+                                skriv(f"Träd: {len(trad_punkter)} punkter ur baskartan (antagen höjd {trad_hojd_m:g} m).")
+
                 klippt = ra / "hojd" / "hojdmodell_klippt.tif"
                 varningar.extend(
                     x
@@ -407,14 +489,14 @@ def mappa_geografi(
                     if x not in varningar
                 )
                 (ra / "filpaket").mkdir(parents=True, exist_ok=True)
+                kallor_fp: dict[str, Any] = {
+                    "hojdmodell": [{"url": q.url, "fil": q.namn, "sha256": q.sha256} for q in hpaket],
+                    "baskarta": [{"url": q.url, "fil": q.namn, "sha256": q.sha256} for q in bpaket],
+                }
+                if nmd_paket is not None:
+                    kallor_fp["nmd"] = [{"url": nmd_paket.url, "fil": nmd_paket.namn, "sha256": nmd_paket.sha256}]
                 (ra / "filpaket" / "kallor.json").write_text(
-                    json.dumps(
-                        {
-                            "hojdmodell": [{"url": q.url, "fil": q.namn, "sha256": q.sha256} for q in hpaket],
-                            "baskarta": [{"url": q.url, "fil": q.namn, "sha256": q.sha256} for q in bpaket],
-                        },
-                        indent=2, sort_keys=True, ensure_ascii=False,
-                    ) + "\n",
+                    json.dumps(kallor_fp, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
                     encoding="utf-8",
                 )
                 hojd_anvand = "filpaket"
@@ -434,10 +516,18 @@ def mappa_geografi(
                     upplosning_m=kommun.lantmateriet.upplosning_m,
                     skriv=skriv,
                     strandlinjer=strandlinjer,
+                    vatten_barriarer=barriarlinjer,
                     vatten_marginal_m=vk.marginal_m if vk else 0.2,
                     vatten_max_avstand_m=vk.max_avstand_m if vk else 2.0,
                     nan_varning_andel=nan_varning_andel,
+                    brytlinjer=brytlinjer,
+                    nmd_fil=nmd_fil,
+                    trad_punkter=trad_punkter,
+                    trad_kronradie_m=trad_kronradie_m,
+                    trad_hojd_m=trad_hojd_m,
                 )
+                if gator_fil is not None and gator_fil.is_file():
+                    shutil.copy2(gator_fil, k1 / "gator.gpkg")
                 vatten_info = (
                     {"m2": round(bygg.vatten_m2, 1), "niva_m_rh2000": list(bygg.vatten_niva_m) if bygg.vatten_niva_m else None,
                      "strandlinjer": len(strandlinjer), "marginal_m": vk.marginal_m, "max_avstand_m": vk.max_avstand_m}
