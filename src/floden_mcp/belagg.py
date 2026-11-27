@@ -18,6 +18,25 @@ from __future__ import annotations
 
 from typing import Any
 
+# Nycklar där suffixet `_min` betyder minuter (tid), aldrig minimivärden som `svf_min`/`vsc_min`.
+_MINUT_NYCKLAR: frozenset[str] = frozenset(
+    {
+        "varaktighet_min",
+        "varaktigheter_min",
+        "steg_min",
+        "tidssteg_min",
+        "insatstidsmal_min",
+        "tid_min",
+    }
+)
+_MINUT_SUFFIX: tuple[str, ...] = (
+    "_varaktighet_min",
+    "_steg_min",
+    "_tidssteg_min",
+    "_insatstidsmal_min",
+    "_tid_min",
+)
+
 # Enheter ur variabelnamnens suffix (AGENTS.md: enheten står i namnet). Längst suffix först.
 _SUFFIX: tuple[tuple[str, str], ...] = (
     ("_mm_h", "mm/h"),
@@ -29,7 +48,6 @@ _SUFFIX: tuple[tuple[str, str], ...] = (
     ("_procent", "%"),
     ("_rel", "andel"),
     ("_mm", "mm"),
-    ("_min", "min"),
     ("_ar", "år"),
     ("_h", "h"),
     ("_s", "s"),
@@ -39,6 +57,8 @@ _SUFFIX: tuple[tuple[str, str], ...] = (
 
 def enhet_for(namn: str) -> str | None:
     """Enheten ur måttets namn (`max_djup_m` -> `m`), eller None när namnet inte anger någon."""
+    if namn in _MINUT_NYCKLAR or namn.endswith(_MINUT_SUFFIX):
+        return "min"
     for suffix, enhet in _SUFFIX:
         if namn.endswith(suffix):
             return enhet
