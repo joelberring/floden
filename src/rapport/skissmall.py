@@ -584,6 +584,61 @@ def bygg_dokument(
                     delar.append(f"Motivering: {p.motivering}")
                 dok.stycke(" · ".join(delar), "notis")
 
+    from rapport.gyf_utci_belagg import gyf_tabellrader, utci_tabellrader
+
+    gyf_rader = gyf_tabellrader(r, tj)
+    if gyf_rader:
+        rubrik(2, "3.2" if sbk else "", "Grönytefaktor (GYF, skiss)")
+        dok.stycke(
+            "Sammanställning av deterministiskt beräknad grönytefaktor (GYF) ur körningens "
+            "resultatfiler. Metodstatus: skiss.",
+            "liten",
+        )
+        dok.block.append(
+            Tabell(
+                (
+                    "Scenario",
+                    "Profil",
+                    "GYF",
+                    "Riktmärke",
+                    "Ekoeffektiv yta",
+                    "Flaggad yta",
+                    "Total area",
+                    "Status",
+                ),
+                tuple(gyf_rader),
+                (0.14, 0.14, 0.09, 0.11, 0.16, 0.14, 0.14, 0.08),
+                liten=True,
+            )
+        )
+
+    utci_rader = utci_tabellrader(r, tj)
+    if utci_rader:
+        utci_nr = "3.3" if (sbk and gyf_rader) else ("3.2" if sbk else "")
+        rubrik(2, utci_nr, "Termiskt mikroklimat (UTCI, skiss)")
+        dok.stycke(
+            "Sammanställning av deterministiskt beräknad termisk stress (UTCI och T_mrt) ur "
+            "körningens resultatfiler. Metodstatus: skiss.",
+            "liten",
+        )
+        dok.block.append(
+            Tabell(
+                (
+                    "Scenario",
+                    "UTCI medel",
+                    "UTCI p90",
+                    "UTCI max",
+                    "T_mrt medel",
+                    "Stark värmestress",
+                    "Utanför giltighet",
+                    "Status",
+                ),
+                tuple(utci_rader),
+                (0.14, 0.12, 0.12, 0.12, 0.13, 0.14, 0.15, 0.08),
+                liten=True,
+            )
+        )
+
     # Saknat underlag och villkor --------------------------------------------------------------
     rubrik(1, "4", "Saknat underlag och villkor")
     saknat = []

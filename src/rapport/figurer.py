@@ -239,6 +239,22 @@ FIGURSTILAR: Final[dict[str, FigurStil]] = {
             FargKlass(65.0, None, hex_till_rgb("#8C3B2B"), "≥ 65 dBA"),
         ),
     ),
+    "mikroklimat_utci": FigurStil(
+        namn="mikroklimat_utci",
+        doman="mikroklimat",
+        storhet="Termisk stress (UTCI)",
+        enhet="°C",
+        tomvarde_farg=FARG_KARTYTA,
+        tomvarde_etikett="Utanför giltighetsområde / inget värde",
+        klasser=(
+            FargKlass(None, 9.0, hex_till_rgb("#4A7D8C"), "< 9 °C (köldstress)"),
+            FargKlass(9.0, 26.0, hex_till_rgb("#DCE6D5"), "9 – 26 °C (ingen stress)"),
+            FargKlass(26.0, 32.0, hex_till_rgb("#E8D48B"), "26 – 32 °C (måttlig värmestress)"),
+            FargKlass(32.0, 38.0, hex_till_rgb("#D69853"), "32 – 38 °C (stark värmestress)"),
+            FargKlass(38.0, 46.0, hex_till_rgb("#B85A3A"), "38 – 46 °C (mycket stark värmestress)"),
+            FargKlass(46.0, None, hex_till_rgb("#7A2820"), "≥ 46 °C (extrem värmestress)"),
+        ),
+    ),
 }
 
 
@@ -267,6 +283,8 @@ _ROLL_TILL_STIL: Final[dict[str, str]] = {
     "buller": "buller_dba",
     "ljudniva": "buller_dba",
     "laeq": "buller_dba",
+    "utci": "mikroklimat_utci",
+    "utci_c": "mikroklimat_utci",
 }
 
 
