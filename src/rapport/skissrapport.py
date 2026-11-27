@@ -17,6 +17,7 @@ förberedda (`skede`, `revision`, `bedomningsgrunder`, `granskning`, `signering`
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -622,6 +623,7 @@ class RapportTjanst:
         antaganden = _antaganden(res, [t["analys"] for t in analyser], koordinater=koord)
         if amne == "ekologi":
             from rapport.ekologibelagg import ekologiantaganden
+            from rapport.gyf_utci_belagg import gyf_antaganden
 
             antaganden = ekologiantaganden(
                 self.kalla,
@@ -632,9 +634,16 @@ class RapportTjanst:
                     if t["losare"] == "ekologi.konnektivitet"
                 },
             )
+            antaganden = list(dict.fromkeys([*antaganden, *gyf_antaganden(utmapp)]))
             skalnot = _skalfelsantagande(koord)
             if skalnot and skalnot not in antaganden:
                 antaganden = [*antaganden, skalnot]
+        if amne == "dagsljus":
+            from rapport.gyf_utci_belagg import utci_antaganden
+
+            utci_ant = utci_antaganden(utmapp)
+            if utci_ant:
+                antaganden = list(dict.fromkeys([*antaganden, *utci_ant]))
         if amne == "luft":
             from rapport.luftbelagg import luftantaganden
 
@@ -667,7 +676,16 @@ class RapportTjanst:
             "scenarier": [s["id"] for s in res["scenarier"]],
         }
 
-    def _metoder(self, korningar: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    def _metoder(
+        self, korningar: Sequence[Mapping[str, Any]], *, amne: str | None = None
+    ) -> list[dict[str, Any]]:
+        from rapport.gyf_utci_belagg import (
+            GYF_LOSARE,
+            UTCI_LOSARE,
+            hitta_gyf_scenarier,
+            hitta_utci_scenarier,
+        )
+
         losare: dict[str, dict[str, Any]] = {}
         alla = {m["namn"]: m for m in self.tjanst.metoder_lista()["metoder"]}
         for k in korningar:
@@ -681,6 +699,30 @@ class RapportTjanst:
                     "losare": n,
                     "visningsnamn": info.get("visningsnamn", n),
                     "version": info.get("version"),
+                    "status": st["status"],
+                    "underlag": st["underlag"],
+                    "anmarkning": st.get("anmarkning") or st.get("motivering"),
+                }
+            try:
+                utmapp = self.kalla.utmapp(str(k["korning_id"]))
+            except BelaggFel:
+                continue
+            if amne in (None, "ekologi") and GYF_LOSARE not in losare and hitta_gyf_scenarier(utmapp):
+                st = self.tjanst.metodstatus(GYF_LOSARE)
+                losare[GYF_LOSARE] = {
+                    "losare": GYF_LOSARE,
+                    "visningsnamn": "Grönytefaktor (GYF)",
+                    "version": "v1-skiss",
+                    "status": st["status"],
+                    "underlag": st["underlag"],
+                    "anmarkning": st.get("anmarkning") or st.get("motivering"),
+                }
+            if amne in (None, "dagsljus") and UTCI_LOSARE not in losare and hitta_utci_scenarier(utmapp):
+                st = self.tjanst.metodstatus(UTCI_LOSARE)
+                losare[UTCI_LOSARE] = {
+                    "losare": UTCI_LOSARE,
+                    "visningsnamn": "Termiskt mikroklimat (UTCI)",
+                    "version": "v1-skiss",
                     "status": st["status"],
                     "underlag": st["underlag"],
                     "anmarkning": st.get("anmarkning") or st.get("motivering"),
@@ -997,7 +1039,7 @@ class RapportTjanst:
             mottagare=mott,
             pastaenden=(),
             kartor=tuple(self._kartor(rid, amne, posts)),
-            metoder=tuple(self._metoder(posts)),
+            metoder=tuple(self._metoder(posts, amne=amne)),
             metodnotis={
                 "ai_stod": bool(ai_stod),
                 "modeller": [modell] if modell else [],
@@ -1149,6 +1191,14 @@ class RapportTjanst:
                 kid = korningar[0]
             if kid not in korningar:
                 raise PastaendeFel(f"Körningen '{kid}' ingår inte i rapporten.")
+            if adress.startswith("gyf.") and r.amne != "ekologi":
+                raise PastaendeFel(
+                    f"Belägget '{adress}' hör till ämnet ekologi, inte '{r.amne}'."
+                )
+            if adress.startswith("utci.") and r.amne != "dagsljus":
+                raise PastaendeFel(
+                    f"Belägget '{adress}' hör till ämnet dagsljus, inte '{r.amne}'."
+                )
             try:
                 hamtade.append(self.kalla.hamta(adress, str(kid), r.mottagare_per_namn))
             except BelaggFel as exc:
@@ -1409,9 +1459,10 @@ class RapportTjanst:
         return list(dict.fromkeys(ut))
 
     def _adresser_ekologi(self, r: Rapport) -> list[str]:
-        """Beläggsadresser för ekologi (se `rapport.ekologibelagg` och `belaggskalla.EKOLOGI_MATT`)."""
+        """Beläggsadresser för ekologi (se `rapport.ekologibelagg`, `rapport.gyf_utci_belagg` och `belaggskalla.EKOLOGI_MATT`)."""
         from rapport.belaggskalla import EKOLOGI_MATT
         from rapport.ekologibelagg import DELTAMATT, NATVERKSPARAMETRAR
+        from rapport.gyf_utci_belagg import gyf_adresser
 
         mv = [n.removeprefix("matvarde:") for (_l, n) in EKOLOGI_MATT if n.startswith("matvarde:")]
         ut: list[str] = []
@@ -1427,11 +1478,14 @@ class RapportTjanst:
                         ut += [
                             f"ekojamforelse.{a['analys']}.{j['fore']}.{j['efter']}.{m}" for m in DELTAMATT
                         ]
+            with contextlib.suppress(BelaggFel):
+                ut += gyf_adresser(self.kalla.utmapp(str(k["korning_id"])))
         return list(dict.fromkeys(ut))
 
     def _adresser_dagsljus(self, r: Rapport) -> list[str]:
-        """Beläggsadresser för dagsljus och sol (se `rapport.fasadbelagg` och `belaggskalla`)."""
+        """Beläggsadresser för dagsljus och sol (se `rapport.fasadbelagg`, `rapport.gyf_utci_belagg` och `belaggskalla`)."""
         from rapport.fasadbelagg import JAMFORMATT, PARAMETRAR, PUNKTMATT
+        from rapport.gyf_utci_belagg import utci_adresser
 
         ut: list[str] = []
         for k in r.korningar:
@@ -1470,6 +1524,8 @@ class RapportTjanst:
                         f"omrade.{m.namn}.skillnad.{j['namn']}.{st}"
                         for st in ("medel", "min", "yta_minskning_m2")
                     ]
+            with contextlib.suppress(BelaggFel):
+                ut += utci_adresser(self.kalla.utmapp(str(k["korning_id"])))
         return list(dict.fromkeys(ut))
 
     def lista(self, projekt: str | None = None) -> list[dict[str, Any]]:
