@@ -139,8 +139,10 @@ def test_losaren_ar_registrerad_i_domanen_ekologi_och_ger_tydliga_parameterfel()
             {"artprofil": "pollinerare", "spridning_faktor_intervall": [2, 1]}
         )
     p = losare.validera_parametrar({"artprofil": "pollinerare"})
-    assert p["cellstorlek_m"] == 4.0 and p["max_flackar"] == 40
+    assert p["cellstorlek_m"] == 4.0 and p["max_flackar"] == 120
     assert p["markslagsmappning_sha256"] == las_markslagskonfig().sha256
+    # Uttryckligt max_flackar accepteras fortfarande (och standardvärdet klarar tätare Göteborgsfönster > 40 fläckar)
+    assert losare.validera_parametrar({"artprofil": "pollinerare", "max_flackar": 97})["max_flackar"] == 97
 
 
 def test_markslagsmappningen_ar_konfiguration_med_giltiga_koder() -> None:
