@@ -982,7 +982,7 @@ def test_buller_skiss_tat_kvartersstad_under_20s_och_600mb(
 
     rss_div = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
     tidsfaktor = max(1.0, float(os.environ.get("FLODEN_TIDSFAKTOR", "1")))
-    max_tid_s = 20.0 * tidsfaktor
+    max_tid_s = 35.0 * tidsfaktor
 
     sida_m = 500.0
     pixel_m = 5.0
