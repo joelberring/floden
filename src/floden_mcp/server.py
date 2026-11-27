@@ -16,9 +16,11 @@ Verktygen finns i en tabell längst ned (`VERKTYG`); klassen för varje verktyg 
 import base64
 import contextlib
 import functools
+import hashlib
 import json
 import os
 import re
+import stat
 import time
 import urllib.parse
 import uuid
@@ -49,6 +51,7 @@ from rapport.bestallning import (
     BESTALLNINGSAMNEN,
     MOTTAGARROLLER,
     SKEDEN,
+    BestallningFel,
     sammanfattning_bestallning,
 )
 from rapport.fragekatalog import FragekatalogFel, fraga_med_formaga
@@ -99,12 +102,19 @@ kor och vanta; resultat_sammanfattning, resultat_varde, jamfor och karta_bild f�
 Rapporter (R1, R2): bestallning_skapa (syfte, skede, mottagare, ämnen; valfritt), fragekatalog_sok,
 rapport_skapa (skyfall, dagsljus/sol, ekologi eller luft; med bestallning_id styr beställningen frågorna och
 ingressen), rapport_installningar, pastaende_lagg_till (tal bara som platshållare
-{{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_hamta.
+{{matt:<adress>}}), rapport_kontrollera, rapport_exportera (word/pdf), rapport_export_hamta (hämtar
+exporterad PDF/DOCX som base64 för verifierat öppna rapporter), rapport_hamta.
 Koordinater är EPSG:3011 (SWEREF 99 18 00) i meter. Du kan ange modell och roll i anropen eller
 med session_deklarera; det loggas i körloggen (korlogg_hamta).
 """
 
 _FEL_PREFIX = "[floden]"
+MAX_EXPORT_HAMTA_BYTE = 20 * 1024 * 1024
+_EXPORT_MIME: dict[str, str] = {
+    "pdf": "application/pdf",
+    "word": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_EXPORT_ANDELSE: dict[str, str] = {"pdf": ".pdf", "word": ".docx"}
 
 
 def _till_dict(r: Any) -> dict[str, Any]:
@@ -490,6 +500,8 @@ def bygg_server(
                     svar = fn(*args, **kwargs)
                 except FlodenFel as exc:
                     raise ToolError(f"{exc} {_FEL_PREFIX}{exc.kod}") from exc
+                except BestallningFel as exc:
+                    raise ToolError(f"{exc} {_FEL_PREFIX}fel_indata") from exc
                 except (RapportFel, PastaendeFel, FragekatalogFel) as exc:
                     raise ToolError(f"{exc} {_FEL_PREFIX}vagrad") from exc
                 except ExportStoppad as exc:
@@ -875,10 +887,7 @@ def bygg_server(
                 fel_text = redigera_text(fel_text)
             utfall = (
                 "nekad_oppenhet"
-                if fel
-                and fel_text
-                and (vilket in utv_verktyg or vilket.startswith(UTV_PREFIX))
-                and f"{_FEL_PREFIX}nekad_oppenhet" in fel_text
+                if fel and fel_text and f"{_FEL_PREFIX}nekad_oppenhet" in fel_text
                 else ("fel" if fel else "ok")
             )
             try:
@@ -1141,7 +1150,10 @@ def bygg_server(
         ] = None,
         utsnitt: Annotated[
             list[float] | None,
-            Field(description="Zooma: [e_min, n_min, e_max, n_max] i EPSG:3011."),
+            Field(
+                description="Zooma: [e_min, n_min, e_max, n_max] i EPSG:3011 "
+                "(utelämnat: projektets avgransning_3011 med marginal när den finns, annars hela lagret)."
+            ),
         ] = None,
         max_px: Annotated[int, Field(description="Längsta kartsida i pixlar (300-2000).")] = 900,
         modell: Modell = None,
@@ -1241,13 +1253,22 @@ def bygg_server(
     @verktyg(
         "kor",
         "Startar en körning i bakgrunden och returnerar körnings-id direkt. Ange scenario (sparat) "
-        "eller fraga (ref), eller lage_idag=true för projektets befintliga läge utan förslag. Jobb med "
-        "oförändrad nyckel hämtas ur cachen. Använd vanta för att invänta resultatet.",
+        "eller fraga (ref), eller lage_idag=true för projektets befintliga läge utan förslag. "
+        "analyser: t.ex. ['dagsljus.sol', 'vatten.skyfall'] (samma '<bas>.<analys>'-format som "
+        "korplan och tillgangliga_analyser i projekt_info; standard: alla utom dagsljus.vsc). "
+        "Jobb med oförändrad nyckel hämtas ur cachen. Använd vanta för att invänta resultatet.",
     )
     def kor(
         scenario: Annotated[str | None, Field(description="Sparat scenario (slug).")] = None,
         fraga: Annotated[str | None, Field(description="Frågans ref (fragor_lista).")] = None,
-        analyser: list[str] | None = None,
+        analyser: Annotated[
+            list[str] | None,
+            Field(
+                description="Valfria analys-id på formen '<bas>.<analys>', t.ex. "
+                "['dagsljus.sol', 'vatten.skyfall'] eller ['dagsljus.vsc'] "
+                "(se tillgangliga_analyser i projekt_info). Utelämnat: sol och skyfall."
+            ),
+        ] = None,
         avtappning_mm_h: Annotated[
             float | None, Field(description="Ledningsnätets avtappning, mm/h (standard 0).")
         ] = None,
@@ -1301,7 +1322,9 @@ def bygg_server(
     ) -> dict[str, Any]:
         return tjanst.jamfor(korning_id, omrade)
 
-    _registrera_rapportverktyg(server, verktyg, rapporter, tillstand, behorighet, oppenhet)
+    _registrera_rapportverktyg(
+        server, verktyg, rapporter, tillstand, behorighet, oppenhet, klass_for_projekt
+    )
     _registrera_resurser(server, tjanst)
     if utvecklingslage_aktivt(env):
         utv_namn = registrera_utvecklingsverktyg(
@@ -1317,6 +1340,51 @@ def bygg_server(
     return server
 
 
+def _kontrollera_geografi_oppen_for_mcp(pmapp: Path, geomapp: Path | None) -> None:
+    """Fail-closed kontroll av `oppen_for_mcp` i geografins manifest när projektet pekar på en geografi."""
+    pfil = pmapp / "projekt.json"
+    if not pfil.is_file():
+        raise FlodenFel(
+            "Nekad: projektmetadata saknas; öppenhet (K38) kan inte verifieras. Inget har lämnats ut.",
+            "nekad_oppenhet",
+        )
+    try:
+        pdoc = json.loads(pfil.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise FlodenFel(
+            "Nekad: projektmetadata kan inte läsas; öppenhet (K38) kan inte verifieras. Inget har lämnats ut.",
+            "nekad_oppenhet",
+        ) from exc
+    if not isinstance(pdoc, dict):
+        raise FlodenFel(
+            "Nekad: projektmetadata är ogiltig; öppenhet (K38) kan inte verifieras. Inget har lämnats ut.",
+            "nekad_oppenhet",
+        )
+    geo_ref = pdoc.get("geografi")
+    if isinstance(geo_ref, str) and geo_ref.strip():
+        if geomapp is None:
+            raise FlodenFel(
+                "Nekad: geografimappen saknas; oppen_for_mcp kan inte verifieras (K38). Inget har lämnats ut.",
+                "nekad_oppenhet",
+            )
+        from geografi.modell import GeografiFel, las_manifest
+
+        try:
+            manifest, _ = las_manifest(geomapp, geo_ref.strip(), verifiera=False)
+        except GeografiFel as exc:
+            raise FlodenFel(
+                "Nekad: geografimanifestet kan inte läsas; oppen_for_mcp kan inte verifieras (K38). "
+                "Inget har lämnats ut.",
+                "nekad_oppenhet",
+            ) from exc
+        if manifest.get("oppen_for_mcp") is not True:
+            raise FlodenFel(
+                "Nekad: geografins manifest är inte markerat oppen_for_mcp=true (K38). "
+                "Inget har lämnats ut.",
+                "nekad_oppenhet",
+            )
+
+
 def _registrera_rapportverktyg(
     server: MCPServer,
     verktyg: Callable[..., Callable[[Callable[..., Any]], Callable[..., Any]]],
@@ -1324,6 +1392,7 @@ def _registrera_rapportverktyg(
     tillstand: Sessionstillstand,
     behorighet: Behorighet | None = None,
     oppenhet: Oppenhet | None = None,
+    klass_for_projekt: Callable[[DataKlass, str | None], DataKlass] | None = None,
 ) -> None:
     """Rapportverktygen (R1): frågekatalog, skissrapport, påståenden med belägg, kontroll, export."""
     RapportId = Annotated[str, Field(description="Rapport-id från rapport_skapa (r-<12 hex>).")]
@@ -1668,6 +1737,195 @@ def _registrera_rapportverktyg(
             "fil": str(fil),
             "storlek_byte": fil.stat().st_size,
             "sha256": sha256_fil(fil),
+        }
+
+    @verktyg(
+        "rapport_export_hamta",
+        "Hämtar en exporterad rapportfil ('pdf' eller 'word') som base64-kodat innehåll med "
+        "verifierad SHA-256-kontrollsumma. Endast tillåtet för verifierat öppna rapporter "
+        "(K38 fail-closed, dataklass 'oppet') där anroparen har minst rollen lasare. "
+        "Maxstorlek 20 MiB; inget filinnehåll skrivs till körloggen.",
+    )
+    def rapport_export_hamta(
+        rapport_id: RapportId,
+        format: Annotated[str, Field(description="'pdf' eller 'word'.")] = "pdf",
+        modell: Modell = None,
+        roll: Roll = None,
+    ) -> dict[str, Any]:
+        if format not in _EXPORT_MIME:
+            raise FlodenFel("format ska vara 'pdf' eller 'word'.", "fel_indata")
+        r = rapporter.hamta(rapport_id)
+        if behorighet is not None or rapporter.tjanst.app.konto.aktiv:
+            konto = tillstand.konto
+            har_roll = konto is not None and (
+                bool(behorighet(konto, str(r.projekt), "lasare"))
+                if behorighet is not None
+                else bool(rapporter.tjanst.app.konto.har_roll(konto, str(r.projekt), "lasare"))
+            )
+            if not har_roll:
+                raise RapportFel(f"Okänd rapport '{rapport_id}'.")
+        if str(r.dataklass) != DataKlass.OPPET.value:
+            raise FlodenFel(
+                "Nekad: rapporten har inte dataklass 'oppet'. Exporterade filer lämnas bara ut "
+                "för verifierat öppna rapporter (K38). Inget har lämnats ut.",
+                "nekad_oppenhet",
+            )
+        eff_klass = (
+            klass_for_projekt(DataKlass.OPPET, str(r.projekt))
+            if klass_for_projekt is not None
+            else rapporter.policy.klass_for(DataKlass.OPPET, str(r.projekt))
+        )
+        if eff_klass is not DataKlass.OPPET:
+            raise FlodenFel(
+                "Nekad: projektet har inte dataklass 'oppet'. Exporterade filer lämnas bara ut "
+                "för verifierat öppna projekt (K38). Inget har lämnats ut.",
+                "nekad_oppenhet",
+            )
+        if oppenhet is None:
+            raise FlodenFel(
+                "Nekad: öppenhetsspärren (K38) kan inte verifieras. Inget har lämnats ut.",
+                "nekad_oppenhet",
+            )
+        try:
+            if str(r.projekt) == PROJEKT_ID:
+                demomapp = getattr(rapporter.tjanst.fragor, "demomapp", None)
+                if demomapp is not None:
+                    oppenhet.kontrollera_sokvag(demomapp)
+            else:
+                pmapp = rapporter.tjanst.projektmapp(str(r.projekt))
+                if pmapp is None:
+                    raise FlodenFel(
+                        "Nekad: projektets öppenhet kan inte verifieras (K38). Inget har lämnats ut.",
+                        "nekad_oppenhet",
+                    )
+                oppenhet.kontrollera_sokvag(pmapp)
+                if rapporter.tjanst.projekt_oppen(str(r.projekt)) is not True:
+                    raise FlodenFel(
+                        "Nekad: projektets underlag är inte verifierat öppna data (K38). "
+                        "Inget har lämnats ut.",
+                        "nekad_oppenhet",
+                    )
+                _kontrollera_geografi_oppen_for_mcp(
+                    pmapp, getattr(rapporter.tjanst.kv, "geomapp", None)
+                )
+            korning_ids: set[str] = set()
+            for post_k in r.korningar:
+                kid = post_k.get("korning_id") if isinstance(post_k, Mapping) else None
+                if isinstance(kid, str):
+                    korning_ids.add(kid)
+            for karta in r.kartor:
+                if isinstance(karta.korning_id, str):
+                    korning_ids.add(karta.korning_id)
+            for past in r.pastaenden:
+                for b in past.belagg:
+                    if isinstance(b.korning_id, str):
+                        korning_ids.add(b.korning_id)
+            for kid in sorted(korning_ids):
+                oppenhet.kontrollera_korning(kid)
+        except OppenhetNekad as exc:
+            raise FlodenFel(str(exc), "nekad_oppenhet") from exc
+
+        export_post = next(
+            (e for e in reversed(r.exporter) if isinstance(e, Mapping) and e.get("format") == format),
+            None,
+        )
+        if export_post is None:
+            raise FlodenFel(
+                f"Rapporten '{rapport_id}' har ingen exporterad {format}-fil. "
+                "Kör rapport_exportera först.",
+                "saknas",
+            )
+        rel_raw = export_post.get("fil")
+        vantad_sha256 = export_post.get("sha256")
+        if not isinstance(rel_raw, str) or not rel_raw or "\x00" in rel_raw or "\\" in rel_raw:
+            raise FlodenFel("Ogiltig exportreferens i rapportens metadata.", "nekad_sokvag")
+        if not isinstance(vantad_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", vantad_sha256):
+            raise FlodenFel("Ogiltig SHA-256 i rapportens exportmetadata.", "ogiltig")
+        rel_path = Path(rel_raw)
+        if (
+            rel_path.is_absolute()
+            or len(rel_path.parts) != 2
+            or rel_path.parts[0] != "export"
+            or rel_path.parts[1] in ("", ".", "..")
+            or not rel_path.name.endswith(_EXPORT_ANDELSE[format])
+        ):
+            raise FlodenFel(
+                "Exportfilen ligger utanför rapportens export/-mapp och nekas.",
+                "nekad_sokvag",
+            )
+        rmapp = rapporter.arkiv.rapportmapp(r.rapport_id)
+        export_mapp = rmapp / "export"
+        if rmapp.is_symlink() or export_mapp.is_symlink() or not export_mapp.is_dir():
+            raise FlodenFel("Rapportens exportmapp saknas eller är ogiltig.", "nekad_sokvag")
+        export_rot = export_mapp.resolve()
+        kandidat = export_mapp / rel_path.name
+        if kandidat.is_symlink():
+            raise FlodenFel("Symlänkar tillåts inte i rapportens exportmapp.", "nekad_sokvag")
+        try:
+            kandidat_ren = kandidat.resolve(strict=True)
+        except OSError as exc:
+            raise FlodenFel(
+                f"Exporterad {format}-fil för rapporten '{rapport_id}' saknas på disk.",
+                "saknas",
+            ) from exc
+        if kandidat_ren.parent != export_rot or not kandidat_ren.is_relative_to(export_rot):
+            raise FlodenFel(
+                "Exportfilen ligger utanför rapportens export/-mapp och nekas.",
+                "nekad_sokvag",
+            )
+        try:
+            st = os.lstat(kandidat)
+        except OSError as exc:
+            raise FlodenFel(
+                f"Exporterad {format}-fil för rapporten '{rapport_id}' kunde inte läsas.",
+                "saknas",
+            ) from exc
+        if not stat.S_ISREG(st.st_mode):
+            raise FlodenFel("Exportfilen är inte en vanlig fil.", "nekad_sokvag")
+        if st.st_size <= 0:
+            raise FlodenFel("Exportfilen är tom.", "ogiltig")
+        if st.st_size > MAX_EXPORT_HAMTA_BYTE:
+            raise FlodenFel(
+                f"Exportfilen är för stor ({st.st_size} byte; gräns {MAX_EXPORT_HAMTA_BYTE} byte).",
+                "for_stor",
+            )
+        flaggor = (
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+        )
+        try:
+            fd = os.open(kandidat, flaggor)
+        except OSError as exc:
+            raise FlodenFel("Exportfilen kunde inte öppnas säkert.", "nekad_sokvag") from exc
+        try:
+            fh = os.fdopen(fd, "rb")
+        except Exception:
+            os.close(fd)
+            raise
+        try:
+            with fh:
+                innehall = fh.read(MAX_EXPORT_HAMTA_BYTE + 1)
+        except OSError as exc:
+            raise FlodenFel("Exportfilen kunde inte läsas.", "ogiltig") from exc
+        if len(innehall) > MAX_EXPORT_HAMTA_BYTE:
+            raise FlodenFel(
+                f"Exportfilen överskrider storleksgränsen ({MAX_EXPORT_HAMTA_BYTE} byte).",
+                "for_stor",
+            )
+        faktisk_sha256 = hashlib.sha256(innehall).hexdigest()
+        if faktisk_sha256 != vantad_sha256:
+            raise FlodenFel(
+                "Exportfilens SHA-256 stämmer inte med rapportens exportmetadata; "
+                "filen lämnas inte ut.",
+                "ogiltig",
+            )
+        return {
+            "rapport_id": r.rapport_id,
+            "format": format,
+            "filnamn": kandidat.name,
+            "mime_type": _EXPORT_MIME[format],
+            "storlek_byte": len(innehall),
+            "sha256": faktisk_sha256,
+            "innehall_base64": base64.b64encode(innehall).decode("ascii"),
         }
 
     @verktyg(

@@ -38,6 +38,8 @@ FARG_BYGGNAD: Final[tuple[int, int, int]] = (0xD4, 0xCF, 0xC2)  # #D4CFC2 byggna
 FARG_BYGGNAD_KANT: Final[tuple[int, int, int]] = (0x9B, 0x95, 0x86)  # #9B9586 byggnadskontur
 FARG_BYGGNAD_NY: Final[tuple[int, int, int]] = (0xB4, 0x46, 0x2B)  # #B4462B ny byggnad
 FARG_BYGGNAD_ANDRAD: Final[tuple[int, int, int]] = (0x8C, 0x5A, 0x00)  # #8C5A00 ändrad byggnad
+FARG_VATTEN: Final[tuple[int, int, int]] = (0xB8, 0xD4, 0xE3)  # #B8D4E3 permanent vattenyta
+FARG_VATTEN_KANT: Final[tuple[int, int, int]] = (0x8B, 0xAF, 0xC4)  # #8BAFC4 vattenyta ram
 FARG_BADGE_BG: Final[tuple[int, int, int]] = (0xE6, 0xEA, 0xE1)  # #E6EAE1 statusmärke bakgrund
 FARG_BADGE_KANT: Final[tuple[int, int, int]] = (0xB8, 0xC4, 0xB0)  # #B8C4B0 statusmärke ram
 FARG_SWATCH_KANT: Final[tuple[int, int, int]] = (0xB8, 0xB3, 0xA4)  # #B8B3A4 färgruta ram
@@ -476,6 +478,7 @@ def klassificera_raster(
     raster: NDArray[np.floating[Any]],
     stil: FigurStil,
     byggnad_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
 ) -> NDArray[np.uint8]:
     """Mappar ett 2D-raster vektoriserat till RGB enligt ``stil``."""
     arr = np.asarray(raster, dtype=np.float64)
@@ -498,6 +501,14 @@ def klassificera_raster(
         if k.max_varde is not None:
             mask &= arr < k.max_varde
         rgb[mask] = k.farg
+
+    if vatten_mask is not None:
+        vmask = np.asarray(vatten_mask, dtype=bool)
+        if vmask.shape != arr.shape:
+            raise FigurFel(
+                f"vatten_mask har form {vmask.shape}, men rastret har form {arr.shape}."
+            )
+        rgb[vmask] = FARG_VATTEN
 
     if byggnad_mask is not None:
         bmask = np.asarray(byggnad_mask, dtype=bool)
@@ -719,6 +730,7 @@ def rendera_kartfigur(
     metodstatus: str = "Skissunderlag",
     geo: GeoTransformInfo | None = None,
     byggnad_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
     byggnader_3011: Sequence[Mapping[str, Any]] | None = None,
     projektpolygon_3011: Sequence[Sequence[float]] | None = None,
     ut_fil: str | Path | None = None,
@@ -740,7 +752,8 @@ def rendera_kartfigur(
         raise FigurFel("geo (GeoTransformInfo) krävs för att rita byggnader_3011.")
 
     fstil = hamta_figurstil(stil)
-    rgb = klassificera_raster(raster, fstil, byggnad_mask=byggnad_mask)
+    rgb = klassificera_raster(raster, fstil, byggnad_mask=byggnad_mask, vatten_mask=vatten_mask)
+    har_vatten = vatten_mask is not None and bool(np.any(np.asarray(vatten_mask, dtype=bool)))
     karta_h, karta_w, _ = rgb.shape
 
     if geo is not None and (geo.hojd != karta_h or geo.bredd != karta_w):
@@ -781,6 +794,8 @@ def rendera_kartfigur(
     extra_poster: list[tuple[str, str]] = []
     if fstil.tomvarde_etikett:
         extra_poster.append(("tom", fstil.tomvarde_etikett))
+    if har_vatten:
+        extra_poster.append(("vatten", "Vattenyta"))
     if byggnad_mask is not None:
         extra_poster.append(("byggnad", "Byggnad"))
     if byggnader_3011:
@@ -946,6 +961,13 @@ def rendera_kartfigur(
                 outline=FARG_POLYGON,
                 width=2,
             )
+        elif typ == "vatten":
+            rit.rectangle(
+                [x, sy0, x + swatch_w, sy1],
+                fill=FARG_VATTEN,
+                outline=FARG_VATTEN_KANT,
+                width=1,
+            )
         elif typ == "byggnad":
             rit.rectangle(
                 [x, sy0, x + swatch_w, sy1],
@@ -1048,6 +1070,7 @@ def spara_kartfigur(
     metodstatus: str = "Skissunderlag",
     geo: GeoTransformInfo | None = None,
     byggnad_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
     byggnader_3011: Sequence[Mapping[str, Any]] | None = None,
     projektpolygon_3011: Sequence[Sequence[float]] | None = None,
     run_hash: str | None = None,
@@ -1066,6 +1089,7 @@ def spara_kartfigur(
         metodstatus=metodstatus,
         geo=geo,
         byggnad_mask=byggnad_mask,
+        vatten_mask=vatten_mask,
         byggnader_3011=byggnader_3011,
         projektpolygon_3011=projektpolygon_3011,
         ut_fil=mal,
@@ -1089,6 +1113,8 @@ __all__ = [
     "FARG_POLYGON",
     "FARG_TEXT",
     "FARG_TEXT_SEK",
+    "FARG_VATTEN",
+    "FARG_VATTEN_KANT",
     "FIGURSTILAR",
     "FargKlass",
     "FigurFel",

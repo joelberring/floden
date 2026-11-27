@@ -13,6 +13,7 @@ Varje metod returnerar en vanlig `dict` (JSON-kompatibel) och kastar `FlodenFel`
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import re
@@ -25,6 +26,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import numpy as np
+from numpy.typing import NDArray
 from shapely.geometry import Polygon, box
 
 from floden_mcp.belagg import belagg, enhet_for, varde_med_belagg
@@ -44,6 +46,9 @@ PROJEKT_ID = "demokvarteret"
 STANDARD_METODSTATUS = Path(__file__).resolve().parents[2] / "data" / "mcp" / "metodstatus.toml"
 MAX_KORNINGSID_PER_VANTA = 20
 KLARA = ("klar", "fel")
+MARKSLAG_VATTEN = 8
+_MAX_KARTA_RASTER_PX = 2048
+_PROJEKT_UTSNITT_MARGINAL = 0.10
 _T = TypeVar("_T")
 
 
@@ -110,6 +115,156 @@ def _ett_av(scenario: str | None, fraga: str | None, lage_idag: bool) -> None:
             "(projektets befintliga läge utan förslag).",
             "fel_indata",
         )
+
+
+def _standard_utsnitt_for_projekt(
+    avgr: tuple[float, float, float, float],
+    utbredning: Mapping[str, Any],
+) -> tuple[float, float, float, float] | None:
+    """Standardutsnitt kring projektets `avgransning_3011` (~10 % marginal) klämt till rastret.
+
+    Returnerar `None` när projektets avgränsning redan täcker hela lagret eller ligger utanför det.
+    """
+    rx0 = float(utbredning["x_min"])
+    ry0 = float(utbredning["y_min"])
+    rx1 = float(utbredning["x_max"])
+    ry1 = float(utbredning["y_max"])
+    ax0, ay0, ax1, ay1 = avgr
+    if ax1 <= rx0 or ax0 >= rx1 or ay1 <= ry0 or ay0 >= ry1:
+        return None
+    if ax0 <= rx0 and ay0 <= ry0 and ax1 >= rx1 and ay1 >= ry1:
+        return None
+    pad_x = (ax1 - ax0) * _PROJEKT_UTSNITT_MARGINAL
+    pad_y = (ay1 - ay0) * _PROJEKT_UTSNITT_MARGINAL
+    cx0 = max(rx0, ax0 - pad_x)
+    cy0 = max(ry0, ay0 - pad_y)
+    cx1 = min(rx1, ax1 + pad_x)
+    cy1 = min(ry1, ay1 + pad_y)
+    if cx1 <= cx0 or cy1 <= cy0:
+        return None
+    if (cx1 - cx0) >= (rx1 - rx0) - 1e-6 and (cy1 - cy0) >= (ry1 - ry0) - 1e-6:
+        return None
+    return (cx0, cy0, cx1, cy1)
+
+
+def _rendera_karta_med_vatten(
+    *,
+    raster: NDArray[np.float32],
+    tak: NDArray[np.bool_] | None,
+    vatten_mask: NDArray[np.bool_],
+    lager: Mapping[str, Any],
+    byggnader: Sequence[Mapping[str, Any]] | None,
+    korning_id: str,
+    kodversion: str,
+    skiss: bool,
+    utsnitt: tuple[float, float, float, float] | None = None,
+    max_px: int = 900,
+    rubrik: str | None = None,
+) -> tuple[bytes, dict[str, Any]]:
+    """Samma kartrendering som `floden_mcp.karta.rendera_karta`, med permanent vattenyta (`markslag == 8`)."""
+    from rapport.figurer import berakna_skalstock_m, figurstil_for_lager, rendera_kartfigur
+    from testsvit.k1_io import GeoTransformInfo
+
+    u = lager["utbredning"]
+    px = float(lager["pixelstorlek_m"])
+    ox_m, oy_m = float(u["x_min"]), float(u["y_max"])
+    hojd_c, bredd_c = raster.shape
+    c0, c1, r0, r1 = 0, bredd_c, 0, hojd_c
+    if utsnitt is not None:
+        x0, y0, x1, y1 = utsnitt
+        c0 = max(0, int(math.floor((x0 - ox_m) / px)))
+        c1 = min(bredd_c, int(math.ceil((x1 - ox_m) / px)))
+        r0 = max(0, int(math.floor((oy_m - y1) / px)))
+        r1 = min(hojd_c, int(math.ceil((oy_m - y0) / px)))
+        if c1 <= c0 or r1 <= r0:
+            raise FlodenFel("Utsnittet ligger utanför lagrets utsträckning.", "fel_indata")
+
+    sub = raster[r0:r1, c0:c1]
+    tak_sub = None if tak is None else tak[r0:r1, c0:c1]
+    vatten_sub = vatten_mask[r0:r1, c0:c1]
+
+    faktor = max(1, math.ceil(max(sub.shape) / _MAX_KARTA_RASTER_PX))
+    sub_vis = sub[::faktor, ::faktor] if faktor > 1 else sub
+    tak_vis = (
+        None
+        if tak_sub is None
+        else (tak_sub[::faktor, ::faktor] if faktor > 1 else tak_sub)
+    )
+    vatten_vis = vatten_sub[::faktor, ::faktor] if faktor > 1 else vatten_sub
+    px_bild = px * faktor
+
+    h_c, b_c = sub_vis.shape
+    x_min = ox_m + c0 * px
+    y_max = oy_m - r0 * px
+    x_max = x_min + b_c * px_bild
+    y_min = y_max - h_c * px_bild
+
+    geo = GeoTransformInfo(
+        bredd=int(b_c),
+        hojd=int(h_c),
+        x_min=x_min,
+        y_max=y_max,
+        pixelstorlek_x=px_bild,
+        pixelstorlek_y=px_bild,
+        epsg=3011,
+        dtype="float32",
+    )
+
+    scen = (
+        f"{lager['efter']} − {lager['fore']}"
+        if lager["typ"] == "skillnad"
+        else str(lager["scenario"])
+    )
+    typtext = {
+        "bas": "bas",
+        "scenario": "scenario",
+        "skillnad": "skillnad (efter minus före)",
+    }[lager["typ"]]
+    if rubrik is None:
+        rubrik = f"{lager['etikett']}, {typtext}: {scen}".replace("_", " ")
+
+    stil = figurstil_for_lager(lager)
+    karta_max_px = max(120, int(max_px))
+    skala_vis = karta_max_px / max(b_c, h_c)
+    vis_w = max(200, int(round(b_c * skala_vis)))
+    langd_m, _ = berakna_skalstock_m(geo, vis_w)
+
+    anmarkning = (
+        "SKISS: metoden är inte klassad för formell rapport. "
+        "Ingen AI har räknat eller ritat talen."
+        if skiss
+        else "Ingen AI har räknat eller ritat talen."
+    )
+    duk = rendera_kartfigur(
+        sub_vis,
+        stil,
+        titel=rubrik,
+        undertitel=f"Körning {korning_id} · EPSG:3011",
+        metodstatus="Skissunderlag" if skiss else "Rapportmetod",
+        geo=geo,
+        byggnad_mask=tak_vis,
+        vatten_mask=vatten_vis if bool(np.any(vatten_vis)) else None,
+        byggnader_3011=byggnader,
+        anmarkning=anmarkning,
+        kalla=f"Floden {kodversion} · Ritad ur körningens GeoTIFF",
+        karta_max_px=karta_max_px,
+        legend_placering="sida",
+    )
+    ut = io.BytesIO()
+    duk.save(ut, format="PNG", optimize=True)
+    return ut.getvalue(), {
+        "bild_px": [duk.width, duk.height],
+        "kartutsnitt": [x_min, y_min, x_max, y_max],
+        "kartutsnitt_beskrivning": "[e_min, n_min, e_max, n_max] i EPSG:3011 (m)",
+        "cellstorlek_m": px_bild,
+        "enhet": lager["enhet"] or None,
+        "skala": lager["skala"],
+        "nedsampling": faktor,
+        "norr": "uppat",
+        "skalstock_m": float(langd_m),
+        "kartmotor": "rapport.figurer",
+        "figurstil": stil.namn,
+    }
 
 
 class FlodenTjanst:
@@ -1012,6 +1167,149 @@ class FlodenTjanst:
 
     # ------------------------------------------------------------------ karta
 
+    def _projekt_avgransning_bbox(self, korning_id: str) -> tuple[float, float, float, float] | None:
+        """Projektets uttryckliga `avgransning_3011` (`[e0, n0, e1, n1]`), eller `None`."""
+        projekt_id = self.app.projekt_for_korning(korning_id)
+        if not projekt_id or projekt_id == PROJEKT_ID:
+            return None
+        pmapp = self.projektmapp(projekt_id)
+        if pmapp is not None:
+            pfil = pmapp / "projekt.json"
+            if pfil.is_file():
+                try:
+                    d = json.loads(pfil.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    d = None
+                raw = d.get("avgransning_3011") if isinstance(d, dict) else None
+                if isinstance(raw, Sequence) and not isinstance(raw, str) and len(raw) == 4:
+                    try:
+                        x0, y0, x1, y1 = (float(v) for v in raw)
+                    except (TypeError, ValueError):
+                        pass
+                    else:
+                        if all(math.isfinite(v) for v in (x0, y0, x1, y1)) and x1 > x0 and y1 > y0:
+                            return (x0, y0, x1, y1)
+        try:
+            kalla = self.kv.kalla(projekt_id)
+        except (FlodenWebbFel, OSError, KeyError, ValueError):
+            return None
+        avgr = getattr(kalla, "avgransning", None)
+        if isinstance(avgr, Sequence) and len(avgr) == 4:
+            try:
+                x0, y0, x1, y1 = (float(v) for v in avgr)
+            except (TypeError, ValueError):
+                return None
+            if all(math.isfinite(v) for v in (x0, y0, x1, y1)) and x1 > x0 and y1 > y0:
+                return (x0, y0, x1, y1)
+        return None
+
+    def _k1_rutor_for_korning(self, korning_id: str, la: Mapping[str, Any]) -> list[Path]:
+        """Hämtar K1-rutor med `markslag.tif` för en körning (för vattenmask `markslag == 8`)."""
+        sedda: list[Path] = []
+        sett: set[Path] = set()
+
+        def lagg_till(mapp: Path) -> None:
+            ren = mapp.resolve()
+            if ren not in sett and (mapp / "markslag.tif").is_file():
+                sett.add(ren)
+                sedda.append(mapp)
+
+        try:
+            k = self.fragor._hamta(korning_id)  # noqa: SLF001
+            sam_fil = k.utmapp / "sammanstallning.json"
+            if sam_fil.is_file():
+                sam = json.loads(sam_fil.read_text(encoding="utf-8"))
+                rutor_per_scen, _ = self.fragor._scenariorutor(k, sam)  # noqa: SLF001
+                if rutor_per_scen:
+                    sids = (
+                        [str(la.get("fore") or ""), str(la.get("efter") or "")]
+                        if la.get("typ") == "skillnad"
+                        else [str(la.get("scenario") or "")]
+                    )
+                    for sid in sids:
+                        for mapp in rutor_per_scen.get(sid, {}).values():
+                            lagg_till(Path(mapp))
+                    if not sedda:
+                        for rutmap in rutor_per_scen.values():
+                            for mapp in rutmap.values():
+                                lagg_till(Path(mapp))
+            if not sedda:
+                fraga_fil = self.fragor._fil_for_korning(k)  # noqa: SLF001
+                fraga = las_fraga(fraga_fil)
+                for spec in fraga.scenarier.values():
+                    bas = Path(spec.bas)
+                    if (bas / "markslag.tif").is_file():
+                        lagg_till(bas)
+                    elif bas.is_dir():
+                        for barn in sorted(bas.iterdir()):
+                            if barn.is_dir():
+                                lagg_till(barn)
+        except Exception:  # noqa: BLE001 - valfri visuell mask; faller tillbaka nedan
+            pass
+
+        if not sedda:
+            projekt_id = self.app.projekt_for_korning(korning_id)
+            if projekt_id:
+                try:
+                    mallar = self.kv.kalla(projekt_id).mallar
+                    for mall in mallar.values():
+                        for ruta in mall.rutor:
+                            lagg_till(Path(ruta.mapp))
+                except Exception:  # noqa: BLE001 - valfri visuell mask
+                    pass
+        return sedda
+
+    def _vatten_mask_for_lager(
+        self,
+        korning_id: str,
+        la: Mapping[str, Any],
+        raster_shape: tuple[int, int],
+    ) -> NDArray[np.bool_] | None:
+        """Bygger boolesk mask för permanent vatten (`markslag == 8`) i lagrets cellrutnät."""
+        from testsvit.k1_io import las_geotiff
+
+        rutor = self._k1_rutor_for_korning(korning_id, la)
+        if not rutor:
+            return None
+        u = la["utbredning"]
+        px = float(la["pixelstorlek_m"])
+        x_min, y_max = float(u["x_min"]), float(u["y_max"])
+        h, b = raster_shape
+        ut = np.zeros((h, b), dtype=np.bool_)
+        for mapp in rutor:
+            fil = mapp / "markslag.tif"
+            if not fil.is_file():
+                continue
+            try:
+                arr, geo = las_geotiff(fil)
+            except (OSError, ValueError):
+                continue
+            vatten = np.asarray(arr) == MARKSLAG_VATTEN
+            if not bool(vatten.any()):
+                continue
+            f = px / float(geo.pixelstorlek_x)
+            if f >= 1.0 - 1e-9 and abs(f - round(f)) <= 1e-6:
+                fi = round(f)
+                if fi > 1:
+                    hh, bb = (vatten.shape[0] // fi) * fi, (vatten.shape[1] // fi) * fi
+                    vatten = vatten[:hh, :bb].reshape(hh // fi, fi, bb // fi, fi).any(axis=(1, 3))
+            elif f > 0.0 and abs((1.0 / f) - round(1.0 / f)) <= 1e-6:
+                up = round(1.0 / f)
+                vatten = np.repeat(np.repeat(vatten, up, axis=0), up, axis=1)
+            else:
+                continue
+            c0f = (float(geo.x_min) - x_min) / px
+            r0f = (y_max - float(geo.y_max)) / px
+            if abs(c0f - round(c0f)) > 1e-3 or abs(r0f - round(r0f)) > 1e-3:
+                continue
+            c0, r0 = round(c0f), round(r0f)
+            rs, cs = max(0, r0), max(0, c0)
+            re, ce = min(h, r0 + vatten.shape[0]), min(b, c0 + vatten.shape[1])
+            if re <= rs or ce <= cs:
+                continue
+            ut[rs:re, cs:ce] |= vatten[rs - r0 : re - r0, cs - c0 : ce - c0]
+        return ut if bool(ut.any()) else None
+
     def karta(
         self,
         korning_id: str,
@@ -1036,7 +1334,15 @@ class FlodenTjanst:
             finns = ", ".join(f"{la['typ']}:{la['scenario']}" for la in lager)
             raise FlodenFel(f"Inget sådant lager. Tillgängligt: {finns}.", "okand")
         la = kandidater[0]
-        omr = None if utsnitt is None else _rektangel(utsnitt, "utsnitt")
+        if utsnitt is not None:
+            omr: tuple[float, float, float, float] | None = _rektangel(utsnitt, "utsnitt")
+        else:
+            avgr = self._projekt_avgransning_bbox(korning_id)
+            omr = (
+                _standard_utsnitt_for_projekt(avgr, la["utbredning"])
+                if avgr is not None
+                else None
+            )
         with _oversatt():
             data = self.fragor.lager_raster(korning_id, la["id"])
         losare = next((t["losare"] for t in res["tabeller"] if t["analys"] == analys), "")
@@ -1045,18 +1351,47 @@ class FlodenTjanst:
             sc = la["efter"] if la["typ"] == "skillnad" else la["scenario"]
             byggnader = res["byggnader"]["scenarier"].get(sc)
         status = self.metodstatus(losare) if losare else {"status": "skiss"}
-        png, meta = rendera_karta(
-            raster=data["raster"],
-            tak=data["tak"],
-            lager=la,
-            byggnader=byggnader,
-            korning_id=korning_id,
-            kodversion=self.kodversion,
-            skiss=status["status"] != "rapport",
-            utsnitt=omr,
-            max_px=max(300, min(int(max_px), 2000)),
-            rubrik=rubrik,
+        ar_skyfall = (
+            str(la.get("doman") or "") == "vatten"
+            or losare.startswith("vatten.")
+            or str(la.get("roll") or "") == "max_djup"
         )
+        vatten_mask = (
+            self._vatten_mask_for_lager(
+                korning_id,
+                la,
+                (int(data["raster"].shape[0]), int(data["raster"].shape[1])),
+            )
+            if ar_skyfall
+            else None
+        )
+        if vatten_mask is not None:
+            png, meta = _rendera_karta_med_vatten(
+                raster=data["raster"],
+                tak=data["tak"],
+                vatten_mask=vatten_mask,
+                lager=la,
+                byggnader=byggnader,
+                korning_id=korning_id,
+                kodversion=self.kodversion,
+                skiss=status["status"] != "rapport",
+                utsnitt=omr,
+                max_px=max(300, min(int(max_px), 2000)),
+                rubrik=rubrik,
+            )
+        else:
+            png, meta = rendera_karta(
+                raster=data["raster"],
+                tak=data["tak"],
+                lager=la,
+                byggnader=byggnader,
+                korning_id=korning_id,
+                kodversion=self.kodversion,
+                skiss=status["status"] != "rapport",
+                utsnitt=omr,
+                max_px=max(300, min(int(max_px), 2000)),
+                rubrik=rubrik,
+            )
         sha = hashlib.sha256(png).hexdigest()
         mapp = self.mcp_mapp / "kartor"
         mapp.mkdir(parents=True, exist_ok=True)
@@ -1320,15 +1655,25 @@ class FlodenTjanst:
         }
 
     def _valda_analyser(self, projekt: str, analyser: Sequence[str] | None) -> list[str]:
-        if analyser:
-            return [str(a) for a in analyser]
         mallar = self.kv._kravs_projekt(projekt)  # noqa: SLF001
-        return [
+        tillgangliga = [
             f"{kort}.{a.id}"
             for kort, m in mallar.items()
             for a in m.fraga.analyser
-            if a.id != "vsc"  # samma förval som webben (VSC är långsammare)
         ]
+        if analyser:
+            valda = [str(a) for a in analyser]
+            giltiga = set(tillgangliga)
+            okanda = [a for a in valda if a not in giltiga]
+            if okanda:
+                raise FlodenFel(
+                    f"Okänd analys '{okanda[0]}'. Tillgängliga analyser i projektet: "
+                    + ", ".join(tillgangliga)
+                    + ".",
+                    "fel_indata",
+                )
+            return valda
+        return [a for a in tillgangliga if not a.endswith(".vsc")]
 
     @staticmethod
     def _plan_sammanfattning(plan: Mapping[str, Any], detalj: bool) -> dict[str, Any]:
