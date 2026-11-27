@@ -238,8 +238,8 @@ def _sv(v: float) -> str:
 
 
 def _fmt_yta(varde_m2: float, cell_m: float = 1.0) -> str:
-    steg = max(10.0 if varde_m2 >= 1000.0 else 1.0, cell_m * cell_m)
-    return formatera_tal(varde_m2, "m²", steg if steg in (1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0) else standardsteg("m²", varde_m2, cell_m * cell_m))
+    steg = max(1.0, cell_m * cell_m)
+    return formatera_tal(varde_m2, "m²", steg)
 
 
 def _fmt_belagg(b: Belagg, *, steg: float | None = None, tecken: bool = False) -> str:
@@ -1209,25 +1209,26 @@ def bygg_dokument(
             tr_f, tr_e = pf.trosklar_fore, pf.trosklar_efter
             if tr_f is not None and tr_e is not None:
                 c = tr_e.cellstorlek_m
+                steg = max(1.0, c * c)
+
+                def _tr_rad(etikett: str, vf: float, ve: float) -> tuple[str, str, str, str]:
+                    rf = round(vf / steg) * steg
+                    re_ = round(ve / steg) * steg
+                    return (
+                        etikett,
+                        formatera_tal(rf, "m²", steg),
+                        formatera_tal(re_, "m²", steg),
+                        formatera_tal(re_ - rf, "m²", steg, tecken=True),
+                    )
+
                 tr_rader = [
-                    (
-                        "Märkbart vatten (≥ 10 cm)",
-                        _fmt_yta(tr_f.yta_over_0_1m_m2, c),
-                        _fmt_yta(tr_e.yta_over_0_1m_m2, c),
-                        formatera_tal(tr_e.yta_over_0_1m_m2 - tr_f.yta_over_0_1m_m2, "m²", max(1.0, c * c), tecken=True),
-                    ),
-                    (
+                    _tr_rad("Märkbart vatten (≥ 10 cm)", tr_f.yta_over_0_1m_m2, tr_e.yta_over_0_1m_m2),
+                    _tr_rad(
                         "Framkomlighetsgräns räddningstjänst (≥ 20 cm)",
-                        _fmt_yta(tr_f.yta_over_0_2m_m2, c),
-                        _fmt_yta(tr_e.yta_over_0_2m_m2, c),
-                        formatera_tal(tr_e.yta_over_0_2m_m2 - tr_f.yta_over_0_2m_m2, "m²", max(1.0, c * c), tecken=True),
+                        tr_f.yta_over_0_2m_m2,
+                        tr_e.yta_over_0_2m_m2,
                     ),
-                    (
-                        "Risk för byggnadsskada (≥ 30 cm)",
-                        _fmt_yta(tr_f.yta_over_0_3m_m2, c),
-                        _fmt_yta(tr_e.yta_over_0_3m_m2, c),
-                        formatera_tal(tr_e.yta_over_0_3m_m2 - tr_f.yta_over_0_3m_m2, "m²", max(1.0, c * c), tecken=True),
-                    ),
+                    _tr_rad("Risk för byggnadsskada (≥ 30 cm)", tr_f.yta_over_0_3m_m2, tr_e.yta_over_0_3m_m2),
                 ]
                 dok.block.append(
                     Tabell(
@@ -1256,12 +1257,12 @@ def bygg_dokument(
                 lp_rader = []
                 for lp in pf.lagpunkter:
                     mh = (
-                        f"+{formatera_tal(lp.markhojd_rh2000_m, 'm', 0.1)}"
+                        formatera_tal(lp.markhojd_rh2000_m, "m", 0.01, tecken=True)
                         if lp.markhojd_rh2000_m is not None
                         else "–"
                     )
                     vn = (
-                        f"+{formatera_tal(lp.vattenniva_rh2000_m, 'm', 0.1)}"
+                        formatera_tal(lp.vattenniva_rh2000_m, "m", 0.01, tecken=True)
                         if lp.vattenniva_rh2000_m is not None
                         else "–"
                     )

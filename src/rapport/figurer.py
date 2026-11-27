@@ -1125,6 +1125,23 @@ def _rita_skalstock(karta_img: Image.Image, geo: GeoTransformInfo) -> Image.Imag
 # ---------------------------------------------------------------------- Huvudfunktion
 
 
+def _sanera_fot_kalla(kalla: str | None, befintlig_fot: str) -> str:
+    """Tar bort dubbletter av CRS/höjdsystem som redan står i spårbarhetsfoten."""
+    if not kalla:
+        return ""
+    bas_lag = befintlig_fot.lower()
+    delar: list[str] = []
+    for raw in kalla.split("·"):
+        del_ = raw.strip()
+        if not del_:
+            continue
+        if del_.lower() in bas_lag:
+            continue
+        if del_ not in delar:
+            delar.append(del_)
+    return " · ".join(delar)
+
+
 def rendera_kartfigur(
     raster: NDArray[np.floating[Any]],
     stil: str | FigurStil,
@@ -1316,8 +1333,9 @@ def rendera_kartfigur(
         innehall_h = vis_h + gap + leg_inre_h
 
     fot_v = "SWEREF 99 18 00 · RH 2000"
-    if kalla:
-        fot_v = f"{fot_v} · Källa: {kalla}"
+    kalla_ren = _sanera_fot_kalla(kalla, fot_v)
+    if kalla_ren:
+        fot_v = f"{fot_v} · Källa: {kalla_ren}"
     fot_h_text = f"run.json: {run_hash[:12]}" if run_hash else ""
 
     # Se till att titel + statusmärke, undertitel och sidfot får plats utan klippning
@@ -1907,8 +1925,9 @@ def rita_sektionsfigur(
     rit.line([(marg_x, fot_y), (bredd_px - marg_x, fot_y)], fill=FARG_LINJE, width=1)
     overf_s = f"{overforh:.1f}".replace(".", ",")
     fot_v = f"SWEREF 99 18 00 · RH 2000 · Vertikal överförhöjning: {overf_s}×"
-    if kalla:
-        fot_v = f"{fot_v} · {kalla}"
+    kalla_ren = _sanera_fot_kalla(kalla, fot_v)
+    if kalla_ren:
+        fot_v = f"{fot_v} · Källa: {kalla_ren}"
     rit.text((marg_x, fot_y + 8), fot_v, fill=FARG_TEXT_SEK, font=font_fot)
     if run_hash:
         fh_txt = f"run.json: {run_hash[:12]}"

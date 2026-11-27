@@ -1812,7 +1812,7 @@ class RapportTjanst:
                 markorer_3011=markorer or None,
                 run_hash=run_hash,
                 anmarkning=anm,
-                kalla="Floden · SWEREF 99 18 00",
+                kalla="Floden",
                 karta_max_px=karta_max_px,
                 legend_placering="botten" if legend_placering == "botten" else "sida",
             )
@@ -2004,7 +2004,7 @@ class RapportTjanst:
                         markor_avstand_m=sek_data["p1_avstand_m"],
                         markor_etikett=sek_data["p1_id"],
                         run_hash=run_hash,
-                        kalla="Floden · RH 2000",
+                        kalla="Floden",
                     )
                     buf_s = io.BytesIO()
                     sek_img.save(buf_s, format="PNG", optimize=True)

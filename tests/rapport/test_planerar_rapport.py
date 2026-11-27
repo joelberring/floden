@@ -491,3 +491,80 @@ def test_detaljkarta_och_tvarsektion_pa_demo_och_tamper_stoppas(m: Miljo) -> Non
     m.andra(r, _forvanska_varde)
     with pytest.raises(ExportStoppad):
         m.rt.exportera(r.rapport_id, "pdf")
+
+
+def test_troskeltabell_summerar_exakt_negativ_rh2000_och_deduplicerad_fot(
+    m: Miljo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from rapport.belaggskalla import Lagpunkt, SkyfallsTroskelytor
+    from rapport.figurer import _sanera_fot_kalla
+    from rapport.skissmall import Tabell
+    from rapport.skissrapport import PlanerarFigurer
+
+    # 1. Tröskeltabellen på demo-vatten ska summera exakt per rad (Före + Skillnad == Efter)
+    r = _full(m)
+    dok = bygg_dokument(r, m.rt)
+    tr_tab = next(
+        b
+        for b in dok.block
+        if isinstance(b, Tabell) and b.kolumner and b.kolumner[0].startswith("Djupklass")
+    )
+
+    def _tolka_m2(s: str) -> int:
+        ren = s.replace("\u202f", "").replace("\u00a0", "").replace(" ", "").replace("m²", "")
+        ren = ren.replace("−", "-")
+        return int(ren)
+
+    for rad in tr_tab.rader:
+        fore_v, efter_v, skill_v = _tolka_m2(rad[1]), _tolka_m2(rad[2]), _tolka_m2(rad[3])
+        assert fore_v + skill_v == efter_v, rad
+
+    # 2. Negativ RH 2000-höjd får aldrig ge "+−0,3 m" utan "−0,32 m" / "−0,12 m" (2 decimaler)
+    kust_pf = PlanerarFigurer(
+        trosklar_fore=SkyfallsTroskelytor("fore", 0.30, 654.0, 315.0, 104.0, 1.0, "f", None),
+        trosklar_efter=SkyfallsTroskelytor("efter", 0.44, 1374.0, 539.0, 267.0, 1.0, "e", None),
+        lagpunkter=(
+            Lagpunkt(
+                id="P1",
+                e_m=151256.0,
+                n_m=6580258.0,
+                djup_m=0.20,
+                rad=10,
+                kol=10,
+                markhojd_rh2000_m=-0.32,
+                vattenniva_rh2000_m=-0.12,
+            ),
+            Lagpunkt(
+                id="P2",
+                e_m=151296.0,
+                n_m=6580220.0,
+                djup_m=0.16,
+                rad=20,
+                kol=20,
+                markhojd_rh2000_m=13.08,
+                vattenniva_rh2000_m=13.24,
+            ),
+        ),
+    )
+    monkeypatch.setattr(m.rt, "planerarfigurer", lambda _r, skriv_filer=True: kust_pf)
+    dok_kust = bygg_dokument(r, m.rt)
+    kust_text = dokumentets_text(dok_kust)
+    assert "+−" not in kust_text and "+-" not in kust_text
+    lp_tab = next(
+        b for b in dok_kust.block if isinstance(b, Tabell) and b.kolumner and b.kolumner[0] == "Punkt"
+    )
+    assert lp_tab.rader[0][2] == "−0,32\u00a0m"
+    assert lp_tab.rader[0][3] == "−0,12\u00a0m"
+    assert lp_tab.rader[1][2] == "+13,08\u00a0m"
+    assert lp_tab.rader[1][3] == "+13,24\u00a0m"
+
+    # 3. Figurfot skyddad mot dubblerat SWEREF 99 18 00 / RH 2000
+    assert _sanera_fot_kalla("Floden · SWEREF 99 18 00", "SWEREF 99 18 00 · RH 2000") == "Floden"
+    assert (
+        _sanera_fot_kalla(
+            "Floden · RH 2000", "SWEREF 99 18 00 · RH 2000 · Vertikal överförhöjning: 11,9×"
+        )
+        == "Floden"
+    )
+    assert _sanera_fot_kalla("Floden", "SWEREF 99 18 00 · RH 2000") == "Floden"
+
