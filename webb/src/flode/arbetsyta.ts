@@ -779,8 +779,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   // Vektorlager, osäkerhet och avläsning
   const vektorPa = new Set<VektorSlag>();
   const vektorCache = new Map<string, VektorSvar>();
-  let vektorFel: string | null = null;
-  let vektorSeq = 0;
+  const vektorLaddar = new Set<VektorSlag>();
+  const vektorAvbryt = new Map<VektorSlag, { nyckel: string; ctrl: AbortController }>();
+  const vektorFelPerSlag = new Map<VektorSlag, string>();
   const vektorGrans: Partial<Record<VektorSlag, number>> = {};
   let sankaHtml: string | null = null;
   let sankaSeq = 0;
@@ -1475,27 +1476,99 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     a?.settAnalysVektor(ut);
     b?.settAnalysVektor(null);
   };
+  const vektorEtikett = (slag: VektorSlag): string =>
+    slag === "sankor" ? "sänkor" : slag === "flodesvagar" ? "flödesvägar" : slag === "rannsten_flode" ? "rännstenar" : "fasadpunkter";
+
+  const arAvbrutetVektorFel = (e: unknown, signal: AbortSignal): boolean =>
+    signal.aborted || (e instanceof Error && e.name === "AbortError");
+
+  const lagerNotData = (): { text: string; arFel: boolean } => {
+    const roller = rollerNu();
+    const aktivNyckel = valtNyckel ?? (vyBas ? forvaldNyckel(roller, vyBas) : null);
+    const valdRoll = roller.find((x) => x.nyckel === aktivNyckel);
+    const basText = valdRoll && vyBas ? valText(valdRoll, kartLageForAnalys(), Boolean(vyBas.lage_idag)) : "";
+    const laddText =
+      vektorLaddar.size > 0
+        ? `Hämtar ${[...vektorLaddar].map(vektorEtikett).join(", ")} …`
+        : "";
+    const felLista = [...vektorFelPerSlag.values()];
+    const delar = [basText, laddText, ...felLista].filter(Boolean);
+    return { text: delar.join(" "), arFel: felLista.length > 0 };
+  };
+
+  const uppdateraLagerNot = (): void => {
+    const notEl = rot.querySelector<HTMLElement>("#ar-lager-not");
+    if (!notEl) return;
+    const { text, arFel } = lagerNotData();
+    notEl.textContent = text;
+    notEl.hidden = text.length === 0;
+    notEl.classList.toggle("flode-fel", arFel);
+    notEl.classList.toggle("flode-dampad", !arFel);
+  };
+
   const laddaVektorer = async (): Promise<void> => {
-    const nr = ++vektorSeq;
-    vektorFel = null;
     const onskade: ReadonlySet<VektorSlag> =
       lage === "redigera" ? (visaFlodeUnder ? new Set<VektorSlag>(["flodesvagar"]) : new Set<VektorSlag>()) : vektorPa;
-    const behov = tillgangligaVektorer().filter((s) => onskade.has(s));
-    await Promise.all(
-      behov.map(async (slag) => {
-        const nyckel = vektorNyckel(slag);
-        if (!nyckel || vektorCache.has(nyckel) || !vy) return;
-        const [kid, sc] = nyckel.split("|") as [string, string];
-        try {
-          vektorCache.set(nyckel, await lasJson<VektorSvar>(vektorUrl(kid, sc, slag, vektorGrans[slag] ?? null)));
-        } catch (e) {
-          vektorFel = `Lagret gick inte att hämta: ${e instanceof Error ? e.message : String(e)}`;
-        }
-      }),
-    );
-    if (nr !== vektorSeq || avslutad) return;
-    sattVektorer();
-    ritaTecken();
+    const tillgangliga = new Set<VektorSlag>(tillgangligaVektorer());
+    const behov = [...tillgangliga].filter((s) => onskade.has(s));
+
+    // Avbryt inaktuella förfrågningar (t.ex. när reglaget flyttas eller ett lager släcks).
+    for (const [slag, post] of [...vektorAvbryt.entries()]) {
+      const ny = onskade.has(slag) && tillgangliga.has(slag) ? vektorNyckel(slag) : null;
+      if (!ny || ny !== post.nyckel) {
+        post.ctrl.abort();
+        vektorAvbryt.delete(slag);
+        vektorLaddar.delete(slag);
+      }
+    }
+    for (const slag of [...vektorFelPerSlag.keys()]) {
+      if (!onskade.has(slag) || !tillgangliga.has(slag)) vektorFelPerSlag.delete(slag);
+    }
+
+    const uppdrag: Promise<void>[] = [];
+    for (const slag of behov) {
+      const nyckel = vektorNyckel(slag);
+      if (!nyckel || !vy) continue;
+      if (vektorCache.has(nyckel)) {
+        vektorFelPerSlag.delete(slag);
+        continue;
+      }
+      if (vektorAvbryt.get(slag)?.nyckel === nyckel) continue;
+      const [kid, sc] = nyckel.split("|") as [string, string];
+      const ctrl = new AbortController();
+      vektorAvbryt.set(slag, { nyckel, ctrl });
+      vektorLaddar.add(slag);
+      vektorFelPerSlag.delete(slag);
+      uppdrag.push(
+        (async () => {
+          try {
+            const svar = await lasJson<VektorSvar>(
+              vektorUrl(kid, sc, slag, vektorGrans[slag] ?? null),
+              { signal: ctrl.signal },
+            );
+            if (avslutad || vektorAvbryt.get(slag)?.ctrl !== ctrl) return;
+            vektorAvbryt.delete(slag);
+            vektorLaddar.delete(slag);
+            vektorCache.set(nyckel, svar);
+            sattVektorer();
+            ritaTecken();
+            uppdateraLagerNot();
+          } catch (e) {
+            if (avslutad || arAvbrutetVektorFel(e, ctrl.signal)) return;
+            if (vektorAvbryt.get(slag)?.ctrl !== ctrl) return;
+            vektorAvbryt.delete(slag);
+            vektorLaddar.delete(slag);
+            vektorFelPerSlag.set(
+              slag,
+              `${vektorEtikett(slag)[0]?.toUpperCase()}${vektorEtikett(slag).slice(1)} gick inte att hämta: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            uppdateraLagerNot();
+          }
+        })(),
+      );
+    }
+    uppdateraLagerNot();
+    if (uppdrag.length > 0) await Promise.all(uppdrag);
   };
 
   const rollerNu = (): LagerVal[] => {
@@ -1533,13 +1606,13 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         return `<label class="ar-grans-rad">${esc(g.namn)} <input type="range" min="0" max="100" value="${gransPos(g, v)}" data-grans="${x.slag}" aria-label="${esc(g.namn)}" /> <output data-grans-ut="${x.slag}">${formateraHogst(v, 1)} ${esc(g.enhet)}</output></label>`;
       })
       .join("");
-    const valdRoll = roller.find((x) => x.nyckel === aktivNyckel);
-    const not = [valdRoll ? valText(valdRoll, kartLageForAnalys(), Boolean(vyBas.lage_idag)) : "", vektorFel ?? ""].filter(Boolean).join(" ");
+    const notData = lagerNotData();
+    const notKlass = notData.arFel ? "flode-liten flode-fel" : "flode-liten flode-dampad";
     return `<div class="ar-lagerblock" aria-label="Kartlager">
       <span class="ar-sektion-rubrik">Kartlager</span>
       <div class="ar-lagerknappar" role="group" aria-label="${esc(lagerGruppEtikettForAmne(amne))}">${knappar.join("")}</div>
       ${gransRader ? `<div class="ar-grans-rader">${gransRader}</div>` : ""}
-      ${not ? `<p class="flode-liten flode-dampad">${esc(not)}</p>` : ""}
+      <p class="${notKlass}" id="ar-lager-not" role="status" aria-live="polite"${notData.text ? "" : " hidden"}>${esc(notData.text)}</p>
     </div>`;
   };
 
@@ -4048,6 +4121,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     klar,
     avsluta: () => {
       avslutad = true;
+      for (const post of vektorAvbryt.values()) post.ctrl.abort();
+      vektorAvbryt.clear();
+      vektorLaddar.clear();
       stoppaTidTimer();
       if (kontrollTimer !== null) window.clearTimeout(kontrollTimer);
       if (avlTimer !== null) window.clearTimeout(avlTimer);

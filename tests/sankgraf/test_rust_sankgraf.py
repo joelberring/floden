@@ -638,3 +638,122 @@ def test_rust_paritet_a_fall_testsvit() -> None:
 
         fyll_rs = statisk_fyllning(rs_graf, 0.15)
         assert fyll_rs.volymfel_rel < 1e-6, f"{mapp.name}: volymfel {fyll_rs.volymfel_rel}"
+
+
+def test_avrinningsnat_utdata_validering_crc_och_trunkering(tmp_path: Path) -> None:
+    """`_las_avrinningsnat_utdata` avvisar korrupt CRC, fel läge och trunkerad fil."""
+    flow = np.array([-1, -1, -1, -1], dtype=np.dtype("<i4"))
+    ordn = np.array([0, 1, 2, 3], dtype=np.dtype("<i4"))
+    tillr = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.dtype("<f8"))
+    payload = flow.tobytes() + ordn.tobytes() + tillr.tobytes()
+    crc = zlib.crc32(payload) & 0xFFFFFFFF
+    hdr = rust_brygga._HEADER_UT_STRUCT.pack(  # noqa: SLF001
+        rust_brygga._MAGIC_UT,  # noqa: SLF001
+        rust_brygga._FORMAT_VERSION,  # noqa: SLF001
+        rust_brygga._LAGE_AVRINNINGSNAT_TILLRINNING,  # noqa: SLF001
+        2,
+        2,
+        0,
+        crc,
+        4,
+        0,
+        len(payload),
+        0,
+    )
+    ok_fil = tmp_path / "ok.flsg"
+    ok_fil.write_bytes(hdr + payload)
+    f_ut, o_ut, t_ut = rust_brygga._las_avrinningsnat_utdata(  # noqa: SLF001
+        ok_fil, rust_brygga._LAGE_AVRINNINGSNAT_TILLRINNING, 2, 2  # noqa: SLF001
+    )
+    np.testing.assert_array_equal(f_ut, flow)
+    np.testing.assert_array_equal(o_ut, ordn)
+    assert t_ut is not None
+    np.testing.assert_array_equal(t_ut, tillr)
+
+    # Korrupt byte i payload -> CRC-fel
+    bad_crc = tmp_path / "bad_crc.flsg"
+    raw = bytearray(hdr + payload)
+    raw[-1] ^= 0x01
+    bad_crc.write_bytes(bytes(raw))
+    with pytest.raises(SankGrafRustFel, match="CRC-32"):
+        rust_brygga._las_avrinningsnat_utdata(  # noqa: SLF001
+            bad_crc, rust_brygga._LAGE_AVRINNINGSNAT_TILLRINNING, 2, 2  # noqa: SLF001
+        )
+
+    # Fel läge i header
+    with pytest.raises(SankGrafRustFel, match="Fel körläge"):
+        rust_brygga._las_avrinningsnat_utdata(  # noqa: SLF001
+            ok_fil, rust_brygga._LAGE_AVRINNINGSNAT, 2, 2  # noqa: SLF001
+        )
+
+
+def test_rust_paritet_avrinningsnat_och_tillrinning() -> None:
+    """Bitidentisk paritet mellan Rust (`Lage::Avrinningsnat*`) och Python `avrinningsnat.py`."""
+    binar = _krav_eller_skip_rust_binar()
+    from sankgraf.avrinningsnat import (
+        _fyll_och_riktning_python,
+        avrinningsnat_ur_falt,
+        tillrinning,
+    )
+    from sankgraf.rust_brygga import (
+        kor_avrinningsnat_rust,
+        kor_avrinningsnat_tillrinning_rust,
+    )
+
+    rng = np.random.default_rng(123)
+    # 1. Kuperad + platå + byggnader + slutet område (inre gård) + takvatten
+    h, b = 120, 100
+    yy, xx = np.mgrid[0:h, 0:b].astype(np.float64)
+    z = (
+        10.0
+        + 0.04 * np.abs(xx - b / 2.0)
+        + 0.02 * (h - yy)
+        + 0.35 * np.sin(xx / 7.0) * np.cos(yy / 9.0)
+        + 0.15 * gaussian_filter(rng.normal(0.0, 1.0, size=(h, b)), sigma=2.5)
+    )
+    # Platt platå med svacka
+    z[20:40, 20:40] = 10.5
+    z[28:33, 28:33] = 9.8
+    aktiv = np.ones((h, b), dtype=np.bool_)
+    # Byggnadsmur runt sluten gård (60..75, 55..70)
+    aktiv[60:76, 55:71] = False
+    aktiv[63:73, 58:68] = True
+    z[67, 62] = 7.2  # lägsta cell i sluten gård
+    extra = np.zeros((h, b), dtype=np.float64)
+    extra[59, 60] = 350.0
+    extra[40, 50] = 500.0
+
+    flow_py, ordn_py = _fyll_och_riktning_python(z, aktiv)
+    flow_rs, ordn_rs = kor_avrinningsnat_rust(z, aktiv, binar=binar)
+    np.testing.assert_array_equal(flow_rs, flow_py)
+    np.testing.assert_array_equal(ordn_rs, ordn_py)
+
+    egen = np.where(aktiv, 1.0, 0.0) + np.where(aktiv, extra, 0.0)
+    a_py = tillrinning(flow_py, ordn_py, egen)
+    flow_rs2, ordn_rs2, a_rs = kor_avrinningsnat_tillrinning_rust(z, aktiv, egen, binar=binar)
+    np.testing.assert_array_equal(flow_rs2, flow_py)
+    np.testing.assert_array_equal(ordn_rs2, ordn_py)
+    np.testing.assert_allclose(a_rs, a_py, rtol=0.0, atol=1e-12)
+
+    str_py = avrinningsnat_ur_falt(
+        z,
+        aktiv,
+        extra,
+        x_min=150000.0,
+        y_max=6580000.0,
+        pixel_m=1.0,
+        min_yta_m2=150.0,
+        anvand_rust=False,
+    )
+    str_rs = avrinningsnat_ur_falt(
+        z,
+        aktiv,
+        extra,
+        x_min=150000.0,
+        y_max=6580000.0,
+        pixel_m=1.0,
+        min_yta_m2=150.0,
+        anvand_rust=True,
+    )
+    assert str_rs == str_py
+    assert len(str_rs) > 0

@@ -76,8 +76,11 @@ from webb.subproc_kor import (
     SubprocAvbrutenFel,
     SubprocFel,
     SubprocHanterare,
+    SubprocMinneFel,
+    SubprocTimeoutFel,
     befintlig_sokvag,
     kor_fraga_i_barnprocess,
+    kor_vektor_i_barnprocess,
     las_framsteg,
 )
 
@@ -327,14 +330,18 @@ class FragaTjanst:
         """Låsfri ögonblicksbild av körkön för `GET /api/halsa`."""
         return dict(self._ko_snapshot)
 
-    def _las_for_korning(self, korning_id: str) -> threading.RLock:
-        """Per-körningslås så tung PNG/mosaik/byggnads-rendering inte blockerar andra körningar."""
+    def _las_for_nyckel(self, nyckel: str) -> threading.RLock:
+        """Finkornigt lås per nyckel (t.ex. körning eller enskilt vektorlager)."""
         with self._lock:
-            las = self._korningslas.get(korning_id)
+            las = self._korningslas.get(nyckel)
             if las is None:
                 las = threading.RLock()
-                self._korningslas[korning_id] = las
+                self._korningslas[nyckel] = las
             return las
+
+    def _las_for_korning(self, korning_id: str) -> threading.RLock:
+        """Per-körningslås så tung PNG/mosaik/byggnads-rendering inte blockerar andra körningar."""
+        return self._las_for_nyckel(korning_id)
 
     def stang(self, *, vanta: bool = True) -> None:
         """Stänger bakgrundsexekutorn och ev. barnprocesser rent (idempotent, inga zombies)."""
@@ -688,17 +695,28 @@ class FragaTjanst:
             for kid in korning_ids:
                 self._korningar.pop(kid, None)
                 self._korningslas.pop(kid, None)
+                prefix = f"vektor:{kid}:"
+                for nyckel in [k for k in self._korningslas if k.startswith(prefix)]:
+                    self._korningslas.pop(nyckel, None)
                 if kid in self._ko_ordning:
                     self._ko_ordning.remove(kid)
                 self._aktiva_korningar.discard(kid)
             self._uppdatera_ko_snapshot()
 
-    def _hitta_pagande(self, ref: str, projekt_id: str | None) -> Korning | None:
-        """Pågående/köad körning för `(ref, projekt_id)` (anropas under `self._lock`)."""
+    def _hitta_pagande(
+        self, ref: str, projekt_id: str | None, plan_nyckel: str | None = None
+    ) -> Korning | None:
+        """Pågående/köad körning för `(ref, projekt_id)` och ev. `plan_nyckel`."""
         for k in self._korningar.values():
             # Återanvänd bara en pågående körning i samma projekt: annars skulle någon få ett
-            # körnings-id som den inte har rätt att läsa.
-            if k.ref == ref and k.status in ("ko", "kor") and k.projekt_id == projekt_id:
+            # körnings-id som den inte har rätt att läsa. Skiljer sig `plan_nyckel` (t.ex. byte
+            # från Standard till 10-årsregn på samma frågefil) startas en ny körning.
+            if (
+                k.ref == ref
+                and k.status in ("ko", "kor")
+                and k.projekt_id == projekt_id
+                and (plan_nyckel is None or k.plan_nyckel is None or k.plan_nyckel == plan_nyckel)
+            ):
                 return k
         return None
 
@@ -710,11 +728,9 @@ class FragaTjanst:
                 raise KoFullFel(
                     "Servern håller på att stängas ner och tar inte emot nya körningar."
                 )
-            befintlig = self._hitta_pagande(ref, projekt_id)
-            if befintlig is not None:
-                return {**self._status(befintlig), "ateranvand": True}
         self._kontrollera_diskutrymme()
         plan = self._planera(fraga)  # tydligt fel direkt, innan något köas
+        plan_nyckel = _plan_nyckel(plan)
         korning_id = (
             f"{fraga.fraga_id}-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(2)}"
         )
@@ -725,7 +741,7 @@ class FragaTjanst:
             fraga_fil=self._visa(fil),
             mapp=self.korningsmapp / korning_id,
             jobb_totalt=len(plan.jobb),
-            plan_nyckel=_plan_nyckel(plan),
+            plan_nyckel=plan_nyckel,
             plan=plan,
             projekt_id=projekt_id,
         )
@@ -735,7 +751,7 @@ class FragaTjanst:
                     "Servern håller på att stängas ner och tar inte emot nya körningar."
                 )
             # Omkontroll under `_lock` efter `_planera` för att förhindra TOCTOU-dubbelkörning.
-            befintlig = self._hitta_pagande(ref, projekt_id)
+            befintlig = self._hitta_pagande(ref, projekt_id, plan_nyckel)
             if befintlig is not None:
                 return {**self._status(befintlig), "ateranvand": True}
             if len(self._aktiva_korningar) + len(self._ko_ordning) >= 1 + self.max_ko:
@@ -1603,7 +1619,7 @@ class FragaTjanst:
             "sankor": f".v2.{vol:g}.{djup:g}",
         }.get(slag, "")
         cachefil = k.mapp / "webb" / f"vektor.{scenario}.{slag}{suffix}.json"
-        las = self._las_for_korning(k.korning_id)
+        las = self._las_for_nyckel(f"vektor:{k.korning_id}:{scenario}:{slag}")
         with las:
             if cachefil.is_file():
                 cachad: dict[str, Any] = json.loads(cachefil.read_text(encoding="utf-8"))
@@ -1803,6 +1819,231 @@ class FragaTjanst:
             graf = replace(graf, takvatten=tv)
         return graf
 
+    @classmethod
+    def _ladda_avrinningsnat_underlag(
+        cls,
+        mappar: Sequence[Path],
+        *,
+        takvatten: bool,
+        takvatten_andel_ledning: float,
+    ) -> tuple[Any, np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any] | None]:
+        """Läser höjd, markslag, öppningar och ev. takvatten för flödesvägar (utan sänkgraf)."""
+        from karna.inbyggda import kontrollera_sankgraf_celler
+        from sankgraf.hierarki import _applicera_oppningar, sammanfoga_rutor
+        from sankgraf.takvatten import bygg_takvatten, las_takpolygoner
+        from sankgraf.typer import MARKSLAG_BYGGNAD, las_oppningar_fran_gpkg
+        from testsvit.k1_io import las_geotiff
+
+        oppningar: list[Any] = []
+        sedda_opp: set[Any] = set()
+        tak_per_id: dict[str, Any] = {}
+
+        if len(mappar) == 1:
+            mapp = mappar[0]
+            mark_raw, glob_geo = las_geotiff(mapp / "mark.tif")
+            slag_raw, _ = las_geotiff(mapp / "markslag.tif")
+            glob_mark = np.asarray(mark_raw, dtype=np.float32)
+            glob_slag = np.asarray(slag_raw, dtype=np.uint8)
+            opp_fil = mapp / "oppningar.gpkg"
+            if opp_fil.is_file():
+                oppningar = list(las_oppningar_fran_gpkg(opp_fil))
+            if takvatten:
+                bygg_fil = mapp / "byggnader.gpkg"
+                if bygg_fil.is_file():
+                    for tp in las_takpolygoner(bygg_fil):
+                        tak_per_id.setdefault(tp.byggnad_id, tp)
+        else:
+            rut_data: list[tuple[Any, Any, Any, Any]] = []
+            geos: list[Any] = []
+            for mapp in mappar:
+                mark_raw, geo = las_geotiff(mapp / "mark.tif")
+                slag_raw, _ = las_geotiff(mapp / "markslag.tif")
+                mark_f32 = np.asarray(mark_raw, dtype=np.float32)
+                geos.append(geo)
+                rut_data.append(
+                    (
+                        geo,
+                        mark_f32,
+                        np.zeros_like(mark_f32, dtype=np.float32),
+                        np.asarray(slag_raw, dtype=np.uint8),
+                    )
+                )
+                opp_fil = mapp / "oppningar.gpkg"
+                if opp_fil.is_file():
+                    for o in las_oppningar_fran_gpkg(opp_fil):
+                        nyckel_o = (o.typ, o.bredd_m, o.botten_rh2000, tuple(o.koordinater))
+                        if nyckel_o not in sedda_opp:
+                            sedda_opp.add(nyckel_o)
+                            oppningar.append(o)
+                if takvatten:
+                    bygg_fil = mapp / "byggnader.gpkg"
+                    if bygg_fil.is_file():
+                        for tp in las_takpolygoner(bygg_fil):
+                            tak_per_id.setdefault(tp.byggnad_id, tp)
+            overlapp_m = cls._bestam_overlapp_m(mappar, geos)
+            glob_geo, glob_mark, _glob_osak, glob_slag = sammanfoga_rutor(
+                rut_data, overlapp_m=overlapp_m
+            )
+            del _glob_osak, rut_data
+
+        kontrollera_sankgraf_celler(int(glob_mark.shape[0] * glob_mark.shape[1]), len(mappar))
+        eff_z, eff_slag = _applicera_oppningar(glob_mark, glob_slag, glob_geo, oppningar)
+        aktiv = np.asarray(eff_slag != MARKSLAG_BYGGNAD, dtype=bool) & np.isfinite(eff_z)
+
+        extra: np.ndarray[Any, Any] | None = None
+        if takvatten:
+            takpolygoner = tuple(tak_per_id[bid] for bid in sorted(tak_per_id))
+            oppning_mask = np.asarray(
+                (glob_slag == MARKSLAG_BYGGNAD) & (eff_slag != MARKSLAG_BYGGNAD),
+                dtype=np.bool_,
+            )
+            tv = bygg_takvatten(
+                eff_z,
+                eff_slag,
+                glob_geo,
+                byggnader=takpolygoner,
+                andel_ledning=takvatten_andel_ledning,
+                oppning_mask=oppning_mask if np.any(oppning_mask) else None,
+            )
+            if not tv.tom:
+                extra = np.asarray(tv.extra_area_m2, dtype=np.float64)
+        return glob_geo, eff_z, aktiv, extra
+
+    @staticmethod
+    def _spara_avrinningsnat_bas_atomiskt(
+        mal: Path,
+        *,
+        z: np.ndarray[Any, Any],
+        flow: np.ndarray[Any, Any],
+        ordn: np.ndarray[Any, Any],
+        a: np.ndarray[Any, Any],
+        x_min: float,
+        y_max: float,
+        pixel_m: float,
+    ) -> None:
+        mal.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp_namn = tempfile.mkstemp(prefix=f".{mal.name}.", suffix=".tmp", dir=mal.parent)
+        tmp = Path(tmp_namn)
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                np.savez(
+                    fh,
+                    z=np.asarray(z, dtype=np.float32),
+                    flow=np.asarray(flow, dtype=np.int32),
+                    ordn=np.asarray(ordn, dtype=np.int32),
+                    a=np.asarray(a, dtype=np.float64),
+                    geo=np.asarray([float(x_min), float(y_max), float(pixel_m)], dtype=np.float64),
+                )
+            os.replace(tmp, mal)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _las_avrinningsnat_bas(
+        mal: Path,
+    ) -> tuple[
+        np.ndarray[Any, Any],
+        np.ndarray[Any, Any],
+        np.ndarray[Any, Any],
+        np.ndarray[Any, Any],
+        float,
+        float,
+        float,
+    ] | None:
+        if not mal.is_file():
+            return None
+        try:
+            with np.load(mal, allow_pickle=False) as d:
+                z = np.asarray(d["z"], dtype=np.float32)
+                flow = np.asarray(d["flow"], dtype=np.int32)
+                ordn = np.asarray(d["ordn"], dtype=np.int32)
+                a = np.asarray(d["a"], dtype=np.float64)
+                geo = np.asarray(d["geo"], dtype=np.float64)
+            if geo.size != 3 or z.ndim != 2 or flow.size != z.size or a.size != z.size:
+                raise ValueError("Ogiltiga dimensioner i avrinningsnat-cache.")
+            return z, flow, ordn, a, float(geo[0]), float(geo[1]), float(geo[2])
+        except Exception:  # noqa: BLE001 - trasig cachefil rensas och räknas om rent
+            mal.unlink(missing_ok=True)
+            return None
+
+    @classmethod
+    def _berakna_sankgraf_vektor_fran_mappar(
+        cls,
+        mappar: Sequence[Path],
+        *,
+        slag: str,
+        persistens_faktor: float | None,
+        takvatten: bool,
+        takvatten_andel_ledning: float,
+        min_yta_m2: float,
+        min_volym_m3: float,
+        min_djup_m: float,
+        bas_npz: Path | None = None,
+    ) -> dict[str, Any]:
+        """Bygger `sankor` eller `flodesvagar` ur K1-rutor (anropas direkt eller i barnprocess)."""
+        if slag == "flodesvagar":
+            from sankgraf.avrinningsnat import berakna_avrinningsfalt, strackor_fran_falt
+
+            cachad = cls._las_avrinningsnat_bas(bas_npz) if bas_npz is not None else None
+            if cachad is not None:
+                z_arr, flow, ordn, a, x_min, y_max, pixel_m = cachad
+            else:
+                glob_geo, eff_z, aktiv, extra = cls._ladda_avrinningsnat_underlag(
+                    mappar,
+                    takvatten=takvatten,
+                    takvatten_andel_ledning=takvatten_andel_ledning,
+                )
+                pixel_m = float(glob_geo.pixelstorlek_x)
+                x_min = float(glob_geo.x_min)
+                y_max = float(glob_geo.y_max)
+                z64 = np.asarray(eff_z, dtype=np.float64)
+                flow, ordn, a = berakna_avrinningsfalt(z64, aktiv, extra, pixel_m=pixel_m)
+                z_arr = eff_z
+                if bas_npz is not None:
+                    cls._spara_avrinningsnat_bas_atomiskt(
+                        bas_npz,
+                        z=z_arr,
+                        flow=flow,
+                        ordn=ordn,
+                        a=a,
+                        x_min=x_min,
+                        y_max=y_max,
+                        pixel_m=pixel_m,
+                    )
+            vagar = strackor_fran_falt(
+                z_arr,
+                flow,
+                ordn,
+                a,
+                x_min=x_min,
+                y_max=y_max,
+                pixel_m=pixel_m,
+                min_yta_m2=min_yta_m2,
+            )
+            return analysvektor.flodesvagar_fran_strackor(vagar, min_yta_m2)
+
+        from sankgraf.fyllning import kor_statisk_k1_mapp
+
+        if len(mappar) == 1:
+            graf, _ = kor_statisk_k1_mapp(
+                mappar[0],
+                regn_m=0.0,
+                persistens_faktor=persistens_faktor,
+                takvatten=takvatten,
+                takvatten_andel_ledning=takvatten_andel_ledning,
+            )
+        else:
+            graf = cls._bygg_flerruts_sankgraf(
+                mappar,
+                persistens_faktor=persistens_faktor,
+                takvatten=takvatten,
+                takvatten_andel_ledning=takvatten_andel_ledning,
+            )
+        return analysvektor.sankor_geojson(
+            graf, min_volym_m3=min_volym_m3, min_djup_m=min_djup_m
+        )
+
     def _sankgraf_vektor(
         self,
         k: Korning,
@@ -1813,8 +2054,6 @@ class FragaTjanst:
         min_volym_m3: float,
         min_djup_m: float,
     ) -> dict[str, Any]:
-        from sankgraf.fyllning import kor_statisk_k1_mapp
-
         jobb = next(
             (
                 j
@@ -1870,29 +2109,84 @@ class FragaTjanst:
                 varning or "Scenariot saknar K1-rutor för sänkor och flödesvägar.",
                 status_kod=409,
             )
-        try:
-            if len(mappar) == 1:
-                graf, _ = kor_statisk_k1_mapp(
-                    mappar[0],
-                    regn_m=0.0,
-                    persistens_faktor=par.get("persistens_faktor"),
-                    takvatten=bool(par.get("takvatten", True)),
-                    takvatten_andel_ledning=float(par.get("takvatten_andel_ledning", 0.0)),
-                )
-            else:
-                graf = self._bygg_flerruts_sankgraf(
+        persistens_faktor = par.get("persistens_faktor")
+        takvatten = bool(par.get("takvatten", True))
+        takvatten_andel_ledning = float(par.get("takvatten_andel_ledning", 0.0))
+        bas_npz = k.mapp / "webb" / f"avrinningsnat.{scenario}.v2.npz"
+
+        # Snabbväg: när avrinningsfältet redan är beräknat och cachat räcker en lätt tröskling.
+        if slag == "flodesvagar" and bas_npz.is_file():
+            try:
+                return self._berakna_sankgraf_vektor_fran_mappar(
                     mappar,
-                    persistens_faktor=par.get("persistens_faktor"),
-                    takvatten=bool(par.get("takvatten", True)),
-                    takvatten_andel_ledning=float(par.get("takvatten_andel_ledning", 0.0)),
+                    slag=slag,
+                    persistens_faktor=persistens_faktor,
+                    takvatten=takvatten,
+                    takvatten_andel_ledning=takvatten_andel_ledning,
+                    min_yta_m2=min_yta_m2,
+                    min_volym_m3=min_volym_m3,
+                    min_djup_m=min_djup_m,
+                    bas_npz=bas_npz,
                 )
+            except Exception as exc:  # ett tydligt fel i stället för ett tyst tomt lager
+                raise FlodenWebbFel(
+                    f"Flödesvägarna kunde inte byggas: {exc}", status_kod=409
+                ) from exc
+
+        if self.exekutor_lage == "process":
+            webbmapp = k.mapp / "webb"
+            webbmapp.mkdir(parents=True, exist_ok=True)
+            fd, tmp_ut = tempfile.mkstemp(
+                prefix=f".vektor_ut_{scenario}_{slag}_", suffix=".json", dir=str(webbmapp)
+            )
+            os.close(fd)
+            ut_fil = Path(tmp_ut)
+            ut_fil.unlink(missing_ok=True)
+            try:
+                kor_vektor_i_barnprocess(
+                    slag=slag,
+                    mappar=mappar,
+                    persistens_faktor=persistens_faktor,
+                    takvatten=takvatten,
+                    takvatten_andel_ledning=takvatten_andel_ledning,
+                    min_yta_m2=min_yta_m2,
+                    min_volym_m3=min_volym_m3,
+                    min_djup_m=min_djup_m,
+                    ut_json=ut_fil,
+                    bas_npz=bas_npz if slag == "flodesvagar" else None,
+                    max_ram_mb=self.jobb_max_ram_mb,
+                    max_tid_s=self.jobb_max_tid_s,
+                    hanterare=self._subproc,
+                )
+                ut_data: dict[str, Any] = json.loads(ut_fil.read_text(encoding="utf-8"))
+                return ut_data
+            except (SubprocMinneFel, SubprocTimeoutFel, SubprocAvbrutenFel) as exc:
+                raise FlodenWebbFel(str(exc), status_kod=503) from exc
+            except SubprocFel as exc:
+                raise FlodenWebbFel(
+                    f"Sänkgrafen kunde inte byggas: {exc}", status_kod=409
+                ) from exc
+            except (OSError, ValueError) as exc:
+                raise FlodenWebbFel(
+                    f"Vektorlagret kunde inte läsas från barnprocessen: {exc}", status_kod=500
+                ) from exc
+            finally:
+                ut_fil.unlink(missing_ok=True)
+
+        try:
+            return self._berakna_sankgraf_vektor_fran_mappar(
+                mappar,
+                slag=slag,
+                persistens_faktor=persistens_faktor,
+                takvatten=takvatten,
+                takvatten_andel_ledning=takvatten_andel_ledning,
+                min_yta_m2=min_yta_m2,
+                min_volym_m3=min_volym_m3,
+                min_djup_m=min_djup_m,
+                bas_npz=bas_npz if slag == "flodesvagar" else None,
+            )
         except Exception as exc:  # ett tydligt fel i stället för ett tyst tomt lager
             raise FlodenWebbFel(f"Sänkgrafen kunde inte byggas: {exc}", status_kod=409) from exc
-        return (
-            analysvektor.sankor_geojson(graf, min_volym_m3=min_volym_m3, min_djup_m=min_djup_m)
-            if slag == "sankor"
-            else analysvektor.flodesvagar_geojson(graf, min_yta_m2)
-        )
 
     # Byggnader, antaganden och avläsning --------------------------------------------------
 

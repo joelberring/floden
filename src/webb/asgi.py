@@ -179,6 +179,7 @@ class FlodenAsgiApp:
         self.max_samtidiga_berakningar = eff_max_samtidiga
         self.ko_timeout_s = float(ko_timeout_s)
         self._semafor_per_loop: dict[int, asyncio.Semaphore] = {}
+        self._vektor_semafor_per_loop: dict[int, asyncio.Semaphore] = {}
 
     def _semafor(self) -> asyncio.Semaphore:
         loop = asyncio.get_running_loop()
@@ -188,6 +189,29 @@ class FlodenAsgiApp:
             sem = asyncio.Semaphore(self.max_samtidiga_berakningar)
             self._semafor_per_loop[nyckel] = sem
         return sem
+
+    def _vektor_semafor(self) -> asyncio.Semaphore:
+        """Separat semafor för tunga vektorlager (`sankor`/`flodesvagar`) så att snabba
+        `POST .../kor`, status-pollar och `/api/halsa` aldrig svälts ut i `to_thread`-poolen."""
+        loop = asyncio.get_running_loop()
+        nyckel = id(loop)
+        sem = self._vektor_semafor_per_loop.get(nyckel)
+        if sem is None:
+            sem = asyncio.Semaphore(max(2, self.max_samtidiga_berakningar))
+            self._vektor_semafor_per_loop[nyckel] = sem
+        return sem
+
+    @staticmethod
+    def _ar_tung_vektor(metod: str, sokvag: str) -> bool:
+        """Sant för `GET /api/korningar/<id>/vektor/<scenario>/<sankor|flodesvagar>`."""
+        if metod != "GET":
+            return False
+        ren = sokvag.rstrip("/") or "/"
+        delar = [d for d in ren.split("/") if d]
+        if len(delar) != 6 or delar[:2] != ["api", "korningar"] or delar[3] != "vektor":
+            return False
+        slag = delar[5].removesuffix(".json")
+        return slag in ("sankor", "flodesvagar")
 
     _TUNGA_EXAKTA: frozenset[str] = frozenset(
         {"/api/kor", "/api/risk", "/api/rapport", "/api/rutt", "/api/projekt"}
@@ -374,6 +398,30 @@ class FlodenAsgiApp:
                 )
             finally:
                 sem.release()
+        elif self._ar_tung_vektor(metod, sokvag):
+            vsem = self._vektor_semafor()
+            try:
+                await asyncio.wait_for(vsem.acquire(), timeout=max(2.0, self.ko_timeout_s))
+            except TimeoutError:
+                await _skicka_fel(
+                    send,
+                    503,
+                    "Servern beräknar redan vektorlager (sänkor/flödesvägar). "
+                    "Försök igen om en liten stund.",
+                    extra_rubriker=(("Retry-After", "2"),),
+                    huvud=huvud,
+                )
+                return
+            try:
+                status, ut_headers, ut_kropp = await asyncio.to_thread(
+                    self.app.hantera_http,
+                    metod,
+                    full_sokvag,
+                    rubriker,
+                    _hamta_kropp,
+                )
+            finally:
+                vsem.release()
         else:
             status, ut_headers, ut_kropp = await asyncio.to_thread(
                 self.app.hantera_http,

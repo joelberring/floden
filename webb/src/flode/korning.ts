@@ -46,6 +46,7 @@ async function standardApi(): Promise<KorningApi> {
 type Lyssnare = () => void;
 const lyssnare = new Set<Lyssnare>();
 const timers = new Map<string, ReturnType<typeof setInterval>>();
+const startTimers = new Map<string, ReturnType<typeof setInterval>>();
 const aktivaFilter = new Map<string, AktivKorningFilter>();
 const pagaendeKoll = new Set<string>();
 const klaraAvsnittPerProjekt = new Map<string, string[]>();
@@ -200,10 +201,34 @@ export function arPagaende(t: FlodeTillstand): boolean {
   return Boolean(t.korning && !t.korning.klar);
 }
 
+function stoppaStartTimer(projekt: string): void {
+  const sid = startTimers.get(projekt);
+  if (sid !== undefined) clearInterval(sid);
+  startTimers.delete(projekt);
+}
+
 function stoppa(projekt: string): void {
+  stoppaStartTimer(projekt);
   const id = timers.get(projekt);
   if (id !== undefined) clearInterval(id);
   timers.delete(projekt);
+}
+
+function startaVanteKlocka(t: FlodeTillstand, startadMs: number, prefix: string): void {
+  stoppaStartTimer(t.projekt);
+  startTimers.set(
+    t.projekt,
+    setInterval(() => {
+      const k = t.korning;
+      if (!k || k.klar || k.startadMs !== startadMs) {
+        stoppaStartTimer(t.projekt);
+        return;
+      }
+      const s = Math.max(0, Math.round((Date.now() - startadMs) / 1000));
+      t.korning = { ...k, text: `${prefix} (${formatera(s, 0)} s)` };
+      signalera();
+    }, 1000),
+  );
 }
 
 /**
@@ -273,6 +298,7 @@ export async function startaKorning(
   klaraAvsnittPerProjekt.set(t.projekt, []);
   t.korning = { slug: sc.slug, text: "Beräknar … (0 s)", klar: false, fel: null, startadMs };
   signalera();
+  startaVanteKlocka(t, startadMs, "Beräknar …");
   const mallar = mallarFranAnalyser(analyser);
   const harVatten = mallar.has("vatten");
   const harSol = mallar.has("dagsljus");
@@ -288,9 +314,12 @@ export async function startaKorning(
       harVatten ? t.skyfallMetod : null,
     );
   } catch (e) {
+    stoppaStartTimer(t.projekt);
     t.korning = { slug: sc.slug, text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs };
     signalera();
     return;
+  } finally {
+    stoppaStartTimer(t.projekt);
   }
   aktivaFilter.set(t.projekt, extraktStartatFilter(svar, analyser));
   stoppa(t.projekt);
@@ -316,6 +345,7 @@ export async function startaLageIdag(
   klaraAvsnittPerProjekt.set(t.projekt, []);
   t.korning = { slug: "", text: `Beräknar nuläge … (${formatera(0, 0)} s)`, klar: false, fel: null, startadMs, lage: true };
   signalera();
+  startaVanteKlocka(t, startadMs, "Beräknar nuläge …");
   const mallar = mallarFranAnalyser(analyser);
   const harVatten = mallar.has("vatten");
   const harSol = mallar.has("dagsljus");
@@ -330,9 +360,12 @@ export async function startaLageIdag(
       harVatten ? t.skyfallMetod : null,
     );
   } catch (e) {
+    stoppaStartTimer(t.projekt);
     t.korning = { slug: "", text: "", klar: true, fel: e instanceof Error ? e.message : String(e), startadMs, lage: true };
     signalera();
     return;
+  } finally {
+    stoppaStartTimer(t.projekt);
   }
   aktivaFilter.set(t.projekt, extraktStartatFilter(svar, analyser));
   stoppa(t.projekt);
