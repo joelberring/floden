@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import urllib.parse
+import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,8 +117,12 @@ def hamta_nmd(
     if not medlemmar:
         raise KommunKallaFel(f"NMD-paketet {p.namn} innehåller ingen GeoTIFF (.tif/.tiff).")
     vald = medlemmar[0]
-    mal = p.fil.parent / Path(vald)
-    if not mal.is_file():
+    mal = (p.fil.parent / hashlib.sha256(vald.encode()).hexdigest()[:12]).with_suffix(
+        Path(vald).suffix.lower()
+    )
+    with zipfile.ZipFile(p.fil) as zf:
+        forvantad_storlek = zf.getinfo(vald).file_size
+    if not (mal.is_file() and mal.stat().st_size == forvantad_storlek):
         skriv(f"  Packar upp {Path(vald).name} till filcachen ...")
         mal = packa_upp_medlem(p.fil, vald, p.fil.parent)
     return mal, p

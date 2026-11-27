@@ -68,11 +68,19 @@ def nmd_raster_for_ruta(nmd_fil: Path, ruta: Ruta) -> NDArray[np.uint8]:
 
 
 def nmd_till_k1_markslag(nmd_koder: NDArray[np.uint8]) -> NDArray[np.uint8]:
-    """Översätter NMD-basskiktets klasskoder till K1-markslag (byggnader bränns in ovanpå senare)."""
+    """Översätter NMD-basskiktets klasskoder till K1-markslag (byggnader bränns in ovanpå senare).
+
+    NMD-kodnyckel (Naturvårdsverket NMD 2018 basskikt):
+    - 2 = Öppen våtmark, 3 = Åkermark, 42 = Övrig öppen mark med vegetation -> GRAS (4)
+    - 41 = Övrig öppen mark utan vegetation (hällmark/berg/grus) -> BERG (6)
+    - 51/52/53 = Exploaterad mark (byggnad/övrig/väg) -> HARDGJORT (1)
+    - 61/62 = Sjöar/vattendrag och hav -> VATTEN (8)
+    - 111–118, 121–128 = Skog -> SKOG (5)
+    """
     ut = np.full(nmd_koder.shape, HARDGJORT, dtype=np.uint8)
-    ut[(nmd_koder == 2) | (nmd_koder == 41) | (nmd_koder == 42)] = GRAS
+    ut[(nmd_koder == 2) | (nmd_koder == 3) | (nmd_koder == 42)] = GRAS
+    ut[nmd_koder == 41] = BERG
     ut[((nmd_koder >= 111) & (nmd_koder <= 118)) | ((nmd_koder >= 121) & (nmd_koder <= 128))] = SKOG
-    ut[nmd_koder == 3] = BERG
     ut[(nmd_koder == 61) | (nmd_koder == 62)] = VATTEN
     return ut
 

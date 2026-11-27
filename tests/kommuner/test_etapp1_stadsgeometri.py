@@ -158,12 +158,13 @@ def test_brytlinjer_gator_och_trad_ur_baskarta(tmp_path: Path) -> None:
 
 
 def test_nmd_till_k1_markslag_och_inbranning_i_k1_filpaket(tmp_path: Path) -> None:
+    # NMD 3 = Åkermark -> GRAS, NMD 41 = Öppen mark utan vegetation -> BERG, NMD 2/42 -> GRAS
     koder = np.array([[51, 52, 53, 41], [42, 111, 128, 3], [61, 62, 2, 0]], dtype=np.uint8)
     slag = nmd_till_k1_markslag(koder)
     assert slag[0, 0] == HARDGJORT and slag[0, 1] == HARDGJORT and slag[0, 2] == HARDGJORT
-    assert slag[0, 3] == GRAS and slag[1, 0] == GRAS and slag[2, 2] == GRAS
+    assert slag[0, 3] == BERG
+    assert slag[1, 0] == GRAS and slag[1, 3] == GRAS and slag[2, 2] == GRAS
     assert slag[1, 1] == SKOG and slag[1, 2] == SKOG
-    assert slag[1, 3] == BERG
     assert slag[2, 0] == VATTEN and slag[2, 1] == VATTEN
     assert slag[2, 3] == HARDGJORT
 
@@ -325,3 +326,48 @@ def test_5km_och_10km_dem_skarv_valjer_alla_overlappande_paket(tmp_path: Path) -
     ax_bbox_3011 = transform_bounds(3007, 3011, 146000.0, 6398000.0, 147000.0, 6399000.0)
     # Den axeljusterade 3011-boxens hörn ligger utanför den roterade 3007-kvadraten
     assert not _tacker(hoj, ax_bbox_3011)
+
+
+def test_hamta_nmd_ateranvander_uppackad_cachefil_utan_ny_uppackning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Andra anropet till `hamta_nmd` ska återanvända den hashade GeoTIFF:en i cachen utan att packa upp ZIP:en igen."""
+    import kommuner.filkallor as fk
+
+    k = las_kommun("goteborg", rot=REPO)
+    assert k.filpaket is not None and k.filpaket.nmd is not None
+    nmd_url = k.filpaket.nmd.urlar[0]
+
+    tif_src = tmp_path / "O_lan_nmd2018bas_ogeneraliserad_v1_1.tif"
+    tif_src.write_bytes(b"FAKE-GEOTIFF-BYTES-12345")
+    zp = tmp_path / "nmd.zip"
+    with zipfile.ZipFile(zp, "w") as zf:
+        zf.write(tif_src, "O_lan/O_lan_nmd2018bas_ogeneraliserad_v1_1.tif")
+    zip_bytes = zp.read_bytes()
+
+    hamtningar: list[str] = []
+
+    def _hamtare(url: str, mal: Path) -> None:
+        assert url == nmd_url
+        hamtningar.append(url)
+        mal.write_bytes(zip_bytes)
+
+    uppackningar = 0
+    orig_packa = fk.packa_upp_medlem
+
+    def _rakna_packa(*args: Any, **kwargs: Any) -> Path:
+        nonlocal uppackningar
+        uppackningar += 1
+        return orig_packa(*args, **kwargs)
+
+    monkeypatch.setattr(fk, "packa_upp_medlem", _rakna_packa)
+
+    cache = tmp_path / "_filcache"
+    ut1, _ = fk.hamta_nmd(k, cache, hamtare=_hamtare, skriv=lambda _: None)
+    assert ut1.is_file() and ut1.read_bytes() == b"FAKE-GEOTIFF-BYTES-12345"
+    assert len(hamtningar) == 1 and uppackningar == 1
+
+    # Andra anropet: varken ny nedladdning eller ny uppackning
+    ut2, _ = fk.hamta_nmd(k, cache, hamtare=_hamtare, skriv=lambda _: None)
+    assert ut2 == ut1
+    assert len(hamtningar) == 1 and uppackningar == 1
