@@ -52,6 +52,8 @@ _HEADER_UT_STRUCT = struct.Struct("<8sIIIIIIQQQQ")
 _LAGE_KOMPLETT = 0
 _LAGE_AVRINNING = 1
 _LAGE_GRANSPAR = 2
+_LAGE_AVRINNINGSNAT = 3
+_LAGE_AVRINNINGSNAT_TILLRINNING = 4
 
 _SYSTEM_BINAR = Path("/usr/local/bin/sankgraf_karna")
 _REPO_BINAR = (
@@ -203,6 +205,8 @@ def _skriv_indata(
     aktiv_arr: NDArray[np.bool_],
     catch_arr: NDArray[np.int32] | NDArray[np.int64] | None,
     kantbarriarer: Mapping[tuple[int, int], float],
+    *,
+    egen_arr: NDArray[np.float64] | None = None,
 ) -> None:
     if z_arr.ndim != 2 or aktiv_arr.shape != z_arr.shape:
         raise SankGrafRustFel(
@@ -233,6 +237,13 @@ def _skriv_indata(
             raise SankGrafRustFel("catch_2d saknas eller har fel form för GRANSPAR.")
         catch_c = np.ascontiguousarray(catch_arr, dtype=np.dtype("<i4"))
         delar.append(memoryview(catch_c).cast("B"))
+    elif lage == _LAGE_AVRINNINGSNAT_TILLRINNING:
+        if egen_arr is None or egen_arr.size != n_celler:
+            raise SankGrafRustFel(
+                "egen_yta saknas eller har fel längd för AVRINNINGSNAT_TILLRINNING."
+            )
+        egen_c = np.ascontiguousarray(egen_arr.ravel(), dtype=np.dtype("<f8"))
+        delar.append(memoryview(egen_c).cast("B"))
 
     antal_barriarer = len(kantbarriarer)
     if antal_barriarer > 0:
@@ -517,3 +528,170 @@ def kor_granspar_rust(
     if granspar is None:
         raise SankGrafRustFel("Ofullständigt resultat från sankgraf_karna i GRANSPAR-läge.")
     return granspar
+
+
+def _las_avrinningsnat_utdata(
+    ut_fil: Path,
+    forvantat_lage: int,
+    hojd: int,
+    bredd: int,
+) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float64] | None]:
+    if not ut_fil.is_file():
+        raise SankGrafRustFel(f"sankgraf_karna skapade ingen utdatafil ({ut_fil}).")
+    fil_langd = ut_fil.stat().st_size
+    if fil_langd < _HEADER_UT_STRUCT.size:
+        raise SankGrafRustFel(
+            f"Trunkerad utdatafil: {fil_langd} byte < {_HEADER_UT_STRUCT.size} byte header."
+        )
+
+    with ut_fil.open("rb") as fil:
+        hdr_bytes = fil.read(_HEADER_UT_STRUCT.size)
+        if len(hdr_bytes) != _HEADER_UT_STRUCT.size:
+            raise SankGrafRustFel("Kunde inte läsa komplett utdata-header från sankgraf_karna.")
+        (
+            magic,
+            version,
+            lage,
+            h_ut,
+            b_ut,
+            _antal_lov,
+            header_crc,
+            ordning_len,
+            _antal_kanter,
+            header_payload_langd,
+            _reserverad,
+        ) = _HEADER_UT_STRUCT.unpack(hdr_bytes)
+
+        if magic != _MAGIC_UT:
+            raise SankGrafRustFel("Ogiltig magisk signatur i utdatafil från sankgraf_karna.")
+        if version != _FORMAT_VERSION:
+            raise SankGrafRustFel(
+                f"Okänd formatversion {version} i utdatafil (förväntade {_FORMAT_VERSION})."
+            )
+        if lage != forvantat_lage:
+            raise SankGrafRustFel(
+                f"Fel körläge i utdatafil: fick {lage}, förväntade {forvantat_lage}."
+            )
+        if h_ut != hojd or b_ut != bredd:
+            raise SankGrafRustFel(
+                f"Dimensioner i utdatafil ({h_ut}x{b_ut}) matchar inte indata ({hojd}x{bredd})."
+            )
+
+        n_celler = hojd * bredd
+        if ordning_len > n_celler:
+            raise SankGrafRustFel(
+                f"Ogiltig ordningslängd ({ordning_len}) > antal celler ({n_celler})."
+            )
+        har_tillr = lage == _LAGE_AVRINNINGSNAT_TILLRINNING
+        forvantad_payload = (n_celler + int(ordning_len)) * 4 + (n_celler * 8 if har_tillr else 0)
+        if header_payload_langd != forvantad_payload:
+            raise SankGrafRustFel(
+                f"Utdata-headerns payload-längd ({header_payload_langd}) matchar inte "
+                f"förväntad storlek ({forvantad_payload})."
+            )
+        faktisk_payload = fil_langd - _HEADER_UT_STRUCT.size
+        if faktisk_payload != forvantad_payload:
+            raise SankGrafRustFel(
+                f"Korrupt eller trunkerad utdatafil: fick {faktisk_payload} payload-byte, "
+                f"förväntade {forvantad_payload}."
+            )
+
+        crc = 0
+        flow_flat, crc = _las_array(fil, n_celler, np.dtype("<i4"), crc, "flow_to")
+        ordn_flat, crc = _las_array(fil, int(ordning_len), np.dtype("<i4"), crc, "ordning")
+        tillr_arr: NDArray[np.float64] | None = None
+        if har_tillr:
+            tillr_flat, crc = _las_array(fil, n_celler, np.dtype("<f8"), crc, "tillrinning")
+            tillr_arr = np.asarray(tillr_flat, dtype=np.float64)
+
+    if crc != header_crc:
+        raise SankGrafRustFel(
+            f"CRC-32-fel i utdatafil från sankgraf_karna: "
+            f"beräknade {crc:#010x}, header angav {header_crc:#010x}."
+        )
+
+    return np.asarray(flow_flat, dtype=np.int32), np.asarray(ordn_flat, dtype=np.int32), tillr_arr
+
+
+def _kor_avrinningsnat_binar(
+    lage: int,
+    z_arr: NDArray[np.float32] | NDArray[np.float64],
+    aktiv_arr: NDArray[np.bool_],
+    *,
+    egen_arr: NDArray[np.float64] | None = None,
+    binar: str | Path | None = None,
+    timeout_s: float | None = None,
+) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float64] | None]:
+    program = hitta_sankgraf_karna(binar)
+    hojd, bredd = z_arr.shape
+    tmp_dir = Path(tempfile.mkdtemp(prefix="floden-avrinningsnat-"))
+    try:
+        in_fil = tmp_dir / "in.flsg"
+        ut_fil = tmp_dir / "ut.flsg"
+        _skriv_indata(in_fil, lage, z_arr, aktiv_arr, None, {}, egen_arr=egen_arr)
+        try:
+            res = subprocess.run(
+                [str(program), str(in_fil), str(ut_fil)],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise SankGrafRustFel(
+                f"sankgraf_karna överskred tidsgränsen ({timeout_s} s)."
+            ) from exc
+        except OSError as exc:
+            raise SankGrafRustFel(f"Kunde inte starta sankgraf_karna ({program}): {exc}") from exc
+
+        if res.returncode != 0:
+            detalj = res.stderr.strip() or res.stdout.strip() or f"returkod {res.returncode}"
+            raise SankGrafRustFel(
+                f"sankgraf_karna misslyckades (kod {res.returncode}): {detalj}"
+            )
+
+        return _las_avrinningsnat_utdata(ut_fil, lage, hojd, bredd)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def kor_avrinningsnat_rust(
+    z_arr: NDArray[np.float32] | NDArray[np.float64],
+    aktiv_arr: NDArray[np.bool_],
+    *,
+    binar: str | Path | None = None,
+    timeout_s: float | None = None,
+) -> tuple[NDArray[np.int32], NDArray[np.int32]]:
+    """Kör 8-granne prioritetsfyllning + D8 (`fyll_och_riktning`) i Rust."""
+    flow, ordn, _ = _kor_avrinningsnat_binar(
+        _LAGE_AVRINNINGSNAT,
+        z_arr,
+        aktiv_arr,
+        binar=binar,
+        timeout_s=timeout_s,
+    )
+    return flow, ordn
+
+
+def kor_avrinningsnat_tillrinning_rust(
+    z_arr: NDArray[np.float32] | NDArray[np.float64],
+    aktiv_arr: NDArray[np.bool_],
+    egen_arr: NDArray[np.float64],
+    *,
+    binar: str | Path | None = None,
+    timeout_s: float | None = None,
+) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]]:
+    """Kör 8-granne prioritetsfyllning + D8 + nedströms tillrinning i ett enda Rust-anrop."""
+    flow, ordn, tillr = _kor_avrinningsnat_binar(
+        _LAGE_AVRINNINGSNAT_TILLRINNING,
+        z_arr,
+        aktiv_arr,
+        egen_arr=egen_arr,
+        binar=binar,
+        timeout_s=timeout_s,
+    )
+    if tillr is None:
+        raise SankGrafRustFel(
+            "Ofullständigt resultat från sankgraf_karna i AVRINNINGSNAT_TILLRINNING-läge."
+        )
+    return flow, ordn, tillr

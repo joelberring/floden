@@ -4,7 +4,9 @@
 //! Deterministisk Rust-kärna utan externa crates för SankGrafs tunga rastersteg:
 //! - 4-granne avrinning, kantbarriärer, platå-BFS och lövsänkeetikettering
 //! - Extraktion och sortering av unika gränspar och sadelkanter
+//! - 8-granne prioritetsfyllning (Priority-Flood), D8 och tillrinningsackumulering
 
+mod avrinningsnat;
 mod binar_io;
 mod karna;
 
@@ -55,6 +57,7 @@ fn kor(args: &[String]) -> Result<(), String> {
         z,
         aktiv,
         catch,
+        egen,
         barriarer,
     } = binar_io::las_indata(in_sokvag)?;
 
@@ -113,6 +116,31 @@ fn kor(args: &[String]) -> Result<(), String> {
             drop(barriarer);
             skriv_granspar(&mut skrivare, &gp)?;
             skrivare.avsluta(lage, hojd, bredd, 0, gp.par_w.len(), gp.f_u.len())?;
+        }
+        Lage::Avrinningsnat => {
+            let res = avrinningsnat::fyll_och_riktning(hojd, bredd, &z, &aktiv)?;
+            drop(aktiv);
+            drop(z);
+            drop(barriarer);
+            let ordning_len = res.ordning.len();
+            skrivare.skriv_i32_skiva(&res.flow_to)?;
+            skrivare.skriv_i32_skiva(&res.ordning)?;
+            skrivare.avsluta(lage, hojd, bredd, 0, ordning_len, 0)?;
+        }
+        Lage::AvrinningsnatTillrinning => {
+            let egen_vec = egen
+                .ok_or_else(|| "egen_yta saknas för körläge AVRINNINGSNAT_TILLRINNING.".to_string())?;
+            let res = avrinningsnat::fyll_och_riktning(hojd, bredd, &z, &aktiv)?;
+            drop(aktiv);
+            drop(z);
+            drop(barriarer);
+            let tillr = avrinningsnat::berakna_tillrinning(&res.flow_to, &res.ordning, &egen_vec)?;
+            drop(egen_vec);
+            let ordning_len = res.ordning.len();
+            skrivare.skriv_i32_skiva(&res.flow_to)?;
+            skrivare.skriv_i32_skiva(&res.ordning)?;
+            skrivare.skriv_f64_skiva(&tillr)?;
+            skrivare.avsluta(lage, hojd, bredd, 0, ordning_len, 0)?;
         }
     }
 
@@ -221,6 +249,66 @@ mod tests {
         // Testa även --version och --help
         kor(&["--version".to_string()]).expect("version");
         kor(&["--help".to_string()]).expect("help");
+
+        let _ = fs::remove_file(&in_fil);
+        let _ = fs::remove_file(&ut_fil);
+    }
+
+    #[test]
+    fn kor_avrinningsnat_och_tillrinning_med_crc() {
+        let h = 5u32;
+        let b = 5u32;
+        let mut z = Vec::with_capacity(25);
+        for r in 0..h {
+            for c in 0..b {
+                z.push(0.05 * ((c as f64) - 2.0).abs() + 0.02 * ((h - r) as f64));
+            }
+        }
+        let aktiv = vec![1u8; 25];
+        let egen = vec![1.0f64; 25];
+
+        let mut payload = Vec::new();
+        for &v in &z {
+            payload.extend_from_slice(&v.to_le_bytes());
+        }
+        payload.extend_from_slice(&aktiv);
+        for &e in &egen {
+            payload.extend_from_slice(&e.to_le_bytes());
+        }
+        let crc = crc32_uppdatera(0, &payload);
+        let mut buf = Vec::with_capacity(HEADER_IN_BYTES as usize + payload.len());
+        buf.extend_from_slice(&MAGIC_IN);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&4u32.to_le_bytes()); // AvrinningsnatTillrinning
+        buf.extend_from_slice(&1u32.to_le_bytes()); // f64
+        buf.extend_from_slice(&h.to_le_bytes());
+        buf.extend_from_slice(&b.to_le_bytes());
+        buf.extend_from_slice(&crc.to_le_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+        buf.extend_from_slice(&payload);
+
+        let in_fil = temp_sokvag("avr_in");
+        let ut_fil = temp_sokvag("avr_ut");
+        fs::write(&in_fil, &buf).expect("skriv avr_in");
+
+        kor(&[
+            in_fil.to_string_lossy().into_owned(),
+            ut_fil.to_string_lossy().into_owned(),
+        ])
+        .expect("kor avrinningsnat");
+
+        let ut_bytes = fs::read(&ut_fil).expect("läs avr_ut");
+        assert_eq!(&ut_bytes[0..8], &MAGIC_UT);
+        assert_eq!(u32::from_le_bytes(ut_bytes[12..16].try_into().expect("lage")), 4);
+        let ordning_len = u64::from_le_bytes(ut_bytes[32..40].try_into().expect("ordn"));
+        assert_eq!(ordning_len, 25);
+        let hdr_crc = u32::from_le_bytes(ut_bytes[28..32].try_into().expect("crc"));
+        let payload_len = u64::from_le_bytes(ut_bytes[48..56].try_into().expect("len"));
+        assert_eq!(payload_len, 25 * 4 + 25 * 4 + 25 * 8);
+        let ut_payload = &ut_bytes[HEADER_UT_BYTES as usize..];
+        assert_eq!(ut_payload.len() as u64, payload_len);
+        assert_eq!(crc32_uppdatera(0, ut_payload), hdr_crc);
 
         let _ = fs::remove_file(&in_fil);
         let _ = fs::remove_file(&ut_fil);

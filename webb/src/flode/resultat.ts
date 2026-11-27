@@ -101,8 +101,9 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   let valtNyckel: string | null = null;
   const vektorPa = new Set<VektorSlag>();
   const vektorCache = new Map<string, VektorSvar>();
-  let vektorFel: string | null = null;
-  let vektorSeq = 0;
+  const vektorLaddar = new Set<VektorSlag>();
+  const vektorAvbryt = new Map<VektorSlag, { nyckel: string; ctrl: AbortController }>();
+  const vektorFelPerSlag = new Map<VektorSlag, string>();
   const vektorGrans: Partial<Record<VektorSlag, number>> = {};
   let sankaHtml: string | null = null;
   let sankaSeq = 0;
@@ -217,27 +218,69 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     a?.settAnalysVektor(ut);
     b?.settAnalysVektor(null);
   };
-  /** Hämtar de tända vektorlagren för läget som visas (en gång per körning, scenario och slag) och ritar om. */
+  const vektorEtikett = (slag: VektorSlag): string =>
+    slag === "sankor" ? "sänkor" : slag === "flodesvagar" ? "flödesvägar" : slag === "rannsten_flode" ? "rännstenar" : "fasadpunkter";
+  const arAvbrutetVektorFel = (e: unknown, signal: AbortSignal): boolean =>
+    signal.aborted || (e instanceof Error && e.name === "AbortError");
+  /** Hämtar de tända vektorlagren för läget som visas (en gång per körning, scenario och slag) och ritar om progressivt. */
   const laddaVektorer = async (): Promise<void> => {
-    const nr = ++vektorSeq;
-    vektorFel = null;
-    const behov = tillgangligaVektorer().filter((s) => vektorPa.has(s));
-    await Promise.all(
-      behov.map(async (slag) => {
-        const nyckel = vektorNyckel(slag);
-        if (!nyckel || vektorCache.has(nyckel) || !vy) return;
-        const [kid, sc] = nyckel.split("|") as [string, string];
-        try {
-          vektorCache.set(nyckel, await lasJson<VektorSvar>(vektorUrl(kid, sc, slag, vektorGrans[slag] ?? null)));
-        } catch (e) {
-          vektorFel = `Lagret gick inte att hämta: ${e instanceof Error ? e.message : String(e)}`;
-        }
-      }),
-    );
-    if (nr !== vektorSeq || avslutad) return;
-    sattVektorer();
-    ritaTecken();
+    const tillgangliga = new Set<VektorSlag>(tillgangligaVektorer());
+    const behov = [...tillgangliga].filter((s) => vektorPa.has(s));
+    for (const [slag, post] of [...vektorAvbryt.entries()]) {
+      const ny = vektorPa.has(slag) && tillgangliga.has(slag) ? vektorNyckel(slag) : null;
+      if (!ny || ny !== post.nyckel) {
+        post.ctrl.abort();
+        vektorAvbryt.delete(slag);
+        vektorLaddar.delete(slag);
+      }
+    }
+    for (const slag of [...vektorFelPerSlag.keys()]) {
+      if (!vektorPa.has(slag) || !tillgangliga.has(slag)) vektorFelPerSlag.delete(slag);
+    }
+    const uppdrag: Promise<void>[] = [];
+    for (const slag of behov) {
+      const nyckel = vektorNyckel(slag);
+      if (!nyckel || !vy) continue;
+      if (vektorCache.has(nyckel)) {
+        vektorFelPerSlag.delete(slag);
+        continue;
+      }
+      if (vektorAvbryt.get(slag)?.nyckel === nyckel) continue;
+      const [kid, sc] = nyckel.split("|") as [string, string];
+      const ctrl = new AbortController();
+      vektorAvbryt.set(slag, { nyckel, ctrl });
+      vektorLaddar.add(slag);
+      vektorFelPerSlag.delete(slag);
+      uppdrag.push(
+        (async () => {
+          try {
+            const svar = await lasJson<VektorSvar>(
+              vektorUrl(kid, sc, slag, vektorGrans[slag] ?? null),
+              { signal: ctrl.signal },
+            );
+            if (avslutad || vektorAvbryt.get(slag)?.ctrl !== ctrl) return;
+            vektorAvbryt.delete(slag);
+            vektorLaddar.delete(slag);
+            vektorCache.set(nyckel, svar);
+            sattVektorer();
+            ritaTecken();
+            uppdateraVisaText();
+          } catch (e) {
+            if (avslutad || arAvbrutetVektorFel(e, ctrl.signal)) return;
+            if (vektorAvbryt.get(slag)?.ctrl !== ctrl) return;
+            vektorAvbryt.delete(slag);
+            vektorLaddar.delete(slag);
+            vektorFelPerSlag.set(
+              slag,
+              `${vektorEtikett(slag)[0]?.toUpperCase()}${vektorEtikett(slag).slice(1)} gick inte att hämta: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            uppdateraVisaText();
+          }
+        })(),
+      );
+    }
     uppdateraVisaText();
+    if (uppdrag.length > 0) await Promise.all(uppdrag);
   };
   const rollerNu = (): LagerVal[] => {
     if (!vyBas || !r) return [];
@@ -246,7 +289,8 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
   const tillampaVal = (): ProjektVy | null => (vyBas ? vyMedVal(vyBas, rollerNu().find((x) => x.nyckel === valtNyckel) ?? null) : null);
   const visaText = (): string => {
     const v = rollerNu().find((x) => x.nyckel === (valtNyckel ?? (vyBas ? forvaldNyckel(rollerNu(), vyBas) : null)));
-    return [v && vyBas ? valText(v, lage, Boolean(vyBas.lage_idag)) : "", vektorFel ?? ""].filter(Boolean).join(" ");
+    const ladd = vektorLaddar.size > 0 ? `Hämtar ${[...vektorLaddar].map(vektorEtikett).join(", ")} …` : "";
+    return [v && vyBas ? valText(v, lage, Boolean(vyBas.lage_idag)) : "", ladd, ...vektorFelPerSlag.values()].filter(Boolean).join(" ");
   };
   const uppdateraVisaText = (): void => {
     const t2 = rot.querySelector("#rs-visa-text");
@@ -829,6 +873,9 @@ export function visaResultat(rot: HTMLElement, projekt: string): Avslutbar {
     klar,
     avsluta: () => {
       avslutad = true;
+      for (const post of vektorAvbryt.values()) post.ctrl.abort();
+      vektorAvbryt.clear();
+      vektorLaddar.clear();
       markhojd.avsluta();
       ac.abort();
       avlyssna();

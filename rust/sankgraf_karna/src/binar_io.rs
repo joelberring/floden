@@ -19,6 +19,8 @@ pub enum Lage {
     Komplett = 0,
     Avrinning = 1,
     Granspar = 2,
+    Avrinningsnat = 3,
+    AvrinningsnatTillrinning = 4,
 }
 
 impl Lage {
@@ -27,6 +29,8 @@ impl Lage {
             0 => Ok(Self::Komplett),
             1 => Ok(Self::Avrinning),
             2 => Ok(Self::Granspar),
+            3 => Ok(Self::Avrinningsnat),
+            4 => Ok(Self::AvrinningsnatTillrinning),
             _ => Err(format!("Okänt körläge i header: {v}")),
         }
     }
@@ -59,6 +63,7 @@ pub struct Indata {
     pub z: ZData,
     pub aktiv: Vec<u8>,
     pub catch: Option<Vec<i32>>,
+    pub egen: Option<Vec<f64>>,
     /// Sorterade kantbarriärer med unik nyckel `((u as u64) << 32) | (v as u64)`, där `u < v`.
     pub barriarer: Vec<(u64, f64)>,
 }
@@ -250,12 +255,20 @@ pub fn las_indata(sokvag: &Path) -> Result<Indata, String> {
     } else {
         0
     };
+    let egen_bytes = if lage == Lage::AvrinningsnatTillrinning {
+        n_u64
+            .checked_mul(8)
+            .ok_or_else(|| "Byte-längd för egen_yta svämmade över.".to_string())?
+    } else {
+        0
+    };
     let barriar_bytes = antal_barriarer_u64
         .checked_mul(16)
         .ok_or_else(|| "Byte-längd för barriärer svämmade över.".to_string())?;
     let forvantad_payload = z_bytes
         .checked_add(n_u64)
         .and_then(|x| x.checked_add(catch_bytes))
+        .and_then(|x| x.checked_add(egen_bytes))
         .and_then(|x| x.checked_add(barriar_bytes))
         .ok_or_else(|| "Total payload-längd svämmade över.".to_string())?;
 
@@ -288,6 +301,12 @@ pub fn las_indata(sokvag: &Path) -> Result<Indata, String> {
 
     let catch = if lage == Lage::Granspar {
         Some(las_i32_vec(&mut lasare, n_celler, &mut crc, "catch")?)
+    } else {
+        None
+    };
+
+    let egen = if lage == Lage::AvrinningsnatTillrinning {
+        Some(las_f64_vec(&mut lasare, n_celler, &mut crc, "egen_yta")?)
     } else {
         None
     };
@@ -334,6 +353,7 @@ pub fn las_indata(sokvag: &Path) -> Result<Indata, String> {
         z,
         aktiv,
         catch,
+        egen,
         barriarer,
     })
 }

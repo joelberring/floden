@@ -81,3 +81,29 @@ def test_byggnader_ar_hinder_och_tak_ger_extra_yta() -> None:
     v1 = avrinningsnat_ur_falt(z, akt, None, x_min=0.0, y_max=60.0, pixel_m=1.0, min_yta_m2=100.0)
     v2 = avrinningsnat_ur_falt(z, akt, extra, x_min=0.0, y_max=60.0, pixel_m=1.0, min_yta_m2=100.0)
     assert max(s.tillrinning_m2 for s in v2) > max(s.tillrinning_m2 for s in v1) + 300
+
+
+def test_berakna_avrinningsfalt_och_strackor_fran_falt_matchar_full_korning() -> None:
+    from sankgraf.avrinningsnat import berakna_avrinningsfalt, strackor_fran_falt
+
+    h, b = 120, 71
+    linjer = [
+        [(0, 10), (45, 18)], [(0, 26), (45, 18)], [(0, 44), (45, 52)], [(0, 62), (45, 52)],
+        [(45, 18), (80, 35)], [(45, 52), (80, 35)], [(80, 35), (119, 35)],
+    ]  # fmt: skip
+    r = np.mgrid[0:h, 0:b][0].astype(float)
+    z = 0.1 * _avst_till_linjer(h, b, linjer) + 0.05 * (h - r)
+    akt = np.ones((h, b), dtype=bool)
+    akt[15:25, 30:40] = False
+    extra = np.zeros((h, b), dtype=float)
+    extra[25, 35] = 250.0
+
+    flow, ordn, a = berakna_avrinningsfalt(z, akt, extra, pixel_m=1.0, anvand_rust=False)
+    for troskel in (150.0, 300.0, 600.0):
+        via_bas = strackor_fran_falt(
+            z, flow, ordn, a, x_min=0.0, y_max=float(h), pixel_m=1.0, min_yta_m2=troskel
+        )
+        direkt = avrinningsnat_ur_falt(
+            z, akt, extra, x_min=0.0, y_max=float(h), pixel_m=1.0, min_yta_m2=troskel, anvand_rust=False
+        )
+        assert via_bas == direkt

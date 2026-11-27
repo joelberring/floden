@@ -754,13 +754,144 @@ def _kor_spec_fil(spec_fil: Path) -> int:
         return 1
 
 
+def _bygg_vektor_barnkommando(spec_fil: Path) -> list[str]:
+    """Standardkommando för att bygga vektorlager (sänkor/flödesvägar) i isolerad barnprocess."""
+    return [sys.executable, "-m", "webb.subproc_kor", "--vektor-spec-fil", str(spec_fil)]
+
+
+def kor_vektor_i_barnprocess(
+    *,
+    slag: str,
+    mappar: Sequence[Path],
+    persistens_faktor: float | None,
+    takvatten: bool,
+    takvatten_andel_ledning: float,
+    min_yta_m2: float,
+    min_volym_m3: float,
+    min_djup_m: float,
+    ut_json: Path,
+    bas_npz: Path | None = None,
+    max_ram_mb: float = STANDARD_JOBB_MAX_RAM_MB,
+    max_tid_s: float = STANDARD_JOBB_MAX_TID_S,
+    poll_intervall_s: float = STANDARD_POLL_INTERVALL_S,
+    hanterare: SubprocHanterare | None = None,
+    extra_env: Mapping[str, str] | None = None,
+) -> SubprocResultat:
+    """Bygger tunga vektorlager (`sankor` / `flodesvagar`) i en isolerad barnprocess.
+
+    Håller Python-GIL och minnestoppar helt utanför webbserverprocessen (S-O1)."""
+    ut_abs = Path(ut_json).resolve()
+    ut_abs.parent.mkdir(parents=True, exist_ok=True)
+    fd_st, tmp_status = tempfile.mkstemp(
+        prefix=f".vektor_status_{slag}_", suffix=".json", dir=str(ut_abs.parent)
+    )
+    os.close(fd_st)
+    status_abs = Path(tmp_status)
+    status_abs.unlink(missing_ok=True)
+
+    spec_payload: dict[str, Any] = {
+        "slag": slag,
+        "mappar": [str(Path(m).resolve()) for m in mappar],
+        "persistens_faktor": persistens_faktor,
+        "takvatten": bool(takvatten),
+        "takvatten_andel_ledning": float(takvatten_andel_ledning),
+        "min_yta_m2": float(min_yta_m2),
+        "min_volym_m3": float(min_volym_m3),
+        "min_djup_m": float(min_djup_m),
+        "ut_json": str(ut_abs),
+        "bas_npz": str(Path(bas_npz).resolve()) if bas_npz is not None else None,
+        "status_fil": str(status_abs),
+    }
+    fd, tmp_spec = tempfile.mkstemp(
+        prefix=f".vektor_spec_{slag}_", suffix=".json", dir=str(ut_abs.parent)
+    )
+    spec_fil = Path(tmp_spec)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(spec_payload, fh, ensure_ascii=False)
+            fh.write("\n")
+        kommando = _bygg_vektor_barnkommando(spec_fil)
+        resultat = overvaka_barnprocess(
+            kommando,
+            max_ram_mb=max_ram_mb,
+            max_tid_s=max_tid_s,
+            poll_intervall_s=poll_intervall_s,
+            hanterare=hanterare,
+            status_fil=status_abs,
+            extra_env=extra_env,
+        )
+    finally:
+        spec_fil.unlink(missing_ok=True)
+        status_abs.unlink(missing_ok=True)
+
+    if not ut_abs.is_file():
+        raise SubprocFel(
+            f"Vektorprocessen ({slag}) avslutades utan att skriva resultatfil.",
+            returkod=resultat.returkod,
+        )
+    return resultat
+
+
+def _kor_vektor_spec_fil(spec_fil: Path) -> int:
+    """Körs inne i barnprocessen: bygger `sankor` eller `flodesvagar` och skriver JSON atomiskt."""
+    from webb.fragor import FragaTjanst
+
+    spec = json.loads(spec_fil.read_text(encoding="utf-8"))
+    status_fil = Path(spec["status_fil"])
+    ut_json = Path(spec["ut_json"])
+    bas_npz = Path(spec["bas_npz"]) if spec.get("bas_npz") else None
+    mappar = [Path(m) for m in spec["mappar"]]
+
+    try:
+        ut = FragaTjanst._berakna_sankgraf_vektor_fran_mappar(  # noqa: SLF001 - samma paket
+            mappar,
+            slag=str(spec["slag"]),
+            persistens_faktor=spec.get("persistens_faktor"),
+            takvatten=bool(spec.get("takvatten", True)),
+            takvatten_andel_ledning=float(spec.get("takvatten_andel_ledning", 0.0)),
+            min_yta_m2=float(spec["min_yta_m2"]),
+            min_volym_m3=float(spec["min_volym_m3"]),
+            min_djup_m=float(spec["min_djup_m"]),
+            bas_npz=bas_npz,
+        )
+        _skriv_json_atomiskt(ut_json, ut)
+        _skriv_json_atomiskt(status_fil, {"status": "klar", "uppdaterad": _nu_iso()})
+        return 0
+    except MemoryError as exc:
+        _skriv_json_atomiskt(
+            status_fil,
+            {
+                "status": "fel",
+                "fel_typ": "MemoryError",
+                "fel_meddelande": str(exc) or "Otillräckligt arbetsminne.",
+                "uppdaterad": _nu_iso(),
+            },
+        )
+        return 137
+    except Exception as exc:  # noqa: BLE001
+        _skriv_json_atomiskt(
+            status_fil,
+            {
+                "status": "fel",
+                "fel_typ": type(exc).__name__,
+                "fel_meddelande": str(exc),
+                "uppdaterad": _nu_iso(),
+            },
+        )
+        return 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m webb.subproc_kor",
-        description="Kör en K20-utredningsfråga i isolerad barnprocess.",
+        description="Kör en K20-utredningsfråga eller vektorberäkning i isolerad barnprocess.",
     )
-    ap.add_argument("--spec-fil", required=True, type=Path, help="JSON-fil med körspecifikation.")
+    grupp = ap.add_mutually_exclusive_group(required=True)
+    grupp.add_argument("--spec-fil", type=Path, help="JSON-fil med körspecifikation.")
+    grupp.add_argument("--vektor-spec-fil", type=Path, help="JSON-fil med vektorspecifikation.")
     args = ap.parse_args(list(argv) if argv is not None else None)
+    if args.vektor_spec_fil is not None:
+        return _kor_vektor_spec_fil(args.vektor_spec_fil)
     return _kor_spec_fil(args.spec_fil)
 
 
@@ -786,6 +917,7 @@ __all__ = [
     "cgroup_minne_grans_mb",
     "disk_ledig_gb",
     "kor_fraga_i_barnprocess",
+    "kor_vektor_i_barnprocess",
     "las_framsteg",
     "overvaka_barnprocess",
     "process_rss_mb",
