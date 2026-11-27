@@ -174,6 +174,18 @@ def _hamta_api_nyckel(
             return str(varden["nyckel"]).strip(), None
         return None, None
 
+    if register is not None and konto_id:
+        from konto.nycklar import NyckelForrad
+
+        forrad = NyckelForrad(register)
+        if forrad.paslagen:
+            try:
+                varden = forrad.las(konto_id, typ_id)
+            except Exception as exc:  # noqa: BLE001 - texten är fri från nyckelvärden
+                return None, str(getattr(exc, "text", f"Nyckeln '{typ_id}' kunde inte läsas."))
+            if isinstance(varden, Mapping) and varden.get("nyckel"):
+                return str(varden["nyckel"]).strip(), None
+
     env_map = {
         "trafikverket": "TRAFIKVERKET_API_NYCKEL",
         "artdatabanken": "ARTDATABANKEN_API_NYCKEL",

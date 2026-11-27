@@ -1306,7 +1306,7 @@ def test_e2e_mcp_utv_geografi_mappa_nya_additiva_flaggor(
         assert fanga[-1]["kwargs"]["vmi_lan"] == "O_Goteborg_Bohus"
         assert "nyckel_forrad" not in fanga[-1]["kwargs"]
 
-        # Med hamta_trafikverket / hamta_artfynd skickas konto.nycklar vidare
+        # Med hamta_trafikverket / hamta_artfynd skickas bara konto_id + register (ALDRIG nyckel_forrad)
         fel2, text2, data2 = anropa_verktyg(
             klient,
             sess,
@@ -1323,5 +1323,41 @@ def test_e2e_mcp_utv_geografi_mappa_nya_additiva_flaggor(
         assert isinstance(data2, dict) and data2["ref"] == "goteborg-test@v7"
         assert fanga[-1]["kwargs"]["hamta_trafikverket"] is True
         assert fanga[-1]["kwargs"]["hamta_artfynd"] is True
-        assert fanga[-1]["kwargs"]["nyckel_forrad"] is miljo.adapter.nycklar
+        assert "nyckel_forrad" not in fanga[-1]["kwargs"]
+        assert fanga[-1]["kwargs"]["register"] is miljo.register
+        assert isinstance(fanga[-1]["kwargs"]["konto_id"], str) and fanga[-1]["kwargs"]["konto_id"]
+
+    # Verifiera att mappa._hamta_api_nyckel själv slår upp nycklar ur register + konto_id
+    # när nyckel_forrad=None och FLODEN_NYCKELHEMLIGHET finns i miljön.
+    from cryptography.fernet import Fernet
+
+    from geografi.mappa import _hamta_api_nyckel
+    from konto.nycklar import HEMLIGHET_MILJOVARIABEL, NyckelForrad
+
+    fernet_hemlighet = Fernet.generate_key().decode()
+    monkeypatch.setenv(HEMLIGHET_MILJOVARIABEL, fernet_hemlighet)
+    forrad_dir = NyckelForrad(miljo.register, fernet_hemlighet, miljo.klocka)
+    sup_konto_id = str(fanga[-1]["kwargs"]["konto_id"])
+    assert forrad_dir.spara(sup_konto_id, "trafikverket", {"nyckel": "tv-e2e-mcp-isolering-99"})
+    assert forrad_dir.spara(sup_konto_id, "artdatabanken", {"nyckel": "art-e2e-mcp-isolering-88"})
+    tv_ut, tv_v = _hamta_api_nyckel(
+        "trafikverket",
+        explicit_nyckel=None,
+        konto_id=sup_konto_id,
+        konfig={"konto": {"inloggning": "pa"}},
+        konfig_fil=tmp_path / "config.toml",
+        register=miljo.register,
+        nyckel_forrad=None,
+    )
+    art_ut, art_v = _hamta_api_nyckel(
+        "artdatabanken",
+        explicit_nyckel=None,
+        konto_id=sup_konto_id,
+        konfig={"konto": {"inloggning": "pa"}},
+        konfig_fil=tmp_path / "config.toml",
+        register=miljo.register,
+        nyckel_forrad=None,
+    )
+    assert tv_ut == "tv-e2e-mcp-isolering-99" and tv_v is None
+    assert art_ut == "art-e2e-mcp-isolering-88" and art_v is None
     shutil.rmtree(tmp_path / "mcp_utv", ignore_errors=True)

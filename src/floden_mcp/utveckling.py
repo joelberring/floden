@@ -683,7 +683,7 @@ def registrera_utvecklingsverktyg(
         hamta_trafikverket: Annotated[
             bool,
             Field(
-                description="Valfritt: hämta NVDB-vägnät från Trafikverket Öppet API med kontots krypterade 'trafikverket'-nyckel."
+                description="Valfritt: hämta NVDB-vägnät från Trafikverket Öppet API via kontots lagrade dataåtkomst."
             ),
         ] = False,
         trafik_fran_baskarta: Annotated[
@@ -713,7 +713,7 @@ def registrera_utvecklingsverktyg(
         hamta_artfynd: Annotated[
             bool,
             Field(
-                description="Valfritt: hämta publika rödlistade/fridlysta artfynd via SLU Artdatabanken SOS med hård OSL-spärr (kräver kontots 'artdatabanken'-nyckel)."
+                description="Valfritt: hämta publika rödlistade/fridlysta artfynd via SLU Artdatabanken SOS med hård OSL-spärr."
             ),
         ] = False,
         modell: Modell = None,
@@ -763,8 +763,6 @@ def registrera_utvecklingsverktyg(
             extra_kwargs["vmi_lan"] = ren_vmi_lan
         if hamta_artfynd:
             extra_kwargs["hamta_artfynd"] = True
-        if hamta_trafikverket or hamta_artfynd:
-            extra_kwargs["nyckel_forrad"] = tjanst.app.konto.nycklar
         try:
             res = mappa_geografi(
                 kommun,
