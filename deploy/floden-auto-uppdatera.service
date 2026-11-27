@@ -1,0 +1,22 @@
+[Unit]
+Description=Floden kontrollerad automatisk uppdatering från ghcr.io med backup och återställning
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/floden
+EnvironmentFile=-/srv/floden/.env
+UMask=0077
+SyslogIdentifier=floden-auto-uppdatera
+TimeoutStartSec=300
+# Kontrollerar ny avbildning på ghcr.io (FLODEN_TAG, förval main), tar online-säker
+# SQLite-backup före uppgradering, verifierar /api/halsa inifrån containern och
+# rullar automatiskt tillbaka till föregående avbildning vid misslyckad hälsokontroll.
+# Kör som root som förval för åtkomst till Docker-socketen; avkommentera User=floden
+# om en lokal värdanvändare `floden` tillhör docker-gruppen.
+# User=floden
+ExecStart=/srv/floden/deploy/floden-auto-uppdatera.sh
+Nice=10
+IOSchedulingClass=idle

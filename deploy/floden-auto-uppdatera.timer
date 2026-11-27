@@ -1,0 +1,12 @@
+[Unit]
+Description=Kontrollerad pull-timer för automatisk uppdatering av Floden (var 3:e minut)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=3min
+RandomizedDelaySec=15s
+Persistent=false
+Unit=floden-auto-uppdatera.service
+
+[Install]
+WantedBy=timers.target
