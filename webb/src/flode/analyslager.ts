@@ -335,7 +335,13 @@ export function sankaBeskrivning(p: Record<string, unknown>): string {
 }
 
 export function flodesvagBeskrivning(p: Record<string, unknown>): string {
-  return `Flödesväg: tillrinning ${formatera(tal(p.tillrinning_m2) ?? 0, 0)} m², Strahler-ordning ${formatera(tal(p.ordning) ?? 1, 0)}, längd ${formatera(tal(p.langd_m) ?? 0, 0)} m, lutning ${formatera((tal(p.lutning) ?? 0) * 100, 1)} %.`;
+  const typText =
+    p.typ === "rannsten"
+      ? " (rännsten längs kantsten)"
+      : p.typ === "markstrak"
+        ? " (markstråk)"
+        : "";
+  return `Flödesväg${typText}: tillrinning ${formatera(tal(p.tillrinning_m2) ?? 0, 0)} m², Strahler-ordning ${formatera(tal(p.ordning) ?? 1, 0)}, längd ${formatera(tal(p.langd_m) ?? 0, 0)} m, lutning ${formatera((tal(p.lutning) ?? 0) * 100, 1)} %.`;
 }
 
 export function fasadBeskrivning(p: Record<string, unknown>): string {
@@ -385,11 +391,20 @@ export function vektorTillKarta(svar: VektorSvar): AnalysVektor {
     } else if (svar.slag === "flodesvagar" && f.geometry.type === "LineString") {
       const yta = tal(p.tillrinning_m2) ?? ts.lo;
       const farg = varFarg(PALETTER.tillrinning as readonly string[], logAndel(yta, ts.lo, ts.hi), 0, 1);
-      features.push({ type: "Feature", properties: { farg, bredd: flodesBredd(yta, ts.lo, ts.hi), beskrivning: flodesvagBeskrivning(p) }, geometry: { type: "LineString", coordinates: ring(f.geometry.coordinates) } });
+      const typ = p.typ === "rannsten" ? "rannsten" : "markstrak";
+      features.push({
+        type: "Feature",
+        properties: { farg, bredd: flodesBredd(yta, ts.lo, ts.hi), pilar: true, typ, beskrivning: flodesvagBeskrivning(p) },
+        geometry: { type: "LineString", coordinates: ring(f.geometry.coordinates) },
+      });
     } else if (svar.slag === "rannsten_flode" && f.geometry.type === "LineString") {
       const q = rannstenFlode(p) ?? rs.lo;
       const farg = varFarg(PALETTER.tillrinning as readonly string[], q, rs.lo, rs.hi);
-      features.push({ type: "Feature", properties: { farg, bredd: rannstenBredd(q, rs.lo, rs.hi), beskrivning: rannstenBeskrivning(p) }, geometry: { type: "LineString", coordinates: ring(f.geometry.coordinates) } });
+      features.push({
+        type: "Feature",
+        properties: { farg, bredd: rannstenBredd(q, rs.lo, rs.hi), pilar: true, beskrivning: rannstenBeskrivning(p) },
+        geometry: { type: "LineString", coordinates: ring(f.geometry.coordinates) },
+      });
     } else if (svar.slag === "vsc" && f.geometry.type === "Point") {
       const v = tal(p.vsc_procent);
       const farg = v === null ? INGEN_FARG : varFarg(PALETTER.sekventiell as readonly string[], v, VSC_SKALA.lo, VSC_SKALA.hi);

@@ -1615,7 +1615,7 @@ class FragaTjanst:
         if scenario not in s["scenarier"]:
             raise FlodenWebbFel(f"Okänt scenario '{scenario}'.", status_kod=404)
         suffix = {
-            "flodesvagar": f".v2.{yta:g}",
+            "flodesvagar": f".v3.{yta:g}",
             "sankor": f".v2.{vol:g}.{djup:g}",
         }.get(slag, "")
         cachefil = k.mapp / "webb" / f"vektor.{scenario}.{slag}{suffix}.json"
@@ -1826,15 +1826,27 @@ class FragaTjanst:
         *,
         takvatten: bool,
         takvatten_andel_ledning: float,
-    ) -> tuple[Any, np.ndarray[Any, Any], np.ndarray[Any, Any], np.ndarray[Any, Any] | None]:
-        """Läser höjd, markslag, öppningar och ev. takvatten för flödesvägar (utan sänkgraf)."""
+    ) -> tuple[
+        Any,
+        np.ndarray[Any, Any],
+        np.ndarray[Any, Any],
+        np.ndarray[Any, Any] | None,
+        list[Any],
+    ]:
+        """Läser höjd, markslag, brytlinjer, öppningar och ev. takvatten för flödesvägar."""
         from karna.inbyggda import kontrollera_sankgraf_celler
         from sankgraf.hierarki import _applicera_oppningar, sammanfoga_rutor
         from sankgraf.takvatten import bygg_takvatten, las_takpolygoner
-        from sankgraf.typer import MARKSLAG_BYGGNAD, las_oppningar_fran_gpkg
+        from sankgraf.typer import (
+            MARKSLAG_BYGGNAD,
+            las_brytlinjer_fran_gpkg,
+            las_oppningar_fran_gpkg,
+        )
         from testsvit.k1_io import las_geotiff
 
+        brytlinjer: list[Any] = []
         oppningar: list[Any] = []
+        sedda_bryt: set[Any] = set()
         sedda_opp: set[Any] = set()
         tak_per_id: dict[str, Any] = {}
 
@@ -1844,6 +1856,13 @@ class FragaTjanst:
             slag_raw, _ = las_geotiff(mapp / "markslag.tif")
             glob_mark = np.asarray(mark_raw, dtype=np.float32)
             glob_slag = np.asarray(slag_raw, dtype=np.uint8)
+            bryt_fil = mapp / "brytlinjer.gpkg"
+            if bryt_fil.is_file():
+                for b in las_brytlinjer_fran_gpkg(bryt_fil):
+                    nyckel_b = (b.typ, b.hojd_m, tuple(b.koordinater), b.z_kron_rh2000)
+                    if nyckel_b not in sedda_bryt:
+                        sedda_bryt.add(nyckel_b)
+                        brytlinjer.append(b)
             opp_fil = mapp / "oppningar.gpkg"
             if opp_fil.is_file():
                 oppningar = list(las_oppningar_fran_gpkg(opp_fil))
@@ -1868,6 +1887,13 @@ class FragaTjanst:
                         np.asarray(slag_raw, dtype=np.uint8),
                     )
                 )
+                bryt_fil = mapp / "brytlinjer.gpkg"
+                if bryt_fil.is_file():
+                    for b in las_brytlinjer_fran_gpkg(bryt_fil):
+                        nyckel_b = (b.typ, b.hojd_m, tuple(b.koordinater), b.z_kron_rh2000)
+                        if nyckel_b not in sedda_bryt:
+                            sedda_bryt.add(nyckel_b)
+                            brytlinjer.append(b)
                 opp_fil = mapp / "oppningar.gpkg"
                 if opp_fil.is_file():
                     for o in las_oppningar_fran_gpkg(opp_fil):
@@ -1907,7 +1933,7 @@ class FragaTjanst:
             )
             if not tv.tom:
                 extra = np.asarray(tv.extra_area_m2, dtype=np.float64)
-        return glob_geo, eff_z, aktiv, extra
+        return glob_geo, eff_z, aktiv, extra, brytlinjer
 
     @staticmethod
     def _spara_avrinningsnat_bas_atomiskt(
@@ -1984,12 +2010,23 @@ class FragaTjanst:
         """Bygger `sankor` eller `flodesvagar` ur K1-rutor (anropas direkt eller i barnprocess)."""
         if slag == "flodesvagar":
             from sankgraf.avrinningsnat import berakna_avrinningsfalt, strackor_fran_falt
+            from sankgraf.typer import las_brytlinjer_fran_gpkg
 
             cachad = cls._las_avrinningsnat_bas(bas_npz) if bas_npz is not None else None
             if cachad is not None:
                 z_arr, flow, ordn, a, x_min, y_max, pixel_m = cachad
+                brytlinjer: list[Any] = []
+                sedda_bryt: set[Any] = set()
+                for mapp in mappar:
+                    bryt_fil = mapp / "brytlinjer.gpkg"
+                    if bryt_fil.is_file():
+                        for b in las_brytlinjer_fran_gpkg(bryt_fil):
+                            nyckel_b = (b.typ, b.hojd_m, tuple(b.koordinater), b.z_kron_rh2000)
+                            if nyckel_b not in sedda_bryt:
+                                sedda_bryt.add(nyckel_b)
+                                brytlinjer.append(b)
             else:
-                glob_geo, eff_z, aktiv, extra = cls._ladda_avrinningsnat_underlag(
+                glob_geo, eff_z, aktiv, extra, brytlinjer = cls._ladda_avrinningsnat_underlag(
                     mappar,
                     takvatten=takvatten,
                     takvatten_andel_ledning=takvatten_andel_ledning,
@@ -1998,7 +2035,15 @@ class FragaTjanst:
                 x_min = float(glob_geo.x_min)
                 y_max = float(glob_geo.y_max)
                 z64 = np.asarray(eff_z, dtype=np.float64)
-                flow, ordn, a = berakna_avrinningsfalt(z64, aktiv, extra, pixel_m=pixel_m)
+                flow, ordn, a = berakna_avrinningsfalt(
+                    z64,
+                    aktiv,
+                    extra,
+                    pixel_m=pixel_m,
+                    x_min=x_min,
+                    y_max=y_max,
+                    brytlinjer=brytlinjer,
+                )
                 z_arr = eff_z
                 if bas_npz is not None:
                     cls._spara_avrinningsnat_bas_atomiskt(
@@ -2020,6 +2065,7 @@ class FragaTjanst:
                 y_max=y_max,
                 pixel_m=pixel_m,
                 min_yta_m2=min_yta_m2,
+                brytlinjer=brytlinjer,
             )
             return analysvektor.flodesvagar_fran_strackor(vagar, min_yta_m2)
 
@@ -2112,7 +2158,7 @@ class FragaTjanst:
         persistens_faktor = par.get("persistens_faktor")
         takvatten = bool(par.get("takvatten", True))
         takvatten_andel_ledning = float(par.get("takvatten_andel_ledning", 0.0))
-        bas_npz = k.mapp / "webb" / f"avrinningsnat.{scenario}.v2.npz"
+        bas_npz = k.mapp / "webb" / f"avrinningsnat.{scenario}.v3.npz"
 
         # Snabbväg: när avrinningsfältet redan är beräknat och cachat räcker en lätt tröskling.
         if slag == "flodesvagar" and bas_npz.is_file():

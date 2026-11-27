@@ -118,7 +118,7 @@ fn kor(args: &[String]) -> Result<(), String> {
             skrivare.avsluta(lage, hojd, bredd, 0, gp.par_w.len(), gp.f_u.len())?;
         }
         Lage::Avrinningsnat => {
-            let res = avrinningsnat::fyll_och_riktning(hojd, bredd, &z, &aktiv)?;
+            let res = avrinningsnat::fyll_och_riktning(hojd, bredd, &z, &aktiv, &barriarer)?;
             drop(aktiv);
             drop(z);
             drop(barriarer);
@@ -130,7 +130,7 @@ fn kor(args: &[String]) -> Result<(), String> {
         Lage::AvrinningsnatTillrinning => {
             let egen_vec = egen
                 .ok_or_else(|| "egen_yta saknas för körläge AVRINNINGSNAT_TILLRINNING.".to_string())?;
-            let res = avrinningsnat::fyll_och_riktning(hojd, bredd, &z, &aktiv)?;
+            let res = avrinningsnat::fyll_och_riktning(hojd, bredd, &z, &aktiv, &barriarer)?;
             drop(aktiv);
             drop(z);
             drop(barriarer);
@@ -309,6 +309,71 @@ mod tests {
         let ut_payload = &ut_bytes[HEADER_UT_BYTES as usize..];
         assert_eq!(ut_payload.len() as u64, payload_len);
         assert_eq!(crc32_uppdatera(0, ut_payload), hdr_crc);
+
+        let _ = fs::remove_file(&in_fil);
+        let _ = fs::remove_file(&ut_fil);
+    }
+
+    #[test]
+    fn kor_avrinningsnat_med_kantbarriarer_genom_binar_io() {
+        // 5x5: rad 2 lutar österut (10.04..10.00), rad 3 lägre gård (9.50). Barriär 10.20 mellan rad 2 och 3.
+        let h = 5u32;
+        let b = 5u32;
+        let mut z = vec![10.1f64; 25];
+        for c in 0..5usize {
+            z[2 * 5 + c] = 10.04 - 0.01 * (c as f64);
+            z[3 * 5 + c] = 9.5;
+            z[4 * 5 + c] = 9.4;
+        }
+        let aktiv = vec![1u8; 25];
+        let egen = vec![1.0f64; 25];
+        let barriarer: Vec<(i32, i32, f64)> = (0..5i32).map(|c| (10 + c, 15 + c, 10.2)).collect();
+
+        let mut payload = Vec::new();
+        for &v in &z {
+            payload.extend_from_slice(&v.to_le_bytes());
+        }
+        payload.extend_from_slice(&aktiv);
+        for &e in &egen {
+            payload.extend_from_slice(&e.to_le_bytes());
+        }
+        for &(u, _, _) in &barriarer {
+            payload.extend_from_slice(&u.to_le_bytes());
+        }
+        for &(_, v, _) in &barriarer {
+            payload.extend_from_slice(&v.to_le_bytes());
+        }
+        for &(_, _, w) in &barriarer {
+            payload.extend_from_slice(&w.to_le_bytes());
+        }
+
+        let crc = crc32_uppdatera(0, &payload);
+        let mut buf = Vec::with_capacity(HEADER_IN_BYTES as usize + payload.len());
+        buf.extend_from_slice(&MAGIC_IN);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&4u32.to_le_bytes()); // AvrinningsnatTillrinning
+        buf.extend_from_slice(&1u32.to_le_bytes()); // f64
+        buf.extend_from_slice(&h.to_le_bytes());
+        buf.extend_from_slice(&b.to_le_bytes());
+        buf.extend_from_slice(&crc.to_le_bytes());
+        buf.extend_from_slice(&(barriarer.len() as u64).to_le_bytes());
+        buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+        buf.extend_from_slice(&payload);
+
+        let in_fil = temp_sokvag("avr_bar_in");
+        let ut_fil = temp_sokvag("avr_bar_ut");
+        fs::write(&in_fil, &buf).expect("skriv avr_bar_in");
+        kor(&[
+            in_fil.to_string_lossy().into_owned(),
+            ut_fil.to_string_lossy().into_owned(),
+        ])
+        .expect("kor avrinningsnat med barriarer");
+
+        let ut_bytes = fs::read(&ut_fil).expect("läs avr_bar_ut");
+        let ut_payload = &ut_bytes[HEADER_UT_BYTES as usize..];
+        let flow_cell_12 = i32::from_le_bytes(ut_payload[12 * 4..13 * 4].try_into().expect("f12"));
+        // Cell (2, 2) = 12 ska rinna österut till (2, 3) = 13, inte över kantstenen till rad 3.
+        assert_eq!(flow_cell_12, 13);
 
         let _ = fs::remove_file(&in_fil);
         let _ = fs::remove_file(&ut_fil);

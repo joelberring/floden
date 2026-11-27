@@ -613,22 +613,40 @@ def _las_avrinningsnat_utdata(
     return np.asarray(flow_flat, dtype=np.int32), np.asarray(ordn_flat, dtype=np.int32), tillr_arr
 
 
+def _kanonisera_barriarer(
+    kantbarriarer: Mapping[tuple[int, int], float] | None,
+) -> dict[tuple[int, int], float]:
+    """Kanoniserar och deduplicerar barriärkanter till `(min(u, v), max(u, v)) -> max(w)`."""
+    if not kantbarriarer:
+        return {}
+    ut: dict[tuple[int, int], float] = {}
+    for (u, v), w in kantbarriarer.items():
+        nyckel = (int(u), int(v)) if u < v else (int(v), int(u))
+        wf = float(w)
+        tidigare = ut.get(nyckel)
+        if tidigare is None or wf > tidigare:
+            ut[nyckel] = wf
+    return ut
+
+
 def _kor_avrinningsnat_binar(
     lage: int,
     z_arr: NDArray[np.float32] | NDArray[np.float64],
     aktiv_arr: NDArray[np.bool_],
     *,
     egen_arr: NDArray[np.float64] | None = None,
+    kantbarriarer: Mapping[tuple[int, int], float] | None = None,
     binar: str | Path | None = None,
     timeout_s: float | None = None,
 ) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float64] | None]:
     program = hitta_sankgraf_karna(binar)
     hojd, bredd = z_arr.shape
+    barriarer_kanon = _kanonisera_barriarer(kantbarriarer)
     tmp_dir = Path(tempfile.mkdtemp(prefix="floden-avrinningsnat-"))
     try:
         in_fil = tmp_dir / "in.flsg"
         ut_fil = tmp_dir / "ut.flsg"
-        _skriv_indata(in_fil, lage, z_arr, aktiv_arr, None, {}, egen_arr=egen_arr)
+        _skriv_indata(in_fil, lage, z_arr, aktiv_arr, None, barriarer_kanon, egen_arr=egen_arr)
         try:
             res = subprocess.run(
                 [str(program), str(in_fil), str(ut_fil)],
@@ -659,6 +677,7 @@ def kor_avrinningsnat_rust(
     z_arr: NDArray[np.float32] | NDArray[np.float64],
     aktiv_arr: NDArray[np.bool_],
     *,
+    kantbarriarer: Mapping[tuple[int, int], float] | None = None,
     binar: str | Path | None = None,
     timeout_s: float | None = None,
 ) -> tuple[NDArray[np.int32], NDArray[np.int32]]:
@@ -667,6 +686,7 @@ def kor_avrinningsnat_rust(
         _LAGE_AVRINNINGSNAT,
         z_arr,
         aktiv_arr,
+        kantbarriarer=kantbarriarer,
         binar=binar,
         timeout_s=timeout_s,
     )
@@ -678,6 +698,7 @@ def kor_avrinningsnat_tillrinning_rust(
     aktiv_arr: NDArray[np.bool_],
     egen_arr: NDArray[np.float64],
     *,
+    kantbarriarer: Mapping[tuple[int, int], float] | None = None,
     binar: str | Path | None = None,
     timeout_s: float | None = None,
 ) -> tuple[NDArray[np.int32], NDArray[np.int32], NDArray[np.float64]]:
@@ -687,6 +708,7 @@ def kor_avrinningsnat_tillrinning_rust(
         z_arr,
         aktiv_arr,
         egen_arr=egen_arr,
+        kantbarriarer=kantbarriarer,
         binar=binar,
         timeout_s=timeout_s,
     )

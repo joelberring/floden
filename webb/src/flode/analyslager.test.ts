@@ -292,3 +292,53 @@ test("sänkor visas som halvgenomskinlig streckad kontur och arbetsyta visar akt
   assert.match(arSrc, /Visar just nu \$\{visatRegn\}/);
   assert.match(cssSrc, /\.ar-lagerknappar button \{[^}]*min-height: 30px;\s*height: auto;/);
 });
+
+test("flödesvägar visar rännsten/markstråk i beskrivning, har pilar=true och kartmotorn ritar pil-ikon samt halo lokalt", async () => {
+  const { readFileSync } = await import("node:fs");
+  const kmSrc = readFileSync(new URL("../karta/kartmotor.ts", import.meta.url), "utf-8");
+
+  assert.match(
+    flodesvagBeskrivning({ tillrinning_m2: 1234, ordning: 2, langd_m: 85, lutning: 0.015, typ: "rannsten" }),
+    /^Flödesväg \(rännsten längs kantsten\): tillrinning 1\s234 m², Strahler-ordning 2, längd 85 m, lutning 1,5 %\.$/,
+  );
+  assert.match(
+    flodesvagBeskrivning({ tillrinning_m2: 820, ordning: 1, langd_m: 40, lutning: 0.02, typ: "markstrak" }),
+    /^Flödesväg \(markstråk\): tillrinning 820 m², Strahler-ordning 1, längd 40 m, lutning 2,0 %\.$/,
+  );
+
+  const flodeSvar: VektorSvar = {
+    slag: "flodesvagar",
+    scenario: "fore",
+    korning_id: "k-pil",
+    meta: { antal_totalt: 2, visade: 2 },
+    features: [
+      { geometry: { type: "LineString", coordinates: [[151000, 6580000], [151020, 6580000]] }, properties: { tillrinning_m2: 900, ordning: 1, langd_m: 20, lutning: 0.01, typ: "rannsten" } },
+      { geometry: { type: "LineString", coordinates: [[151000, 6580015], [151020, 6580015]] }, properties: { tillrinning_m2: 1800, ordning: 2, langd_m: 20, lutning: 0.01, typ: "markstrak" } },
+    ],
+  };
+  const kFlode = vektorTillKarta(flodeSvar);
+  assert.equal(kFlode.fc.features[0]?.properties?.pilar, true);
+  assert.equal(kFlode.fc.features[0]?.properties?.typ, "rannsten");
+  assert.match(String(kFlode.fc.features[0]?.properties?.beskrivning), /rännsten längs kantsten/);
+  assert.equal(kFlode.fc.features[1]?.properties?.pilar, true);
+  assert.equal(kFlode.fc.features[1]?.properties?.typ, "markstrak");
+  assert.match(String(kFlode.fc.features[1]?.properties?.beskrivning), /markstråk/);
+
+  const rannstenSvar: VektorSvar = {
+    slag: "rannsten_flode",
+    scenario: "fore",
+    korning_id: "k-pil",
+    meta: { antal_totalt: 1, visade: 1 },
+    features: [
+      { geometry: { type: "LineString", coordinates: [[151000, 6580000], [151020, 6580000]] }, properties: { flode_m3_s: 0.08, djup_m: 0.1, langd_m: 20 } },
+    ],
+  };
+  const kRann = vektorTillKarta(rannstenSvar);
+  assert.equal(kRann.fc.features[0]?.properties?.pilar, true);
+
+  assert.match(kmSrc, /FLODE_PIL_IKON = "flode-pil"/);
+  assert.match(kmSrc, /document\.createElement\("canvas"\)/);
+  assert.match(kmSrc, /id: "analys-linje-halo"/);
+  assert.match(kmSrc, /id: "analys-linje"[^}]*"line-cap": "round"[^}]*"line-join": "round"/);
+  assert.match(kmSrc, /id: "analys-linje-pil"[\s\S]*"symbol-placement": "line"[\s\S]*"symbol-spacing": 75[\s\S]*"icon-rotation-alignment": "map"/);
+});

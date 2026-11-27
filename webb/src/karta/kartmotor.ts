@@ -112,6 +112,7 @@ const PROJEKT_POLYGON = "projekt-polygon";
 const RIT = "rit";
 const OVERFALL = "overfall";
 const ANALYS = "analys";
+const FLODE_PIL_IKON = "flode-pil";
 const SKARV = "skarv";
 const MAT = "mat";
 const SEKTION = "sektion";
@@ -123,7 +124,9 @@ const OVERLAGER = [
   "rutor-linje",
   "analys-yta-fyll",
   "analys-yta-kant",
+  "analys-linje-halo",
   "analys-linje",
+  "analys-linje-pil",
   "analys-punkt",
   "projekt-polygon-fyll",
   "projekt-polygon-kant",
@@ -461,9 +464,37 @@ export class Kartmotor {
 
   // ------------------------------------------------------------------ vektorlager
 
+  /** Skapar en lokal Canvas-ritad riktningspil (0 externa nätanrop) för flödesvägar och 1D-rännstenar. */
+  private registreraFlodePil(): void {
+    const k = this.karta;
+    if (k.hasImage(FLODE_PIL_IKON) || typeof document === "undefined") return;
+    const storlek = 24;
+    const canvas = document.createElement("canvas");
+    canvas.width = storlek;
+    canvas.height = storlek;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, storlek, storlek);
+    ctx.beginPath();
+    ctx.moveTo(20, 12);
+    ctx.lineTo(6, 4);
+    ctx.lineTo(10, 12);
+    ctx.lineTo(6, 20);
+    ctx.closePath();
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+    ctx.fillStyle = "#08306b";
+    ctx.fill();
+    const img = ctx.getImageData(0, 0, storlek, storlek);
+    k.addImage(FLODE_PIL_IKON, img, { pixelRatio: 2 });
+  }
+
   private byggOverlager(): void {
     const k = this.karta;
     const grov = arGrovPekare(); // pekskärm: större handtag
+    this.registreraFlodePil();
     for (const s of [BYGGNADER, RUTOR, PROJEKT_POLYGON, ANALYS, OVERFALL, `${SKARV}-yta`, `${SKARV}-pil`, `${SKARV}-spets`, `${SKARV}-punkt`, `${RIT}-hus`, `${RIT}-fig`, `${RIT}-bryt`, `${RIT}-folj`, `${RIT}-utkast`, `${RIT}-las`, `${RIT}-mitt`, `${RIT}-horn`, `${RIT}-fast`, `${RIT}-punkter`, MAT, SEKTION, SEKTION_MARKOR]) {
       k.addSource(s, { type: "geojson", data: TOM });
     }
@@ -488,7 +519,32 @@ export class Kartmotor {
     k.addLayer({ id: "rutor-linje", type: "line", source: RUTOR, paint: { "line-color": "#111111", "line-opacity": 0.5, "line-width": 1, "line-dasharray": [4, 3] } });
     k.addLayer({ id: "analys-yta-fyll", type: "fill", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["get", "farg"], "fill-opacity": 0.14 } });
     k.addLayer({ id: "analys-yta-kant", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["get", "farg"], "line-width": 2, "line-dasharray": [4, 2] } });
-    k.addLayer({ id: "analys-linje", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "farg"], "line-width": ["get", "bredd"], "line-opacity": 0.9 } });
+    k.addLayer({
+      id: "analys-linje-halo",
+      type: "line",
+      source: ANALYS,
+      filter: ["==", ["geometry-type"], "LineString"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": "#ffffff", "line-width": ["+", ["coalesce", ["get", "bredd"], 2], 2.5], "line-opacity": 0.8 },
+    });
+    k.addLayer({ id: "analys-linje", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "farg"], "line-width": ["get", "bredd"], "line-opacity": 0.92 } });
+    k.addLayer({
+      id: "analys-linje-pil",
+      type: "symbol",
+      source: ANALYS,
+      filter: ["all", ["==", ["geometry-type"], "LineString"], ["==", ["get", "pilar"], true]],
+      layout: {
+        "symbol-placement": "line",
+        "symbol-spacing": 75,
+        "icon-image": FLODE_PIL_IKON,
+        "icon-size": 0.85,
+        "icon-rotation-alignment": "map",
+        "icon-pitch-alignment": "map",
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+      },
+      paint: { "icon-opacity": 0.92 },
+    });
     k.addLayer({ id: "analys-punkt", type: "circle", source: ANALYS, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 4, "circle-color": ["get", "farg"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
     k.addLayer({ id: "projekt-polygon-fyll", type: "fill", source: PROJEKT_POLYGON, paint: { "fill-color": "#2f4a2c", "fill-opacity": 0.04 } });
     k.addLayer({ id: "projekt-polygon-kant", type: "line", source: PROJEKT_POLYGON, paint: { "line-color": "#2f4a2c", "line-width": 2.5, "line-opacity": 0.95 } });
@@ -608,7 +664,7 @@ export class Kartmotor {
   /** Hovring och klick på en analysfigur visar dess värden (egenskapen `beskrivning`). */
   private kopplaAnalys(): void {
     const k = this.karta;
-    const lager = ["analys-yta-fyll", "analys-linje", "analys-punkt"];
+    const lager = ["analys-yta-fyll", "analys-linje", "analys-linje-pil", "analys-punkt"];
     const visa = (e: maplibregl.MapLayerMouseEvent): void => {
       const text = e.features?.[0]?.properties?.beskrivning;
       if (typeof text !== "string") return;
