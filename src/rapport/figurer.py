@@ -43,6 +43,14 @@ FARG_VATTEN_KANT: Final[tuple[int, int, int]] = (0x8B, 0xAF, 0xC4)  # #8BAFC4 va
 FARG_BADGE_BG: Final[tuple[int, int, int]] = (0xE6, 0xEA, 0xE1)  # #E6EAE1 statusmärke bakgrund
 FARG_BADGE_KANT: Final[tuple[int, int, int]] = (0xB8, 0xC4, 0xB0)  # #B8C4B0 statusmärke ram
 FARG_SWATCH_KANT: Final[tuple[int, int, int]] = (0xB8, 0xB3, 0xA4)  # #B8B3A4 färgruta ram
+FARG_VAGKANT: Final[tuple[int, int, int]] = (0xBD, 0xB7, 0xA8)  # #BDB7A8 vägkant / kantsten
+FARG_HOJDKURVA: Final[tuple[int, int, int]] = (0x94, 0x8D, 0x7E)  # #948D7E subtil höjdkurva
+FARG_FLODESVAG: Final[tuple[int, int, int]] = (0x2B, 0x5B, 0x7A)  # #2B5B7A flödesväg med pil
+FARG_MARKOR: Final[tuple[int, int, int]] = (0x9E, 0x2A, 0x2B)  # #9E2A2B lågpunktsmarkör P1–P3
+FARG_MARK_FYLL: Final[tuple[int, int, int]] = (0xE5, 0xDF, 0xD2)  # #E5DFD2 markfyllning i sektion
+FARG_VATTEN_FORE: Final[tuple[int, int, int]] = (0x8F, 0xB9, 0xAC)  # #8FB9AC vatten före i sektion
+FARG_VATTEN_EFTER: Final[tuple[int, int, int]] = (0x3D, 0x76, 0x8F)  # #3D768F vatten efter
+FARG_VATTEN_EFTER_LINJE: Final[tuple[int, int, int]] = (0x1E, 0x45, 0x60)  # #1E4560 vattenyta efter
 
 _SKALSTOCK_VAL_M: Final[tuple[int, ...]] = (
     2,
@@ -288,18 +296,87 @@ _ROLL_TILL_STIL: Final[dict[str, str]] = {
 }
 
 
-def _formatera_tal_sv(varde: float) -> str:
+def _formatera_tal_sv(varde: float, *, fasta_dec: int | None = None) -> str:
     """Formaterar ett skaltal med svenskt decimalkomma utan onödiga nollor."""
     av = abs(varde)
     if av == 0.0:
         return "0"
+    if fasta_dec is not None:
+        return f"{varde:.{fasta_dec}f}".replace(".", ",")
     if av >= 100.0:
         return f"{varde:.0f}"
     if av >= 10.0:
         return f"{varde:.1f}".rstrip("0").rstrip(".").replace(".", ",")
-    if av >= 0.1:
+    if av >= 0.01:
         return f"{varde:.2f}".rstrip("0").rstrip(".").replace(".", ",")
-    return f"{varde:.3g}".replace(".", ",")
+    return f"{varde:.3f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def _runda_125(varde: float, *, golv: float = 0.01) -> float:
+    """Avrundar uppåt till snyggt 1–2–5-tal för kartans teckenförklaring."""
+    v = max(abs(float(varde)), float(golv))
+    if not math.isfinite(v):
+        return float(golv)
+    exp = math.floor(math.log10(v))
+    bas = 10.0**exp
+    mant = v / bas
+    for steg in (1.0, 2.0, 2.5, 5.0, 10.0):
+        if mant <= steg + 1e-9:
+            return round(steg * bas, 6)
+    return round(10.0 * bas, 6)
+
+
+def _runda_skillnadsgranser(
+    *,
+    roll: str,
+    doman: str,
+    enhet: str,
+    max_abs: float,
+    troskel: float,
+) -> tuple[float, float, float, str | None, int | None]:
+    """Väljer runda, läsbara klassgränser ``(g1, g2, g3, neutral_text, fasta_dec)``."""
+    hi = abs(float(max_abs)) if math.isfinite(max_abs) else 0.0
+    tr = max(0.0, float(troskel)) if math.isfinite(troskel) else 0.0
+    ar_skyfall = enhet == "m" or doman in ("vatten", "skyfall") or roll == "max_djup"
+    ar_sol = enhet in ("h", "tim") or roll in ("soltimmar", "sammanhangande_soltimmar")
+    ar_eko = roll in ("stromtathet", "kansighet") or doman == "ekologi"
+
+    if ar_skyfall:
+        if hi < 0.02:
+            return 0.02, 0.05, 0.15, "Ingen förändring ≥ 2 cm", 2
+        if hi <= 0.12:
+            return 0.02, 0.05, 0.10, None, 2
+        if hi <= 0.28:
+            return 0.02, 0.10, 0.20, None, 2
+        if hi <= 0.75:
+            return 0.05, 0.20, 0.50, None, 2
+        return 0.10, 0.20, 0.50, None, 2
+
+    if ar_sol:
+        enh = enhet or "tim"
+        if hi < 0.5:
+            return 0.5, 1.0, 2.0, f"Ingen förändring ≥ 0,5 {enh}", None
+        if hi <= 2.5:
+            return 0.5, 1.0, 2.0, None, None
+        return 0.5, 2.0, 4.0, None, None
+
+    if ar_eko:
+        if hi < 0.02:
+            return 0.02, 0.10, 0.25, "Ingen förändring ≥ 0,02", 2
+        if hi <= 0.30:
+            return 0.02, 0.10, 0.20, None, 2
+        return 0.05, 0.20, 0.50, None, 2
+
+    golv = max(tr, 0.02) if hi <= 2.0 else max(tr, 0.5)
+    if hi < golv:
+        g1 = _runda_125(golv, golv=0.01)
+        g2 = _runda_125(g1 * 2.5, golv=g1 * 2.0)
+        g3 = _runda_125(g2 * 2.5, golv=g2 * 2.0)
+        return g1, g2, g3, f"Ingen förändring ≥ {_formatera_tal_sv(g1)}", None
+    g1 = _runda_125(max(tr, hi * 0.08), golv=golv)
+    g2 = _runda_125(max(g1 * 2.0, hi * 0.35), golv=g1 * 2.0)
+    g3 = _runda_125(max(g2 * 2.0, hi * 0.72), golv=g2 * 2.0)
+    return g1, g2, g3, None, None
 
 
 def _bygg_skillnadsstil(
@@ -311,21 +388,24 @@ def _bygg_skillnadsstil(
     max_abs: float,
     troskel: float = 0.0,
 ) -> FigurStil:
-    """Bygger en symmetrisk, färgblindsvänlig divergerande skala för skillnadslager."""
-    hi = abs(float(max_abs))
-    tr = max(0.0, float(troskel))
-    if not math.isfinite(hi) or hi <= 0.0:
-        hi = max(tr * 5.0, 0.5)
-    g1 = min(tr, hi * 0.35) if tr > 0.0 else hi * 0.04
-    if g1 <= 0.0:
-        g1 = hi * 0.04
-    if hi <= g1:
-        hi = g1 * 4.0
-    g2 = g1 + (hi - g1) * 0.30
-    g3 = g1 + (hi - g1) * 0.68
+    """Bygger en symmetrisk, färgblindsvänlig divergerande skala med rundade klassgränser."""
+    g1, g2, g3, neutral_text, fasta_dec = _runda_skillnadsgranser(
+        roll=roll,
+        doman=doman,
+        enhet=enhet,
+        max_abs=max_abs,
+        troskel=troskel,
+    )
     enhet_visa = enhet or ("relativ, 0–1" if roll in ("stromtathet", "kansighet") else "")
     suf = f" {enhet}" if enhet else ""
-    s1, s2, s3 = _formatera_tal_sv(g1), _formatera_tal_sv(g2), _formatera_tal_sv(g3)
+    s1 = _formatera_tal_sv(g1, fasta_dec=fasta_dec)
+    s2 = _formatera_tal_sv(g2, fasta_dec=fasta_dec)
+    s3 = _formatera_tal_sv(g3, fasta_dec=fasta_dec)
+    noll_etikett = (
+        f"−{s1} – +{s1}{suf} ({neutral_text})"
+        if neutral_text
+        else f"−{s1} – +{s1}{suf} (oförändrat)"
+    )
     return FigurStil(
         namn=f"{doman or roll}_skillnad",
         doman=doman or roll,
@@ -337,7 +417,7 @@ def _bygg_skillnadsstil(
             FargKlass(None, -g3, hex_till_rgb("#234B66"), f"≤ −{s3}{suf} (minskning)"),
             FargKlass(-g3, -g2, hex_till_rgb("#4A7D8C"), f"−{s3} – −{s2}{suf}"),
             FargKlass(-g2, -g1, hex_till_rgb("#8FB9AC"), f"−{s2} – −{s1}{suf}"),
-            FargKlass(-g1, g1, FARG_KARTYTA, f"−{s1} – +{s1}{suf} (oförändrat)"),
+            FargKlass(-g1, g1, FARG_KARTYTA, noll_etikett),
             FargKlass(g1, g2, hex_till_rgb("#D6B463"), f"+{s1} – +{s2}{suf}"),
             FargKlass(g2, g3, hex_till_rgb("#B86A4B"), f"+{s2} – +{s3}{suf}"),
             FargKlass(g3, None, hex_till_rgb("#8C3B2B"), f"≥ +{s3}{suf} (ökning)"),
@@ -572,6 +652,312 @@ def berakna_skalstock_m(geo: GeoTransformInfo, vis_w: int) -> tuple[int, int]:
 _berakna_skalstock_m = berakna_skalstock_m
 
 
+_MS_KANTER: Final[dict[int, tuple[tuple[int, int], ...]]] = {
+    1: ((3, 2),),
+    2: ((2, 1),),
+    3: ((3, 1),),
+    4: ((0, 1),),
+    5: ((3, 0), (2, 1)),
+    6: ((0, 2),),
+    7: ((3, 0),),
+    8: ((3, 0),),
+    9: ((0, 2),),
+    10: ((3, 2), (0, 1)),
+    11: ((0, 1),),
+    12: ((3, 1),),
+    13: ((2, 1),),
+    14: ((3, 2),),
+}
+
+
+def _slata_mark(z: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Lätt 3×3-utjämning av markhöjd (bara ändliga grannar) för rena höjdkurvor."""
+    hojd, bredd = z.shape
+    if hojd < 3 or bredd < 3:
+        return z
+    giltig = np.isfinite(z)
+    fyll = np.where(giltig, z, 0.0)
+    summa = np.zeros_like(fyll)
+    antal = np.zeros_like(fyll)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            r0s, r1s = max(0, dr), hojd + min(0, dr)
+            c0s, c1s = max(0, dc), bredd + min(0, dc)
+            r0d, r1d = max(0, -dr), hojd + min(0, -dr)
+            c0d, c1d = max(0, -dc), bredd + min(0, -dc)
+            summa[r0d:r1d, c0d:c1d] += fyll[r0s:r1s, c0s:c1s]
+            antal[r0d:r1d, c0d:c1d] += giltig[r0s:r1s, c0s:c1s]
+    ut = np.full_like(z, np.nan)
+    ok = giltig & (antal > 0.0)
+    ut[ok] = summa[ok] / antal[ok]
+    return ut
+
+
+def _rita_hojdkurvor(
+    karta_img: Image.Image,
+    markhojd_m: NDArray[np.floating[Any]],
+    geo: GeoTransformInfo,
+    vis_w: int,
+    vis_h: int,
+    *,
+    byggnad_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    ekvidistans_m: float | None = None,
+) -> tuple[Image.Image, float | None]:
+    """Ritar subtila höjdkurvor ur ``markhojd_m`` via ren NumPy marching squares."""
+    z = np.asarray(markhojd_m, dtype=np.float64).copy()
+    if z.ndim != 2 or z.shape[0] < 2 or z.shape[1] < 2:
+        return karta_img, None
+    if byggnad_mask is not None and np.asarray(byggnad_mask).shape == z.shape:
+        z[np.asarray(byggnad_mask, dtype=bool)] = np.nan
+    if vatten_mask is not None and np.asarray(vatten_mask).shape == z.shape:
+        z[np.asarray(vatten_mask, dtype=bool)] = np.nan
+    z = _slata_mark(z)
+    giltiga = z[np.isfinite(z)]
+    if giltiga.size < 4:
+        return karta_img, None
+    z_min = float(np.min(giltiga))
+    z_max = float(np.max(giltiga))
+    spann = z_max - z_min
+    if not math.isfinite(spann) or spann < 0.25:
+        return karta_img, None
+
+    if ekvidistans_m is not None and ekvidistans_m > 0.0:
+        ekv = float(ekvidistans_m)
+    elif spann <= 15.0:
+        ekv = 1.0
+    elif spann <= 40.0:
+        ekv = 2.0
+    else:
+        ekv = 5.0
+    if math.floor(z_max / ekv) < math.ceil(z_min / ekv) and ekvidistans_m is None:
+        ekv = 0.5
+    n_start = math.ceil(z_min / ekv)
+    n_slut = math.floor(z_max / ekv)
+    if n_slut < n_start:
+        return karta_img, None
+    while (n_slut - n_start + 1) > 25 and ekvidistans_m is None:
+        ekv *= 2.0
+        n_start = math.ceil(z_min / ekv)
+        n_slut = math.floor(z_max / ekv)
+
+    nivaer = [k * ekv for k in range(n_start, n_slut + 1)]
+    if not nivaer:
+        return karta_img, None
+
+    # Nedsampla lätt för mycket stora raster så kurvorna är snabba och rena.
+    steg = max(1, int(math.ceil(max(z.shape) / 220.0)))
+    zg = z[::steg, ::steg] if steg > 1 else z
+    gh, gb = zg.shape
+    if gh < 2 or gb < 2:
+        return karta_img, None
+
+    z00 = zg[:-1, :-1]
+    z01 = zg[:-1, 1:]
+    z11 = zg[1:, 1:]
+    z10 = zg[1:, :-1]
+    kvad_ok = np.isfinite(z00) & np.isfinite(z01) & np.isfinite(z11) & np.isfinite(z10)
+    if not bool(np.any(kvad_ok)):
+        return karta_img, None
+
+    sx = vis_w / max(geo.bredd, 1)
+    sy = vis_h / max(geo.hojd, 1)
+    overlay = Image.new("RGBA", karta_img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    def _interp(va: float, vb: float, lv: float) -> float:
+        d = vb - va
+        if abs(d) < 1e-9:
+            return 0.5
+        return max(0.0, min(1.0, (lv - va) / d))
+
+    def _kant_pt(
+        r: int, c: int, kant: int, a: float, b: float, d: float, e: float, lv: float
+    ) -> tuple[float, float]:
+        if kant == 0:
+            t = _interp(a, b, lv)
+            return ((c + t) * steg + 0.5) * sx, (r * steg + 0.5) * sy
+        if kant == 1:
+            t = _interp(b, d, lv)
+            return ((c + 1) * steg + 0.5) * sx, ((r + t) * steg + 0.5) * sy
+        if kant == 2:
+            t = _interp(e, d, lv)
+            return ((c + t) * steg + 0.5) * sx, ((r + 1) * steg + 0.5) * sy
+        t = _interp(a, e, lv)
+        return (c * steg + 0.5) * sx, ((r + t) * steg + 0.5) * sy
+
+    ritade = 0
+    for lv in nivaer:
+        kod = (
+            ((z00 >= lv).astype(np.uint8) << 3)
+            | ((z01 >= lv).astype(np.uint8) << 2)
+            | ((z11 >= lv).astype(np.uint8) << 1)
+            | (z10 >= lv).astype(np.uint8)
+        )
+        aktiv = kvad_ok & (kod > 0) & (kod < 15)
+        rs, cs = np.nonzero(aktiv)
+        if rs.size == 0:
+            continue
+        huvud = abs(lv % (5.0 * ekv)) < 1e-6 or abs((5.0 * ekv) - (lv % (5.0 * ekv))) < 1e-6
+        farg = (*FARG_HOJDKURVA, 165 if huvud else 115)
+        bredd = 2 if huvud else 1
+        for r_i, c_i in zip(rs.tolist(), cs.tolist(), strict=True):
+            a = float(z00[r_i, c_i])
+            b = float(z01[r_i, c_i])
+            d = float(z11[r_i, c_i])
+            e = float(z10[r_i, c_i])
+            for k1, k2 in _MS_KANTER[int(kod[r_i, c_i])]:
+                p1 = _kant_pt(r_i, c_i, k1, a, b, d, e, lv)
+                p2 = _kant_pt(r_i, c_i, k2, a, b, d, e, lv)
+                draw.line([p1, p2], fill=farg, width=bredd)
+                ritade += 1
+
+    if ritade == 0:
+        return karta_img, None
+    return Image.alpha_composite(karta_img.convert("RGBA"), overlay).convert("RGB"), ekv
+
+
+def _rita_baskarta_linjer_3011(
+    karta_img: Image.Image,
+    linjer_3011: Sequence[Sequence[Sequence[float]]],
+    geo: GeoTransformInfo,
+    vis_w: int,
+    vis_h: int,
+) -> tuple[Image.Image, int]:
+    """Ritar vägkanter / kantstenar (EPSG:3011) i mjuk varmgrå linje (#BDB7A8)."""
+    skala_x = vis_w / (geo.bredd * geo.pixelstorlek_x)
+    skala_y = vis_h / (geo.hojd * geo.pixelstorlek_y)
+    m_per_px = (geo.bredd * geo.pixelstorlek_x) / max(vis_w, 1)
+    linjebredd = 2 if m_per_px <= 0.6 else 1
+    overlay = Image.new("RGBA", karta_img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    ritade = 0
+    for linje in linjer_3011:
+        if len(linje) < 2:
+            continue
+        pts = [
+            ((float(p[0]) - geo.x_min) * skala_x, (geo.y_max - float(p[1])) * skala_y)
+            for p in linje
+            if len(p) >= 2
+        ]
+        if len(pts) < 2:
+            continue
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        if max(xs) < 0 or min(xs) > vis_w or max(ys) < 0 or min(ys) > vis_h:
+            continue
+        draw.line(pts, fill=(*FARG_VAGKANT, 235), width=linjebredd)
+        ritade += 1
+    if ritade == 0:
+        return karta_img, 0
+    return Image.alpha_composite(karta_img.convert("RGBA"), overlay).convert("RGB"), ritade
+
+
+def _rita_flodesvagar_3011(
+    karta_img: Image.Image,
+    flodesvagar_3011: Sequence[Sequence[Sequence[float]]],
+    geo: GeoTransformInfo,
+    vis_w: int,
+    vis_h: int,
+) -> tuple[Image.Image, int]:
+    """Ritar flödesvägar med riktningspilar i dämpad skifferblå ton (#2B5B7A)."""
+    skala_x = vis_w / (geo.bredd * geo.pixelstorlek_x)
+    skala_y = vis_h / (geo.hojd * geo.pixelstorlek_y)
+    overlay = Image.new("RGBA", karta_img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    ritade = 0
+    for linje in flodesvagar_3011:
+        if len(linje) < 2:
+            continue
+        pts = [
+            ((float(p[0]) - geo.x_min) * skala_x, (geo.y_max - float(p[1])) * skala_y)
+            for p in linje
+            if len(p) >= 2
+        ]
+        if len(pts) < 2:
+            continue
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        if max(xs) < 0 or min(xs) > vis_w or max(ys) < 0 or min(ys) > vis_h:
+            continue
+        tot_px = sum(
+            math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+            for i in range(len(pts) - 1)
+        )
+        if tot_px < 14.0:
+            continue
+        draw.line(pts, fill=(*FARG_FLODESVAG, 210), width=2)
+        ritade += 1
+        # Rita riktningspilar längs flödesvägen (nedströms) med jämnt avstånd.
+        ack = 0.0
+        nasta_pil = min(tot_px * 0.55, 42.0)
+        for i in range(len(pts) - 1):
+            x0, y0 = pts[i]
+            x1, y1 = pts[i + 1]
+            dx, dy = x1 - x0, y1 - y0
+            seg = math.hypot(dx, dy)
+            if seg < 1e-3:
+                continue
+            ux, uy = dx / seg, dy / seg
+            while ack + seg >= nasta_pil and nasta_pil <= tot_px - 6.0:
+                t = (nasta_pil - ack) / seg
+                px, py = x0 + dx * t, y0 + dy * t
+                if 6 <= px <= vis_w - 6 and 6 <= py <= vis_h - 6:
+                    pil_l = 7.0
+                    pil_b = 4.2
+                    spets = (px + ux * 2.0, py + uy * 2.0)
+                    v_h = (px - ux * pil_l - uy * pil_b, py - uy * pil_l + ux * pil_b)
+                    h_h = (px - ux * pil_l + uy * pil_b, py - uy * pil_l - ux * pil_b)
+                    draw.polygon([spets, v_h, h_h], fill=(*FARG_FLODESVAG, 240))
+                nasta_pil += 78.0
+            ack += seg
+    if ritade == 0:
+        return karta_img, 0
+    return Image.alpha_composite(karta_img.convert("RGBA"), overlay).convert("RGB"), ritade
+
+
+def _rita_markorer_3011(
+    karta_img: Image.Image,
+    markorer_3011: Sequence[Mapping[str, Any]],
+    geo: GeoTransformInfo,
+    vis_w: int,
+    vis_h: int,
+) -> tuple[Image.Image, int]:
+    """Ritar numrerade lågpunktsmarkörer (P1–P3) med tydlig kontrastbricka."""
+    skala_x = vis_w / (geo.bredd * geo.pixelstorlek_x)
+    skala_y = vis_h / (geo.hojd * geo.pixelstorlek_y)
+    overlay = Image.new("RGBA", karta_img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    font_p = _typsnitt("LiberationSans-Bold.ttf", 11)
+    ritade = 0
+    for m in markorer_3011:
+        pid = str(m.get("id") or "").strip()
+        if not pid:
+            continue
+        e = float(m["e_m"])
+        n = float(m["n_m"])
+        px = (e - geo.x_min) * skala_x
+        py = (geo.y_max - n) * skala_y
+        if px < 4 or px > vis_w - 4 or py < 4 or py > vis_h - 4:
+            continue
+        # Håll brickan inne i kartytan så texten aldrig klipps mot kanten.
+        cx = max(14.0, min(vis_w - 14.0, px))
+        cy = max(14.0, min(vis_h - 14.0, py))
+        draw.ellipse([cx - 13, cy - 13, cx + 13, cy + 13], fill=(*FARG_BAKGRUND, 245))
+        draw.ellipse(
+            [cx - 11, cy - 11, cx + 11, cy + 11],
+            fill=(*FARG_MARKOR, 255),
+            outline=(*FARG_BAKGRUND, 255),
+            width=1,
+        )
+        tw, th = _text_storlek(draw, pid, font_p)
+        draw.text((cx - tw / 2.0, cy - th / 2.0 - 1.5), pid, fill=(255, 255, 255, 255), font=font_p)
+        ritade += 1
+    if ritade == 0:
+        return karta_img, 0
+    return Image.alpha_composite(karta_img.convert("RGBA"), overlay).convert("RGB"), ritade
+
+
 def _rita_byggnader_3011(
     karta_img: Image.Image,
     byggnader_3011: Sequence[Mapping[str, Any]],
@@ -751,6 +1137,11 @@ def rendera_kartfigur(
     vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
     byggnader_3011: Sequence[Mapping[str, Any]] | None = None,
     projektpolygon_3011: Sequence[Sequence[float]] | None = None,
+    baskarta_linjer_3011: Sequence[Sequence[Sequence[float]]] | None = None,
+    markhojd_m: NDArray[np.floating[Any]] | None = None,
+    hojdkurvor_ekvidistans_m: float | None = None,
+    flodesvagar_3011: Sequence[Sequence[Sequence[float]]] | None = None,
+    markorer_3011: Sequence[Mapping[str, Any]] | None = None,
     ut_fil: str | Path | None = None,
     run_hash: str | None = None,
     anmarkning: str | None = None,
@@ -768,6 +1159,12 @@ def rendera_kartfigur(
         raise FigurFel("geo (GeoTransformInfo) krävs för att rita projektpolygon_3011.")
     if byggnader_3011 and geo is None:
         raise FigurFel("geo (GeoTransformInfo) krävs för att rita byggnader_3011.")
+    if baskarta_linjer_3011 and geo is None:
+        raise FigurFel("geo (GeoTransformInfo) krävs för att rita baskarta_linjer_3011.")
+    if flodesvagar_3011 and geo is None:
+        raise FigurFel("geo (GeoTransformInfo) krävs för att rita flodesvagar_3011.")
+    if markorer_3011 and geo is None:
+        raise FigurFel("geo (GeoTransformInfo) krävs för att rita markorer_3011.")
 
     fstil = hamta_figurstil(stil)
     rgb = klassificera_raster(raster, fstil, byggnad_mask=byggnad_mask, vatten_mask=vatten_mask)
@@ -787,10 +1184,37 @@ def rendera_kartfigur(
         (vis_w, vis_h), resample=Image.Resampling.NEAREST
     )
 
+    ritad_ekv: float | None = None
+    if markhojd_m is not None and geo is not None:
+        karta_img, ritad_ekv = _rita_hojdkurvor(
+            karta_img,
+            markhojd_m,
+            geo,
+            vis_w,
+            vis_h,
+            byggnad_mask=byggnad_mask,
+            vatten_mask=vatten_mask,
+            ekvidistans_m=hojdkurvor_ekvidistans_m,
+        )
+    antal_baskarta = 0
+    if baskarta_linjer_3011 and geo is not None:
+        karta_img, antal_baskarta = _rita_baskarta_linjer_3011(
+            karta_img, baskarta_linjer_3011, geo, vis_w, vis_h
+        )
+    antal_flode = 0
+    if flodesvagar_3011 and geo is not None:
+        karta_img, antal_flode = _rita_flodesvagar_3011(
+            karta_img, flodesvagar_3011, geo, vis_w, vis_h
+        )
     if byggnader_3011 and geo is not None:
         karta_img = _rita_byggnader_3011(karta_img, byggnader_3011, geo, vis_w, vis_h)
     if projektpolygon_3011 is not None and geo is not None:
         karta_img = _rita_projektpolygon(karta_img, projektpolygon_3011, geo, vis_w, vis_h)
+    antal_markorer = 0
+    if markorer_3011 and geo is not None:
+        karta_img, antal_markorer = _rita_markorer_3011(
+            karta_img, markorer_3011, geo, vis_w, vis_h
+        )
     karta_img = _rita_norrpil(karta_img)
     if geo is not None:
         karta_img = _rita_skalstock(karta_img, geo)
@@ -826,6 +1250,15 @@ def rendera_kartfigur(
             extra_poster.append(("byggnad_andrad", "Ändrad byggnad"))
     if projektpolygon_3011 is not None:
         extra_poster.append(("polygon", "Projektområde"))
+    if antal_baskarta > 0:
+        extra_poster.append(("vagkant", "Vägkant / kantsten"))
+    if ritad_ekv is not None:
+        ekv_txt = _formatera_tal_sv(ritad_ekv)
+        extra_poster.append(("hojdkurva", f"Höjdkurvor ({ekv_txt} m)"))
+    if antal_flode > 0:
+        extra_poster.append(("flodesvag", "Flödesväg"))
+    if antal_markorer > 0:
+        extra_poster.append(("markor", "Djupaste lågpunkt (P1–P3)"))
 
     # Layoutdimensioner
     marg_x = 26
@@ -1014,6 +1447,23 @@ def rendera_kartfigur(
                 outline=FARG_BYGGNAD_ANDRAD,
                 width=2,
             )
+        elif typ == "vagkant":
+            ym = (sy0 + sy1) // 2
+            rit.line([(x, ym), (x + swatch_w, ym)], fill=FARG_VAGKANT, width=2)
+        elif typ == "hojdkurva":
+            ym = (sy0 + sy1) // 2
+            rit.line([(x, ym), (x + swatch_w, ym)], fill=FARG_HOJDKURVA, width=1)
+        elif typ == "flodesvag":
+            ym = (sy0 + sy1) // 2
+            rit.line([(x, ym), (x + swatch_w - 4, ym)], fill=FARG_FLODESVAG, width=2)
+            rit.polygon(
+                [(x + swatch_w, ym), (x + swatch_w - 6, ym - 3), (x + swatch_w - 6, ym + 3)],
+                fill=FARG_FLODESVAG,
+            )
+        elif typ == "markor":
+            cx = x + swatch_w // 2
+            cy = (sy0 + sy1) // 2
+            rit.ellipse([cx - 6, cy - 6, cx + 6, cy + 6], fill=FARG_MARKOR)
         else:
             rit.rectangle(
                 [x, sy0, x + swatch_w, sy1],
@@ -1091,6 +1541,11 @@ def spara_kartfigur(
     vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
     byggnader_3011: Sequence[Mapping[str, Any]] | None = None,
     projektpolygon_3011: Sequence[Sequence[float]] | None = None,
+    baskarta_linjer_3011: Sequence[Sequence[Sequence[float]]] | None = None,
+    markhojd_m: NDArray[np.floating[Any]] | None = None,
+    hojdkurvor_ekvidistans_m: float | None = None,
+    flodesvagar_3011: Sequence[Sequence[Sequence[float]]] | None = None,
+    markorer_3011: Sequence[Mapping[str, Any]] | None = None,
     run_hash: str | None = None,
     anmarkning: str | None = None,
     kalla: str | None = None,
@@ -1110,6 +1565,11 @@ def spara_kartfigur(
         vatten_mask=vatten_mask,
         byggnader_3011=byggnader_3011,
         projektpolygon_3011=projektpolygon_3011,
+        baskarta_linjer_3011=baskarta_linjer_3011,
+        markhojd_m=markhojd_m,
+        hojdkurvor_ekvidistans_m=hojdkurvor_ekvidistans_m,
+        flodesvagar_3011=flodesvagar_3011,
+        markorer_3011=markorer_3011,
         ut_fil=mal,
         run_hash=run_hash,
         anmarkning=anmarkning,
@@ -1120,17 +1580,363 @@ def spara_kartfigur(
     return mal
 
 
+def rita_sektionsfigur(
+    avstand_m: Sequence[float] | NDArray[np.floating[Any]],
+    mark_rh2000_m: Sequence[float] | NDArray[np.floating[Any]],
+    *,
+    vatten_fore_m: Sequence[float] | NDArray[np.floating[Any]] | None = None,
+    vatten_efter_m: Sequence[float] | NDArray[np.floating[Any]] | None = None,
+    byggnad_mask: Sequence[bool] | NDArray[np.bool_] | None = None,
+    byggnad_hojd_rh2000_m: Sequence[float] | NDArray[np.floating[Any]] | None = None,
+    byggnad_ny_mask: Sequence[bool] | NDArray[np.bool_] | None = None,
+    titel: str = "Tvärsektion genom djupaste lågpunkt",
+    undertitel: str = "",
+    metodstatus: str = "Skissunderlag",
+    markor_avstand_m: float | None = None,
+    markor_etikett: str = "P1",
+    ut_fil: str | Path | None = None,
+    run_hash: str | None = None,
+    kalla: str | None = None,
+    bredd_px: int = 1120,
+    hojd_px: int = 440,
+) -> Image.Image:
+    """Ritar en höjd- och vattensektion i RH 2000 (marklinje, byggnader, vattenyta före/efter)."""
+    dist = np.asarray(avstand_m, dtype=np.float64)
+    mark = np.asarray(mark_rh2000_m, dtype=np.float64)
+    if dist.ndim != 1 or mark.ndim != 1 or dist.size < 2 or dist.size != mark.size:
+        raise FigurFel("avstand_m och mark_rh2000_m måste vara 1D-vektorer med samma längd (≥ 2).")
+    giltig_mark = np.isfinite(dist) & np.isfinite(mark)
+    if int(np.count_nonzero(giltig_mark)) < 2:
+        raise FigurFel("Tvärsektionen saknar tillräckligt många giltiga markhöjder.")
+
+    def _opt_f(
+        seq: Sequence[float] | NDArray[np.floating[Any]] | None, namn: str
+    ) -> NDArray[np.float64] | None:
+        if seq is None:
+            return None
+        arr = np.asarray(seq, dtype=np.float64)
+        if arr.shape != dist.shape:
+            raise FigurFel(f"{namn} har längd {arr.shape}, väntade {dist.shape}.")
+        return arr
+
+    def _opt_b(
+        seq: Sequence[bool] | NDArray[np.bool_] | None, namn: str
+    ) -> NDArray[np.bool_] | None:
+        if seq is None:
+            return None
+        arr = np.asarray(seq, dtype=bool)
+        if arr.shape != dist.shape:
+            raise FigurFel(f"{namn} har längd {arr.shape}, väntade {dist.shape}.")
+        return arr
+
+    vf = _opt_f(vatten_fore_m, "vatten_fore_m")
+    ve = _opt_f(vatten_efter_m, "vatten_efter_m")
+    bmask = _opt_b(byggnad_mask, "byggnad_mask")
+    bhojd = _opt_f(byggnad_hojd_rh2000_m, "byggnad_hojd_rh2000_m")
+    bny = _opt_b(byggnad_ny_mask, "byggnad_ny_mask")
+
+    x_min = float(np.nanmin(dist[giltig_mark]))
+    x_max = float(np.nanmax(dist[giltig_mark]))
+    if x_max <= x_min:
+        raise FigurFel("avstand_m måste ha positiv utsträckning.")
+
+    # Höjdskala styrs av mark + vattenyta (byggnader klipps vid taket så vattendjup syns tydligt).
+    y_kand = [mark[giltig_mark]]
+    if vf is not None:
+        ok = giltig_mark & np.isfinite(vf) & (vf > 0.0)
+        if bool(np.any(ok)):
+            y_kand.append(mark[ok] + vf[ok])
+    if ve is not None:
+        ok = giltig_mark & np.isfinite(ve) & (ve > 0.0)
+        if bool(np.any(ok)):
+            y_kand.append(mark[ok] + ve[ok])
+    alla_y = np.concatenate(y_kand)
+    z_lo = float(np.min(alla_y))
+    z_hi = float(np.max(alla_y))
+    spann_z = max(z_hi - z_lo, 0.8)
+    y_bot = z_lo - max(0.35, spann_z * 0.18)
+    y_top = z_hi + max(0.75, spann_z * 0.45)
+
+    # Snygga Y-axelsteg i RH 2000
+    y_spann = y_top - y_bot
+    if y_spann <= 3.5:
+        y_steg = 0.5
+    elif y_spann <= 8.0:
+        y_steg = 1.0
+    elif y_spann <= 18.0:
+        y_steg = 2.0
+    else:
+        y_steg = 5.0
+    y_bot = math.floor(y_bot / y_steg) * y_steg
+    y_top = math.ceil(y_top / y_steg) * y_steg
+
+    font_titel = _typsnitt("Gelasio-Bold.ttf", 20)
+    font_under = _typsnitt("LiberationSans-Regular.ttf", 12)
+    font_badge = _typsnitt("LiberationSans-Bold.ttf", 11)
+    font_ax = _typsnitt("LiberationSans-Regular.ttf", 11)
+    font_ax_b = _typsnitt("LiberationSans-Bold.ttf", 11)
+    font_fot = _typsnitt("LiberationSans-Regular.ttf", 10)
+
+    duk = Image.new("RGB", (bredd_px, hojd_px), FARG_BAKGRUND)
+    rit = ImageDraw.Draw(duk)
+
+    marg_x = 24
+    marg_topp = 18
+    titel_h = _text_storlek(rit, titel, font_titel)[1]
+    under_h = _text_storlek(rit, undertitel, font_under)[1] if undertitel else 0
+    huvud_h = titel_h + (5 + under_h if undertitel else 0) + 10
+
+    rit.text((marg_x, marg_topp), titel, fill=FARG_TEXT, font=font_titel)
+    if undertitel:
+        rit.text((marg_x, marg_topp + titel_h + 5), undertitel, fill=FARG_TEXT_SEK, font=font_under)
+    if metodstatus:
+        bw, bh = _text_storlek(rit, metodstatus, font_badge)
+        bx1 = bredd_px - marg_x
+        bx0 = bx1 - (bw + 18)
+        by0 = marg_topp + 1
+        by1 = by0 + bh + 9
+        rit.rounded_rectangle(
+            [bx0, by0, bx1, by1], radius=9, fill=FARG_BADGE_BG, outline=FARG_BADGE_KANT, width=1
+        )
+        rit.text((bx0 + 9, by0 + 4), metodstatus, fill=FARG_POLYGON, font=font_badge)
+
+    huvud_y = marg_topp + huvud_h
+    rit.line([(marg_x, huvud_y), (bredd_px - marg_x, huvud_y)], fill=FARG_LINJE, width=1)
+
+    # Plotruta
+    plot_x0 = marg_x + 76
+    plot_x1 = bredd_px - marg_x - 16
+    plot_y0 = huvud_y + 24
+    plot_y1 = hojd_px - 86
+    plot_w = max(plot_x1 - plot_x0, 100)
+    plot_h = max(plot_y1 - plot_y0, 80)
+
+    def _px(x_m: float) -> float:
+        return plot_x0 + (x_m - x_min) / (x_max - x_min) * plot_w
+
+    def _py(z_m: float) -> float:
+        t = (z_m - y_bot) / max(y_top - y_bot, 1e-6)
+        return plot_y1 - max(0.0, min(1.0, t)) * plot_h
+
+    rit.rectangle(
+        [plot_x0, plot_y0, plot_x1, plot_y1], fill=(255, 255, 255), outline=FARG_LINJE, width=1
+    )
+
+    # Horisontella höjdlinjer (RH 2000)
+    n_y0 = int(round(y_bot / y_steg))
+    n_y1 = int(round(y_top / y_steg))
+    for k in range(n_y0, n_y1 + 1):
+        zv = k * y_steg
+        yy = _py(zv)
+        rit.line([(plot_x0, yy), (plot_x1, yy)], fill=(0xEA, 0xE6, 0xDC), width=1)
+        if zv >= 0:
+            etik = f"+{_formatera_tal_sv(zv, fasta_dec=1)} m"
+        else:
+            etik = f"−{_formatera_tal_sv(abs(zv), fasta_dec=1)} m"
+        tw, th = _text_storlek(rit, etik, font_ax)
+        rit.text((plot_x0 - tw - 8, yy - th / 2.0), etik, fill=FARG_TEXT_SEK, font=font_ax)
+    rit.text((marg_x, plot_y0 - 17), "Höjd (RH 2000)", fill=FARG_TEXT_SEK, font=font_ax_b)
+
+    # Vertikala meterlinjer
+    x_spann = x_max - x_min
+    if x_spann <= 35.0:
+        x_steg = 5.0
+    elif x_spann <= 90.0:
+        x_steg = 10.0
+    elif x_spann <= 220.0:
+        x_steg = 20.0
+    else:
+        x_steg = 50.0
+    xv = math.ceil(x_min / x_steg) * x_steg
+    while xv <= x_max + 1e-6:
+        xx = _px(xv)
+        rit.line([(xx, plot_y0), (xx, plot_y1)], fill=(0xF0, 0xED, 0xE5), width=1)
+        etik = f"{_formatera_meter(xv)} m"
+        tw, _ = _text_storlek(rit, etik, font_ax)
+        rit.text((xx - tw / 2.0, plot_y1 + 5), etik, fill=FARG_TEXT_SEK, font=font_ax)
+        xv += x_steg
+
+    # Vattenlager (före + efter) som sammanhängande polygoner ovanför marklinjen
+    ov = Image.new("RGBA", duk.size, (0, 0, 0, 0))
+    od = ImageDraw.Draw(ov)
+
+    def _rita_vatten(
+        v_arr: NDArray[np.float64],
+        fyll: tuple[int, int, int, int],
+        linje: tuple[int, int, int, int],
+    ) -> None:
+        n = dist.size
+        i = 0
+        while i < n:
+            if not (giltig_mark[i] and math.isfinite(float(v_arr[i])) and float(v_arr[i]) > 0.01):
+                i += 1
+                continue
+            j = i
+            while (
+                j < n
+                and giltig_mark[j]
+                and math.isfinite(float(v_arr[j]))
+                and float(v_arr[j]) > 0.01
+            ):
+                j += 1
+            topp = [(_px(float(dist[k])), _py(float(mark[k] + v_arr[k]))) for k in range(i, j)]
+            botten = [(_px(float(dist[k])), _py(float(mark[k]))) for k in range(j - 1, i - 1, -1)]
+            if len(topp) == 1:
+                x_c = topp[0][0]
+                hw = max(3.0, plot_w / max(n * 2.0, 1.0))
+                od.rectangle(
+                    [x_c - hw, topp[0][1], x_c + hw, botten[0][1]], fill=fyll, outline=linje
+                )
+            else:
+                od.polygon([*topp, *botten], fill=fyll)
+                od.line(topp, fill=linje, width=2)
+            i = j
+
+    har_v_fore = vf is not None and bool(np.any(giltig_mark & np.isfinite(vf) & (vf > 0.01)))
+    har_v_efter = ve is not None and bool(np.any(giltig_mark & np.isfinite(ve) & (ve > 0.01)))
+    if vf is not None and har_v_fore:
+        _rita_vatten(vf, (*FARG_VATTEN_FORE, 130), (*FARG_VATTEN_FORE, 240))
+    if ve is not None and har_v_efter:
+        _rita_vatten(ve, (*FARG_VATTEN_EFTER, 155), (*FARG_VATTEN_EFTER_LINJE, 255))
+    duk = Image.alpha_composite(duk.convert("RGBA"), ov).convert("RGB")
+    rit = ImageDraw.Draw(duk)
+
+    # Markfyllning och marklinje
+    idx_ok = np.nonzero(giltig_mark)[0]
+    mark_pts = [(_px(float(dist[i])), _py(float(mark[i]))) for i in idx_ok]
+    if len(mark_pts) >= 2:
+        fyll_poly = [(mark_pts[0][0], float(plot_y1)), *mark_pts, (mark_pts[-1][0], float(plot_y1))]
+        rit.polygon(fyll_poly, fill=FARG_MARK_FYLL)
+        rit.line(mark_pts, fill=FARG_TEXT_SEK, width=3)
+
+    # Byggnadsblock (befintliga + nya i terrakotta)
+    har_bygg = False
+    har_bygg_ny = False
+    if bmask is not None and bool(np.any(bmask & giltig_mark)):
+        n = dist.size
+        i = 0
+        while i < n:
+            if not (giltig_mark[i] and bool(bmask[i])):
+                i += 1
+                continue
+            ar_ny = bny is not None and bool(bny[i])
+            j = i
+            while (
+                j < n
+                and giltig_mark[j]
+                and bool(bmask[j])
+                and (bny is None or bool(bny[j]) == ar_ny)
+            ):
+                j += 1
+            x_l = _px(float(dist[i]))
+            x_r = _px(float(dist[j - 1]))
+            if x_r - x_l < 4.0:
+                x_l -= 2.0
+                x_r += 2.0
+            bas_y = min(_py(float(mark[k])) for k in range(i, j))
+            if bhojd is not None and np.any(np.isfinite(bhojd[i:j])):
+                tak_z = float(np.nanmax(bhojd[i:j]))
+                tak_y = max(float(plot_y0 + 3), _py(tak_z))
+            else:
+                tak_y = float(plot_y0 + 6)
+            if ar_ny:
+                har_bygg_ny = True
+                fyll_b = (0xE8, 0xC6, 0xBC)
+                kant_b = FARG_BYGGNAD_NY
+            else:
+                har_bygg = True
+                fyll_b = FARG_BYGGNAD
+                kant_b = FARG_BYGGNAD_KANT
+            rit.rectangle([x_l, tak_y, x_r, bas_y], fill=fyll_b, outline=kant_b, width=2)
+            etik_b = "Ny byggnad" if ar_ny else "Byggnad"
+            bw_t, bh_t = _text_storlek(rit, etik_b, font_fot)
+            if (x_r - x_l) >= bw_t + 8 and (bas_y - tak_y) >= bh_t + 6:
+                rit.text(
+                    ((x_l + x_r - bw_t) / 2.0, (tak_y + bas_y - bh_t) / 2.0),
+                    etik_b,
+                    fill=kant_b if ar_ny else FARG_TEXT_SEK,
+                    font=font_fot,
+                )
+            i = j
+
+    # Markör för djupaste lågpunkt (P1)
+    if markor_avstand_m is not None and x_min <= markor_avstand_m <= x_max:
+        mx = _px(float(markor_avstand_m))
+        rit.line([(mx, plot_y0 + 22), (mx, plot_y1)], fill=FARG_MARKOR, width=1)
+        bw_m, bh_m = _text_storlek(rit, markor_etikett, font_badge)
+        pw = max(24, bw_m + 10)
+        rit.rounded_rectangle(
+            [mx - pw / 2.0, plot_y0 + 4, mx + pw / 2.0, plot_y0 + 4 + bh_m + 6],
+            radius=6,
+            fill=FARG_MARKOR,
+        )
+        rit.text(
+            (mx - bw_m / 2.0, plot_y0 + 6),
+            markor_etikett,
+            fill=(255, 255, 255),
+            font=font_badge,
+        )
+
+    # Ram överst så kanterna förblir knivskarpa
+    rit.rectangle([plot_x0, plot_y0, plot_x1, plot_y1], outline=FARG_LINJE, width=1)
+
+    # Kompakt horisontell teckenförklaring under X-axeln
+    leg_y = plot_y1 + 26
+    lx = plot_x0
+    leg_poster: list[tuple[str, tuple[int, int, int], tuple[int, int, int]]] = [
+        ("Marklinje (RH 2000)", FARG_MARK_FYLL, FARG_TEXT_SEK),
+    ]
+    if har_v_fore:
+        leg_poster.append(("Vattenyta före", FARG_VATTEN_FORE, FARG_VATTEN_FORE))
+    if har_v_efter:
+        leg_poster.append(("Vattenyta efter", FARG_VATTEN_EFTER, FARG_VATTEN_EFTER_LINJE))
+    if har_bygg:
+        leg_poster.append(("Befintlig byggnad", FARG_BYGGNAD, FARG_BYGGNAD_KANT))
+    if har_bygg_ny:
+        leg_poster.append(("Ny byggnad", (0xE8, 0xC6, 0xBC), FARG_BYGGNAD_NY))
+    for namn, fyll_l, kant_l in leg_poster:
+        rit.rectangle([lx, leg_y + 2, lx + 16, leg_y + 12], fill=fyll_l, outline=kant_l, width=1)
+        rit.text((lx + 22, leg_y), namn, fill=FARG_TEXT, font=font_ax)
+        lx += 22 + _text_storlek(rit, namn, font_ax)[0] + 18
+
+    # Spårbarhetsfot + vertikal överförhöjning
+    px_per_m_x = plot_w / max(x_max - x_min, 1e-6)
+    px_per_m_y = plot_h / max(y_top - y_bot, 1e-6)
+    overforh = px_per_m_y / max(px_per_m_x, 1e-6)
+    fot_y = hojd_px - 32
+    rit.line([(marg_x, fot_y), (bredd_px - marg_x, fot_y)], fill=FARG_LINJE, width=1)
+    overf_s = f"{overforh:.1f}".replace(".", ",")
+    fot_v = f"SWEREF 99 18 00 · RH 2000 · Vertikal överförhöjning: {overf_s}×"
+    if kalla:
+        fot_v = f"{fot_v} · {kalla}"
+    rit.text((marg_x, fot_y + 8), fot_v, fill=FARG_TEXT_SEK, font=font_fot)
+    if run_hash:
+        fh_txt = f"run.json: {run_hash[:12]}"
+        fhw, _ = _text_storlek(rit, fh_txt, font_fot)
+        rit.text((bredd_px - marg_x - fhw, fot_y + 8), fh_txt, fill=FARG_TEXT_SEK, font=font_fot)
+
+    if ut_fil is not None:
+        mal = Path(ut_fil)
+        mal.parent.mkdir(parents=True, exist_ok=True)
+        duk.save(mal, format="PNG")
+    return duk
+
+
 __all__ = [
     "FARG_BAKGRUND",
     "FARG_BYGGNAD",
     "FARG_BYGGNAD_ANDRAD",
     "FARG_BYGGNAD_KANT",
     "FARG_BYGGNAD_NY",
+    "FARG_FLODESVAG",
+    "FARG_HOJDKURVA",
     "FARG_KARTYTA",
     "FARG_LINJE",
+    "FARG_MARKOR",
     "FARG_POLYGON",
     "FARG_TEXT",
     "FARG_TEXT_SEK",
+    "FARG_VAGKANT",
     "FARG_VATTEN",
     "FARG_VATTEN_KANT",
     "FIGURSTILAR",
@@ -1143,5 +1949,6 @@ __all__ = [
     "hex_till_rgb",
     "klassificera_raster",
     "rendera_kartfigur",
+    "rita_sektionsfigur",
     "spara_kartfigur",
 ]

@@ -62,6 +62,7 @@ def test_forvalen_lagras_i_k33(forval: dict[str, Any]) -> None:
         "sprakprofil": "sbk", "numrerade_rubriker": False, "numrerade_figurer": False,
         "avsandare": "Stadsbyggnadskontoret", "diarienummer": "", "handlaggare": "",
         "accentfarg": "000000", "logotyp": None, "typsnitt_brodtext": None, "typsnitt_rubriker": None,
+        "separat_bilaga": False,
     }  # fmt: skip
     assert Rapport.fran_dict(json.loads(json.dumps(r.till_dict()))) == r
 
@@ -78,14 +79,16 @@ def test_forval_inga_nummer_sbk_ton_och_svensk_sifferform(forval: dict[str, Any]
     rader = text.splitlines()
     for rubrik in (
         "Sammanfattning",
-        "Uppdrag och beräkningsfall",
-        "Resultat",
-        "Metod och osäkerhet",
+        "Uppdrag, plats och beräkningsfall",
+        "Kartor och resultat",
+        "Åtgärder, villkor och vad som saknas inför nästa skede",
+        "Metod, begränsningar och frågekatalogsöversikt",
     ):
         assert rubrik in rader
-    assert not re.search(r"^\d+ (Sammanfattning|Resultat)", text, re.M)
+    assert not re.search(r"^\d+ (Sammanfattning|Kartor och resultat)", text, re.M)
     assert "Figur 1" not in text and "figur 1" not in text
     for bilaga in (
+        "Teknisk spårbarhetsbilaga",
         "Bilaga 1 Belägg",
         "Bilaga 2 Körlogg",
         "Bilaga 3 Manifest",
@@ -93,9 +96,10 @@ def test_forval_inga_nummer_sbk_ton_och_svensk_sifferform(forval: dict[str, Any]
     ):
         assert bilaga in rader
     assert "Bilaga A" not in text
-    # sbk-ton
-    assert "Underlaget är framtaget med beräkningsverktyget Floden (beräkning demo-vatten)" in text
-    assert "AI har inte använts" in text
+    # sbk-ton: deterministisk metodnotis utan rå AI-jargong; körnings-id i teknisk bilaga
+    assert "Underlaget är framtaget med Floden (deterministiska fysikberäkningar)." in text
+    assert "utan AI-stöd" in text
+    assert "AI:n har valt körningar och skrivit text" not in text
     assert "Kartorna nedan visar" in text
     # svensk sifferform: smalt hårt mellanslag i tusental, decimalkomma, datum i ord
     sk03 = next(p for p in r.pastaenden if p.fraga_id == "SK-03").fylld_text()
@@ -129,10 +133,17 @@ def test_word_har_rubrikformat_och_svenska(forval: dict[str, Any]) -> None:
 def test_bildtexter_utan_nummer_och_scenarionamn_i_klarsprak(
     forval: dict[str, Any], m: Miljo
 ) -> None:
+    from rapport.skissmall import Figur, FigurPar
+
     r: Rapport = forval["rapport"]
     dok = bygg_dokument(r, m.rt)
-    figurer = [b for b in dok.block if type(b).__name__ == "Figur"]
-    assert len(figurer) == 3
+    figurer: list[Figur] = []
+    for b in dok.block:
+        if isinstance(b, FigurPar):
+            figurer.extend([b.vanster, b.hoger])
+        elif isinstance(b, Figur):
+            figurer.append(b)
+    assert len(figurer) >= 3
     assert figurer[0].bildtext.startswith("Största vattendjup på marken före förslaget, i meter")
     assert figurer[2].bildtext.startswith(
         "Skillnad i största vattendjup på marken, efter minus före"

@@ -34,7 +34,7 @@ FILROLLER: Final[dict[str, str]] = {
     "typsnitt_rubriker": "typsnittet för rubriker",
 }
 _TEXTFALT: Final[tuple[str, ...]] = ("avsandare", "diarienummer", "handlaggare")
-_BOOLFALT: Final[tuple[str, ...]] = ("numrerade_rubriker", "numrerade_figurer")
+_BOOLFALT: Final[tuple[str, ...]] = ("numrerade_rubriker", "numrerade_figurer", "separat_bilaga")
 NYCKLAR: Final[tuple[str, ...]] = (
     "sprakprofil",
     *_BOOLFALT,
@@ -86,6 +86,7 @@ class RapportInstallningar:
     sprakprofil: str = "sbk"
     numrerade_rubriker: bool = False
     numrerade_figurer: bool = False
+    separat_bilaga: bool = False
     avsandare: str = STANDARD_AVSANDARE
     diarienummer: str = ""
     handlaggare: str = ""
@@ -119,6 +120,7 @@ class RapportInstallningar:
             "sprakprofil": self.sprakprofil,
             "numrerade_rubriker": self.numrerade_rubriker,
             "numrerade_figurer": self.numrerade_figurer,
+            "separat_bilaga": self.separat_bilaga,
             "avsandare": self.avsandare,
             "diarienummer": self.diarienummer,
             "handlaggare": self.handlaggare,
