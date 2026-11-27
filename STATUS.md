@@ -2,6 +2,31 @@
 
 Senaste posten överst. Format i `AGENTS.md`.
 
+## 2026-11-26 – Våg 9–10 (`#177–#182`) & Våg 11 stress-E2E – Serverstabilitet, processisolering, lokal diskstädning, RAM-optimering & `PLAN.md`-synk (`Uppdrag 19–21`)
+
+Gjort: Sammanfattat och synkat **`PLAN.md`** (`Uppdrag 19–21` motsvarande serveroptimeringsplanen `S-O1–S-O5`) med **Våg 9 (`9be7b44`, PR `#177–#178`)** och **Våg 10 (`26faa19`, PR `#179–#182`)** samt byggt den integrerade stress- och feltillstånds-E2E-sviten `tests/e2e/test_v10_server_stabilitet.py` mot riktig Våg 9–10-kod utan nätverksanrop:
+- **Våg 9 (`9be7b44`, PR `#177–#178`):** `fokus`-filtrering i `skyfall.toml` + bakåtkompatibel `_fallback_vatten_fokus`, fail-fast `FLODEN_MAX_SANKGRAF_CELLER=4_500_000`, oberoende ämneskörning i Steg 2, `fragor._roller` 500-fix mot saknad/oläsbar `run.json` samt `_filcache@*`-tystning.
+- **Våg 10 (`26faa19`, PR `#179–#182`, 23 filer, +6 345/−324, 4-vägs merge med 0 konflikter):**
+  - **PR `#179` (`1d6806d`, `Uppdrag 19` / S-O1):** Barnprocessisolering (`FLODEN_EXEKUTOR=process`, `src/webb/subproc_kor.py`) med aktiv fysisk RSS-/tidsvakt (`FLODEN_JOBB_MAX_RAM_MB`/`FLODEN_JOBB_MAX_TID_S`), 1-tråds BLAS/OpenMP, zombie-fri nedstängning, pre-flight diskvakt (`507`), ASGI-samtidighetstak (`FLODEN_MAX_SAMTIDIGA_BERAKNINGAR=2` → `503 + Retry-After`) samt PII-fri `/api/halsa`-telemetri (`minne_rss_mb`, `minne_grans_mb`, `disk_ledig_gb`, `exekutor`).
+  - **PR `#180` (`5d65cc4`, `Uppdrag 19` / S-O2):** Automatisk lokal diskstädning utan S3 (`src/gemensamt/lokal_diskstadare.py`, `floden lagring stada --alla`, `deploy/floden-cache-stada.service`) med atomiskt skydd av pågående körningar, demo, projekt, `data/konto`, `data/lokal` och symlänkar.
+  - **PR `#181` (`2d5e4de`, `Uppdrag 20` del A / S-O3a):** Strömmande dagsljusmosaik (högst 1 `_Tile` i RAM), bytebudgetar & celltak i `_HORISONT_CACHE`, `VarmestressLagerCache`, `BullerLagerCache` och `_SvfCache`.
+  - **PR `#182` (`26faa19`, `Uppdrag 20` del A / S-O3a):** Vektoriserad `int32`-`SankGraf` utan Python-`par_kanter`-dict samt Jacobi-CG och fail-fast `FLODEN_MAX_EKOLOGI_CELLER` i `ekologi.krets`.
+- **Våg 11 stress- & feltillstånds-E2E (`tests/e2e/test_v10_server_stabilitet.py`):** 6 integrerade end-to-end-tester som verifierar (1) `SIGKILL`- och RSS-vaktsdöd i barnprocess → `/api/halsa` `200 OK` (0 PII) → återhämtning i samma `FragaTjanst`, (2) timeout-kill över hel processgrupp inkl. barnbarn & zombie-fri `FragaTjanst.stang()` med aktivt + köat jobb, (3) diskvakt `507` utan halvskrivna filer → `stada_lokal_disk` ned till ≤ 85 % med 100 % bevarade skyddade objekt + symlänksmål → återhämtning, (4) riktig `FlodenAsgiApp` + `FlodenApiApp` med `FLODEN_MAX_SAMTIDIGA_BERAKNINGAR=2` (`503 + Retry-After` på 3:e/4:e tunga POST, `/api/halsa` `200 OK` direkt, `lifespan.shutdown`), (5) gallrad och korrumperad `run.json` i avslutad körning utan `FileNotFoundError`/HTTP 500 i `fragor.resultat`/`kartverktyg.status`/`status_lage_idag`, samt (6) tvärs-modul RAM-budget & fysikinvarianter (`int32`-`SankGraf` `volymfel_rel < 1e-9`, `_HORISONT_CACHE`/`VarmestressLagerCache`/`BullerLagerCache` under upprepade insättningar, samt `170×170` ren Jacobi-CG `bal < 1e-6` + `FLODEN_MAX_EKOLOGI_CELLER`).
+
+Mätt:
+- **Våg 10 sammanslagning på `main` (`26faa19`, PR `#179–#182`, 23 filer, +6 345/−324, 0 konflikter):**
+  - **GitHub CI:** **11/11 gröna** på samtliga 4 PR:er (`#179–#182`; `#180` **12/12** inkl. `Avbildning/build`) — totalt **40 verifierade PR:er `#143–#182`**.
+  - **Kodkvalitet & fysik:** `ruff` **0 fel**, `mypy --platform linux` **0 fel (399 källfiler)**, `floden testsvit` **18/18 godkända (0,0000 % volymfel)**, Grupp E **7/7**, `tests/gemensamt/test_paketgranser.py` **5/5**, riktad `pytest` **422/422 passed, 0 failed**.
+  - **Uppmätt RAM & prestanda (Våg 10):**
+    - *SankGraf `1000×1000` (`#182`):* `tracemalloc` **121,7 → 82,0 MB (−32,6 %)**, kärnan **45,3 → 27,0 MB (−40,4 %)**, **2,80×** snabbare, exakt volymbevarande.
+    - *Ekologi `500×500` Jacobi-CG (`#182`):* RSS **547,0 → 165,7 MiB (−69,7 %)** med `rel_dR = 1,09e-13`, `bal = 1,33e-08`.
+- **Nya stress-/feltillstånds-E2E (`tests/e2e/test_v10_server_stabilitet.py`):**
+  - `pytest -v tests/e2e/test_v10_server_stabilitet.py`: **6/6 passed, 0 failed** på **14,10 s** (under 25 s-budget: OOM/SIGKILL + RSS + återhämtning `3,41 s`, disk `507` → `stada_lokal_disk` → återhämtning `3,33 s`, tvärs-modul SankGraf/cacher/Ekologi `170×170` CG `3,16 s`, timeout-kill processgrupp + zombie-fri `stang()` `1,01 s`, gallrad/trasig `run.json` `0,77 s`, ASGI-samtidighetstak `2` → `503` + `/api/halsa` `200` `0,20 s`).
+  - `ruff check src tests testsvit`: **0 fel**; `mypy --platform linux src`: **0 fel (399 källfiler)**.
+
+Öppet: Under feltillståndskontrollen upptäcktes ett kantfall i `src/webb/fragor.py` (`_antaganden` ~rad 2006 och `_fil_sha256` ~rad 2209) där giltig icke-dict-JSON (t.ex. `"[]"`) i `run.json` gav `AttributeError` — delegerat separat i Våg 11 utan att röra `src/` i denna PR. Övriga delar av Våg 11 (`Uppdrag 20` del B `rust/sankgraf_karna` och `Uppdrag 21` lokal förberäkning utan S3 / PNG ≤ 2048 px / UI-cellvarning / `floden drift arbetare` & driftmatris A/B/C) pågår parallellt.
+Nästa: Slutför och verifiera samtliga Våg 11-PR:er, slå samman på `main` och driftsätt nya avbildningen på `floden.berring.se`.
+
 ## 2026-11-26 – Våg 9 – RAM-härdning, skyfall-ruturval (`fokus`), oberoende ämneskörning & driftsbuggar från `floden.berring.se` (PR #177–#178)
 
 Gjort: Åtgärdat de fem skarpa driftsfynden från live-testet på `floden.berring.se` (`goteborg-test@v4` 3 GB cgroup OOM-kill, `fragor._roller` HTTP 500, `_filcache@*`-loggspam, tvångskörning av Skyfall vid Dagsljus och `.flode-segment`-glipa) samt dokumenterat 4-lagers RAM-planen i `docs/DRIFT.md` i två konfliktfria PR:er (0 % filöverlapp, 15 filer, +2 298/−121), oberoende verifierade och sammanslagna på `main` (`c86a2d6`). Skyddade filer lämnades helt orörda:
