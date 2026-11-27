@@ -13,9 +13,9 @@ import pytest
 import rasterio
 from pyproj import CRS, Transformer
 from rasterio.transform import from_origin
+from tools.jamfor_smhi_skyfall import main
 
 from benchmark.format import kontrollera
-from tools.jamfor_smhi_skyfall import main
 
 REPO = Path(__file__).resolve().parents[2]
 CHECKPOINTS_FIL = REPO / "data" / "referens" / "goteborg_checkpoints.json"

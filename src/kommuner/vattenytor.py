@@ -215,7 +215,7 @@ def vattenytor_for_rutor(
     alla unika strandnära celler längs vattenytan, så att grannrutor får exakt samma nivå (0 m steg).
 
     Om `max_overhojd_over_omgivning_m` anges (förval 15,0 m) avvisas uppenbart korrupta
-    strandlinje-outliers vars mediannivå ligger mer än gränsen över omgivande torr mark (p90),
+    strandlinje-outliers vars mediannivå ligger mer än gränsen över omgivande torr mark (median),
     medan giltiga högt belägna dammar (där omgivande mark ligger vid eller över vattenytan)
     bevaras och loggas. Per-komponent-diagnostik skrivs till `diagnostik` om en lista ges.
     """
