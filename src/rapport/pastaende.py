@@ -58,16 +58,19 @@ _SIFFRA_RE: Final[re.Pattern[str]] = re.compile(r"\d")
 # Beteckningar som innehåller siffror men inte är tal ur en körning.
 _TILLATNA_BETECKNINGAR: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\b[A-Z]{2}-\d{2}\b"),  # frågans id, t.ex. SK-06
-    re.compile(r"\bEPSG\s*:\s*3011\b", re.IGNORECASE),
-    re.compile(r"\bSWEREF\s*99\s*18\s*00\b", re.IGNORECASE),
+    re.compile(r"\bEPSG\s*:\s*\d{4,5}\b", re.IGNORECASE),  # t.ex. EPSG:3011, EPSG:3007, EPSG:3006
+    re.compile(r"\bSWEREF\s*99\s*(?:TM|\d{2}\s*\d{2})\b", re.IGNORECASE),  # SWEREF 99 18 00, 12 00, TM
     re.compile(r"\bRH\s*2000\b", re.IGNORECASE),
     re.compile(r"\bK\d{1,2}(?:/v\d+)?\b"),  # kontrakt (K7, K0/v1)
     re.compile(r"\b(?:PBL|BBR)\s+\d+\s+kap\.(?:\s*\d+\s*[a-z]?\s*§+)?", re.IGNORECASE),
     re.compile(r"\bStockholmsregn\s+2024\b"),
+    re.compile(r"\bDahlström\s*(?:\(\s*2010\s*\)|2010\b)"),  # Svenskt Vatten / Dahlström (2010)
+    re.compile(r"\bP(?:104|110)\b"),  # Svenskt Vatten P104 / P110
     re.compile(r"\bTabell\s+\d+\b"),
     re.compile(r"\bd50\b"),  # spridningsavståndet där sannolikheten är hälften (ekologi)
-    re.compile(r"\bNMD\s*\d{1,3}\b"),  # NMD-klasskod (identifierare, inte ett tal)
+    re.compile(r"\bNMD\s*(?:2018|2023|\d{1,3})\b"),  # NMD-version (NMD 2018/2023) eller klasskod
     re.compile(r"\bPM\s?(?:10|2,5)\b"),  # partikelfraktion (beteckning, inte ett tal)
+    re.compile(r"\bLISFLOOD-FP(?:\s+v\d+(?:\.\d+)*)?\b"),  # SMHI:s 2D-modellbeteckning
 )
 _OPTIONER: Final[frozenset[str]] = frozenset({"avrundning", "enhet", "tecken", "format"})
 

@@ -46,11 +46,16 @@ class Matt:
     statistik: str
     upplosning: float | None = None
     """None = cellens yta (ytmått) eller ur lagret."""
+    enhet: str | None = None
+    """None = härleds ur måttnamnet via `enhet_for`."""
 
 
 _STATISK_TID = "läget vid regnets slut (statisk fyllning, inget förlopp)"
 _DYNAMIK_TID = "högsta värde per cell under hela händelsen"
 _REGN = "regnets parameter (indata, ingen statistik)"
+REGN_PARAMETRAR: Final[frozenset[str]] = frozenset(
+    {"regn_mm", "varaktighet_min", "aterkomsttid_ar", "klimatfaktor"}
+)
 
 VATTEN_MATVARDEN: Final[dict[str, Matt]] = {
     "max_djup_m": Matt(
@@ -87,6 +92,62 @@ VATTEN_MATVARDEN: Final[dict[str, Matt]] = {
     ),
 }
 
+TVAD_MATVARDEN: Final[dict[str, Matt]] = {
+    **VATTEN_MATVARDEN,
+    "max_hastighet_m_s": Matt(
+        "största vattenhastighet över markytan",
+        _DYNAMIK_TID,
+        "största värde bland beräkningsområdets celler",
+        0.01,
+        enhet="m/s",
+    ),
+    "max_fara_m2_s": Matt(
+        "största översvämningsfara (djup × hastighet)",
+        _DYNAMIK_TID,
+        "största värde bland beräkningsområdets celler",
+        0.01,
+        enhet="m²/s",
+    ),
+    "in_m3": Matt(
+        "total tillförd vattenvolym (regn)",
+        "summa under hela händelsen",
+        "summa över beräkningsområdet",
+        1.0,
+    ),
+    "avtappat_m3": Matt(
+        "volym som avtappats till ledningsnätet",
+        "summa under hela händelsen",
+        "summa över beräkningsområdet",
+        1.0,
+    ),
+    "infiltrerat_m3": Matt(
+        "volym som infiltrerat i marken",
+        "summa under hela händelsen",
+        "summa över beräkningsområdet",
+        1.0,
+    ),
+    "initial_forlust_m3": Matt(
+        "volym i initial förlust (ytmagasinering)",
+        "summa under hela händelsen",
+        "summa över beräkningsområdet",
+        1.0,
+    ),
+    "massbalans_fel": Matt(
+        "volymbalansens relativa fel (regn mot lagrat, utflöde och förluster)",
+        "hela körningen",
+        "en siffra per körning",
+        1e-16,
+        enhet="andel",
+    ),
+    "antal_tidssteg": Matt(
+        "antal beräkningstidssteg",
+        "hela körningen",
+        "en siffra per körning",
+        1.0,
+        enhet="st",
+    ),
+}
+
 MATTKATALOG: Final[dict[tuple[str, str], Matt]] = {
     ("vatten.statisk_fyllning", "max_djup"): Matt(
         "vattendjup över markytan", _STATISK_TID, "per cell", 0.001
@@ -94,17 +155,35 @@ MATTKATALOG: Final[dict[tuple[str, str], Matt]] = {
     ("vatten.dynamik", "max_djup"): Matt(
         "vattendjup över markytan", _DYNAMIK_TID, "per cell", 0.001
     ),
+    ("vatten.2d", "max_djup"): Matt(
+        "vattendjup över markytan", _DYNAMIK_TID, "per cell", 0.001
+    ),
+    ("vatten.2d", "hastighet"): Matt(
+        "vattenhastighet över markytan", _DYNAMIK_TID, "per cell", 0.01
+    ),
+    ("vatten.2d", "ankomsttid"): Matt(
+        "ankomsttid till 0,1 m vattendjup",
+        "tid från regnstart till tröskeldjup",
+        "per cell",
+        1.0,
+    ),
     **{
         ("vatten.statisk_fyllning", f"matvarde:{n}"): Matt(
-            m.storhet, m.tidsdefinition or _STATISK_TID, m.statistik, m.upplosning
+            m.storhet, m.tidsdefinition or _STATISK_TID, m.statistik, m.upplosning, m.enhet
         )
         for n, m in VATTEN_MATVARDEN.items()
     },
     **{
         ("vatten.dynamik", f"matvarde:{n}"): Matt(
-            m.storhet, m.tidsdefinition or _DYNAMIK_TID, m.statistik, m.upplosning
+            m.storhet, m.tidsdefinition or _DYNAMIK_TID, m.statistik, m.upplosning, m.enhet
         )
         for n, m in VATTEN_MATVARDEN.items()
+    },
+    **{
+        ("vatten.2d", f"matvarde:{n}"): Matt(
+            m.storhet, m.tidsdefinition or _DYNAMIK_TID, m.statistik, m.upplosning, m.enhet
+        )
+        for n, m in TVAD_MATVARDEN.items()
     },
 }
 
@@ -549,14 +628,22 @@ class FlodenBelaggKalla:
                 f"matvarde.{analys}.{scenario}.<ruta>.{namn}."
             )
         rad = rader[0]
+        rel = str(rad["belagg"]["fil"])
+        manifest_dok, msha = self._manifest(korning_id, rel)
+        raw_varde: Any = rad["varden"].get(namn)
         if (
-            namn not in rad["varden"]
-            or not isinstance(rad["varden"][namn], int | float)
-            or (isinstance(rad["varden"][namn], bool))
+            (raw_varde is None or isinstance(raw_varde, bool) or not isinstance(raw_varde, int | float))
+            and namn in REGN_PARAMETRAR
+        ):
+            par = manifest_dok.get("parametrar", {})
+            if isinstance(par, Mapping):
+                raw_varde = par.get(namn)
+        if (
+            raw_varde is None
+            or isinstance(raw_varde, bool)
+            or not isinstance(raw_varde, int | float)
         ):
             raise BelaggFel(f"Mätvärdet '{namn}' finns inte som tal i {analys}/{scenario}.")
-        rel = str(rad["belagg"]["fil"])
-        _manifest, msha = self._manifest(korning_id, rel)
         return Belagg(
             adress=adress,
             korning_id=korning_id,
@@ -571,10 +658,10 @@ class FlodenBelaggKalla:
             namnare=LUFT_NAMNARE if losare == "luft.mkn" else HELA_OMRADET,
             matt=f"matvarden:{namn}",
             storhet=grund.storhet,
-            enhet=enhet_for(namn),
+            enhet=grund.enhet if grund.enhet is not None else enhet_for(namn),
             tidsdefinition=grund.tidsdefinition,
             statistik=grund.statistik,
-            varde=float(rad["varden"][namn]),
+            varde=float(raw_varde),
             upplosning=float(grund.upplosning or 0.0),
             jamforbarhet=self._jamforbarhet(korning_id, analys, (scenario,)),
             regn=self.regn_text(korning_id, analys, scenario),
@@ -693,6 +780,8 @@ __all__ = [
     "HELA_OMRADET_MARK",
     "JAMFORELSEMATT",
     "MATTKATALOG",
+    "REGN_PARAMETRAR",
+    "TVAD_MATVARDEN",
     "VATTEN_MATVARDEN",
     "OMRADESSTATISTIK",
     "BelaggFel",

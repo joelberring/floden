@@ -646,8 +646,12 @@ def _ekologitext(r: Rapport, text: str) -> list[str]:
     if antagen and "p saknas i källan; d50 = tröskel/2" not in low:
         fel.append("Antagandet 'p saknas i källan; d50 = tröskel/2' syns inte i dokumentet.")
     kartor = {k.typ for k in r.kartor}
-    if not {"bas", "scenario", "skillnad"} <= kartor:
-        fel.append("Flaskhalskartan (strömtäthet) saknas före, efter eller som skillnad.")
+    har_jamforelser = any(bool(k.get("jamforelser")) for k in r.korningar)
+    if har_jamforelser:
+        if not {"bas", "scenario", "skillnad"} <= kartor:
+            fel.append("Flaskhalskartan (strömtäthet) saknas före, efter eller som skillnad.")
+    elif "bas" not in kartor:
+        fel.append("Flaskhalskartan (strömtäthet) för läget idag saknas.")
     return fel
 
 

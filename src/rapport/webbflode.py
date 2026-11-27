@@ -131,6 +131,50 @@ def saknad_mall(amne: str) -> str | None:
     return None
 
 
+def _regnkalla_och_typ(
+    r: Rapport,
+    *,
+    rt: RapportTjanst | None = None,
+    analys: str | None = None,
+) -> tuple[str, str | None]:
+    """Läser faktisk IDF-källa och regntyp ur körningens antaganden (med bakåtkompatibel reserv)."""
+    standard = ("Stockholmsregn 2024 (Tabell 7)", "block")
+    if not r.korningar:
+        return standard
+    k = r.korningar[0]
+    if rt is not None:
+        kalla = getattr(rt, "kalla", None)
+        if kalla is not None and hasattr(kalla, "_resultat"):
+            try:
+                res = kalla._resultat(str(k["korning_id"]))  # noqa: SLF001
+                for post in res.get("antaganden", {}).get("regn", []):
+                    if analys is not None and post.get("analys") != analys:
+                        continue
+                    rapport = post.get("rapport") or post.get("kalla")
+                    if rapport:
+                        tabell = post.get("tabell")
+                        namn = f"{rapport} ({tabell})" if tabell else str(rapport)
+                        rtyp = str(post["regntyp"]) if post.get("regntyp") else None
+                        return namn, rtyp
+            except Exception:  # noqa: BLE001 - faller tillbaka till lagrade antaganden
+                pass
+    for rad in k.get("antaganden", ()):
+        s = str(rad).strip()
+        if not s.startswith("Regn:"):
+            continue
+        efter_prefix = s.removeprefix("Regn:").strip()
+        forsta = efter_prefix.split(",", 1)[0].strip().rstrip(".")
+        if not forsta or forsta.lower().startswith(("angiven regnmängd", "angivet regn")):
+            continue
+        rtyp_text: str | None = None
+        if "blockregn" in efter_prefix:
+            rtyp_text = "block"
+        elif "cdsregn" in efter_prefix:
+            rtyp_text = "cds"
+        return forsta, rtyp_text
+    return standard
+
+
 def _skyfall_pastaenden_lage_idag(
     analys: str,
     bas: str,
@@ -138,10 +182,13 @@ def _skyfall_pastaenden_lage_idag(
     demo: bool,
     regn_ur_idf: bool,
     sprakprofil: str,
+    regnkalla: str = "Stockholmsregn 2024 (Tabell 7)",
+    regntyp: str | None = "block",
 ) -> list[Mapping[str, Any]]:
     """Påståenden för en skyfallsrapport som enbart redovisar läget idag (utan ritförslag)."""
     mv = f"matvarde.{analys}.{bas}"
     sbk = sprakprofil == "sbk"
+    regntyp_del = f" som {regntyp}regn" if regntyp else ""
     ut: list[Mapping[str, Any]] = [
         {
             "fraga_id": "SK-01",
@@ -167,7 +214,7 @@ def _skyfall_pastaenden_lage_idag(
                 "status": "villkorat",
                 "fordjupning": "ja",
                 "text": (
-                    "Sållningen av läget idag är gjord med Stockholmsregn 2024 (Tabell 7) som blockregn: "
+                    f"Sållningen av läget idag är gjord med {regnkalla}{regntyp_del}: "
                     f"återkomsttid {_m(mv + '.aterkomsttid_ar')}, varaktighet "
                     f"{_m(mv + '.varaktighet_min')}, klimatfaktor "
                     f"{_m(mv + '.klimatfaktor', 'avrundning=0,1')} och regnmängd "
@@ -340,11 +387,18 @@ def skyfall_pastaenden(
     demo: bool,
     regn_ur_idf: bool = True,
     har_avgransning: bool = False,
+    regnkalla: str | None = None,
+    regntyp: str | None = None,
 ) -> list[Mapping[str, Any]]:
     k = r.korningar[0]
     analys = next((a["analys"] for a in k["analyser"] if str(a["losare"]).startswith("vatten.")), None)
     if analys is None:
         raise ValueError("Körningen har ingen skyfallsanalys (vatten.*).")
+    if regnkalla is None:
+        hittad_kalla, hittad_typ = _regnkalla_och_typ(r, analys=analys)
+        regnkalla = hittad_kalla
+        if regntyp is None:
+            regntyp = hittad_typ
     jf = next((j for j in k["jamforelser"] if j["analys"] == analys and j["utdata"] == "max_djup"), None)
     if jf is None:
         bas = _bas_scenario(k, analys)
@@ -359,6 +413,8 @@ def skyfall_pastaenden(
             demo=demo,
             regn_ur_idf=regn_ur_idf,
             sprakprofil=r.installningar.sprakprofil,
+            regnkalla=regnkalla,
+            regntyp=regntyp,
         )
         return [_anpassa_pastaende(p, har_avgransning=har_avgransning) for p in alla]
 
@@ -373,7 +429,7 @@ def skyfall_pastaenden(
         )
 
     ut: list[Mapping[str, Any]] = []
-    for p in pastaenden(analys, r.installningar.sprakprofil):
+    for p in pastaenden(analys, r.installningar.sprakprofil, regnkalla=regnkalla, regntyp=regntyp):
         d = dict(p)
         if d["fraga_id"] == "SK-07" and not demo:
             # Mottagare (platser som påverkas) anges inte i webbflödet: säg det i stället för att gissa.
@@ -661,11 +717,18 @@ def pastaenden_for(rt: RapportTjanst, r: Rapport) -> list[Mapping[str, Any]]:
     demo = r.projekt == "demokvarteret"
     avgransad = har_avgransningspolygon(rt, r)
     if r.amne == "skyfall":
+        analys = next(
+            (a["analys"] for a in r.korningar[0]["analyser"] if str(a["losare"]).startswith("vatten.")),
+            None,
+        ) if r.korningar else None
+        regnkalla, regntyp = _regnkalla_och_typ(r, rt=rt, analys=analys)
         alla = skyfall_pastaenden(
             r,
             demo=demo,
             regn_ur_idf=_regn_ur_idf(rt, r),
             har_avgransning=avgransad,
+            regnkalla=regnkalla,
+            regntyp=regntyp,
         )
     elif r.amne == "dagsljus":
         alla = dagsljus_pastaenden(rt, r, har_avgransning=avgransad)

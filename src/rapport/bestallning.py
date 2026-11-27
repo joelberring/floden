@@ -83,7 +83,7 @@ _SKYDD: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\b(?:19|20)?\d{6}[-+]\d{4}\b"),
 )
 _SYFTE_MAX = 600
-_NAMN_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9_]{1,40}$")
+_NAMN_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 class BestallningFel(Exception):
