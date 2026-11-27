@@ -693,7 +693,7 @@ class FlodenBelaggKalla:
             from rapport.fasadbelagg import fasad_belagg
 
             return fasad_belagg(self, adress, korning_id, delar)
-        if typ in ("ekojamforelse", "ekonatverk"):
+        if typ in ("ekojamforelse", "ekonatverk", "ekoskrivbord"):
             from rapport.ekologibelagg import ekologi_belagg
 
             return ekologi_belagg(self, adress, korning_id, delar)
@@ -703,7 +703,7 @@ class FlodenBelaggKalla:
             return gyf_utci_belagg(self, adress, korning_id, delar)
         raise BelaggFel(
             f"Okänd beläggstyp '{typ}' i '{adress}'. Tillåtna: jamforelse, matvarde, omrade, "
-            "fasad, fasadjamforelse, ekojamforelse, ekonatverk, gyf, utci."
+            "fasad, fasadjamforelse, ekojamforelse, ekonatverk, ekoskrivbord, gyf, utci."
         )
 
     def _jamforelse(self, adress: str, korning_id: str, namn: str, matt: str) -> Belagg:

@@ -711,6 +711,36 @@ def _pdf_text(s: str, storlek: float = 9.5) -> str:
     return s.replace(" ", f'<font size="{0.55 * storlek:.2f}">\u00a0</font>')
 
 
+_TOM_CM_RE: Final[re.Pattern[str]] = re.compile(r"^[-+0-9.eE\s]+cm$")
+
+
+def _sida_har_innehall(code: list[str] | tuple[str, ...]) -> bool:
+    """Sant bara när PDF-sidan innehåller ritad text, bild eller grafik (inte bara q/Q/cm)."""
+    for rad in code:
+        s = str(rad).strip()
+        if not s or s.startswith("%") or s in ("q", "Q"):
+            continue
+        if _TOM_CM_RE.fullmatch(s):
+            continue
+        return True
+    return False
+
+
+def _rensa_flode(flode: list[Any], spacer_typ: type[Any], pagebreak_typ: type[Any]) -> list[Any]:
+    """Tar bort avslutande och dubbla sidbrytningar/mellanrum som kan skapa en tom slutsida."""
+    ut: list[Any] = []
+    for obj in flode:
+        if isinstance(obj, pagebreak_typ):
+            while ut and isinstance(ut[-1], spacer_typ):
+                ut.pop()
+            if not ut or isinstance(ut[-1], pagebreak_typ):
+                continue
+        ut.append(obj)
+    while ut and isinstance(ut[-1], spacer_typ | pagebreak_typ):
+        ut.pop()
+    return ut
+
+
 def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
     from reportlab.lib import colors
     from reportlab.lib.enums import TA_LEFT, TA_RIGHT
@@ -1189,9 +1219,13 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
             self._startPage()
 
         def save(self) -> None:
-            antal = len(self._sidor)
-            for sida in self._sidor:
+            sidor = [s for s in self._sidor if _sida_har_innehall(s.get("_code", ()))]
+            if not sidor and self._sidor:
+                sidor = self._sidor[:1]
+            antal = len(sidor)
+            for nr, sida in enumerate(sidor, start=1):
                 self.__dict__.update(sida)
+                self._pageNumber = nr
                 self._rita_ram(antal)
                 super().showPage()
             super().save()
@@ -1231,6 +1265,7 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
         lang=us.sprak,
         invariant=1,
     )
+    flode = _rensa_flode(flode, Spacer, PageBreak)
     mall.build(flode, canvasmaker=SidCanvas)
     return ut_p
 

@@ -32,7 +32,7 @@ STANDARD_MARKSLAGSKONFIG = (
 )
 FORMAT_K45 = "floden-ekologi-konnektivitet/v1"
 STANDARD_CELLSTORLEK_M = 4.0
-STANDARD_MAX_FLACKAR = 40
+STANDARD_MAX_FLACKAR = 120
 STANDARD_MAX_CELLER = 250_000
 STANDARD_SPRIDNING_FAKTOR = (0.8, 1.25)
 """Spridningsavståndets faktorer för intervallet (kärnans standard)."""

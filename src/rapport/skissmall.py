@@ -317,6 +317,28 @@ def _pastaenden_per_fraga(r: Rapport) -> dict[str, list[Pastaende]]:
     return ut
 
 
+def _formatera_antagande(text: str) -> str:
+    """Ersätter tekniska lösar-id:n och parameterparenteser i antagandelistan med ren svensk text."""
+    ren = text.replace(" (uttrycklig parameter)", "")
+    for losar_id, etikett in (
+        ("dagsljus.svf_mark", "Himmelsfaktor (SVF) på mark"),
+        ("dagsljus.soltimmar_mark", "Soltimmar på mark"),
+        ("dagsljus.vsc_fasad", "Vertikal himmelskomponent (VSC) vid fasad"),
+        ("dagsljus.horisont", "Horisontvinklar på mark"),
+        ("ekologi.konnektivitet", "Ekologisk konnektivitet"),
+        ("ekologi.gyf", "Grönytefaktor (GYF)"),
+        ("mikroklimat.utci", "Termiskt mikroklimat (UTCI)"),
+        ("vatten.statisk_fyllning", "Statisk skyfallsfyllning"),
+        ("vatten.dynamik", "Dynamisk skyfallsmodell"),
+        ("vatten.2d", "2D-skyfallsmodell"),
+        ("luft.mkn", "Luftkvalitet (PM10 mot MKN)"),
+        ("buller.nord2000", "Trafikbuller (Nord2000 skiss)"),
+    ):
+        if losar_id in ren:
+            ren = ren.replace(losar_id, etikett)
+    return ren
+
+
 def _losare(r: Rapport, korning_id: str, analys: str) -> str:
     for k in r.korningar:
         if k["korning_id"] == korning_id:
@@ -1117,7 +1139,7 @@ def bygg_dokument(
                 dok.stycke("Beräkningen bygger på följande antaganden:")
                 dok.block.append(
                     Punktlista(
-                        tuple(a.replace(" (uttrycklig parameter)", "") for a in k["antaganden"])
+                        tuple(_formatera_antagande(str(a)) for a in k["antaganden"])
                     )
                 )
         if r.mottagare:
@@ -1335,6 +1357,7 @@ def bygg_dokument(
             )
 
         _lagg_till_gyf_utci(dok, r, tj, sbk=True, rubrik=rubrik)
+        _lagg_till_ekologi_skrivbord(dok, r, tj, sbk=True, rubrik=rubrik)
 
         # 4. Åtgärder, villkor och vad som saknas inför nästa skede ----------------------------
         rubrik(1, "4", "Åtgärder, villkor och vad som saknas inför nästa skede")
@@ -1539,6 +1562,7 @@ def bygg_dokument(
             dok.stycke(" · ".join(delar), "notis")
 
     _lagg_till_gyf_utci(dok, r, tj, sbk=False, rubrik=rubrik)
+    _lagg_till_ekologi_skrivbord(dok, r, tj, sbk=False, rubrik=rubrik)
 
     rubrik(1, "4", "Saknat underlag och villkor")
     saknat_n = []
@@ -1667,6 +1691,60 @@ def _lagg_till_gyf_utci(
                 liten=True,
             )
         )
+
+
+def _lagg_till_ekologi_skrivbord(
+    dok: Dokument,
+    r: Rapport,
+    tj: RapportTjanst,
+    *,
+    sbk: bool,
+    rubrik: Any,
+) -> None:
+    """Lägger till skrivbordskontroll (skydd & naturvärden) och 'Checklista inför fältinventering (NVI)' i ekologirapporter."""
+    if r.amne != "ekologi":
+        return
+    from rapport.ekologibelagg import (
+        OSL_VARNING,
+        ekologi_nvi_checklista_rader,
+        ekologi_skrivbord_tabellrader,
+    )
+
+    skrivbord_rader = ekologi_skrivbord_tabellrader(r, tj)
+    if skrivbord_rader:
+        rubrik(2, "3.4" if sbk else "", "Skrivbordskontroll av skydd och naturvärden (skiss)")
+        dok.stycke(
+            "Översikt av öppna registerdata (Naturvårdsverket, Skogsstyrelsen och publika artfynd) "
+            "för plan- och buffertområdet. Underlaget ersätter inte fältinventering. Metodstatus: skiss.",
+            "liten",
+        )
+        dok.block.append(
+            Tabell(
+                ("Datakälla", "Ursprung", "Utfall i underlaget", "Överlapp, avstånd och begränsning"),
+                tuple(skrivbord_rader),
+                (0.25, 0.22, 0.25, 0.28),
+                liten=True,
+            )
+        )
+        dok.stycke(OSL_VARNING, "notis")
+
+    if sbk or skrivbord_rader:
+        nvi_rader = ekologi_nvi_checklista_rader(r, tj)
+        if nvi_rader:
+            rubrik(2, "3.5" if (sbk and skrivbord_rader) else ("3.4" if sbk else ""), "Checklista inför fältinventering (NVI)")
+            dok.stycke(
+                "Kompakt checklista inför fältinventering baserad på skrivbordsunderlaget. "
+                + OSL_VARNING,
+                "liten",
+            )
+            dok.block.append(
+                Tabell(
+                    ("Moment", "Prioritet", "Underlag i skrivbordskontroll", "Åtgärd inför fältbesök"),
+                    tuple(nvi_rader),
+                    (0.22, 0.13, 0.30, 0.35),
+                    liten=True,
+                )
+            )
 
 
 def _lagg_till_begransningar(
