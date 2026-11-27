@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from kommuner.filpaket import packa_upp_medlem, vsizip, zip_medlemmar
+from kommuner.konfig import BrytlinjeRegel, GatorRegel, TradKonfig
 from kommuner.wfs import KommunKallaFel
 
 FORMAT_ORDNING = (".gpkg", ".shp", ".json", ".dwg")
@@ -476,3 +477,306 @@ def byggnader_ur_lokala_filer(
     if ensamma:
         varningar.append(f"{ensamma} byggnader kommer ur en kontur utan yta på byggnadslagret.")
     return ut, antal, varningar
+
+
+# --- 3D-brytlinjer, gatuvektorer och träd ur öppna baskartepaket -------------------------------------------
+
+
+def _las_vektorobjekt_ur_paket(
+    paket: Sequence[Path],
+    lager_monster: str,
+    objekt_falt: str,
+    objekt_monster: str,
+    bbox_publicering: tuple[float, float, float, float],
+) -> tuple[list[tuple[Any, str]], bool]:
+    """Läser `(geometri, typ_text)` ur GeoPackage/Shapefile i `paket` som matchar lager- och objektmönster."""
+    import pyogrio
+
+    l_re = re.compile(lager_monster)
+    o_re = re.compile(objekt_monster)
+    ut: list[tuple[Any, str]] = []
+    hittat_lager = False
+    for p in paket:
+        hittat_i_paket = False
+        for andelse in (".gpkg", ".shp"):
+            for m in zip_medlemmar(p, (andelse,)):
+                sokv = vsizip(p, m)
+                if andelse == ".gpkg":
+                    lager: list[str | None] = [
+                        str(r[0]) for r in pyogrio.list_layers(sokv) if l_re.search(str(r[0]))
+                    ]
+                elif l_re.search(Path(m).stem):
+                    lager = [None]
+                else:
+                    lager = []
+                for lg in lager:
+                    hittat_i_paket = True
+                    hittat_lager = True
+                    kol = [objekt_falt] if objekt_falt else []
+                    gdf = (
+                        pyogrio.read_dataframe(sokv, layer=lg, bbox=bbox_publicering, columns=kol)
+                        if lg
+                        else pyogrio.read_dataframe(sokv, bbox=bbox_publicering, columns=kol)
+                    )
+                    if objekt_falt and objekt_falt not in gdf.columns:
+                        raise KommunKallaFel(
+                            f"Baskartans lager {m} saknar fältet '{objekt_falt}'."
+                        )
+                    if objekt_falt:
+                        varden = gdf[objekt_falt].astype(str)
+                        valda = varden.map(lambda x: bool(o_re.search(x)))
+                        for geom, typ_v in zip(
+                            gdf.geometry[valda.to_numpy()],
+                            varden[valda.to_numpy()],
+                            strict=True,
+                        ):
+                            if geom is not None and not geom.is_empty:
+                                ut.append((geom, str(typ_v)))
+                    else:
+                        for geom in gdf.geometry:
+                            if geom is not None and not geom.is_empty:
+                                ut.append((geom, ""))
+            if hittat_i_paket:
+                break
+    return ut, hittat_lager
+
+
+def _linjedelar(geom: Any) -> list[Any]:
+    """Plattar ut LineString/LinearRing/MultiLineString/GeometryCollection till icke-tomma linjer."""
+    if geom is None or geom.is_empty:
+        return []
+    if geom.geom_type in ("LineString", "LinearRing"):
+        return [geom]
+    if hasattr(geom, "geoms"):
+        ut: list[Any] = []
+        for d in geom.geoms:
+            ut.extend(_linjedelar(d))
+        return ut
+    return []
+
+
+def brytlinjer_till_gpkg(
+    paket: Sequence[Path],
+    *,
+    regler: Sequence[BrytlinjeRegel],
+    bbox_publicering: tuple[float, float, float, float],
+    epsg_publicering: int,
+    ut: Path,
+) -> tuple[Path, list[Any], list[str]]:
+    """Extraherar 3D-brytlinjer (t.ex. kantstenar, murar) ur baskartan, transformerar till EPSG:3011 och skriver K1 `brytlinjer.gpkg`."""
+    import math
+
+    from pyproj import Transformer
+    from shapely.geometry import box
+
+    from markmodell.brytlinjer import Brytlinje
+    from markmodell.k1_skrivare import skriv_brytlinjer_gpkg
+    from markmodell.rutnat import Ruta
+
+    klippbox = box(*bbox_publicering)
+    tr = Transformer.from_crs(epsg_publicering, 3011, always_xy=True)
+    brytlinjer: list[Brytlinje] = []
+    varningar: list[str] = []
+    per_roll: dict[str, int] = {}
+    antal_3d = 0
+
+    for regel in regler:
+        objekt, hittat = _las_vektorobjekt_ur_paket(
+            paket, regel.lager_monster, regel.objekt_falt, regel.objekt_monster, bbox_publicering
+        )
+        if not hittat:
+            varningar.append(
+                f"Brytlinjer ({regel.roll}): inget lager i baskartan matchar '{regel.lager_monster}'."
+            )
+            continue
+        for geom, _ in objekt:
+            klippt = geom.intersection(klippbox)
+            for linje in _linjedelar(klippt):
+                koord = list(linje.coords)
+                if len(koord) < 2:
+                    continue
+                xs = [float(p[0]) for p in koord]
+                ys = [float(p[1]) for p in koord]
+                es, ns = tr.transform(xs, ys)
+                punkter = tuple((float(e), float(n)) for e, n in zip(es, ns, strict=True))
+                if len(set(punkter)) < 2:
+                    continue
+                z_kron: tuple[float, ...] | None = None
+                if linje.has_z:
+                    zs = [float(p[2]) for p in koord if len(p) > 2]
+                    if (
+                        len(zs) == len(punkter)
+                        and all(math.isfinite(z) for z in zs)
+                        and not all(z == 0.0 for z in zs)
+                    ):
+                        z_kron = tuple(zs)
+                        antal_3d += 1
+                brytlinjer.append(
+                    Brytlinje(
+                        typ=regel.roll,
+                        hojd_m=regel.standard_m,
+                        punkter=punkter,
+                        z_kron_rh2000=z_kron,
+                        kalla="baskarta",
+                    )
+                )
+                per_roll[regel.roll] = per_roll.get(regel.roll, 0) + 1
+
+    e0_3011, n0_3011 = tr.transform(bbox_publicering[0], bbox_publicering[1])
+    e1_3011, n1_3011 = tr.transform(bbox_publicering[2], bbox_publicering[3])
+    sida = max(1.0, math.ceil(max(abs(e1_3011 - e0_3011), abs(n1_3011 - n0_3011))))
+    referensruta = Ruta(float(min(e0_3011, e1_3011)), float(min(n0_3011, n1_3011)), sida, 0.0, 1.0)
+    skriv_brytlinjer_gpkg(ut, brytlinjer, referensruta)
+    if brytlinjer:
+        delar = ", ".join(f"{r}: {n}" for r, n in sorted(per_roll.items()))
+        varningar.append(
+            f"Brytlinjer ur baskartan: {len(brytlinjer)} linjer ({delar}; {antal_3d} med 3D-höjd)."
+        )
+    else:
+        varningar.append("Brytlinjer ur baskartan: inga objekt hittades i området.")
+    return ut, brytlinjer, varningar
+
+
+def gator_till_gpkg(
+    paket: Sequence[Path],
+    *,
+    regler: Sequence[GatorRegel],
+    bbox_publicering: tuple[float, float, float, float],
+    epsg_publicering: int,
+    ut: Path,
+) -> tuple[Path, int, list[str]]:
+    """Extraherar gatu-/spår-/kajvektorer ur baskartan till `gator.gpkg` (EPSG:3011, lager `gator`)."""
+    import geopandas as gpd
+    from shapely.geometry import box
+
+    klippbox = box(*bbox_publicering)
+    rader: list[dict[str, str]] = []
+    geometrier: list[Any] = []
+    varningar: list[str] = []
+
+    for regel in regler:
+        objekt, hittat = _las_vektorobjekt_ur_paket(
+            paket, regel.lager_monster, regel.objekt_falt, regel.objekt_monster, bbox_publicering
+        )
+        if not hittat:
+            varningar.append(
+                f"Vektorbakgrund ({regel.kategori}): inget lager i baskartan matchar '{regel.lager_monster}'."
+            )
+            continue
+        for geom, typ_v in objekt:
+            klippt = geom.intersection(klippbox)
+            for linje in _linjedelar(klippt):
+                if len(linje.coords) >= 2:
+                    rader.append({"kategori": regel.kategori, "typ": typ_v})
+                    geometrier.append(linje)
+
+    ut.parent.mkdir(parents=True, exist_ok=True)
+    if geometrier:
+        gdf = gpd.GeoDataFrame(rader, geometry=geometrier, crs=f"EPSG:{epsg_publicering}").to_crs(epsg=3011)
+        gdf.to_file(ut, driver="GPKG", layer="gator")
+    else:
+        gdf = gpd.GeoDataFrame({"kategori": [], "typ": []}, geometry=[], crs="EPSG:3011")
+        gdf.to_file(ut, driver="GPKG", layer="gator")
+    return ut, len(geometrier), varningar
+
+
+def trad_fran_baskarta(
+    paket: Sequence[Path],
+    *,
+    trad_konfig: TradKonfig,
+    bbox_publicering: tuple[float, float, float, float],
+    epsg_publicering: int,
+) -> tuple[list[tuple[float, float, str]], list[str]]:
+    """Extraherar trädpunkter (`Barrträd`, `Lövträd`) ur baskartan och transformerar till EPSG:3011."""
+    from pyproj import Transformer
+
+    objekt, hittat = _las_vektorobjekt_ur_paket(
+        paket,
+        trad_konfig.lager_monster,
+        trad_konfig.objekt_falt,
+        trad_konfig.objekt_monster,
+        bbox_publicering,
+    )
+    varningar: list[str] = []
+    if not hittat:
+        varningar.append(
+            f"Träd (vegetation): inget lager i baskartan matchar '{trad_konfig.lager_monster}'."
+        )
+        return [], varningar
+
+    tr = Transformer.from_crs(epsg_publicering, 3011, always_xy=True)
+    e0, n0, e1, n1 = bbox_publicering
+    xs: list[float] = []
+    ys: list[float] = []
+    typer: list[str] = []
+    for geom, typ_v in objekt:
+        delar = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
+        for d in delar:
+            if d.geom_type != "Point" or d.is_empty:
+                continue
+            x, y = float(d.x), float(d.y)
+            if e0 <= x <= e1 and n0 <= y <= n1:
+                xs.append(x)
+                ys.append(y)
+                typer.append(typ_v)
+    if not xs:
+        return [], varningar
+    es, ns = tr.transform(xs, ys)
+    punkter = [(float(e), float(n), t) for e, n, t in zip(es, ns, typer, strict=True)]
+    varningar.append(
+        f"Träd ur baskartan: {len(punkter)} trädpunkter rasteriseras till vegetation.tif med "
+        f"kronradie {trad_konfig.kronradie_m:g} m och antagen kronhöjd {trad_konfig.antagen_hojd_m:g} m "
+        "(baskartan saknar uppmätt trädhöjd)."
+    )
+    return punkter, varningar
+
+
+def rasterisera_trad_vegetation(
+    trad_punkter: Sequence[tuple[float, float, str]],
+    ruta: Any,
+    *,
+    kronradie_m: float = 3.5,
+    antagen_hojd_m: float = 8.0,
+    upplosning_m: float = 1.0,
+) -> Any:
+    """Rasteriserar trädpunkter (EPSG:3011) till vegetationshöjdraster (float32, m) för `ruta`, eller None om inga träd träffar."""
+    import math
+
+    import numpy as np
+
+    if not trad_punkter:
+        return None
+    e0, n0, e1, n1 = ruta.yttre_bbox
+    r_m = float(kronradie_m)
+    lokala = [
+        (e, n)
+        for e, n, _ in trad_punkter
+        if (e0 - r_m <= e <= e1 + r_m) and (n0 - r_m <= n <= n1 + r_m)
+    ]
+    if not lokala:
+        return None
+    px = float(upplosning_m)
+    f = max(1, round(px / float(ruta.upplosning_m)))
+    gr = int(ruta.form_rc[0]) // f
+    gk = int(ruta.form_rc[1]) // f
+    veg = np.zeros((gr, gk), dtype=np.float32)
+    rad_celler = int(math.ceil(r_m / px))
+    r2 = r_m * r_m
+    hojd_f32 = np.float32(antagen_hojd_m)
+    for e, n in lokala:
+        kc = int(math.floor((e - e0) / px))
+        rc = int(math.floor((n1 - n) / px))
+        r_min = max(0, rc - rad_celler)
+        r_max = min(gr, rc + rad_celler + 1)
+        k_min = max(0, kc - rad_celler)
+        k_max = min(gk, kc + rad_celler + 1)
+        if r_min >= r_max or k_min >= k_max:
+            continue
+        ce = e0 + (np.arange(k_min, k_max, dtype=np.float64) + 0.5) * px
+        cn = n1 - (np.arange(r_min, r_max, dtype=np.float64) + 0.5) * px
+        de = ce[None, :] - e
+        dn = cn[:, None] - n
+        inom = (de * de + dn * dn) <= r2
+        sub = veg[r_min:r_max, k_min:k_max]
+        sub[inom] = np.maximum(sub[inom], hojd_f32)
+    return veg if bool(np.any(veg > 0.0)) else None

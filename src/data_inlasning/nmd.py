@@ -92,6 +92,16 @@ def kontrollera_koder(klasser: NDArray[Any]) -> None:
         )
 
 
+def las_crs_epsg(crs: Any) -> int | None:
+    """Läser EPSG-kod ur rasterio CRS; provar lägre tröskel (20) för Esri WKT1-filer."""
+    if crs is None:
+        return None
+    epsg = crs.to_epsg()
+    if epsg is None:
+        epsg = crs.to_epsg(confidence_threshold=20)
+    return int(epsg) if epsg is not None else None
+
+
 def klipp_nmd(
     nmd_fil: str | Path,
     kaerna_3011: tuple[float, float, float, float],
@@ -123,7 +133,7 @@ def klipp_nmd(
     if bredd * hojd > 4_000_000:
         raise NmdFel(f"Området blir {bredd * hojd} celler; minska området eller bufferten.")
     with rasterio.open(nmd_fil) as ds:
-        if ds.crs is None or ds.crs.to_epsg() != EPSG_NMD:
+        if las_crs_epsg(ds.crs) != EPSG_NMD:
             raise NmdFel(f"NMD-filen ska ha EPSG:{EPSG_NMD}, fick {ds.crs}.")
         # Fönster med marginal i källans CRS (rektangeln roterar något mellan 3011 och 3006).
         sb = transform_bounds(EPSG_ANALYS, EPSG_NMD, x0, y0, x1, y1, densify_pts=21)
