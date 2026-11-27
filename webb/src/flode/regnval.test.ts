@@ -8,6 +8,8 @@ import {
   medRegnForval,
   regnEtikett,
   regnSignatur,
+  regnSignaturFranKorningar,
+  regnValFranServer,
   regnValHtml,
   STANDARD_REGNVAL,
   tillRegnParam,
@@ -73,7 +75,62 @@ test("regnEtikett formaterar serverns regndata som en ren 1-radig svensk etikett
     "100-årsregn · 60 min · kf 1,25 = 68 mm",
   );
   assert.equal(regnEtikett({ regn_mm: 100 }), "Regn 100 mm");
+  assert.equal(regnEtikett({ regn_mm: 73.133, varaktighet_min: 360 }), "Regn 73,1 mm · 360 min");
   assert.equal(regnEtikett(null), null);
+});
+
+test("dahlstrom-2010 och Göteborgs standardregn rundturar exakt till samma regnSignatur", () => {
+  const regn10Val = medRegnForval(STANDARD_REGNVAL, "10ar");
+  const server10 = {
+    aterkomsttid_ar: 10,
+    varaktighet_min: 60,
+    klimatfaktor: 1.25,
+    regn_mm: 32.134,
+    berakningstyp: "statisk" as const,
+    regntyp: "cds" as const,
+    kalla: "dahlstrom-2010",
+    ar_standard: false,
+    skyfall_metod: "graf" as const,
+  };
+  assert.equal(
+    regnSignaturFranKorningar([{ mall: "vatten", status: { status: "klar" }, vyer: [], regn: server10 }]),
+    regnSignatur(regn10Val, null, "graf"),
+  );
+  assert.equal(
+    regnEtikett(server10),
+    "10-årsregn · 60 min · kf 1,25 = 32,1 mm",
+  );
+
+  const serverStdGbg = {
+    aterkomsttid_ar: null,
+    varaktighet_min: 360,
+    klimatfaktor: null,
+    regn_mm: 73.133,
+    berakningstyp: "statisk" as const,
+    regntyp: "block" as const,
+    kalla: null,
+    ar_standard: true,
+    skyfall_metod: "graf" as const,
+  };
+  assert.equal(
+    regnSignaturFranKorningar([{ mall: "vatten", status: { status: "klar" }, vyer: [], regn: serverStdGbg }]),
+    regnSignatur(STANDARD_REGNVAL, null, "graf"),
+  );
+
+  const serverExtrem = {
+    aterkomsttid_ar: null,
+    varaktighet_min: null,
+    klimatfaktor: null,
+    regn_mm: 100,
+    berakningstyp: "statisk" as const,
+    regntyp: "block" as const,
+    kalla: null,
+    ar_standard: false,
+    skyfall_metod: "graf" as const,
+  };
+  const extremVal = regnValFranServer(serverExtrem);
+  assert.ok(extremVal);
+  assert.equal(regnSignatur(extremVal, null, "graf"), regnSignatur(medRegnForval(STANDARD_REGNVAL, "extrem"), null, "graf"));
 });
 
 test("valdRegnText visar projektets förval, dynamisk typ och avtappning", () => {

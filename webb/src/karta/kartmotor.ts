@@ -486,8 +486,8 @@ export class Kartmotor {
       },
     });
     k.addLayer({ id: "rutor-linje", type: "line", source: RUTOR, paint: { "line-color": "#111111", "line-opacity": 0.5, "line-width": 1, "line-dasharray": [4, 3] } });
-    k.addLayer({ id: "analys-yta-fyll", type: "fill", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["get", "farg"], "fill-opacity": 0.5 } });
-    k.addLayer({ id: "analys-yta-kant", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["get", "farg"], "line-width": 2 } });
+    k.addLayer({ id: "analys-yta-fyll", type: "fill", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "fill-color": ["get", "farg"], "fill-opacity": 0.14 } });
+    k.addLayer({ id: "analys-yta-kant", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "Polygon"], paint: { "line-color": ["get", "farg"], "line-width": 2, "line-dasharray": [4, 2] } });
     k.addLayer({ id: "analys-linje", type: "line", source: ANALYS, filter: ["==", ["geometry-type"], "LineString"], layout: { "line-cap": "round", "line-join": "round" }, paint: { "line-color": ["get", "farg"], "line-width": ["get", "bredd"], "line-opacity": 0.9 } });
     k.addLayer({ id: "analys-punkt", type: "circle", source: ANALYS, filter: ["==", ["geometry-type"], "Point"], paint: { "circle-radius": 4, "circle-color": ["get", "farg"], "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } });
     k.addLayer({ id: "projekt-polygon-fyll", type: "fill", source: PROJEKT_POLYGON, paint: { "fill-color": "#2f4a2c", "fill-opacity": 0.04 } });

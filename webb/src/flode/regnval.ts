@@ -278,22 +278,23 @@ export function regnSignaturFranKorningar(
  */
 export function regnEtikett(r: RegnPost | RegnForval | null | undefined): string | null {
   if (!r) return null;
-  const delar: string[] = [];
-  if (typeof r.aterkomsttid_ar === "number" && Number.isFinite(r.aterkomsttid_ar)) {
-    delar.push(`${formateraHogst(r.aterkomsttid_ar, 0)}-årsregn`);
-  }
-  if (typeof r.varaktighet_min === "number" && Number.isFinite(r.varaktighet_min)) {
-    delar.push(`${formateraHogst(r.varaktighet_min, 0)} min`);
-  }
-  if (typeof r.klimatfaktor === "number" && Number.isFinite(r.klimatfaktor)) {
-    delar.push(`kf ${formateraHogst(r.klimatfaktor, 2)}`);
-  }
+  const harAr = typeof r.aterkomsttid_ar === "number" && Number.isFinite(r.aterkomsttid_ar);
+  const harVar = typeof r.varaktighet_min === "number" && Number.isFinite(r.varaktighet_min);
+  const harKf = typeof r.klimatfaktor === "number" && Number.isFinite(r.klimatfaktor);
   const harMm = typeof r.regn_mm === "number" && Number.isFinite(r.regn_mm);
-  if (delar.length === 0) {
-    if (harMm) return `Regn ${formateraHogst(r.regn_mm as number, 1)} mm`;
+  if (!harAr && !harKf) {
+    if (harMm) {
+      const bas = `Regn ${formateraHogst(r.regn_mm as number, 1)} mm`;
+      return harVar ? `${bas} · ${formateraHogst(r.varaktighet_min as number, 0)} min` : bas;
+    }
+    if (harVar) return `${formateraHogst(r.varaktighet_min as number, 0)} min`;
     const kalla = ("rapport" in r ? r.rapport : null) || r.kalla;
     return kalla ? String(kalla) : null;
   }
+  const delar: string[] = [];
+  if (harAr) delar.push(`${formateraHogst(r.aterkomsttid_ar as number, 0)}-årsregn`);
+  if (harVar) delar.push(`${formateraHogst(r.varaktighet_min as number, 0)} min`);
+  if (harKf) delar.push(`kf ${formateraHogst(r.klimatfaktor as number, 2)}`);
   const grund = delar.join(" · ");
   return harMm ? `${grund} = ${formateraHogst(r.regn_mm as number, 1)} mm` : grund;
 }

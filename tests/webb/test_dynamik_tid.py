@@ -162,20 +162,33 @@ def test_giltiga_regntyp_och_berakningstyp_samt_tillampa_regn() -> None:
     _tillampa_regn("vatten.dynamik", par_idf, {"regntyp": "cds", "berakningstyp": "dynamisk"})
     assert par_idf["regntyp"] == "cds"
 
-    # Mall utan IDF + vatten.dynamik + regntyp="cds" använder generera_cds_regn
+    # Mall utan IDF + vatten.dynamik + regntyp="cds" använder dahlstrom-2010 (som generera_cds_regn)
+    from gemensamt.regn import IDF_DAHLSTROM_2010, skapa_regn_fran_idf_kalla
+
     par_cds: dict[str, Any] = {"regn_mm": 70.0}
     _tillampa_regn(
         "vatten.dynamik",
         par_cds,
         {"aterkomsttid_ar": 100.0, "varaktighet_min": 60.0, "klimatfaktor": 1.25, "regntyp": "cds"},
     )
-    forv_cds = generera_cds_regn(100.0, klimatfaktor=1.25, varaktighet_min=60.0)
-    assert par_cds["regn_tid_s"] == list(forv_cds.tid_s)
-    assert par_cds["regn_mm_h"] == list(forv_cds.intensitet_mm_h)
+    assert par_cds["idf"] == IDF_DAHLSTROM_2010
+    assert par_cds["aterkomsttid_ar"] == 100.0
+    assert par_cds["varaktighet_min"] == 60.0
+    assert par_cds["klimatfaktor"] == 1.25
     assert par_cds["regntyp"] == "cds"
     assert "regn_mm" not in par_cds
+    forv_cds = generera_cds_regn(100.0, klimatfaktor=1.25, varaktighet_min=60.0)
+    serie_cds = skapa_regn_fran_idf_kalla(
+        par_cds["idf"],
+        par_cds["aterkomsttid_ar"],
+        klimatfaktor=par_cds["klimatfaktor"],
+        typ=par_cds["regntyp"],
+        varaktighet_min=par_cds["varaktighet_min"],
+    )
+    assert serie_cds.tid_s == forv_cds.tid_s
+    assert serie_cds.intensitet_mm_h == forv_cds.intensitet_mm_h
 
-    # Mall utan IDF + vatten.dynamik + regntyp="block" använder generera_blockregn
+    # Mall utan IDF + vatten.dynamik + regntyp="block" ger dahlstrom-2010 (som generera_blockregn)
     par_blk: dict[str, Any] = {"regn_mm": 70.0}
     _tillampa_regn(
         "vatten.dynamik",
@@ -187,10 +200,18 @@ def test_giltiga_regntyp_och_berakningstyp_samt_tillampa_regn() -> None:
             "regntyp": "block",
         },
     )
-    forv_blk = generera_blockregn(100.0, klimatfaktor=1.25, varaktighet_min=60.0)
-    assert par_blk["regn_tid_s"] == list(forv_blk.tid_s)
-    assert par_blk["regn_mm_h"] == list(forv_blk.intensitet_mm_h)
+    assert par_blk["idf"] == IDF_DAHLSTROM_2010
     assert par_blk["regntyp"] == "block"
+    forv_blk = generera_blockregn(100.0, klimatfaktor=1.25, varaktighet_min=60.0)
+    serie_blk = skapa_regn_fran_idf_kalla(
+        par_blk["idf"],
+        par_blk["aterkomsttid_ar"],
+        klimatfaktor=par_blk["klimatfaktor"],
+        typ=par_blk["regntyp"],
+        varaktighet_min=par_blk["varaktighet_min"],
+    )
+    assert serie_blk.tid_s == forv_blk.tid_s
+    assert serie_blk.intensitet_mm_h == forv_blk.intensitet_mm_h
 
 
 # ------------------------------------------------------------------ K20-byte & end-to-end API

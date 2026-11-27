@@ -653,8 +653,11 @@
   gap: 4px;
 }
 .ar-lagerknappar button {
-  height: 30px;
-  padding: 0 10px;
+  min-height: 30px;
+  height: auto;
+  padding: 5px 10px;
+  line-height: 1.25;
+  text-align: left;
   border: 1px solid var(--f-linje, #d9d9d9);
   background: var(--f-yta, #ffffff);
   color: var(--f-text, #111111);
@@ -662,6 +665,17 @@
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
+}
+.ar-lager-varning {
+  padding: 6px 8px;
+  border-left: 3px solid var(--f-accent, #111111);
+  background: var(--f-yta, #ffffff);
+  color: var(--f-text, #111111);
+  font-weight: 500;
+}
+.ar-visat-regn {
+  margin: -4px 0 8px;
+  color: var(--f-text-sekundar, #333333);
 }
 .ar-lagerknappar button:hover {
   border-color: var(--f-linje-stark, #111111);

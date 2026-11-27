@@ -1043,9 +1043,20 @@ def skapa_regn_fran_spec(
 
 DATA_REGN_MAPP: Path = Path(__file__).resolve().parents[2] / "data" / "regn"
 IDF_DAHLSTROM_2010 = "dahlstrom-2010"
+DAHLSTROM_2010_STANDARD_KLIMATFAKTOR: float = 1.0
 IDF_STOCKHOLMSREGN_2024 = "stockholmsregn-2024"
 STOCKHOLMSREGN_2024_STANDARD_KLIMATFAKTOR: float = 1.4
 STOCKHOLMSREGN_2024_TIDIGARE_STADSFAKTOR: float = 1.25
+
+
+def dahlstrom_2010_manifest_parametrar(klimatfaktor: float) -> dict[str, Any]:
+    """Källa och faktor för K0-manifestets `parametrar` (Dahlström 2010 / P110, ej tabell)."""
+    return {
+        "idf_kalla": IDF_DAHLSTROM_2010,
+        "idf_rapport": "Dahlström (2010) / Svenskt Vatten P104 & P110",
+        "idf_klimatfaktor": _validera_positivt_tal(klimatfaktor, "klimatfaktor"),
+        "idf_klimatfaktor_ingar_i_tabell": False,
+    }
 
 
 @dataclass(frozen=True)
@@ -1174,14 +1185,18 @@ def skapa_regn_fran_idf_kalla(
     tidssteg_min: float = STANDARD_TIDSSTEG_MIN,
     toppfaktor: float = STANDARD_CDS_TOPPFAKTOR,
 ) -> RegnSerieK4:
-    """Skapar block- eller CDS-regn ur en registrerad IDF-tabell.
+    """Skapar block- eller CDS-regn ur en registrerad IDF-tabell eller `dahlstrom-2010` (P110).
 
-    `klimatfaktor=None` ger källans standardfaktor (Stockholmsregn 2024: 1,4); värdet skrivs i
-    serien (`klimatfaktor`) och i `regn_id`. Faktorn multipliceras med hela regnkurvan.
+    `klimatfaktor=None` ger källans standardfaktor (Stockholmsregn 2024: 1,4; Dahlström 2010: 1,0);
+    värdet skrivs i serien (`klimatfaktor`) och i `regn_id`. Faktorn multipliceras med hela kurvan.
     """
-    kalla = hamta_idf_kalla(kalla_id)
-    kf = kalla.standard_klimatfaktor if klimatfaktor is None else klimatfaktor
-    tabell = kalla.las()
+    if kalla_id == IDF_DAHLSTROM_2010:
+        kf = DAHLSTROM_2010_STANDARD_KLIMATFAKTOR if klimatfaktor is None else klimatfaktor
+        tabell: IdfTabell | None = None
+    else:
+        kalla = hamta_idf_kalla(kalla_id)
+        kf = kalla.standard_klimatfaktor if klimatfaktor is None else klimatfaktor
+        tabell = kalla.las()
     t_ar = _validera_positivt_tal(aterkomsttid_ar, "aterkomsttid_ar")
     d_tot = _validera_positivt_tal(varaktighet_min, "varaktighet_min")
     kf = _validera_positivt_tal(kf, "klimatfaktor")

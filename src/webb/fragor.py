@@ -2358,14 +2358,15 @@ class FragaTjanst:
                     }
                 )
             elif "regn_mm" in par:
-                regn.append(
-                    {
-                        "analys": j["analys"],
-                        "kalla": None,
-                        "regn_mm": par["regn_mm"],
-                        "klimatfaktor": None,
-                    }
-                )
+                regn_post: dict[str, Any] = {
+                    "analys": j["analys"],
+                    "kalla": None,
+                    "regn_mm": par["regn_mm"],
+                    "klimatfaktor": None,
+                }
+                if par.get("varaktighet_min") is not None:
+                    regn_post["varaktighet_min"] = par.get("varaktighet_min")
+                regn.append(regn_post)
             if "takvatten_antagande" in mv or "avtappning_antagande" in mv:
                 vatten.append(
                     {

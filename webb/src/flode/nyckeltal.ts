@@ -48,6 +48,8 @@ export interface Underlag {
   efterDjup_m?: number | null;
   foreLagrat_m3?: number | null;
   efterLagrat_m3?: number | null;
+  foreUt_m3?: number | null;
+  efterUt_m3?: number | null;
   /** Svaret från `POST /api/analys/ekologi` (K45); null när det saknas. */
   ekologi?: EkologiSvar | null;
 }
