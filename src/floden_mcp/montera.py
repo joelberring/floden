@@ -8,6 +8,7 @@ varje förfrågan går genom `KontoSkydd` (bearer-token eller session). **`/mcp`
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
@@ -16,6 +17,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from floden_mcp.http import ASGIApp, KontoSkydd, ar_loopback
+from floden_mcp.utveckling import utvecklingslage_aktivt
+
+_logg = logging.getLogger("floden_mcp")
 
 MCP_SOKVAG = "/mcp"
 
@@ -34,6 +38,7 @@ class MonteradMcp:
 
     app: ASGIApp
     livscykel: Callable[[], AbstractAsyncContextManager[Any]]
+    utvecklingslage: bool = False
 
     @staticmethod
     def ager(sokvag: str) -> bool:
@@ -50,7 +55,17 @@ def montera_mcp(webb_app: Any, rot: Path, *, host: str) -> MonteradMcp:
             f"/mcp är av: inloggningen är av och värden är {host}, inte loopback. Slå på inloggning "
             "([konto] inloggning = \"pa\", docs/KONTO.md) för att nå /mcp utifrån."
         )
-    server, _policy, _logg, _app = bygg(rot, app=webb_app)
+    utv_flagga = utvecklingslage_aktivt()
+    if utv_flagga:
+        if konto.aktiv:
+            _logg.warning(
+                "MCP-utvecklingsläge (utv_*) är AKTIVT på /mcp: varje utv_*-anrop kräver inloggat superadmin-konto."
+            )
+        else:
+            _logg.warning(
+                "FLODEN_MCP_UTVECKLINGSLAGE=1 har ingen verkan utan inloggning: utv_*-verktyg nekas när inloggning är av."
+            )
+    server, _policy, _logg_kor, _app = bygg(rot, app=webb_app)
     transport = None
     if konto.aktiv:
         from mcp.server.transport_security import TransportSecuritySettings
@@ -69,4 +84,5 @@ def montera_mcp(webb_app: Any, rot: Path, *, host: str) -> MonteradMcp:
     return MonteradMcp(
         app=KontoSkydd(starlette, konto),
         livscykel=lambda: starlette.router.lifespan_context(starlette),
+        utvecklingslage=bool(utv_flagga and konto.aktiv),
     )

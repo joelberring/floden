@@ -227,6 +227,30 @@ verktyg med nyckelrelaterade namn och sådana importer; `tests/floden_mcp/test_m
 konton, `docs/KONTO.md` avsnitt 11): e-postadresser är personuppgifter och behörighet ges av människor. Verktygen ser bara
 vad kontot redan har tillgång till (`projekt_lista`); körloggen har konto-id men aldrig nyckelvärden.
 
+### Utvecklingsläge för superadmin (`FLODEN_MCP_UTVECKLINGSLAGE=1`, opt-in)
+
+För serverdrift och utveckling finns ett **avstängt-som-förval** utvecklingsläge som lägger till explicita, typade `utv_*`-verktyg bakom ett **dubbellås**:
+
+1. **Miljöflagga:** `utv_*`-verktygen registreras endast när `FLODEN_MCP_UTVECKLINGSLAGE=1` är satt vid serverstart (förval `0`: noll `utv_*`-verktyg finns). Aktivt läge visas som `"mcp_utvecklingslage": true` på `/api/halsa`.
+2. **Superadmin vid varje anrop:** Varje anrop till ett `utv_*`-verktyg kontrollerar både i middleware och inne i verktyget att anroparen är autentiserad och har `Register.ar_superadmin == True`. Oautentiserade anrop nekas med HTTP 401; inloggade icke-superadmin (`lasare`/`utredare`) nekas med `403` och loggas som `nekad_behorighet`.
+
+**Icke-förbikopplingsbara skyddsregler i utvecklingsläget:**
+- **0 hemligheter:** API-nycklar, krypteringshemligheter, S3-nycklar och OAuth-hemligheter exponeras aldrig.
+- **0 personuppgifter (PII):** `utv_konto_lista` returnerar enbart anonymiserat `konto_id`, roll-/spärrstatus, tidsstämplar och organisationsmedlemskap — aldrig e-postadresser eller personnamn. Loggar och feltexter redigeras för e-postadresser och tokens.
+- **K38-öppenhetsspärr:** Stängda kommuner, lokala baskartor (t.ex. Stockholm) och icke-öppna projekt nekas konsekvent.
+- **Inga godtyckliga skalkommandon:** Endast typade verktyg mot interna Floden-moduler och vitlistade test-/benchmarkkörningar. Alla anrop loggas i den hashkedjade körloggen.
+
+| Verktyg | Gör |
+| --- | --- |
+| `utv_drift_halsa` | serverns hälsotelemetri, kontodatabasens SQLite-integritet (WAL, `integrity_check`, `foreign_key_check`), aktiv commit, körloggens hashkedjestatus och `mcp_utvecklingslage: true` |
+| `utv_drift_loggar` | senaste N rader ur den hashkedjade körloggen (redigerade för 0 PII/tokens) |
+| `utv_geografi_lista`, `utv_geografi_planera`, `utv_geografi_mappa` | listar, planerar (bbox) och mappar **enbart öppna** kommuner och geografier; stängda kommuner och lokala baskartor nekas (K38) |
+| `utv_lagring_lista`, `utv_lagring_stada`, `utv_disk_stada` | listar strikt `geografi/` och `tmp/` i objektlagring; städar lokal LRU-cache / `tmp/` resp. lokal diskcache med `torrkor=true` som förval |
+| `utv_konto_backup` | kör online-säker SQLite-backup och integritetsverifiering (valfritt `s3=false`), 0 PII |
+| `utv_testsvit_kor`, `utv_benchmark_kor` | kör `floden testsvit` eller utvalt/lättviktigt benchmarkfall i isolerad delprocess med strukturerad sammanfattning |
+| `utv_konto_lista` | anonymiserad kontolista (`konto_id`, `superadmin`, `sparrad`, `organisationer` — aldrig e-post/namn) |
+| `utv_projekt_roll_satt`, `utv_projekt_radera` | sätter `lasare`/`utredare` respektive raderar (med namnbekräftelse) **enbart verifierat öppna icke-demoprojekt**; `demokvarteret` och stängda projekt nekas alltid |
+
 ## Dataklasser
 
 Varje svar och varje projekt har en klass: `oppet` < `internt` < `skyddat` < `personuppgifter`. Ett

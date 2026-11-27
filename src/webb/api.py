@@ -1546,6 +1546,7 @@ class FlodenApiApp:
             "minne_grans_mb": cgroup_minne_grans_mb(),
             "disk_ledig_gb": disk_ledig_gb(cachemapp),
             "exekutor": exekutor_lage,
+            "mcp_utvecklingslage": os.environ.get("FLODEN_MCP_UTVECKLINGSLAGE") == "1",
         }
 
     def lista_omraden(self) -> dict[str, Any]:

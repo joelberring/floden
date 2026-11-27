@@ -58,6 +58,8 @@ services:
       FLODEN_S3_PREFIX: ${FLODEN_S3_PREFIX:-}
       FLODEN_LOKAL_CACHE_MAPP: ${FLODEN_LOKAL_CACHE_MAPP:-}
       FLODEN_LOKAL_CACHE_MAX_GB: ${FLODEN_LOKAL_CACHE_MAX_GB:-}
+      # Opt-in superadmin MCP-utvecklingsläge (utv_*-verktyg, 0 = avstängt som förval).
+      FLODEN_MCP_UTVECKLINGSLAGE: ${FLODEN_MCP_UTVECKLINGSLAGE:-0}
     volumes:
       - ./config.local.toml:/app/config.local.toml:ro
       # Bara på serverns disk tills förrådet (S4) finns. Kontodatabasen är det enda som inte går att räkna om.
