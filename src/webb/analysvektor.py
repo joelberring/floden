@@ -190,6 +190,7 @@ def flodesvagar_fran_strackor(
                 "ordning": int(v.ordning),
                 "langd_m": _avrunda(v.langd_m, 1),
                 "lutning": _avrunda(v.lutning, 4),
+                "typ": v.typ,
             },
         }
         for v in vagar

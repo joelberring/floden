@@ -5,7 +5,7 @@ Verifierar:
    identiska fält (`antal_totalt`, `visade`, `dolda`, `delsankor`, sorteringsordning) även vid
    många sänkor (> `MAX_SANKOR`).
 2. `FragaTjanst.vektor(..., "flodesvagar")`: hoppar över `bygg_sankgraf`, sparar bascachen
-   `avrinningsnat.<scenario>.v2.npz` och återanvänder den vid reglageändringar (`min_yta_m2`).
+   `avrinningsnat.<scenario>.v3.npz` och återanvänder den vid reglageändringar (`min_yta_m2`).
 3. Processisolerad vektorberäkning (`exekutor="process"`): kör både `flodesvagar` och `sankor`
    i kortlivad barnprocess (`kor_vektor_i_barnprocess`), och omvandlar RAM-/timeout-fel till
    tydligt HTTP 503 utan att påverka servern.
@@ -148,13 +148,13 @@ def test_flodesvagar_hoppar_over_sankgraf_och_ateranvander_bas_npz(
         v500 = tjanst.vektor(kid, "fore", "flodesvagar", min_yta_m2=100.0)
         assert v500["slag"] == "flodesvagar"
         assert len(v500["features"]) > 0
-        bas_npz = tmp_path / "korningar" / kid / "webb" / "avrinningsnat.fore.v2.npz"
+        bas_npz = tmp_path / "korningar" / kid / "webb" / "avrinningsnat.fore.v3.npz"
         assert bas_npz.is_file()
 
         # Andra reglageläget (50 m²) läser ur `bas_npz` utan att köra `berakna_avrinningsfalt`
         with mock.patch(
             "sankgraf.avrinningsnat.berakna_avrinningsfalt",
-            side_effect=AssertionError("Borde ha använt avrinningsnat.fore.v2.npz"),
+            side_effect=AssertionError("Borde ha använt avrinningsnat.fore.v3.npz"),
         ):
             v50 = tjanst.vektor(kid, "fore", "flodesvagar", min_yta_m2=50.0)
         assert v50["meta"]["min_yta_m2"] == 50.0
@@ -172,7 +172,7 @@ def test_vektor_i_barnprocess_och_tydligt_503_vid_minnes_eller_tidsfel(
         v_flode = tjanst.vektor(kid, "fore", "flodesvagar", min_yta_m2=100.0)
         assert v_flode["slag"] == "flodesvagar"
         assert len(v_flode["features"]) > 0
-        assert (tmp_path / "korningar" / kid / "webb" / "avrinningsnat.fore.v2.npz").is_file()
+        assert (tmp_path / "korningar" / kid / "webb" / "avrinningsnat.fore.v3.npz").is_file()
 
         v_sank = tjanst.vektor(kid, "fore", "sankor", min_volym_m3=0.1, min_djup_m=0.05)
         assert v_sank["slag"] == "sankor"
