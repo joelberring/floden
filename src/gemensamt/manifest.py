@@ -174,10 +174,15 @@ class RunManifest:
         )
 
 
-def hamta_kodversion(repo_rot: str | Path | None = None) -> str:
+def hamta_kodversion(
+    repo_rot: str | Path | None = None,
+    miljo: Mapping[str, str] | None = None,
+) -> str:
     """Hämtar aktuell git-revision (kort SHA + `-smutsig` vid osparade ändringar).
 
-    Om git inte är tillgängligt eller repot saknar commits returneras `"okand"`.
+    Om git inte är tillgängligt eller repot saknar commits faller funktionen tillbaka på
+    `FLODEN_COMMIT` via `kort_commit_ur_miljo(miljo)`. Saknas även en giltig sådan returneras
+    `"okand"`.
     """
     cwd = str(repo_rot) if repo_rot is not None else None
     try:
@@ -189,20 +194,20 @@ def hamta_kodversion(repo_rot: str | Path | None = None) -> str:
             text=True,
         )
         sha = rev.stdout.strip()
-        if not sha:
-            return "okand"
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=cwd,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        if status.stdout.strip():
-            return f"{sha}-smutsig"
-        return sha
+        if sha:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=cwd,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            if status.stdout.strip():
+                return f"{sha}-smutsig"
+            return sha
     except (OSError, subprocess.CalledProcessError):
-        return "okand"
+        pass
+    return kort_commit_ur_miljo(miljo) or "okand"
 
 
 _COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
@@ -224,7 +229,7 @@ def visningsversion(
     """Versionen som visas för människor (kartornas sidfot): `FLODEN_COMMIT` när den finns, annars
     git-revisionen (`hamta_kodversion`). I avbildningen finns ingen git, så utan `FLODEN_COMMIT`
     stod det annars "okand"."""
-    return kort_commit_ur_miljo(miljo) or hamta_kodversion(repo_rot)
+    return kort_commit_ur_miljo(miljo) or hamta_kodversion(repo_rot, miljo=miljo)
 
 
 def skapa_manifest(
