@@ -137,9 +137,16 @@ class StatiskFyllning(Analyslosare):
             if "varaktighet_min" in parametrar:
                 ut0["varaktighet_min"] = _tal(parametrar, "varaktighet_min", minst=0.0)
             return ut0
-        # Regn ur en registrerad IDF-källa (gemensamt.regn): källa, återkomsttid, varaktighet och
-        # klimatfaktor är uttryckliga parametrar och ingår i nyckeln och i K0-manifestet.
-        from gemensamt.regn import RegnFel, hamta_idf_kalla
+        # Regn ur en registrerad IDF-källa eller `dahlstrom-2010` (gemensamt.regn): källa,
+        # återkomsttid, varaktighet och klimatfaktor är uttryckliga parametrar i nyckel och K0.
+        from gemensamt.regn import (
+            DAHLSTROM_2010_STANDARD_KLIMATFAKTOR,
+            IDF_DAHLSTROM_2010,
+            RegnFel,
+            dahlstrom_2010_manifest_parametrar,
+            hamta_idf_kalla,
+            skapa_regn_fran_idf_kalla,
+        )
 
         if "regn_mm" in parametrar:
             raise LosarFel(f"{self.namn}: 'regn_mm' och 'idf' kan inte anges samtidigt.")
@@ -150,25 +157,43 @@ class StatiskFyllning(Analyslosare):
         if typ not in ("block", "cds"):
             raise LosarFel(f"Parametern 'regntyp' måste vara 'block' eller 'cds', fick {typ!r}.")
         try:
-            kalla = hamta_idf_kalla(kalla_id)
-            kf = (
-                _tal(parametrar, "klimatfaktor", minst=0.0)
-                if "klimatfaktor" in parametrar
-                else kalla.standard_klimatfaktor
+            aterkomst = _tal(parametrar, "aterkomsttid_ar", minst=0.0)
+            varakt = (
+                _tal(parametrar, "varaktighet_min", minst=0.0)
+                if "varaktighet_min" in parametrar
+                else 60.0
             )
+            if kalla_id == IDF_DAHLSTROM_2010:
+                kf = (
+                    _tal(parametrar, "klimatfaktor", minst=0.0)
+                    if "klimatfaktor" in parametrar
+                    else DAHLSTROM_2010_STANDARD_KLIMATFAKTOR
+                )
+                skapa_regn_fran_idf_kalla(
+                    kalla_id,
+                    aterkomst,
+                    klimatfaktor=kf,
+                    typ=typ,
+                    varaktighet_min=varakt,
+                )
+                manifest_idf = dahlstrom_2010_manifest_parametrar(kf)
+            else:
+                kalla = hamta_idf_kalla(kalla_id)
+                kf = (
+                    _tal(parametrar, "klimatfaktor", minst=0.0)
+                    if "klimatfaktor" in parametrar
+                    else kalla.standard_klimatfaktor
+                )
+                manifest_idf = kalla.manifest_parametrar(kf)
             ut: dict[str, Any] = {
                 "persistens_faktor": persistens,
                 "idf": kalla_id,
                 "regntyp": typ,
-                "aterkomsttid_ar": _tal(parametrar, "aterkomsttid_ar", minst=0.0),
-                "varaktighet_min": (
-                    _tal(parametrar, "varaktighet_min", minst=0.0)
-                    if "varaktighet_min" in parametrar
-                    else 60.0
-                ),
+                "aterkomsttid_ar": aterkomst,
+                "varaktighet_min": varakt,
                 "klimatfaktor": kf,
             }
-            ut.update(kalla.manifest_parametrar(kf))
+            ut.update(manifest_idf)
         except RegnFel as exc:
             raise LosarFel(f"{self.namn}: {exc}") from exc
         ut.update(vatten)

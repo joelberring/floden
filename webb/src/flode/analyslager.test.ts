@@ -272,5 +272,23 @@ test("vektorTeckenHtml för sänkor eliminerar duplicerade djuprutor när harDju
 
   const kompaktUtanDolda = vektorTeckenHtml({ ...SANKOR, meta: { antal_totalt: 2, visade: 2, dolda: 0 } }, true);
   assert.match(kompaktUtanDolda, /Sänkor: samma djupskala · etikett = volym \(m³\)/);
+  assert.match(kompaktUtanDolda, /ändras inte av regn/);
   assert.doesNotMatch(kompaktUtanDolda, /små dolda/);
+  assert.match(full, /Sänkor \(topografi\)/);
+  assert.match(full, /inte valt regn/);
+});
+
+test("sänkor visas som halvgenomskinlig streckad kontur och arbetsyta visar aktivt regn samt kontrollagersvarning", async () => {
+  const { readFileSync } = await import("node:fs");
+  const kmSrc = readFileSync(new URL("../karta/kartmotor.ts", import.meta.url), "utf-8");
+  const arSrc = readFileSync(new URL("./arbetsyta.ts", import.meta.url), "utf-8");
+  const cssSrc = readFileSync(new URL("./arbetsyta.css", import.meta.url), "utf-8");
+
+  assert.match(kmSrc, /id: "analys-yta-fyll"[^}]*"fill-opacity": 0\.14/);
+  assert.match(kmSrc, /id: "analys-yta-kant"[^}]*"line-dasharray": \[4, 2\]/);
+  assert.match(arSrc, /id="ar-visat-regn"/);
+  assert.match(arSrc, /Avrunnet ut ur området/);
+  assert.match(arSrc, /Visar kontrollager i stället för vattendjup/);
+  assert.match(arSrc, /Visar just nu \$\{visatRegn\}/);
+  assert.match(cssSrc, /\.ar-lagerknappar button \{[^}]*min-height: 30px;\s*height: auto;/);
 });

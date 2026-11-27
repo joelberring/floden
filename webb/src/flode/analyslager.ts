@@ -270,7 +270,7 @@ export interface VektorVal {
 }
 
 const VEKTORER: Record<VektorSlag, VektorVal> = {
-  sankor: { slag: "sankor", namn: "Sänkor med volym", hjalp: "Sänkornas yta när de är fulla, med kapacitet i kubikmeter och djup vid fullt. Sänkor som fylls ihop visas som en." },
+  sankor: { slag: "sankor", namn: "Sänkor med volym", hjalp: "Terrängens sänkor vid fullt (topografi — ändras inte av valt regn), med kapacitet i kubikmeter och djup vid fullt. Sänkor som fylls ihop visas som en." },
   flodesvagar: { slag: "flodesvagar", namn: "Flödesvägar", hjalp: "Avrinningsnätet: små rännilar som går ihop till större stråk nedströms. Bredd och färg visar tillrinningen (m²) och hovring ger ordning (Strahler)." },
   rannsten_flode: { slag: "rannsten_flode", namn: "Rännstenar (1D-flöde)", hjalp: "1D-flöde längs kantsten och rännstenar (m³/s). Färg och bredd visar toppflödet längs varje sträcka." },
   vsc: { slag: "vsc", namn: "Fasadpunkter (VSC)", hjalp: "Dagsljus på fasaden (vertikal himmelskomponent, VSC) i procent per punkt." },
@@ -419,11 +419,11 @@ export function vektorTeckenHtml(svar: VektorSvar, harDjupSkala = false): string
   if (svar.slag === "sankor") {
     if (harDjupSkala) {
       const doldaDel = (svar.meta.dolda ?? 0) > 0 ? ` · ${formatera(svar.meta.dolda ?? 0, 0)} små dolda` : "";
-      return `<span class="flode-liten flode-dampad">Sänkor: samma djupskala · etikett = volym (m³)${doldaDel}</span>${delvis}`;
+      return `<span class="flode-liten flode-dampad">Sänkor: samma djupskala · etikett = volym (m³)${doldaDel}</span><span class="flode-liten flode-dampad">Streckad kontur: terrängens kapacitet vid fullt (ändras inte av regn).</span>${delvis}`;
     }
     const klasser = VATTEN_KLASSER.map((k) => `<span><i style="background:${k.farg}"></i>från ${formateraHogst(k.fran, 2)} m</span>`).join("");
     const dolda = (svar.meta.dolda ?? 0) > 0 ? `<span class="flode-liten flode-dampad">${formatera(svar.meta.dolda ?? 0, 0)} små sänkor är dolda (reglaget Minsta volym). Klicka på en sänka för vattenytans mått.</span>` : "";
-    return `<span class="flode-kort-rubrik">Sänkor: djup vid fullt, etikett = volym (m³)</span><span class="flode-klasser">${klasser}</span>${delvis}${dolda}`;
+    return `<span class="flode-kort-rubrik">Sänkor (topografi): djup vid fullt, etikett = volym (m³)</span><span class="flode-liten flode-dampad">Streckad kontur: visar terrängens kapacitet vid fullt, inte valt regn.</span><span class="flode-klasser">${klasser}</span>${delvis}${dolda}`;
   }
   if (svar.slag === "flodesvagar") {
     const { lo, hi } = tillrinningSkala(svar);

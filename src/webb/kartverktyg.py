@@ -445,42 +445,31 @@ def _tillampa_regn(
             "Projektets skyfallsmall saknar IDF-källa; ange 'aterkomsttid_ar' eller direkt 'regn_mm'.",
             400,
         )
-    from gemensamt.regn import RegnFel, generera_blockregn, generera_cds_regn
+    from gemensamt.regn import IDF_DAHLSTROM_2010, RegnFel, skapa_regn_fran_idf_kalla
 
+    aterkomst = float(regn["aterkomsttid_ar"])
     var_min = float(regn.get("varaktighet_min", 60.0))
     kf = float(regn.get("klimatfaktor", 1.0))
     regntyp = str(regn.get("regntyp", "block"))
     try:
-        if losare in ("vatten.dynamik", "vatten.2d") and regntyp == "cds":
-            serie = generera_cds_regn(
-                float(regn["aterkomsttid_ar"]),
-                klimatfaktor=kf,
-                varaktighet_min=var_min,
-            )
-        else:
-            serie = generera_blockregn(
-                float(regn["aterkomsttid_ar"]),
-                klimatfaktor=kf,
-                varaktighet_min=var_min,
-            )
+        skapa_regn_fran_idf_kalla(
+            IDF_DAHLSTROM_2010,
+            aterkomst,
+            klimatfaktor=kf,
+            typ=regntyp,
+            varaktighet_min=var_min,
+        )
     except RegnFel as exc:
         raise _fel(f"Ogiltiga regnparametrar: {exc}", 400) from exc
-    if losare == "vatten.dynamik":
-        parametrar.pop("regn_mm", None)
-        parametrar.pop("varaktighet_min", None)
-        parametrar["regn_tid_s"] = list(serie.tid_s)
-        parametrar["regn_mm_h"] = list(serie.intensitet_mm_h)
-        parametrar["regntyp"] = regntyp
-    elif losare == "vatten.2d":
-        parametrar.pop("regn_mm", None)
-        parametrar.pop("varaktighet_min", None)
-        for nyckel in _IDF_NYCKLAR_ATT_RENSA:
-            parametrar.pop(nyckel, None)
-        parametrar["regn_tid_s"] = list(serie.tid_s)
-        parametrar["regn_mm_h"] = list(serie.intensitet_mm_h)
-    else:
-        parametrar["regn_mm"] = round(float(serie.total_djup_mm), 3)
-        parametrar["varaktighet_min"] = var_min
+    parametrar.pop("regn_mm", None)
+    parametrar.pop("regn_tid_s", None)
+    parametrar.pop("regn_mm_h", None)
+    parametrar.pop("idf_klimatfaktor", None)
+    parametrar["idf"] = IDF_DAHLSTROM_2010
+    parametrar["aterkomsttid_ar"] = aterkomst
+    parametrar["varaktighet_min"] = var_min
+    parametrar["klimatfaktor"] = kf
+    parametrar["regntyp"] = regntyp
 
 
 def _sol(v: Any) -> dict[str, Any] | None:
@@ -982,11 +971,21 @@ class KartverktygTjanst:
         kalla: str | None = idf_id or (p.get("idf_kalla") if isinstance(p.get("idf_kalla"), str) else None)
 
         if idf_id is not None and aterkomsttid is not None:
-            from gemensamt.regn import RegnFel, hamta_idf_kalla, skapa_regn_fran_idf_kalla
+            from gemensamt.regn import (
+                DAHLSTROM_2010_STANDARD_KLIMATFAKTOR,
+                IDF_DAHLSTROM_2010,
+                RegnFel,
+                hamta_idf_kalla,
+                skapa_regn_fran_idf_kalla,
+            )
 
             try:
-                idf_kalla = hamta_idf_kalla(idf_id)
-                eff_kf = klimatfaktor if klimatfaktor is not None else float(idf_kalla.standard_klimatfaktor)
+                std_kf = (
+                    DAHLSTROM_2010_STANDARD_KLIMATFAKTOR
+                    if idf_id == IDF_DAHLSTROM_2010
+                    else float(hamta_idf_kalla(idf_id).standard_klimatfaktor)
+                )
+                eff_kf = klimatfaktor if klimatfaktor is not None else std_kf
                 eff_var = varaktighet if varaktighet is not None else 60.0
                 typ = str(p.get("regntyp", "block"))
                 serie = skapa_regn_fran_idf_kalla(

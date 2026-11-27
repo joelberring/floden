@@ -1348,12 +1348,16 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           : harEgetAmne
             ? vyerFor("lage").length > 0 || vyerFor("ritat").length > 0 || vyerFor("projekt").length > 0
             : inst.harAktuelltResultat;
+    const visatRegn = amne === "vatten" ? korningRegnRad() : null;
+    const valtRegn = amne === "vatten" ? valdRegnText(t.regn, info?.regn_forval, t.avtappning, t.skyfallMetod) : null;
     const aktivVarning =
       amne === "vatten"
         ? inst.regnUtdaterat
-          ? t.skyfallMetod === "2d"
-            ? "Vald skyfallsmetod (2D) eller regn skiljer sig från visat resultat (eller saknar beräkning)."
-            : "Valt regn skiljer sig från visat resultat (eller saknar beräkning)."
+          ? visatRegn && valtRegn
+            ? `Visar just nu ${visatRegn}. Tryck på knappen ovan för att räkna om med ${valtRegn}.`
+            : t.skyfallMetod === "2d"
+              ? "Vald skyfallsmetod (2D) eller regn skiljer sig från visat resultat (eller saknar beräkning)."
+              : "Valt regn skiljer sig från visat resultat (eller saknar beräkning)."
           : null
         : amne === "dagsljus"
           ? inst.solUtdaterat
@@ -1392,7 +1396,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       : "";
 
     const status = pagar
-      ? `<p class="flode-liten" role="status" aria-live="polite">${esc(t.korning?.text ?? "Beräknar …")}</p>`
+      ? `<p class="flode-liten" role="status" aria-live="polite">${esc(t.korning?.text ?? "Beräknar …")}${valtRegn ? ` · ${esc(valtRegn)}` : ""}</p>`
       : t.korning?.fel
         ? `<p class="flode-fel flode-liten" role="alert">${esc(t.korning.fel)}</p>`
         : aktivVarning
@@ -1482,28 +1486,34 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   const arAvbrutetVektorFel = (e: unknown, signal: AbortSignal): boolean =>
     signal.aborted || (e instanceof Error && e.name === "AbortError");
 
-  const lagerNotData = (): { text: string; arFel: boolean } => {
+  const lagerNotData = (): { text: string; arFel: boolean; arVarning: boolean } => {
     const roller = rollerNu();
     const aktivNyckel = valtNyckel ?? (vyBas ? forvaldNyckel(roller, vyBas) : null);
     const valdRoll = roller.find((x) => x.nyckel === aktivNyckel);
-    const basText = valdRoll && vyBas ? valText(valdRoll, kartLageForAnalys(), Boolean(vyBas.lage_idag)) : "";
+    const arKontrollVatten = amne === "vatten" && Boolean(valdRoll?.kontroll);
+    const basText = arKontrollVatten && valdRoll
+      ? `Visar kontrollager i stället för vattendjup (${valdRoll.etikett}). Välj Vattendjup ovan för att se regnets vatten på kartan.`
+      : valdRoll && vyBas
+        ? valText(valdRoll, kartLageForAnalys(), Boolean(vyBas.lage_idag))
+        : "";
     const laddText =
       vektorLaddar.size > 0
         ? `Hämtar ${[...vektorLaddar].map(vektorEtikett).join(", ")} …`
         : "";
     const felLista = [...vektorFelPerSlag.values()];
     const delar = [basText, laddText, ...felLista].filter(Boolean);
-    return { text: delar.join(" "), arFel: felLista.length > 0 };
+    return { text: delar.join(" "), arFel: felLista.length > 0, arVarning: arKontrollVatten && felLista.length === 0 };
   };
 
   const uppdateraLagerNot = (): void => {
     const notEl = rot.querySelector<HTMLElement>("#ar-lager-not");
     if (!notEl) return;
-    const { text, arFel } = lagerNotData();
+    const { text, arFel, arVarning } = lagerNotData();
     notEl.textContent = text;
     notEl.hidden = text.length === 0;
     notEl.classList.toggle("flode-fel", arFel);
-    notEl.classList.toggle("flode-dampad", !arFel);
+    notEl.classList.toggle("ar-lager-varning", arVarning);
+    notEl.classList.toggle("flode-dampad", !arFel && !arVarning);
   };
 
   const laddaVektorer = async (): Promise<void> => {
@@ -1607,7 +1617,11 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       })
       .join("");
     const notData = lagerNotData();
-    const notKlass = notData.arFel ? "flode-liten flode-fel" : "flode-liten flode-dampad";
+    const notKlass = notData.arFel
+      ? "flode-liten flode-fel"
+      : notData.arVarning
+        ? "flode-liten ar-lager-varning"
+        : "flode-liten flode-dampad";
     return `<div class="ar-lagerblock" aria-label="Kartlager">
       <span class="ar-sektion-rubrik">Kartlager</span>
       <div class="ar-lagerknappar" role="group" aria-label="${esc(lagerGruppEtikettForAmne(amne))}">${knappar.join("")}</div>
@@ -2101,6 +2115,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       efterDjup_m: num(re, "max_djup_m"),
       foreLagrat_m3: num(rf, "lagrat_m3"),
       efterLagrat_m3: num(re, "lagrat_m3"),
+      foreUt_m3: num(rf, "ut_m3"),
+      efterUt_m3: num(re, "ut_m3"),
     };
   };
 
@@ -2148,6 +2164,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     osakLaddar = false;
     if (avslutad) return;
     ritaAnalysPanel();
+    ritaRegnOchKor();
     synkaKarta();
   };
 
@@ -2264,9 +2281,15 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     if (kalla === "lage" || lage === "nulage") {
       const djupTxt = u.foreDjup_m !== null && u.foreDjup_m !== undefined ? formateraDjupCm(u.foreDjup_m) : "–";
       const volTxt = u.foreLagrat_m3 !== null && u.foreLagrat_m3 !== undefined ? `${formatera(u.foreLagrat_m3, 0)} m³` : "–";
+      const utTxt = u.foreUt_m3 !== null && u.foreUt_m3 !== undefined ? `${formatera(u.foreUt_m3, 0)} m³` : null;
+      const arStatiskVatten = amne === "vatten" && r.antaganden.analyser.some((a) => a.losare === "vatten.statisk_fyllning");
       let nulageTal = "";
       if (amne === "vatten") {
-        nulageTal = `<dl class="flode-tal"><div><dt>Största djup i nuläget</dt><dd>${esc(djupTxt)}</dd></div><div><dt>Stående vatten i lågpunkter</dt><dd>${esc(volTxt)}</dd></div></dl>`;
+        const utRad = utTxt !== null ? `<div><dt>Avrunnet ut ur området</dt><dd>${esc(utTxt)}</dd></div>` : "";
+        const statiskNot = arStatiskVatten
+          ? `<p class="flode-liten flode-dampad">Statisk beräkning fyller lågpunkter upp till bräddpunkten; överskottet rinner vidare (Avrunnet). Fulla lågpunkter blir inte djupare vid större regn — välj Flöde i tid (dynamisk) eller 2D lokal tröghet för rinnande flödesdjup.</p>`
+          : "";
+        nulageTal = `<dl class="flode-tal"><div><dt>Största djup i nuläget</dt><dd>${esc(djupTxt)}</dd></div><div><dt>Stående vatten i lågpunkter</dt><dd>${esc(volTxt)}</dd></div>${utRad}</dl>${statiskNot}`;
       } else if (amne === "ekologi") {
         nulageTal = nulageEkologiTalHtml(u);
       }
@@ -2277,8 +2300,10 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
           : "";
       const nulageOsakHtml = amne === "vatten" || amne === "dagsljus" ? osakerhetHtml(osakerhetVisning()) : "";
       const anm = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ...ekoVarning, `Körning ${vy.korning_id}.`].filter(Boolean).join(" ");
+      const visatRegnHtml = regn ? `<p class="flode-liten ar-visat-regn" id="ar-visat-regn"><strong>Visat regn:</strong> ${esc(regn)}</p>` : "";
       inne.innerHTML = `${kallVal}${solBlock}${natverkVal}${lagerBlock}
         <h1 class="flode-h" id="ar-rubrik">Nuläge · ${esc(AMNESNAMN[amne])}</h1>
+        ${visatRegnHtml}
         ${nulageTal}
         ${nulageOsakHtml}
         ${dpcTabellHtml()}
@@ -2293,11 +2318,12 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const jfr = jamforelse(amne, u);
     const ingress = amne === "dagsljus" || amne === "ekologi" ? projektSvar?.avsnitt?.find((x) => x.id === amne)?.ingress : null;
     const raderRegn = [regn ? `Regn: ${regn}.` : "", ...vattenAnt.map((x) => `${x}.`), ingress ?? "", ...ekoVarning, `Körning ${vy.korning_id}.`].filter(Boolean).join(" ");
+    const visatRegnHtml = regn ? `<p class="flode-liten ar-visat-regn" id="ar-visat-regn"><strong>Visat regn:</strong> ${esc(regn)}</p>` : "";
     const vyVal =
       vyer.length > 1
         ? `<div class="flode-chips liten" role="group" aria-label="Förändring">${vyer.map((v) => `<button type="button" data-vy="${esc(v.id)}" aria-pressed="${v.id === vy?.id}">${esc(v.efter_namn)}</button>`).join("")}</div>`
         : "";
-    inne.innerHTML = `${kallVal}${vyVal}${solBlock}${natverkVal}${lagerBlock}${kroppHtml({
+    inne.innerHTML = `${kallVal}${vyVal}${solBlock}${natverkVal}${lagerBlock}${visatRegnHtml}${kroppHtml({
       slutsats: slutsats(amne, u),
       tal,
       jamforelse: jfr,
@@ -2365,6 +2391,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     bullerKontroller?.uppdateraKontext();
     cadBimKontroller.uppdateraKontext();
     ritaAnalysPanel();
+    ritaRegnOchKor();
     synkaKarta();
   };
 

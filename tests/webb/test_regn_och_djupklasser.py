@@ -16,7 +16,13 @@ from PIL import Image
 
 from demovarld.demo import LITEN
 from demovarld.varld import nytt_hus_polygon
-from gemensamt.regn import generera_blockregn, skapa_regn_fran_idf_kalla
+from gemensamt.regn import (
+    IDF_DAHLSTROM_2010,
+    generera_blockregn,
+    lista_idf_kallor,
+    skapa_regn_fran_idf_kalla,
+)
+from karna.inbyggda import Dynamik, StatiskFyllning, TvadLokalTroghet
 from karna.utredning import Analys, KorbarFraga
 from tests.webb.conftest import Demo
 from webb.api import FlodenApiApp
@@ -312,16 +318,40 @@ def test_idf_parametrar_styr_skyfallslosaren_och_uppdaterar_antaganden(kv: _Kv) 
 
 
 def test_tillampa_regn_pa_geografimall_och_dynamik() -> None:
-    # Geografimall (enbart regn_mm): IDF-val beräknas deterministiskt via Dahlström 2010 / P110.
+    # Geografimall (enbart regn_mm): IDF-val sparas som dahlstrom-2010 med full K0-proveniens.
     par_geo: dict[str, Any] = {"regn_mm": 70.0}
     _tillampa_regn(
         "vatten.statisk_fyllning",
         par_geo,
         {"aterkomsttid_ar": 10.0, "varaktighet_min": 60.0, "klimatfaktor": 1.25},
     )
-    forvantad = generera_blockregn(10.0, klimatfaktor=1.25, varaktighet_min=60.0)
-    assert par_geo["regn_mm"] == pytest.approx(round(forvantad.total_djup_mm, 3))
+    assert par_geo["idf"] == IDF_DAHLSTROM_2010
+    assert par_geo["aterkomsttid_ar"] == 10.0
     assert par_geo["varaktighet_min"] == 60.0
+    assert par_geo["klimatfaktor"] == 1.25
+    assert par_geo["regntyp"] == "block"
+    assert "regn_mm" not in par_geo
+    validerad = StatiskFyllning().validera_parametrar(par_geo)
+    assert validerad["idf_kalla"] == IDF_DAHLSTROM_2010
+    regn_mm, regn_mv = StatiskFyllning._regn_mm(validerad)  # noqa: SLF001
+    forvantad = generera_blockregn(10.0, klimatfaktor=1.25, varaktighet_min=60.0)
+    assert regn_mm == pytest.approx(forvantad.total_djup_mm, rel=1e-9)
+    assert regn_mv["aterkomsttid_ar"] == 10.0
+    assert regn_mv["klimatfaktor"] == 1.25
+
+    # Registrerade tabeller ändras inte (Dahlström 2010 är formel, inte tabell).
+    assert lista_idf_kallor() == ["stockholmsregn-2024"]
+
+    # Alla tre skyfallslösare accepterar dahlstrom-2010 i validera_parametrar.
+    par_cds: dict[str, Any] = {
+        "idf": IDF_DAHLSTROM_2010,
+        "aterkomsttid_ar": 10.0,
+        "varaktighet_min": 60.0,
+        "klimatfaktor": 1.25,
+        "regntyp": "cds",
+    }
+    assert Dynamik().validera_parametrar(par_cds)["idf_kalla"] == IDF_DAHLSTROM_2010
+    assert TvadLokalTroghet().validera_parametrar(par_cds)["idf_kalla"] == IDF_DAHLSTROM_2010
 
     # Ensam klimatfaktor utan IDF-källa eller återkomsttid ger 400 (inga gissningar).
     with pytest.raises(FlodenWebbFel) as exc:
@@ -350,3 +380,141 @@ def test_tillampa_regn_pa_geografimall_och_dynamik() -> None:
     assert par_avt["regn_mm"] == 80.0
     assert par_avt["varaktighet_min"] == 360.0
     assert "idf" not in par_avt
+
+
+def test_kommunmall_utan_idf_ger_full_dahlstrom_status_och_skiljer_vattenmangd(
+    demo: Demo, tmp_path: Path
+) -> None:
+    """Göteborg-liknande skyfallsmall (enbart regn_mm + varaktighet_min):
+    - Standard ger ar_standard=True och behåller varaktighet_min i antaganden.
+    - 10-årsregn och 100-årsregn sparar dahlstrom-2010 + aterkomsttid_ar + klimatfaktor + regntyp
+      så klienten inte visar falsk mismatch-varning.
+    - Större regn (10-års -> 100-års -> 100 mm) ger strikt mer stående vatten.
+    """
+    fragor_mapp = tmp_path / "fragor"
+    fragor_mapp.mkdir()
+    skyfall_mall = (demo.fragor / "demo_vatten.toml").read_text(encoding="utf-8")
+    # Ersätt Stockholms-IDF med en kommunmall utan lokal IDF (som Göteborg: regn_mm + varaktighet).
+    skyfall_geo = re.sub(
+        r"parametrar\s*=\s*\{[^}]+\}",
+        "parametrar = { regn_mm = 73.133, varaktighet_min = 360, takvatten = true }",
+        skyfall_mall,
+        count=1,
+    )
+    assert "idf" not in skyfall_geo
+    # Lös relativa sökvägar mot demots frågemapp så bas och k9 hittas från tmp_path.
+    skyfall_geo = re.sub(
+        r'"(\.\./[^"]+)"',
+        lambda m: f'"{(demo.fragor / m.group(1)).resolve().as_posix()}"',
+        skyfall_geo,
+    )
+    (fragor_mapp / "demo_vatten.toml").write_text(skyfall_geo, encoding="utf-8")
+
+    app = FlodenApiApp(
+        testsvit_rot=REPO / "testsvit",
+        konfig_fil=REPO / "config.toml",
+        fragemappar=[fragor_mapp],
+        cachemapp=tmp_path / "cache",
+        korningsmapp=tmp_path / "korningar",
+        kartverktygsmapp=tmp_path / "kartverktyg",
+        datamappar=[tmp_path],
+    )
+    app.fragor.demomapp = demo.varld
+
+    def anrop(verb: str, sokvag: str, kropp: Any = None) -> tuple[int, dict[str, Any]]:
+        data = b"" if kropp is None else json.dumps(kropp).encode("utf-8")
+        st, _, ut = app.hantera_forfragan(verb, sokvag, data)
+        return st, json.loads(ut)
+
+    def kor_och_hamta(regn_kropp: dict[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+        payload: dict[str, Any] = {"analyser": ["vatten.skyfall"]}
+        if regn_kropp is not None:
+            payload["regn"] = regn_kropp
+        st, k = anrop("POST", f"{P}/lage-idag/kor", payload)
+        assert st == 202, k
+        kid = k["fragor"][0]["korning"]["korning_id"]
+        slut = time.monotonic() + 120.0
+        while time.monotonic() < slut:
+            kst = app.fragor.korning_status(kid)
+            assert kst["status"] != "fel", kst
+            if kst["status"] == "klar":
+                res = app.fragor.resultat(kid)
+                st_s, lage_st = anrop("GET", f"{P}/lage-idag/status")
+                assert st_s == 200
+                vatten_post = next(p for p in lage_st["korningar"] if p["mall"] == "vatten")
+                return res, vatten_post
+            time.sleep(0.1)
+        raise AssertionError("Körningen blev inte klar i tid.")
+
+    # 1. Standard (73,133 mm, 360 min)
+    res_std, post_std = kor_och_hamta(None)
+    assert res_std["antaganden"]["regn"][0]["regn_mm"] == pytest.approx(73.133)
+    assert res_std["antaganden"]["regn"][0]["varaktighet_min"] == 360.0
+    assert post_std["regn"]["ar_standard"] is True
+    assert post_std["regn"]["aterkomsttid_ar"] is None
+
+    # 2. 10-årsregn (Dahlström 2010: ~32,134 mm)
+    res_10, post_10 = kor_och_hamta(
+        {
+            "aterkomsttid_ar": 10,
+            "varaktighet_min": 60,
+            "klimatfaktor": 1.25,
+            "berakningstyp": "statisk",
+            "regntyp": "cds",
+        }
+    )
+    regn_10 = res_10["antaganden"]["regn"][0]
+    assert regn_10["kalla"] == IDF_DAHLSTROM_2010
+    assert regn_10["aterkomsttid_ar"] == 10.0
+    assert regn_10["varaktighet_min"] == 60.0
+    assert regn_10["klimatfaktor"] == 1.25
+    assert regn_10["regntyp"] == "cds"
+    forv_10 = skapa_regn_fran_idf_kalla(
+        IDF_DAHLSTROM_2010, 10.0, klimatfaktor=1.25, typ="cds", varaktighet_min=60.0
+    )
+    assert regn_10["regn_mm"] == pytest.approx(forv_10.total_djup_mm, rel=1e-6)
+    assert post_10["regn"] == {
+        "aterkomsttid_ar": 10.0,
+        "varaktighet_min": 60.0,
+        "klimatfaktor": 1.25,
+        "regn_mm": pytest.approx(forv_10.total_djup_mm, rel=1e-6),
+        "berakningstyp": "statisk",
+        "regntyp": "cds",
+        "kalla": IDF_DAHLSTROM_2010,
+        "ar_standard": False,
+        "skyfall_metod": "graf",
+    }
+
+    # 3. 100-årsregn (Dahlström 2010: ~63,56 mm) och Extremregn (100 mm)
+    res_100, post_100 = kor_och_hamta(
+        {
+            "aterkomsttid_ar": 100,
+            "varaktighet_min": 60,
+            "klimatfaktor": 1.25,
+            "berakningstyp": "statisk",
+            "regntyp": "cds",
+        }
+    )
+    assert post_100["regn"]["kalla"] == IDF_DAHLSTROM_2010
+    assert post_100["regn"]["aterkomsttid_ar"] == 100.0
+    assert post_100["regn"]["ar_standard"] is False
+
+    res_ext, post_ext = kor_och_hamta(
+        {"regn_mm": 100, "berakningstyp": "statisk", "regntyp": "block"}
+    )
+    assert post_ext["regn"]["regn_mm"] == pytest.approx(100.0)
+    assert post_ext["regn"]["ar_standard"] is False
+
+    # Litet regn (5 mm) fyller delvis; vid 100-års och 100 mm bräddar sänkorna och ut_m3 växer.
+    res_5, _ = kor_och_hamta({"regn_mm": 5, "berakningstyp": "statisk", "regntyp": "block"})
+    v_5 = res_5["tabeller"][0]["rader"][0]["varden"]
+    v_10 = res_10["tabeller"][0]["rader"][0]["varden"]
+    v_100 = res_100["tabeller"][0]["rader"][0]["varden"]
+    v_ext = res_ext["tabeller"][0]["rader"][0]["varden"]
+    assert float(v_100["lagrat_m3"]) >= float(v_10["lagrat_m3"]) > float(v_5["lagrat_m3"])
+    assert (
+        float(v_ext["ut_m3"])
+        > float(v_100["ut_m3"])
+        > float(v_10["ut_m3"])
+        > float(v_5["ut_m3"])
+    )

@@ -21,6 +21,8 @@ from gemensamt.manifest import (
     skriv_manifest,
 )
 from gemensamt.regn import (
+    DAHLSTROM_2010_STANDARD_KLIMATFAKTOR,
+    IDF_DAHLSTROM_2010,
     IDF_KALLOR,
     KONTRAKT_K4,
     REGN_FORVAL,
@@ -36,6 +38,7 @@ from gemensamt.regn import (
     RegnSerieK4,
     dahlstrom_2010_intensitet_l_s_ha,
     dahlstrom_2010_intensitet_mm_h,
+    dahlstrom_2010_manifest_parametrar,
     generera_blockregn,
     generera_cds_regn,
     hamta_idf_kalla,
@@ -52,9 +55,11 @@ from gemensamt.regn import (
 )
 
 __all__ = [
+    "DAHLSTROM_2010_STANDARD_KLIMATFAKTOR",
     "EPSG_INTERN",
     "EPSG_LANTMATERIET",
     "HOJDSYSTEM",
+    "IDF_DAHLSTROM_2010",
     "IDF_KALLOR",
     "KONTRAKT_K0",
     "KONTRAKT_K4",
@@ -76,6 +81,7 @@ __all__ = [
     "RunManifest",
     "dahlstrom_2010_intensitet_l_s_ha",
     "dahlstrom_2010_intensitet_mm_h",
+    "dahlstrom_2010_manifest_parametrar",
     "generera_blockregn",
     "generera_cds_regn",
     "hamta_idf_kalla",
