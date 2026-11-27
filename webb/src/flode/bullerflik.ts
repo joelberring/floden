@@ -15,9 +15,61 @@ import { formatera, formateraHogst } from "../tal.ts";
 
 export const BULLER_ANALYS_URL = "/api/analys/buller";
 
+/** URL för projektets klickbara väglänkar (`GET` / `POST /api/projekt/<id>/trafik`). */
+export function projektTrafikUrl(projekt: string): string {
+  return `/api/projekt/${encodeURIComponent(projekt)}/trafik`;
+}
+
 /** Obligatorisk, framträdande varningsbanner i Steg 2 (får aldrig döljas). */
 export const BULLER_SKISS_BANNER =
   "SKISS — ej Nord2000-konform (formell bullerrapport spärrad)";
+
+export type TrafikKallmarke = "NVDB" | "Kommun" | "Egen" | null;
+export type TrafikScenarioLage = "nulage" | "prognos";
+
+/** En klickbar väglänk ur geografins `lager.trafik` (med ev. projektjusteringar, EPSG:3011). */
+export interface TrafikLank {
+  lank_id: string;
+  koordinater: Array<[number, number]>;
+  gatunamn: string | null;
+  vagnummer?: string | null;
+  vaghallare?: string | null;
+  hastighet_km_h: number | null;
+  korfalt?: number | null;
+  adt_fordon_dygn: number | null;
+  prognos_adt_fordon_dygn: number | null;
+  andel_tung_pct: number | null;
+  matar?: number | null;
+  adt_kalla: string | null;
+  kallmarke: TrafikKallmarke;
+  osaker: boolean;
+  har_adt: boolean;
+  egen_justering?: boolean;
+}
+
+/** En vald och redigerbar väglänk i Steg 2-trafiktabellen (delas mellan Buller och Luft). */
+export interface TrafikValdLank {
+  lank_id: string;
+  gatunamn: string | null;
+  koordinater: Array<[number, number]>;
+  adt_fordon_dygn: number | null;
+  prognos_adt_fordon_dygn: number | null;
+  hastighet_km_h: number | null;
+  andel_tung_pct: number | null;
+  matar?: number | null;
+  adt_kalla: string | null;
+  kallmarke: TrafikKallmarke;
+  osaker: boolean;
+}
+
+export interface TrafikJusteringPost {
+  lank_id: string;
+  adt_fordon_dygn: number | null;
+  prognos_adt_fordon_dygn: number | null;
+  hastighet_km_h: number | null;
+  andel_tung_pct: number | null;
+  kalla: string;
+}
 
 export interface BullerVagSegment {
   id: string;
@@ -153,6 +205,21 @@ export interface BullerPanelTillstand {
   ritarVag?: boolean;
   ritadPunkt1?: { e: number; n: number } | null;
   aktivtLage?: string;
+  trafikLankar?: readonly TrafikLank[];
+  valdaTrafikLankar?: readonly TrafikValdLank[];
+  trafikLage?: TrafikScenarioLage;
+  trafikLaddar?: boolean;
+  trafikSparar?: boolean;
+  trafikFel?: string | null;
+}
+
+export interface TrafikTabellOpts {
+  tillgangliga: readonly TrafikLank[];
+  valda: readonly TrafikValdLank[];
+  trafikLage: TrafikScenarioLage;
+  laddar?: boolean;
+  sparar?: boolean;
+  fel?: string | null;
 }
 
 const avrunda01 = (v: number): number => Math.round(v * 10) / 10;
@@ -276,6 +343,366 @@ export function byggBullerBegaran(
     mottagarhojd_m: p.mottagarhojd_m,
     vagsegment: [seg],
   };
+}
+
+function tolkaKallmarke(v: unknown): TrafikKallmarke {
+  if (v === "NVDB" || v === "Kommun" || v === "Egen") return v;
+  return null;
+}
+
+function valfrittTal(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function valfriText(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s ? s : null;
+}
+
+/** Tolkar GeoJSON FeatureCollection från `GET /api/projekt/<id>/trafik` (EPSG:3011) utan att hitta på ÅDT. */
+export function tolkaProjektTrafikGeoJson(geojson: unknown): TrafikLank[] {
+  if (!geojson || typeof geojson !== "object") return [];
+  const features = (geojson as { features?: unknown }).features;
+  if (!Array.isArray(features)) return [];
+
+  const ut: TrafikLank[] = [];
+  for (let i = 0; i < features.length; i += 1) {
+    const feat = features[i];
+    if (!feat || typeof feat !== "object") continue;
+    const geom = (feat as { geometry?: unknown }).geometry;
+    if (!geom || typeof geom !== "object" || (geom as { type?: unknown }).type !== "LineString") {
+      continue;
+    }
+    const rawCoords = (geom as { coordinates?: unknown }).coordinates;
+    if (!Array.isArray(rawCoords) || rawCoords.length < 2) continue;
+    const koordinater: Array<[number, number]> = [];
+    let ok = true;
+    for (const pt of rawCoords) {
+      if (!Array.isArray(pt) || pt.length < 2 || !arTal(pt[0]) || !arTal(pt[1])) {
+        ok = false;
+        break;
+      }
+      koordinater.push([pt[0], pt[1]]);
+    }
+    if (!ok || koordinater.length < 2) continue;
+
+    const propsRaw = (feat as { properties?: unknown }).properties;
+    const props: Record<string, unknown> =
+      propsRaw && typeof propsRaw === "object" ? (propsRaw as Record<string, unknown>) : {};
+    const lid = valfriText(props.lank_id) ?? valfriText((feat as { id?: unknown }).id) ?? `lank_${i + 1}`;
+    const adt = valfrittTal(props.adt_fordon_dygn);
+    const prognos = valfrittTal(props.prognos_adt_fordon_dygn);
+    const harNagonAdt = adt !== null || prognos !== null;
+    const tung = harNagonAdt ? valfrittTal(props.andel_tung_pct) : null;
+    const adtKalla = harNagonAdt ? valfriText(props.adt_kalla) : null;
+    const kallmarke = harNagonAdt ? tolkaKallmarke(props.kallmarke) : null;
+
+    ut.push({
+      lank_id: lid,
+      koordinater,
+      gatunamn: valfriText(props.gatunamn),
+      vagnummer: valfriText(props.vagnummer),
+      vaghallare: valfriText(props.vaghallare),
+      hastighet_km_h: valfrittTal(props.hastighet_km_h),
+      korfalt: valfrittTal(props.korfalt),
+      adt_fordon_dygn: adt,
+      prognos_adt_fordon_dygn: prognos,
+      andel_tung_pct: tung,
+      matar: valfrittTal(props.matar),
+      adt_kalla: adtKalla,
+      kallmarke,
+      osaker: Boolean(props.osaker),
+      har_adt: adt !== null,
+      egen_justering: Boolean(props.egen_justering),
+    });
+  }
+  return ut;
+}
+
+/** Visningstext för källmärke (`NVDB 2025`, `Kommun`, `Egen` eller `ÅDT saknas`). */
+export function trafikKallmarkeEtikett(
+  lank: Pick<TrafikLank, "kallmarke" | "adt_kalla" | "matar" | "adt_fordon_dygn">,
+): string {
+  if (lank.kallmarke === "Egen") return "Egen";
+  if (lank.kallmarke === "NVDB") {
+    return arTal(lank.matar) ? `NVDB ${Math.round(lank.matar)}` : "NVDB";
+  }
+  if (lank.kallmarke === "Kommun") {
+    return arTal(lank.matar) ? `Kommun ${Math.round(lank.matar)}` : "Kommun";
+  }
+  if (!arTal(lank.adt_fordon_dygn)) return "ÅDT saknas";
+  return lank.adt_kalla ?? "Okänd källa";
+}
+
+/** Returnerar aktivt ÅDT-värde för Nuläge eller Prognos (faller tillbaka på nuläge i prognosläge). */
+export function effektivAdtForLank(
+  lank: Pick<TrafikValdLank, "adt_fordon_dygn" | "prognos_adt_fordon_dygn">,
+  lage: TrafikScenarioLage,
+): number | null {
+  if (lage === "prognos") {
+    if (arTal(lank.prognos_adt_fordon_dygn)) return lank.prognos_adt_fordon_dygn;
+    return arTal(lank.adt_fordon_dygn) ? lank.adt_fordon_dygn : null;
+  }
+  return arTal(lank.adt_fordon_dygn) ? lank.adt_fordon_dygn : null;
+}
+
+/** Klick på en väglänk lägger till den i trafiktabellen (eller tar bort den om den redan är vald). */
+export function valjEllerAvmarkeraTrafikLank(
+  valda: readonly TrafikValdLank[],
+  lank: TrafikLank,
+): TrafikValdLank[] {
+  if (valda.some((v) => v.lank_id === lank.lank_id)) {
+    return valda.filter((v) => v.lank_id !== lank.lank_id);
+  }
+  const ny: TrafikValdLank = {
+    lank_id: lank.lank_id,
+    gatunamn: lank.gatunamn,
+    koordinater: lank.koordinater.map(([e, n]) => [e, n]),
+    adt_fordon_dygn: lank.adt_fordon_dygn,
+    prognos_adt_fordon_dygn: lank.prognos_adt_fordon_dygn,
+    hastighet_km_h: lank.hastighet_km_h,
+    andel_tung_pct: lank.andel_tung_pct,
+    matar: lank.matar,
+    adt_kalla: lank.adt_kalla,
+    kallmarke: lank.kallmarke,
+    osaker: lank.osaker,
+  };
+  return [...valda, ny];
+}
+
+/** Uppdaterar användarredigerade trafikvärden på en vald väglänk och märker källan som `Egen`. */
+export function uppdateraValdTrafikLank(
+  valda: readonly TrafikValdLank[],
+  lankId: string,
+  andring: Partial<
+    Pick<
+      TrafikValdLank,
+      "adt_fordon_dygn" | "prognos_adt_fordon_dygn" | "hastighet_km_h" | "andel_tung_pct"
+    >
+  >,
+): TrafikValdLank[] {
+  return valda.map((v) => {
+    if (v.lank_id !== lankId) return v;
+    const nyAdt = "adt_fordon_dygn" in andring ? (andring.adt_fordon_dygn ?? null) : v.adt_fordon_dygn;
+    const nyPrognos =
+      "prognos_adt_fordon_dygn" in andring
+        ? (andring.prognos_adt_fordon_dygn ?? null)
+        : v.prognos_adt_fordon_dygn;
+    const nyHast = "hastighet_km_h" in andring ? (andring.hastighet_km_h ?? null) : v.hastighet_km_h;
+    const nyTung = "andel_tung_pct" in andring ? (andring.andel_tung_pct ?? null) : v.andel_tung_pct;
+    const harNagonAdt = arTal(nyAdt) || arTal(nyPrognos);
+    return {
+      ...v,
+      adt_fordon_dygn: nyAdt,
+      prognos_adt_fordon_dygn: nyPrognos,
+      hastighet_km_h: nyHast,
+      andel_tung_pct: nyTung,
+      kallmarke: harNagonAdt ? "Egen" : null,
+      adt_kalla: harNagonAdt ? "Egen uppgift" : null,
+      osaker: false,
+    };
+  });
+}
+
+/** Validerar alla valda väglänkar för aktivt trafikläge (Nuläge eller Prognos). */
+export function valideraValdaTrafikLankar(
+  valda: readonly TrafikValdLank[],
+  lage: TrafikScenarioLage = "nulage",
+): string | null {
+  if (valda.length === 0) {
+    return "Välj minst en väglänk på kartan eller rita en väg manuellt.";
+  }
+  for (const lank of valda) {
+    const etikett = lank.gatunamn ?? lank.lank_id;
+    const adt = effektivAdtForLank(lank, lage);
+    if (!arTal(adt) || adt < 0) {
+      return `ÅDT saknas för "${etikett}" — ange trafikflöde (fordon/dygn >= 0).`;
+    }
+    if (!arTal(lank.hastighet_km_h) || lank.hastighet_km_h <= 0) {
+      return `Hastighet måste vara > 0 km/h för "${etikett}".`;
+    }
+    if (!arTal(lank.andel_tung_pct) || lank.andel_tung_pct < 0 || lank.andel_tung_pct > 100) {
+      return `Ange andel tung trafik (0–100 %) för "${etikett}".`;
+    }
+    if (lank.koordinater.length < 2) {
+      return `Väglänk "${etikett}" saknar giltig linjegeometri.`;
+    }
+  }
+  return null;
+}
+
+/** Konverterar valda väglänkar till `vagsegment` för `POST /api/analys/buller`. */
+export function byggBullerVagSegmentFranValda(
+  valda: readonly TrafikValdLank[],
+  lage: TrafikScenarioLage = "nulage",
+): BullerVagSegment[] {
+  return valda.map((lank) => ({
+    id: lank.lank_id,
+    koordinater: lank.koordinater.map(([e, n]) => [e, n]),
+    adt_fordon_dygn: effektivAdtForLank(lank, lage) as number,
+    hastighet_km_h: lank.hastighet_km_h as number,
+    andel_tung_pct: lank.andel_tung_pct as number,
+  }));
+}
+
+/** Bygger `POST /api/analys/buller`-begäran från klickade väglänkar (+ ev. manuellt ritad väg). */
+export function byggBullerBegaranMedTrafik(
+  omrade_id: string,
+  p: BullerParam,
+  valda: readonly TrafikValdLank[],
+  opts?: { scenario?: string | null; trafikLage?: TrafikScenarioLage },
+): {
+  omrade_id: string;
+  scenario?: string;
+  mottagarhojd_m: number;
+  vagsegment: BullerVagSegment[];
+} {
+  const scenario = opts?.scenario ?? null;
+  const lage = opts?.trafikLage ?? "nulage";
+  if (valda.length === 0) {
+    return byggBullerBegaran(omrade_id, p, scenario);
+  }
+  const vagsegment = byggBullerVagSegmentFranValda(valda, lage);
+  const harManuell =
+    arTal(p.vag_start_e) &&
+    arTal(p.vag_start_n) &&
+    arTal(p.vag_slut_e) &&
+    arTal(p.vag_slut_n) &&
+    arTal(p.adt_fordon_dygn) &&
+    arTal(p.hastighet_km_h) &&
+    arTal(p.andel_tung_pct) &&
+    Math.hypot(p.vag_slut_e - p.vag_start_e, p.vag_slut_n - p.vag_start_n) >= 0.1;
+  if (harManuell) {
+    vagsegment.push({
+      id: "manuell_vag_1",
+      koordinater: [
+        [p.vag_start_e as number, p.vag_start_n as number],
+        [p.vag_slut_e as number, p.vag_slut_n as number],
+      ],
+      adt_fordon_dygn: p.adt_fordon_dygn as number,
+      hastighet_km_h: p.hastighet_km_h as number,
+      andel_tung_pct: p.andel_tung_pct as number,
+    });
+  }
+  return {
+    omrade_id,
+    ...(scenario ? { scenario } : {}),
+    mottagarhojd_m: p.mottagarhojd_m,
+    vagsegment,
+  };
+}
+
+/** Bygger JSON-kropp för `POST /api/projekt/<id>/trafik` från användarens valda trafiktabell. */
+export function byggTrafikJusteringarPayload(valda: readonly TrafikValdLank[]): {
+  ersatt: false;
+  justeringar: TrafikJusteringPost[];
+} {
+  return {
+    ersatt: false,
+    justeringar: valda.map((lank) => ({
+      lank_id: lank.lank_id,
+      adt_fordon_dygn: lank.adt_fordon_dygn,
+      prognos_adt_fordon_dygn: lank.prognos_adt_fordon_dygn,
+      hastighet_km_h: lank.hastighet_km_h,
+      andel_tung_pct: lank.andel_tung_pct,
+      kalla: "Egen uppgift",
+    })),
+  };
+}
+
+/** Renderar klickbara väglänkar, Nuläge/Prognos-växlare och redigerbar trafiktabell (Buller + Luft). */
+export function trafikTabellHtml(opts: TrafikTabellOpts): string {
+  const { tillgangliga, valda, trafikLage } = opts;
+  const valdaIdn = new Set(valda.map((v) => v.lank_id));
+  const medAdt = tillgangliga.filter((l) => l.har_adt).length;
+  const utanAdt = tillgangliga.length - medAdt;
+
+  const statusHtml = opts.laddar
+    ? `<p class="flode-liten flode-dampad" role="status">Läser väglänkar ur projektets trafiklager …</p>`
+    : opts.fel
+      ? `<p class="flode-liten flode-fel" role="alert">${esc(opts.fel)}</p>`
+      : tillgangliga.length > 0
+        ? `<p class="flode-liten flode-dampad">Klicka på en gata i kartan eller listan: <strong>${esc(formatera(medAdt, 0))}</strong> med ÅDT (fast linje), <strong>${esc(formatera(utanAdt, 0))}</strong> saknar ÅDT (streckad linje).</p>`
+        : `<p class="flode-liten flode-dampad">Projektets geografi saknar trafiklager — rita väg på kartan nedan.</p>`;
+
+  const snabblistaHtml =
+    tillgangliga.length > 0
+      ? `<div class="ar-bl-trafik-lista" role="group" aria-label="Väglänkar i projektområdet">
+          ${tillgangliga
+            .map((lk) => {
+              const vald = valdaIdn.has(lk.lank_id);
+              const namn = lk.gatunamn ?? lk.lank_id;
+              const marke = trafikKallmarkeEtikett(lk);
+              const adtTxt = arTal(lk.adt_fordon_dygn)
+                ? `${formatera(lk.adt_fordon_dygn, 0)} ÅDT`
+                : "ÅDT saknas";
+              const stilKlass = lk.har_adt ? "har-adt" : "saknar-adt";
+              return `<button type="button" class="flode-knapp liten ar-bl-lank-knapp ${stilKlass}${vald ? " svart" : ""}" data-bl-valj-lank="${esc(lk.lank_id)}" aria-pressed="${vald}">
+                <span>${esc(namn)}</span>
+                <span class="ar-bl-lank-meta">${esc(adtTxt)} · ${esc(marke)}</span>
+              </button>`;
+            })
+            .join("")}
+        </div>`
+      : "";
+
+  const tabellHtml =
+    valda.length > 0
+      ? `<div class="ar-bl-trafik-tabell-ram">
+          <table class="ar-bl-trafik-tabell" aria-label="Valda väglänkar för buller och luft">
+            <thead>
+              <tr>
+                <th>Gata / länk</th>
+                <th>Nuläge ÅDT</th>
+                <th>Prognos-ÅDT</th>
+                <th>Hast. (km/h)</th>
+                <th>Tung (%)</th>
+                <th>Källa</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${valda
+                .map((lk) => {
+                  const namn = lk.gatunamn ?? lk.lank_id;
+                  const marke = trafikKallmarkeEtikett(lk);
+                  const badgeKlass = lk.kallmarke ? `ar-kallmarke-${lk.kallmarke.toLowerCase()}` : "ar-kallmarke-saknas";
+                  const osakerHtml = lk.osaker
+                    ? ` <span class="ar-bl-osaker-badge" title="Tvetydig matchning i trafikfil — kontrollera värdet">Osäker</span>`
+                    : "";
+                  return `<tr data-bl-vald-rad="${esc(lk.lank_id)}">
+                    <td><strong>${esc(namn)}</strong>${osakerHtml}</td>
+                    <td><input type="text" inputmode="decimal" aria-label="Nuläge ÅDT för ${esc(namn)}" data-bl-lank-id="${esc(lk.lank_id)}" data-bl-lank-falt="adt_fordon_dygn" value="${esc(fmtInput(lk.adt_fordon_dygn, 0))}" placeholder="ÅDT saknas – ange värde" /></td>
+                    <td><input type="text" inputmode="decimal" aria-label="Prognos-ÅDT för ${esc(namn)}" data-bl-lank-id="${esc(lk.lank_id)}" data-bl-lank-falt="prognos_adt_fordon_dygn" value="${esc(fmtInput(lk.prognos_adt_fordon_dygn, 0))}" placeholder="valfritt" /></td>
+                    <td><input type="text" inputmode="decimal" aria-label="Hastighet km/h för ${esc(namn)}" data-bl-lank-id="${esc(lk.lank_id)}" data-bl-lank-falt="hastighet_km_h" value="${esc(fmtInput(lk.hastighet_km_h, 0))}" placeholder="km/h" /></td>
+                    <td><input type="text" inputmode="decimal" aria-label="Tung andel procent för ${esc(namn)}" data-bl-lank-id="${esc(lk.lank_id)}" data-bl-lank-falt="andel_tung_pct" value="${esc(fmtInput(lk.andel_tung_pct, 1))}" placeholder="%" /></td>
+                    <td><span class="ar-bl-kallmarke ${badgeKlass}" data-bl-kallmarke="${esc(lk.kallmarke ?? "saknas")}">${esc(marke)}</span></td>
+                    <td><button type="button" class="flode-knapp liten" data-bl-ta-bort-lank="${esc(lk.lank_id)}" aria-label="Ta bort ${esc(namn)}">×</button></td>
+                  </tr>`;
+                })
+                .join("")}
+            </tbody>
+          </table>
+          <div class="ar-bl-trafik-atgarder">
+            <button type="button" class="flode-knapp liten" id="ar-bl-spara-trafik"${opts.sparar ? " disabled" : ""}>${opts.sparar ? "Sparar …" : "Spara trafikuppgifter"}</button>
+          </div>
+        </div>`
+      : "";
+
+  return `
+    <div class="ar-bl-trafik-sektion" id="ar-bl-trafik-sektion">
+      <div class="ar-bl-trafik-huvud">
+        <span class="ar-sektion-rubrik">Väglänkar i projektet</span>
+        <div class="flode-segment liten" role="group" aria-label="Trafikläge nuläge eller prognos">
+          <button type="button" data-bl-trafik-lage="nulage" aria-pressed="${trafikLage === "nulage"}">Nuläge</button>
+          <button type="button" data-bl-trafik-lage="prognos" aria-pressed="${trafikLage === "prognos"}">Prognos</button>
+        </div>
+      </div>
+      ${statusHtml}
+      ${snabblistaHtml}
+      ${tabellHtml}
+    </div>`;
 }
 
 /** Beräknar en synlig vägsträcka 10 m innanför projektets södra kant (endast vid aktivt knapptryck). */
@@ -427,6 +854,22 @@ export function bullerPanelHtml(t: BullerPanelTillstand): string {
       ${varningHtml}`;
   }
 
+  const visaTrafikSektion =
+    t.trafikLankar !== undefined ||
+    t.valdaTrafikLankar !== undefined ||
+    Boolean(t.trafikLaddar) ||
+    Boolean(t.trafikFel);
+  const trafikSektionHtml = visaTrafikSektion
+    ? trafikTabellHtml({
+        tillgangliga: t.trafikLankar ?? [],
+        valda: t.valdaTrafikLankar ?? [],
+        trafikLage: t.trafikLage ?? "nulage",
+        laddar: t.trafikLaddar,
+        sparar: t.trafikSparar,
+        fel: t.trafikFel,
+      })
+    : "";
+
   return `
     <section class="ar-doman-kort ar-buller-panel" id="ar-buller-panel" aria-label="Buller skissanalys">
       <div class="ar-doman-huvud">
@@ -438,6 +881,7 @@ export function bullerPanelHtml(t: BullerPanelTillstand): string {
           <strong>${esc(BULLER_SKISS_BANNER)}</strong>
           <span>Skissverktyg ovanpå <code>buller.nord2000</code> (<code>nord2000_konform = false</code>). Ej för myndighetsbeslut.</span>
         </div>
+        ${trafikSektionHtml}
         <div class="ar-buller-atgarder">
           <button type="button" class="flode-knapp liten${ritarVag ? " svart" : ""}" id="ar-bl-rita-vag" aria-pressed="${ritarVag}">${ritarVag ? "Avbryt vägritning" : "Rita väg på kartan"}</button>
           <button type="button" class="flode-knapp liten" id="ar-bl-fyll-vag">Fyll väg längs projektkant</button>
@@ -493,6 +937,11 @@ export interface BullerKopplingOpts {
   onRitaVagAndrad?: (aktiv: boolean) => void;
   onVagLinjeAndrad?: (linje: BullerVagLinjeVy | null) => void;
   onStatusAndrad?: () => void;
+  onValdaTrafikAndrade?: (valda: readonly TrafikValdLank[], lage: TrafikScenarioLage) => void;
+  onSparaTrafik?: (payload: {
+    ersatt: false;
+    justeringar: TrafikJusteringPost[];
+  }) => Promise<TrafikLank[] | void>;
 }
 
 export interface BullerStatus {
@@ -513,6 +962,10 @@ export interface BullerKontroller {
   vagLinje(): BullerVagLinjeVy | null;
   hjalpText(): string;
   status(): BullerStatus;
+  sattTrafikLankar(lankar: readonly TrafikLank[]): void;
+  klickaTrafikLank(lankId: string): boolean;
+  valdaTrafikLankar(): readonly TrafikValdLank[];
+  trafikLage(): TrafikScenarioLage;
 }
 
 /** Kopplar Buller-skisspanelen i Steg 2 mot `POST /api/analys/buller` och kartan. */
@@ -592,7 +1045,18 @@ export function kopplaBullerPanel(
 
   const korBuller = async (): Promise<void> => {
     state.param = lasParamUrForm();
-    const fel = valideraBullerParam(state.param);
+    const valda = state.valdaTrafikLankar ?? [];
+    const lage = state.trafikLage ?? "nulage";
+    let fel: string | null = null;
+    if (valda.length > 0) {
+      if (!arTal(state.param.mottagarhojd_m) || state.param.mottagarhojd_m <= 0) {
+        fel = "Mottagarhöjd måste vara > 0 m.";
+      } else {
+        fel = valideraValdaTrafikLankar(valda, lage);
+      }
+    } else {
+      fel = valideraBullerParam(state.param);
+    }
     if (fel) {
       state.fel = fel;
       rita();
@@ -610,7 +1074,10 @@ export function kopplaBullerPanel(
     opts.onStatusAndrad?.();
     try {
       const { lasJson } = await import("../api.ts");
-      const begaran = byggBullerBegaran(opts.projekt, state.param, state.scenario);
+      const begaran = byggBullerBegaranMedTrafik(opts.projekt, state.param, valda, {
+        scenario: state.scenario,
+        trafikLage: lage,
+      });
       const svar = await lasJson<BullerAnalysSvar>(BULLER_ANALYS_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -634,6 +1101,44 @@ export function kopplaBullerPanel(
     }
   };
 
+  const sparaTrafik = async (): Promise<void> => {
+    const valda = state.valdaTrafikLankar ?? [];
+    if (valda.length === 0) return;
+    state.trafikSparar = true;
+    state.trafikFel = null;
+    rita();
+    try {
+      const payload = byggTrafikJusteringarPayload(valda);
+      if (opts.onSparaTrafik) {
+        const uppd = await opts.onSparaTrafik(payload);
+        if (uppd) state.trafikLankar = uppd;
+      } else {
+        const { lasJson } = await import("../api.ts");
+        const svar = await lasJson<unknown>(projektTrafikUrl(opts.projekt), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        state.trafikLankar = tolkaProjektTrafikGeoJson(svar);
+      }
+    } catch (e) {
+      state.trafikFel = e instanceof Error ? e.message : String(e);
+    } finally {
+      state.trafikSparar = false;
+      rita();
+    }
+  };
+
+  const klickaTrafikLank = (lankId: string): boolean => {
+    const hittad = (state.trafikLankar ?? []).find((l) => l.lank_id === lankId);
+    if (!hittad) return false;
+    state.valdaTrafikLankar = valjEllerAvmarkeraTrafikLank(state.valdaTrafikLankar ?? [], hittad);
+    state.fel = null;
+    opts.onValdaTrafikAndrade?.(state.valdaTrafikLankar, state.trafikLage ?? "nulage");
+    rita();
+    return true;
+  };
+
   const avbrytVagRitning = (): boolean => {
     if (!state.ritarVag) return false;
     state.ritarVag = false;
@@ -646,12 +1151,60 @@ export function kopplaBullerPanel(
   };
 
   behallare.addEventListener(
+    "change",
+    (h) => {
+      const inp = (h.target as Element).closest<HTMLInputElement>("[data-bl-lank-falt]");
+      if (!inp) return;
+      const lid = inp.dataset.blLankId;
+      const falt = inp.dataset.blLankFalt as
+        | "adt_fordon_dygn"
+        | "prognos_adt_fordon_dygn"
+        | "hastighet_km_h"
+        | "andel_tung_pct"
+        | undefined;
+      if (!lid || !falt) return;
+      const tal = tolkaBullerTal(inp.value);
+      state.valdaTrafikLankar = uppdateraValdTrafikLank(state.valdaTrafikLankar ?? [], lid, {
+        [falt]: tal,
+      });
+      opts.onValdaTrafikAndrade?.(state.valdaTrafikLankar, state.trafikLage ?? "nulage");
+      rita();
+    },
+    { signal: opts.signal },
+  );
+
+  behallare.addEventListener(
     "click",
     (h) => {
       const m = (h.target as Element).closest<HTMLElement>(
-        "#ar-bl-kor,#ar-bl-fyll-vag,#ar-bl-rita-vag,[data-bl-lager]",
+        "#ar-bl-kor,#ar-bl-fyll-vag,#ar-bl-rita-vag,#ar-bl-spara-trafik,[data-bl-lager],[data-bl-trafik-lage],[data-bl-valj-lank],[data-bl-ta-bort-lank]",
       );
       if (!m) return;
+      if (m.id === "ar-bl-spara-trafik") {
+        void sparaTrafik();
+        return;
+      }
+      const trafikLageVal = m.dataset.blTrafikLage;
+      if (trafikLageVal === "nulage" || trafikLageVal === "prognos") {
+        state.trafikLage = trafikLageVal;
+        opts.onValdaTrafikAndrade?.(state.valdaTrafikLankar ?? [], trafikLageVal);
+        rita();
+        return;
+      }
+      const valjId = m.dataset.blValjLank;
+      if (valjId) {
+        klickaTrafikLank(valjId);
+        return;
+      }
+      const taBortId = m.dataset.blTaBortLank;
+      if (taBortId) {
+        state.valdaTrafikLankar = (state.valdaTrafikLankar ?? []).filter(
+          (v) => v.lank_id !== taBortId,
+        );
+        opts.onValdaTrafikAndrade?.(state.valdaTrafikLankar, state.trafikLage ?? "nulage");
+        rita();
+        return;
+      }
       if (m.id === "ar-bl-rita-vag") {
         state.param = lasParamUrForm();
         if (state.ritarVag) {
@@ -771,5 +1324,12 @@ export function kopplaBullerPanel(
       harSvar: state.svar !== null,
       ritarVag: Boolean(state.ritarVag),
     }),
+    sattTrafikLankar: (lankar: readonly TrafikLank[]) => {
+      state.trafikLankar = [...lankar];
+      rita();
+    },
+    klickaTrafikLank,
+    valdaTrafikLankar: () => state.valdaTrafikLankar ?? [],
+    trafikLage: () => state.trafikLage ?? "nulage",
   };
 }

@@ -447,6 +447,49 @@ def _valj_cellstorlek_m(
     return float(f * px)
 
 
+def _rensa_dubbelhorn(
+    coords: Sequence[Sequence[float]], tol_m: float = 1.0e-7
+) -> list[tuple[float, float]]:
+    """Tar bort på varandra följande sammanfallande hörn (samt slutpunkt lika med startpunkt)."""
+    ut: list[tuple[float, float]] = []
+    for pt in coords:
+        e, n = float(pt[0]), float(pt[1])
+        if not ut or math.hypot(e - ut[-1][0], n - ut[-1][1]) > tol_m:
+            ut.append((e, n))
+    while len(ut) > 1 and math.hypot(ut[-1][0] - ut[0][0], ut[-1][1] - ut[0][1]) <= tol_m:
+        ut.pop()
+    return ut
+
+
+def _markhojd_bilinjar_min(
+    e_arr: NDArray[np.float64],
+    n_arr: NDArray[np.float64],
+    terrang_rh2000_m: NDArray[np.float64],
+    e_min_m: float,
+    n_max_m: float,
+    cell_m: float,
+) -> float | None:
+    """Samma bilinjära markhöjdsinterpolation som `Bullerscen.markhojd_m` (för takhöjdskontroll)."""
+    n_rad, n_kol = terrang_rh2000_m.shape
+    e_max_m = e_min_m + n_kol * cell_m
+    n_min_m = n_max_m - n_rad * cell_m
+    inne = (e_arr >= e_min_m) & (e_arr <= e_max_m) & (n_arr >= n_min_m) & (n_arr <= n_max_m)
+    if not bool(np.any(inne)):
+        return None
+    ei = e_arr[inne]
+    ni = n_arr[inne]
+    kol = np.clip((ei - e_min_m) / cell_m - 0.5, 0.0, n_kol - 1.0)
+    rad = np.clip((n_max_m - ni) / cell_m - 0.5, 0.0, n_rad - 1.0)
+    k0 = np.minimum(np.floor(kol).astype(np.int64), n_kol - 2)
+    r0 = np.minimum(np.floor(rad).astype(np.int64), n_rad - 2)
+    fk = kol - k0
+    fr = rad - r0
+    z = terrang_rh2000_m
+    ovre = z[r0, k0] * (1.0 - fk) + z[r0, k0 + 1] * fk
+    nedre = z[r0 + 1, k0] * (1.0 - fk) + z[r0 + 1, k0 + 1] * fk
+    return float(np.min(ovre * (1.0 - fr) + nedre * fr))
+
+
 def _skarm_till_byggnader(
     skarmar: Sequence[_SkarmLinje],
     terrang_rh2000_m: NDArray[np.float64],
@@ -454,8 +497,14 @@ def _skarm_till_byggnader(
     n_max_m: float,
     cell_m: float,
     befintliga_polygoner: Sequence[Any],
+    befintliga_idn: frozenset[str] = frozenset(),
 ) -> tuple[list[Any], list[str]]:
-    """Omvandlar bullerskärmslinjer till smala `Byggnad`-hinder utan överlapp mot byggnader."""
+    """Omvandlar bullerskärmslinjer till smala, hålfria `Byggnad`-hinder utan överlapp.
+
+    Högre skärmar placeras före lägre så att akustisk skärmning bevaras vid korsande/parallella
+    murar. Eventuella ring- eller hålpolygoner (t.ex. sluten gårdsmur runt ett hus eller annan mur)
+    delas med `_polygon_utan_hal` så att hål aldrig fylls igen till överlappande polygoner.
+    """
     import shapely
 
     from buller.typer import Byggnad
@@ -475,45 +524,83 @@ def _skarm_till_byggnader(
         rad = min(max(int(math.floor((n_max_m - n) / cell_m)), 0), n_rad - 1)
         return float(terrang_rh2000_m[rad, kol])
 
+    # Högre skärm får företräde vid korsande eller tätt liggande murar.
+    sorterade_skarmar = sorted(
+        skarmar,
+        key=lambda s: (
+            -(max(s.z_kron_rh2000) if s.z_kron_rh2000 is not None else s.hojd_m),
+            -s.hojd_m,
+            s.skarm_id,
+        ),
+    )
+
     upptagna: list[Any] = list(befintliga_polygoner)
+    anvanda_idn: set[str] = set(befintliga_idn)
     hinder: list[Any] = []
     varningar: list[str] = []
 
-    for sk in skarmar:
+    for sk in sorterade_skarmar:
         linje = shapely.LineString(sk.koordinater).intersection(raster_box)
-        if linje.is_empty or linje.length <= 1.0e-3:
+        if linje.is_empty or float(linje.length) <= 1.0e-3:
             varningar.append(
                 f"Bullerskärm '{sk.skarm_id}' ligger utanför beräkningsområdet och hoppades över."
             )
             continue
-        buff = linje.buffer(sk.tjocklek_m * 0.5, cap_style="flat", join_style="mitre")
+        # Bevel-hörn förhindrar långa mitre-spetsar vid skarpa vinklar i kommunala murpolylinjer.
+        buff = linje.buffer(sk.tjocklek_m * 0.5, cap_style="flat", join_style="bevel")
+        if not buff.is_valid:
+            buff = shapely.make_valid(buff)
         buff = buff.intersection(raster_box)
         if upptagna:
             union_upptagna = shapely.union_all(upptagna)
-            # Liten marginal (1 cm) så skärm inte skapar degenererade noll-area-överlapp mot hus.
+            # Liten marginal (1 cm) mot hus/murar för att undvika degenererade överlapp.
             buff = buff.difference(union_upptagna.buffer(0.01))
         if buff.is_empty:
             varningar.append(
                 f"Bullerskärm '{sk.skarm_id}' överlappar helt befintliga hinder och hoppades över."
             )
             continue
-        delar = [
-            g
-            for g in shapely.get_parts(buff)
-            if g.geom_type == "Polygon" and float(g.area) > 1.0e-3
-        ]
+        delar: list[Any] = []
+        for g in shapely.get_parts(buff):
+            if g.geom_type != "Polygon" or float(g.area) <= 1.0e-3:
+                continue
+            if not g.is_valid:
+                g = shapely.make_valid(g)
+            for del_g in shapely.get_parts(g):
+                if del_g.geom_type != "Polygon" or float(del_g.area) <= 1.0e-3:
+                    continue
+                for utan_hal in _polygon_utan_hal(del_g):
+                    if float(utan_hal.area) > 1.0e-3:
+                        delar.append(utan_hal)
+        if not delar:
+            varningar.append(
+                f"Bullerskärm '{sk.skarm_id}' överlappar helt befintliga hinder och hoppades över."
+            )
+            continue
         for del_idx, poly in enumerate(delar):
-            coords = list(poly.exterior.coords)[:-1]
+            coords = _rensa_dubbelhorn(list(poly.exterior.coords))
             if len(coords) < 3:
+                continue
+            ren_poly = shapely.Polygon(coords)
+            if not ren_poly.is_valid or float(ren_poly.area) <= 1.0e-3:
                 continue
             e_arr = np.asarray([c[0] for c in coords], dtype=np.float64)
             n_arr = np.asarray([c[1] for c in coords], dtype=np.float64)
-            mark_max = max(_markhojd_punkt(float(e), float(n)) for e, n in coords)
+            mark_max = max(_markhojd_punkt(e, n) for e, n in coords)
+            bilinjar_min = _markhojd_bilinjar_min(
+                e_arr, n_arr, terrang_rh2000_m, e_min_m, n_max_m, cell_m
+            )
+            min_tillatet_tak = (
+                max(mark_max, bilinjar_min) + 0.05 if bilinjar_min is not None else mark_max + 0.05
+            )
             if sk.z_kron_rh2000 is not None:
-                tak_m = max(max(sk.z_kron_rh2000), mark_max + 0.05)
+                tak_m = max(max(sk.z_kron_rh2000), min_tillatet_tak)
             else:
-                tak_m = mark_max + sk.hojd_m
+                tak_m = max(mark_max + sk.hojd_m, min_tillatet_tak)
             bid = sk.skarm_id if len(delar) == 1 else f"{sk.skarm_id}#{del_idx}"
+            while bid in anvanda_idn:
+                bid = f"{bid}_s"
+            anvanda_idn.add(bid)
             hinder.append(
                 Byggnad(
                     id=bid,
@@ -523,13 +610,14 @@ def _skarm_till_byggnader(
                     reflektionsforlust_db=float(sk.reflektionsforlust_db),
                 )
             )
-            upptagna.append(poly)
+            upptagna.append(ren_poly)
     return hinder, varningar
 
 
 _BYGGNAD_OVERLAPP_TOL_M2 = 1.0e-4
 _BYGGNAD_KLIPP_TOL_M2 = 1.0e-5
 _MIN_KLIPPT_BYGGNAD_AREA_M2 = 0.25
+_MIN_KLIPPT_SKARM_AREA_M2 = 1.0e-3
 
 
 def _polygon_utan_hal(poly: Any) -> list[Any]:
@@ -563,14 +651,17 @@ def _polygon_utan_hal(poly: Any) -> list[Any]:
 
 def _rensa_overlappande_byggnader(
     byggnader: Sequence[Any],
+    *,
+    skarm_ids: frozenset[str] = frozenset(),
 ) -> tuple[list[Any], list[str]]:
-    """Klipper överlappande K1-byggnadspolygoner (t.ex. sammansatta takplan i tät kvartersstad).
+    """Klipper överlappande hinderpolygoner (byggnader och bullerskärmar/murar).
 
     `Bullerscen` behåller sitt strikta överlappskrav (<= 1e-4 m²). I kommunala baskartor (bl.a.
     Göteborgs sluten kvartersstad) förekommer både 3D-takplan på olika höjdnivåer som överlappar
-    i plan och millimetertunna väggöverlapp. Här ges högre takvolym företräde (bevarar akustisk
-    skärmning); lägre överlappande delar klipps bort deterministiskt och redovisas öppet som
-    varning. Om inga par överlappar > 1e-4 m² returneras listan oförändrad utan varning.
+    i plan, millimetertunna väggöverlapp och buffrade murar (`bryt_mur_*`) intill täta hus. Här
+    ges högre hinder företräde (bevarar akustisk skärmning); lägre överlappande delar klipps bort
+    deterministiskt och redovisas öppet som varning. Om inga par överlappar > 1e-4 m² returneras
+    listan oförändrad utan varning.
     """
     import shapely
 
@@ -600,6 +691,7 @@ def _rensa_overlappande_byggnader(
     placerade_bygg: list[Any] = []
     placerade_poly: list[Any] = []
     placerade_bounds: list[tuple[float, float, float, float]] = []
+    anvanda_idn: set[str] = set()
     antal_klippta = 0
     antal_borttagna = 0
     max_overlapp_m2 = 0.0
@@ -609,6 +701,11 @@ def _rensa_overlappande_byggnader(
         p = polys[idx]
         if not p.is_valid:
             p = shapely.make_valid(p)
+        min_area = (
+            _MIN_KLIPPT_SKARM_AREA_M2
+            if str(b.id) in skarm_ids
+            else _MIN_KLIPPT_BYGGNAD_AREA_M2
+        )
         bx0, by0, bx1, by1 = p.bounds
         traffar: list[Any] = []
         for q, qb in zip(placerade_poly, placerade_bounds, strict=True):
@@ -618,6 +715,7 @@ def _rensa_overlappande_byggnader(
                 traffar.append(q)
 
         if not traffar:
+            anvanda_idn.add(str(b.id))
             placerade_bygg.append(b)
             placerade_poly.append(p)
             placerade_bounds.append((bx0, by0, bx1, by1))
@@ -631,11 +729,16 @@ def _rensa_overlappande_byggnader(
         rest = p.difference(union_traff)
         delar: list[Any] = []
         for g in shapely.get_parts(rest):
-            if g.geom_type != "Polygon" or float(g.area) < _MIN_KLIPPT_BYGGNAD_AREA_M2:
+            if g.geom_type != "Polygon" or float(g.area) < min_area:
                 continue
-            for utan_hal in _polygon_utan_hal(g):
-                if float(utan_hal.area) >= _MIN_KLIPPT_BYGGNAD_AREA_M2:
-                    delar.append(utan_hal)
+            if not g.is_valid:
+                g = shapely.make_valid(g)
+            for del_g in shapely.get_parts(g):
+                if del_g.geom_type != "Polygon" or float(del_g.area) < min_area:
+                    continue
+                for utan_hal in _polygon_utan_hal(del_g):
+                    if float(utan_hal.area) >= min_area:
+                        delar.append(utan_hal)
 
         if not delar:
             antal_borttagna += 1
@@ -643,12 +746,18 @@ def _rensa_overlappande_byggnader(
 
         antal_klippta += 1
         for del_nr, del_poly in enumerate(delar):
-            coords = list(del_poly.exterior.coords)[:-1]
+            coords = _rensa_dubbelhorn(list(del_poly.exterior.coords))
             if len(coords) < 3:
+                continue
+            ren_poly = shapely.Polygon(coords)
+            if not ren_poly.is_valid or float(ren_poly.area) < min_area:
                 continue
             e_arr = np.asarray([c[0] for c in coords], dtype=np.float64)
             n_arr = np.asarray([c[1] for c in coords], dtype=np.float64)
             bid = str(b.id) if len(delar) == 1 else f"{b.id}#klipp{del_nr}"
+            while bid in anvanda_idn:
+                bid = f"{bid}_k"
+            anvanda_idn.add(bid)
             placerade_bygg.append(
                 Byggnad(
                     id=bid,
@@ -658,8 +767,8 @@ def _rensa_overlappande_byggnader(
                     reflektionsforlust_db=float(b.reflektionsforlust_db),
                 )
             )
-            placerade_poly.append(del_poly)
-            placerade_bounds.append(del_poly.bounds)
+            placerade_poly.append(ren_poly)
+            placerade_bounds.append(ren_poly.bounds)
 
     varning = (
         f"Överlappande byggnadspolygoner i K1-underlaget (t.ex. sammansatta takplan i tät "
@@ -1105,9 +1214,28 @@ class BullerNord2000(Analyslosare):
             mos.y_max_m,
             mos.cell_m,
             byggnad_poly,
+            befintliga_idn=frozenset(str(b.id) for b in riktiga_byggnader),
         )
         varningar.extend(skarm_varningar)
-        alla_hinder = tuple([*riktiga_byggnader, *skarm_hinder])
+        if skarm_hinder:
+            skarm_id_set = frozenset(str(s.id) for s in skarm_hinder)
+            alla_rensade, skarm_overlapp_varningar = _rensa_overlappande_byggnader(
+                [*riktiga_byggnader, *skarm_hinder],
+                skarm_ids=skarm_id_set,
+            )
+            varningar.extend(skarm_overlapp_varningar)
+            riktiga_byggnader = [
+                h for h in alla_rensade if str(h.id).split("#klipp", 1)[0] not in skarm_id_set
+            ]
+            skarm_hinder = [
+                h for h in alla_rensade if str(h.id).split("#klipp", 1)[0] in skarm_id_set
+            ]
+            byggnad_poly = [
+                shapely.Polygon(np.column_stack([b.e_m, b.n_m])) for b in riktiga_byggnader
+            ]
+            alla_hinder = tuple(alla_rensade)
+        else:
+            alla_hinder = tuple(riktiga_byggnader)
 
         # 2. Klipp vägar till rastret och bygg Bullerscen.
         n_rad, n_kol = mos.form
