@@ -733,7 +733,7 @@ def _metodstatus(
 
 def kontrollera_skissrapport(r: Rapport, tj: RapportTjanst) -> dict[str, Any]:
     """Alla kontroller inför export. `godkand` är sant bara om ingen punkt har fel."""
-    from rapport.skissmall import bygg_dokument, dokumentets_text
+    from rapport.skissmall import bygg_bilagedokument, bygg_dokument, dokumentets_text
 
     cache: dict[str, str] = {}
 
@@ -741,7 +741,10 @@ def kontrollera_skissrapport(r: Rapport, tj: RapportTjanst) -> dict[str, Any]:
         if "t" not in cache:
             try:
                 dok = bygg_dokument(r, tj, korlogg_rader=[])
-                cache["t"] = " ".join(dokumentets_text(dok).split())
+                delar = [dokumentets_text(dok)]
+                if r.installningar.separat_bilaga:
+                    delar.append(dokumentets_text(bygg_bilagedokument(r, tj, korlogg_rader=[])))
+                cache["t"] = " ".join(" ".join(delar).split())
             except (PastaendeFel, KeyError, ValueError, LookupError) as exc:
                 cache["t"] = f"[dokumentet kunde inte byggas: {exc}]"
         return cache["t"]

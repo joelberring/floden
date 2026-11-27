@@ -18,9 +18,13 @@ förberedda (`skede`, `revision`, `bedomningsgrunder`, `granskning`, `signering`
 from __future__ import annotations
 
 import contextlib
+import io
 import json
+import math
 import os
 import re
+import sqlite3
+import struct
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -28,13 +32,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+import numpy as np
+from numpy.typing import NDArray
+
 from floden_mcp.dataklass import DataKlass, Policy
 from floden_mcp.karna_api import FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, hash_av
 from gemensamt.hash import sha256_bytes, sha256_fil
 from rapport.amnestext import EKOLOGI_ENHET, TITEL, bildtext_lagrad, tomvarde_lagrad
 from rapport.amnestext import kartrubrik as kartrubrik_text
-from rapport.belaggskalla import BelaggFel, FlodenBelaggKalla
+from rapport.belaggskalla import (
+    SKYFALL_TROSKEL_M,
+    BelaggFel,
+    FlodenBelaggKalla,
+    Lagpunkt,
+    SkyfallsTroskelytor,
+)
 from rapport.bestallning import (
     Bestallning,
     BestallningArkiv,
@@ -264,6 +277,41 @@ class Rapport:
         return replace(self, **andringar)
 
 
+_UUID_RE: Final[re.Pattern[str]] = re.compile(
+    r"^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$",
+    re.IGNORECASE,
+)
+
+
+def ar_ra_uuid(varde: str) -> bool:
+    """Sant om strängen är ett rått 32-teckens hex-id eller standard-UUID."""
+    return bool(_UUID_RE.fullmatch(str(varde).strip()))
+
+
+@dataclass(frozen=True)
+class ExtraFigur:
+    """Tilläggsfigur (detaljkarta eller tvärsektion) ritad deterministiskt ur körningens data."""
+
+    fil: str
+    bildtext: str
+    rubrik: str
+    typ: str  # "detalj" | "sektion"
+    sha256: str
+
+
+@dataclass(frozen=True)
+class PlanerarFigurer:
+    """Berikade kartor, detaljzoom, tvärsektion och skyfallsmått för planerarvänlig export."""
+
+    kart_filer: dict[str, str] = field(default_factory=dict)
+    detaljkartor: tuple[ExtraFigur, ...] = ()
+    sektioner: tuple[ExtraFigur, ...] = ()
+    lagpunkter: tuple[Lagpunkt, ...] = ()
+    trosklar_fore: SkyfallsTroskelytor | None = None
+    trosklar_efter: SkyfallsTroskelytor | None = None
+    troskel_analys: str = ""
+
+
 def metodnotis_text(
     notis: Mapping[str, Any],
     *,
@@ -271,39 +319,36 @@ def metodnotis_text(
     korningar: Sequence[str] = (),
     bilaga: str = "bilaga",
 ) -> str:
-    """Metodnotisen som den står i rapporten (förval enligt Joels beslut 2026-11-22).
-
-    `sbk` ger språkprofilen "sbk": ursprunget (Floden, körningar, AI-stöd) i klarspråk."""
+    """Metodnotisen som den står i rapporten (saklig, ärlig metodnotis utan AI-jargong)."""
+    del korningar  # körnings-slugs redovisas i den tekniska spårbarhetsbilagan
     modeller = [m for m in notis.get("modeller", []) if m]
     ansvarig = notis.get("ansvarig_utredare")
     if sbk:
-        bas = "Underlaget är framtaget med beräkningsverktyget Floden"
-        if korningar:
-            bas += f" (beräkning {', '.join(korningar)})"
-        if notis.get("ai_stod", True):
-            bas += " och AI-stöd" + (f" ({', '.join(modeller)})" if modeller else "") + "."
-            bas += (
-                " AI har använts för att välja beräkningar och formulera texten. Alla tal och "
-                "kartor kommer ur beräkningarna och har kontrollerats automatiskt mot dem."
-            )
-        else:
-            bas += (
-                ". AI har inte använts: texten följer fasta formuleringar. Alla tal och kartor "
-                "kommer ur beräkningarna och har kontrollerats automatiskt mot dem."
-            )
-        bas += f" Körloggen finns i {bilaga}."
-        bas += (
-            f" Ansvarig utredare: {ansvarig}."
-            if ansvarig
-            else " Ansvarig utredare är inte angiven."
+        bas = (
+            "Underlaget är framtaget med Floden (deterministiska fysikberäkningar). "
+            "Metodstatus: skiss — avsett för tidig sållning och alternativjämförelse, "
+            "inte formell kravprövning. Alla tal och kartor kommer direkt ur beräkningarna "
+            "och har kontrollerats automatiskt mot dem."
         )
+        if notis.get("ai_stod", True):
+            mod = f" ({', '.join(modeller)})" if modeller else ""
+            bas += f" Textutkast och urval har sammanställts med AI-stöd{mod}."
+        else:
+            bas += " Texten följer fasta formuleringar utan AI-stöd."
+        del bilaga
+        bas += (
+            " Fullständig spårbarhet (belägg, körlogg, manifest och kontroll) redovisas i "
+            "teknisk bilaga sist i rapporten."
+        )
+        if ansvarig:
+            bas += f" Ansvarig utredare: {ansvarig}."
         return bas
     if notis.get("ai_stod", True):
-        bas = "Underlaget har tagits fram med Floden och AI-stöd"
-        bas += f" ({', '.join(modeller)})." if modeller else "."
-        bas += (
-            " AI:n har valt körningar och skrivit text; alla tal och kartor kommer ur Flodens "
-            "körningar och har kontrollerats automatiskt mot dem."
+        mod = f" ({', '.join(modeller)})" if modeller else ""
+        bas = (
+            "Underlaget har tagits fram med Floden (deterministiska fysikberäkningar) och "
+            f"AI-stöd{mod}. Textutkast har sammanställts med AI-stöd; alla tal och kartor "
+            "kommer ur Flodens körningar och har kontrollerats automatiskt mot dem."
         )
     else:
         bas = (
@@ -311,7 +356,7 @@ def metodnotis_text(
             "formuleringar). Alla tal och kartor kommer ur Flodens körningar och har "
             "kontrollerats automatiskt mot dem."
         )
-    bas += " Körloggen finns som bilaga."
+    bas += " Fullständig spårbarhet och körlogg finns i den tekniska bilagan."
     bas += (
         f" Ansvarig utredare: {ansvarig}."
         if ansvarig
@@ -503,6 +548,41 @@ class RapportTjanst:
         return self._katalog
 
     # ------------------------------------------------------------------ skapa
+
+    def projektnamn(self, projekt: str) -> str:
+        """Läsbart projektnamn ur ``projekt.json`` (visar aldrig en rå 32-teckens UUID)."""
+        if projekt == "demokvarteret":
+            return "Demokvarteret"
+        fragor = getattr(self.tjanst, "fragor", None)
+        app = getattr(self.tjanst, "app", None)
+        rotter: list[Path] = []
+        for kand in (
+            getattr(fragor, "projektrot", None) if fragor is not None else None,
+            getattr(app, "projektmapp", None) if app is not None else None,
+        ):
+            if kand is not None:
+                p = Path(kand)
+                if p.is_dir() and p not in rotter:
+                    rotter.append(p)
+        for proj_rot in rotter:
+            for fil in sorted(proj_rot.glob("*/projekt.json")):
+                try:
+                    d = json.loads(fil.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                pid = d.get("register_id") or d.get("projekt_id")
+                if pid == projekt or d.get("projekt_id") == projekt or fil.parent.name == projekt:
+                    namn = str(d.get("namn") or "").strip()
+                    if namn and not ar_ra_uuid(namn):
+                        return namn
+                    slug = str(d.get("projekt_id") or fil.parent.name).strip()
+                    if slug and not ar_ra_uuid(slug):
+                        return slug.replace("-", " ").replace("_", " ").strip().capitalize()
+        if ar_ra_uuid(projekt):
+            return "Planprojekt"
+        return projekt
 
     def _geografi_koordinater(
         self, korning_id: str, projekt: str | None = None
@@ -1027,12 +1107,13 @@ class RapportTjanst:
             )
         except InstallningsFel as exc:
             raise RapportFel(str(exc)) from exc
+        visningsprojekt = self.projektnamn(projekt)
         rapport = Rapport(
             rapport_id=rid,
             niva=niva,
             amne=amne,
             projekt=projekt,
-            titel=titel or f"{TITEL[amne]} – {projekt}",
+            titel=titel or f"{TITEL[amne]} – {visningsprojekt}",
             skapad=skapad,
             fragor=tuple(f.id for f in valda),
             korningar=tuple(posts),
@@ -1309,7 +1390,8 @@ class RapportTjanst:
             raise ExportStoppad(resultat)
         dok = bygg_dokument(r, self, korlogg_rader=self.korloggrader(r), med_resurser=True)
         mapp = self.arkiv.rapportmapp(rapport_id)
-        namn = f"export/{rapport_id}.{'docx' if fmt == 'word' else 'pdf'}"
+        andelse = "docx" if fmt == "word" else "pdf"
+        namn = f"export/{rapport_id}.{andelse}"
         ut = mapp / namn
         ut.parent.mkdir(parents=True, exist_ok=True)
         tmp = ut.with_name(ut.name + ".tmp")
@@ -1327,12 +1409,34 @@ class RapportTjanst:
                 'pip install -e ".[rapport]"'
             ) from exc
         os.replace(tmp, ut)
+        bilaga_namn: str | None = None
+        if r.installningar.separat_bilaga:
+            from rapport.skissmall import bygg_bilagedokument
+
+            bil_dok = bygg_bilagedokument(
+                r, self, korlogg_rader=self.korloggrader(r), med_resurser=True
+            )
+            bilaga_namn = f"export/{rapport_id}_bilaga.{andelse}"
+            bil_ut = mapp / bilaga_namn
+            bil_tmp = bil_ut.with_name(bil_ut.name + ".tmp")
+            try:
+                if fmt == "word":
+                    skriv_word(bil_dok, bil_tmp, mapp)
+                else:
+                    skriv_pdf(bil_dok, bil_tmp, mapp)
+            except TypsnittFel as exc:
+                bil_tmp.unlink(missing_ok=True)
+                raise RapportFel(str(exc)) from exc
+            os.replace(bil_tmp, bil_ut)
         post: dict[str, Any] = {
             "format": fmt,
             "fil": namn,
             "sha256": sha256_fil(ut),
             "tid": _nu(),
         }
+        if bilaga_namn is not None:
+            post["bilaga_fil"] = bilaga_namn
+            post["bilaga_sha256"] = sha256_fil(mapp / bilaga_namn)
         typsnitt = [
             {"roll": roll, "familj": res.familj, "sha256": res.sha256}
             for roll, res in r.installningar.resurser().items()
@@ -1397,10 +1501,16 @@ class RapportTjanst:
         def _ar_tal(val: Any) -> bool:
             return isinstance(val, int | float) and not isinstance(val, bool)
 
+        har_raster: bool | None = None
         ut: list[str] = []
         for n in kandidater:
             if _ar_tal(varden.get(n)) or (n in REGN_PARAMETRAR and _ar_tal(par.get(n))):
                 ut.append(n)
+            elif n in SKYFALL_TROSKEL_M:
+                if har_raster is None:
+                    har_raster = self.kalla.har_max_djup_raster(korning_id, analys, scenario)
+                if har_raster:
+                    ut.append(n)
         return ut
 
     def adresser(self, r: Rapport) -> list[str]:
@@ -1530,6 +1640,402 @@ class RapportTjanst:
 
     def lista(self, projekt: str | None = None) -> list[dict[str, Any]]:
         return [sammanfattning(r, self.arkiv) for r in self.arkiv.lista(projekt)]
+
+    def planerarfigurer(self, r: Rapport, *, skriv_filer: bool = True) -> PlanerarFigurer:
+        """Deterministiska planerarfigurer: berikade kartor, detaljzoom, tvärsektion och lågpunkter.
+
+        Rör aldrig K33-fältet ``r.kartor`` (bevarar 100 % bakåtkompatibilitet och ``9/9``-kontroll).
+        Returnerar tom ``PlanerarFigurer`` om körningens raster saknas (t.ex. i rena mocktester).
+        """
+        from rapport.figurer import (
+            figurstil_for_lager,
+            rendera_kartfigur,
+            rita_sektionsfigur,
+        )
+        from rapport.sprak import scenarionamn
+        from testsvit.k1_io import GeoTransformInfo
+
+        if not r.korningar:
+            return PlanerarFigurer()
+        fragor = getattr(self.tjanst, "fragor", None)
+        if fragor is None or not hasattr(fragor, "lager_raster"):
+            return PlanerarFigurer()
+
+        kartmapp = self.arkiv.rapportmapp(r.rapport_id) / "kartor"
+        if skriv_filer:
+            kartmapp.mkdir(parents=True, exist_ok=True)
+
+        # Identifiera par (bas + scenario) per jämförelse så de får bottenlegend för sida-vid-sida!
+        par_kart_ids: set[str] = set()
+        for kp in r.korningar:
+            for j in kp.get("jamforelser", []):
+                bas_k = next(
+                    (
+                        k
+                        for k in r.kartor
+                        if k.typ == "bas"
+                        and k.korning_id == kp["korning_id"]
+                        and k.analys == j["analys"]
+                        and k.scenario == j["fore"]
+                        and (not k.meta.get("roll") or k.meta.get("roll") == j["utdata"])
+                    ),
+                    None,
+                )
+                efter_k = next(
+                    (
+                        k
+                        for k in r.kartor
+                        if k.typ == "scenario"
+                        and k.korning_id == kp["korning_id"]
+                        and k.jamforelse == j["namn"]
+                    ),
+                    None,
+                )
+                if bas_k is not None and efter_k is not None:
+                    par_kart_ids.add(bas_k.kart_id)
+                    par_kart_ids.add(efter_k.kart_id)
+
+        # För skyfall: deterministiska tröskelytor + lågpunkter P1–P3 + markhöjd
+        trosklar_fore: SkyfallsTroskelytor | None = None
+        trosklar_efter: SkyfallsTroskelytor | None = None
+        troskel_analys = ""
+        lagpunkter: list[Lagpunkt] = []
+        kontext_cache: dict[tuple[str, str], dict[str, Any]] = {}
+
+        def _kontext(kid: str, scen: str, la: Mapping[str, Any], h: int, b: int) -> dict[str, Any]:
+            nyckel = (kid, scen)
+            if nyckel in kontext_cache:
+                return kontext_cache[nyckel]
+            rutor = _k1_rutor_for(fragor, kid, scen)
+            terrang = _las_terrang_mosaik(rutor, la, h, b)
+            baskarta = _las_baskarta_linjer(rutor)
+            floden = _las_flodesvagar(fragor, kid, scen) if r.amne == "skyfall" else []
+            poly = _projektpolygon_ring(fragor, kid)
+            ut_k = {
+                "terrang": terrang,
+                "baskarta": baskarta,
+                "floden": floden,
+                "projektpolygon": poly,
+            }
+            kontext_cache[nyckel] = ut_k
+            return ut_k
+
+        # Beräkna skyfalls-trösklar & lågpunkter ur första skyfallskörningen
+        if r.amne == "skyfall":
+            kp0 = r.korningar[0]
+            kid0 = str(kp0["korning_id"])
+            an0 = next(
+                (a for a in kp0.get("analyser", []) if str(a.get("losare", "")).startswith("vatten.")),
+                None,
+            )
+            if an0 is not None:
+                troskel_analys = str(an0["analys"])
+                jf0 = next(
+                    (
+                        j
+                        for j in kp0.get("jamforelser", [])
+                        if j.get("analys") == troskel_analys and j.get("utdata") == "max_djup"
+                    ),
+                    None,
+                )
+                fore_s = str(jf0["fore"]) if jf0 is not None else (
+                    str(an0["scenarier"][0]) if an0.get("scenarier") else None
+                )
+                efter_s = str(jf0["efter"]) if jf0 is not None else None
+                if fore_s:
+                    trosklar_fore = self.kalla.skyfall_trosklar(kid0, troskel_analys, fore_s)
+                if efter_s:
+                    trosklar_efter = self.kalla.skyfall_trosklar(kid0, troskel_analys, efter_s)
+                prim_s = efter_s or fore_s
+                if prim_s:
+                    pack = self.kalla._max_djup_data(kid0, troskel_analys, prim_s)  # noqa: SLF001
+                    if pack is not None:
+                        ras_p, _tak_p, _pm_p, _geo_p, la_p, _, _ = pack
+                        ktx_p = _kontext(kid0, prim_s, la_p, ras_p.shape[0], ras_p.shape[1])
+                        lagpunkter = self.kalla.skyfall_lagpunkter(
+                            kid0, troskel_analys, prim_s, mark_z=ktx_p["terrang"]
+                        )
+
+        markorer_dict = [
+            {"id": lp.id, "e_m": lp.e_m, "n_m": lp.n_m, "djup_m": lp.djup_m} for lp in lagpunkter
+        ]
+
+        kart_filer: dict[str, str] = {}
+        detaljkartor: list[ExtraFigur] = []
+        sektioner: list[ExtraFigur] = []
+        gjorda_detalj: set[tuple[str, str]] = set()
+        gjorda_sektion: set[str] = set()
+
+        def _rendera_och_spara(
+            *,
+            filnamn: str,
+            raster_sub: NDArray[np.float64],
+            tak_sub: NDArray[np.bool_] | None,
+            vatten_sub: NDArray[np.bool_] | None,
+            mark_sub: NDArray[np.float64] | None,
+            geo: GeoTransformInfo,
+            la: Mapping[str, Any],
+            titel: str,
+            undertitel: str,
+            byggnader: Sequence[Mapping[str, Any]] | None,
+            baskarta: Sequence[Sequence[Sequence[float]]],
+            flodesvagar: Sequence[Sequence[Sequence[float]]],
+            projektpolygon: Sequence[Sequence[float]] | None,
+            markorer: Sequence[Mapping[str, Any]] | None,
+            skiss: bool,
+            run_hash: str,
+            karta_max_px: int,
+            legend_placering: str,
+        ) -> tuple[str, str]:
+            stil = figurstil_for_lager(la)
+            anm = (
+                "SKISS: metoden är inte klassad för formell kravprövning. Deterministisk fysikberäkning."
+                if skiss
+                else "Deterministisk fysikberäkning."
+            )
+            duk = rendera_kartfigur(
+                raster_sub,
+                stil,
+                titel=titel,
+                undertitel=undertitel,
+                metodstatus="Skissunderlag" if skiss else "Rapportmetod",
+                geo=geo,
+                byggnad_mask=tak_sub,
+                vatten_mask=(
+                    vatten_sub if (vatten_sub is not None and bool(np.any(vatten_sub))) else None
+                ),
+                byggnader_3011=byggnader,
+                projektpolygon_3011=projektpolygon,
+                baskarta_linjer_3011=baskarta or None,
+                markhojd_m=mark_sub,
+                flodesvagar_3011=flodesvagar or None,
+                markorer_3011=markorer or None,
+                run_hash=run_hash,
+                anmarkning=anm,
+                kalla="Floden",
+                karta_max_px=karta_max_px,
+                legend_placering="botten" if legend_placering == "botten" else "sida",
+            )
+            buf = io.BytesIO()
+            duk.save(buf, format="PNG", optimize=True)
+            png_bytes = buf.getvalue()
+            sha = sha256_bytes(png_bytes)
+            rel_fil = f"kartor/{filnamn}"
+            if skriv_filer:
+                _skriv_bytes_om_andrad(kartmapp / filnamn, png_bytes)
+            return rel_fil, sha
+
+        for k in r.kartor:
+            try:
+                res = self.kalla._resultat(k.korning_id)  # noqa: SLF001
+                data = fragor.lager_raster(k.korning_id, k.lager_id)
+            except Exception:  # noqa: BLE001
+                continue
+            la = data["lager"]
+            raster = np.asarray(data["raster"], dtype=np.float64)
+            tak = None if data.get("tak") is None else np.asarray(data["tak"], dtype=bool)
+            h, b = raster.shape
+            sc_kontext = str(la.get("efter") if la.get("typ") == "skillnad" else la.get("scenario") or k.scenario)
+            ktx = _kontext(k.korning_id, sc_kontext, la, h, b)
+            byggnader = None
+            if res.get("byggnader"):
+                byggnader = res["byggnader"]["scenarier"].get(sc_kontext)
+            vatten_mask: NDArray[np.bool_] | None = None
+            if r.amne == "skyfall" and hasattr(self.tjanst, "_vatten_mask_for_lager"):
+                with contextlib.suppress(Exception):
+                    vm = self.tjanst._vatten_mask_for_lager(k.korning_id, la, (h, b))  # noqa: SLF001
+                    if vm is not None:
+                        vatten_mask = np.asarray(vm, dtype=bool)
+
+            utsnitt = k.meta.get("utsnitt") or k.meta.get("kartutsnitt")
+            r_sub, t_sub, v_sub, m_sub, geo_sub = _beskar_lager(
+                raster, tak, vatten_mask, ktx["terrang"], la, utsnitt
+            )
+            skiss = str(k.meta.get("metodstatus") or "skiss") != "rapport"
+            kp_post = next((x for x in r.korningar if x["korning_id"] == k.korning_id), {})
+            run_hash = str(kp_post.get("manifest_sha256") or "")
+            ar_par = k.kart_id in par_kart_ids
+            vis_titel = str(k.meta.get("rubrik") or k.kart_id)
+            if r.installningar.sbk:
+                undertitel = (
+                    f"{self.projektnamn(r.projekt)} · SWEREF 99 18 00"
+                    if not ar_ra_uuid(self.projektnamn(r.projekt))
+                    else "SWEREF 99 18 00 · RH 2000"
+                )
+            else:
+                undertitel = f"Körning {k.korning_id} · EPSG:3011"
+
+            rel_fil, _sha = _rendera_och_spara(
+                filnamn=f"{k.kart_id}_plan.png",
+                raster_sub=r_sub,
+                tak_sub=t_sub,
+                vatten_sub=v_sub,
+                mark_sub=m_sub,
+                geo=geo_sub,
+                la=la,
+                titel=vis_titel,
+                undertitel=undertitel,
+                byggnader=byggnader,
+                baskarta=ktx["baskarta"],
+                flodesvagar=ktx["floden"] if k.typ != "skillnad" else [],
+                projektpolygon=ktx["projektpolygon"],
+                markorer=markorer_dict if r.amne == "skyfall" else None,
+                skiss=skiss,
+                run_hash=run_hash,
+                karta_max_px=520 if ar_par else 680,
+                legend_placering="botten" if ar_par else "sida",
+            )
+            kart_filer[k.kart_id] = rel_fil
+
+            # Automatisk inzoomad detaljkarta runt förslagsbyggnader / projektpolygon (+40 m)
+            detalj_nyckel = (k.korning_id, k.analys)
+            skall_detalj = (
+                detalj_nyckel not in gjorda_detalj
+                and r.amne in ("skyfall", "dagsljus")
+                and (k.typ == "scenario" or (k.typ == "bas" and not kp_post.get("jamforelser")))
+            )
+            if skall_detalj:
+                det_box = _detalj_utsnitt(
+                    la=la,
+                    byggnader=byggnader,
+                    projektpolygon=ktx["projektpolygon"],
+                    mottagare=r.mottagare,
+                    oversikt_utsnitt=utsnitt,
+                )
+                if det_box is not None:
+                    gjorda_detalj.add(detalj_nyckel)
+                    dr, dt, dv, dm, dgeo = _beskar_lager(
+                        raster, tak, vatten_mask, ktx["terrang"], la, det_box
+                    )
+                    det_rubrik = (
+                        f"Detaljkarta: största vattendjup {scenarionamn(sc_kontext)} förslaget"
+                        if r.amne == "skyfall" and k.typ == "scenario"
+                        else (
+                            "Detaljkarta: största vattendjup (läget idag)"
+                            if r.amne == "skyfall"
+                            else f"Detaljkarta: soltimmar ({scenarionamn(sc_kontext)})"
+                        )
+                    )
+                    det_fil, det_sha = _rendera_och_spara(
+                        filnamn=f"detalj_{k.kart_id}.png",
+                        raster_sub=dr,
+                        tak_sub=dt,
+                        vatten_sub=dv,
+                        mark_sub=dm,
+                        geo=dgeo,
+                        la=la,
+                        titel=det_rubrik,
+                        undertitel="Inzoomning runt förslag och närområde (+40 m kontext)",
+                        byggnader=byggnader,
+                        baskarta=ktx["baskarta"],
+                        flodesvagar=ktx["floden"],
+                        projektpolygon=ktx["projektpolygon"],
+                        markorer=markorer_dict if r.amne == "skyfall" else None,
+                        skiss=skiss,
+                        run_hash=run_hash,
+                        karta_max_px=720,
+                        legend_placering="sida",
+                    )
+                    det_text = (
+                        "Inzoomad detaljkarta kring förslagsbyggnader och projektområde "
+                        "(+40 m omgivande kontext) med vägkanter, höjdkurvor, byggnader och "
+                        "markerade lågpunkter. Norr uppåt; skalstock i kartan."
+                        if r.amne == "skyfall"
+                        else "Inzoomad detaljkarta kring förslagsbyggnader och gårdsrum "
+                        "(+40 m omgivande kontext). Norr uppåt; skalstock i kartan."
+                    )
+                    detaljkartor.append(
+                        ExtraFigur(
+                            fil=det_fil,
+                            bildtext=det_text,
+                            rubrik=det_rubrik,
+                            typ="detalj",
+                            sha256=det_sha,
+                        )
+                    )
+
+            # Automatisk tvärsektion genom djupaste lågpunkt (P1) / nya byggnaden för skyfall
+            if (
+                r.amne == "skyfall"
+                and k.analys not in gjorda_sektion
+                and ktx["terrang"] is not None
+                and (k.typ == "scenario" or (k.typ == "bas" and not kp_post.get("jamforelser")))
+                and (lagpunkter or any(b.get("status") in ("ny", "andrad") for b in (byggnader or ())))
+            ):
+                gjorda_sektion.add(k.analys)
+                fore_raster: NDArray[np.float64] | None = None
+                efter_raster: NDArray[np.float64] | None = None
+                jf_match = next(
+                    (j for j in kp_post.get("jamforelser", []) if j.get("namn") == k.jamforelse),
+                    None,
+                )
+                if jf_match is not None:
+                    efter_raster = raster
+                    with contextlib.suppress(Exception):
+                        f_data = fragor.lager_raster(
+                            k.korning_id, f"{k.analys}.{jf_match['fore']}.max_djup"
+                        )
+                        if np.asarray(f_data["raster"]).shape == raster.shape:
+                            fore_raster = np.asarray(f_data["raster"], dtype=np.float64)
+                else:
+                    fore_raster = raster
+
+                sek_data = _sampla_tvarsektion(
+                    terrang=ktx["terrang"],
+                    la=la,
+                    djup_fore=fore_raster,
+                    djup_efter=efter_raster,
+                    tak=tak,
+                    byggnader=byggnader,
+                    lagpunkter=lagpunkter,
+                )
+                if sek_data is not None:
+                    sek_img = rita_sektionsfigur(
+                        sek_data["avstand_m"],
+                        sek_data["mark_m"],
+                        vatten_fore_m=sek_data["vatten_fore_m"],
+                        vatten_efter_m=sek_data["vatten_efter_m"],
+                        byggnad_mask=sek_data["byggnad_mask"],
+                        byggnad_hojd_rh2000_m=sek_data["byggnad_hojd_m"],
+                        byggnad_ny_mask=sek_data["byggnad_ny_mask"],
+                        titel="Tvärsektion genom djupaste lågpunkt och bebyggelse",
+                        undertitel=sek_data["undertitel"],
+                        metodstatus="Skissunderlag" if skiss else "Rapportmetod",
+                        markor_avstand_m=sek_data["p1_avstand_m"],
+                        markor_etikett=sek_data["p1_id"],
+                        run_hash=run_hash,
+                        kalla="Floden",
+                    )
+                    buf_s = io.BytesIO()
+                    sek_img.save(buf_s, format="PNG", optimize=True)
+                    sek_bytes = buf_s.getvalue()
+                    sek_sha = sha256_bytes(sek_bytes)
+                    sek_namn = f"sektion_{k.analys}.png"
+                    if skriv_filer:
+                        _skriv_bytes_om_andrad(kartmapp / sek_namn, sek_bytes)
+                    sektioner.append(
+                        ExtraFigur(
+                            fil=f"kartor/{sek_namn}",
+                            bildtext=(
+                                "Höjd- och vattensektion i RH 2000 genom den djupaste lågpunkten "
+                                "och angränsande bebyggelse. Marklinje ur markmodellen, vattenyta "
+                                "före och efter förslaget samt byggnadsblock."
+                            ),
+                            rubrik="Tvärsektion genom djupaste lågpunkt och bebyggelse",
+                            typ="sektion",
+                            sha256=sek_sha,
+                        )
+                    )
+
+        return PlanerarFigurer(
+            kart_filer=kart_filer,
+            detaljkartor=tuple(detaljkartor),
+            sektioner=tuple(sektioner),
+            lagpunkter=tuple(lagpunkter),
+            trosklar_fore=trosklar_fore,
+            trosklar_efter=trosklar_efter,
+            troskel_analys=troskel_analys,
+        )
 
 
 def _nulagesrubrik(amne: str) -> str:
@@ -1684,13 +2190,19 @@ def _dagsljusantagande(a: Mapping[str, Any]) -> str:
     losare = str(a["losare"])
     delar: list[str] = []
     if losare == "dagsljus.soltimmar_mark":
-        datum = p.get("datum") or []
-        delar.append(
-            "Soltimmar på mark för "
-            + ", ".join(datum_text(str(d), True) for d in datum)
-            + f" (tidssteg {_sv(p.get('steg_min'))} min, {_sv(p.get('azimutriktningar'))} "
-            "riktningar)"
+        datum = [str(d) for d in (p.get("datum") or []) if str(d).strip()]
+        datum_del = (
+            " för " + ", ".join(datum_text(d, True) for d in datum)
+            if datum
+            else ""
         )
+        detaljer: list[str] = []
+        if p.get("steg_min") is not None:
+            detaljer.append(f"tidssteg {_sv(p.get('steg_min'))} min")
+        if p.get("azimutriktningar") is not None:
+            detaljer.append(f"{_sv(p.get('azimutriktningar'))} riktningar")
+        parentes = f" ({', '.join(detaljer)})" if detaljer else ""
+        delar.append(f"Soltimmar på mark{datum_del}{parentes}")
     elif losare == "dagsljus.vsc_fasad":
         delar.append(
             "Vertikal himmelskomponent (VSC) vid fasadpunkter, mulen CIE-himmel, en punkt var "
@@ -1707,6 +2219,446 @@ def _dagsljusantagande(a: Mapping[str, Any]) -> str:
     return "; ".join(delar) + "."
 
 
+def _skriv_bytes_om_andrad(mal: Path, data: bytes) -> None:
+    if mal.is_file() and mal.read_bytes() == data:
+        return
+    mal.parent.mkdir(parents=True, exist_ok=True)
+    tmp = mal.with_name(mal.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, mal)
+
+
+def _k1_rutor_for(fragor: Any, korning_id: str, scenario: str) -> list[Path]:
+    """K1-rutornas kataloger för (korning_id, scenario) via FragaTjanst."""
+    if not (
+        hasattr(fragor, "_hamta")
+        and hasattr(fragor, "_sammanstallning")
+        and hasattr(fragor, "_scenariorutor")
+    ):
+        return []
+    try:
+        k_obj = fragor._hamta(korning_id)  # noqa: SLF001
+        s_dok = fragor._sammanstallning(k_obj)  # noqa: SLF001
+        rutor_map, _varn = fragor._scenariorutor(k_obj, s_dok)  # noqa: SLF001
+        if not rutor_map:
+            return []
+        sc_map = rutor_map.get(scenario) or next(iter(rutor_map.values()), {})
+        return [Path(p) for p in sc_map.values() if Path(p).is_dir()]
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _las_terrang_mosaik(
+    rutor: Sequence[Path], la: Mapping[str, Any], h: int, b: int
+) -> NDArray[np.float64] | None:
+    """Läser bar markhöjd (``terrang.tif``, annars ``mark.tif``) på lagrets exakta rutnät."""
+    from testsvit.k1_io import las_geotiff
+
+    if not rutor:
+        return None
+    u = la["utbredning"]
+    ox = float(u["x_min"])
+    oy = float(u["y_max"])
+    px = float(la["pixelstorlek_m"])
+    ut = np.full((h, b), np.nan, dtype=np.float64)
+    hittad = False
+    for rmapp in rutor:
+        fil = rmapp / "terrang.tif"
+        if not fil.is_file():
+            fil = rmapp / "mark.tif"
+        if not fil.is_file():
+            continue
+        try:
+            arr, geo = las_geotiff(fil)
+        except Exception:  # noqa: BLE001
+            continue
+        z = np.asarray(arr, dtype=np.float64)
+        th, tb = z.shape
+        if (
+            abs(geo.pixelstorlek_x - px) < 1e-6
+            and abs(geo.pixelstorlek_y - px) < 1e-6
+        ):
+            c0 = int(round((geo.x_min - ox) / px))
+            r0 = int(round((oy - geo.y_max) / px))
+            rs, re_ = max(0, r0), min(h, r0 + th)
+            cs, ce = max(0, c0), min(b, c0 + tb)
+            if rs < re_ and cs < ce:
+                sub = z[rs - r0 : re_ - r0, cs - c0 : ce - c0]
+                ok = np.isfinite(sub)
+                ut[rs:re_, cs:ce] = np.where(ok, sub, ut[rs:re_, cs:ce])
+                hittad = hittad or bool(np.any(ok))
+        else:
+            # Allmän omsampling till lagrets cellcentra
+            c_min = max(0, int(math.floor((geo.x_min - ox) / px)))
+            c_max = min(b, int(math.ceil((geo.x_max - ox) / px)))
+            r_min = max(0, int(math.floor((oy - geo.y_max) / px)))
+            r_max = min(h, int(math.ceil((oy - geo.y_min) / px)))
+            if c_min < c_max and r_min < r_max:
+                es = ox + (np.arange(c_min, c_max, dtype=np.float64) + 0.5) * px
+                ns = oy - (np.arange(r_min, r_max, dtype=np.float64) + 0.5) * px
+                tc = np.clip(np.floor((es - geo.x_min) / geo.pixelstorlek_x).astype(int), 0, tb - 1)
+                tr = np.clip(np.floor((geo.y_max - ns) / geo.pixelstorlek_y).astype(int), 0, th - 1)
+                sub = z[np.ix_(tr, tc)]
+                ok = np.isfinite(sub)
+                ut[r_min:r_max, c_min:c_max] = np.where(ok, sub, ut[r_min:r_max, c_min:c_max])
+                hittad = hittad or bool(np.any(ok))
+    return ut if hittad else None
+
+
+def _avkoda_gpkg_geom(blob: bytes) -> list[list[tuple[float, float]]]:
+    """Avkodar linjer ur en OGC GeoPackage-geometriblob (LineString/MultiLineString/Polygon)."""
+    if not blob or len(blob) < 8 or blob[:2] != b"GP":
+        return []
+    flags = blob[3]
+    env_ind = (flags >> 1) & 0x07
+    env_bytes = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}.get(env_ind, 0)
+    wkb_start = 8 + env_bytes
+    if wkb_start >= len(blob):
+        return []
+    try:
+        from shapely import wkb
+
+        geom = wkb.loads(blob[wkb_start:])
+    except Exception:  # noqa: BLE001
+        return []
+    ut: list[list[tuple[float, float]]] = []
+    gtyp = getattr(geom, "geom_type", "")
+    if gtyp == "LineString":
+        pts = [(float(c[0]), float(c[1])) for c in geom.coords]
+        if len(pts) >= 2:
+            ut.append(pts)
+    elif gtyp == "MultiLineString":
+        for ls in geom.geoms:
+            pts = [(float(c[0]), float(c[1])) for c in ls.coords]
+            if len(pts) >= 2:
+                ut.append(pts)
+    elif gtyp == "Polygon":
+        pts = [(float(c[0]), float(c[1])) for c in geom.exterior.coords]
+        if len(pts) >= 2:
+            ut.append(pts)
+    return ut
+
+
+def _las_baskarta_linjer(rutor: Sequence[Path]) -> list[list[tuple[float, float]]]:
+    """Läser vägkanter/kantstenar ur ``brytlinjer.gpkg`` och ev. ``gator.gpkg`` i K1-rutorna."""
+    ut: list[list[tuple[float, float]]] = []
+    for rmapp in rutor:
+        for filnamn in ("brytlinjer.gpkg", "gator.gpkg"):
+            gpkg = rmapp / filnamn
+            if not gpkg.is_file():
+                continue
+            try:
+                conn = sqlite3.connect(f"file:{gpkg}?mode=ro", uri=True)
+                try:
+                    tabeller = [
+                        str(r[0])
+                        for r in conn.execute(
+                            "SELECT table_name FROM gpkg_contents WHERE data_type = 'features'"
+                        ).fetchall()
+                    ]
+                    for tab in tabeller:
+                        if not re.fullmatch(r"[A-Za-z0-9_]+", tab):
+                            continue
+                        geom_kol = conn.execute(
+                            "SELECT column_name FROM gpkg_geometry_columns WHERE table_name = ?",
+                            (tab,),
+                        ).fetchone()
+                        if not geom_kol:
+                            continue
+                        gkol = str(geom_kol[0])
+                        if not re.fullmatch(r"[A-Za-z0-9_]+", gkol):
+                            continue
+                        for (blob,) in conn.execute(
+                            f'SELECT "{gkol}" FROM "{tab}" WHERE "{gkol}" IS NOT NULL LIMIT 3000'  # noqa: S608
+                        ).fetchall():
+                            if isinstance(blob, bytes | bytearray):
+                                ut.extend(_avkoda_gpkg_geom(bytes(blob)))
+                finally:
+                    conn.close()
+            except (sqlite3.Error, OSError, struct.error):
+                continue
+    return ut
+
+
+def _las_flodesvagar(fragor: Any, korning_id: str, scenario: str) -> list[list[tuple[float, float]]]:
+    """Läser deterministiska flödesvägar (GeoJSON) ur FragaTjanst om tillgängligt."""
+    if not hasattr(fragor, "vektor"):
+        return []
+    try:
+        fc = fragor.vektor(korning_id, scenario, "flodesvagar", min_yta_m2=100.0)
+    except Exception:  # noqa: BLE001
+        return []
+    feats = fc.get("features", []) if isinstance(fc, Mapping) else []
+    feats = sorted(
+        feats,
+        key=lambda f: -float((f.get("properties") or {}).get("uppstroms_yta_m2") or 0.0),
+    )[:120]
+    ut: list[list[tuple[float, float]]] = []
+    for f in feats:
+        geom = f.get("geometry") or {}
+        gtyp = geom.get("type")
+        coords = geom.get("coordinates") or []
+        if gtyp == "LineString" and len(coords) >= 2:
+            ut.append([(float(p[0]), float(p[1])) for p in coords])
+        elif gtyp == "MultiLineString":
+            for ls in coords:
+                if len(ls) >= 2:
+                    ut.append([(float(p[0]), float(p[1])) for p in ls])
+    return ut
+
+
+def _projektpolygon_ring(fragor: Any, korning_id: str) -> list[tuple[float, float]] | None:
+    if not hasattr(fragor, "projekt_avgransning"):
+        return None
+    try:
+        avgr = fragor.projekt_avgransning(korning_id)
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(avgr, Mapping):
+        return None
+    gj = avgr.get("polygon_3011") or {}
+    coords = gj.get("coordinates") if isinstance(gj, Mapping) else None
+    if not coords:
+        return None
+    ring = coords[0] if gj.get("type") == "Polygon" else (coords[0][0] if gj.get("type") == "MultiPolygon" else None)
+    if not ring or len(ring) < 3:
+        return None
+    return [(float(p[0]), float(p[1])) for p in ring]
+
+
+def _beskar_lager(
+    raster: NDArray[np.float64],
+    tak: NDArray[np.bool_] | None,
+    vatten: NDArray[np.bool_] | None,
+    mark: NDArray[np.float64] | None,
+    la: Mapping[str, Any],
+    utsnitt: Sequence[float] | None,
+) -> tuple[
+    NDArray[np.float64],
+    NDArray[np.bool_] | None,
+    NDArray[np.bool_] | None,
+    NDArray[np.float64] | None,
+    Any,
+]:
+    """Beskär raster och hjälpmasker exakt till ``utsnitt`` med nedsampling vid mycket stora raster."""
+    from testsvit.k1_io import GeoTransformInfo
+
+    u = la["utbredning"]
+    px = float(la["pixelstorlek_m"])
+    ox_m, oy_m = float(u["x_min"]), float(u["y_max"])
+    hojd_c, bredd_c = raster.shape
+    c0, c1, r0, r1 = 0, bredd_c, 0, hojd_c
+    if utsnitt is not None and len(utsnitt) == 4:
+        x0, y0, x1, y1 = (float(v) for v in utsnitt)
+        c0 = max(0, int(math.floor((x0 - ox_m) / px)))
+        c1 = min(bredd_c, int(math.ceil((x1 - ox_m) / px)))
+        r0 = max(0, int(math.floor((oy_m - y1) / px)))
+        r1 = min(hojd_c, int(math.ceil((oy_m - y0) / px)))
+        if c1 <= c0 or r1 <= r0:
+            c0, c1, r0, r1 = 0, bredd_c, 0, hojd_c
+
+    sub = raster[r0:r1, c0:c1]
+    tak_sub = None if tak is None else tak[r0:r1, c0:c1]
+    vat_sub = None if vatten is None else vatten[r0:r1, c0:c1]
+    mark_sub = None if mark is None else mark[r0:r1, c0:c1]
+
+    faktor = max(1, math.ceil(max(sub.shape) / 1400))
+    if faktor > 1:
+        sub = sub[::faktor, ::faktor]
+        tak_sub = None if tak_sub is None else tak_sub[::faktor, ::faktor]
+        vat_sub = None if vat_sub is None else vat_sub[::faktor, ::faktor]
+        mark_sub = None if mark_sub is None else mark_sub[::faktor, ::faktor]
+    px_bild = px * faktor
+    h_c, b_c = sub.shape
+    geo = GeoTransformInfo(
+        bredd=int(b_c),
+        hojd=int(h_c),
+        x_min=ox_m + c0 * px,
+        y_max=oy_m - r0 * px,
+        pixelstorlek_x=px_bild,
+        pixelstorlek_y=px_bild,
+        epsg=3011,
+        dtype="float32",
+    )
+    return sub, tak_sub, vat_sub, mark_sub, geo
+
+
+def _detalj_utsnitt(
+    *,
+    la: Mapping[str, Any],
+    byggnader: Sequence[Mapping[str, Any]] | None,
+    projektpolygon: Sequence[Sequence[float]] | None,
+    mottagare: Sequence[Mottagare],
+    oversikt_utsnitt: Sequence[float] | None,
+) -> tuple[float, float, float, float] | None:
+    """Tät beskärning (+40 m kontext) runt förslagsbyggnader eller projektpolygon när mindre än översikten."""
+    u = la["utbredning"]
+    rx0, ry0, rx1, ry1 = (float(u[k]) for k in ("x_min", "y_min", "x_max", "y_max"))
+    if oversikt_utsnitt is not None and len(oversikt_utsnitt) == 4:
+        ox0, oy0, ox1, oy1 = (float(v) for v in oversikt_utsnitt)
+    else:
+        ox0, oy0, ox1, oy1 = rx0, ry0, rx1, ry1
+    ow, oh = max(ox1 - ox0, 1.0), max(oy1 - oy0, 1.0)
+
+    pts: list[tuple[float, float]] = []
+    if byggnader:
+        for b in byggnader:
+            if b.get("status") in ("ny", "andrad"):
+                pts.extend((float(p[0]), float(p[1])) for p in b.get("ring", ()))
+    if not pts and projektpolygon:
+        pts.extend((float(p[0]), float(p[1])) for p in projektpolygon)
+    if not pts and mottagare:
+        for m in mottagare:
+            pts.extend((float(p[0]), float(p[1])) for p in m.polygon)
+    if not pts:
+        return None
+
+    fx0 = min(p[0] for p in pts) - 40.0
+    fx1 = max(p[0] for p in pts) + 40.0
+    fy0 = min(p[1] for p in pts) - 40.0
+    fy1 = max(p[1] for p in pts) + 40.0
+
+    # Kvadratisk / balanserad detaljruta, minst 80 m sida, inom rastrets utbredning.
+    sida = max(80.0, fx1 - fx0, fy1 - fy0)
+    cx, cy = (fx0 + fx1) / 2.0, (fy0 + fy1) / 2.0
+    max_sida = min(rx1 - rx0, ry1 - ry0)
+    sida = min(sida, max_sida)
+    dx0 = min(max(cx - sida / 2.0, rx0), rx1 - sida)
+    dy0 = min(max(cy - sida / 2.0, ry0), ry1 - sida)
+    dx1, dy1 = dx0 + sida, dy0 + sida
+
+    if (dx1 - dx0) >= 0.85 * ow and (dy1 - dy0) >= 0.85 * oh:
+        return None
+    return (dx0, dy0, dx1, dy1)
+
+
+def _sampla_tvarsektion(
+    *,
+    terrang: NDArray[np.float64],
+    la: Mapping[str, Any],
+    djup_fore: NDArray[np.float64] | None,
+    djup_efter: NDArray[np.float64] | None,
+    tak: NDArray[np.bool_] | None,
+    byggnader: Sequence[Mapping[str, Any]] | None,
+    lagpunkter: Sequence[Lagpunkt],
+) -> dict[str, Any] | None:
+    """Samplar en 1D-tvärsektion (RH 2000) genom djupaste lågpunkt och ev. ny byggnad."""
+    from shapely.geometry import Point, Polygon
+
+    u = la["utbredning"]
+    ox, oy = float(u["x_min"]), float(u["y_max"])
+    rx0, ry0, rx1, ry1 = (float(u[k]) for k in ("x_min", "y_min", "x_max", "y_max"))
+    px = float(la["pixelstorlek_m"])
+    h, b = terrang.shape
+
+    ny_centra: list[tuple[float, float]] = []
+    poly_poster: list[tuple[Polygon, float, bool]] = []
+    for bp in byggnader or ():
+        ring = bp.get("ring") or ()
+        if len(ring) < 3:
+            continue
+        poly = Polygon([(float(p[0]), float(p[1])) for p in ring])
+        if not poly.is_valid or poly.is_empty:
+            continue
+        ar_ny = bp.get("status") in ("ny", "andrad")
+        tak_rh = float(bp.get("takhojd_rh2000") or 0.0)
+        poly_poster.append((poly, tak_rh, ar_ny))
+        if ar_ny:
+            c = poly.centroid
+            ny_centra.append((float(c.x), float(c.y)))
+
+    p1 = lagpunkter[0] if lagpunkter else None
+    p1_id = p1.id if p1 is not None else "P1"
+    if p1 is not None and ny_centra:
+        nc = min(ny_centra, key=lambda c: math.hypot(c[0] - p1.e_m, c[1] - p1.n_m))
+        d_m = math.hypot(nc[0] - p1.e_m, nc[1] - p1.n_m)
+        if 4.0 <= d_m <= 110.0:
+            ux, uy = (nc[0] - p1.e_m) / d_m, (nc[1] - p1.n_m) / d_m
+            e0, n0 = p1.e_m - ux * 30.0, p1.n_m - uy * 30.0
+            e1, n1 = nc[0] + ux * 30.0, nc[1] + uy * 30.0
+            undertitel = f"Sektion genom lågpunkt {p1.id} och nytt förslag (SWEREF 99 18 00)"
+        else:
+            e0, n0 = p1.e_m - 45.0, p1.n_m
+            e1, n1 = p1.e_m + 45.0, p1.n_m
+            undertitel = f"Väst–östlig sektion genom lågpunkt {p1.id} (SWEREF 99 18 00)"
+    elif p1 is not None:
+        e0, n0 = p1.e_m - 45.0, p1.n_m
+        e1, n1 = p1.e_m + 45.0, p1.n_m
+        undertitel = f"Väst–östlig sektion genom lågpunkt {p1.id} (SWEREF 99 18 00)"
+    elif ny_centra:
+        cx, cy = ny_centra[0]
+        e0, n0 = cx - 45.0, cy
+        e1, n1 = cx + 45.0, cy
+        undertitel = "Väst–östlig sektion genom nytt förslag (SWEREF 99 18 00)"
+    else:
+        return None
+
+    # Klipp sektionens ändpunkter mot rastrets utbredning.
+    e0 = max(rx0 + px, min(rx1 - px, e0))
+    e1 = max(rx0 + px, min(rx1 - px, e1))
+    n0 = max(ry0 + px, min(ry1 - px, n0))
+    n1 = max(ry0 + px, min(ry1 - px, n1))
+    langd = math.hypot(e1 - e0, n1 - n0)
+    if langd < 10.0:
+        return None
+
+    n_steg = 140
+    t_arr = np.linspace(0.0, 1.0, n_steg, dtype=np.float64)
+    es = e0 + (e1 - e0) * t_arr
+    ns = n0 + (n1 - n0) * t_arr
+    avst = t_arr * langd
+
+    cs = np.clip(np.floor((es - ox) / px).astype(int), 0, b - 1)
+    rs = np.clip(np.floor((oy - ns) / px).astype(int), 0, h - 1)
+    mark_s = terrang[rs, cs].astype(np.float64)
+    if int(np.count_nonzero(np.isfinite(mark_s))) < 4:
+        return None
+
+    bmask = np.zeros(n_steg, dtype=bool)
+    bny = np.zeros(n_steg, dtype=bool)
+    bhojd = np.full(n_steg, np.nan, dtype=np.float64)
+    if tak is not None:
+        bmask |= tak[rs, cs]
+    if poly_poster:
+        for i in range(n_steg):
+            pt = Point(float(es[i]), float(ns[i]))
+            for poly, tak_rh, ar_ny in poly_poster:
+                if poly.contains(pt):
+                    bmask[i] = True
+                    if ar_ny:
+                        bny[i] = True
+                    if tak_rh > 0.0:
+                        bhojd[i] = tak_rh
+                    break
+
+    vf_s: NDArray[np.float64] | None = None
+    if djup_fore is not None:
+        vf_s = np.where(bmask, 0.0, np.nan_to_num(djup_fore[rs, cs], nan=0.0))
+    ve_s: NDArray[np.float64] | None = None
+    if djup_efter is not None:
+        ve_s = np.where(bmask, 0.0, np.nan_to_num(djup_efter[rs, cs], nan=0.0))
+
+    p1_avst: float | None = None
+    if p1 is not None:
+        dx, dy = e1 - e0, n1 - n0
+        proj = ((p1.e_m - e0) * dx + (p1.n_m - n0) * dy) / max(langd * langd, 1e-9)
+        if 0.0 <= proj <= 1.0:
+            p1_avst = proj * langd
+
+    return {
+        "avstand_m": avst,
+        "mark_m": mark_s,
+        "vatten_fore_m": vf_s,
+        "vatten_efter_m": ve_s,
+        "byggnad_mask": bmask if bool(np.any(bmask)) else None,
+        "byggnad_hojd_m": bhojd if bool(np.any(np.isfinite(bhojd))) else None,
+        "byggnad_ny_mask": bny if bool(np.any(bny)) else None,
+        "p1_avstand_m": p1_avst,
+        "p1_id": p1_id,
+        "undertitel": undertitel,
+    }
+
+
 def _sv(v: Any) -> str:
     try:
         return f"{float(v):g}".replace(".", ",")
@@ -1719,12 +2671,15 @@ __all__ = [
     "KONTRAKT_K33",
     "STANDARD_RAPPORTMAPP",
     "TOMVARDE_TEXT",
+    "ExtraFigur",
     "Karta",
     "Mottagare",
+    "PlanerarFigurer",
     "Rapport",
     "RapportArkiv",
     "RapportFel",
     "RapportTjanst",
+    "ar_ra_uuid",
     "metodnotis_text",
     "sammanfattning",
 ]

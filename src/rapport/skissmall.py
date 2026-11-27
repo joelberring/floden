@@ -1,17 +1,22 @@
 # ruff: noqa: E501
-"""Mallen för skissunderlaget (nivå 1, skyfall): rapporten som en lista block (R1).
+"""Mallen för skissunderlaget (nivå 1): planerarvänlig besluts-PM med kompakt teknisk bilaga sist.
 
 Samma block skrivs till Word och PDF (`rapport.skissexport`), så att båda formaten har exakt samma
-innehåll. Dispositionen följer `docs/utredningar-stockholm/rapportdisposition.md`, förkortad för
-ett skissunderlag: titelhuvud och handling, sammanfattning med trafikljus per fråga, uppdrag och
-beräkningsfall, resultat (kartor före, efter och skillnad; påståenden per fråga), saknat underlag
-och villkor, metod och osäkerhet med metodnotis, och bilagor (belägg, körlogg, manifest,
-kontroll).
+innehåll. Dispositionen följer `docs/utredningar-stockholm/rapportdisposition.md` i planerarens
+läsordning:
 
-All text här är antingen fast (mallens, i rapportens språkprofil, se `rapport.sprak`), skriven av
-Floden ur körningarna (antaganden, bildtexter, manifest) eller påståendenas text med
-platshållarna ifyllda av Floden. Rapportens inställningar (`rapport.installningar`) styr
-språkprofil, numrering av rubriker och figurer, titelhuvud och utseende.
+1. Sammanfattning & nyckeltal (KPI-kort, faktaruta, styrande frågor)
+2. Uppdrag, plats & beräkningsfall (syfte, regn och antaganden)
+3. Kartor & resultat (före/efter sida-vid-sida, detaljkarta, skillnadskarta, tvärsektion,
+   skyfallsmått/lågpunkter P1–P3 samt slutsatser per planeringsfråga)
+4. Åtgärder, villkor & vad som saknas inför nästa skede
+5. Metod, begränsningar & samlad frågekatalogsöversikt
+6. Teknisk spårbarhetsbilaga (sist i samma PDF, eller separat med `separat_bilaga=True`):
+   identifieringsdata, belägg (B1..Bn), filtrerad körlogg med hashkedja, K0-manifest och 9/9-kontroll.
+
+All text här är antingen fast (mallens, i rapportens språkprofil), härledd deterministiskt ur
+körningarna (antaganden, skyfallsmått, bildtexter, manifest) eller påståendenas text med
+platshållarna ifyllda av Floden.
 """
 
 from __future__ import annotations
@@ -31,9 +36,12 @@ from rapport.pastaende import (
     FORDJUPNING_TEXT,
     STATUS_TEXT,
     TRAFIKLJUS,
+    Belagg,
     Pastaende,
+    formatera_tal,
     ordna_fordjupning,
     ordna_fragestatus,
+    standardsteg,
 )
 from rapport.sprak import (
     FORDJUPNING_TEXT_SBK,
@@ -44,7 +52,7 @@ from rapport.sprak import (
 )
 
 if TYPE_CHECKING:
-    from rapport.skissrapport import Karta, Rapport, RapportTjanst
+    from rapport.skissrapport import Karta, PlanerarFigurer, Rapport, RapportTjanst
 
 
 @dataclass(frozen=True)
@@ -81,11 +89,56 @@ class Figur:
 
 
 @dataclass(frozen=True)
+class FigurPar:
+    """Två kartor sida-vid-sida (Före | Efter, 81 mm + 4 mm + 81 mm = 166 mm)."""
+
+    vanster: Figur
+    hoger: Figur
+    gemensam_bildtext: str = ""
+
+
+@dataclass(frozen=True)
+class Nyckeltal:
+    """Ett KPI-kort med stort verifierat värde, kort etikett och undertitel."""
+
+    etikett: str
+    varde: str
+    undertitel: str = ""
+    accent: str = ""
+
+
+@dataclass(frozen=True)
+class Nyckeltalsrad:
+    """3–4 KPI-kort sida vid sida överst på sida 1 (samtliga ur verifierade belägg/mått)."""
+
+    kort: tuple[Nyckeltal, ...]
+
+
+@dataclass(frozen=True)
+class Faktaruta:
+    """Diskret tonad sammanfattnings- eller rekommendationsruta (#F7F5EE + 3 pt #2F4A2C)."""
+
+    rubrik: str
+    stycken: tuple[str, ...] = ()
+    punkter: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Sidbrytning:
     pass
 
 
-Block = Rubrik | Stycke | Punktlista | Tabell | Figur | Sidbrytning
+Block = (
+    Rubrik
+    | Stycke
+    | Punktlista
+    | Tabell
+    | Figur
+    | FigurPar
+    | Nyckeltalsrad
+    | Faktaruta
+    | Sidbrytning
+)
 
 
 @dataclass(frozen=True)
@@ -184,6 +237,16 @@ def _sv(v: float) -> str:
     return tecken + heltal + ("," + dec if dec else "")
 
 
+def _fmt_yta(varde_m2: float, cell_m: float = 1.0) -> str:
+    steg = max(1.0, cell_m * cell_m)
+    return formatera_tal(varde_m2, "m²", steg)
+
+
+def _fmt_belagg(b: Belagg, *, steg: float | None = None, tecken: bool = False) -> str:
+    s = steg if steg is not None else standardsteg(b.enhet, b.varde, b.upplosning)
+    return formatera_tal(b.varde, b.enhet, s, tecken=tecken)
+
+
 def dokumentets_text(dok: Dokument) -> str:
     """Allt dokumentets text (för kontrollen att påståenden och metodstatus står i det)."""
     delar = [dok.titel, dok.sidhuvud, dok.sidfot]
@@ -202,14 +265,25 @@ def dokumentets_text(dok: Dokument) -> str:
                 delar.extend(rad)
         elif isinstance(b, Figur):
             delar.append(b.bildtext)
+        elif isinstance(b, FigurPar):
+            delar.extend([b.vanster.bildtext, b.hoger.bildtext])
+            if b.gemensam_bildtext:
+                delar.append(b.gemensam_bildtext)
+        elif isinstance(b, Nyckeltalsrad):
+            for k in b.kort:
+                delar.extend(x for x in (k.etikett, k.varde, k.undertitel) if x)
+        elif isinstance(b, Faktaruta):
+            delar.append(b.rubrik)
+            delar.extend(b.stycken)
+            delar.extend(b.punkter)
     return "\n".join(delar)
 
 
 def huvudtext(dok: Dokument) -> str:
-    """Löptexten före bilagorna (för språktestet): rubriker, stycken, punkter och bildtexter."""
+    """Löptexten före bilagorna (för språktestet): rubriker, stycken, punkter, rutor och bildtexter."""
     delar: list[str] = []
     for b in dok.block:
-        if isinstance(b, Rubrik) and b.text.startswith("Bilaga"):
+        if isinstance(b, Rubrik) and b.text.startswith(("Bilaga", "Teknisk spårbarhetsbilaga")):
             break
         if isinstance(b, Rubrik | Stycke):
             delar.append(b.text)
@@ -217,6 +291,17 @@ def huvudtext(dok: Dokument) -> str:
             delar.extend(b.punkter)
         elif isinstance(b, Figur):
             delar.append(b.bildtext)
+        elif isinstance(b, FigurPar):
+            delar.extend([b.vanster.bildtext, b.hoger.bildtext])
+            if b.gemensam_bildtext:
+                delar.append(b.gemensam_bildtext)
+        elif isinstance(b, Nyckeltalsrad):
+            for k in b.kort:
+                delar.extend(x for x in (k.etikett, k.varde, k.undertitel) if x)
+        elif isinstance(b, Faktaruta):
+            delar.append(b.rubrik)
+            delar.extend(b.stycken)
+            delar.extend(b.punkter)
     return "\n".join(delar)
 
 
@@ -285,33 +370,303 @@ def _bestallningsrader(r: Rapport, sbk: bool) -> list[tuple[str, str]]:
     ]
 
 
-def bygg_dokument(
+def _visningsprojekt(r: Rapport, tj: RapportTjanst) -> str:
+    from rapport.skissrapport import ar_ra_uuid
+
+    if hasattr(tj, "projektnamn"):
+        namn = str(tj.projektnamn(r.projekt)).strip()
+        if namn and not ar_ra_uuid(namn):
+            return namn
+    if r.projekt == "demokvarteret":
+        return "Demokvarteret"
+    return "Planprojekt" if ar_ra_uuid(r.projekt) else r.projekt
+
+
+def _sanera_titel(titel: str, projekt: str, visningsprojekt: str) -> str:
+    """Ersätter eventuell rå UUID i lagrad titel med läsbart projektnamn."""
+    from rapport.skissrapport import ar_ra_uuid
+
+    if ar_ra_uuid(projekt) and projekt in titel:
+        return titel.replace(projekt, visningsprojekt)
+    return titel
+
+
+def _hitta_belagg(r: Rapport, *nyckelord: str) -> Belagg | None:
+    """Hittar första belägget i rapportens påståenden vars adress matchar samtliga delsträngar."""
+    for p in r.pastaenden:
+        for b in p.belagg:
+            if all(k in b.adress for k in nyckelord):
+                return b
+    return None
+
+
+def _bygg_nyckeltalsrad(
     r: Rapport,
-    tj: RapportTjanst,
-    *,
-    korlogg_rader: Sequence[Mapping[str, Any]] = (),
-    med_resurser: bool = False,
-) -> Dokument:
-    """Rapporten som block. Kastar `PastaendeFel` om en platshållare inte kan fyllas.
+    pf: PlanerarFigurer,
+    antal: Mapping[str, int],
+) -> Nyckeltalsrad | None:
+    """Bygger 3–4 KPI-kort uteslutande ur verifierade belägg och deterministiska skyfallsmått."""
+    n_tot = len(r.fragor)
+    n_fordj = antal.get("ja", 0)
+    n_oklar = antal.get("kan_inte_avgoras", 0)
+    utr_sub_delar = []
+    if n_fordj:
+        utr_sub_delar.append(f"{n_fordj} utreds vidare")
+    if n_oklar:
+        utr_sub_delar.append(f"{n_oklar} kräver underlag")
+    if not utr_sub_delar:
+        utr_sub_delar.append("ingen fördjupning i skedet")
+    kort_utr = Nyckeltal(
+        etikett="Frågor att utreda",
+        varde=f"{n_fordj + n_oklar} av {n_tot}",
+        undertitel=" · ".join(utr_sub_delar),
+        accent="B86A4B" if (n_fordj + n_oklar) > 0 else "2F4A2C",
+    )
+    kort: list[Nyckeltal] = []
+    har_jfr = any(bool(k.get("jamforelser")) for k in r.korningar)
 
-    `med_resurser` slår upp logotyp och typsnitt (för export); utan dem byggs bara texten."""
-    from rapport.skissrapport import metodnotis_text
+    if r.amne == "skyfall":
+        b_djup_efter = _hitta_belagg(r, "matvarde.", ".max_djup_m")
+        djup_fore_b = None
+        djup_efter_b = None
+        for p in r.pastaenden:
+            for b in p.belagg:
+                if b.adress.endswith(".max_djup_m"):
+                    if har_jfr and any(j["efter"] in b.scenarier for k in r.korningar for j in k["jamforelser"]):
+                        djup_efter_b = djup_efter_b or b
+                    elif any(j["fore"] in b.scenarier for k in r.korningar for j in k["jamforelser"]):
+                        djup_fore_b = djup_fore_b or b
+                    else:
+                        djup_fore_b = djup_fore_b or b
+        if djup_efter_b is not None:
+            sub = f"före förslaget: {_fmt_belagg(djup_fore_b)}" if djup_fore_b is not None else "högsta djup på mark"
+            kort.append(Nyckeltal("Största djup efter", _fmt_belagg(djup_efter_b), sub, "234B66"))
+        elif djup_fore_b is not None:
+            kort.append(Nyckeltal("Största djup idag", _fmt_belagg(djup_fore_b), "befintligt läge", "234B66"))
+        elif b_djup_efter is not None:
+            kort.append(Nyckeltal("Största vattendjup", _fmt_belagg(b_djup_efter), "över markytan", "234B66"))
 
-    inst: RapportInstallningar = r.installningar
+        tr = pf.trosklar_efter or pf.trosklar_fore
+        if tr is not None:
+            sub20 = f"≥ 30 cm (skaderisk): {_fmt_yta(tr.yta_over_0_3m_m2, tr.cellstorlek_m)}"
+            kort.append(
+                Nyckeltal(
+                    "Markyta ≥ 20 cm",
+                    _fmt_yta(tr.yta_over_0_2m_m2, tr.cellstorlek_m),
+                    sub20,
+                    "4A7D8C",
+                )
+            )
+        b_yta_ok = _hitta_belagg(r, "jamforelse.", ".yta_okning_m2")
+        b_max_ok = _hitta_belagg(r, "jamforelse.", ".max_okning")
+        if b_yta_ok is not None:
+            sub_ok = (
+                f"största ökning: {_fmt_belagg(b_max_ok, tecken=True)}"
+                if b_max_ok is not None
+                else "ökning över tröskelvärde"
+            )
+            kort.append(Nyckeltal("Mark med ökat djup", _fmt_belagg(b_yta_ok), sub_ok, "8C5A00"))
+        elif tr is not None:
+            kort.append(
+                Nyckeltal(
+                    "Markyta ≥ 10 cm",
+                    _fmt_yta(tr.yta_over_0_1m_m2, tr.cellstorlek_m),
+                    "märkbart vatten (tak undantagna)",
+                    "4A7D8C",
+                )
+            )
+        elif (b_lagr := _hitta_belagg(r, ".lagrat_m3")) is not None:
+            kort.append(Nyckeltal("Stående vattenvolym", _fmt_belagg(b_lagr), "i lågpunkter", "4A7D8C"))
+
+    elif r.amne == "dagsljus":
+        b_sol = _hitta_belagg(r, "omrade.hela_omradet.", ".soltimmar.medel")
+        if b_sol is not None:
+            kort.append(Nyckeltal("Soltimmar (medel)", _fmt_belagg(b_sol), "direkt sol på marken", "8C5A00"))
+        b_forl = _hitta_belagg(r, "jamforelse.", "yta_minskning_over_1h_m2") or _hitta_belagg(
+            r, "jamforelse.", "yta_minskning_m2"
+        )
+        if b_forl is not None:
+            kort.append(Nyckeltal("Mark med minskad sol", _fmt_belagg(b_forl), "efter jämfört med före", "4A7D8C"))
+        b_vsc = _hitta_belagg(r, "fasadjamforelse.", ".antal_under_grans_efter") or _hitta_belagg(
+            r, "fasad.", ".antal_under_grans"
+        )
+        if b_vsc is not None:
+            kort.append(Nyckeltal("Fasadpunkter under 27 %", _fmt_belagg(b_vsc), "vertikal himmelsandel (VSC)", "2F4A2C"))
+
+    elif r.amne == "ekologi":
+        b_eca = _hitta_belagg(r, ".eca_m2")
+        if b_eca is not None:
+            kort.append(Nyckeltal("Habitatyta (ECA)", _fmt_belagg(b_eca), "potentiell livsmiljö", "2F4A2C"))
+        b_deca = _hitta_belagg(r, "ekojamforelse.", ".delta_eca_procent")
+        if b_deca is not None:
+            kort.append(Nyckeltal("Förändring av ECA", _fmt_belagg(b_deca, tecken=True), "efter mot före", "4A7D8C"))
+        b_flack = _hitta_belagg(r, ".antal_flackar")
+        if b_flack is not None:
+            kort.append(Nyckeltal("Habitatfläckar", _fmt_belagg(b_flack), "i beräkningsområdet", "2F4A2C"))
+
+    elif r.amne == "luft":
+        b_f_lo = _hitta_belagg(r, "mkn_fore", ".lagst_antal_dygn")
+        b_f_hi = _hitta_belagg(r, "mkn_fore", ".hogst_antal_dygn")
+        b_gr = _hitta_belagg(r, ".max_dygn_ar_antal_dygn")
+        gr_sub = f"dygnsgräns: {_fmt_belagg(b_gr)}/år" if b_gr is not None else "känslighetsintervall"
+        if b_f_lo is not None and b_f_hi is not None:
+            v_lo = formatera_tal(b_f_lo.varde, None, 1.0, visa_enhet=False)
+            v_hi = formatera_tal(b_f_hi.varde, "dygn", 1.0)
+            kort.append(Nyckeltal("PM10 över gräns (före)", f"{v_lo}–{v_hi}", gr_sub, "2F4A2C"))
+        b_e_lo = _hitta_belagg(r, "mkn_efter", ".lagst_antal_dygn")
+        b_e_hi = _hitta_belagg(r, "mkn_efter", ".hogst_antal_dygn")
+        if b_e_lo is not None and b_e_hi is not None:
+            v_lo = formatera_tal(b_e_lo.varde, None, 1.0, visa_enhet=False)
+            v_hi = formatera_tal(b_e_hi.varde, "dygn", 1.0)
+            korsar = b_gr is not None and b_e_lo.varde <= b_gr.varde < b_e_hi.varde
+            kort.append(
+                Nyckeltal(
+                    "PM10 över gräns (efter)",
+                    f"{v_lo}–{v_hi}",
+                    "korsar dygnsgränsen" if korsar else gr_sub,
+                    "B86A4B" if korsar else "4A7D8C",
+                )
+            )
+        b_am_lo = _hitta_belagg(r, ".arsmedel_lagst_ug_m3")
+        b_am_hi = _hitta_belagg(r, ".arsmedel_hogst_ug_m3")
+        if b_am_lo is not None and b_am_hi is not None:
+            v_lo = formatera_tal(b_am_lo.varde, None, 0.1, visa_enhet=False)
+            v_hi = formatera_tal(b_am_hi.varde, "µg/m³", 0.1)
+            kort.append(Nyckeltal("Årsmedel PM10", f"{v_lo}–{v_hi}", "känslighetsintervall", "4A7D8C"))
+
+    kort.append(kort_utr)
+    if len(kort) < 2:
+        return None
+    return Nyckeltalsrad(tuple(kort[:4]))
+
+
+def _bygg_faktaruta(
+    r: Rapport,
+    pf: PlanerarFigurer,
+    antal: Mapping[str, int],
+) -> Faktaruta:
+    """Kort klarspråklig beslutsruta: resultat, styrande platser, förändring och nästa skede."""
+    punkter: list[str] = []
+    har_jfr = any(bool(k.get("jamforelser")) for k in r.korningar)
+
+    # 1. Vad visar beräkningen?
+    if r.amne == "skyfall":
+        tr = pf.trosklar_efter or pf.trosklar_fore
+        if tr is not None:
+            punkter.append(
+                "Vad beräkningen visar: "
+                f"Största vattendjup på mark är {formatera_tal(tr.max_djup_m, 'm', 0.01)}. "
+                f"Markytan med minst 20 cm vattendjup (framkomlighetsgräns) uppgår till "
+                f"{_fmt_yta(tr.yta_over_0_2m_m2, tr.cellstorlek_m)} och markytan med minst 30 cm "
+                f"(skaderisk för byggnader) till {_fmt_yta(tr.yta_over_0_3m_m2, tr.cellstorlek_m)}."
+            )
+        else:
+            b_d = _hitta_belagg(r, ".max_djup_m")
+            punkter.append(
+                f"Vad beräkningen visar: Största beräknade vattendjup är {_fmt_belagg(b_d)}."
+                if b_d is not None
+                else "Vad beräkningen visar: Tidig skyfallssållning över beräkningsområdet."
+            )
+    elif r.amne == "dagsljus":
+        b_sol = _hitta_belagg(r, "omrade.hela_omradet.", ".soltimmar.medel")
+        punkter.append(
+            f"Vad beräkningen visar: Direkt sol på marken ligger i medel kring {_fmt_belagg(b_sol)} per dygn "
+            "och kompletteras av himmelsandel (VSC) vid genererade fasadpunkter."
+            if b_sol is not None
+            else "Vad beräkningen visar: Tidig sållning av direkt sol på mark och vertikal himmelsandel vid fasad."
+        )
+    elif r.amne == "ekologi":
+        b_eca = _hitta_belagg(r, ".eca_m2")
+        punkter.append(
+            f"Vad beräkningen visar: Modellerat spridningssamband för potentiell livsmiljö med okänd kvalitet "
+            f"(sammanhängande habitatarea {_fmt_belagg(b_eca)})."
+            if b_eca is not None
+            else "Vad beräkningen visar: Tidig sållning av spridningssamband för potentiell livsmiljö med okänd kvalitet."
+        )
+    else:
+        punkter.append(
+            "Vad beräkningen visar: Känslighetsintervall för PM10 mot dygnsnormen ur givna externa timserier "
+            "och angiven bakgrundshalt."
+        )
+
+    # 2. Vilka platser styr?
+    platsdelar: list[str] = []
+    if pf.lagpunkter:
+        lp_txt = ", ".join(
+            f"{lp.id} ({formatera_tal(lp.djup_m, 'm', 0.01)})" for lp in pf.lagpunkter
+        )
+        platsdelar.append(f"största lågpunkterna {lp_txt} (markerade i kartorna)")
+    if r.mottagare:
+        platsdelar.append(", ".join(m.beskrivning for m in r.mottagare))
+    if platsdelar:
+        punkter.append("Styrande platser: " + "; ".join(platsdelar) + ".")
+    else:
+        punkter.append("Styrande platser: Hela beräkningsområdet på mark (byggnadernas tak undantagna).")
+
+    # 3. Vad förändrar förslaget?
+    if not har_jfr and r.amne != "luft":
+        punkter.append(
+            "Förslagets påverkan: Underlaget avser enbart befintligt läge utan ritat förslag; "
+            "ingen jämförelse mellan före och efter är gjord."
+        )
+    elif r.amne == "skyfall":
+        b_ok = _hitta_belagg(r, "jamforelse.", ".yta_okning_m2")
+        b_max = _hitta_belagg(r, "jamforelse.", ".max_okning")
+        b_min = _hitta_belagg(r, "jamforelse.", ".yta_minskning_m2")
+        if b_ok is not None and b_max is not None:
+            min_del = f", medan djupet minskar på {_fmt_belagg(b_min)}" if b_min is not None else ""
+            punkter.append(
+                f"Vad förslaget förändrar: Vattendjupet ökar över tröskelvärdet på {_fmt_belagg(b_ok)} mark "
+                f"(största ökning {_fmt_belagg(b_max, tecken=True)}){min_del}."
+            )
+    elif r.amne == "dagsljus":
+        b_forl = _hitta_belagg(r, "jamforelse.", "yta_minskning_over_1h_m2") or _hitta_belagg(
+            r, "jamforelse.", "yta_minskning_m2"
+        )
+        if b_forl is not None:
+            punkter.append(
+                f"Vad förslaget förändrar: Beräknad markyta med minskad direkt sol uppgår till {_fmt_belagg(b_forl)}."
+            )
+    elif r.amne == "ekologi":
+        b_dp = _hitta_belagg(r, "ekojamforelse.", ".delta_eca_procent")
+        if b_dp is not None:
+            punkter.append(
+                f"Vad förslaget förändrar: Den ekvivalenta sammanhängande habitatarean ändras med "
+                f"{_fmt_belagg(b_dp, tecken=True)} mellan före och efter."
+            )
+    else:
+        punkter.append(
+            "Vad förslaget förändrar: Intervallet efter förslaget redovisas mot nuläget; "
+            "där intervallet korsar gränsen kan utfallet inte avgöras i detta skede."
+        )
+
+    # 4. Vad behöver säkras i nästa skede?
+    saknade_topp: list[str] = []
+    for p in r.pastaenden:
+        for s in p.saknat_underlag:
+            kort_s = s.split(".")[0].strip()
+            if kort_s and kort_s not in saknade_topp:
+                saknade_topp.append(kort_s)
+            if len(saknade_topp) >= 2:
+                break
+        if len(saknade_topp) >= 2:
+            break
+    n_tot = len(r.fragor)
+    sam = sammanfattningsmening(n_tot, antal, amnestext.fragenamn(r))
+    nasta = sam
+    if saknade_topp:
+        nasta += " Prioriterat underlag inför fortsatt prövning: " + "; ".join(saknade_topp) + "."
+    punkter.append("Att säkra i nästa skede: " + nasta)
+
+    return Faktaruta(
+        rubrik="Samlad bild inför fortsatt planarbete",
+        punkter=tuple(punkter),
+    )
+
+
+def _bygger_utseende(r: Rapport, tj: RapportTjanst, med_resurser: bool) -> Utseende:
+    inst = r.installningar
     sbk = inst.sbk
-    demo = r.projekt == "demokvarteret"
-    status_text = STATUS_TEXT_SBK if sbk else STATUS_TEXT
-    fordj_text = FORDJUPNING_TEXT_SBK if sbk else FORDJUPNING_TEXT
-
-    def rubrik(niva: int, nr: str, text: str) -> None:
-        dok.rubrik(niva, f"{nr} {text}" if inst.numrerade_rubriker and nr else text)
-
-    def bilaga(i: int) -> str:
-        return f"Bilaga {i}" if sbk else f"Bilaga {'ABCD'[i - 1]}"
-
-    def bilref(i: int) -> str:
-        return bilaga(i).lower()
-
     resurser = tj.resursfiler(r) if med_resurser else {}
 
     def typsnitt(roll: str) -> Typsnitt | None:
@@ -321,444 +676,78 @@ def bygg_dokument(
             return None
         return Typsnitt(fil, str(res.familj or "Typsnitt"), res.sha256)
 
-    datum = datum_text(r.skapad, sbk)
-    dok = Dokument(
-        titel=r.titel,
-        sidhuvud=(
-            " · ".join(
-                x
-                for x in (
-                    inst.avsandare,
-                    r.titel,
-                    f"Dnr {inst.diarienummer}" if inst.diarienummer else "",
-                )
-                if x
-            )
+    return Utseende(
+        accent=inst.accentfarg,
+        ljus=(
+            dict(LJUS_TEXT_SBK)
             if sbk
-            else f"{r.titel} · {r.rapport_id}"
+            else {
+                "nej": "Grön: Ingen fördjupning",
+                "ja": "Gul: Behöver fördjupas",
+                "kan_inte_avgoras": "Röd: Kan inte avgöras",
+            }
         ),
-        sidfot=(
-            "Skissunderlag – sållning, inte bedömning mot krav. Metoderna är skisser."
-            if sbk
-            else "Skissunderlag (nivå 1): sållning, inte bedömning mot krav. Metoderna är skisser."
-        ),
-        titelhuvud=Titelhuvud(
-            avsandare=inst.avsandare,
-            dokumenttyp="Skissunderlag",
-            datum=datum,
-            diarienummer=inst.diarienummer,
-            handlaggare=inst.handlaggare,
-        ),
-        utseende=Utseende(
-            accent=inst.accentfarg,
-            ljus=(
-                dict(LJUS_TEXT_SBK)
-                if sbk
-                else {
-                    "nej": "Grön: Ingen fördjupning",
-                    "ja": "Gul: Behöver fördjupas",
-                    "kan_inte_avgoras": "Röd: Kan inte avgöras",
-                }
-            ),
-            logotyp=resurser.get("logotyp"),
-            typsnitt_brodtext=typsnitt("typsnitt_brodtext"),
-            typsnitt_rubriker=typsnitt("typsnitt_rubriker"),
-        ),
+        logotyp=resurser.get("logotyp"),
+        typsnitt_brodtext=typsnitt("typsnitt_brodtext"),
+        typsnitt_rubriker=typsnitt("typsnitt_rubriker"),
     )
-    ingress = amnestext.ingress(r, sbk, demo)
-    dok.stycke(ingress, "ingress")
+
+
+def _lagg_till_teknisk_bilaga(
+    dok: Dokument,
+    r: Rapport,
+    tj: RapportTjanst,
+    *,
+    korlogg_rader: Sequence[Mapping[str, Any]],
+    bnr: Mapping[tuple[str, str], int],
+    sbk: bool,
+    separat: bool,
+) -> None:
+    """Skriver kompakt teknisk spårbarhetsbilaga (identifiering, belägg, filtrerad körlogg, manifest, 9/9-kontroll)."""
+
+    def bilaga(i: int) -> str:
+        return f"Bilaga {i}" if sbk else f"Bilaga {'ABCD'[i - 1]}"
 
     kontroll = r.kontroll or {}
     ansvarig = r.metodnotis.get("ansvarig_utredare")
+    if not separat:
+        dok.block.append(Sidbrytning())
     if sbk:
-        korningar = "; ".join(
-            f"beräkning {k['korning_id']} (Floden, kodversion {k.get('kodversion')})"
-            + _underlagssuffix(k, True)
+        dok.rubrik(1, "Teknisk spårbarhetsbilaga")
+        dok.stycke(
+            "Denna bilaga redovisar tekniska identifierare, belägg före avrundning, filtrerad "
+            "körlogg med obruten hashkedja, K0-manifest och den automatiska kontrollen (9 punkter).",
+            "liten",
+        )
+        korningar_txt = "; ".join(
+            f"{k['korning_id']} (kodversion {k.get('kodversion')})" + _underlagssuffix(k, True)
             for k in r.korningar
         )
-        kontroll_text = (
+        kontroll_txt = (
             "Godkänd " + datum_text(str(kontroll.get("tid", "")), True)
             if kontroll.get("godkand")
-            else "Inte godkänd"
-            if kontroll
-            else "Inte gjord"
-        )
-        rader: tuple[tuple[str, str], ...] = (
-            ("Dokumenttyp", "Skissunderlag för tidig sållning"),
-            ("Projekt", r.projekt),
-            ("Ämne", amnestext.amnesnamn(r)),
-            ("Skede", "Planstart och tidig sållning"),
-            *_bestallningsrader(r, True),
-            ("Underlag", korningar[0].upper() + korningar[1:] if korningar else "–"),
-            (
-                "Frågekatalog",
-                "Utredningsfrågor för Stockholm, källäge "
-                + datum_text(str(r.katalog.get("granskningsdatum")), True),
-            ),
-            ("Uppgifternas klass", {"oppet": "Öppna"}.get(r.dataklass, r.dataklass)),
-            ("Ansvarig utredare", str(ansvarig) if ansvarig else "Anges av beställaren"),
-            ("Automatisk kontroll", kontroll_text),
-            ("Rapport-id", r.rapport_id),
-        )
-    else:
-        korningar = "; ".join(
-            f"{k['korning_id']} (kod {k.get('kodversion')})" + _underlagssuffix(k, False) for k in r.korningar
-        )
-        rader = (
-            ("Handling", "Skissunderlag, nivå 1 (sållning)"),
-            ("Projekt", r.projekt),
-            ("Ämne", amnestext.amnesnamn(r)),
-            ("Skede", "Planstart och tidig sållning"),
-            *_bestallningsrader(r, False),
-            ("Datum", datum),
-            ("Rapport-id", r.rapport_id),
-            ("Körningar", korningar),
-            (
-                "Frågekatalog",
-                f"{r.katalog.get('fil')} (källäge {r.katalog.get('granskningsdatum')})",
-            ),
-            ("Dataklass", {"oppet": "öppet"}.get(r.dataklass, r.dataklass)),
-            ("Ansvarig utredare", str(ansvarig or "Anges inte (frivilligt i nivå 1)")),
-            (
-                "Kontroll inför export",
-                "godkänd " + datum_text(str(kontroll.get("tid", "")), False)
-                if kontroll.get("godkand")
-                else "inte godkänd"
-                if kontroll
-                else "inte gjord",
-            ),
-        )
-    dok.block.append(Tabell(None, rader, (0.28, 0.72), liten=True))
-
-    # Sammanfattning ---------------------------------------------------------------------------
-    per_fraga = _pastaenden_per_fraga(r)
-    fordj = {f: ordna_fordjupning([p.fordjupning for p in ps]) for f, ps in per_fraga.items()}
-    antal = {k: sum(1 for v in fordj.values() if v == k) for k in ("ja", "kan_inte_avgoras", "nej")}
-    rubrik(1, "1", "Sammanfattning")
-    if sbk:
-        n_tot = len(r.fragor)
-        mening = sammanfattningsmening(n_tot, antal, amnestext.fragenamn(r))
-        if mening:
-            dok.stycke(mening)
-        dok.stycke(
-            "Tabellen visar för varje fråga om den behöver utredas vidare. Frågorna kommer ur "
-            f"frågekatalogen för {({'skyfall': 'skyfall', 'ekologi': 'ekologi', 'luft': 'luft'}).get(r.amne, 'dagsljus och sol')}."
-        )
-    else:
-        dok.stycke(
-            f"Sållningen omfattar {len(r.fragor)} frågor ur frågekatalogen. "
-            f"{antal['ja']} behöver fördjupas, {antal['kan_inte_avgoras']} kan inte avgöras med "
-            f"dagens underlag och {antal['nej']} behöver ingen fördjupning i detta skede. "
-            "Trafikljuset svarar på frågan om frågan behöver fördjupas: grönt nej, gult ja, rött "
-            "kan inte avgöras."
-        )
-    sam_rader = []
-    for fid, ps in per_fraga.items():
-        status = ordna_fragestatus([p.status for p in ps]) if ps else "underlag_saknas"
-        sam_rader.append((f"{fid} {_fragetext(r, fid)}", status_text[status], fordj[fid]))
-    dok.block.append(
-        Tabell(
-            ("Fråga", "Svar i underlaget" if sbk else "Status", "Fördjupning"),
-            tuple(sam_rader),
-            (0.48, 0.26, 0.26) if sbk else (0.56, 0.17, 0.27),
-            ljus_kolumn=2,
-        )
-    )
-
-    # Uppdrag och beräkningsfall ---------------------------------------------------------------
-    rubrik(1, "2", "Uppdrag och beräkningsfall")
-    for k in r.korningar:
-        if sbk:
-            if r.amne == "luft":
-                lagen = [luftlage(a["analys"]) for a in k["analyser"]]
-                jfr = (
-                    f"Underlaget gäller lägena {' och '.join(lagen)}, var och ett med en given timserie."
-                    if len(lagen) > 1
-                    else f"Underlaget gäller läget {lagen[0]} med en given timserie." if lagen else ""
-                )
-            elif r.amne in ("dagsljus", "ekologi"):
-                jfr = " ".join(
-                    f"Läget {amnestext.lage(r.amne, j['efter'])} jämförs med läget "
-                    f"{amnestext.lage(r.amne, j['fore'])}."
-                    for j in k["jamforelser"]
-                )
-            else:
-                jfr = " ".join(
-                    f"Läget {scenarionamn(j['efter'])} förslaget jämförs med läget "
-                    f"{scenarionamn(j['fore'])} förslaget, med samma regn."
-                    for j in k["jamforelser"]
-                )
-            dok.stycke(f"{k['beskrivning']} {jfr}".strip())
-            if k.get("antaganden"):
-                dok.stycke("Beräkningen bygger på följande antaganden:")
-                dok.block.append(
-                    Punktlista(
-                        tuple(a.replace(" (uttrycklig parameter)", "") for a in k["antaganden"])
-                    )
-                )
-        else:
-            jfr = "; ".join(
-                f"{j['efter']} jämförs med {j['fore']} ({j['analys']}, {j['utdata']})"
-                for j in k["jamforelser"]
-            )
-            dok.stycke(
-                f"Körning {k['korning_id']}: {k['beskrivning']} Scenarier: "
-                f"{', '.join(k['scenarier'])}. {jfr + '.' if jfr else ''}"
-            )
-            if k.get("antaganden"):
-                dok.stycke("Antaganden som Floden har räknat med:", "liten")
-                dok.block.append(Punktlista(tuple(k["antaganden"])))
-    if r.mottagare:
-        if sbk:
-            dok.stycke("Underlaget redovisar också resultat för följande plats:")
-            dok.block.append(
-                Punktlista(
-                    tuple(m.beskrivning[:1].upper() + m.beskrivning[1:] + "." for m in r.mottagare)
-                )
-            )
-        else:
-            dok.stycke("Mottagare (platser som påverkas) som påståendena kan gälla:")
-            dok.block.append(
-                Punktlista(
-                    tuple(
-                        f"{m.namn}: {m.beskrivning} (polygon med {len(m.polygon)} hörn, EPSG:3011)"
-                        for m in r.mottagare
-                    )
-                )
-            )
-
-    # Resultat ---------------------------------------------------------------------------------
-    rubrik(1, "3", "Resultat")
-    dok.stycke(amnestext.resultatintro(r, sbk, bilref(1)))
-    for nr, karta in enumerate(r.kartor, start=1):
-        text = bildtext(karta, r)
-        if inst.numrerade_figurer:
-            text = f"Figur {nr}. {text}"
-        dok.block.append(Figur(karta.fil, text, nr))
-
-    # Ett belägg-id per adress och körning: samma tal i flera påståenden ger en rad i bilagan.
-    per_adress: dict[tuple[str, str], int] = {}
-    bnr: dict[tuple[str, str], int] = {}
-    for p in r.pastaenden:
-        for b in p.belagg:
-            nr = per_adress.setdefault((b.korning_id, b.adress), len(per_adress) + 1)
-            bnr[(p.pastaende_id, b.adress)] = nr
-
-    rubrik(2, "3.1" if sbk else "", "Resultat per fråga" if sbk else "Påståenden per fråga")
-    for fid, ps in per_fraga.items():
-        if not ps:
-            continue
-        rubrik(3, "", f"{fid} {_fragetext(r, fid)}")
-        for p in ps:
-            dok.stycke(p.fylld_text())
-            if sbk:
-                delar = [f"{status_text[p.status]}. {fordj_text[p.fordjupning]}."]
-                if p.belagg:
-                    delar.append(
-                        "Belägg "
-                        + ", ".join(f"B{bnr[(p.pastaende_id, b.adress)]}" for b in p.belagg)
-                        + "."
-                    )
-                if p.forutsattning:
-                    delar.append(f"Förutsättning: {p.forutsattning.rstrip('.')}.")
-                if p.ansvarig_funktion:
-                    delar.append(f"Ansvarar: {p.ansvarig_funktion.rstrip('.')}.")
-                if p.motivering:
-                    delar.append(f"Skäl: {p.motivering.rstrip('.')}.")
-                dok.stycke(" ".join(delar), "notis")
-            else:
-                delar = [
-                    f"Status: {STATUS_TEXT[p.status]}",
-                    f"Fördjupning: {FORDJUPNING_TEXT[p.fordjupning]}",
-                ]
-                if p.belagg:
-                    delar.append(
-                        "Belägg: "
-                        + ", ".join(f"B{bnr[(p.pastaende_id, b.adress)]}" for b in p.belagg)
-                    )
-                if p.forutsattning:
-                    delar.append(f"Förutsättning: {p.forutsattning}")
-                if p.ansvarig_funktion:
-                    delar.append(f"Ansvarig: {p.ansvarig_funktion}")
-                if p.motivering:
-                    delar.append(f"Motivering: {p.motivering}")
-                dok.stycke(" · ".join(delar), "notis")
-
-    from rapport.gyf_utci_belagg import gyf_tabellrader, utci_tabellrader
-
-    gyf_rader = gyf_tabellrader(r, tj)
-    if gyf_rader:
-        rubrik(2, "3.2" if sbk else "", "Grönytefaktor (GYF, skiss)")
-        dok.stycke(
-            "Sammanställning av deterministiskt beräknad grönytefaktor (GYF) ur körningens "
-            "resultatfiler. Metodstatus: skiss.",
-            "liten",
+            else ("Inte godkänd" if kontroll else "Inte gjord")
         )
         dok.block.append(
             Tabell(
+                None,
                 (
-                    "Scenario",
-                    "Profil",
-                    "GYF",
-                    "Riktmärke",
-                    "Ekoeffektiv yta",
-                    "Flaggad yta",
-                    "Total area",
-                    "Status",
-                ),
-                tuple(gyf_rader),
-                (0.14, 0.14, 0.09, 0.11, 0.16, 0.14, 0.14, 0.08),
-                liten=True,
-            )
-        )
-
-    utci_rader = utci_tabellrader(r, tj)
-    if utci_rader:
-        utci_nr = "3.3" if (sbk and gyf_rader) else ("3.2" if sbk else "")
-        rubrik(2, utci_nr, "Termiskt mikroklimat (UTCI, skiss)")
-        dok.stycke(
-            "Sammanställning av deterministiskt beräknad termisk stress (UTCI och T_mrt) ur "
-            "körningens resultatfiler. Metodstatus: skiss.",
-            "liten",
-        )
-        dok.block.append(
-            Tabell(
-                (
-                    "Scenario",
-                    "UTCI medel",
-                    "UTCI p90",
-                    "UTCI max",
-                    "T_mrt medel",
-                    "Stark värmestress",
-                    "Utanför giltighet",
-                    "Status",
-                ),
-                tuple(utci_rader),
-                (0.14, 0.12, 0.12, 0.12, 0.13, 0.14, 0.15, 0.08),
-                liten=True,
-            )
-        )
-
-    # Saknat underlag och villkor --------------------------------------------------------------
-    rubrik(1, "4", "Saknat underlag och villkor")
-    saknat = []
-    for p in r.pastaenden:
-        for s in p.saknat_underlag:
-            saknat.append((p.fraga_id, s, p.ansvarig_funktion or "–"))
-        if p.status == "villkorat" and p.forutsattning:
-            saknat.append(
-                (p.fraga_id, f"Förutsättning: {p.forutsattning}", p.ansvarig_funktion or "–")
-            )
-    if saknat:
-        if sbk:
-            dok.stycke(
-                "Följande underlag behövs innan frågorna kan besvaras. Frågorna behöver utredas "
-                "vidare i planarbetet."
-            )
-        dok.block.append(
-            Tabell(
-                (
-                    "Fråga",
-                    "Vad som saknas eller förutsätts",
-                    "Ansvarar" if sbk else "Ansvarig funktion",
-                ),
-                tuple(saknat),
-                (0.12, 0.62, 0.26),
-            )
-        )
-    else:
-        dok.stycke("Inget saknat underlag har angetts.")
-
-    # Metod och osäkerhet ----------------------------------------------------------------------
-    rubrik(1, "5", "Metod och osäkerhet" if sbk else "Metod, osäkerhet och metodnotis")
-    dok.stycke(
-        metodnotis_text(
-            r.metodnotis,
-            sbk=sbk,
-            korningar=[k["korning_id"] for k in r.korningar],
-            bilaga=bilref(2),
-        )
-    )
-    if sbk:
-        metodrader = tuple(
-            (
-                str(m["visningsnamn"]),
-                str(m.get("version") or "–"),
-                f"{m['status']} – inte granskad för formell utredning"
-                if m["status"] == "skiss"
-                else str(m["status"]),
-                "; ".join(m.get("underlag") or []) or "–",
-            )
-            for m in r.metoder
-        )
-        dok.block.append(
-            Tabell(
-                ("Metod", "Version", "Status", "Underlag för granskning"),
-                metodrader,
-                (0.3, 0.1, 0.24, 0.36),
-                liten=True,
-            )
-        )
-        dok.stycke(
-            "Status skiss betyder att metoden duger för att jämföra alternativ i ett tidigt skede, "
-            "men att den inte är granskad för en formell utredning. Bara en människa kan ändra "
-            "metodens status."
-        )
-    else:
-        dok.block.append(
-            Tabell(
-                ("Metod (lösare)", "Version", "Valideringsstatus", "Underlag för granskning"),
-                tuple(
+                    ("Rapport-id", r.rapport_id),
+                    ("Projekt-id", r.projekt),
+                    ("Beräkningskörningar", korningar_txt or "–"),
                     (
-                        f"{m['visningsnamn']} ({m['losare']})",
-                        str(m.get("version") or "–"),
-                        str(m["status"]),
-                        "; ".join(m.get("underlag") or []) or "–",
-                    )
-                    for m in r.metoder
+                        "Frågekatalog",
+                        f"{r.katalog.get('fil')} (källäge {r.katalog.get('granskningsdatum')})",
+                    ),
+                    ("Dataklass", {"oppet": "Öppna (oppet)"}.get(r.dataklass, r.dataklass)),
+                    ("Ansvarig utredare", str(ansvarig) if ansvarig else "Anges av beställaren"),
+                    ("Automatisk kontroll", kontroll_txt),
                 ),
-                (0.34, 0.1, 0.18, 0.38),
+                (0.26, 0.74),
                 liten=True,
             )
         )
-        dok.stycke(
-            "Valideringsstatus 'skiss' betyder att metoden duger för att utforska och jämföra "
-            "alternativ men inte är granskad för en formell rapport. Bara en människa kan klassa "
-            "en metod som 'rapport'."
-        )
-    if r.amne in ("dagsljus", "ekologi", "luft"):
-        inledning, osak = amnestext.osakerhet(r, sbk, bilaga(1) if sbk else bilref(1))
-        if sbk:
-            dok.stycke(inledning)
-    else:
-        statisk = any(
-            a["losare"] == "vatten.statisk_fyllning" for k in r.korningar for a in k["analyser"]
-        )
-        if sbk:
-            osak = [
-                "Beräkningen är en statisk fyllning. Den visar läget när regnet har slutat, men inte "
-                "förloppet, infiltrationen i marken eller vattnets hastighet."
-                if statisk
-                else "Beräkningen är dynamisk men har en förenklad koppling till ledningsnätet.",
-                "Vattendjupet anges över markytan. Det är inte en vattennivå i höjdsystemet RH 2000.",
-                "Taken räknas inte som mark när läget före och efter förslaget jämförs.",
-                f"{bilaga(1)} anger för varje tal vad det mäter och vid vilken tidpunkt.",
-            ]
-            dok.stycke("Resultatet ska läsas med följande begränsningar:")
-        else:
-            osak = [
-                "Statisk fyllning räknar inget förlopp i tid, ingen infiltration och ingen hastighet; "
-                "kartorna visar läget vid regnets slut."
-                if statisk
-                else "Dynamisk beräkning med förenklad nätkoppling.",
-                "Vattendjupet är djup över markytan, inte vattennivå i RH 2000.",
-                "Byggnadernas tak räknas inte som mark i jämförelserna (samma takmask som webben).",
-                f"Varje beläggs tidsdefinition och statistik står i {bilref(1)}.",
-            ]
-    dok.block.append(Punktlista(tuple(osak)))
 
-    # Bilagor ----------------------------------------------------------------------------------
-    dok.block.append(Sidbrytning())
     dok.rubrik(1, f"{bilaga(1)} Belägg")
     dok.stycke(
         "Varje tal i texten kommer ur ett belägg. Värdet står här före avrundning, med "
@@ -779,7 +768,7 @@ def bygg_dokument(
                 (
                     f"B{bnr[(p.pastaende_id, b.adress)]}",
                     b.adress,
-                    _sv(b.varde) + (f" {b.enhet}" if b.enhet and b.enhet != "andel" else ""),
+                    _sv(b.varde) + (f"\u00a0{b.enhet}" if b.enhet and b.enhet != "andel" else ""),
                     f"{b.storhet}. {b.statistik}. {b.tidsdefinition}".strip(". ") + ".",
                     b.namnare,
                     f"{b.korning_id}/{b.fil} ({_kort(b.fil_sha256)})",
@@ -790,7 +779,7 @@ def bygg_dokument(
             Tabell(
                 ("", "Adress", "Värde", "Mått, statistik, tid", "Nämnare", "Körning, fil"),
                 tuple(brader),
-                (0.06, 0.19, 0.14, 0.27, 0.14, 0.2),
+                (0.05, 0.21, 0.15, 0.23, 0.16, 0.20),
                 liten=True,
             )
         )
@@ -809,40 +798,49 @@ def bygg_dokument(
                 )
                 for h in r.handelser
             ),
-            (0.2, 0.17, 0.2, 0.43),
+            (0.20, 0.17, 0.20, 0.43),
             liten=True,
         )
     )
     if korlogg_rader:
+        # Filtrera bort misslyckade MCP-retrier (utfall == "fel") ur läsbilagan; korlogg.jsonl ändras aldrig.
+        godkanda = [x for x in korlogg_rader if str(x.get("utfall", "")).lower() != "fel"]
+        utelamnade_fel = len(korlogg_rader) - len(godkanda)
         dok.stycke(
-            "MCP-körloggen (anrop som rör rapporten eller dess körningar; inga argumentvärden, "
-            "bara hash):",
+            "MCP-körloggen (godkända anrop som rör rapporten eller dess körningar; inga "
+            "argumentvärden, bara hash):",
             "liten",
         )
-        dok.block.append(
-            Tabell(
-                ("Tid (UTC)", "Klient", "Modell, roll", "Verktyg", "Utfall", "Hash"),
-                tuple(
-                    (
-                        str(x.get("tid", ""))[:19].replace("T", " "),
-                        str((x.get("klient") or {}).get("namn", "")),
-                        ", ".join(str(v) for v in (x.get("modell"), x.get("roll")) if v) or "–",
-                        str(x.get("verktyg", "")),
-                        str(x.get("utfall", "")),
-                        _kort(str(x.get("hash", "")), 10),
-                    )
-                    for x in korlogg_rader
-                ),
-                (0.18, 0.14, 0.2, 0.22, 0.1, 0.16),
-                liten=True,
+        if godkanda:
+            dok.block.append(
+                Tabell(
+                    ("Tid (UTC)", "Klient", "Modell, roll", "Verktyg", "Utfall", "Hash"),
+                    tuple(
+                        (
+                            str(x.get("tid", ""))[:19].replace("T", " "),
+                            str((x.get("klient") or {}).get("namn", "")),
+                            ", ".join(str(v) for v in (x.get("modell"), x.get("roll")) if v) or "–",
+                            str(x.get("verktyg", "")),
+                            str(x.get("utfall", "")),
+                            _kort(str(x.get("hash", "")), 10),
+                        )
+                        for x in godkanda
+                    ),
+                    (0.18, 0.14, 0.20, 0.24, 0.08, 0.16),
+                    liten=True,
+                )
             )
-        )
-        ok, n, fel_rad = tj.korlogg.verifiera() if tj.korlogg else (True, 0, None)
-        dok.stycke(
+        ok, n, fel_rad = tj.korlogg.verifiera() if tj.korlogg else (True, len(korlogg_rader), None)
+        kedja_txt = (
             f"Körloggens hashkedja: {'obruten' if ok else f'bruten vid rad {fel_rad}'} "
-            f"({n} rader kontrollerade).",
-            "liten",
+            f"({n} rader kontrollerade över hela korlogg.jsonl)."
         )
+        if utelamnade_fel > 0:
+            kedja_txt += (
+                f" Misslyckade anrop/retrier utelämnade ur läsbilagan: {utelamnade_fel} st "
+                "(samtliga ingår oförändrade i den obrutna hashkedjan)."
+            )
+        dok.stycke(kedja_txt, "liten")
     else:
         dok.stycke(
             "Ingen MCP-körlogg hör till rapporten (skapad utan MCP, t.ex. i referensflödet).",
@@ -874,7 +872,7 @@ def bygg_dokument(
             Tabell(
                 ("Jobb", "Lösare", "Parametrar ur K0-manifestet"),
                 tuple(jobbrader),
-                (0.15, 0.2, 0.65),
+                (0.16, 0.20, 0.64),
                 liten=True,
             )
         )
@@ -886,7 +884,7 @@ def bygg_dokument(
                 tuple(
                     (str(m["visningsnamn"]), str(m["losare"]), str(m["status"])) for m in r.metoder
                 ),
-                (0.4, 0.35, 0.25),
+                (0.40, 0.35, 0.25),
                 liten=True,
             )
         )
@@ -900,18 +898,826 @@ def bygg_dokument(
                     (p["rubrik"], "godkänd" if p["godkand"] else "fel", str(p["granskat"]))
                     for p in kontroll.get("punkter", [])
                 ),
-                (0.55, 0.25, 0.2),
+                (0.55, 0.25, 0.20),
                 liten=True,
             )
         )
+
+
+def _belaggsindex(r: Rapport) -> dict[tuple[str, str], int]:
+    per_adress: dict[tuple[str, str], int] = {}
+    bnr: dict[tuple[str, str], int] = {}
+    for p in r.pastaenden:
+        for b in p.belagg:
+            nr = per_adress.setdefault((b.korning_id, b.adress), len(per_adress) + 1)
+            bnr[(p.pastaende_id, b.adress)] = nr
+    return bnr
+
+
+def bygg_bilagedokument(
+    r: Rapport,
+    tj: RapportTjanst,
+    *,
+    korlogg_rader: Sequence[Mapping[str, Any]] = (),
+    med_resurser: bool = False,
+) -> Dokument:
+    """Bygger en fristående teknisk spårbarhetsbilaga (används när `separat_bilaga=True`)."""
+    inst = r.installningar
+    sbk = inst.sbk
+    vis_proj = _visningsprojekt(r, tj)
+    ren_titel = _sanera_titel(r.titel, r.projekt, vis_proj)
+    datum = datum_text(r.skapad, sbk)
+    dok = Dokument(
+        titel=f"Teknisk spårbarhetsbilaga – {ren_titel}",
+        sidhuvud=" · ".join(x for x in (inst.avsandare, ren_titel, "Teknisk bilaga") if x),
+        sidfot="Teknisk spårbarhetsbilaga – Floden (deterministiska fysikberäkningar).",
+        titelhuvud=Titelhuvud(
+            avsandare=inst.avsandare,
+            dokumenttyp="Teknisk bilaga",
+            datum=datum,
+            diarienummer=inst.diarienummer,
+            handlaggare=inst.handlaggare,
+        ),
+        utseende=_bygger_utseende(r, tj, med_resurser),
+    )
+    _lagg_till_teknisk_bilaga(
+        dok,
+        r,
+        tj,
+        korlogg_rader=korlogg_rader,
+        bnr=_belaggsindex(r),
+        sbk=sbk,
+        separat=True,
+    )
     return dok
+
+
+def bygg_dokument(
+    r: Rapport,
+    tj: RapportTjanst,
+    *,
+    korlogg_rader: Sequence[Mapping[str, Any]] = (),
+    med_resurser: bool = False,
+) -> Dokument:
+    """Rapporten som block. Kastar `PastaendeFel` om en platshållare inte kan fyllas.
+
+    `med_resurser` slår upp logotyp och typsnitt (för export); utan dem byggs bara texten."""
+    from rapport.skissrapport import PlanerarFigurer, metodnotis_text
+
+    inst: RapportInstallningar = r.installningar
+    sbk = inst.sbk
+    demo = r.projekt == "demokvarteret"
+    status_text = STATUS_TEXT_SBK if sbk else STATUS_TEXT
+    fordj_text = FORDJUPNING_TEXT_SBK if sbk else FORDJUPNING_TEXT
+    vis_proj = _visningsprojekt(r, tj)
+    ren_titel = _sanera_titel(r.titel, r.projekt, vis_proj)
+
+    def rubrik(niva: int, nr: str, text: str) -> None:
+        dok.rubrik(niva, f"{nr} {text}" if inst.numrerade_rubriker and nr else text)
+
+    def bilaga(i: int) -> str:
+        return f"Bilaga {i}" if sbk else f"Bilaga {'ABCD'[i - 1]}"
+
+    def bilref(i: int) -> str:
+        return bilaga(i).lower()
+
+    pf = (
+        tj.planerarfigurer(r, skriv_filer=True)
+        if hasattr(tj, "planerarfigurer")
+        else PlanerarFigurer()
+    )
+
+    datum = datum_text(r.skapad, sbk)
+    dok = Dokument(
+        titel=ren_titel if sbk else r.titel,
+        sidhuvud=(
+            " · ".join(
+                x
+                for x in (
+                    inst.avsandare,
+                    ren_titel,
+                    f"Dnr {inst.diarienummer}" if inst.diarienummer else "",
+                )
+                if x
+            )
+            if sbk
+            else f"{r.titel} · {r.rapport_id}"
+        ),
+        sidfot=(
+            "Skissunderlag – tidig sållning, inte formell kravprövning. Metodstatus: skiss."
+            if sbk
+            else "Skissunderlag (nivå 1): sållning, inte bedömning mot krav. Metoderna är skisser."
+        ),
+        titelhuvud=Titelhuvud(
+            avsandare=inst.avsandare,
+            dokumenttyp="Skissunderlag",
+            datum=datum,
+            diarienummer=inst.diarienummer,
+            handlaggare=inst.handlaggare,
+        ),
+        utseende=_bygger_utseende(r, tj, med_resurser),
+    )
+
+    per_fraga = _pastaenden_per_fraga(r)
+    fordj = {f: ordna_fordjupning([p.fordjupning for p in ps]) for f, ps in per_fraga.items()}
+    antal = {k: sum(1 for v in fordj.values() if v == k) for k in ("ja", "kan_inte_avgoras", "nej")}
+    bnr = _belaggsindex(r)
+
+    if sbk:
+        # ------------------------------------------------------------------ SIDA 1 (Planerarens överblick)
+        from rapport.korningsval import underlagstext
+
+        underlag_beskr = "; ".join(
+            dict.fromkeys(
+                t
+                for k in r.korningar
+                if (t := underlagstext(k.get("underlag"), True))
+            )
+        )
+        if not underlag_beskr:
+            underlag_beskr = "Deterministiska fysikberäkningar (detaljer i teknisk bilaga)"
+        else:
+            underlag_beskr = underlag_beskr[0].upper() + underlag_beskr[1:]
+
+        sida1_rader: tuple[tuple[str, str], ...] = (
+            ("Projekt", vis_proj),
+            ("Ämne", amnestext.amnesnamn(r)),
+            ("Skede", "Planstart och tidig sållning (skissunderlag)"),
+            ("Datum", datum),
+            *_bestallningsrader(r, True),
+            ("Underlag", underlag_beskr),
+        )
+        dok.block.append(Tabell(None, sida1_rader, (0.22, 0.78), liten=True))
+
+        # 1. Sammanfattning & nyckeltal --------------------------------------------------------
+        rubrik(1, "1", "Sammanfattning")
+        kpi = _bygg_nyckeltalsrad(r, pf, antal)
+        if kpi is not None:
+            dok.block.append(kpi)
+        dok.block.append(_bygg_faktaruta(r, pf, antal))
+
+        # Kompakt översikt över frågor som styr fortsatt arbete (ja / kan_inte_avgoras)
+        styrande = [
+            (
+                _fragetext(r, fid) or fid,
+                status_text[ordna_fragestatus([p.status for p in ps]) if ps else "underlag_saknas"],
+                fordj[fid],
+                fid,
+            )
+            for fid, ps in per_fraga.items()
+            if fordj[fid] in ("ja", "kan_inte_avgoras")
+        ]
+        if styrande:
+            dok.stycke(
+                "Styrande planeringsfrågor som behöver utredas vidare eller kompletteras med underlag "
+                "(fullständig frågekatalogsöversikt finns sist i huvudtexten):",
+                "liten",
+            )
+            dok.block.append(
+                Tabell(
+                    ("Planeringsfråga", "Läge i underlaget", "Fördjupning", "Ref"),
+                    tuple(styrande[:8]),
+                    (0.46, 0.22, 0.23, 0.09),
+                    ljus_kolumn=2,
+                    liten=True,
+                )
+            )
+            if len(styrande) > 8:
+                dok.stycke(
+                    f"Ytterligare {len(styrande) - 8} frågor kräver fördjupning eller kompletterande "
+                    "underlag och redovisas i avsnittet Kartor och resultat samt i frågekatalogsöversikten.",
+                    "liten",
+                )
+
+        # 2. Uppdrag, plats och beräkningsfall -------------------------------------------------
+        rubrik(1, "2", "Uppdrag, plats och beräkningsfall")
+        dok.stycke(amnestext.ingress(r, True, demo), "ingress")
+        for k in r.korningar:
+            if r.amne == "luft":
+                lagen = [luftlage(a["analys"]) for a in k["analyser"]]
+                jfr = (
+                    f"Underlaget gäller lägena {' och '.join(lagen)}, var och ett med en given timserie."
+                    if len(lagen) > 1
+                    else (f"Underlaget gäller läget {lagen[0]} med en given timserie." if lagen else "")
+                )
+            elif r.amne in ("dagsljus", "ekologi"):
+                jfr = " ".join(
+                    f"Läget {amnestext.lage(r.amne, j['efter'])} jämförs med läget "
+                    f"{amnestext.lage(r.amne, j['fore'])}."
+                    for j in k["jamforelser"]
+                )
+            else:
+                jfr = " ".join(
+                    f"Läget {scenarionamn(j['efter'])} förslaget jämförs med läget "
+                    f"{scenarionamn(j['fore'])} förslaget, med samma regn."
+                    for j in k["jamforelser"]
+                )
+            dok.stycke(f"{k['beskrivning']} {jfr}".strip())
+            if k.get("antaganden"):
+                dok.stycke("Beräkningen bygger på följande antaganden:")
+                dok.block.append(
+                    Punktlista(
+                        tuple(a.replace(" (uttrycklig parameter)", "") for a in k["antaganden"])
+                    )
+                )
+        if r.mottagare:
+            dok.stycke("Underlaget redovisar särskilt resultat för följande plats:")
+            dok.block.append(
+                Punktlista(
+                    tuple(m.beskrivning[:1].upper() + m.beskrivning[1:] + "." for m in r.mottagare)
+                )
+            )
+
+        # 3. Kartor och resultat ---------------------------------------------------------------
+        rubrik(1, "3", "Kartor och resultat")
+        dok.stycke(amnestext.resultatintro(r, True, bilref(1)))
+
+        # Bygg par (Före | Efter sida-vid-sida som FigurPar) + skillnadskarta + detaljkarta + sektion
+        anvanda_kartor: set[str] = set()
+        fig_nr = 0
+
+        def _figur(k_obj: Karta) -> Figur:
+            nonlocal fig_nr
+            fig_nr += 1
+            txt = bildtext(k_obj, r)
+            if inst.numrerade_figurer:
+                txt = f"Figur {fig_nr}. {txt}"
+            fil = pf.kart_filer.get(k_obj.kart_id, k_obj.fil)
+            return Figur(fil, txt, fig_nr)
+
+        for kp in r.korningar:
+            for j in kp.get("jamforelser", []):
+                bas_k = next(
+                    (
+                        k
+                        for k in r.kartor
+                        if k.typ == "bas"
+                        and k.korning_id == kp["korning_id"]
+                        and k.analys == j["analys"]
+                        and k.scenario == j["fore"]
+                        and (not k.meta.get("roll") or k.meta.get("roll") == j["utdata"])
+                    ),
+                    None,
+                )
+                efter_k = next(
+                    (
+                        k
+                        for k in r.kartor
+                        if k.typ == "scenario"
+                        and k.korning_id == kp["korning_id"]
+                        and k.jamforelse == j["namn"]
+                    ),
+                    None,
+                )
+                diff_k = next(
+                    (
+                        k
+                        for k in r.kartor
+                        if k.typ == "skillnad"
+                        and k.korning_id == kp["korning_id"]
+                        and k.jamforelse == j["namn"]
+                    ),
+                    None,
+                )
+                if bas_k is not None and efter_k is not None and efter_k.kart_id not in anvanda_kartor:
+                    anvanda_kartor.add(bas_k.kart_id)
+                    anvanda_kartor.add(efter_k.kart_id)
+                    dok.block.append(
+                        FigurPar(
+                            vanster=_figur(bas_k),
+                            hoger=_figur(efter_k),
+                            gemensam_bildtext=(
+                                f"Jämförelse med gemensam färgskala: {scenarionamn(j['fore'])} "
+                                f"(vänster) och {scenarionamn(j['efter'])} (höger)."
+                            ),
+                        )
+                    )
+                if diff_k is not None and diff_k.kart_id not in anvanda_kartor:
+                    anvanda_kartor.add(diff_k.kart_id)
+                    dok.block.append(_figur(diff_k))
+
+        for karta in r.kartor:
+            if karta.kart_id not in anvanda_kartor:
+                anvanda_kartor.add(karta.kart_id)
+                dok.block.append(_figur(karta))
+
+        # Deterministisk skyfallstabell: tröskelytor (10/20/30 cm) och största lågpunkter P1–P3
+        # Placeras direkt efter översikts-/skillnadskartorna så uppslagen utnyttjas balanserat.
+        if r.amne == "skyfall" and (pf.trosklar_fore is not None or pf.trosklar_efter is not None):
+            rubrik(2, "3.1", "Översvämmade markytor och djupaste lågpunkter")
+            tr_rader: list[tuple[str, ...]] = []
+            tr_f, tr_e = pf.trosklar_fore, pf.trosklar_efter
+            if tr_f is not None and tr_e is not None:
+                c = tr_e.cellstorlek_m
+                steg = max(1.0, c * c)
+
+                def _tr_rad(etikett: str, vf: float, ve: float) -> tuple[str, str, str, str]:
+                    rf = round(vf / steg) * steg
+                    re_ = round(ve / steg) * steg
+                    return (
+                        etikett,
+                        formatera_tal(rf, "m²", steg),
+                        formatera_tal(re_, "m²", steg),
+                        formatera_tal(re_ - rf, "m²", steg, tecken=True),
+                    )
+
+                tr_rader = [
+                    _tr_rad("Märkbart vatten (≥ 10 cm)", tr_f.yta_over_0_1m_m2, tr_e.yta_over_0_1m_m2),
+                    _tr_rad(
+                        "Framkomlighetsgräns räddningstjänst (≥ 20 cm)",
+                        tr_f.yta_over_0_2m_m2,
+                        tr_e.yta_over_0_2m_m2,
+                    ),
+                    _tr_rad("Risk för byggnadsskada (≥ 30 cm)", tr_f.yta_over_0_3m_m2, tr_e.yta_over_0_3m_m2),
+                ]
+                dok.block.append(
+                    Tabell(
+                        ("Djupklass (mark, tak undantagna)", "Före", "Efter", "Skillnad"),
+                        tuple(tr_rader),
+                        (0.49, 0.17, 0.17, 0.17),
+                        liten=True,
+                    )
+                )
+            elif (tr_en := tr_e or tr_f) is not None:
+                c = tr_en.cellstorlek_m
+                dok.block.append(
+                    Tabell(
+                        ("Djupklass (mark, tak undantagna)", "Beräknad markyta"),
+                        (
+                            ("Märkbart vatten (≥ 10 cm)", _fmt_yta(tr_en.yta_over_0_1m_m2, c)),
+                            ("Framkomlighetsgräns räddningstjänst (≥ 20 cm)", _fmt_yta(tr_en.yta_over_0_2m_m2, c)),
+                            ("Risk för byggnadsskada (≥ 30 cm)", _fmt_yta(tr_en.yta_over_0_3m_m2, c)),
+                        ),
+                        (0.70, 0.30),
+                        liten=True,
+                    )
+                )
+
+            if pf.lagpunkter:
+                lp_rader = []
+                for lp in pf.lagpunkter:
+                    mh = (
+                        formatera_tal(lp.markhojd_rh2000_m, "m", 0.01, tecken=True)
+                        if lp.markhojd_rh2000_m is not None
+                        else "–"
+                    )
+                    vn = (
+                        formatera_tal(lp.vattenniva_rh2000_m, "m", 0.01, tecken=True)
+                        if lp.vattenniva_rh2000_m is not None
+                        else "–"
+                    )
+                    koord = f"E {round(lp.e_m)}, N {round(lp.n_m)}"
+                    lp_rader.append(
+                        (lp.id, formatera_tal(lp.djup_m, "m", 0.01), mh, vn, koord)
+                    )
+                dok.stycke(
+                    "Största lokala lågpunkter (minst 15 cm djup och 30 m inbördes avstånd, markerade i kartan):",
+                    "liten",
+                )
+                dok.block.append(
+                    Tabell(
+                        ("Punkt", "Största djup", "Markhöjd (RH 2000)", "Mark + djup (RH 2000)", "Läge (SWEREF 99 18 00)"),
+                        tuple(lp_rader),
+                        (0.10, 0.16, 0.21, 0.23, 0.30),
+                        liten=True,
+                    )
+                )
+
+        for extra in (*pf.detaljkartor, *pf.sektioner):
+            fig_nr += 1
+            txt = f"Figur {fig_nr}. {extra.bildtext}" if inst.numrerade_figurer else extra.bildtext
+            dok.block.append(Figur(extra.fil, txt, fig_nr))
+
+        # Resultat per planeringsfråga (rena rubriker utan störande kodprefix-väggar!)
+        res_nr = "3.2" if (r.amne == "skyfall" and (pf.trosklar_fore or pf.trosklar_efter)) else "3.1"
+        rubrik(2, res_nr, "Resultat per fråga")
+        ej_tillampliga_rader: list[tuple[str, str, str, str]] = []
+        for fid, ps in per_fraga.items():
+            if not ps:
+                continue
+            if all(p.status == "ej_tillampligt" for p in ps):
+                for p in ps:
+                    ej_tillampliga_rader.append(
+                        (
+                            _fragetext(r, fid) or fid,
+                            p.fylld_text(),
+                            (p.motivering or "–").rstrip(".") + "." if p.motivering else "–",
+                            fid,
+                        )
+                    )
+                continue
+            rubrik(3, "", _fragetext(r, fid) or fid)
+            for p in ps:
+                dok.stycke(p.fylld_text())
+                delar = [f"Fråga {fid}", status_text[p.status], fordj_text[p.fordjupning]]
+                if p.belagg:
+                    delar.append(
+                        "Belägg "
+                        + ", ".join(f"B{bnr[(p.pastaende_id, b.adress)]}" for b in p.belagg)
+                    )
+                if p.forutsattning:
+                    delar.append(f"Förutsättning: {p.forutsattning.rstrip('.')}")
+                if p.ansvarig_funktion:
+                    delar.append(f"Ansvarar: {p.ansvarig_funktion.rstrip('.')}")
+                if p.motivering:
+                    delar.append(f"Skäl: {p.motivering.rstrip('.')}")
+                dok.stycke(" · ".join(delar) + ".", "notis")
+
+        if ej_tillampliga_rader:
+            rubrik(3, "", "Frågor som inte prövas i detta skede")
+            dok.block.append(
+                Tabell(
+                    ("Planeringsfråga", "Besked i underlaget", "Skäl", "Ref"),
+                    tuple(ej_tillampliga_rader),
+                    (0.30, 0.30, 0.31, 0.09),
+                    liten=True,
+                )
+            )
+
+        _lagg_till_gyf_utci(dok, r, tj, sbk=True, rubrik=rubrik)
+
+        # 4. Åtgärder, villkor och vad som saknas inför nästa skede ----------------------------
+        rubrik(1, "4", "Åtgärder, villkor och vad som saknas inför nästa skede")
+        saknat = []
+        for p in r.pastaenden:
+            for s in p.saknat_underlag:
+                saknat.append((s, p.ansvarig_funktion or "Beställaren / utredare", p.fraga_id))
+            if p.status == "villkorat" and p.forutsattning:
+                saknat.append(
+                    (f"Villkor att fastställa: {p.forutsattning}", p.ansvarig_funktion or "–", p.fraga_id)
+                )
+        if saknat:
+            dok.stycke(
+                "Följande underlag och ställningstaganden behövs inför fortsatt detaljplanering."
+            )
+            dok.block.append(
+                Tabell(
+                    ("Vad som saknas eller behöver säkras", "Ansvarar", "Ref"),
+                    tuple(saknat),
+                    (0.65, 0.25, 0.10),
+                )
+            )
+        else:
+            dok.stycke("Inget saknat underlag har angetts i detta skede.")
+
+        # 5. Metod, begränsningar och frågekatalogsöversikt ------------------------------------
+        rubrik(1, "5", "Metod, begränsningar och frågekatalogsöversikt")
+        dok.stycke(
+            metodnotis_text(
+                r.metodnotis,
+                sbk=True,
+                korningar=[k["korning_id"] for k in r.korningar],
+                bilaga=bilref(2),
+            )
+        )
+        metodrader = tuple(
+            (
+                str(m["visningsnamn"]),
+                str(m.get("version") or "–"),
+                f"{m['status']} – inte granskad för formell utredning"
+                if m["status"] == "skiss"
+                else str(m["status"]),
+                "; ".join(m.get("underlag") or []) or "–",
+            )
+            for m in r.metoder
+        )
+        dok.block.append(
+            Tabell(
+                ("Metod", "Version", "Status", "Underlag för granskning"),
+                metodrader,
+                (0.28, 0.10, 0.26, 0.36),
+                liten=True,
+            )
+        )
+        _lagg_till_begransningar(dok, r, sbk=True, bilaga1=bilaga(1), bilref1=bilref(1))
+
+        rubrik(2, "5.1", "Samlad frågekatalogsöversikt")
+        dok.stycke(
+            f"Fullständig förteckning över samtliga {len(r.fragor)} utredningsfrågor i underlaget "
+            "och huruvida de behöver utredas vidare:",
+            "liten",
+        )
+        sam_rader = []
+        for fid, ps in per_fraga.items():
+            status = ordna_fragestatus([p.status for p in ps]) if ps else "underlag_saknas"
+            sam_rader.append((fid, _fragetext(r, fid), status_text[status], fordj[fid]))
+        dok.block.append(
+            Tabell(
+                ("Ref", "Planeringsfråga", "Svar i underlaget", "Fördjupning"),
+                tuple(sam_rader),
+                (0.09, 0.45, 0.23, 0.23),
+                ljus_kolumn=3,
+                liten=True,
+            )
+        )
+
+        # 6. Teknisk spårbarhetsbilaga (sist i samma PDF, eller hänvisning vid separat_bilaga=True)
+        if inst.separat_bilaga:
+            dok.stycke(
+                "Teknisk spårbarhetsbilaga (belägg före avrundning, filtrerad körlogg med "
+                "hashkedja, K0-manifest och 9-punktskontroll) exporteras som separat fil.",
+                "liten",
+            )
+        else:
+            _lagg_till_teknisk_bilaga(
+                dok,
+                r,
+                tj,
+                korlogg_rader=korlogg_rader,
+                bnr=bnr,
+                sbk=True,
+                separat=False,
+            )
+        return dok
+
+    # ------------------------------------------------------------------ NEUTRAL PROFIL (R1-bakåtkompatibel)
+    dok.stycke(amnestext.ingress(r, False, demo), "ingress")
+    kontroll = r.kontroll or {}
+    ansvarig = r.metodnotis.get("ansvarig_utredare")
+    korningar = "; ".join(
+        f"{k['korning_id']} (kod {k.get('kodversion')})" + _underlagssuffix(k, False)
+        for k in r.korningar
+    )
+    rader: tuple[tuple[str, str], ...] = (
+        ("Handling", "Skissunderlag, nivå 1 (sållning)"),
+        ("Projekt", vis_proj),
+        ("Ämne", amnestext.amnesnamn(r)),
+        ("Skede", "Planstart och tidig sållning"),
+        *_bestallningsrader(r, False),
+        ("Datum", datum),
+        ("Rapport-id", r.rapport_id),
+        ("Körningar", korningar),
+        (
+            "Frågekatalog",
+            f"{r.katalog.get('fil')} (källäge {r.katalog.get('granskningsdatum')})",
+        ),
+        ("Dataklass", {"oppet": "öppet"}.get(r.dataklass, r.dataklass)),
+        ("Ansvarig utredare", str(ansvarig or "Anges inte (frivilligt i nivå 1)")),
+        (
+            "Kontroll inför export",
+            "godkänd " + datum_text(str(kontroll.get("tid", "")), False)
+            if kontroll.get("godkand")
+            else ("inte godkänd" if kontroll else "inte gjord"),
+        ),
+    )
+    dok.block.append(Tabell(None, rader, (0.26, 0.74), liten=True))
+
+    rubrik(1, "1", "Sammanfattning")
+    dok.stycke(
+        f"Sållningen omfattar {len(r.fragor)} frågor ur frågekatalogen. "
+        f"{antal['ja']} behöver fördjupas, {antal['kan_inte_avgoras']} kan inte avgöras med "
+        f"dagens underlag och {antal['nej']} behöver ingen fördjupning i detta skede. "
+        "Trafikljuset svarar på frågan om frågan behöver fördjupas: grönt nej, gult ja, rött "
+        "kan inte avgöras."
+    )
+    sam_rader_n = []
+    for fid, ps in per_fraga.items():
+        status = ordna_fragestatus([p.status for p in ps]) if ps else "underlag_saknas"
+        sam_rader_n.append((f"{fid} {_fragetext(r, fid)}", status_text[status], fordj[fid]))
+    dok.block.append(
+        Tabell(
+            ("Fråga", "Status", "Fördjupning"),
+            tuple(sam_rader_n),
+            (0.56, 0.17, 0.27),
+            ljus_kolumn=2,
+        )
+    )
+
+    rubrik(1, "2", "Uppdrag och beräkningsfall")
+    for k in r.korningar:
+        jfr = "; ".join(
+            f"{j['efter']} jämförs med {j['fore']} ({j['analys']}, {j['utdata']})"
+            for j in k["jamforelser"]
+        )
+        dok.stycke(
+            f"Körning {k['korning_id']}: {k['beskrivning']} Scenarier: "
+            f"{', '.join(k['scenarier'])}. {jfr + '.' if jfr else ''}"
+        )
+        if k.get("antaganden"):
+            dok.stycke("Antaganden som Floden har räknat med:", "liten")
+            dok.block.append(Punktlista(tuple(k["antaganden"])))
+    if r.mottagare:
+        dok.stycke("Mottagare (platser som påverkas) som påståendena kan gälla:")
+        dok.block.append(
+            Punktlista(
+                tuple(
+                    f"{m.namn}: {m.beskrivning} (polygon med {len(m.polygon)} hörn, EPSG:3011)"
+                    for m in r.mottagare
+                )
+            )
+        )
+
+    rubrik(1, "3", "Resultat")
+    dok.stycke(amnestext.resultatintro(r, False, bilref(1)))
+    for nr, karta in enumerate(r.kartor, start=1):
+        text = bildtext(karta, r)
+        if inst.numrerade_figurer:
+            text = f"Figur {nr}. {text}"
+        dok.block.append(Figur(karta.fil, text, nr))
+
+    rubrik(2, "", "Påståenden per fråga")
+    for fid, ps in per_fraga.items():
+        if not ps:
+            continue
+        rubrik(3, "", f"{fid} {_fragetext(r, fid)}")
+        for p in ps:
+            dok.stycke(p.fylld_text())
+            delar = [
+                f"Status: {STATUS_TEXT[p.status]}",
+                f"Fördjupning: {FORDJUPNING_TEXT[p.fordjupning]}",
+            ]
+            if p.belagg:
+                delar.append(
+                    "Belägg: " + ", ".join(f"B{bnr[(p.pastaende_id, b.adress)]}" for b in p.belagg)
+                )
+            if p.forutsattning:
+                delar.append(f"Förutsättning: {p.forutsattning}")
+            if p.ansvarig_funktion:
+                delar.append(f"Ansvarig: {p.ansvarig_funktion}")
+            if p.motivering:
+                delar.append(f"Motivering: {p.motivering}")
+            dok.stycke(" · ".join(delar), "notis")
+
+    _lagg_till_gyf_utci(dok, r, tj, sbk=False, rubrik=rubrik)
+
+    rubrik(1, "4", "Saknat underlag och villkor")
+    saknat_n = []
+    for p in r.pastaenden:
+        for s in p.saknat_underlag:
+            saknat_n.append((p.fraga_id, s, p.ansvarig_funktion or "–"))
+        if p.status == "villkorat" and p.forutsattning:
+            saknat_n.append(
+                (p.fraga_id, f"Förutsättning: {p.forutsattning}", p.ansvarig_funktion or "–")
+            )
+    if saknat_n:
+        dok.block.append(
+            Tabell(
+                ("Fråga", "Vad som saknas eller förutsätts", "Ansvarig funktion"),
+                tuple(saknat_n),
+                (0.12, 0.62, 0.26),
+            )
+        )
+    else:
+        dok.stycke("Inget saknat underlag har angetts.")
+
+    rubrik(1, "5", "Metod, osäkerhet och metodnotis")
+    dok.stycke(
+        metodnotis_text(
+            r.metodnotis,
+            sbk=False,
+            korningar=[k["korning_id"] for k in r.korningar],
+            bilaga=bilref(2),
+        )
+    )
+    dok.block.append(
+        Tabell(
+            ("Metod (lösare)", "Version", "Valideringsstatus", "Underlag för granskning"),
+            tuple(
+                (
+                    f"{m['visningsnamn']} ({m['losare']})",
+                    str(m.get("version") or "–"),
+                    str(m["status"]),
+                    "; ".join(m.get("underlag") or []) or "–",
+                )
+                for m in r.metoder
+            ),
+            (0.34, 0.10, 0.18, 0.38),
+            liten=True,
+        )
+    )
+    dok.stycke(
+        "Valideringsstatus 'skiss' betyder att metoden duger för att utforska och jämföra "
+        "alternativ men inte är granskad för en formell rapport. Bara en människa kan klassa "
+        "en metod som 'rapport'."
+    )
+    _lagg_till_begransningar(dok, r, sbk=False, bilaga1=bilaga(1), bilref1=bilref(1))
+
+    if not inst.separat_bilaga:
+        _lagg_till_teknisk_bilaga(
+            dok,
+            r,
+            tj,
+            korlogg_rader=korlogg_rader,
+            bnr=bnr,
+            sbk=False,
+            separat=False,
+        )
+    return dok
+
+
+def _lagg_till_gyf_utci(
+    dok: Dokument,
+    r: Rapport,
+    tj: RapportTjanst,
+    *,
+    sbk: bool,
+    rubrik: Any,
+) -> None:
+    from rapport.gyf_utci_belagg import gyf_tabellrader, utci_tabellrader
+
+    gyf_rader = gyf_tabellrader(r, tj)
+    if gyf_rader:
+        rubrik(2, "3.3" if sbk else "", "Grönytefaktor (GYF, skiss)")
+        dok.stycke(
+            "Sammanställning av deterministiskt beräknad grönytefaktor (GYF) ur körningens "
+            "resultatfiler. Metodstatus: skiss.",
+            "liten",
+        )
+        dok.block.append(
+            Tabell(
+                (
+                    "Alternativ" if sbk else "Scenario",
+                    "Profil",
+                    "GYF",
+                    "Riktmärke",
+                    "Ekoeffektiv yta",
+                    "Flaggad yta",
+                    "Total area",
+                    "Status",
+                ),
+                tuple(gyf_rader),
+                (0.14, 0.14, 0.09, 0.11, 0.16, 0.14, 0.14, 0.08),
+                liten=True,
+            )
+        )
+
+    utci_rader = utci_tabellrader(r, tj)
+    if utci_rader:
+        utci_nr = "3.4" if (sbk and gyf_rader) else ("3.3" if sbk else "")
+        rubrik(2, utci_nr, "Termiskt mikroklimat (UTCI, skiss)")
+        dok.stycke(
+            "Sammanställning av deterministiskt beräknad termisk stress (UTCI och medelstrålningstemperatur) ur "
+            "körningens resultatfiler. Metodstatus: skiss.",
+            "liten",
+        )
+        dok.block.append(
+            Tabell(
+                (
+                    "Alternativ" if sbk else "Scenario",
+                    "UTCI medel",
+                    "UTCI p90",
+                    "UTCI max",
+                    "T_mrt medel",
+                    "Stark värmestress",
+                    "Utanför giltighet",
+                    "Status",
+                ),
+                tuple(utci_rader),
+                (0.14, 0.12, 0.12, 0.12, 0.13, 0.14, 0.15, 0.08),
+                liten=True,
+            )
+        )
+
+
+def _lagg_till_begransningar(
+    dok: Dokument,
+    r: Rapport,
+    *,
+    sbk: bool,
+    bilaga1: str,
+    bilref1: str,
+) -> None:
+    if r.amne in ("dagsljus", "ekologi", "luft"):
+        inledning, osak = amnestext.osakerhet(r, sbk, bilaga1 if sbk else bilref1)
+        if sbk:
+            dok.stycke(inledning)
+    else:
+        statisk = any(
+            a["losare"] == "vatten.statisk_fyllning" for k in r.korningar for a in k["analyser"]
+        )
+        if sbk:
+            osak = [
+                "Beräkningen är en statisk fyllning. Den visar läget när regnet har slutat, men inte "
+                "förloppet, infiltrationen i marken eller vattnets hastighet."
+                if statisk
+                else "Beräkningen är dynamisk men har en förenklad koppling till ledningsnätet.",
+                "Vattendjupet anges över markytan. Det är inte en vattennivå i höjdsystemet RH 2000.",
+                "Taken räknas inte som mark när läget före och efter förslaget jämförs.",
+                f"{bilaga1} anger för varje tal vad det mäter och vid vilken tidpunkt.",
+            ]
+            dok.stycke("Resultatet ska läsas med följande begränsningar:")
+        else:
+            osak = [
+                "Statisk fyllning räknar inget förlopp i tid, ingen infiltration och ingen hastighet; "
+                "kartorna visar läget vid regnets slut."
+                if statisk
+                else "Dynamisk beräkning med förenklad nätkoppling.",
+                "Vattendjupet är djup över markytan, inte vattennivå i RH 2000.",
+                "Byggnadernas tak räknas inte som mark i jämförelserna (samma takmask som webben).",
+                f"Varje beläggs tidsdefinition och statistik står i {bilref1}.",
+            ]
+    dok.block.append(Punktlista(tuple(osak)))
 
 
 __all__ = [
     "TRAFIKLJUS",
     "Block",
     "Dokument",
+    "Faktaruta",
     "Figur",
+    "FigurPar",
+    "Nyckeltal",
+    "Nyckeltalsrad",
     "Punktlista",
     "Rubrik",
     "Sidbrytning",
@@ -921,8 +1727,10 @@ __all__ = [
     "Typsnitt",
     "Utseende",
     "bildtext",
+    "bygg_bilagedokument",
     "bygg_dokument",
     "dokumentets_text",
     "huvudtext",
     "kartrubrik",
+    "sammanfattningsmening",
 ]

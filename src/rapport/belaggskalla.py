@@ -20,17 +20,22 @@ Ett mått får bara användas om dess storhet, tidsdefinition och statistik är 
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+import numpy as np
+from numpy.typing import NDArray
+
 from floden_mcp.belagg import enhet_for
 from floden_mcp.karna_api import FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import hash_av
 from gemensamt.hash import sha256_fil
 from rapport.pastaende import Belagg, PastaendeFel
+from testsvit.k1_io import GeoTransformInfo
 
 
 class BelaggFel(PastaendeFel):
@@ -90,7 +95,187 @@ VATTEN_MATVARDEN: Final[dict[str, Matt]] = {
     "takvatten_takyta_m2": Matt(
         "takyta vars regn leds till marken", "", "summa över byggnaderna", 1.0
     ),
+    "yta_over_0_1m_m2": Matt(
+        "markyta med minst 0,10 m vattendjup (märkbart vatten)",
+        "",
+        "summa över markceller med djup ≥ 0,10 m (tak undantagna)",
+        None,
+        enhet="m²",
+    ),
+    "yta_over_0_2m_m2": Matt(
+        "markyta med minst 0,20 m vattendjup (framkomlighetsgräns räddningstjänst)",
+        "",
+        "summa över markceller med djup ≥ 0,20 m (tak undantagna)",
+        None,
+        enhet="m²",
+    ),
+    "yta_over_0_3m_m2": Matt(
+        "markyta med minst 0,30 m vattendjup (risk för byggnadsskada)",
+        "",
+        "summa över markceller med djup ≥ 0,30 m (tak undantagna)",
+        None,
+        enhet="m²",
+    ),
 }
+
+SKYFALL_TROSKEL_M: Final[dict[str, float]] = {
+    "yta_over_0_1m_m2": 0.10,
+    "yta_over_0_2m_m2": 0.20,
+    "yta_over_0_3m_m2": 0.30,
+}
+
+
+@dataclass(frozen=True)
+class SkyfallsTroskelytor:
+    """Deterministiska skyfallsmått per scenario ur takmaskat ``max_djup.tif``."""
+
+    scenario: str
+    max_djup_m: float
+    yta_over_0_1m_m2: float
+    yta_over_0_2m_m2: float
+    yta_over_0_3m_m2: float
+    cellstorlek_m: float
+    fil: str
+    fil_sha256: str | None
+
+
+@dataclass(frozen=True)
+class Lagpunkt:
+    """Deterministiskt detekterad lågpunkt (lokalt maximum i ``max_djup.tif``)."""
+
+    id: str
+    e_m: float
+    n_m: float
+    djup_m: float
+    rad: int
+    kol: int
+    markhojd_rh2000_m: float | None = None
+    vattenniva_rh2000_m: float | None = None
+
+
+def berakna_skyfallstrosklar(
+    djup: NDArray[np.floating[Any]],
+    cellstorlek_m: float,
+    *,
+    tak_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    projekt_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+) -> dict[str, float]:
+    """Beräknar deterministiska markytor (m²) med djup ≥ 0,10, 0,20 och 0,30 m (tak undantagna)."""
+    arr = np.asarray(djup, dtype=np.float64)
+    if arr.ndim != 2:
+        raise ValueError(f"djup måste vara 2D, fick {arr.ndim}D.")
+    if not (cellstorlek_m > 0.0 and math.isfinite(cellstorlek_m)):
+        raise ValueError("cellstorlek_m måste vara ett positivt ändligt tal.")
+    giltig = np.isfinite(arr)
+    if tak_mask is not None:
+        tmask = np.asarray(tak_mask, dtype=bool)
+        if tmask.shape != arr.shape:
+            raise ValueError(f"tak_mask har form {tmask.shape}, väntade {arr.shape}.")
+        giltig &= ~tmask
+    if projekt_mask is not None:
+        pmask = np.asarray(projekt_mask, dtype=bool)
+        if pmask.shape != arr.shape:
+            raise ValueError(f"projekt_mask har form {pmask.shape}, väntade {arr.shape}.")
+        giltig &= pmask
+    cell_m2 = float(cellstorlek_m) ** 2
+    ut: dict[str, float] = {}
+    for nyckel, grans_m in SKYFALL_TROSKEL_M.items():
+        ut[nyckel] = float(np.count_nonzero(giltig & (arr >= grans_m))) * cell_m2
+    ut["max_djup_m"] = float(np.max(arr[giltig])) if bool(np.any(giltig)) else 0.0
+    return ut
+
+
+def detektera_lagpunkter(
+    djup: NDArray[np.floating[Any]],
+    geo: GeoTransformInfo,
+    *,
+    tak_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    vatten_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    projekt_mask: NDArray[np.bool_] | NDArray[np.integer[Any]] | None = None,
+    mark_z: NDArray[np.floating[Any]] | None = None,
+    max_antal: int = 3,
+    min_djup_m: float = 0.15,
+    min_avstand_m: float = 30.0,
+) -> list[Lagpunkt]:
+    """Detekterar deterministiskt upp till ``max_antal`` lokala maxima i ``djup``.
+
+    Krav: takmaskade (och fria från permanent vatten), inom ``projekt_mask`` om angiven,
+    djup ≥ ``min_djup_m`` (standard 0,15 m) och euklidiskt avstånd ≥ ``min_avstand_m``
+    (standard 30 m) mellan valda punkter. Returnerar ``P1``, ``P2``, ``P3`` i fallande djup.
+    """
+    arr = np.asarray(djup, dtype=np.float64)
+    if arr.ndim != 2 or arr.size == 0:
+        return []
+    hojd, bredd = arr.shape
+    if geo.hojd != hojd or geo.bredd != bredd:
+        raise ValueError(
+            f"GeoTransformInfo ({geo.hojd}×{geo.bredd}) matchar inte djup ({hojd}×{bredd})."
+        )
+    giltig = np.isfinite(arr) & (arr >= float(min_djup_m))
+    if tak_mask is not None:
+        giltig &= ~np.asarray(tak_mask, dtype=bool)
+    if vatten_mask is not None:
+        giltig &= ~np.asarray(vatten_mask, dtype=bool)
+    if projekt_mask is not None:
+        giltig &= np.asarray(projekt_mask, dtype=bool)
+    if not bool(np.any(giltig)):
+        return []
+
+    # Lokalt maximum (icke-strikt ≥ mot 8-grannar så plana sänkbottnar inte tappas bort).
+    fyll = np.where(giltig, arr, -np.inf)
+    pad = np.pad(fyll, 1, mode="constant", constant_values=-np.inf)
+    grann_max = np.full_like(fyll, -np.inf)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if dr == 0 and dc == 0:
+                continue
+            grann_max = np.maximum(grann_max, pad[1 + dr : 1 + dr + hojd, 1 + dc : 1 + dc + bredd])
+    lokal_max = giltig & (arr >= grann_max)
+    rader, kolumner = np.nonzero(lokal_max)
+    if rader.size == 0:
+        return []
+
+    # Deterministisk sortering: djupast först, sedan rad och kolumn.
+    djup_kand = arr[rader, kolumner]
+    ordning = sorted(
+        range(int(rader.size)),
+        key=lambda i: (-float(djup_kand[i]), int(rader[i]), int(kolumner[i])),
+    )
+    mark_arr = (
+        np.asarray(mark_z, dtype=np.float64)
+        if mark_z is not None and np.asarray(mark_z).shape == arr.shape
+        else None
+    )
+    valda: list[Lagpunkt] = []
+    min_avst_kv = float(min_avstand_m) ** 2
+    for idx in ordning:
+        if len(valda) >= max_antal:
+            break
+        r = int(rader[idx])
+        c = int(kolumner[idx])
+        e = float(geo.x_min) + (c + 0.5) * float(geo.pixelstorlek_x)
+        n = float(geo.y_max) - (r + 0.5) * float(geo.pixelstorlek_y)
+        if any((e - p.e_m) ** 2 + (n - p.n_m) ** 2 < min_avst_kv for p in valda):
+            continue
+        d_m = float(arr[r, c])
+        mz: float | None = None
+        vn: float | None = None
+        if mark_arr is not None and math.isfinite(float(mark_arr[r, c])):
+            mz = float(mark_arr[r, c])
+            vn = mz + d_m
+        valda.append(
+            Lagpunkt(
+                id=f"P{len(valda) + 1}",
+                e_m=e,
+                n_m=n,
+                djup_m=d_m,
+                rad=r,
+                kol=c,
+                markhojd_rh2000_m=mz,
+                vattenniva_rh2000_m=vn,
+            )
+        )
+    return valda
 
 TVAD_MATVARDEN: Final[dict[str, Matt]] = {
     **VATTEN_MATVARDEN,
@@ -635,6 +820,24 @@ class FlodenBelaggKalla:
         rel = str(rad["belagg"]["fil"])
         manifest_dok, msha = self._manifest(korning_id, rel)
         raw_varde: Any = rad["varden"].get(namn)
+        fil_rel = rel
+        fil_sha: str | None = msha
+        upplosning_override: float | None = None
+        namnare_override: str | None = None
+        if (
+            (raw_varde is None or isinstance(raw_varde, bool) or not isinstance(raw_varde, int | float))
+            and namn in SKYFALL_TROSKEL_M
+        ):
+            trosklar = self.skyfall_trosklar(korning_id, analys, scenario)
+            if trosklar is None:
+                raise BelaggFel(
+                    f"Mätvärdet '{namn}' kräver max_djup-raster för {analys}/{scenario} i '{korning_id}'."
+                )
+            raw_varde = getattr(trosklar, namn)
+            fil_rel = trosklar.fil
+            fil_sha = trosklar.fil_sha256
+            upplosning_override = trosklar.cellstorlek_m ** 2
+            namnare_override = hela_omradet_text(HELA_OMRADET_MARK, self.har_avgransning(korning_id))
         if (
             (raw_varde is None or isinstance(raw_varde, bool) or not isinstance(raw_varde, int | float))
             and namn in REGN_PARAMETRAR
@@ -651,24 +854,165 @@ class FlodenBelaggKalla:
         return Belagg(
             adress=adress,
             korning_id=korning_id,
-            fil=rel,
-            fil_sha256=msha,
+            fil=fil_rel,
+            fil_sha256=fil_sha,
             manifest=rel,
             manifest_sha256=msha,
             analys=analys,
             losare=losare,
             scenarier=(scenario,),
             mottagare=f"scenario {scenario}" + (f", ruta {ruta}" if ruta else ""),
-            namnare=LUFT_NAMNARE if losare == "luft.mkn" else HELA_OMRADET,
+            namnare=(
+                namnare_override
+                if namnare_override is not None
+                else (LUFT_NAMNARE if losare == "luft.mkn" else HELA_OMRADET)
+            ),
             matt=f"matvarden:{namn}",
             storhet=grund.storhet,
             enhet=grund.enhet if grund.enhet is not None else enhet_for(namn),
             tidsdefinition=grund.tidsdefinition,
             statistik=grund.statistik,
             varde=float(raw_varde),
-            upplosning=float(grund.upplosning or 0.0),
+            upplosning=(
+                upplosning_override
+                if upplosning_override is not None
+                else float(grund.upplosning or 0.0)
+            ),
             jamforbarhet=self._jamforbarhet(korning_id, analys, (scenario,)),
             regn=self.regn_text(korning_id, analys, scenario),
+        )
+
+    def _max_djup_data(
+        self, korning_id: str, analys: str, scenario: str
+    ) -> tuple[
+        NDArray[np.float64],
+        NDArray[np.bool_] | None,
+        NDArray[np.bool_] | None,
+        GeoTransformInfo,
+        dict[str, Any],
+        str,
+        str | None,
+    ] | None:
+        """Hämtar takmaskat max_djup-raster + projektmask + GeoTransformInfo + källfil/sha256."""
+        try:
+            res = self._resultat(korning_id)
+        except BelaggFel:
+            return None
+        lager_id = f"{analys}.{scenario}.max_djup"
+        la = next((x for x in res.get("lager", []) if x.get("id") == lager_id), None)
+        if la is None:
+            return None
+        fragor = getattr(self.tjanst, "fragor", None)
+        if fragor is None or not hasattr(fragor, "lager_raster"):
+            return None
+        try:
+            data = fragor.lager_raster(korning_id, lager_id)
+        except Exception:  # noqa: BLE001
+            return None
+        raster = np.asarray(data["raster"], dtype=np.float64)
+        tak_raw = data.get("tak")
+        tak = None if tak_raw is None else np.asarray(tak_raw, dtype=bool)
+        h, b = raster.shape
+        px = float(la["pixelstorlek_m"])
+        u = la["utbredning"]
+        geo = GeoTransformInfo(
+            bredd=int(b),
+            hojd=int(h),
+            x_min=float(u["x_min"]),
+            y_max=float(u["y_max"]),
+            pixelstorlek_x=px,
+            pixelstorlek_y=px,
+            epsg=3011,
+            dtype="float32",
+        )
+        projekt_mask: NDArray[np.bool_] | None = None
+        if hasattr(fragor, "_hamta") and hasattr(fragor, "_inne_i_projektet"):
+            try:
+                k_obj = fragor._hamta(korning_id)  # noqa: SLF001
+                inne = fragor._inne_i_projektet(k_obj, la, h, b)  # noqa: SLF001
+                if inne is not None:
+                    projekt_mask = np.asarray(inne, dtype=bool)
+            except Exception:  # noqa: BLE001
+                projekt_mask = None
+        utmapp = self.utmapp(korning_id)
+        enkel_tif = utmapp / analys / scenario / "max_djup.tif"
+        if enkel_tif.is_file():
+            fil_rel = f"{analys}/{scenario}/max_djup.tif"
+            fil_sha: str | None = sha256_fil(enkel_tif)
+        else:
+            tifs = sorted((utmapp / analys / scenario).glob("*/max_djup.tif"))
+            if tifs:
+                fil_rel = f"{analys}/{scenario}/*/max_djup.tif"
+                fil_sha = hash_av([(p.relative_to(utmapp).as_posix(), sha256_fil(p)) for p in tifs])
+            else:
+                fil_rel = lager_id
+                fil_sha = None
+        return raster, tak, projekt_mask, geo, dict(la), fil_rel, fil_sha
+
+    def har_max_djup_raster(self, korning_id: str, analys: str, scenario: str) -> bool:
+        """Sant om körningen har ett läsbart max_djup-raster för analys/scenario."""
+        return self._max_djup_data(korning_id, analys, scenario) is not None
+
+    def skyfall_trosklar(
+        self, korning_id: str, analys: str, scenario: str
+    ) -> SkyfallsTroskelytor | None:
+        """Deterministiska tröskelytor (≥ 10, 20, 30 cm) ur takmaskat max_djup.tif."""
+        pack = self._max_djup_data(korning_id, analys, scenario)
+        if pack is None:
+            return None
+        raster, tak, projekt_mask, geo, _la, fil_rel, fil_sha = pack
+        m = berakna_skyfallstrosklar(
+            raster,
+            geo.pixelstorlek_x,
+            tak_mask=tak,
+            projekt_mask=projekt_mask,
+        )
+        return SkyfallsTroskelytor(
+            scenario=scenario,
+            max_djup_m=m["max_djup_m"],
+            yta_over_0_1m_m2=m["yta_over_0_1m_m2"],
+            yta_over_0_2m_m2=m["yta_over_0_2m_m2"],
+            yta_over_0_3m_m2=m["yta_over_0_3m_m2"],
+            cellstorlek_m=geo.pixelstorlek_x,
+            fil=fil_rel,
+            fil_sha256=fil_sha,
+        )
+
+    def skyfall_lagpunkter(
+        self,
+        korning_id: str,
+        analys: str,
+        scenario: str,
+        *,
+        mark_z: NDArray[np.floating[Any]] | None = None,
+        max_antal: int = 3,
+        min_djup_m: float = 0.15,
+        min_avstand_m: float = 30.0,
+    ) -> list[Lagpunkt]:
+        """Deterministiskt detekterade lågpunkter (P1–P3) ur takmaskat max_djup.tif."""
+        pack = self._max_djup_data(korning_id, analys, scenario)
+        if pack is None:
+            return []
+        raster, tak, projekt_mask, geo, la, _fil_rel, _fil_sha = pack
+        vatten_mask: NDArray[np.bool_] | None = None
+        vm_fn = getattr(self.tjanst, "_vatten_mask_for_lager", None)
+        if callable(vm_fn):
+            try:
+                vm = vm_fn(korning_id, la, (raster.shape[0], raster.shape[1]))
+                if vm is not None:
+                    vatten_mask = np.asarray(vm, dtype=bool)
+            except Exception:  # noqa: BLE001
+                vatten_mask = None
+        return detektera_lagpunkter(
+            raster,
+            geo,
+            tak_mask=tak,
+            vatten_mask=vatten_mask,
+            projekt_mask=projekt_mask,
+            mark_z=mark_z,
+            max_antal=max_antal,
+            min_djup_m=min_djup_m,
+            min_avstand_m=min_avstand_m,
         )
 
     def _omrade(
@@ -788,9 +1132,14 @@ __all__ = [
     "TVAD_MATVARDEN",
     "VATTEN_MATVARDEN",
     "OMRADESSTATISTIK",
+    "SKYFALL_TROSKEL_M",
     "BelaggFel",
     "BelaggKalla",
     "FlodenBelaggKalla",
+    "Lagpunkt",
     "Matt",
     "Mottagare",
+    "SkyfallsTroskelytor",
+    "berakna_skyfallstrosklar",
+    "detektera_lagpunkter",
 ]

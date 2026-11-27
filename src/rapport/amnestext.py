@@ -119,10 +119,71 @@ def bildtext_lagrad(
     )
 
 
+_INFINITIV_START: Final[tuple[str, ...]] = (
+    "skissa",
+    "utreda",
+    "bedöma",
+    "pröva",
+    "undersöka",
+    "jämföra",
+    "analysera",
+    "belysa",
+    "kartlägga",
+    "kontrollera",
+    "visa",
+    "granska",
+    "beräkna",
+    "sålla",
+    "ta ",
+    "ge ",
+    "se ",
+    "klargöra",
+    "fastställa",
+    "stödja",
+    "värdera",
+    "följa",
+    "beskriva",
+    "redovisa",
+    "utvärdera",
+    "verifiera",
+    "belysa",
+    "avgöra",
+)
+
+
+def _syftesmening(syfte_ra: str, sbk: bool) -> str:
+    """Grammatiskt korrekt svensk syftesmening — dubblerar aldrig 'för att skissunderlag'."""
+    syfte = " ".join(str(syfte_ra).split()).rstrip(".")
+    if not syfte:
+        return "Underlaget är ett skissunderlag för tidig sållning." if sbk else "Skissunderlag."
+    low = syfte.lower()
+    inled_l = syfte[:1].lower() + syfte[1:]
+    inled_u = syfte[:1].upper() + syfte[1:]
+    if low.startswith("för att "):
+        return f"Underlaget är beställt {inled_l}." if sbk else f"Skissunderlag beställt {inled_l}."
+    if low.startswith("att "):
+        return f"Underlaget är beställt för {inled_l}." if sbk else f"Skissunderlag beställt för {inled_l}."
+    forstam = low.split(" ", 1)[0]
+    if any(low.startswith(v) for v in _INFINITIV_START) or (
+        forstam.endswith("a") and len(forstam) > 3 and forstam not in ("solstudie", "karta", "skala", "yta", "data", "några", "alla", "olika", "stora", "nya")
+    ):
+        return (
+            f"Underlaget är beställt för att {inled_l}."
+            if sbk
+            else f"Skissunderlag beställt för att {inled_l}."
+        )
+    return (
+        f"Beställningen avser: {inled_u}."
+        if sbk
+        else f"Beställningen avser: {inled_u}."
+    )
+
+
 def bildtext_sbk(
     amne: str, typ: str, scenario: str, fore: str, efter: str, korning: str, losare: str
 ) -> str:
-    """Bildtexten i språkprofilen sbk (utan figurnummer)."""
+    """Bildtexten i språkprofilen sbk (utan figurnummer och utan råa körnings-slugs)."""
+    del korning  # körnings-id hör hemma i teknisk spårbarhetsbilaga
     if amne == "ekologi":
         if typ == "skillnad":
             vad = (
@@ -131,10 +192,7 @@ def bildtext_sbk(
             )
         else:
             vad = f"Strömtäthet (flaskhalsar) {lage(amne, scenario)}, i {EKOLOGI_ENHET}."
-        return (
-            f"{vad} Gäller {EKOLOGI_ETIKETT} för signalarten. Beräkning {korning}. Norr uppåt. "
-            f"{tomvarde_sbk(amne)}"
-        )
+        return f"{vad} Gäller {EKOLOGI_ETIKETT} för signalarten. Norr uppåt. {tomvarde_sbk(amne)}"
     if amne == "dagsljus":
         if typ == "skillnad":
             vad = (
@@ -143,10 +201,7 @@ def bildtext_sbk(
             )
         else:
             vad = f"Direkt sol på marken {lage(amne, scenario)}, i timmar (h) per dygn."
-        return (
-            f"{vad} Dygnssumma: medel över de valda datumen. Beräkning {korning}. Norr uppåt. "
-            f"{tomvarde_sbk(amne)}"
-        )
+        return f"{vad} Dygnssumma: medel över de valda datumen. Norr uppåt. {tomvarde_sbk(amne)}"
     statisk = losare == "vatten.statisk_fyllning"
     tid = (
         "Läget när regnet har slutat (statisk fyllning)."
@@ -160,7 +215,7 @@ def bildtext_sbk(
         )
     else:
         vad = f"Största vattendjup på marken {lage(amne, scenario)}, i meter (m)."
-    return f"{vad} {tid} Beräkning {korning}. Norr uppåt. {tomvarde_sbk(amne)}"
+    return f"{vad} {tid} Norr uppåt. {tomvarde_sbk(amne)}"
 
 
 def fragenamn(r: Rapport) -> str:
@@ -224,14 +279,8 @@ def ingress(r: Rapport, sbk: bool, demo: bool) -> str:
         ]
     else:
         roll = MOTTAGARTEXT[b.mottagare_roll]
-        syfte = b.syfte.rstrip(".")
-        syfte = syfte[:1].lower() + syfte[1:]
         delar = [
-            (
-                f"Underlaget är beställt för att {syfte}."
-                if sbk
-                else f"Skissunderlag beställt för att {syfte}."
-            ),
+            _syftesmening(b.syfte, sbk),
             {
                 "planhandlaggare": (
                     "Det är skrivet för planhandläggaren: det visar vilka frågor som behöver "

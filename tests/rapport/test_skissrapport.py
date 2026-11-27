@@ -154,7 +154,8 @@ def test_word_innehaller_ratt_tal(exporterad: dict[str, Any], m: Miljo) -> None:
     assert "vatten.statisk_fyllning" in text and "skiss" in text
     import docx
 
-    assert len(docx.Document(str(exporterad["word"])).inline_shapes) == 3
+    # 3 huvudkartor (före/efter sida-vid-sida + skillnad) samt detaljzoom + tvärsektion
+    assert len(docx.Document(str(exporterad["word"])).inline_shapes) == 5
 
 
 def test_pdf_har_sidor_och_text(exporterad: dict[str, Any]) -> None:
