@@ -1027,6 +1027,35 @@ class KartverktygTjanst:
             kommun = kalla.geografi.split("@", 1)[0].strip()
         return kommun or None
 
+    def _projekt_kommun(self, kalla: Projektkalla) -> str | None:
+        """Hämtar kommun-id ur `projekt.json` (primärt) eller geografimanifest (additivt för GYF-förval)."""
+        if kalla.mapp is not None:
+            fil = kalla.mapp / "projekt.json"
+            if fil.is_file():
+                try:
+                    raw = json.loads(fil.read_text(encoding="utf-8"))
+                    if isinstance(raw, Mapping):
+                        val = raw.get("kommun")
+                        if isinstance(val, str) and val.strip():
+                            return val.strip()
+                except (OSError, ValueError):
+                    pass
+        return self._kommun_for_kalla(kalla)
+
+    def _har_nmd(self, kalla: Projektkalla, mallar: Mapping[str, Mall]) -> bool:
+        """Sant om projektet har ekologimall eller `lager.nmd` i sitt geografimanifest."""
+        if "ekologi" in mallar:
+            return True
+        if kalla.geografi and self.geomapp is not None:
+            try:
+                manifest, _ = las_geo_manifest(self.geomapp, kalla.geografi, verifiera=False)
+                lager = manifest.get("lager")
+                if isinstance(lager, Mapping) and isinstance(lager.get("nmd"), Mapping):
+                    return True
+            except GeografiFel:
+                pass
+        return False
+
     def _forberaknad_bas(
         self,
         kalla: Projektkalla,
@@ -1376,6 +1405,10 @@ class KartverktygTjanst:
             "slag": kalla.slag,
             "namn": kalla.namn,
             "geografi": kalla.geografi,
+            # Additivt (Etapp 2): kommun-id för GYF-förval samt indataflaggor för NMD och brytlinjer.
+            "kommun": self._projekt_kommun(kalla),
+            "har_nmd": self._har_nmd(kalla, mallar),
+            "har_brytlinjer": bool(brytl),
             "forberaknad_bas": self._forberaknad_bas(kalla, utbr),
             "berakningsomfang": self._berakningsomfang(kalla),
             "avgransning_3011": list(kalla.avgransning) if kalla.avgransning else None,

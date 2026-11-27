@@ -143,3 +143,35 @@ export function luftPanelHtml(indata: LuftPanelIndata): string {
     <p class="flode-liten flode-dampad">Alla tal kommer ur körningen ${esc(indata.korningId)}.</p>
     ${indata.las ? `<details class="flode-detalj"><summary>Så läser du kartan</summary><p class="flode-liten flode-dampad">${esc(indata.las)}</p></details>` : ""}`;
 }
+
+export interface LuftTomIndata {
+  harMall?: boolean;
+  rapportHref?: string | null;
+}
+
+/** Ärlig översikt för domänen Vind & Luft i Steg 2 när inga luftkörningar finns ännu. */
+export function luftTomPanelHtml(indata: LuftTomIndata = {}): string {
+  const harMall = Boolean(indata.harMall);
+  const korTips = harMall
+    ? `<p class="flode-liten">Projektet har en luftmall redo. Tryck på beräkningsknappen ovan för att räkna vindkomfort och luftkvalitet i nuläget.</p>`
+    : `<div class="flode-ruta ar-luft-tom-ruta">
+        <p><strong>Inga vind- eller luftkörningar finns i projektet ännu.</strong></p>
+        <p>Floden hittar aldrig på väder- eller trafikdata. För att räkna Vind &amp; Luft på kartan krävs:</p>
+        <ul class="ar-luft-krav">
+          <li><strong>Vindkomfort (NEN 8100, skiss):</strong> väderunderlag (vindros / SMHI-vindstatistik) och en luftmall (<code>luft.toml</code>) i projektet.</li>
+          <li><strong>Luftkvalitet &amp; MKN (PM10/NO₂, skiss):</strong> trafik- och emissionsunderlag samt bakgrundshalt.</li>
+        </ul>
+        ${
+          indata.rapportHref
+            ? `<p class="flode-liten">Har du redan en extern timserie (CSV) och bakgrundshalt kan du skapa en MKN-rapport direkt i <a href="${esc(indata.rapportHref)}">Steg 3 · Rapport</a>.</p>`
+            : ""
+        }
+      </div>`;
+  return `
+    <div class="ar-doman-huvud">
+      <h1 class="flode-h" id="ar-rubrik">Vind &amp; Luft</h1>
+      <span class="ar-skiss-badge" title="Metodstatus: skiss">SKISS</span>
+    </div>
+    <p class="flode-liten flode-dampad">${esc(LUFT_SKISS_NOTIS)}</p>
+    ${korTips}`;
+}

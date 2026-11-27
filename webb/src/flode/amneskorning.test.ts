@@ -180,12 +180,10 @@ test("analyserForAktivtAmne mappar aktivt ämne till egna analyser med säker fa
   assert.deepEqual(ar.analyserForAktivtAmne(info, "vatten"), ["vatten.skyfall"]);
   assert.deepEqual(ar.analyserForAktivtAmne(info, "dagsljus"), ["dagsljus.sol"]);
   assert.deepEqual(ar.analyserForAktivtAmne(info, "ekologi"), ["ekologi.konnektivitet"]);
-  // Ämne utan egen körbar mall ("luft") faller säkert tillbaka på projektets förvalda analyser
-  assert.deepEqual(ar.analyserForAktivtAmne(info, "luft"), [
-    "vatten.skyfall",
-    "dagsljus.sol",
-    "ekologi.konnektivitet",
-  ]);
+  // Ämne utan egen körbar mall ("luft", "mikroklimat", "buller") faller ALDRIG tyst tillbaka på Skyfall
+  assert.deepEqual(ar.analyserForAktivtAmne(info, "luft"), []);
+  assert.deepEqual(ar.analyserForAktivtAmne(info, "mikroklimat"), []);
+  assert.deepEqual(ar.analyserForAktivtAmne(info, "buller"), []);
 
   // Etiketter: ämnesspecifika när > 1 körbart ämne finns och aktivt ämne har egna analyser
   const solEtik = ar.korKnappEtiketterForAmne(info, "dagsljus");
@@ -198,17 +196,18 @@ test("analyserForAktivtAmne mappar aktivt ämne till egna analyser med säker fa
   assert.equal(vatEtik.arFlerAmnen, true);
   assert.equal(vatEtik.nulage, "Beräkna skyfall (nuläge)");
 
-  // Fallback-ämne (luft saknas i info.analyser) ska inte visa vilseledande "Beräkna luft" eller dubbel "alla ämnen"-knapp
+  // Ämne utan egen körbar mall ska inte visa vilseledande "Beräkna luft" eller dubbel "alla ämnen"-knapp
   const luftEtik = ar.korKnappEtiketterForAmne(info, "luft");
   assert.equal(luftEtik.arFlerAmnen, false);
   assert.equal(luftEtik.nulage, "Beräkna nuläge");
 
-  // Enämnesprojekt visar korta standardetiketter utan sekundär "alla ämnen"-knapp
+  // Enämnesprojekt visar korta standardetiketter utan sekundär "alla ämnen"-knapp och faller aldrig tyst tillbaka på Skyfall
   const baraVatten: Pick<ProjektInfo, "analyser"> = {
     analyser: [{ id: "vatten.skyfall", namn: "Skyfall", mall: "vatten", analys: "skyfall", forval: true }],
   };
   assert.deepEqual(ar.analyserForAktivtAmne(baraVatten, "vatten"), ["vatten.skyfall"]);
-  assert.deepEqual(ar.analyserForAktivtAmne(baraVatten, "dagsljus"), ["vatten.skyfall"]);
+  assert.deepEqual(ar.analyserForAktivtAmne(baraVatten, "dagsljus"), []);
+  assert.deepEqual(ar.analyserForAktivtAmne(baraVatten, "ekologi"), []);
   assert.equal(ar.korKnappEtiketterForAmne(baraVatten, "vatten").arFlerAmnen, false);
   assert.equal(ar.korKnappEtiketterForAmne(baraVatten, "vatten").nulage, "Beräkna nuläge");
 
