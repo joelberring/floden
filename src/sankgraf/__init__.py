@@ -28,6 +28,10 @@ from sankgraf.hierarki import (
     sammanfoga_rutor,
 )
 from sankgraf.persistens import filtrera_persistens
+from sankgraf.rust_brygga import (
+    SankGrafRustFel,
+    hitta_sankgraf_karna,
+)
 from sankgraf.typer import (
     BYGGNAD_NOD_ID,
     HAR_PYARROW,
@@ -61,6 +65,7 @@ __all__ = [
     "FlodesVag",
     "SankGraf",
     "SankGrafFel",
+    "SankGrafRustFel",
     "SankNod",
     "StatiskFyllningResultat",
     "VolymPunkt",
@@ -75,6 +80,7 @@ __all__ = [
     "detektera_bifurkationer",
     "exportera_bifiltrering_json",
     "filtrera_persistens",
+    "hitta_sankgraf_karna",
     "kor_statisk_k1_mapp",
     "las_brytlinjer_fran_gpkg",
     "las_geotiff_int64",
