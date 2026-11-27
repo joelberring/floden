@@ -735,6 +735,7 @@ export interface GyfUtciKontroller {
   rensaVarmelager(): void;
   sattStandardProfil(profil: GyfProfilId): void;
   sattAktivDoman(doman: string): void;
+  sakerstallGyfLaddad?(): void;
   sattPlatsensVader?(vader: PlatsensVaderUtciInfo | null): void;
   status(): GyfUtciStatus;
 }
@@ -983,6 +984,11 @@ export function kopplaGyfUtciPaneler(
     sattAktivDoman: (doman: string) => {
       aktivDoman = doman;
       rita();
+    },
+    sakerstallGyfLaddad: () => {
+      if (gyfState.svar === null && !gyfState.laddar && gyfState.fel === null) {
+        void korGyf();
+      }
     },
     sattPlatsensVader: (vader: PlatsensVaderUtciInfo | null) => {
       vsState.platsensVader = vader;

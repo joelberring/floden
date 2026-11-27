@@ -78,8 +78,13 @@ TILLATNA_SMHI_VARDAR: Final[frozenset[str]] = frozenset(
     }
 )
 
-STRANG_PARAM_GLOBAL: Final[int] = 116  # Globalstrålning (W/m²)
-STRANG_PARAM_DIREKT_NORMAL: Final[int] = 117  # Direkt normalstrålning (W/m²)
+# I SMHI STRÅNG v1 är:
+#   116 = CIE UV-irradians (mW/m²) – INTE globalstrålning (används ej för UTCI)
+#   117 = Globalstrålning (W/m²)
+#   118 = Direkt normalstrålning (W/m²)
+STRANG_PARAM_CIE_UV: Final[int] = 116  # CIE UV-irradians (mW/m²) – endast dokumentation
+STRANG_PARAM_GLOBAL: Final[int] = 117  # Globalstrålning (W/m²)
+STRANG_PARAM_DIREKT_NORMAL: Final[int] = 118  # Direkt normalstrålning (W/m²)
 
 STANDARD_TIMEOUT_S: Final[float] = 20.0
 DATAVARDLUFT_TIMEOUT_S: Final[float] = 5.0
@@ -367,7 +372,7 @@ def hamta_metobs_parameter_serie(
 
 @dataclass(frozen=True)
 class StrangSommarResultat:
-    """Solstrålning ur SMHI STRÅNG v1 (`116` global, `117` direkt normal) för sommaren."""
+    """Solstrålning ur SMHI STRÅNG v1 (`117` global, `118` direkt normal) för sommaren."""
 
     lon_grader: float
     lat_grader: float
@@ -416,11 +421,11 @@ def bygg_strang_url(
     till_datum: str,
     bas_url: str = SMHI_STRANG_BAS_URL,
 ) -> str:
-    """Bygger URL för SMHI STRÅNG v1 (`parameter 116` global eller `117` direkt normal)."""
+    """Bygger URL för SMHI STRÅNG v1 (`parameter 117` global eller `118` direkt normal)."""
     if parameter_id not in (STRANG_PARAM_GLOBAL, STRANG_PARAM_DIREKT_NORMAL):
         raise SmhiLuftStrangFel(
-            f"Ogiltig STRÅNG-parameter {parameter_id}: använd 116 (global) eller "
-            "117 (direkt normal)."
+            f"Ogiltig STRÅNG-parameter {parameter_id}: använd 117 (globalstrålning, W/m²) eller "
+            "118 (direkt normalstrålning, W/m²); 116 är CIE UV-irradians (mW/m²)."
         )
     if not (math.isfinite(lon_grader) and math.isfinite(lat_grader)):
         raise SmhiLuftStrangFel("Longitud och latitud måste vara ändliga tal.")
@@ -503,9 +508,9 @@ def tolka_strang_json(
 
     obs_lista.sort(key=lambda o: o.epoch_s)
     namn = (
-        "Globalstrålning (STRÅNG 116)"
+        "Globalstrålning (STRÅNG 117)"
         if parameter_id == STRANG_PARAM_GLOBAL
-        else "Direkt normalstrålning (STRÅNG 117)"
+        else "Direkt normalstrålning (STRÅNG 118)"
     )
     eff_param = PARAM_GLOBALSTRALNING if parameter_id == STRANG_PARAM_GLOBAL else parameter_id
     return SmhiParameterSerie(
@@ -536,7 +541,7 @@ def hamta_strang_parameter(
     hamtare: HamtareFn | None = None,
     timeout_s: float = STANDARD_TIMEOUT_S,
 ) -> tuple[SmhiParameterSerie, str]:
-    """Hämtar och tolkar en SMHI STRÅNG v1-parameter (`116` eller `117`) för en punkt."""
+    """Hämtar och tolkar en SMHI STRÅNG v1-parameter (`117` eller `118`) för en punkt."""
     url = bygg_strang_url(
         lon_grader,
         lat_grader,
@@ -579,7 +584,7 @@ def hamta_strang_sommarstralning(
     hamtare: HamtareFn | None = None,
     timeout_s: float = STANDARD_TIMEOUT_S,
 ) -> StrangSommarResultat:
-    """Hämtar STRÅNG globalstrålning (`116`) och direkt normalstrålning (`117`) för sommaren."""
+    """Hämtar STRÅNG globalstrålning (`117`) och direkt normalstrålning (`118`) för sommaren."""
     f_dat = fran_datum or f"{int(ar)}-06-01"
     t_dat = till_datum or f"{int(ar)}-08-31"
     global_serie, global_sha = hamta_strang_parameter(
@@ -904,9 +909,9 @@ def hamta_smhi_vaderpaket(
                 hamtare=hamtare,
                 timeout_s=timeout_s,
             )
-            kallor_sha["strang_global_116"] = strang_res.global_sha256
+            kallor_sha["strang_global_117"] = strang_res.global_sha256
             if strang_res.direkt_normal_sha256:
-                kallor_sha["strang_direkt_normal_117"] = strang_res.direkt_normal_sha256
+                kallor_sha["strang_direkt_normal_118"] = strang_res.direkt_normal_sha256
         except SmhiLuftStrangFel as exc:
             varningar.append(
                 f"SMHI STRÅNG kunde inte hämtas ({exc}); UTCI saknar STRÅNG-strålning."
@@ -1608,6 +1613,7 @@ __all__ = [
     "SMHI_LICENS_SPDX",
     "SMHI_LICENS_TEXT",
     "SMHI_STRANG_BAS_URL",
+    "STRANG_PARAM_CIE_UV",
     "STRANG_PARAM_DIREKT_NORMAL",
     "STRANG_PARAM_GLOBAL",
     "TILLATNA_SMHI_VARDAR",

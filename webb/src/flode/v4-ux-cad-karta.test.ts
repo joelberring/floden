@@ -165,6 +165,12 @@ test("GET /api/analys/ekologi: hamtaEkologiAnalys använder GET med URLSearchPar
   // Källkodskontroll i arbetsyta.ts: Steg 2 anropar hamtaEkologiAnalys och postar aldrig till /api/analys/ekologi
   assert.match(ARBETSYTA_KALLTEXT, /hamtaEkologiAnalys<EkologiMedLager>\(/);
   assert.doesNotMatch(ARBETSYTA_KALLTEXT, /\/api\/analys\/ekologi["'][^;\n]*method:\s*["']POST["']/);
+  // Icke-blockerande Ekologi & GYF: ritaAnalysPanel() (som anropar ritaEkologiSkrivbord) och GYF körs FÖRE hamtaEkologiAnalys()
+  const idxValjVy = ARBETSYTA_KALLTEXT.indexOf("const valjVy = async");
+  const idxRitaPanel = ARBETSYTA_KALLTEXT.indexOf("ritaAnalysPanel();", idxValjVy);
+  const idxHamtaEko = ARBETSYTA_KALLTEXT.indexOf("hamtaEkologiAnalys<EkologiMedLager>(", idxValjVy);
+  assert.ok(idxValjVy > 0 && idxRitaPanel > idxValjVy && idxHamtaEko > idxRitaPanel);
+  assert.match(ARBETSYTA_KALLTEXT, /gyfUtciKontroller\.sakerstallGyfLaddad\?\.\(\)/);
 });
 
 // ------------------------------------------------------------------ 2. U5c: Tangentbordsåtkomst för kartvärden

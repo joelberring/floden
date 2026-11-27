@@ -188,3 +188,85 @@ def test_cg_ej_konvergerad_faller_tillbaka_eller_ger_fel(monkeypatch: pytest.Mon
     monkeypatch.setattr(krets_mod, "cg", _falsk_cg)
     with pytest.raises(EkologiFel, match="konvergerade inte"):
         los_kretspar(myta, mask_a, mask_b, cg_troskel=10)
+
+
+def test_forbered_kretsgraf_och_snabb_konnektivitet_320x320_med_80_flackar() -> None:
+    """Profil: `320×320`-rutnät med `80` fläckar kör < 25 s och < 600 MB RSS (exakt ECA/PC/dPC)."""
+    import resource
+    import sys
+    import time
+
+    from ekologi import (
+        berakna_pc_eca,
+        forbered_kretsgraf,
+        los_kretspar_forberedd,
+    )
+
+    rss_div = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
+
+    # 1. Förberäknad graf ska ge bitidentiskt resultat mot `los_kretspar`
+    myta, mask_a, mask_b = _heterogent_motstand(24, 30, seed=11)
+    ref = los_kretspar(myta, mask_a, mask_b, grannskap=4)
+    graf = forbered_kretsgraf(myta, grannskap=4)
+    snabb = los_kretspar_forberedd(graf, mask_a, mask_b)
+    assert snabb.effektivt_motstand == pytest.approx(ref.effektivt_motstand, rel=1e-12)
+    np.testing.assert_allclose(snabb.stromtathet, ref.stromtathet, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(snabb.kanslighet_cell, ref.kanslighet_cell, rtol=1e-12, atol=1e-12)
+
+    # 2. Stort tätortsfönster: 320×320 celler med 80 habitatfläckar och 20 % byggnadsbarriärer
+    rng = np.random.default_rng(42)
+    ny, nx = 320, 320
+    profil = STANDARD_ARTPROFILER["pollinerare"]
+    hab_kod = min(profil.habitat_markslag)
+    bakgrund_kod = next(
+        kod for kod in (MARKSLAG_SKOG, MARKSLAG_OPPEN, 3) if kod not in profil.habitat_markslag
+    )
+    ms = np.full((ny, nx), bakgrund_kod, dtype=np.uint8)
+    ms[rng.random((ny, nx)) < 0.2] = MARKSLAG_BYGGNAD
+    for k in range(80):
+        r0 = (k // 10) * 38 + 4
+        c0 = (k % 10) * 30 + 4
+        h = 4 + (k % 5)
+        w = 4 + ((k * 3) % 5)
+        ms[r0 : r0 + h, c0 : c0 + w] = hab_kod
+
+    rss_fore_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / rss_div
+    t0 = time.perf_counter()
+    res = berakna_konnektivitet(
+        ms,
+        profil,
+        cell_m=10.0,
+        extra_barriar_mask=(ms == MARKSLAG_BYGGNAD),
+        berakna_flaskhalsar=True,
+    )
+    dt = time.perf_counter() - t0
+    rss_efter_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / rss_div
+    delta_rss_mb = max(0.0, rss_efter_mb - rss_fore_mb)
+
+    assert res.antal_flackar == 80
+    assert dt < 25.0, f"berakna_konnektivitet (320×320, 80 fläckar) tog {dt:.2f} s (> 25 s)"
+    assert delta_rss_mb < 600.0, f"RSS-ökning blev {delta_rss_mb:.1f} MB (> 600 MB)"
+    assert res.stromtathet_sammanlagd is not None
+    assert res.kanslighet_sammanlagd is not None
+    assert res.stromtathet_sammanlagd.shape == (ny, nx)
+    assert res.kanslighet_sammanlagd.shape == (ny, nx)
+    assert 1 <= res.antal_kretspar_beraknade <= 60
+    assert res.antal_kretspar_totalt > res.antal_kretspar_beraknade
+    assert 0.0 < res.kretspar_vikt_andel <= 1.0
+    assert res.krets_upplosningsfaktor == 2
+    assert float(np.max(res.stromtathet_sammanlagd[ms == MARKSLAG_BYGGNAD])) == 0.0
+    assert float(np.max(res.kanslighet_sammanlagd)) <= 0.0
+
+    # 3. ECA, PC och dPC är 100 % exakta över samtliga 80 fläckar (identiska mot berakna_pc_eca)
+    hab = extrahera_habitatflackar(ms, profil, cell_m=10.0)
+    areor = np.array([f.effektiv_area_m2 for f in hab.flackar], dtype=np.float64)
+    pc_ex, eca_ex, _, bet_ex = berakna_pc_eca(
+        areor,
+        res.kostnadsavstand_m,
+        profil.spridningsavstand_m,
+        hab.analys_area_m2,
+        flack_ids=tuple(f.flack_id for f in hab.flackar),
+    )
+    assert res.eca_m2 == pytest.approx(eca_ex, rel=1e-12)
+    assert res.pc == pytest.approx(pc_ex, rel=1e-12)
+    assert res.flack_betydelse == bet_ex

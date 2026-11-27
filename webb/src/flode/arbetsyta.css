@@ -1951,17 +1951,48 @@
   border-color: var(--f-accent, #111111);
   color: var(--f-bakgrund, #ffffff);
 }
+.ar-bl-trafik-tabell-ram {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--f-linje, #d9d9d9);
+  background: var(--f-yta, #ffffff);
+}
+.ar-bl-trafik-tabell-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
 .ar-bl-trafik-tabell {
   width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.ar-bl-trafik-tabell th,
+.ar-bl-trafik-tabell td {
+  padding: 4px 5px;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.ar-bl-trafik-tabell td:first-child {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .ar-bl-trafik-tabell input[type="text"] {
-  width: 62px;
+  width: 54px;
   min-height: 26px;
   padding: 2px 4px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+.ar-bl-trafik-atgarder {
+  padding: 6px;
+  border-top: 1px solid var(--f-linje, #d9d9d9);
 }
 .ar-kallmarke {
   display: inline-block;
@@ -2002,6 +2033,12 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
+}
+#ar-luft-bakgrund,
+.ar-luft-bakgrund-kort {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .ar-luft-vindros-kort svg {
   display: block;
