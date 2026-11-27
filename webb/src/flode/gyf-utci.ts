@@ -130,10 +130,50 @@ export const STANDARD_VARMESTRESS_PARAM: Readonly<VarmestressParam> = {
   solazimut_grad: 180.0,
 };
 
-export type VarmestressForvalId = "varmebolja" | "sommardag" | "anpassa";
+export type VarmestressForvalId =
+  | "varmebolja"
+  | "sommardag"
+  | "platsens_smhi_p95"
+  | "platsens_smhi_p99"
+  | "anpassa";
+
+export interface PlatsensSmhiUtciForval {
+  id: "platsens_smhi_p95" | "platsens_smhi_p99" | string;
+  percentil: number;
+  etikett: string;
+  station_id: string | null;
+  station_namn: string | null;
+  station_avstand_km: number | null;
+  ar: number | null;
+  kalla_text?: string | null;
+  t_luft_c: number;
+  relativ_fuktighet_pct: number | null;
+  vind_10m_m_s: number | null;
+  globalstralning_w_m2: number | null;
+  direkt_normal_w_m2?: number | null;
+  sol_direkt_w_m2: number | null;
+  sol_diffus_w_m2: number | null;
+  solhojd_grad: number;
+  solazimut_grad?: number;
+  strang_kalla?: string | null;
+}
+
+export interface PlatsensVaderUtciInfo {
+  station_id: string | null;
+  station_namn: string | null;
+  station_avstand_km: number | null;
+  ar: number | null;
+  kalla?: string | null;
+  kalla_text?: string | null;
+  lager_sha256?: string | null;
+  forval: {
+    platsens_smhi_p95?: PlatsensSmhiUtciForval | null;
+    platsens_smhi_p99?: PlatsensSmhiUtciForval | null;
+  };
+}
 
 export interface VarmestressForvalPost {
-  id: Exclude<VarmestressForvalId, "anpassa">;
+  id: "varmebolja" | "sommardag";
   etikett: string;
   param: Readonly<VarmestressParam>;
 }
@@ -221,8 +261,10 @@ export interface VarmestressAnalysSvar {
   format: string;
   omrade_id: string;
   scenario: string | null;
+  forval?: VarmestressForvalId | string | null;
   metodstatus: string;
   parametrar: VarmestressParam;
+  platsens_vader?: PlatsensVaderUtciInfo | null;
   geometri?: {
     cellstorlek_m: number;
     utbredning: Utbredning;
@@ -270,9 +312,54 @@ export interface VarmestressPanelTillstand {
   aktivtLagerRoll: VarmestressLagerRoll | null;
   forval?: VarmestressForvalId;
   aktivtLage?: string;
+  platsensVader?: PlatsensVaderUtciInfo | null;
 }
 
 const arTal = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+/** Formaterar synlig källrad för platsens SMHI-väder (`SMHI <station>, <avstånd> km, <år>`). */
+export function smhiKallaText(v: PlatsensVaderUtciInfo): string {
+  const delar: string[] = [];
+  if (v.station_namn && v.station_namn.trim()) {
+    delar.push(`SMHI ${v.station_namn.trim()}`);
+  } else if (v.station_id && v.station_id.trim()) {
+    delar.push(`SMHI station ${v.station_id.trim()}`);
+  } else {
+    delar.push("SMHI");
+  }
+  if (arTal(v.station_avstand_km)) {
+    delar.push(`${formatera(v.station_avstand_km, 1)} km`);
+  }
+  if (arTal(v.ar)) {
+    delar.push(String(Math.round(v.ar)));
+  }
+  return delar.join(", ");
+}
+
+/** Konverterar ett SMHI-värmeböljeförval (`p95`/`p99`) till `VarmestressParam` utan att tappa STRÅNG-strålning. */
+export function smhiForvalTillParam(f: PlatsensSmhiUtciForval): VarmestressParam {
+  return {
+    t_luft_c: f.t_luft_c,
+    relativ_fuktighet_pct: arTal(f.relativ_fuktighet_pct)
+      ? f.relativ_fuktighet_pct
+      : STANDARD_VARMESTRESS_PARAM.relativ_fuktighet_pct,
+    vind_10m_m_s: arTal(f.vind_10m_m_s)
+      ? f.vind_10m_m_s
+      : STANDARD_VARMESTRESS_PARAM.vind_10m_m_s,
+    sol_direkt_w_m2: arTal(f.sol_direkt_w_m2)
+      ? f.sol_direkt_w_m2
+      : STANDARD_VARMESTRESS_PARAM.sol_direkt_w_m2,
+    sol_diffus_w_m2: arTal(f.sol_diffus_w_m2)
+      ? f.sol_diffus_w_m2
+      : STANDARD_VARMESTRESS_PARAM.sol_diffus_w_m2,
+    solhojd_grad: arTal(f.solhojd_grad)
+      ? f.solhojd_grad
+      : STANDARD_VARMESTRESS_PARAM.solhojd_grad,
+    solazimut_grad: arTal(f.solazimut_grad)
+      ? f.solazimut_grad
+      : STANDARD_VARMESTRESS_PARAM.solazimut_grad,
+  };
+}
 
 /** Bygger query-URL för skrivlös `GET /api/analys/gyf` (`lasare`-kompatibel). */
 export function gyfAnalysUrl(
@@ -292,6 +379,7 @@ export function varmestressAnalysUrl(
   omrade_id: string,
   param: Partial<VarmestressParam> = {},
   scenario?: string | null,
+  forval?: VarmestressForvalId | null,
 ): string {
   const p: VarmestressParam = { ...STANDARD_VARMESTRESS_PARAM, ...param };
   const q = new URLSearchParams();
@@ -304,6 +392,9 @@ export function varmestressAnalysUrl(
   q.set("solhojd_grad", String(p.solhojd_grad));
   if (arTal(p.solazimut_grad)) q.set("solazimut_grad", String(p.solazimut_grad));
   if (scenario) q.set("scenario", scenario);
+  if (forval === "platsens_smhi_p95" || forval === "platsens_smhi_p99") {
+    q.set("forval", forval);
+  }
   return `/api/analys/varmestress?${q.toString()}`;
 }
 
@@ -515,13 +606,46 @@ export function varmestressPanelHtml(t: VarmestressPanelTillstand): string {
       ${varningHtml}`;
   }
 
+  const platsens = t.platsensVader ?? s?.platsens_vader ?? null;
+  const smhiP95 = platsens?.forval?.platsens_smhi_p95 ?? null;
+  const smhiP99 = platsens?.forval?.platsens_smhi_p99 ?? null;
+  const smhiKnappar: string[] = [];
+  if (platsens && (smhiP95 || smhiP99)) {
+    if (smhiP95) {
+      smhiKnappar.push(
+        `<button type="button" data-vs-forval="platsens_smhi_p95" aria-pressed="${forval === "platsens_smhi_p95"}"${t.laddar ? " disabled" : ""}>Platsens SMHI-värmebölja (p95) · ${esc(formatera(smhiP95.t_luft_c, 1))} °C</button>`,
+      );
+    }
+    if (smhiP99) {
+      smhiKnappar.push(
+        `<button type="button" data-vs-forval="platsens_smhi_p99" aria-pressed="${forval === "platsens_smhi_p99"}"${t.laddar ? " disabled" : ""}>Platsens SMHI-värmebölja (p99) · ${esc(formatera(smhiP99.t_luft_c, 1))} °C</button>`,
+      );
+    }
+  }
+
   const forvalKnappar = [
     ...VARMESTRESS_FORVAL.map(
       (f) =>
         `<button type="button" data-vs-forval="${f.id}" aria-pressed="${forval === f.id}"${t.laddar ? " disabled" : ""}>${esc(f.etikett)}</button>`,
     ),
+    ...smhiKnappar,
     `<button type="button" data-vs-forval="anpassa" aria-pressed="${forval === "anpassa"}">Anpassa själv</button>`,
   ].join("");
+
+  const aktivtSmhi =
+    forval === "platsens_smhi_p99"
+      ? smhiP99
+      : forval === "platsens_smhi_p95"
+        ? smhiP95
+        : smhiP95 ?? smhiP99;
+  const smhiKallaRad =
+    platsens && (smhiP95 || smhiP99)
+      ? `<p class="flode-liten flode-dampad ar-vs-smhi-kalla">Platsväder: ${esc(smhiKallaText(platsens))}${
+          aktivtSmhi && arTal(aktivtSmhi.globalstralning_w_m2)
+            ? ` · STRÅNG ${esc(formatera(aktivtSmhi.globalstralning_w_m2, 0))} W/m²`
+            : ""
+        }</p>`
+      : "";
 
   const paramSamman =
     forval !== "anpassa"
@@ -536,6 +660,7 @@ export function varmestressPanelHtml(t: VarmestressPanelTillstand): string {
       </div>
       <div class="ar-utci-gyf-kropp">
         <div class="ar-vs-forval" role="group" aria-label="Väderförval för värmestress">${forvalKnappar}</div>
+        ${smhiKallaRad}
         ${paramSamman}
         <div class="ar-vs-grid"${forval === "anpassa" ? "" : " hidden"}>
           <label class="flode-liten">Lufttemp (°C)
@@ -610,6 +735,7 @@ export interface GyfUtciKontroller {
   rensaVarmelager(): void;
   sattStandardProfil(profil: GyfProfilId): void;
   sattAktivDoman(doman: string): void;
+  sattPlatsensVader?(vader: PlatsensVaderUtciInfo | null): void;
   status(): GyfUtciStatus;
 }
 
@@ -738,10 +864,13 @@ export function kopplaGyfUtciPaneler(
     try {
       const { lasJson } = await import("../api.ts");
       const svar = await lasJson<VarmestressAnalysSvar>(
-        varmestressAnalysUrl(opts.projekt, vsState.param, vsState.scenario),
+        varmestressAnalysUrl(opts.projekt, vsState.param, vsState.scenario, vsState.forval),
       );
       if (nr !== vsSeq) return;
       vsState.svar = svar;
+      if (svar.platsens_vader) {
+        vsState.platsensVader = svar.platsens_vader;
+      }
       vsState.fel = null;
       if (vsState.aktivtLagerRoll === null) vsState.aktivtLagerRoll = "utci_c";
       synkaVarmelager();
@@ -795,6 +924,15 @@ export function kopplaGyfUtciPaneler(
           behallare.querySelector<HTMLInputElement>("#ar-vs-tluft")?.focus();
           return;
         }
+        if (fv === "platsens_smhi_p95" || fv === "platsens_smhi_p99") {
+          const pv = vsState.platsensVader ?? vsState.svar?.platsens_vader ?? null;
+          const smhiPost = pv?.forval?.[fv] ?? null;
+          if (smhiPost) {
+            vsState.param = smhiForvalTillParam(smhiPost);
+            void korVarmestress();
+          }
+          return;
+        }
         const post = VARMESTRESS_FORVAL.find((x) => x.id === fv);
         if (post) {
           vsState.param = { ...post.param };
@@ -844,6 +982,10 @@ export function kopplaGyfUtciPaneler(
     },
     sattAktivDoman: (doman: string) => {
       aktivDoman = doman;
+      rita();
+    },
+    sattPlatsensVader: (vader: PlatsensVaderUtciInfo | null) => {
+      vsState.platsensVader = vader;
       rita();
     },
     status: () => ({

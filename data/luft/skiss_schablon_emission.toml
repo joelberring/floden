@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: MIT
+# Publikt referensschablonset för vägtrafikens emissionsfaktorer i tidig skiss (val 3A).
+#
+# VIKTIGT:
+# - Används ALDRIG tyst som standard; kräver aktivt val (`anvand_skiss_schablon = true`).
+# - Ersätter INTE licensbelagda HBEFA-emissionsfaktorer eller lokal fordonsflottekalibrering.
+# - Avsett enbart för översiktlig skissjämförelse i tidigt detaljplaneskede (`metodstatus = "skiss"`).
+# - För skarp MKN-utredning ska kommunens eller utredarens egen verifierade CSV/TOML-tabell
+#   (t.ex. utdrag ur HBEFA 4.2 + lokal dubbdäcks-/NORTRIP-kalibrering) laddas in.
+#
+# Källgrund (öppna publikationer):
+# - EMEP/EEA Air Pollutant Emission Inventory Guidebook 2023, Chapter 1.A.3.b.i-iv (Road transport
+#   exhaust NOx & PM10) och Chapter 1.A.3.b.vi (Automobile tyre and brake wear) samt 1.A.3.b.vii
+#   (Road surface wear), publikt sammanställda riktvärden för svensk/nordisk stadstrafik.
+# - Trafikverket / Naturvårdsverket öppna översiktsrapporter för fordonsflotta ca 2024.
+
+format = "floden-luft-emissionsfaktorer/v1"
+ar_schablon = true
+metodstatus = "skiss"
+ar = 2024
+kalla = "Öppna riktvärden för tidig skiss (EMEP/EEA Guidebook 2023 & publika svenska flottöversikter 2024; ej HBEFA)"
+varning = "SKISS-SCHABLON: Publika riktvärden valda aktivt för tidig planeringsskiss. Ersätter inte licensierade HBEFA-tabeller eller lokal kalibrering och får inte användas för formell MKN-prövning."
+
+# --- Lätta fordon (personbil + lätt lastbil, stad/tätort/infart) ---
+
+[[faktorer]]
+fordonsklass = "latt"
+hastighet_km_h = 30.0
+nox_g_km = 0.24
+pm10_avgas_g_km = 0.005
+pm10_slitage_g_km = 0.045
+direkt_no2_andel = 0.20
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, tätort 30 km/h"
+ar = 2024
+
+[[faktorer]]
+fordonsklass = "latt"
+hastighet_km_h = 50.0
+nox_g_km = 0.19
+pm10_avgas_g_km = 0.004
+pm10_slitage_g_km = 0.055
+direkt_no2_andel = 0.20
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, tätort 50 km/h"
+ar = 2024
+
+[[faktorer]]
+fordonsklass = "latt"
+hastighet_km_h = 70.0
+nox_g_km = 0.17
+pm10_avgas_g_km = 0.004
+pm10_slitage_g_km = 0.070
+direkt_no2_andel = 0.18
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, infart 70 km/h"
+ar = 2024
+
+[[faktorer]]
+fordonsklass = "latt"
+hastighet_km_h = 90.0
+nox_g_km = 0.20
+pm10_avgas_g_km = 0.004
+pm10_slitage_g_km = 0.085
+direkt_no2_andel = 0.18
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, trafikled 90 km/h"
+ar = 2024
+
+# --- Tunga fordon (tung lastbil + buss) ---
+
+[[faktorer]]
+fordonsklass = "tung"
+hastighet_km_h = 30.0
+nox_g_km = 2.40
+pm10_avgas_g_km = 0.025
+pm10_slitage_g_km = 0.220
+direkt_no2_andel = 0.14
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, tätort 30 km/h"
+ar = 2024
+
+[[faktorer]]
+fordonsklass = "tung"
+hastighet_km_h = 50.0
+nox_g_km = 1.85
+pm10_avgas_g_km = 0.020
+pm10_slitage_g_km = 0.260
+direkt_no2_andel = 0.14
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, tätort 50 km/h"
+ar = 2024
+
+[[faktorer]]
+fordonsklass = "tung"
+hastighet_km_h = 70.0
+nox_g_km = 1.55
+pm10_avgas_g_km = 0.018
+pm10_slitage_g_km = 0.310
+direkt_no2_andel = 0.12
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, infart 70 km/h"
+ar = 2024
+
+[[faktorer]]
+fordonsklass = "tung"
+hastighet_km_h = 90.0
+nox_g_km = 1.50
+pm10_avgas_g_km = 0.018
+pm10_slitage_g_km = 0.360
+direkt_no2_andel = 0.12
+kalla = "EMEP/EEA Guidebook 2023 (1.A.3.b) öppet skissriktvärde, trafikled 90 km/h"
+ar = 2024

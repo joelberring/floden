@@ -4,12 +4,20 @@ import { test } from "node:test";
 import type { LagerPost, MatvardeTabell } from "../fragor-typer.ts";
 import type { ProjektVy } from "../types.ts";
 import {
+  bakgrundLuftKortHtml,
+  emissionsKallaValHtml,
   harLuftKorningar,
   LUFT_SKISS_NOTIS,
   luftFlikKnappHtml,
   luftLagerVal,
   luftNyckeltal,
   luftPanelHtml,
+  luftSkissResultatHtml,
+  luftSteg2PanelHtml,
+  vindrosSvgHtml,
+  type BakgrundLuftData,
+  type LuftSkissAnalysSvar,
+  type SmhiVindrosData,
 } from "./luftflik.ts";
 
 const lp = (id: string, roll: string, scenario: string, typ: LagerPost["typ"], extra: Partial<LagerPost> = {}): LagerPost =>
@@ -123,5 +131,152 @@ test("luftPanelHtml märker metoden som skiss, listar enheter och har inga decim
   assert.match(html, /Årsmedelhalt \(µg\/m³\)/);
   assert.match(html, /Alla tal kommer ur körningen luft-demo-1\./);
   const synlig = html.replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(synlig, /\d\.\d/);
+});
+
+const EXEMPEL_VINDROS: SmhiVindrosData = {
+  station_id: "71420",
+  station_namn: "Göteborg A",
+  station_avstand_km: 2.1,
+  ar: 2024,
+  antal_giltiga: 8760,
+  andel_svag_vind_pct: 6.5,
+  medelvind_m_s: 3.8,
+  p95_vind_m_s: 8.4,
+  sektorer: Array.from({ length: 16 }, (_, idx) => ({
+    sektor_index: idx,
+    namn: ["N", "NNO", "NO", "ONO", "O", "OSO", "SO", "SSO", "S", "SSV", "SV", "VSV", "V", "VNV", "NV", "NNV"][idx]!,
+    centrum_grad: idx * 22.5,
+    antal: idx === 10 ? 1800 : 400,
+    andel_pct: idx === 10 ? 22.5 : 4.7,
+    medelvind_m_s: idx === 10 ? 4.6 : 3.2,
+  })),
+};
+
+test("vindrosSvgHtml ritar 16-sektors SVG-vindros med svensk talformatering utan decimalpunkter", () => {
+  const html = vindrosSvgHtml(EXEMPEL_VINDROS);
+  assert.match(html, /<svg\b[^>]*role="img"/);
+  assert.match(html, /SMHI Göteborg A, 2024/);
+  assert.match(html, /3,8 m\/s/);
+  assert.match(html, /8,4 m\/s/);
+  assert.match(html, /6,5 %/);
+  assert.match(html, /data-sektor="SV"/);
+  const synlig = html.replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(synlig, /\d\.\d/);
+});
+
+test("bakgrundLuftKortHtml visar NO2/PM10/O3 med källa eller ärlig 'bakgrund saknas'", () => {
+  const saknasHtml = bakgrundLuftKortHtml(null);
+  assert.match(saknasHtml, /Bakgrund saknas/);
+  assert.match(saknasHtml, /hittar aldrig på/i);
+
+  const bakg: BakgrundLuftData = {
+    tillganglig: true,
+    station_namn: "Femman",
+    avstand_km: 1.2,
+    kalla: "SMHI Datavärdskap luftkvalitet",
+    period_start: "2024-01-01",
+    period_slut: "2024-12-31",
+    amnen: {
+      NO2: { amne: "NO2", enhet: "µg/m³", arsmedel_ug_m3: 15.2, percentil_90_4_ug_m3: 28.4 },
+      PM10: { amne: "PM10", enhet: "µg/m³", arsmedel_ug_m3: 18.6, percentil_90_4_ug_m3: 32.1 },
+    },
+  };
+  const html = bakgrundLuftKortHtml(bakg);
+  assert.match(html, /15,2 µg\/m³/);
+  assert.match(html, /32,1 µg\/m³/);
+  assert.match(html, /Femman · 1,2 km · 2024-01-01–2024-12-31/);
+  // Saknat O3 visas ärligt som "saknas"
+  assert.match(html, /O₃.*saknas/);
+  const synlig = html.replace(/<[^>]*>/g, " ");
+  assert.doesNotMatch(synlig, /\d\.\d/);
+});
+
+test("emissionsKallaValHtml och luftSteg2PanelHtml följer val 3A och visar SKISS-resultat", () => {
+  const egenHtml = emissionsKallaValHtml({
+    lage: "egen_tabell",
+    egenFilnamn: "goteborg_hbefa.csv",
+    egenSha256: "abcdef1234567890",
+  });
+  assert.match(egenHtml, /value="egen_tabell" checked/);
+  assert.match(egenHtml, /goteborg_hbefa\.csv/);
+  assert.match(egenHtml, /abcdef123456/);
+
+  const schablonHtml = emissionsKallaValHtml({
+    lage: "skiss_schablon",
+    schablonBekraftad: false,
+  });
+  assert.match(schablonHtml, /value="skiss_schablon" checked/);
+  assert.match(schablonHtml, /Aktivt skissval \(ej HBEFA\)/);
+  assert.match(schablonHtml, /id="ar-luft-schablon-bekrafta"/);
+
+  const skissSvar: LuftSkissAnalysSvar = {
+    format: "floden-luft-skiss-webb/v1",
+    metodstatus: "skiss",
+    ar_schablon: true,
+    emissionskalla: {
+      kalla: "Öppna riktvärden",
+      ar: 2024,
+      sha256: "1234567890abcdef1234567890abcdef",
+      ar_schablon: true,
+    },
+    nortrip_kord: true,
+    nortrip_antal_timmar: 8760,
+    vindros_param: {
+      station_namn: "Göteborg A",
+      ar: 2024,
+      medelvind_m_s: 3.8,
+      effektiv_vind_m_s: 3.4,
+    },
+    lokalt_tillskott: {
+      nox_arsmedel_ug_m3: 8.4,
+      nox_dygn_ug_m3: 14.2,
+      no2_arsmedel_ug_m3: 4.1,
+      no2_dygn_ug_m3: 6.8,
+      pm10_arsmedel_ug_m3: 2.3,
+      pm10_dygn_ug_m3: 3.9,
+    },
+    bakgrund: {
+      no2_arsmedel_ug_m3: 15.0,
+      pm10_arsmedel_ug_m3: 18.0,
+      pm10_p90_4_ug_m3: 31.0,
+      o3_arsmedel_ug_m3: 58.0,
+    },
+    totalt: {
+      no2_arsmedel_ug_m3: 19.1,
+      pm10_arsmedel_ug_m3: 20.3,
+      pm10_dygn_90_4_ug_m3: 34.9,
+    },
+    per_segment: [
+      {
+        id: "sprangkullsgatan",
+        gatunamn: "Sprängkullsgatan",
+        adt_fordon_dygn: 12000,
+        hastighet_km_h: 50,
+        andel_tung_pct: 8,
+        lokalt_tillskott_nox_arsmedel_ug_m3: 8.4,
+        lokalt_tillskott_pm10_arsmedel_ug_m3: 2.3,
+      },
+    ],
+    varningar: ["Metodstatus: skiss."],
+  };
+
+  const panelHtml = luftSteg2PanelHtml({
+    vaderLuft: { har_vader_luft: true, vindros: EXEMPEL_VINDROS, bakgrund_luft: null },
+    emissionsVal: { lage: "skiss_schablon", schablonBekraftad: true },
+    skissResultat: skissSvar,
+    antalVaglankar: 1,
+  });
+  assert.match(panelHtml, /id="ar-luft-steg2-panel"/);
+  assert.match(panelHtml, /id="ar-luft-vindros"/);
+  assert.match(panelHtml, /id="ar-luft-bakgrund"/);
+  assert.match(panelHtml, /id="ar-luft-emission-val"/);
+  assert.match(panelHtml, /id="ar-luft-skiss-resultat"/);
+  assert.match(panelHtml, /19,1 µg\/m³/);
+  assert.match(panelHtml, /34,9 µg\/m³/);
+  assert.match(panelHtml, /Sprängkullsgatan/);
+  assert.match(panelHtml, />SKISS</);
+  assert.match(luftSkissResultatHtml(null, true), /Beräknar skissutsläpp/);
+  const synlig = panelHtml.replace(/<[^>]*>/g, " ");
   assert.doesNotMatch(synlig, /\d\.\d/);
 });
