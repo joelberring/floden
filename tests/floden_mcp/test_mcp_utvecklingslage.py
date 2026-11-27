@@ -34,7 +34,7 @@ from floden_mcp.http import KontoSkydd
 from floden_mcp.korlogg import Korlogg
 from floden_mcp.montera import MonteradMcp
 from floden_mcp.server import bygg_server
-from floden_mcp.utveckling import UTV_PREFIX, redigera_text
+from floden_mcp.utveckling import UTV_PREFIX, _tolka_testsvit_utdata, redigera_text
 from konto.nycklar import NyckelForrad
 from tests.demovarld.test_demo import Demo
 from tests.floden_mcp.test_mcp import Mcp
@@ -357,9 +357,22 @@ def test_superadmin_utv_verktyg_k38_demo_skydd_noll_pii_och_noll_hemligheter(
 
     lru_cache_mapp = tmp_path / "s3_lru"
     lru_cache_mapp.mkdir()
-    gammal_lru = lru_cache_mapp / "gammal.bin"
+    gammal_lru = lru_cache_mapp / "geografi" / "goteborg" / "gammal.bin"
+    gammal_lru.parent.mkdir(parents=True)
     gammal_lru.write_bytes(b"x" * 2048)
     os.utime(gammal_lru, (1_000_000, 1_000_000))  # gammal -> träffas av max_alder_dagar
+    stangd_lru = lru_cache_mapp / "geografi" / "stockholm" / "hemlig_baskarta.tif"
+    stangd_lru.parent.mkdir(parents=True)
+    stangd_lru.write_bytes(b"s" * 512)
+    os.utime(stangd_lru, (1_000_000, 1_000_000))
+    backup_lru = lru_cache_mapp / "backup" / "konto" / "konto.sqlite"
+    backup_lru.parent.mkdir(parents=True)
+    backup_lru.write_bytes(b"b" * 256)
+    os.utime(backup_lru, (1_000_000, 1_000_000))
+    epost_lru = lru_cache_mapp / "tmp" / "anna@example.test_skiss.bin"
+    epost_lru.parent.mkdir(parents=True)
+    epost_lru.write_bytes(b"e" * 128)
+    os.utime(epost_lru, (1_000_000, 1_000_000))
 
     env_map = {
         "FLODEN_MCP_UTVECKLINGSLAGE": "1",
@@ -530,14 +543,20 @@ def test_superadmin_utv_verktyg_k38_demo_skydd_noll_pii_och_noll_hemligheter(
             fel_p, _, _ = _kor(klient, sess, "utv_lagring_lista", {"prefix": forbjudet_prefix})
             assert fel_p, forbjudet_prefix
 
-        # 7. utv_lagring_stada: torrkor=True som förval, nekar icke-tmp/-prefix, raderar vid torrkor=False.
+        # 7. utv_lagring_stada: torrkor=True som förval, döljer stängd kommun/backup & redigerar PII, nekar icke-tmp/-prefix.
         fel, text, st_torr = _kor(klient, sess, "utv_lagring_stada")
         assert not fel, text
-        assert st_torr["torrkor"] is True and st_torr["antal_raderade"] == 1
+        assert st_torr["torrkor"] is True and st_torr["antal_raderade"] == 4
+        assert st_torr["dolda_icke_oppna"] == 2  # stockholm + backup/konto dolda
+        assert "geografi/goteborg/gammal.bin" in st_torr["raderade_filer"]
+        assert "tmp/[redigerad-epost]_skiss.bin" in st_torr["raderade_filer"]
+        assert "stockholm" not in json.dumps(st_torr).lower()
+        assert "konto.sqlite" not in json.dumps(st_torr).lower()
         assert gammal_lru.is_file()  # torrkörning rörde inte filen!
         fel, text, st_skarp = _kor(klient, sess, "utv_lagring_stada", {"torrkor": False})
         assert not fel, text
-        assert st_skarp["torrkor"] is False and st_skarp["antal_raderade"] == 1
+        assert st_skarp["torrkor"] is False and st_skarp["antal_raderade"] == 4
+        assert st_skarp["dolda_icke_oppna"] == 2
         assert not gammal_lru.exists()
 
         fel_obj_torr, _, obj_torr = _kor(klient, sess, "utv_lagring_stada", {"prefix": "tmp/skiss/"})
@@ -708,3 +727,60 @@ def test_redigera_text_tar_bort_epost_tokens_och_hemligheter() -> None:
     assert "[redigerad-token]" in ren
     assert "secret_key=[redigerad]" in ren
     assert "fl_mcp_xyz999" not in redigera_text("Authorization: Bearer fl_mcp_xyz999")
+
+
+def test_tolka_testsvit_utdata_flera_tabeller_och_ea_volymfel() -> None:
+    """Flertabellstolkning för `floden testsvit` (9-kol A/B + 11-kol EA + Hunter D + Dagsljus E)."""
+    multi = "\n".join(
+        [
+            "| ID | Grupp | Namn | Status | Utfall | Volymfel | Maxdjupsfel | Körtid (s) | Kommentar |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| A0 | A | Skelettfall | skelett | SKELETT | – | – | 0.0000 | OK |",
+            "| A1 | A | Enkel sänka | redo | GODKAND | 0.0000% | 0.0000 m | 0.0159 | OK |",
+            "",
+            "| Fall | Namn | Utfall | Volymfel | Maxdjup | MAE | IoU | 2D (s) | Hybrid (s) | Uppsnabbning | Kommentar |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| EA1 | EA Test 1 | GODKAND | 0.0000% | 0.405 m | 0.0053 m | 0.980 | 0.333 | – | – | OK |",
+            "| EA2 | EA Test 2 | GODKAND | 0.0250% | 0.577 m | 0.0239 m | 0.850 | 1.142 | 0.657 | 1.74x | OK |",
+            "| EA8A | EA Test 8A | GODKAND | 0.0000% | 0.557 m | 0.0200 m | 0.930 | 0.817 | 0.569 | 1.44x | OK |",
+            "",
+            "Sammanfattning: 5/5 testfall passerade.",
+        ]
+    )
+    fall, ok, totalt, max_vol, summ = _tolka_testsvit_utdata(multi)
+    assert [f["id"] for f in fall] == ["A0", "A1", "EA1", "EA2", "EA8A"]
+    assert all(f["id"] != "Fall" for f in fall)
+    assert ok == 5 and totalt == 5
+    assert summ == "Sammanfattning: 5/5 testfall passerade."
+    ea2 = next(f for f in fall if f["id"] == "EA2")
+    assert ea2["utfall"] == "GODKAND"
+    assert ea2["volymfel"] == "0.0250%"
+    assert ea2["kortid_s"] == "1.142"
+    assert max_vol == pytest.approx(0.00025)
+
+    # Grupp D (Hunter, vetenskaplig notation utan %) + Grupp E (dagsljus med Status-kolumn)
+    hunter = "\n".join(
+        [
+            "| Fall | dx (m) | t (s) | RMSE (m) | max fel (m) | frontfel (m) | volymfel | körtid (s) |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| D1 | 5 | 3600 | 0.0040 | 0.0120 | +0.0 | 2.5e-07 | 0.42 |",
+            "Sammanfattning (Grupp D / analytiska 2D-facit): GODKAND.",
+        ]
+    )
+    h_fall, h_ok, h_tot, h_vol, _ = _tolka_testsvit_utdata(hunter)
+    assert [f["id"] for f in h_fall] == ["D1"]
+    assert h_ok == 1 and h_tot == 1
+    assert h_vol == pytest.approx(2.5e-7)
+
+    dagsljus = "\n".join(
+        [
+            "| Fall | Beskrivning | Avvikelse | Gräns | Enhet | Körtid (s) | Status |",
+            "| --- | --- | ---: | ---: | --- | ---: | --- |",
+            "| E1 | Plan mark | 0 | 0.01 | – | 0.1 | GODKAND |",
+            "Sammanfattning (Grupp E / dagsljus): 1/1 passerade.",
+        ]
+    )
+    e_fall, e_ok, e_tot, e_vol, _ = _tolka_testsvit_utdata(dagsljus)
+    assert [f["id"] for f in e_fall] == ["E1"]
+    assert e_fall[0]["utfall"] == "GODKAND"
+    assert e_ok == 1 and e_tot == 1 and e_vol is None

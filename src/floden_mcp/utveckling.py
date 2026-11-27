@@ -54,7 +54,9 @@ _BENCHMARK_STANDARD_FALL: dict[str, str] = {
     "buller": "nord2000-tvastrale",
 }
 
-_EPOST_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+_EPOST_RE = re.compile(
+    r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![A-Za-z0-9-])"
+)
 _TOKEN_RE = re.compile(
     r"(?:fl_mcp_|fl_oat_|fl_sess_|sk-ant-|AIza)[A-Za-z0-9._-]{4,}"
     r"|\bsk-[A-Za-z0-9_-]{16,}\b"
@@ -178,10 +180,11 @@ def _tolka_bbox_avgransning(avgransning: list[float] | str) -> list[float]:
 
 
 def _tolka_testsvit_utdata(utdata: str) -> tuple[list[dict[str, Any]], int, int, float | None, str]:
-    """Tolkar Markdown-tabellen och sammanfattningsraden från `floden testsvit`."""
+    """Tolkar Markdown-tabeller (A/B, C/EA, D/Hunter, E/dagsljus) och sammanfattningsraden från `floden testsvit`."""
     fall: list[dict[str, Any]] = []
     max_volymfel_rel: float | None = None
     sammanfattning = ""
+    kolumner: list[str] = []
     for rad in utdata.splitlines():
         ren = rad.strip()
         if ren.startswith("Sammanfattning"):
@@ -192,35 +195,38 @@ def _tolka_testsvit_utdata(utdata: str) -> tuple[list[dict[str, Any]], int, int,
         celler = [c.strip() for c in ren.strip("|").split("|")]
         if len(celler) < 6:
             continue
-        if celler[0] in ("ID", "---") or all(set(c) <= {"-", ":"} for c in celler if c):
+        if celler[0] in ("ID", "Fall"):
+            kolumner = [c.lower() for c in celler]
             continue
-        utfall_text = ""
-        volym_text = ""
-        kortid_text = ""
-        if len(celler) >= 9:
-            # Standardtabell (grupp A/B): ID | Grupp | Namn | Status | Utfall | Volymfel | Maxdjupsfel | Körtid | Kommentar
-            fid, grupp, namn, utfall_text, volym_text, kortid_text = (
-                celler[0],
-                celler[1],
-                celler[2],
-                celler[4],
-                celler[5],
-                celler[7],
-            )
+        if celler[0] == "---" or all(set(c) <= {"-", ":"} for c in celler if c):
+            continue
+        rad_map = {kol: celler[i] for i, kol in enumerate(kolumner) if i < len(celler)}
+        fid = rad_map.get("id") or rad_map.get("fall") or celler[0]
+        grupp = rad_map.get("grupp", "")
+        namn = rad_map.get("namn") or rad_map.get("beskrivning") or ""
+        if "utfall" in rad_map:
+            utfall_text = rad_map["utfall"]
+        elif rad_map.get("status") in ("GODKAND", "UNDERKAND", "SKELETT"):
+            utfall_text = rad_map["status"]
         else:
-            # EA / Hunter / Grupp E kompakt tabell
-            fid = celler[0]
-            grupp = ""
-            namn = celler[1]
             utfall_text = next(
-                (c for c in celler if c in ("GODKAND", "UNDERKAND", "SKELETT")), celler[-1]
+                (c for c in celler if c in ("GODKAND", "UNDERKAND", "SKELETT")), ""
             )
+        volym_text = rad_map.get("volymfel", "")
+        if not volym_text and not kolumner:
             volym_text = next((c for c in celler if "%" in c), "")
-            kortid_text = ""
-        if volym_text:
+        kortid_text = rad_map.get("körtid (s)") or rad_map.get("2d (s)") or ""
+        if volym_text and volym_text not in ("–", "-"):
             m_vol = _VOLYMFEL_PCT_RE.search(volym_text)
+            rel: float | None = None
             if m_vol:
                 rel = float(m_vol.group(1)) / 100.0
+            else:
+                try:
+                    rel = abs(float(volym_text))
+                except ValueError:
+                    rel = None
+            if rel is not None:
                 max_volymfel_rel = rel if max_volymfel_rel is None else max(max_volymfel_rel, rel)
         fall.append(
             {
@@ -228,8 +234,8 @@ def _tolka_testsvit_utdata(utdata: str) -> tuple[list[dict[str, Any]], int, int,
                 "grupp": grupp,
                 "namn": redigera_text(namn),
                 "utfall": utfall_text,
-                "volymfel": volym_text or None,
-                "kortid_s": kortid_text or None,
+                "volymfel": None if volym_text in ("", "–", "-") else volym_text,
+                "kortid_s": None if kortid_text in ("", "–", "-") else kortid_text,
             }
         )
     antal_godkanda = sum(1 for f in fall if f["utfall"] in ("GODKAND", "SKELETT"))
@@ -238,6 +244,8 @@ def _tolka_testsvit_utdata(utdata: str) -> tuple[list[dict[str, Any]], int, int,
     if m_sum:
         antal_godkanda = int(m_sum.group(1))
         antal_totalt = int(m_sum.group(2))
+    elif "GODKAND" in sammanfattning and "UNDERKAND" not in sammanfattning and antal_totalt > 0 and antal_godkanda == 0:
+        antal_godkanda = antal_totalt
     return fall, antal_godkanda, antal_totalt, max_volymfel_rel, sammanfattning
 
 
@@ -671,7 +679,7 @@ def registrera_utvecklingsverktyg(
                 if len(segment) >= 2 and not _ar_oppen_kommun(segment[1]):
                     dolda += 1
                     continue
-            synliga.append(nyckel)
+            synliga.append(redigera_text(nyckel))
         grans = max(1, min(int(max_antal), 500))
         visade = synliga[:grans]
         return {
@@ -683,6 +691,26 @@ def registrera_utvecklingsverktyg(
             "dolda_icke_oppna": dolda,
             "objekt": visade,
         }
+
+    def _filtrera_lru_sokvagar(sokvagar: tuple[str, ...]) -> tuple[list[str], int]:
+        """K38 + redigering för lokala LRU-cachesökvägar: döljer stängda kommuner och känsliga rotprefix."""
+        _stangda_rotter = frozenset({"backup", "konto", "projekt", "ledningar", "intern"})
+        synliga: list[str] = []
+        dolda = 0
+        for ra in sokvagar:
+            rel = ra.replace("\\", "/").lstrip("/")
+            segment = [s for s in rel.split("/") if s]
+            if not segment:
+                continue
+            rot_del = segment[0].lower()
+            if rot_del in _stangda_rotter or any(s.lower().startswith("ledning") for s in segment):
+                dolda += 1
+                continue
+            if rot_del == "geografi" and len(segment) >= 2 and not _ar_oppen_kommun(segment[1]):
+                dolda += 1
+                continue
+            synliga.append(redigera_text(rel))
+        return synliga, dolda
 
     @utv(
         "utv_lagring_stada",
@@ -720,7 +748,7 @@ def registrera_utvecklingsverktyg(
                         "prefix": ren_prefix,
                         "torrkor": True,
                         "antal_raderade": len(matchande),
-                        "objekt": matchande[:200],
+                        "objekt": [redigera_text(k) for k in matchande[:200]],
                     }
                 raderade = lagring.radera_prefix(ren_prefix)
             except ObjektLagringFel as exc:
@@ -745,6 +773,7 @@ def registrera_utvecklingsverktyg(
             )
         except LokalCacheFel as exc:
             raise ToolError(f"Cachestädning misslyckades: {redigera_text(str(exc))} {_FEL_PREFIX}fel_indata") from exc
+        synliga_filer, dolda_filer = _filtrera_lru_sokvagar(res.raderade_filer)
         return {
             "lage": "lokal_lru_cache",
             "torrkor": res.torrkor,
@@ -753,7 +782,8 @@ def registrera_utvecklingsverktyg(
             "antal_raderade_lru": res.antal_raderade_lru,
             "frigjorda_mb": round(res.frigjorda_mb, 3),
             "kvarvarande_mb": round(res.kvarvarande_mb, 3),
-            "raderade_filer": list(res.raderade_filer[:200]),
+            "dolda_icke_oppna": dolda_filer,
+            "raderade_filer": synliga_filer[:200],
         }
 
     @utv(
