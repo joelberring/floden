@@ -527,6 +527,249 @@ def _skarm_till_byggnader(
     return hinder, varningar
 
 
+_BYGGNAD_OVERLAPP_TOL_M2 = 1.0e-4
+_BYGGNAD_KLIPP_TOL_M2 = 1.0e-5
+_MIN_KLIPPT_BYGGNAD_AREA_M2 = 0.25
+
+
+def _polygon_utan_hal(poly: Any) -> list[Any]:
+    """Delar en polygon med eventuella hål i hålfria polygoner (deterministisk lodrät skärning)."""
+    import shapely
+    from shapely.ops import split
+
+    delar: list[Any] = [poly]
+    for _ in range(len(poly.interiors) + 4):
+        nya: list[Any] = []
+        klar = True
+        for d in delar:
+            if not d.interiors:
+                nya.append(d)
+                continue
+            klar = False
+            hal = shapely.Polygon(d.interiors[0])
+            x = float(hal.representative_point().x)
+            _, y0, _, y1 = d.bounds
+            snitt = split(d, shapely.LineString([(x, y0 - 1.0), (x, y1 + 1.0)]))
+            splittade = [g for g in snitt.geoms if g.geom_type == "Polygon" and float(g.area) > 0.0]
+            if not splittade:
+                nya.append(shapely.Polygon(d.exterior))
+            else:
+                nya.extend(splittade)
+        delar = nya
+        if klar:
+            break
+    return [d if not d.interiors else shapely.Polygon(d.exterior) for d in delar]
+
+
+def _rensa_overlappande_byggnader(
+    byggnader: Sequence[Any],
+) -> tuple[list[Any], list[str]]:
+    """Klipper överlappande K1-byggnadspolygoner (t.ex. sammansatta takplan i tät kvartersstad).
+
+    `Bullerscen` behåller sitt strikta överlappskrav (<= 1e-4 m²). I kommunala baskartor (bl.a.
+    Göteborgs sluten kvartersstad) förekommer både 3D-takplan på olika höjdnivåer som överlappar
+    i plan och millimetertunna väggöverlapp. Här ges högre takvolym företräde (bevarar akustisk
+    skärmning); lägre överlappande delar klipps bort deterministiskt och redovisas öppet som
+    varning. Om inga par överlappar > 1e-4 m² returneras listan oförändrad utan varning.
+    """
+    import shapely
+
+    from buller.typer import Byggnad
+
+    if len(byggnader) < 2:
+        return list(byggnader), []
+
+    polys = [shapely.Polygon(np.column_stack([b.e_m, b.n_m])) for b in byggnader]
+    trad = shapely.STRtree(polys)
+    par_i, par_j = trad.query(polys, predicate="intersects")
+    har_overlapp = False
+    for i_np, j_np in zip(par_i, par_j, strict=True):
+        i, j = int(i_np), int(j_np)
+        if i >= j:
+            continue
+        if float(polys[i].intersection(polys[j]).area) > _BYGGNAD_OVERLAPP_TOL_M2:
+            har_overlapp = True
+            break
+    if not har_overlapp:
+        return list(byggnader), []
+
+    ordning = sorted(
+        range(len(byggnader)),
+        key=lambda i: (-float(byggnader[i].tak_rh2000_m), str(byggnader[i].id), i),
+    )
+    placerade_bygg: list[Any] = []
+    placerade_poly: list[Any] = []
+    placerade_bounds: list[tuple[float, float, float, float]] = []
+    antal_klippta = 0
+    antal_borttagna = 0
+    max_overlapp_m2 = 0.0
+
+    for idx in ordning:
+        b = byggnader[idx]
+        p = polys[idx]
+        if not p.is_valid:
+            p = shapely.make_valid(p)
+        bx0, by0, bx1, by1 = p.bounds
+        traffar: list[Any] = []
+        for q, qb in zip(placerade_poly, placerade_bounds, strict=True):
+            if qb[2] < bx0 or qb[0] > bx1 or qb[3] < by0 or qb[1] > by1:
+                continue
+            if p.intersects(q) and float(p.intersection(q).area) > _BYGGNAD_KLIPP_TOL_M2:
+                traffar.append(q)
+
+        if not traffar:
+            placerade_bygg.append(b)
+            placerade_poly.append(p)
+            placerade_bounds.append((bx0, by0, bx1, by1))
+            continue
+
+        union_traff = shapely.union_all(traffar)
+        overlapp_area = float(p.intersection(union_traff).area)
+        if overlapp_area > max_overlapp_m2:
+            max_overlapp_m2 = overlapp_area
+
+        rest = p.difference(union_traff)
+        delar: list[Any] = []
+        for g in shapely.get_parts(rest):
+            if g.geom_type != "Polygon" or float(g.area) < _MIN_KLIPPT_BYGGNAD_AREA_M2:
+                continue
+            for utan_hal in _polygon_utan_hal(g):
+                if float(utan_hal.area) >= _MIN_KLIPPT_BYGGNAD_AREA_M2:
+                    delar.append(utan_hal)
+
+        if not delar:
+            antal_borttagna += 1
+            continue
+
+        antal_klippta += 1
+        for del_nr, del_poly in enumerate(delar):
+            coords = list(del_poly.exterior.coords)[:-1]
+            if len(coords) < 3:
+                continue
+            e_arr = np.asarray([c[0] for c in coords], dtype=np.float64)
+            n_arr = np.asarray([c[1] for c in coords], dtype=np.float64)
+            bid = str(b.id) if len(delar) == 1 else f"{b.id}#klipp{del_nr}"
+            placerade_bygg.append(
+                Byggnad(
+                    id=bid,
+                    e_m=e_arr,
+                    n_m=n_arr,
+                    tak_rh2000_m=float(b.tak_rh2000_m),
+                    reflektionsforlust_db=float(b.reflektionsforlust_db),
+                )
+            )
+            placerade_poly.append(del_poly)
+            placerade_bounds.append(del_poly.bounds)
+
+    varning = (
+        f"Överlappande byggnadspolygoner i K1-underlaget (t.ex. sammansatta takplan i tät "
+        f"kvartersstad, max {max_overlapp_m2:.1f} m²): {antal_klippta} klipptes och "
+        f"{antal_borttagna} helt överlappade togs bort med företräde för högre takhöjd."
+    )
+    return placerade_bygg, [varning]
+
+
+def _forbered_byggnader_for_raster(
+    byggnader: Sequence[Any],
+    terrang_rh2000_m: NDArray[np.float64],
+    e_min_m: float,
+    n_max_m: float,
+    cell_m: float,
+) -> tuple[list[Any], list[str]]:
+    """Klipper byggnader som sticker ut över rasterkanten och utelämnar tak <= grov marknivå.
+
+    I K1 v2 kan en byggnad som skär en 500 m-rutgräns sticka ut utanför det valda rastret (vilket
+    annars ger `Profilextraktion: punkter ligger utanför terrängrastret` vid diffraktion/reflex).
+    Vid omsampling till grövre bullerceller i kuperad terräng kan dessutom låga byggnader/däck i
+    sluttning hamna under den bilinjärt interpolerade grova markytan. Båda hanteras deterministiskt
+    med öppna varningar medan `Bullerscen` behåller sina strikta geometriska och akustiska krav.
+    """
+    import shapely
+
+    from buller.typer import Byggnad
+
+    n_rad, n_kol = terrang_rh2000_m.shape
+    if n_rad < 2 or n_kol < 2 or not byggnader:
+        return list(byggnader), []
+    e_max_m = e_min_m + n_kol * cell_m
+    n_min_m = n_max_m - n_rad * cell_m
+    raster_box = shapely.box(
+        e_min_m + _RASTER_KANT_MARGINAL_M,
+        n_min_m + _RASTER_KANT_MARGINAL_M,
+        e_max_m - _RASTER_KANT_MARGINAL_M,
+        n_max_m - _RASTER_KANT_MARGINAL_M,
+    )
+
+    klippta_kant = 0
+    kandidater: list[Any] = []
+    for b in byggnader:
+        p = shapely.Polygon(np.column_stack([b.e_m, b.n_m]))
+        if raster_box.covers(p):
+            kandidater.append(b)
+            continue
+        klippt = p.intersection(raster_box)
+        delar = [
+            u
+            for g in shapely.get_parts(klippt)
+            if g.geom_type == "Polygon" and float(g.area) >= _MIN_KLIPPT_BYGGNAD_AREA_M2
+            for u in _polygon_utan_hal(g)
+            if float(u.area) >= _MIN_KLIPPT_BYGGNAD_AREA_M2
+        ]
+        klippta_kant += 1
+        for del_nr, del_poly in enumerate(delar):
+            coords = list(del_poly.exterior.coords)[:-1]
+            if len(coords) < 3:
+                continue
+            bid = str(b.id) if len(delar) == 1 else f"{b.id}#kant{del_nr}"
+            kandidater.append(
+                Byggnad(
+                    id=bid,
+                    e_m=np.asarray([c[0] for c in coords], dtype=np.float64),
+                    n_m=np.asarray([c[1] for c in coords], dtype=np.float64),
+                    tak_rh2000_m=float(b.tak_rh2000_m),
+                    reflektionsforlust_db=float(b.reflektionsforlust_db),
+                )
+            )
+
+    kvar: list[Any] = []
+    utelamnade = 0
+    z = terrang_rh2000_m
+    for b in kandidater:
+        e = np.asarray(b.e_m, dtype=np.float64)
+        n = np.asarray(b.n_m, dtype=np.float64)
+        inne = (e >= e_min_m) & (e <= e_max_m) & (n >= n_min_m) & (n <= n_max_m)
+        if bool(np.any(inne)):
+            ei = e[inne]
+            ni = n[inne]
+            kol = np.clip((ei - e_min_m) / cell_m - 0.5, 0.0, n_kol - 1.0)
+            rad = np.clip((n_max_m - ni) / cell_m - 0.5, 0.0, n_rad - 1.0)
+            k0 = np.minimum(np.floor(kol).astype(np.int64), n_kol - 2)
+            r0 = np.minimum(np.floor(rad).astype(np.int64), n_rad - 2)
+            fk = kol - k0
+            fr = rad - r0
+            ovre = z[r0, k0] * (1.0 - fk) + z[r0, k0 + 1] * fk
+            nedre = z[r0 + 1, k0] * (1.0 - fk) + z[r0 + 1, k0 + 1] * fk
+            mark_m = float(np.min(ovre * (1.0 - fr) + nedre * fr))
+            if float(b.tak_rh2000_m) <= mark_m:
+                utelamnade += 1
+                continue
+        kvar.append(b)
+
+    varningar: list[str] = []
+    if klippta_kant:
+        varningar.append(
+            f"{klippta_kant} byggnad(er) sträckte sig över beräkningsområdets ytterkant och "
+            "klipptes till rastrets utbredning."
+        )
+    if utelamnade:
+        varningar.append(
+            f"{utelamnade} byggnad(er) i K1-underlaget hade takhöjd vid eller under det grova "
+            f"bullerrastrets marknivå (cell {cell_m:g} m, t.ex. låg volym i sluttning) och "
+            "utelämnades från bullerscenen."
+        )
+    return kvar, varningar
+
+
 def _klipp_vag_till_raster(
     koord: Sequence[Sequence[float]],
     e_min_m: float,
@@ -601,9 +844,9 @@ class _Nord2000ForenkladKarna:
         p = forenkla_terrang(profil, REGLER_TC_101327) if profil.x_m.shape[0] > 12 else profil
         try:
             return self._karna.overforing_db(p, vader)
-        except BullerFel as exc:
+        except (BullerFel, ValueError, ZeroDivisionError) as exc:
             self.antal_reservbanor += 1
-            orsak = str(exc)
+            orsak = str(exc) or type(exc).__name__
             if orsak not in self.reserv_orsaker:
                 self.reserv_orsaker.append(orsak)
             return self._reserv.overforing_db(p, vader)
@@ -825,6 +1068,17 @@ class BullerNord2000(Analyslosare):
         except BullerFel as exc:
             raise BullerK21Fel(f"{self.namn}: {exc}") from exc
         varningar.extend(bygg_varningar)
+
+        riktiga_byggnader, overlapp_varningar = _rensa_overlappande_byggnader(riktiga_byggnader)
+        varningar.extend(overlapp_varningar)
+        riktiga_byggnader, raster_bygg_varningar = _forbered_byggnader_for_raster(
+            riktiga_byggnader,
+            mos.terrang_rh2000_m,
+            mos.x_min_m,
+            mos.y_max_m,
+            mos.cell_m,
+        )
+        varningar.extend(raster_bygg_varningar)
 
         byggnad_poly = [
             shapely.Polygon(np.column_stack([b.e_m, b.n_m])) for b in riktiga_byggnader

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import heapq
 import math
+from collections.abc import Mapping
 
 import numpy as np
-from numpy.typing import NDArray
 
-from sankgraf.hierarki import berakna_kurvor_for_celler
+from sankgraf.hierarki import _bygg_nodkurvor_nedifran_upp
 from sankgraf.typer import (
     HAV_NOD_ID,
     TYP_SLUTSANKA,
@@ -42,16 +43,14 @@ def _djupaste_lov(
     return curr
 
 
-def _lov_i_deltrad_set(nod_id: int, barn: dict[int, list[int]]) -> set[int]:
-    resultat: set[int] = set()
-    stack = [nod_id]
-    while stack:
-        curr = stack.pop()
-        if not barn[curr]:
-            resultat.add(curr)
-        else:
-            stack.extend(barn[curr])
-    return resultat
+def _ar_i_deltrad(nod_id: int, rot_id: int, forald: Mapping[int, int | None]) -> bool:
+    """Returnerar True om `nod_id` ligger i delträdet under `rot_id` (O(träddjup))."""
+    curr: int | None = nod_id
+    while curr is not None:
+        if curr == rot_id:
+            return True
+        curr = forald[curr]
+    return False
 
 
 def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
@@ -109,20 +108,57 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
     ursprungliga_lov = [nid for nid, n in graf.noder.items() if n.ar_lov]
     ompekning_lov: dict[int, int] = {lid: lid for lid in ursprungliga_lov}
 
-    while True:
-        kandidat: tuple[float, int] | None = None
-        for nid in sorted(aktiva):
-            if barn[nid] or typ[nid] == TYP_SLUTSANKA:
-                continue
-            pers = overfall_z[nid] - botten[nid]
-            troskel = faktor * osakerhet[nid]
-            if pers < troskel and (kandidat is None or (pers, nid) < kandidat):
-                kandidat = (pers, nid)
+    # Omvända index för ut_till / ut_lov samt min-heap för Elder Rule i O(N log N)
+    in_ut_till: dict[int, set[int]] = {}
+    in_ut_lov: dict[int, set[int]] = {}
+    for nid in aktiva:
+        t_val = ut_till[nid]
+        if t_val is not None:
+            in_ut_till.setdefault(t_val, set()).add(nid)
+        ul_val_init = ut_lov[nid]
+        if ul_val_init is not None:
+            in_ut_lov.setdefault(ul_val_init, set()).add(nid)
 
-        if kandidat is None:
-            break
+    def _satt_ut_till(k: int, nytt: int | None) -> None:
+        gammalt = ut_till[k]
+        if gammalt == nytt:
+            return
+        if gammalt is not None:
+            s_set = in_ut_till.get(gammalt)
+            if s_set is not None:
+                s_set.discard(k)
+        ut_till[k] = nytt
+        if nytt is not None:
+            in_ut_till.setdefault(nytt, set()).add(k)
 
-        _, x = kandidat
+    def _satt_ut_lov(k: int, nytt: int | None) -> None:
+        gammalt = ut_lov[k]
+        if gammalt == nytt:
+            return
+        if gammalt is not None:
+            s_set = in_ut_lov.get(gammalt)
+            if s_set is not None:
+                s_set.discard(k)
+        ut_lov[k] = nytt
+        if nytt is not None:
+            in_ut_lov.setdefault(nytt, set()).add(k)
+
+    kandidater: list[tuple[float, int]] = []
+    for nid in sorted(aktiva):
+        if barn[nid] or typ[nid] == TYP_SLUTSANKA:
+            continue
+        pers_init = overfall_z[nid] - botten[nid]
+        if pers_init < faktor * osakerhet[nid]:
+            heapq.heappush(kandidater, (pers_init, nid))
+
+    while kandidater:
+        pers_kand, x = heapq.heappop(kandidater)
+        if x not in aktiva or barn[x] or typ[x] == TYP_SLUTSANKA:
+            continue
+        akt_pers = overfall_z[x] - botten[x]
+        if akt_pers != pers_kand or akt_pers >= faktor * osakerhet[x]:
+            continue
+
         p = forald[x]
 
         if p is not None:
@@ -135,10 +171,16 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
             if not barn[s]:
                 mal_lov = s
             else:
-                lov_i_s = _lov_i_deltrad_set(s, barn)
                 ut_x = ut_lov.get(x)
                 resolved_ut = _los_ompekning(ut_x, ompekning_lov) if ut_x is not None else -1
-                mal_lov = resolved_ut if resolved_ut in lov_i_s else _djupaste_lov(s, barn, botten)
+                if (
+                    resolved_ut in aktiva
+                    and not barn[resolved_ut]
+                    and _ar_i_deltrad(resolved_ut, s, forald)
+                ):
+                    mal_lov = resolved_ut
+                else:
+                    mal_lov = _djupaste_lov(s, barn, botten)
 
             ompekning_lov[x] = mal_lov
 
@@ -148,8 +190,8 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
             overfall_z[s] = overfall_z[p]
             overfall_xy[s] = overfall_xy[p]
             osakerhet[s] = osakerhet[p]
-            ut_till[s] = ut_till[p]
-            ut_lov[s] = ut_lov[p]
+            _satt_ut_till(s, ut_till[p])
+            _satt_ut_lov(s, ut_lov[p])
             overfall_celler[s] = overfall_celler[p]
             typ[s] = typ[p]
             hinder[s] = hinder[p]
@@ -159,18 +201,32 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
                 barn[gp] = [s if c == p else c for c in barn[gp]]
                 for c in barn[gp]:
                     if c != s and ut_till.get(c) == p:
-                        ut_till[c] = s
+                        _satt_ut_till(c, s)
 
-            for k in aktiva:
-                if k in (x, p):
+            for k in list(in_ut_till.get(x, ())) + list(in_ut_till.get(p, ())):
+                if k in (x, p) or k not in aktiva:
                     continue
-                if ut_till.get(k) in (x, p):
-                    ut_till[k] = s if k != s else None
-                if ut_lov.get(k) == x:
-                    ut_lov[k] = mal_lov if k != s else ut_lov[s]
+                _satt_ut_till(k, s if k != s else None)
+            for k in list(in_ut_lov.get(x, ())):
+                if k in (x, p) or k not in aktiva:
+                    continue
+                _satt_ut_lov(k, mal_lov if k != s else ut_lov[s])
 
+            _satt_ut_till(x, None)
+            _satt_ut_till(p, None)
+            _satt_ut_lov(x, None)
+            _satt_ut_lov(p, None)
+            in_ut_till.pop(x, None)
+            in_ut_till.pop(p, None)
+            in_ut_lov.pop(x, None)
+            in_ut_lov.pop(p, None)
             aktiva.remove(x)
             aktiva.remove(p)
+
+            if not barn[s] and typ[s] != TYP_SLUTSANKA:
+                pers_s = overfall_z[s] - botten[s]
+                if pers_s < faktor * osakerhet[s]:
+                    heapq.heappush(kandidater, (pers_s, s))
         else:
             # Rotlöv utan förälder: dess avrinningsyta rinner vidare till ut_till[x] (eller HAV)
             mal_nod = ut_till[x]
@@ -187,14 +243,20 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
                     mal_lov = HAV_NOD_ID
 
             ompekning_lov[x] = mal_lov
-            for k in aktiva:
-                if k == x:
+            ny_ul = None if mal_lov == HAV_NOD_ID else mal_lov
+            for k in list(in_ut_till.get(x, ())):
+                if k == x or k not in aktiva:
                     continue
-                if ut_till.get(k) == x:
-                    ut_till[k] = mal_nod if mal_nod != k else None
-                if ut_lov.get(k) == x:
-                    ut_lov[k] = None if mal_lov == HAV_NOD_ID else mal_lov
+                _satt_ut_till(k, mal_nod if mal_nod != k else None)
+            for k in list(in_ut_lov.get(x, ())):
+                if k == x or k not in aktiva:
+                    continue
+                _satt_ut_lov(k, ny_ul)
 
+            _satt_ut_till(x, None)
+            _satt_ut_lov(x, None)
+            in_ut_till.pop(x, None)
+            in_ut_lov.pop(x, None)
             aktiva.remove(x)
 
     # Slutlig lövompekning för alla ursprungliga lövnoder
@@ -205,28 +267,16 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
     ny_cell_till_nod = graf.cell_till_nod.copy()
     if slut_karta:
         flat_ct = ny_cell_till_nod.ravel()
+        max_lid = max(slut_karta)
+        lut = np.arange(max_lid + 1, dtype=np.int64)
+        andrad = False
         for gammalt_id, nytt_id in slut_karta.items():
             if gammalt_id != nytt_id:
-                flat_ct[flat_ct == gammalt_id] = nytt_id
-
-    # Samla cellhöjder per kvarvarande lövnod och räkna om exakta kurvor nedifrån och upp
-    z_flat = np.asarray(graf.mark_z, dtype=np.float64).ravel()
-    ct_flat = ny_cell_till_nod.ravel()
-    cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
-
-    lov_mask = ct_flat >= 0
-    lov_ids_flat = ct_flat[lov_mask]
-    lov_z_flat = z_flat[lov_mask]
-
-    celler_per_lov: dict[int, NDArray[np.float64]] = {}
-    if lov_ids_flat.size > 0:
-        ordn = np.argsort(lov_ids_flat, kind="mergesort")
-        s_ids = lov_ids_flat[ordn]
-        s_z = lov_z_flat[ordn]
-        u_ids, s_idx, cnts = np.unique(s_ids, return_index=True, return_counts=True)
-        for lid_np, st_np, c_np in zip(u_ids, s_idx, cnts, strict=True):
-            st = int(st_np)
-            celler_per_lov[int(lid_np)] = s_z[st : st + int(c_np)]
+                lut[gammalt_id] = nytt_id
+                andrad = True
+        if andrad:
+            mask_om = (flat_ct >= 0) & (flat_ct <= max_lid)
+            flat_ct[mask_om] = lut[flat_ct[mask_om]]
 
     # Topologisk ordning nedifrån och upp (barn före förälder)
     ordnade_noder: list[int] = []
@@ -243,34 +293,35 @@ def filtrera_persistens(graf: SankGraf, faktor: float = 2.0) -> SankGraf:
     for nid in sorted(aktiva):
         _postorder(nid)
 
+    # Räkna om exakta kurvor nedifrån och upp i O(N log H) tid och O(N) minne
+    z_flat = graf.mark_z.ravel()
+    ct_flat = ny_cell_till_nod.ravel()
+    cell_area_m2 = float(graf.geo.pixelstorlek_x) * float(graf.geo.pixelstorlek_y)
+
+    lov_mask = ct_flat >= 0
+    lov_ids_flat = ct_flat[lov_mask]
+    lov_z_flat = z_flat[lov_mask]
+    del lov_mask
+
+    kurv_data = _bygg_nodkurvor_nedifran_upp(
+        ordnade_noder,
+        forald,
+        barn,
+        overfall_z,
+        lov_ids_flat,
+        lov_z_flat,
+        cell_area_m2,
+    )
+    del lov_ids_flat, lov_z_flat
+
     nya_noder: dict[int, SankNod] = {}
-    lov_under: dict[int, list[int]] = {}
     nya_ut_lov: dict[int, int | None] = {}
     nya_overfall_celler: dict[int, tuple[tuple[int, int], ...]] = {}
 
     for nid in ordnade_noder:
         b_tup = tuple(barn[nid])
-        if not b_tup:
-            lov_under[nid] = [nid]
-            z_arr = celler_per_lov.get(nid, np.empty(0, dtype=np.float64))
-            avrinning_m2 = float(z_arr.size) * cell_area_m2
-        else:
-            alla_lov: list[int] = []
-            for b_id in b_tup:
-                alla_lov.extend(lov_under[b_id])
-            lov_under[nid] = alla_lov
-            delar = [celler_per_lov[lid] for lid in alla_lov if lid in celler_per_lov]
-            z_arr = (
-                np.asarray(np.concatenate(delar), dtype=np.float64)
-                if delar
-                else np.empty(0, dtype=np.float64)
-            )
-            avrinning_m2 = 0.0
-
         ov_z = overfall_z[nid]
-        vol_kurva, yt_kurva, bot_z, cell_antal = berakna_kurvor_for_celler(
-            z_arr, ov_z, cell_area_m2
-        )
+        vol_kurva, yt_kurva, bot_z, cell_antal, avrinning_m2 = kurv_data.pop(nid)
         ox, oy = overfall_xy[nid]
 
         ut_t = ut_till[nid]

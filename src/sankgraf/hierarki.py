@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -763,6 +763,195 @@ def berakna_kurvor_for_celler(
     return tuple(volym_punkter), tuple(yt_punkter), botten, tot_celler
 
 
+def _bygg_nodkurvor_nedifran_upp(
+    ordnade_noder: Sequence[int],
+    forald_karta: Mapping[int, int | None],
+    barn_karta: Mapping[int, Sequence[int]],
+    overfall_z_karta: Mapping[int, float],
+    lov_ids_flat: NDArray[np.signedinteger[Any]],
+    lov_z_flat: NDArray[np.float32] | NDArray[np.float64],
+    cell_area_m2: float,
+) -> dict[int, tuple[tuple[VolymPunkt, ...], tuple[YtPunkt, ...], float, int, float]]:
+    """Bygger exakta volym- och ytkurvor nedifrån och upp i O(N log H) tid och O(N) minne.
+
+    Varje aktiv cell hör till exakt en unik vätande nod (den lägsta förfadern längs vägen från
+    cellens lövsänka upp till roten som uppfyller ``z_cell < overfall_z[nod]``). Föräldernoder
+    ärver barnens totala volym ``V_barn`` och antal våta celler ``N_barn`` vid delad sadelnivå
+    ``z_sadel``, och bygger sedan sin exakta kurva på intervallet ``[z_sadel, overfall_z]``
+    utan att någonsin duplicera eller konkatenera barnens cellhöjder.
+
+    Returnerar ``nid -> (volymkurva, ytkurva, botten_rh2000, cell_antal, avrinningsyta_m2)``.
+    """
+    m = len(ordnade_noder)
+    if m == 0:
+        return {}
+
+    max_nid = max(ordnade_noder)
+    nid_till_idx = np.full(max_nid + 1, -1, dtype=np.int32)
+    ov_arr = np.empty(m, dtype=np.float64)
+    parent_idx = np.arange(m, dtype=np.int32)
+
+    for i, nid in enumerate(ordnade_noder):
+        nid_till_idx[nid] = i
+        ov_arr[i] = float(overfall_z_karta[nid])
+
+    for i, nid in enumerate(ordnade_noder):
+        p_nid = forald_karta[nid]
+        if p_nid is not None:
+            parent_idx[i] = nid_till_idx[p_nid]
+
+    lov_antal = np.zeros(m, dtype=np.int64)
+    lov_min_z = np.full(m, np.inf, dtype=np.float64)
+    celler_per_idx: dict[int, NDArray[np.float32] | NDArray[np.float64]] = {}
+
+    if lov_ids_flat.size > 0:
+        cur = nid_till_idx[lov_ids_flat]
+        lov_antal = np.bincount(cur, minlength=m)
+        np.minimum.at(lov_min_z, cur, lov_z_flat)
+
+        # Binär lyftning: varje cell klättrar i O(log H) till sin unika vätande nod.
+        up_lager: list[NDArray[np.int32]] = [parent_idx]
+        while True:
+            prev = up_lager[-1]
+            nxt = prev[prev]
+            if np.array_equal(nxt, prev):
+                break
+            up_lager.append(nxt)
+
+        wet_idx = cur.copy()
+        need = np.flatnonzero(lov_z_flat >= ov_arr[cur])
+        del cur
+        if need.size > 0:
+            u = wet_idx[need]
+            z_need = np.asarray(lov_z_flat[need], dtype=np.float64)
+            for lager in reversed(up_lager):
+                anc = lager[u]
+                hopp = ov_arr[anc] <= z_need
+                u[hopp] = anc[hopp]
+            p_u = parent_idx[u]
+            wet_idx[need] = np.where(ov_arr[p_u] > z_need, p_u, -1)
+            del u, z_need, p_u
+        del need, up_lager
+
+        giltig = wet_idx >= 0
+        if np.any(giltig):
+            w_val = wet_idx[giltig]
+            z_val = lov_z_flat[giltig]
+            del wet_idx, giltig
+            ordn = np.argsort(w_val, kind="quicksort")
+            s_w = w_val[ordn]
+            s_z = z_val[ordn]
+            del w_val, z_val, ordn
+            u_w, s_idx, cnts = np.unique(s_w, return_index=True, return_counts=True)
+            del s_w
+            for wi_np, st_np, c_np in zip(u_w, s_idx, cnts, strict=True):
+                st = int(st_np)
+                celler_per_idx[int(wi_np)] = s_z[st : st + int(c_np)]
+            del u_w, s_idx, cnts
+        else:
+            del wet_idx, giltig
+
+    resultat: dict[int, tuple[tuple[VolymPunkt, ...], tuple[YtPunkt, ...], float, int, float]] = {}
+    har_celler: dict[int, bool] = {}
+
+    for i, nid in enumerate(ordnade_noder):
+        ov_z = float(ov_arr[i])
+        barn = barn_karta[nid]
+        z_del = celler_per_idx.pop(i, None)
+        vol_k: tuple[VolymPunkt, ...]
+        yt_k: tuple[YtPunkt, ...]
+
+        if not barn:
+            n_tot_lov = int(lov_antal[i])
+            avrinning_m2 = float(n_tot_lov) * cell_area_m2
+            har_celler[nid] = n_tot_lov > 0
+            if z_del is None or z_del.size == 0:
+                botten = float(lov_min_z[i]) if n_tot_lov > 0 else ov_z
+                vol_k = (VolymPunkt(z=botten, v_m3=0.0), VolymPunkt(z=ov_z, v_m3=0.0))
+                yt_k = (YtPunkt(z=botten, a_m2=0.0), YtPunkt(z=ov_z, a_m2=0.0))
+                resultat[nid] = (vol_k, yt_k, botten, 0, avrinning_m2)
+            else:
+                z_arr = np.asarray(z_del, dtype=np.float64)
+                vol_k, yt_k, botten, cell_antal = berakna_kurvor_for_celler(
+                    z_arr, ov_z, cell_area_m2
+                )
+                resultat[nid] = (vol_k, yt_k, botten, cell_antal, avrinning_m2)
+            continue
+
+        avrinning_m2 = 0.0
+        z_sadel = float(overfall_z_karta[barn[0]])
+        v_barn = sum(resultat[b][0][-1].v_m3 for b in barn)
+        n_barn = sum(resultat[b][3] for b in barn)
+        barn_med_celler = [b for b in barn if har_celler[b]]
+        har_celler[nid] = bool(barn_med_celler)
+        botten = min(resultat[b][2] for b in barn_med_celler) if barn_med_celler else ov_z
+        ny_z = (
+            np.asarray(z_del, dtype=np.float64) if z_del is not None and z_del.size > 0 else None
+        )
+
+        if n_barn == 0 and ny_z is None:
+            vol_k = (VolymPunkt(z=botten, v_m3=0.0), VolymPunkt(z=ov_z, v_m3=0.0))
+            yt_k = (YtPunkt(z=botten, a_m2=0.0), YtPunkt(z=ov_z, a_m2=0.0))
+            resultat[nid] = (vol_k, yt_k, botten, 0, avrinning_m2)
+        elif n_barn == 0 and ny_z is not None:
+            vol_k, yt_k, botten_ny, cell_antal = berakna_kurvor_for_celler(
+                ny_z, ov_z, cell_area_m2
+            )
+            resultat[nid] = (vol_k, yt_k, botten_ny, cell_antal, avrinning_m2)
+        elif ny_z is None:
+            a_barn = float(n_barn) * cell_area_m2
+            vol_pts: list[VolymPunkt] = [
+                VolymPunkt(z=botten, v_m3=0.0),
+                VolymPunkt(z=z_sadel, v_m3=v_barn),
+            ]
+            yt_pts: list[YtPunkt] = [
+                YtPunkt(z=botten, a_m2=0.0),
+                YtPunkt(z=z_sadel, a_m2=a_barn),
+            ]
+            if ov_z > z_sadel:
+                v_top = v_barn + a_barn * (ov_z - z_sadel)
+                vol_pts.append(VolymPunkt(z=ov_z, v_m3=v_top))
+                yt_pts.append(YtPunkt(z=ov_z, a_m2=a_barn))
+            resultat[nid] = (tuple(vol_pts), tuple(yt_pts), botten, n_barn, avrinning_m2)
+        else:
+            unika_z, antal = np.unique(ny_z, return_counts=True)
+            kum_antal = n_barn + np.cumsum(antal, dtype=np.int64)
+            tot_celler = int(kum_antal[-1])
+            a_barn = float(n_barn) * cell_area_m2
+
+            vol_pts = [VolymPunkt(z=botten, v_m3=0.0)]
+            yt_pts = [YtPunkt(z=botten, a_m2=0.0)]
+            z0 = float(unika_z[0])
+            if z0 == z_sadel:
+                v_ack = v_barn
+                vol_pts.append(VolymPunkt(z=z_sadel, v_m3=v_ack))
+                yt_pts.append(YtPunkt(z=z_sadel, a_m2=float(kum_antal[0]) * cell_area_m2))
+            else:
+                vol_pts.append(VolymPunkt(z=z_sadel, v_m3=v_barn))
+                yt_pts.append(YtPunkt(z=z_sadel, a_m2=a_barn))
+                v_ack = v_barn + a_barn * (z0 - z_sadel)
+                vol_pts.append(VolymPunkt(z=z0, v_m3=v_ack))
+                yt_pts.append(YtPunkt(z=z0, a_m2=float(kum_antal[0]) * cell_area_m2))
+
+            n_unika = int(unika_z.size)
+            for idx in range(1, n_unika):
+                z_fore = float(unika_z[idx - 1])
+                z_nu = float(unika_z[idx])
+                area_fore = float(kum_antal[idx - 1]) * cell_area_m2
+                v_ack += area_fore * (z_nu - z_fore)
+                vol_pts.append(VolymPunkt(z=z_nu, v_m3=v_ack))
+                yt_pts.append(YtPunkt(z=z_nu, a_m2=float(kum_antal[idx]) * cell_area_m2))
+
+            z_sista = float(unika_z[-1])
+            max_area = float(kum_antal[-1]) * cell_area_m2
+            v_ack += max_area * (ov_z - z_sista)
+            vol_pts.append(VolymPunkt(z=ov_z, v_m3=v_ack))
+            yt_pts.append(YtPunkt(z=ov_z, a_m2=max_area))
+            resultat[nid] = (tuple(vol_pts), tuple(yt_pts), botten, tot_celler, avrinning_m2)
+
+    return resultat
+
+
 def _instangda_etiketter(aktiv: NDArray[np.bool_]) -> tuple[NDArray[np.int32], list[int]]:
     """Fyrgrannsetiketter för aktiva områden och de etiketter som inte når rasterkanten."""
     from scipy import ndimage
@@ -1150,71 +1339,38 @@ def bygg_sankgraf(
             slutsanka_hinder[nod_id] = hinder_z
     del etiketter
 
-    # Samla cellhöjder per lövsänka i ett svep (behåll float32 i sort_z, konvertera per nod)
+    for nid in range(nasta_nod_id):
+        if nid not in overfall_z_karta:
+            # Bör inte ske på ändlig domän med randkanter, men skydda mot tyst fel
+            raise SankGrafFel(f"Nod {nid} saknar utloppssadel mot randen.")
+
+    # Bygg SankNod-kurvor nedifrån och upp i O(N log H) tid och O(N) minne
     catch_flat = cell_till_nod_int.ravel()
     lov_mask = catch_flat >= 0
     lov_ids_flat = catch_flat[lov_mask]
     lov_z_flat = eff_z_flat[lov_mask]
     del lov_mask
 
-    ordn_lov = np.argsort(lov_ids_flat, kind="mergesort")
-    sort_ids = lov_ids_flat[ordn_lov]
-    sort_z = lov_z_flat[ordn_lov]
-    del lov_ids_flat, lov_z_flat, ordn_lov
-    unika_lov, start_idx, antal_per_lov = np.unique(
-        sort_ids, return_index=True, return_counts=True
+    kurv_data = _bygg_nodkurvor_nedifran_upp(
+        range(nasta_nod_id),
+        forald_karta,
+        barn_karta,
+        overfall_z_karta,
+        lov_ids_flat,
+        lov_z_flat,
+        cell_area_m2,
     )
-    del sort_ids
+    del lov_ids_flat, lov_z_flat
 
-    celler_per_lov: dict[int, NDArray[np.float32]] = {}
-    for lid_np, s_np, cnt_np in zip(unika_lov, start_idx, antal_per_lov, strict=True):
-        lid = int(lid_np)
-        s = int(s_np)
-        cnt = int(cnt_np)
-        celler_per_lov[lid] = sort_z[s : s + cnt]
-    del unika_lov, start_idx, antal_per_lov
-
-    # Bygg SankNod-objekt nedifrån och upp (löv först, sedan föräldrar)
     noder: dict[int, SankNod] = {}
-    lov_i_deltrad: dict[int, list[int]] = {}
-
     for nid in range(nasta_nod_id):
-        barn = barn_karta[nid]
-        if not barn:
-            lov_i_deltrad[nid] = [nid]
-            z_del = celler_per_lov.get(nid)
-            z_arr = (
-                np.asarray(z_del, dtype=np.float64)
-                if z_del is not None
-                else np.empty(0, dtype=np.float64)
-            )
-            avrinning_m2 = float(z_arr.size) * cell_area_m2
-        else:
-            alla_lov: list[int] = []
-            for b_id in barn:
-                alla_lov.extend(lov_i_deltrad.pop(b_id))
-            lov_i_deltrad[nid] = alla_lov
-            z_delar = [celler_per_lov[lid] for lid in alla_lov if lid in celler_per_lov]
-            z_arr = (
-                np.asarray(np.concatenate(z_delar), dtype=np.float64)
-                if z_delar
-                else np.empty(0, dtype=np.float64)
-            )
-            avrinning_m2 = 0.0
-
-        overfall_z = overfall_z_karta.get(nid)
-        if overfall_z is None:
-            # Bör inte ske på ändlig domän med randkanter, men skydda mot tyst fel
-            raise SankGrafFel(f"Nod {nid} saknar utloppssadel mot randen.")
-
-        vol_kurva, yt_kurva, botten_z, cell_antal = berakna_kurvor_for_celler(
-            z_arr, overfall_z, cell_area_m2
-        )
+        vol_kurva, yt_kurva, botten_z, cell_antal, avrinning_m2 = kurv_data.pop(nid)
+        overfall_z = overfall_z_karta[nid]
         ox, oy = overfall_xy_karta[nid]
         noder[nid] = SankNod(
             nod_id=nid,
             forald_id=forald_karta[nid],
-            barn_id=barn,
+            barn_id=barn_karta[nid],
             overfall_rh2000=overfall_z,
             overfall_x=ox,
             overfall_y=oy,
@@ -1230,7 +1386,7 @@ def bygg_sankgraf(
             hinder_rh2000=slutsanka_hinder.get(nid),
         )
 
-    del celler_per_lov, sort_z, lov_i_deltrad
+    del kurv_data
     cell_till_nod_out = np.asarray(cell_till_nod_int, dtype=np.int64)
     del cell_till_nod_int
 

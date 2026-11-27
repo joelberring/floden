@@ -101,7 +101,7 @@ class InstangtOmradeFel(SankGrafFel):
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class VolymPunkt:
     """En punkt `(z, v_m3)` på en sänknods volymkurva (RH 2000, m³)."""
 
@@ -109,7 +109,7 @@ class VolymPunkt:
     v_m3: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class YtPunkt:
     """En punkt `(z, a_m2)` på en sänknods ytkurva (RH 2000, m²)."""
 
@@ -117,7 +117,7 @@ class YtPunkt:
     a_m2: float
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class SankNod:
     """En nod i sänkgrafen enligt kontrakt K2 (`docs/DATAKONTRAKT.md`).
 
@@ -266,7 +266,7 @@ class SankNod:
         return d
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FlodesVag:
     """En flödesväg från en cellgrupp till sin mottagande sänknod eller randutlopp."""
 

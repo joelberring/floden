@@ -870,6 +870,48 @@ class KartverktygTjanst:
                 return [x0, y0, x1, y1]
         return [avgr[0] - m, avgr[1] - m, avgr[2] + m, avgr[3] + m]
 
+    def _fallback_ekologi_fokus(self, kalla: Projektkalla) -> list[float] | None:
+        """Automatiskt ekologifokus för geografiprojekt vars `ekologi.toml` saknar `fokus`.
+
+        Använder projektets avgränsning (dagsljusmallens fokus, `avgransning_3011` i `projekt.json`
+        eller `kalla.avgransning`) så att globala `ekologi.konnektivitet` bara läser berörda
+        K1-rutor i stället för hela geografin. Returnerar `None` för projekt utan geografi.
+        """
+        if kalla.slag != "geografi":
+            return None
+
+        def _box4(v: Any) -> list[float] | None:
+            if not isinstance(v, list | tuple) or len(v) != 4:
+                return None
+            try:
+                x0, y0, x1, y1 = (float(c) for c in v)
+            except (TypeError, ValueError):
+                return None
+            if not all(math.isfinite(c) for c in (x0, y0, x1, y1)) or x1 <= x0 or y1 <= y0:
+                return None
+            return [x0, y0, x1, y1]
+
+        dag_mall = kalla.mallar.get("dagsljus")
+        if dag_mall is not None:
+            for a in dag_mall.fraga.analyser:
+                box = _box4(a.fokus)
+                if box is not None:
+                    return box
+
+        if kalla.mapp is not None:
+            fil = kalla.mapp / "projekt.json"
+            if fil.is_file():
+                try:
+                    raw = json.loads(fil.read_text(encoding="utf-8"))
+                    if isinstance(raw, dict):
+                        box = _box4(raw.get("avgransning_3011"))
+                        if box is not None:
+                            return box
+                except (OSError, ValueError):
+                    pass
+
+        return _box4(kalla.avgransning)
+
     # ------------------------------------------------------------------ projektinfo
 
     def _alla_byggnader(self, kalla: Projektkalla) -> list[dict[str, Any]]:
@@ -1982,6 +2024,7 @@ class KartverktygTjanst:
         )
         stangt = ritl.har_stangt_innehall(d.get("ritlager"), kalla.oppen)
         vatten_fokus = self._fallback_vatten_fokus(kalla)
+        ekologi_fokus = self._fallback_ekologi_fokus(kalla)
         poster: list[dict[str, Any]] = []
         for kort, analyser in urval.items():
             m = mallar[kort]
@@ -2000,7 +2043,7 @@ class KartverktygTjanst:
             innehall = self._k20(
                 m, fil, k9_fil, fraga_id, d["namn"], analyser,
                 avtappning_mm_h=avtappning_mm_h, parametrar_over=parametrar_over, regn=regn, sol=sol,
-                skyfall_metod=skyfall_metod, vatten_fokus=vatten_fokus,
+                skyfall_metod=skyfall_metod, vatten_fokus=vatten_fokus, ekologi_fokus=ekologi_fokus,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             ref = self._ref_for(fil)
@@ -2095,6 +2138,7 @@ class KartverktygTjanst:
         sol: Mapping[str, Any] | None = None,
         skyfall_metod: str = "graf",
         vatten_fokus: Sequence[float] | None = None,
+        ekologi_fokus: Sequence[float] | None = None,
     ) -> dict[str, Any]:
         bas = self._rel(fil, m.bas)
         valda, synt_vsc = self._valj_med_vsc(m, analyser, sol, ["fore", "ritat"])
@@ -2142,6 +2186,8 @@ class KartverktygTjanst:
                 post["fokus"] = list(a.fokus)
             elif vatten_fokus is not None and losare in _LOSARE_MED_REGN:
                 post["fokus"] = list(vatten_fokus)
+            elif ekologi_fokus is not None and losare == "ekologi.konnektivitet":
+                post["fokus"] = list(ekologi_fokus)
             if a.beror_pa:
                 post["beror_pa"] = [b for b in a.beror_pa if b in valda_ids]
             if a.indata:
@@ -2333,6 +2379,7 @@ class KartverktygTjanst:
         sol: Mapping[str, Any] | None = None,
         skyfall_metod: str = "graf",
         vatten_fokus: Sequence[float] | None = None,
+        ekologi_fokus: Sequence[float] | None = None,
     ) -> dict[str, Any]:
         """K20 för läget idag: ett enda scenario (`fore`, projektets befintliga läge), inga jämförelser."""
         bas = self._rel(fil, m.bas)
@@ -2377,6 +2424,8 @@ class KartverktygTjanst:
                 post["fokus"] = list(a.fokus)
             elif vatten_fokus is not None and losare in _LOSARE_MED_REGN:
                 post["fokus"] = list(vatten_fokus)
+            elif ekologi_fokus is not None and losare == "ekologi.konnektivitet":
+                post["fokus"] = list(ekologi_fokus)
             if a.beror_pa:
                 post["beror_pa"] = [b for b in a.beror_pa if b in valda_ids]
             if a.indata:
@@ -2417,6 +2466,7 @@ class KartverktygTjanst:
         if not urval:
             raise _fel("Välj minst en analys att räkna.", 400)
         vatten_fokus = self._fallback_vatten_fokus(kalla)
+        ekologi_fokus = self._fallback_ekologi_fokus(kalla)
         poster: list[dict[str, Any]] = []
         fragedir.mkdir(parents=True, exist_ok=True)
         proj = re.sub(r"[^a-z0-9_\-]+", "-", projekt.lower()).strip("-")[:38] or "projekt"
@@ -2425,7 +2475,7 @@ class KartverktygTjanst:
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._lage_k20(
                 mallar[kort], fil, fraga_id, analyser, avtappning_mm_h, regn, sol, skyfall_metod,
-                vatten_fokus=vatten_fokus,
+                vatten_fokus=vatten_fokus, ekologi_fokus=ekologi_fokus,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             poster.append(
@@ -2952,7 +3002,11 @@ class KartverktygTjanst:
         )
         proj_tag = f"-{kalla.fraga_infix}" if kalla.fraga_infix else ""
         over = {analys: dict(parametrar)}
-        tag = hashlib.sha256(json.dumps(over, sort_keys=True).encode()).hexdigest()[:8]
+        ekologi_fokus = self._fallback_ekologi_fokus(kalla)
+        tag_payload: Any = (
+            {"over": over, "fokus": ekologi_fokus} if ekologi_fokus is not None else over
+        )
+        tag = hashlib.sha256(json.dumps(tag_payload, sort_keys=True).encode()).hexdigest()[:8]
         if namn_slug is None:
             k9 = next((s.k9 for s in m.fraga.scenarier.values() if s.k9), ())
             if k9:
@@ -2975,7 +3029,8 @@ class KartverktygTjanst:
             fraga_id = f"api-ekologi{proj_tag}-{tag}"
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._k20(
-                m, fil, k9_fil, fraga_id, sc_namn, [analys], parametrar_over=over
+                m, fil, k9_fil, fraga_id, sc_namn, [analys], parametrar_over=over,
+                ekologi_fokus=ekologi_fokus,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             scen_nyckel = sha256_fil(k9_fil)
@@ -3018,7 +3073,8 @@ class KartverktygTjanst:
             fraga_id = f"api{tag}-{namn_slug[:24]}-ekologi"
             fil = fragedir / f"{fraga_id}.json"
             innehall = self._k20(
-                m, fil, k9_fil, fraga_id, d["namn"], [analys], parametrar_over=over
+                m, fil, k9_fil, fraga_id, d["namn"], [analys], parametrar_over=over,
+                ekologi_fokus=ekologi_fokus,
             )
             skriv_atomiskt_text(fil, json.dumps(innehall, indent=2, ensure_ascii=False) + "\n")
             scen_nyckel = f"{sc.nyckel}:stangt" if stangt else sc.nyckel

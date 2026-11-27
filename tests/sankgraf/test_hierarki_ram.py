@@ -327,3 +327,110 @@ def test_500x500_stresstest_och_tracemalloc_minnesbudget() -> None:
 
     res = statisk_fyllning(graf, 0.05)
     assert res.volymfel_rel < 1e-6
+
+
+def test_nodkurvor_linjart_ekvivalent_och_slots() -> None:
+    """Verifierar O(N log H)-kurvor mot naiv cellkonkatenering inkl. persistens och slots=True."""
+    from sankgraf.hierarki import berakna_kurvor_for_celler
+    from sankgraf.persistens import filtrera_persistens
+    from sankgraf.typer import FlodesVag, SankNod, VolymPunkt, YtPunkt
+
+    for cls in (VolymPunkt, YtPunkt, SankNod, FlodesVag):
+        assert hasattr(cls, "__slots__"), f"{cls.__name__} saknar slots=True"
+
+    # Flerstegs-terräng med slutsänka, lika sadlar och celler exakt på sadelnivå.
+    z = np.array(
+        [
+            [20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0],
+            [20.0, 10.0, 10.5, 11.0, 10.2, 11.0, 10.4, 10.8, 20.0],
+            [20.0, 10.5, 11.0, 12.0, 11.0, 12.0, 10.8, 11.5, 20.0],
+            [20.0, 11.0, 12.0, 11.5, 12.0, 11.5, 11.5, 12.0, 20.0],
+            [20.0, 10.3, 10.9, 11.5, 10.1, 11.5, 10.6, 11.0, 20.0],
+            [20.0, 10.9, 11.5, 12.0, 11.5, 12.0, 11.0, 11.8, 20.0],
+            [20.0, 20.0, 20.0, 20.0, 12.5, 20.0, 20.0, 20.0, 20.0],
+        ],
+        dtype=np.float32,
+    )
+    osak = np.full_like(z, 0.25)
+    slag = np.full(z.shape, 1, dtype=np.uint8)
+    geo = _geo(*z.shape, dx=0.5)
+
+    grafer = (
+        bygg_sankgraf(z, osak, slag, geo),
+        filtrera_persistens(bygg_sankgraf(z, osak, slag, geo), faktor=2.0),
+    )
+    for graf in grafer:
+        cell_area = float(geo.pixelstorlek_x) * float(geo.pixelstorlek_y)
+        z_flat = np.asarray(graf.mark_z, dtype=np.float64).ravel()
+        ct_flat = graf.cell_till_nod.ravel()
+        for nid, nod in graf.noder.items():
+            lov = graf.lov_under_nod(nid)
+            mask = np.isin(ct_flat, np.asarray(lov, dtype=np.int64))
+            ref_vol, ref_yt, ref_bot, ref_cnt = berakna_kurvor_for_celler(
+                z_flat[mask], nod.overfall_rh2000, cell_area
+            )
+            assert nod.botten_rh2000 == pytest.approx(ref_bot, abs=1e-12)
+            assert nod.cell_antal == ref_cnt
+            assert nod.max_volym_m3 == pytest.approx(ref_vol[-1].v_m3, rel=1e-12, abs=1e-12)
+            assert nod.ytkurva[-1].a_m2 == pytest.approx(ref_yt[-1].a_m2, rel=1e-12, abs=1e-12)
+            if nod.ar_lov:
+                assert nod.volymkurva == ref_vol
+                assert nod.ytkurva == ref_yt
+            else:
+                z_sadel = graf.noder[nod.barn_id[0]].overfall_rh2000
+                ref_nod = SankNod(
+                    nod_id=nid,
+                    forald_id=nod.forald_id,
+                    barn_id=nod.barn_id,
+                    overfall_rh2000=nod.overfall_rh2000,
+                    overfall_x=nod.overfall_x,
+                    overfall_y=nod.overfall_y,
+                    ut_till_id=nod.ut_till_id,
+                    volymkurva=ref_vol,
+                    ytkurva=ref_yt,
+                    avrinningsyta_m2=nod.avrinningsyta_m2,
+                    persistens_m=nod.persistens_m,
+                    osakerhet_m=nod.osakerhet_m,
+                    botten_rh2000=ref_bot,
+                    cell_antal=ref_cnt,
+                )
+                for frak in (0.0, 0.25, 0.5, 0.75, 1.0):
+                    zt = z_sadel + frak * (nod.overfall_rh2000 - z_sadel)
+                    assert nod.volym_vid_niva(zt) == pytest.approx(
+                        ref_nod.volym_vid_niva(zt), rel=1e-11, abs=1e-11
+                    )
+                    assert nod.area_vid_niva(zt) == pytest.approx(
+                        ref_nod.area_vid_niva(zt), rel=1e-11, abs=1e-11
+                    )
+                    vt = ref_nod.volym_vid_niva(zt)
+                    if vt > ref_nod.volym_vid_niva(z_sadel) + 1e-12:
+                        assert nod.niva_vid_volym(vt) == pytest.approx(
+                            ref_nod.niva_vid_volym(vt), rel=1e-10, abs=1e-10
+                        )
+        res = statisk_fyllning(graf, 0.50)
+        assert res.volymfel_rel < 1e-9
+
+
+def test_djup_sankkedja_linjart_antal_kurvpunkter() -> None:
+    """Djup kedja med >150 sammanslagna sänkor ska ge O(N) kurvpunkter, inte O(N * djup)."""
+    n_sankor = 160
+    bredd = n_sankor * 2 + 1
+    z = np.full((3, bredd), 500.0, dtype=np.float32)
+    # Trappad ränna: varannan kolumn är en grop med stigande sadlar (skev kedja av djup 160).
+    for k in range(n_sankor):
+        z[1, 2 * k + 1] = np.float32(10.0 + 0.01 * k)
+        z[1, 2 * k] = np.float32(20.0 + 0.5 * k)
+    z[1, bredd - 1] = np.float32(20.0 + 0.5 * n_sankor)
+    # Öppna en enda utloppspunkt i högra kanten
+    z[1, 0] = np.float32(200.0)
+    osak = np.full_like(z, 0.01)
+    slag = np.full(z.shape, 1, dtype=np.uint8)
+    geo = _geo(*z.shape, dx=1.0)
+
+    graf = bygg_sankgraf(z, osak, slag, geo)
+    assert len(graf.lovnoder()) >= n_sankor
+    tot_punkter = sum(len(n.volymkurva) for n in graf.noder.values())
+    # Naiv O(N * djup) hade givit ~160 * 160 / 2 > 12 800 punkter; O(N) ligger långt under 2 000!
+    assert tot_punkter < 2_000
+    res = statisk_fyllning(graf, 5.0)
+    assert res.volymfel_rel < 1e-9

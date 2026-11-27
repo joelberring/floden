@@ -2184,6 +2184,16 @@ class FlodenApiApp:
                     "(ΔECA = 0)."
                 )
 
+        ekologi_fokus: list[float] | None = None
+        eko_mall = kalla.mallar.get("ekologi")
+        if eko_mall is not None:
+            for a_eko in eko_mall.fraga.analyser:
+                if a_eko.losare == "ekologi.konnektivitet" and a_eko.fokus is not None:
+                    ekologi_fokus = list(a_eko.fokus)
+                    break
+        if ekologi_fokus is None:
+            ekologi_fokus = self.kartverktyg._fallback_ekologi_fokus(kalla)
+
         fragedir = (
             (self.fragor.cachemapp / "_ekologi_las" / kalla.id)
             if skrivskyddad
@@ -2192,7 +2202,13 @@ class FlodenApiApp:
         fragedir.mkdir(parents=True, exist_ok=True)
         tag = hashlib.sha256(
             json.dumps(
-                {"p": par, "s": scen_nyckel, "k": kalla.id, "i": sorted(indata_filer)},
+                {
+                    "p": par,
+                    "s": scen_nyckel,
+                    "k": kalla.id,
+                    "i": sorted(indata_filer),
+                    "f": ekologi_fokus,
+                },
                 sort_keys=True,
             ).encode("utf-8")
         ).hexdigest()[:10]
@@ -2215,6 +2231,8 @@ class FlodenApiApp:
             "scenarier": ["fore", efter_namn],
             "parametrar": par,
         }
+        if ekologi_fokus is not None:
+            analys_post["fokus"] = list(ekologi_fokus)
         if indata_filer:
             analys_post["indata"] = {
                 roll: Path(os.path.relpath(p_fil.resolve(), fil_mapp)).as_posix()

@@ -565,12 +565,31 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     cell = float(p["cellstorlek_m"]) if p["cellstorlek_m"] is not None else lager.cell_m
     klasser = lager.klasser
     x0, y1 = lager.x_min_m, lager.y_max_m
-    if abs(cell - lager.cell_m) > 1e-9:
+    max_c = int(p["max_celler"])
+    if p["cellstorlek_m"] is None and klasser.size > max_c:
+        orig_celler = int(klasser.size)
+        faktor = max(2, math.ceil(math.sqrt(orig_celler / max_c)))
+        while True:
+            cand_cell = float(lager.cell_m) * faktor
+            cand_ny = max(1, int(round(lager.klasser.shape[0] * lager.cell_m / cand_cell)))
+            cand_nx = max(1, int(round(lager.klasser.shape[1] * lager.cell_m / cand_cell)))
+            if cand_ny * cand_nx <= max_c:
+                cell = cand_cell
+                klasser = _omsampla(lager, cell)
+                varningar.append(
+                    f"Markunderlaget ({orig_celler} celler vid {lager.cell_m:g} m) översteg "
+                    f"max_celler={max_c}; omsamplades deterministiskt till {cell:g} m "
+                    f"({klasser.size} celler) med närmaste granne (ange cellstorlek_m "
+                    "uttryckligen för annan upplösning)."
+                )
+                break
+            faktor += 1
+    elif abs(cell - lager.cell_m) > 1e-9:
         klasser = _omsampla(lager, cell)
-    if klasser.size > int(p["max_celler"]):
+    if klasser.size > max_c:
         raise LosarFel(
             f"{namn}: området blir {klasser.size} celler med cellstorlek {cell:g} m, över "
-            f"max_celler={p['max_celler']}. Öka cellstorlek_m, minska området eller höj max_celler."
+            f"max_celler={max_c}. Öka cellstorlek_m, minska området eller höj max_celler."
         )
     # Ritade hus och befintliga K1-byggnader ovanpå som NMD 51 (biotop: klassen "byggnad").
     hus_kod = NMD_BYGGNAD if not biotop else (klasskoder or {}).get("byggnad")

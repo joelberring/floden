@@ -147,3 +147,43 @@ def test_mappa_goteborg_fortsatter_med_varning_vid_nmd_natfel(lm: FalskLm, tmp_p
     res = mappa(v, nycklar_fran=inga_nycklar, filhamtare=fh)
     assert res.nytt
     assert any("NMD (CC0) kunde inte hämtas" in w for w in res.varningar)
+
+
+def test_mappa_filpaket_snappar_hojdmodell_till_500m_rutor_noll_utanfor_plattor(
+    lm: FalskLm, tmp_path: Path  # noqa: F811
+) -> None:
+    """Höjdmodell ur filpaket ska täcka hela 500 m-K1-rutnätet även när extent inte är 500 m-justerat."""
+    v = bygg_varld(lm, tmp_path)
+    with (REPO / "data/kommuner/goteborg.toml").open("rb") as fh:
+        d = tomllib.load(fh)
+    # Icke-500 m-justerad bbox (t.ex. Lindholmen/Guldheden-mönster)
+    d["omraden"]["haga"]["bbox"] = [147420.0, 6397530.0, 147570.0, 6397680.0]
+    d["lantmateriet"].update(kontext_m=30.0, upplosning_m=2.0)
+    d["dagsljus"].update(azimutriktningar=32, hojd_max_m=3, cellstorlek_m=2)
+    d["geografier"]["goteborg-test"]["max_buffert_m"] = 200.0
+    d["filpaket"]["hojdmodell"]["urlar"] = [HOJD_URL]
+    v["kommun"] = tolka_kommun(d)
+
+    paket = _bygg_kompletta_paket(tmp_path)
+    # Ersätt höjdmodellen med en 2,5 x 2,5 km platta som täcker alla 500 m-snäppta rutor runt Haga
+    stor_t = tmp_path / "p_stor.tif"
+    with rasterio.open(
+        stor_t, "w", driver="GTiff", height=500, width=500, count=1, dtype="float32", crs="EPSG:3007",
+        transform=from_origin(146500.0, 6399000.0, 5.0, 5.0), nodata=-9999.0,
+    ) as ds:
+        ds.write(np.full((500, 500), 12.5, dtype=np.float32), 1)
+    zh_stor = tmp_path / "h_stor.zip"
+    with zipfile.ZipFile(zh_stor, "w") as zf:
+        zf.write(stor_t, "h/stor.tif")
+    paket[HOJD_URL] = zh_stor.read_bytes()
+
+    res = mappa(v, nycklar_fran=inga_nycklar, filhamtare=FalskFilhamtare(paket))
+    assert res.nytt
+    manifest, _ = las_manifest(v["rot"] / "geo", "goteborg-test@v1")
+    k1_mapp = v["rot"] / "geo" / "_lager" / manifest["lager"]["k1_rutnat"]["sha256"]
+    rutor = sorted(k1_mapp.glob("mm_*"))
+    assert rutor
+    for r in rutor:
+        terr, _ = las_geotiff(r / "terrang.tif")
+        assert int(np.count_nonzero(np.isnan(terr))) == 0, f"Oväntad NaN i {r.name}/terrang.tif"
+    assert not any("utanför höjdmodellens plattor" in w for w in manifest["varningar"])
