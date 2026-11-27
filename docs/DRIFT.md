@@ -470,6 +470,170 @@ För större kommungeografier, flerrutiga 2D-skyfall och hög samtidig belastnin
 - **Förberäkning till S3 (`S4`):** `floden forberakna` bygger och lagrar kommunvisa baslager i Hetzner Object Storage (se avsnittet *Lagring, cachestädning och backup (S4)* ovan) så att webbservern hämtar färdiga rutor via lokal LRU-cache.
 - **Elastisk pull-arbetare (`S5k`):** tunga jobb läggs i jobbkö och hämtas av tillfälliga Hetzner-arbetare (större CPU-/RAM-maskiner eller GPU) styrda av kostnadsbok och månadstak, medan basservern förblir liten och snabb för webb, konton, MCP och lättare projektkörningar.
 
+## Driftmatris: profiler (A, B, C), arbetare och automatisk diskstädning
+
+Samma Docker-avbildning (`ghcr.io/joelberring/floden`) kör både ensam basserver idag (utan GPU, utan S3, utan externa kötjänster) och utbyggd produktion imorgon (större VPS, S3-objektlagring och on-demand GPU-/CPU-arbetare).
+
+### Översikt av driftsprofiler
+
+| Egenskap | Profil A — Ensam CX23 (förval idag) | Profil B — CX33 (5–10 samtidiga användare) | Profil C — Tillval imorgon (utan omskrivning) |
+| --- | --- | --- | --- |
+| Server / hårdvara | 1 × Hetzner CX23 (4 GB RAM, 2 vCPU, 40 GB SSD) | 1 × Hetzner CX33 (8 GB RAM, 4 vCPU, 80 GB SSD) | Basserver (CX23/CX33) + on-demand CPU-/GPU-nod |
+| Extra tjänster | **0 extra tjänster** (ingen GPU, ingen S3, ingen extern kö) | **0 extra tjänster** (samma Compose-stack) | Hetzner Object Storage (S3) och/eller lokal `data/forberaknat/` + `floden drift arbetare` |
+| `FLODEN_MEM_LIMIT` | `3g` | `6g` | `3g`–`6g` på webb; friare på arbetarnod |
+| `FLODEN_EXEKUTOR` | `process` | `process` | `process` på webb; pull-kö (`S5k`) för tunga jobb |
+| `FLODEN_JOBB_MAX_RAM_MB` | `2200` | `4200` | Basserver `2200`–`4200`; arbetarnod efter maskin |
+| `FLODEN_JOBB_MAX_TID_S` | `300` | `300` | Basserver `300`; långa jobb på arbetarnod med lease-heartbeat |
+| `FLODEN_MAX_SAMTIDIGA_BERAKNINGAR` | `2` | `4` | `2`–`4` på webb + valfritt antal arbetarnoder |
+| `FLODEN_LOKAL_DISK_MAX_GB` | `12` | `28` | Lokal cache `12`–`28` GB + S3 för förberäknat |
+| `FLODEN_AUTO_STADA_DISK` | `1` (var 24:e timme i containern) | `1` (var 24:e timme i containern) | `1` på webb + S3-livscykelregler |
+| `FLODEN_MAX_SANKGRAF_CELLER` | `4500000` | `9500000` | Lokalt tak på webb; större rutor på arbetarnod |
+| `FLODEN_MAX_DAGSLJUS_CELLER` | `4500000` | `9500000` | Lokalt tak på webb; förberäknat i `data/forberaknat/` / S3 |
+| `FLODEN_MAX_EKOLOGI_CELLER` | `1000000` | `2000000` | Lokalt tak på webb; tunga körningar på arbetarnod |
+| `FLODEN_MAX_PNG_PIXLAR` | `2048` | `2048` | `2048` |
+
+### Profil A — Ensam CX23 (4 GB RAM / `mem_limit: 3g`, 2 vCPU, 40 GB SSD)
+
+Rekommenderade inställningar i `/srv/floden/.env` för stabil drift utan GPU och utan S3 (alla förval ligger redan i `docker-compose.prod.yml`):
+
+```bash
+# Profil A: Hetzner CX23 (4 GB RAM, 2 vCPU, 40 GB SSD, 0 extra tjänster)
+FLODEN_MEM_LIMIT=3g
+FLODEN_SERVER=asgi
+FLODEN_EXEKUTOR=process
+FLODEN_JOBB_MAX_RAM_MB=2200
+FLODEN_JOBB_MAX_TID_S=300
+FLODEN_MAX_SAMTIDIGA_BERAKNINGAR=2
+FLODEN_MIN_LEDIG_DISK_MB=500
+
+# Lokal diskstädning inuti containern (fungerar direkt utan systemd-timer eller S3)
+FLODEN_LOKAL_DISK_MAX_GB=12
+FLODEN_AUTO_STADA_DISK=1
+FLODEN_AUTO_STADA_INTERVALL_TIMMAR=24
+# FLODEN_AUTO_STADA_VID_START=0
+
+# Fail-fast cell- och bildtak för 3 GB containertak
+FLODEN_MAX_SANKGRAF_CELLER=4500000
+FLODEN_MAX_DAGSLJUS_CELLER=4500000
+FLODEN_MAX_EKOLOGI_CELLER=1000000
+FLODEN_MAX_PNG_PIXLAR=2048
+
+# Lås numeriska trådpooler till 1 tråd per barnprocess på 2 vCPU
+OPENBLAS_NUM_THREADS=1
+OMP_NUM_THREADS=1
+MKL_NUM_THREADS=1
+NUMEXPR_NUM_THREADS=1
+```
+
+### Profil B — CX33 (8 GB RAM / `mem_limit: 6g`, 4 vCPU, 80 GB SSD)
+
+För 5–10 samtidiga användare, större projektmosaiker (upp till 3 × 3 rutor vid 0,5 m) och större lokal cache — byt serverstorlek hos Hetzner och uppdatera dessa rader i `/srv/floden/.env` följt av `docker compose -f docker-compose.prod.yml up -d`:
+
+```bash
+# Profil B: Hetzner CX33 (8 GB RAM, 4 vCPU, 80 GB SSD)
+FLODEN_MEM_LIMIT=6g
+FLODEN_EXEKUTOR=process
+FLODEN_JOBB_MAX_RAM_MB=4200
+FLODEN_JOBB_MAX_TID_S=300
+FLODEN_MAX_SAMTIDIGA_BERAKNINGAR=4
+FLODEN_MIN_LEDIG_DISK_MB=1000
+FLODEN_LOKAL_DISK_MAX_GB=28
+FLODEN_AUTO_STADA_DISK=1
+FLODEN_AUTO_STADA_INTERVALL_TIMMAR=24
+FLODEN_MAX_SANKGRAF_CELLER=9500000
+FLODEN_MAX_DAGSLJUS_CELLER=9500000
+FLODEN_MAX_EKOLOGI_CELLER=2000000
+FLODEN_MAX_PNG_PIXLAR=2048
+```
+
+### Profil C — Tillval imorgon utan omskrivning (S3, lokal `data/forberaknat/` & on-demand GPU/CPU-arbetare)
+
+När behovet växer läggs lagring och beräkningsnoder på stegvis utan kodändring:
+
+1. **Lokal förberäknad mapp (`data/forberaknat/`):** förberäknade kommunrutor kan läggas direkt på basserverns disk under `data/forberaknat/` (eller synkas ner dit) för omedelbar visning utan S3.
+2. **Hetzner Object Storage (S3):** fyll i `FLODEN_S3_TYP=s3` samt `FLODEN_S3_ENDPOINT`, `FLODEN_S3_BUCKET`, `FLODEN_S3_REGION`, `FLODEN_S3_ACCESS_KEY`, `FLODEN_S3_SECRET_KEY` i `.env` (se *Lagring, cachestädning och backup (S4)* ovan).
+3. **Enhetlig arbetare (`floden drift arbetare`):** samma avbildning startas som pull-arbetare mot jobbkön (`src/drift/jobbko.py`, S5k):
+
+```bash
+# Fristående lokal CPU-arbetare (ingen S3, ingen GPU; väljer automatiskt CUDA om det finns)
+docker compose -f docker-compose.prod.yml run --rm floden \
+  floden drift arbetare --lagring lokal --enhet auto --ko-rot /app/data/lokal/drift
+
+# On-demand GPU-nod mot Hetzner Object Storage (fail-fast om CUDA/CuPy saknas!)
+docker run --rm --gpus all --env-file .env \
+  -v /srv/floden/data/lokal/drift:/app/data/lokal/drift \
+  ghcr.io/joelberring/floden:main \
+  floden drift arbetare --lagring s3 --enhet cuda --lease-s 300 --intervall-s 2.0
+
+# Engångs-/cron-körning (behandlar högst 1 jobb och avslutar rent; avslutar direkt om kön är tom)
+docker compose -f docker-compose.prod.yml exec floden \
+  floden drift arbetare --lagring lokal --enhet auto --en-gang --json
+```
+
+Viktiga garantier i `floden drift arbetare`:
+- `--enhet auto` detekterar CUDA/CuPy säkert och faller tillbaka till `cpu` med tydlig loggrad om GPU saknas.
+- `--enhet cuda` gör **fail-fast** med svenskt felmeddelande och slutkod `2` om CUDA/CuPy saknas (aldrig tyst fallback till CPU).
+- Långa jobb hålls vid liv av en automatisk lease-heartbeat-tråd (förnyar vid halva `--lease-s`, avslutas alltid rent i `finally`).
+- Vid `SIGTERM`/`SIGINT` slutar arbetaren hämta nya jobb och släpper pågående lease rent så jobbet återköas omedelbart i stället för att fastna i pågående läge.
+- Giftiga jobb (undantag i köraren) markeras misslyckade med PII- och nyckelfri feltext medan arbetaren fortsätter med nästa jobb.
+
+### In-container diskstädning och manuell körning (`floden drift stada-disk`)
+
+När `FLODEN_AUTO_STADA_DISK=1` (förval i `docker-compose.prod.yml`) startar `floden webb` en lätt bakgrundstråd (`AutoDiskStadare`) som anropar `gemensamt.lokal_diskstadare.stada_lokal_disk` var `FLODEN_AUTO_STADA_INTERVALL_TIMMAR` timme (förval `24`). Aktiva körningar, demovärlden och projektens refererade körningar skyddas alltid atomiskt, och tillfälliga I/O-fel under städning påverkar aldrig webbservern. Ställ `FLODEN_AUTO_STADA_VID_START=1` för att även köra ett första svep kort efter uppstart.
+
+Manuell körning och provkörning i containern:
+
+```bash
+# Provkör utan att radera något (JSON-sammanfattning inkl. diskstatus)
+docker compose -f docker-compose.prod.yml exec floden \
+  floden drift stada-disk --torrkor --json
+
+# Städa skarpt med uttryckligt tak och maxålder
+docker compose -f docker-compose.prod.yml exec floden \
+  floden drift stada-disk --max-gb 12 --max-alder-dagar 14
+```
+
+## Felsökning (`/api/halsa`, `507` låg disk och `503` kö full)
+
+Kontrollera först hälsoändpunkten (låsfri — svarar `200 OK` även medan tunga beräkningar pågår):
+
+```bash
+docker compose -f docker-compose.prod.yml exec floden \
+  python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8765/api/halsa').read().decode())"
+```
+
+### Fält i `/api/halsa`
+
+| Fält | Betydelse | Vad du vill se (Profil A CX23) |
+| --- | --- | --- |
+| `minne_rss_mb` | Webbprocessens verkliga fysiska RAM (MiB) via `/proc/self/status` (`VmRSS`). | Vanligtvis `150`–`500` MiB; ska inte växa obegränsat mellan körningar. |
+| `minne_grans_mb` | Containerns cgroup-minnestak i MiB (från `/sys/fs/cgroup/memory.max` eller cgroup v1; `null` utanför container). | `3072.0` vid `FLODEN_MEM_LIMIT=3g` (`6144.0` på CX33). |
+| `disk_ledig_gb` | Ledigt diskutrymme i GB på filsystemet för `data/cache`. | Tydligt över `0.5` GB (gärna `> 5` GB). |
+| `exekutor` | Aktivt körläge för tunga K20-utredningar (`process` eller `trad`). | `process` i produktion (isolerade barnprocesser skyddar webbservern från OOM). |
+| `ko` | Ögonblicksbild `{koade, pagaende, max_ko}` för webbens körkö. | `koade < max_ko` (`max_ko` standard `16`). |
+
+### Vanliga driftfel och åtgärder
+
+- **HTTP `507 Insufficient Storage` (låg ledig disk):**
+  - *Orsak:* pre-flight diskvakten i `FragaTjanst` upptäckte mindre ledig disk på cachevolymen än `FLODEN_MIN_LEDIG_DISK_MB` (standard `500` MB) och stoppar nya körningar innan filsystemet fylls helt.
+  - *Åtgärd:*
+    1. Läs `disk_ledig_gb` i `/api/halsa` och kör `df -h /srv/floden/data`.
+    2. Provkör och rensa lokal cache direkt:
+       ```bash
+       docker compose -f docker-compose.prod.yml exec floden floden drift stada-disk --torrkor --json
+       docker compose -f docker-compose.prod.yml exec floden floden drift stada-disk
+       ```
+    3. Kontrollera att `FLODEN_AUTO_STADA_DISK=1` och att `FLODEN_LOKAL_DISK_MAX_GB` (t.ex. `12` på 40 GB CX23) är rimlig jämfört med `data/lokal/` och Docker-avbildningar (`docker image prune -f`).
+- **HTTP `503 Service Unavailable` (kö full / överlast, med `Retry-After`-huvud):**
+  - *Orsak:* antingen är samtliga samtidiga beräkningsplatser upptagna i ASGI-semaforen (`FLODEN_MAX_SAMTIDIGA_BERAKNINGAR`, förval `2` på CX23) eller så har körkön nått `FLODEN_MAX_KO` (förval `16`), eller så håller servern på att stängas ner.
+  - *Åtgärd:*
+    1. Läs `ko` i `/api/halsa` (`pagaende`, `koade`, `max_ko`) och vänta enligt `Retry-After` (klienten kan försöka igen).
+    2. Kontrollera `docker compose -f docker-compose.prod.yml logs --tail=100 floden` efter hängande jobb eller upprepade tidsgränsavbrott (`FLODEN_JOBB_MAX_TID_S=300`).
+    3. Vid återkommande hög samtidighet: uppgradera till **Profil B (CX33)** och höj `FLODEN_MAX_SAMTIDIGA_BERAKNINGAR=4`, eller avlasta tunga körningar till `floden drift arbetare` (**Profil C**).
+- **Körning avbruten av RAM- eller tidsgräns (men `/api/halsa` svarar `200 OK`):**
+  - *Orsak:* med `FLODEN_EXEKUTOR=process` stoppas en enskild barnprocess som passerar `FLODEN_JOBB_MAX_RAM_MB` (`2200` MB) eller `FLODEN_JOBB_MAX_TID_S` (`300` s) utan att webbservern eller andra användare påverkas.
+  - *Åtgärd:* minska projektavgränsningen eller öka `cellstorlek_m`, eller uppgradera till Profil B/C för större områden.
+
 ## Kostnadskontroll
 
 Basservern kostar lika mycket oavsett antal användare. Allt som kostar per timme (arbetare, GPU) går genom kostnadsbok

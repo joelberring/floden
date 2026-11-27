@@ -1710,6 +1710,10 @@ def bygg_parser() -> argparse.ArgumentParser:
 
     registrera_konto(subparsers)
 
+    from drift.arbetare_cli import registrera as registrera_drift
+
+    registrera_drift(subparsers)
+
     webb_parser = subparsers.add_parser(
         "webb",
         help="Starta Floden i webbläsaren: klient och API från samma port.",
@@ -1932,6 +1936,47 @@ def _kor_webb_asgi(args: argparse.Namespace) -> int:
     return 0
 
 
+def _kommando_webb(args: argparse.Namespace) -> int:
+    """Startar `floden webb` (ASGI eller trådserver) och valfri in-container auto-diskstädare."""
+    from drift.auto_stadare import AutoStadareFel, starta_auto_diskstadare_om_aktiv
+    from webb.api import skapa_http_server
+    from webb.klientbygge import KlientByggeFel, sakerstall_klient
+
+    if not args.ingen_bygg:
+        try:
+            sakerstall_klient(Path(args.konfig).resolve().parent / "webb", tvinga=args.bygg)
+        except KlientByggeFel as exc:
+            print(f"Kunde inte bygga webbklienten: {exc}", file=sys.stderr)
+            return 1
+
+    try:
+        auto_stadare = starta_auto_diskstadare_om_aktiv(args.konfig)
+    except AutoStadareFel as exc:
+        print(f"Fel i konfiguration för automatisk diskstädning: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        if args.server == "asgi":
+            return _kor_webb_asgi(args)
+        server = skapa_http_server(
+            host=args.host,
+            port=args.port,
+            testsvit_rot=args.rot,
+            konfig_fil=args.konfig,
+        )
+        print(f"Floden körs på http://{args.host}:{args.port}  (Ctrl+C avslutar)")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
+        return 0
+    finally:
+        if auto_stadare is not None:
+            auto_stadare.stoppa()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Startpunkt för CLI:t `floden`."""
     parser = bygg_parser()
@@ -1994,6 +2039,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from konto.cli import kor as kor_konto
 
         return kor_konto(args)
+    if args.kommando == "drift":
+        from drift.arbetare_cli import kor as kor_drift
+
+        return kor_drift(args)
     if args.kommando == "forberakna":
         from karna.batch import (
             BatchFel,
@@ -2069,31 +2118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 0 if not status.felade else 1
     if args.kommando == "webb":
-        from webb.api import skapa_http_server
-        from webb.klientbygge import KlientByggeFel, sakerstall_klient
-
-        if not args.ingen_bygg:
-            try:
-                sakerstall_klient(Path(args.konfig).resolve().parent / "webb", tvinga=args.bygg)
-            except KlientByggeFel as exc:
-                print(f"Kunde inte bygga webbklienten: {exc}", file=sys.stderr)
-                return 1
-        if args.server == "asgi":
-            return _kor_webb_asgi(args)
-        server = skapa_http_server(
-            host=args.host,
-            port=args.port,
-            testsvit_rot=args.rot,
-            konfig_fil=args.konfig,
-        )
-        print(f"Floden körs på http://{args.host}:{args.port}  (Ctrl+C avslutar)")
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            server.server_close()
-        return 0
+        return _kommando_webb(args)
 
     parser.print_help()
     return 2
