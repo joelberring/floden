@@ -131,6 +131,32 @@ def _heltal(p: Mapping[str, Any], namn: str, standard: int, *, minst: int) -> in
     return int(v)
 
 
+def _kretspar_redovisning(res: Any, cell_m: float) -> tuple[dict[str, Any], str | None]:
+    """Redovisar parbudget och ev. adaptiv kretsupplösning öppet i `ekologi.json` + `varningar`."""
+    ber = int(getattr(res, "antal_kretspar_beraknade", 0))
+    tot = int(getattr(res, "antal_kretspar_totalt", 0))
+    vikt_andel = float(getattr(res, "kretspar_vikt_andel", 1.0))
+    faktor = int(getattr(res, "krets_upplosningsfaktor", 1))
+    vikt_pct = round(100.0 * vikt_andel, 2)
+    info: dict[str, Any] = {
+        "antal_par_beraknade": ber,
+        "antal_par_totalt": tot,
+        "andel_flodesvikt_procent": vikt_pct,
+        "upplosningsfaktor": faktor,
+        "krets_cellstorlek_m": float(cell_m * faktor),
+    }
+    if tot > 0 and (ber < tot or faktor > 1):
+        uppl_del = f", kretsupplösning {cell_m * faktor:g} m" if faktor > 1 else ""
+        pct_txt = f"{vikt_pct:.1f}".replace(".", ",")
+        varning = (
+            f"Strömtäthet beräknad över de {ber} tyngsta fläckparen av {tot} "
+            f"({pct_txt} % av total flödesvikt{uppl_del}); ECA, PC och dPC är exakta "
+            f"över samtliga {int(res.antal_flackar)} fläckar."
+        )
+        return info, varning
+    return info, None
+
+
 def _intervall(p: Mapping[str, Any], namn: str) -> list[float] | None:
     v = p.get(namn)
     if v is None:
@@ -372,6 +398,9 @@ class Konnektivitet(Analyslosare):
 
         form = slag.shape
         nodata = np.full(form, np.nan, dtype=np.float32)
+        krets_dok, krets_varn = _kretspar_redovisning(res, cell)
+        if krets_varn is not None:
+            varningar.append(krets_varn)
         if res.stromtathet_sammanlagd is None:
             varningar.append(
                 f"{res.antal_flackar} habitatfläck(ar): strömtäthet och känslighet kräver minst "
@@ -450,6 +479,9 @@ class Konnektivitet(Analyslosare):
                 "antal_flackar": res.antal_flackar,
                 "total_habitat_area_m2": res.total_habitat_area_m2,
                 "cellstorlek_m": cell,
+                "kretspar_beraknade": krets_dok["antal_par_beraknade"],
+                "kretspar_totalt": krets_dok["antal_par_totalt"],
+                "kretspar_vikt_pct": krets_dok["andel_flodesvikt_procent"],
             },
             varningar=tuple(varningar),
         )
@@ -687,6 +719,9 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
     hr = res[huvud.scenario_id]
     form = klasser.shape
     nodata = np.full(form, np.nan, dtype=np.float32)
+    krets_dok, krets_varn = _kretspar_redovisning(hr, cell)
+    if krets_varn is not None:
+        varningar.append(krets_varn)
     if hr.stromtathet_sammanlagd is None:
         varningar.append(
             f"{hr.antal_flackar} habitatfläck(ar): strömtäthet och känslighet kräver minst två "
@@ -797,6 +832,9 @@ def _kor_natverk(losare: Konnektivitet, k: LosarKontext) -> LosarUtdata:
             "antal_flackar": hr.antal_flackar,
             "total_habitat_area_m2": hr.total_habitat_area_m2,
             "cellstorlek_m": cell,
+            "kretspar_beraknade": krets_dok["antal_par_beraknade"],
+            "kretspar_totalt": krets_dok["antal_par_totalt"],
+            "kretspar_vikt_pct": krets_dok["andel_flodesvikt_procent"],
         },
         varningar=tuple(varningar),
     )

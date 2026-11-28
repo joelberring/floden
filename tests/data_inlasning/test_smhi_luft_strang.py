@@ -22,6 +22,7 @@ from data_inlasning.smhi import (
     PARAM_VINDRIKTNING,
 )
 from data_inlasning.smhi_luft_strang import (
+    STRANG_PARAM_CIE_UV,
     STRANG_PARAM_DIREKT_NORMAL,
     STRANG_PARAM_GLOBAL,
     SmhiLuftStrangFel,
@@ -93,7 +94,7 @@ def test_kontrollera_smhi_url_nekar_otillatna_vardar_och_protokoll(ogiltig_url: 
     "giltig_url",
     [
         "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/1.json",
-        "https://opendata-download-metanalys.smhi.se/api/category/strang1g/version/1/geotype/point/lon/11.9700/lat/57.7000/parameter/116/data.json?from=2024-06-01&to=2024-08-31",
+        "https://opendata-download-metanalys.smhi.se/api/category/strang1g/version/1/geotype/point/lon/11.9700/lat/57.7000/parameter/117/data.json?from=2024-06-01&to=2024-08-31",
         "https://datavardluft.smhi.se/52North/api/v1/timeseries?expanded=true",
     ],
 )
@@ -169,8 +170,8 @@ def test_hamta_smhi_vaderpaket_med_strang_vindros_utci_och_nortrip(tmp_path: Pat
     rader_d: list[tuple[str, str, str, str]] = [("2023-07-01", "12:00:00", "270", "G")]
     rader_rh: list[tuple[str, str, str, str]] = [("2023-07-01", "12:00:00", "55", "G")]
     rader_ned: list[tuple[str, str, str, str]] = [("2023-07-01", "12:00:00", "0.0", "G")]
-    strang_116: list[dict[str, Any]] = []
     strang_117: list[dict[str, Any]] = []
+    strang_118: list[dict[str, Any]] = []
 
     t0 = datetime(2024, 7, 10, 0, 0, tzinfo=UTC)
     for h in range(48):
@@ -192,8 +193,8 @@ def test_hamta_smhi_vaderpaket_med_strang_vindros_utci_och_nortrip(tmp_path: Pat
         rader_ned.append((d_s, t_s, f"{ned:.1f}", "G"))
         sol_g = 760.0 if 11 <= dt.hour <= 15 else 120.0
         sol_dn = 840.0 if 11 <= dt.hour <= 15 else 100.0
-        strang_116.append({"date_time": iso, "value": sol_g})
-        strang_117.append({"date_time": iso, "value": sol_dn})
+        strang_117.append({"date_time": iso, "value": sol_g})
+        strang_118.append({"date_time": iso, "value": sol_dn})
 
     # Underkänd observation (flagga O, extremtemp 58 °C) ska filtreras bort helt!
     rader_t.append(("2024-07-12", "12:00:00", "58.0", "O"))
@@ -233,10 +234,11 @@ def test_hamta_smhi_vaderpaket_med_strang_vindros_utci_och_nortrip(tmp_path: Pat
 
     def falsk_hamtare(url: str) -> bytes:
         if "strang1g" in url:
+            assert f"/parameter/{STRANG_PARAM_CIE_UV}/" not in url
             if f"/parameter/{STRANG_PARAM_GLOBAL}/" in url:
-                return json.dumps(strang_116).encode("utf-8")
-            if f"/parameter/{STRANG_PARAM_DIREKT_NORMAL}/" in url:
                 return json.dumps(strang_117).encode("utf-8")
+            if f"/parameter/{STRANG_PARAM_DIREKT_NORMAL}/" in url:
+                return json.dumps(strang_118).encode("utf-8")
         for pid, payload in csv_per_param.items():
             if f"/parameter/{pid}/station/71420/" in url:
                 return payload
@@ -264,7 +266,9 @@ def test_hamta_smhi_vaderpaket_med_strang_vindros_utci_och_nortrip(tmp_path: Pat
     assert paket.strang.global_p95_dag_w_m2 == pytest.approx(760.0)
     assert paket.strang.direkt_normal_p95_dag_w_m2 == pytest.approx(840.0)
     assert "metobs_temperatur" in paket.kallor_sha256
-    assert "strang_global_116" in paket.kallor_sha256
+    assert "strang_global_117" in paket.kallor_sha256
+    assert "strang_direkt_normal_118" in paket.kallor_sha256
+    assert "strang_global_116" not in paket.kallor_sha256
 
     # Timvis väderserie round-trip CSV och kompatibel direkt med NORTRIP (`berakna_emission`).
     assert paket.vader_timserie.antal_timmar == 48
@@ -288,13 +292,27 @@ def test_hamta_smhi_vaderpaket_med_strang_vindros_utci_och_nortrip(tmp_path: Pat
 
 
 def test_strang_url_och_tolkning_filtrerar_ogiltiga() -> None:
+    assert STRANG_PARAM_CIE_UV == 116
+    assert STRANG_PARAM_GLOBAL == 117
+    assert STRANG_PARAM_DIREKT_NORMAL == 118
+
+    with pytest.raises(SmhiLuftStrangFel, match="116"):
+        bygg_strang_url(
+            11.97, 57.70, STRANG_PARAM_CIE_UV, fran_datum="2024-06-01", till_datum="2024-08-31"
+        )
+
     url = bygg_strang_url(
         11.97, 57.70, STRANG_PARAM_GLOBAL, fran_datum="2024-06-01", till_datum="2024-08-31"
     )
     assert url.startswith(
         "https://opendata-download-metanalys.smhi.se/api/category/strang1g/version/1/"
     )
-    assert "/parameter/116/data.json?" in url
+    assert "/parameter/117/data.json?" in url
+
+    url_dn = bygg_strang_url(
+        11.97, 57.70, STRANG_PARAM_DIREKT_NORMAL, fran_datum="2024-06-01", till_datum="2024-08-31"
+    )
+    assert "/parameter/118/data.json?" in url_dn
 
     serie = tolka_strang_json(
         [
@@ -306,16 +324,17 @@ def test_strang_url_och_tolkning_filtrerar_ogiltiga() -> None:
     )
     assert serie.antal_godkanda == 1
     assert serie.bortfiltrerade == 2
+    assert "117" in serie.parameter_namn
 
     def strang_hamtare(u: str) -> bytes:
-        if "/parameter/116/" in u:
+        if "/parameter/117/" in u:
             return json.dumps(
-                [{"date_time": "2024-07-01T12:00:00Z", "value": 700.0}]
+                [{"date_time": "2024-07-01T12:00:00Z", "value": 765.0}]
             ).encode("utf-8")
-        raise SmhiLuftStrangFel("117 ej tillgänglig")
+        raise SmhiLuftStrangFel("118 ej tillgänglig")
 
     res = hamta_strang_sommarstralning(11.97, 57.70, ar=2024, hamtare=strang_hamtare)
-    assert res.global_p95_dag_w_m2 == pytest.approx(700.0)
+    assert res.global_p95_dag_w_m2 == pytest.approx(765.0)
     assert res.direkt_normal_serie is None
 
 

@@ -634,13 +634,13 @@ export function trafikTabellHtml(opts: TrafikTabellOpts): string {
               const vald = valdaIdn.has(lk.lank_id);
               const namn = lk.gatunamn ?? lk.lank_id;
               const marke = trafikKallmarkeEtikett(lk);
-              const adtTxt = arTal(lk.adt_fordon_dygn)
-                ? `${formatera(lk.adt_fordon_dygn, 0)} ÅDT`
+              const metaTxt = arTal(lk.adt_fordon_dygn)
+                ? `${formatera(lk.adt_fordon_dygn, 0)} ÅDT · ${marke}`
                 : "ÅDT saknas";
               const stilKlass = lk.har_adt ? "har-adt" : "saknar-adt";
               return `<button type="button" class="flode-knapp liten ar-bl-lank-knapp ${stilKlass}${vald ? " svart" : ""}" data-bl-valj-lank="${esc(lk.lank_id)}" aria-pressed="${vald}">
                 <span>${esc(namn)}</span>
-                <span class="ar-bl-lank-meta">${esc(adtTxt)} · ${esc(marke)}</span>
+                <span class="ar-bl-lank-meta">${esc(metaTxt)}</span>
               </button>`;
             })
             .join("")}
@@ -650,6 +650,7 @@ export function trafikTabellHtml(opts: TrafikTabellOpts): string {
   const tabellHtml =
     valda.length > 0
       ? `<div class="ar-bl-trafik-tabell-ram">
+          <div class="ar-bl-trafik-tabell-scroll">
           <table class="ar-bl-trafik-tabell" aria-label="Valda väglänkar för buller och luft">
             <thead>
               <tr>
@@ -684,6 +685,7 @@ export function trafikTabellHtml(opts: TrafikTabellOpts): string {
                 .join("")}
             </tbody>
           </table>
+          </div>
           <div class="ar-bl-trafik-atgarder">
             <button type="button" class="flode-knapp liten" id="ar-bl-spara-trafik"${opts.sparar ? " disabled" : ""}>${opts.sparar ? "Sparar …" : "Spara trafikuppgifter"}</button>
           </div>

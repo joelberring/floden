@@ -79,12 +79,15 @@ _TILLATNA_PARAMETRAR: Final[frozenset[str]] = frozenset(
         "fasad_avstand_m",
         "vaningshojd_m",
         "max_vaningar",
+        "max_fasadpunkter",
         "reflexordning",
         "karna",
         "okand_mark_klass",
         "byggnader_med_hal",
         "bullerskarmar",
         "land",
+        "utsnitt_3011",
+        "fasad_utsnitt_3011",
     }
 )
 _TILLATNA_VAG_NYCKLAR: Final[frozenset[str]] = frozenset(
@@ -386,10 +389,31 @@ def _las_brytlinje_skarmar(rutor: Sequence[Any]) -> list[_SkarmLinje]:
     return ut
 
 
+def _validera_bbox_3011(ra: Any, nyckel: str, namn: str) -> list[float] | None:
+    if ra is None:
+        return None
+    if not isinstance(ra, list | tuple) or len(ra) != 4:
+        raise BullerK21Fel(
+            f"{namn}: '{nyckel}' måste vara [e_min, n_min, e_max, n_max] i EPSG:3011."
+        )
+    ut: list[float] = []
+    for v in ra:
+        if isinstance(v, bool) or not isinstance(v, int | float) or not math.isfinite(float(v)):
+            raise BullerK21Fel(f"{namn}: '{nyckel}' får bara innehålla ändliga tal, fick {ra!r}.")
+        ut.append(float(v))
+    if ut[0] >= ut[2] or ut[1] >= ut[3]:
+        raise BullerK21Fel(
+            f"{namn}: '{nyckel}' måste uppfylla e_min < e_max och n_min < n_max, fick {ra!r}."
+        )
+    return ut
+
+
 def _valj_cellstorlek_m(
     rutor: Sequence[Any],
     begard_cell_m: float | None,
     max_rasterceller: int,
+    *,
+    utsnitt_3011: Sequence[float] | None = None,
 ) -> float:
     """Bestämmer rutnätsupplösning som heltalsmultipel av K1-rutornas pixelstorlek."""
     from karna.geometri import GeometriFel, las_terrang
@@ -412,6 +436,17 @@ def _valj_cellstorlek_m(
     x_max = max(float(g.x_max) for g in geos)
     y_min = min(float(g.y_min) for g in geos)
     y_max = max(float(g.y_max) for g in geos)
+    if utsnitt_3011 is not None:
+        ux0, uy0, ux1, uy1 = (float(v) for v in utsnitt_3011)
+        kx0 = max(x_min, ux0)
+        kx1 = min(x_max, ux1)
+        ky0 = max(y_min, uy0)
+        ky1 = min(y_max, uy1)
+        if kx1 <= kx0 or ky1 <= ky0:
+            raise BullerK21Fel(
+                "buller.nord2000: angivet 'utsnitt_3011' överlappar inte projektets K1-rutor."
+            )
+        x_min, x_max, y_min, y_max = kx0, kx1, ky0, ky1
 
     def _antal_celler(c: float) -> int:
         x0 = math.floor(x_min / c + 1.0e-6) * c
@@ -1078,6 +1113,18 @@ class BullerNord2000(Analyslosare):
             if max_van_ra is None
             else _valfritt_heltal(parametrar, "max_vaningar", 1, self.namn, minst=1)
         )
+        max_fp_ra = parametrar.get("max_fasadpunkter")
+        max_fasadpunkter = (
+            None
+            if max_fp_ra is None
+            else _valfritt_heltal(parametrar, "max_fasadpunkter", 1, self.namn, minst=1)
+        )
+        utsnitt_3011 = _validera_bbox_3011(
+            parametrar.get("utsnitt_3011"), "utsnitt_3011", self.namn
+        )
+        fasad_utsnitt_3011 = _validera_bbox_3011(
+            parametrar.get("fasad_utsnitt_3011"), "fasad_utsnitt_3011", self.namn
+        )
         reflexordning = _valfritt_heltal(
             parametrar, "reflexordning", STANDARD_REFLEXORDNING, self.namn, minst=0, hogst=1
         )
@@ -1117,12 +1164,15 @@ class BullerNord2000(Analyslosare):
             "fasad_avstand_m": fasad_avstand,
             "vaningshojd_m": vaningshojd,
             "max_vaningar": max_vaningar,
+            "max_fasadpunkter": max_fasadpunkter,
             "reflexordning": reflexordning,
             "karna": karna,
             "okand_mark_klass": okand_klass,
             "byggnader_med_hal": hal,
             "bullerskarmar": bullerskarmar,
             "land": land,
+            "utsnitt_3011": utsnitt_3011,
+            "fasad_utsnitt_3011": fasad_utsnitt_3011,
         }
 
     def paverkansradie_m(self, parametrar: Mapping[str, Any]) -> float | None:
@@ -1156,7 +1206,13 @@ class BullerNord2000(Analyslosare):
         varningar: list[str] = [SKISSVARNING]
 
         # 1. Läs K1 v2-geometri (inkl. K9-ändrade byggnader och brytlinjeskärmar).
-        cell_m = _valj_cellstorlek_m(rutor, p["raster_cell_m"], int(p["max_rasterceller"]))
+        utsnitt = p["utsnitt_3011"]
+        cell_m = _valj_cellstorlek_m(
+            rutor,
+            p["raster_cell_m"],
+            int(p["max_rasterceller"]),
+            utsnitt_3011=utsnitt,
+        )
         rut_mappar = [r.mapp for r in rutor]
         try:
             mos = bygg_ytmosaik(rut_mappar, cell_m)
@@ -1171,6 +1227,37 @@ class BullerNord2000(Analyslosare):
                 "(markslag okänt, terräng medel)."
             )
 
+        # Beskär mosaik och hinder till beräkningsutsnitt (`utsnitt_3011`) om begärt.
+        mos_terrang = mos.terrang_rh2000_m
+        mos_markslag = mos.markslag
+        e_min_m = float(mos.x_min_m)
+        n_max_m = float(mos.y_max_m)
+        n_rad, n_kol = mos.form
+        if utsnitt is not None:
+            ux0, uy0, ux1, uy1 = (float(v) for v in utsnitt)
+            c0 = max(0, min(n_kol - 2, int(math.floor((ux0 - e_min_m) / cell_m))))
+            c1 = max(c0 + 2, min(n_kol, int(math.ceil((ux1 - e_min_m) / cell_m))))
+            r0 = max(0, min(n_rad - 2, int(math.floor((n_max_m - uy1) / cell_m))))
+            r1 = max(r0 + 2, min(n_rad, int(math.ceil((n_max_m - uy0) / cell_m))))
+            if r0 > 0 or r1 < n_rad or c0 > 0 or c1 < n_kol:
+                mos_terrang = np.ascontiguousarray(mos_terrang[r0:r1, c0:c1])
+                mos_markslag = np.ascontiguousarray(mos_markslag[r0:r1, c0:c1])
+                e_min_m = e_min_m + c0 * cell_m
+                n_max_m = n_max_m - r0 * cell_m
+                n_rad, n_kol = mos_terrang.shape
+        e_max_m = e_min_m + n_kol * cell_m
+        n_min_m = n_max_m - n_rad * cell_m
+
+        if utsnitt is not None and byggnads_poster:
+            filtrerade_bygg = []
+            for bp in byggnads_poster:
+                pe = [float(pt[0]) for pt in bp.polygon]
+                pn = [float(pt[1]) for pt in bp.polygon]
+                if max(pe) < e_min_m or min(pe) > e_max_m or max(pn) < n_min_m or min(pn) > n_max_m:
+                    continue
+                filtrerade_bygg.append(bp)
+            byggnads_poster = tuple(filtrerade_bygg)
+
         hal_lage = cast(HalLage, str(p["byggnader_med_hal"]))
         try:
             riktiga_byggnader, _, bygg_varningar = _byggnader(byggnads_poster, hal_lage)
@@ -1182,10 +1269,10 @@ class BullerNord2000(Analyslosare):
         varningar.extend(overlapp_varningar)
         riktiga_byggnader, raster_bygg_varningar = _forbered_byggnader_for_raster(
             riktiga_byggnader,
-            mos.terrang_rh2000_m,
-            mos.x_min_m,
-            mos.y_max_m,
-            mos.cell_m,
+            mos_terrang,
+            e_min_m,
+            n_max_m,
+            cell_m,
         )
         varningar.extend(raster_bygg_varningar)
 
@@ -1195,6 +1282,15 @@ class BullerNord2000(Analyslosare):
 
         # Bullerskärmar från K9/K1 brytlinjer.gpkg samt eventuella explicita parametrar.
         skarm_linjer = _las_brytlinje_skarmar(rutor)
+        if utsnitt is not None and skarm_linjer:
+            skarm_linjer = [
+                sk
+                for sk in skarm_linjer
+                if max(pt[0] for pt in sk.koordinater) >= e_min_m
+                and min(pt[0] for pt in sk.koordinater) <= e_max_m
+                and max(pt[1] for pt in sk.koordinater) >= n_min_m
+                and min(pt[1] for pt in sk.koordinater) <= n_max_m
+            ]
         for sk_dict in p["bullerskarmar"]:
             skarm_linjer.append(
                 _SkarmLinje(
@@ -1209,10 +1305,10 @@ class BullerNord2000(Analyslosare):
             )
         skarm_hinder, skarm_varningar = _skarm_till_byggnader(
             skarm_linjer,
-            mos.terrang_rh2000_m,
-            mos.x_min_m,
-            mos.y_max_m,
-            mos.cell_m,
+            mos_terrang,
+            e_min_m,
+            n_max_m,
+            cell_m,
             byggnad_poly,
             befintliga_idn=frozenset(str(b.id) for b in riktiga_byggnader),
         )
@@ -1238,12 +1334,6 @@ class BullerNord2000(Analyslosare):
             alla_hinder = tuple(riktiga_byggnader)
 
         # 2. Klipp vägar till rastret och bygg Bullerscen.
-        n_rad, n_kol = mos.form
-        e_min_m = mos.x_min_m
-        n_max_m = mos.y_max_m
-        e_max_m = e_min_m + n_kol * cell_m
-        n_min_m = n_max_m - n_rad * cell_m
-
         vagar: list[Vag] = []
         vag_spec_per_nyckel: dict[tuple[str, int], dict[str, Any]] = {}
         for seg in p["vagsegment"]:
@@ -1268,8 +1358,8 @@ class BullerNord2000(Analyslosare):
 
         try:
             scen = Bullerscen(
-                terrang_rh2000_m=mos.terrang_rh2000_m,
-                markslag=mos.markslag,
+                terrang_rh2000_m=mos_terrang,
+                markslag=mos_markslag,
                 e_min_m=e_min_m,
                 n_max_m=n_max_m,
                 cell_m=cell_m,
@@ -1356,7 +1446,7 @@ class BullerNord2000(Analyslosare):
         grid_e, grid_n = np.meshgrid(e_kol, n_rad_koord)
         grid_pts = shapely.points(grid_e.ravel(), grid_n.ravel())
 
-        byggnad_mask = np.asarray(mos.markslag == 9, dtype=np.bool_)
+        byggnad_mask = np.asarray(mos_markslag == 9, dtype=np.bool_)
         if byggnad_poly:
             bygg_trad = shapely.STRtree(byggnad_poly)
             traff_b, _ = bygg_trad.query(grid_pts, predicate="intersects")
@@ -1420,12 +1510,20 @@ class BullerNord2000(Analyslosare):
 
             avst = float(p["fasad_avstand_m"])
             max_van: int | None = p["max_vaningar"]
+            max_fp: int | None = p["max_fasadpunkter"]
+            fp_utsnitt = p["fasad_utsnitt_3011"]
+            tillatna_bygg_idn = frozenset(bp.byggnad_id for bp in byggnads_poster)
             fp_e = fp.e_m + fp.normal_e * avst
             fp_n = fp.n_m + fp.normal_n * avst
             inom = scen.inom_raster(fp_e, fp_n)
+            if fp_utsnitt is not None:
+                fx0, fy0, fx1, fy1 = (float(v) for v in fp_utsnitt)
+                inom_fokus = (fp_e >= fx0) & (fp_e <= fx1) & (fp_n >= fy0) & (fp_n <= fy1)
+            else:
+                inom_fokus = np.ones(fp_e.shape, dtype=np.bool_)
             i_hinder = np.zeros(fp_e.shape, dtype=np.bool_)
-            if alla_poly and bool(inom.any()):
-                in_idx = np.flatnonzero(inom)
+            if alla_poly and bool((inom & inom_fokus).any()):
+                in_idx = np.flatnonzero(inom & inom_fokus)
                 traff_f, _ = scen.byggnadstrad.query(
                     shapely.points(fp_e[in_idx], fp_n[in_idx]), predicate="intersects"
                 )
@@ -1435,6 +1533,11 @@ class BullerNord2000(Analyslosare):
             kandidat_rader: list[tuple[str, str, int, float, float, float, float, float]] = []
             hoppade_fasad = 0
             for idx_fp in range(len(fp)):
+                bid_str = str(fp.byggnad_id[idx_fp])
+                if utsnitt is not None and bid_str not in tillatna_bygg_idn:
+                    continue
+                if not bool(inom_fokus[idx_fp]):
+                    continue
                 van = int(fp.vaning[idx_fp])
                 if max_van is not None and van > max_van:
                     continue
@@ -1448,7 +1551,7 @@ class BullerNord2000(Analyslosare):
                 )
                 kandidat_rader.append(
                     (
-                        str(fp.byggnad_id[idx_fp]),
+                        bid_str,
                         str(fp.fasadpunkt_id[idx_fp]),
                         van,
                         float(fp.hojd_over_mark_m[idx_fp]),
@@ -1462,6 +1565,28 @@ class BullerNord2000(Analyslosare):
                 varningar.append(
                     f"{hoppade_fasad} K11-fasadpunkter hamnade utanför rastret eller i ett "
                     f"hinder efter {avst:g} m utflyttning och utelämnades."
+                )
+            if max_fp is not None and len(kandidat_rader) > max_fp:
+                tot_kand = len(kandidat_rader)
+                if kalla_e_arr.size > 0:
+                    kandidat_rader.sort(
+                        key=lambda rad: (
+                            float(
+                                np.min(
+                                    (kalla_e_arr - rad[6]) ** 2 + (kalla_n_arr - rad[7]) ** 2
+                                )
+                            ),
+                            rad[0],
+                            rad[1],
+                        )
+                    )
+                else:
+                    kandidat_rader.sort(key=lambda rad: (rad[0], rad[1]))
+                kandidat_rader = kandidat_rader[:max_fp]
+                varningar.append(
+                    f"Snabbskiss utvärderade de {max_fp} fasadpunkter som ligger närmast aktiva "
+                    f"vägsegment (av {tot_kand} i beräkningsområdet); ange max_fasadpunkter eller "
+                    "fasad_steg_m uttryckligen för full fasadupplösning."
                 )
             kandidat_rader.sort(key=lambda rad: (rad[0], rad[1]))
             bas_id = n_rad * n_kol

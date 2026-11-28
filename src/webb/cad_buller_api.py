@@ -154,6 +154,16 @@ STANDARD_MAX_BULLER_CELLER: Final[int] = 4_000_000
 FLODEN_MAX_BULLER_CELLER_ENV: Final[str] = "FLODEN_MAX_BULLER_CELLER"
 STANDARD_MAX_BULLER_RASTERCELLER: Final[int] = 10_000
 FLODEN_MAX_BULLER_RASTERCELLER_ENV: Final[str] = "FLODEN_MAX_BULLER_RASTERCELLER"
+STANDARD_BULLER_FOKUS_MARGINAL_M: Final[float] = 80.0
+_WEBB_TAT_BYGGNADER_TROSKEL: Final[int] = 80
+_WEBB_MEDEL_BYGGNADER_TROSKEL: Final[int] = 20
+_WEBB_SKISS_FASAD_STEG_M: Final[float] = 10.0
+_WEBB_SKISS_MAX_VANINGAR: Final[int] = 4
+_WEBB_SKISS_TAT_MAX_FASADPUNKTER: Final[int] = 60
+_WEBB_SKISS_MEDEL_MAX_FASADPUNKTER: Final[int] = 120
+_WEBB_SKISS_TAT_MAX_RASTERCELLER: Final[int] = 100
+_WEBB_SKISS_TAT_SEGMENT_MIN_M: Final[float] = 25.0
+_WEBB_SKISS_TAT_SEGMENT_MAX_M: Final[float] = 65.0
 
 _TILLATNA_IMPORT_ANDELSER: Final[frozenset[str]] = frozenset({".gpkg", ".dxf", ".ifc", ".xml"})
 _EXPORT_FORMAT_META: Final[dict[str, tuple[str, str]]] = {
@@ -1521,6 +1531,107 @@ def _jamfor_buller_resultat(
     return jamforelse, diff_m
 
 
+def _projekt_fokus_avgransning_3011(
+    kartverktyg: KartverktygTjanst,
+    omrade_id: str,
+) -> tuple[float, float, float, float] | None:
+    """Läser projektets fokusavgränsning (`avgransning_3011`) ur `projekt.json` eller `kalla`."""
+    try:
+        pmapp = kartverktyg.projektmapp(omrade_id)
+    except FlodenWebbFel:
+        pmapp = None
+    if pmapp is not None:
+        pfil = pmapp / "projekt.json"
+        if pfil.is_file():
+            try:
+                raw = json.loads(pfil.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raw = None
+            if isinstance(raw, Mapping):
+                avgr = raw.get("avgransning_3011")
+                if isinstance(avgr, Sequence) and len(avgr) == 4:
+                    try:
+                        vals = tuple(float(v) for v in avgr)
+                        if (
+                            all(math.isfinite(v) for v in vals)
+                            and vals[0] < vals[2]
+                            and vals[1] < vals[3]
+                        ):
+                            return (vals[0], vals[1], vals[2], vals[3])
+                    except (TypeError, ValueError):
+                        pass
+    try:
+        kalla = kartverktyg.kalla(omrade_id)
+    except FlodenWebbFel:
+        return None
+    if kalla.avgransning is not None and len(kalla.avgransning) == 4:
+        x0, y0, x1, y1 = (float(v) for v in kalla.avgransning)
+        if all(math.isfinite(v) for v in (x0, y0, x1, y1)) and x0 < x1 and y0 < y1:
+            return (x0, y0, x1, y1)
+    return None
+
+
+def _berakna_buller_utsnitt_3011(
+    fokus_avgr: tuple[float, float, float, float] | None,
+    vagsegment: Sequence[Mapping[str, Any]],
+    bullerskarmar: Sequence[Mapping[str, Any]],
+    k1_bbox: tuple[float, float, float, float],
+    *,
+    marginal_m: float = STANDARD_BULLER_FOKUS_MARGINAL_M,
+) -> tuple[list[float] | None, list[float] | None]:
+    """Beräknar `(utsnitt_3011, fasad_utsnitt_3011)` beskuret till fokus + vägsegment + marginal."""
+    kx0, ky0, kx1, ky1 = k1_bbox
+    k1_area = max(1.0, (kx1 - kx0) * (ky1 - ky0))
+
+    if fokus_avgr is None:
+        return None, None
+
+    e0, n0, e1, n1 = fokus_avgr
+    for seg in vagsegment:
+        for pt in seg.get("koordinater", ()):
+            pe, pn = float(pt[0]), float(pt[1])
+            e0 = min(e0, pe)
+            e1 = max(e1, pe)
+            n0 = min(n0, pn)
+            n1 = max(n1, pn)
+    for sk in bullerskarmar:
+        for pt in sk.get("koordinater", ()):
+            pe, pn = float(pt[0]), float(pt[1])
+            e0 = min(e0, pe)
+            e1 = max(e1, pe)
+            n0 = min(n0, pn)
+            n1 = max(n1, pn)
+
+    ux0 = max(kx0, e0 - marginal_m)
+    uy0 = max(ky0, n0 - marginal_m)
+    ux1 = min(kx1, e1 + marginal_m)
+    uy1 = min(ky1, n1 + marginal_m)
+    if ux1 <= ux0 or uy1 <= uy0:
+        return None, None
+
+    utsnitt_area = (ux1 - ux0) * (uy1 - uy0)
+    utsnitt = [ux0, uy0, ux1, uy1] if utsnitt_area < 0.95 * k1_area else None
+
+    fx0 = max(kx0, fokus_avgr[0])
+    fy0 = max(ky0, fokus_avgr[1])
+    fx1 = min(kx1, fokus_avgr[2])
+    fy1 = min(ky1, fokus_avgr[3])
+    fasad_area = max(0.0, fx1 - fx0) * max(0.0, fy1 - fy0)
+    fasad_utsnitt = (
+        [fx0, fy0, fx1, fy1] if (fx1 > fx0 and fy1 > fy0 and fasad_area < 0.95 * k1_area) else None
+    )
+    return utsnitt, fasad_utsnitt
+
+
+def _total_vaglangd_m(vagsegment: Sequence[Mapping[str, Any]]) -> float:
+    tot = 0.0
+    for seg in vagsegment:
+        koord = seg.get("koordinater", ())
+        for p0, p1 in zip(koord[:-1], koord[1:], strict=True):
+            tot += math.hypot(float(p1[0]) - float(p0[0]), float(p1[1]) - float(p0[1]))
+    return tot
+
+
 def kor_buller_analys(
     kartverktyg: KartverktygTjanst,
     projekt_tjanst: ProjektTjanst,
@@ -1557,6 +1668,17 @@ def kor_buller_analys(
     # Skilj ut webb-kuvertfält och skicka övriga parametrar rakt till K21-valideraren.
     webb_nycklar = {"omrade_id", "projekt_id", "scenario", "ritlager", "andringar"}
     losar_param_in = {k: v for k, v in payload.items() if k not in webb_nycklar}
+    webb_skiss_varningar: list[str] = []
+
+    # Snabb Steg 2-skiss: direkta banor + skärmning (reflexordning=0) som förval när inget
+    # uttryckligen valts (skyddar 3 GB-server mot O(m·k·v) reflexexplosion på tät kvartersstad).
+    if "reflexordning" not in losar_param_in:
+        losar_param_in["reflexordning"] = 0
+        webb_skiss_varningar.append(
+            "Snabbskiss i Steg 2 använder direkta banor och skärmning (reflexordning=0) för "
+            "låg svarstid och begränsad minnesanvändning; ange reflexordning=1 uttryckligen för "
+            "första ordningens fasadreflexer."
+        )
 
     losare = BullerNord2000()
     try:
@@ -1582,7 +1704,7 @@ def kor_buller_analys(
 
     rutor = _projekt_k1_v2_rutor(kartverktyg, projekt_tjanst, omrade_id)
 
-    hojd_k1, bredd_k1, _, _, px_k1, _ = _uppskatta_k1_mosaik_celler(
+    hojd_k1, bredd_k1, x0_k1, y1_k1, px_k1, _ = _uppskatta_k1_mosaik_celler(
         rutor, filnamn="terrang.tif", krav_samma_rutnat=False
     )
     n_k1_celler = hojd_k1 * bredd_k1
@@ -1595,10 +1717,85 @@ def kor_buller_analys(
             "maskin med mer RAM.",
             status_kod=400,
         )
+
+    k1_bbox = (x0_k1, y1_k1 - hojd_k1 * px_k1, x0_k1 + bredd_k1 * px_k1, y1_k1)
+    if "utsnitt_3011" not in losar_param_in:
+        fokus_avgr = _projekt_fokus_avgransning_3011(kartverktyg, omrade_id)
+        auto_utsnitt, auto_fasad_utsnitt = _berakna_buller_utsnitt_3011(
+            fokus_avgr,
+            validerade_param["vagsegment"],
+            validerade_param["bullerskarmar"],
+            k1_bbox,
+        )
+        if auto_utsnitt is not None:
+            validerade_param["utsnitt_3011"] = auto_utsnitt
+            webb_skiss_varningar.append(
+                f"Beräkningsutsnittet beskars till projektets fokusområde och aktiva vägsegment "
+                f"med {STANDARD_BULLER_FOKUS_MARGINAL_M:g} m marginal."
+            )
+        if "fasad_utsnitt_3011" not in losar_param_in and auto_fasad_utsnitt is not None:
+            validerade_param["fasad_utsnitt_3011"] = auto_fasad_utsnitt
+
+    # Räkna byggnader inom aktivt utsnitt för adaptiva skiss-förval i tät kvartersstad.
+    aktiv_bbox = (
+        tuple(float(v) for v in validerade_param["utsnitt_3011"])
+        if validerade_param["utsnitt_3011"] is not None
+        else k1_bbox
+    )
+    ax0, ay0, ax1, ay1 = aktiv_bbox
+    try:
+        bygg_i_utsnitt = [
+            bp
+            for bp in alla_byggnader(list(rutor)).values()
+            if max(pt[0] for pt in bp.polygon) >= ax0
+            and min(pt[0] for pt in bp.polygon) <= ax1
+            and max(pt[1] for pt in bp.polygon) >= ay0
+            and min(pt[1] for pt in bp.polygon) <= ay1
+        ]
+    except GeometriFel:
+        bygg_i_utsnitt = []
+    n_bygg_utsnitt = len(bygg_i_utsnitt)
+
+    if n_bygg_utsnitt > _WEBB_TAT_BYGGNADER_TROSKEL:
+        if "fasad_steg_m" not in losar_param_in:
+            validerade_param["fasad_steg_m"] = _WEBB_SKISS_FASAD_STEG_M
+        if "max_vaningar" not in losar_param_in:
+            validerade_param["max_vaningar"] = _WEBB_SKISS_MAX_VANINGAR
+        if "max_fasadpunkter" not in losar_param_in:
+            validerade_param["max_fasadpunkter"] = _WEBB_SKISS_TAT_MAX_FASADPUNKTER
+        if "segment_langd_m" not in losar_param_in:
+            vag_l = _total_vaglangd_m(validerade_param["vagsegment"])
+            validerade_param["segment_langd_m"] = float(
+                min(
+                    _WEBB_SKISS_TAT_SEGMENT_MAX_M,
+                    max(_WEBB_SKISS_TAT_SEGMENT_MIN_M, math.ceil(vag_l / 6.0)),
+                )
+            )
+        if "raster_cell_m" not in losar_param_in and "max_rasterceller" not in losar_param_in:
+            validerade_param["max_rasterceller"] = min(
+                int(validerade_param["max_rasterceller"]), _WEBB_SKISS_TAT_MAX_RASTERCELLER
+            )
+        webb_skiss_varningar.append(
+            f"Tät kvartersstad ({n_bygg_utsnitt} byggnader i beräkningsutsnittet): webbskiss "
+            f"använder fasad_steg_m={validerade_param['fasad_steg_m']:g} m, "
+            f"max_vaningar={validerade_param['max_vaningar']} och "
+            f"segment_langd_m={validerade_param['segment_langd_m']:g} m för snabb och minnessnål "
+            "beräkning."
+        )
+    elif n_bygg_utsnitt > _WEBB_MEDEL_BYGGNADER_TROSKEL:
+        if "fasad_steg_m" not in losar_param_in:
+            validerade_param["fasad_steg_m"] = _WEBB_SKISS_FASAD_STEG_M
+        if "max_vaningar" not in losar_param_in:
+            validerade_param["max_vaningar"] = _WEBB_SKISS_MAX_VANINGAR
+        if "max_fasadpunkter" not in losar_param_in:
+            validerade_param["max_fasadpunkter"] = _WEBB_SKISS_MEDEL_MAX_FASADPUNKTER
+
     if validerade_param["raster_cell_m"] is not None:
         cell_beg = float(validerade_param["raster_cell_m"])
-        est_mott = max(1, math.ceil((bredd_k1 * px_k1) / cell_beg)) * max(
-            1, math.ceil((hojd_k1 * px_k1) / cell_beg)
+        est_bredd_m = ax1 - ax0
+        est_hojd_m = ay1 - ay0
+        est_mott = max(1, math.ceil(est_bredd_m / cell_beg)) * max(
+            1, math.ceil(est_hojd_m / cell_beg)
         )
         if est_mott > max_raster:
             raise FlodenWebbFel(
@@ -1735,6 +1932,7 @@ def kor_buller_analys(
         dict.fromkeys(
             [
                 SKISSVARNING,
+                *webb_skiss_varningar,
                 *(sam_fore.get("varningar") or ()),
                 *((sam_efter or {}).get("varningar") or ()),
             ]

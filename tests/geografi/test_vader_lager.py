@@ -175,6 +175,8 @@ def test_bygg_och_las_vader_lager_deterministisk_sha256_och_oppenhet(tmp_path: P
     assert forval["platsens_smhi_p95"]["globalstralning_w_m2"] == pytest.approx(720.0)
     assert forval["platsens_smhi_p99"]["direkt_normal_w_m2"] == pytest.approx(860.0)
     assert forval["platsens_smhi_p95"]["sol_direkt_w_m2"] == pytest.approx(780.0)
+    assert forval["platsens_smhi_p95"]["sol_diffus_w_m2"] > 0.0
+    assert forval["platsens_smhi_p99"]["sol_diffus_w_m2"] > 0.0
 
     # Manipulerad fil i lagret måste fångas av SHA-256-verifieringen!
     (vl_mapp / FIL_VINDROS).write_text(json.dumps({"manipulerad": True}), encoding="utf-8")

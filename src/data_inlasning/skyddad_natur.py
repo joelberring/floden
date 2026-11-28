@@ -39,6 +39,7 @@ EPSG_WGS84: Final[int] = 4326
 NVR_WFS_URL: Final[str] = "https://geodata.naturvardsverket.se/inspire/ps-nvr/ows"
 N2K_WFS_URL: Final[str] = "https://geodata.naturvardsverket.se/inspire/ps-n2k/ows"
 VMI_NEDLADDNING_BAS_URL: Final[str] = "https://geodata.naturvardsverket.se/nedladdning/VMI"
+VMI_URSPRUNGLIG_SUBKATALOG: Final[str] = "ursprunglig_digitalisering"
 SKOGSSTYRELSEN_BAS_URL: Final[str] = "https://geodpags.skogsstyrelsen.se/arcgis/rest/services"
 
 TILLATNA_NV_VARDAR: Final[frozenset[str]] = frozenset({"geodata.naturvardsverket.se"})
@@ -91,6 +92,7 @@ SKOGSSTYRELSEN_TJANSTER: Final[tuple[tuple[str, str, str], ...]] = (
 )
 
 _LAN_KATALOG_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_VMI_SEGMENT_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _HREF_RE: Final[re.Pattern[str]] = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.I)
 _EPSG_RE: Final[re.Pattern[str]] = re.compile(r"EPSG[:/]+(\d{4,5})", re.I)
 _XML_FARLIGT_RE: Final[re.Pattern[bytes]] = re.compile(rb"<!(?:DOCTYPE|ENTITY)\b", re.I)
@@ -892,6 +894,62 @@ def _hitta_gis_i_zip(zip_fil: Path, ut_mapp: Path) -> Path | None:
     return None
 
 
+def _validera_vmi_filnamn(filnamn: str) -> tuple[str, str, bool]:
+    """Validerar relativt VMI-filnamn (antingen `fil.zip` eller `undermapp/fil.zip`).
+
+    Returnerar `(relativ_sokvag, basnamn, har_undermapp)` utan möjlighet till path traversal.
+    """
+    ra = str(filnamn).strip()
+    if not ra or ra.startswith("/") or "\\" in ra or ".." in ra:
+        raise SkyddadNaturFel(f"Ogiltigt VMI-filnamn: {filnamn!r}.")
+    delar = ra.split("/")
+    if len(delar) > 2 or any(not _VMI_SEGMENT_RE.fullmatch(d) for d in delar):
+        raise SkyddadNaturFel(f"Ogiltigt VMI-filnamn: {filnamn!r}.")
+    basnamn = delar[-1]
+    if not basnamn.lower().endswith(".zip"):
+        raise SkyddadNaturFel(f"Ogiltigt VMI-filnamn: {filnamn!r}.")
+    return "/".join(delar), basnamn, len(delar) > 1
+
+
+def _matcha_vmi_ursprunglig_zip(
+    lan: str,
+    zip_lankar: Sequence[str],
+) -> list[str]:
+    """Matchar läns-ZIP i `ursprunglig_digitalisering/` på länsbokstav och/eller länsnamn."""
+    unika = sorted(set(zip_lankar))
+    if not unika:
+        return []
+    delar = [d for d in lan.split("_") if d]
+    lansbokstav = delar[0].lower() if delar and 1 <= len(delar[0]) <= 2 and delar[0].isalpha() else ""
+    namndelar = [d.lower() for d in delar[1:] if len(d) >= 3]
+
+    traffar_kod: list[str] = []
+    if lansbokstav:
+        prefix = f"{lansbokstav}_"
+        for u in unika:
+            namn = Path(urllib.parse.urlsplit(u).path).name.lower()
+            if namn.startswith(prefix):
+                traffar_kod.append(u)
+    if traffar_kod:
+        traffar_kod.sort(
+            key=lambda u: (
+                0 if any(tok in Path(urllib.parse.urlsplit(u).path).name.lower() for tok in namndelar) else 1,
+                u,
+            )
+        )
+        return traffar_kod
+
+    if namndelar:
+        traffar_namn = [
+            u
+            for u in unika
+            if any(tok in Path(urllib.parse.urlsplit(u).path).name.lower() for tok in namndelar)
+        ]
+        if traffar_namn:
+            return traffar_namn
+    return []
+
+
 def hamta_vmi_lan_zip(
     lan_katalog: str,
     cache_mapp: str | Path,
@@ -903,6 +961,10 @@ def hamta_vmi_lan_zip(
 ) -> VmiPaketPost:
     """Listar och hämtar läns-ZIP ur Naturvårdsverkets VMI-nedladdning med SHA-256-cache.
 
+    Stöder både direkta länskataloger (inkl. `5_GIS_skikt/`), explicit relativ sökväg i `filnamn`
+    (t.ex. `ursprunglig_digitalisering/O_VastraGotaland_VMI.zip`) samt automatisk fallback till
+    `ursprunglig_digitalisering/` med länsbokstavsmatchning när länskatalogens `5_GIS_skikt/` är tom.
+
     Returnerar `VmiPaketPost` med `zip_fil`, `gis_fil` (redo för `data_inlasning.vmi.rastrera_vmi`)
     och verifierad `sha256`.
     """
@@ -912,54 +974,88 @@ def hamta_vmi_lan_zip(
             f"Ogiltig länskatalog för VMI: {lan_katalog!r} (tillåtet: bokstäver, siffror, _, -)."
         )
     _kontrollera_url(bas_url, TILLATNA_NV_VARDAR, "Naturvårdsverket VMI")
-    katalog_url = f"{bas_url.rstrip('/')}/{lan}/"
+    bas_med_sned = f"{bas_url.rstrip('/')}/"
+    katalog_url = f"{bas_med_sned}{lan}/"
 
     vald_url: str
     vald_namn: str
     if filnamn is not None:
-        rent = Path(filnamn).name
-        if rent != filnamn or not rent.lower().endswith(".zip") or ".." in filnamn:
-            raise SkyddadNaturFel(f"Ogiltigt VMI-filnamn: {filnamn!r}.")
-        vald_namn = rent
-        vald_url = urllib.parse.urljoin(katalog_url, rent)
+        rel_sokvag, vald_namn, har_undermapp = _validera_vmi_filnamn(filnamn)
+        vald_url = urllib.parse.urljoin(bas_med_sned if har_undermapp else katalog_url, rel_sokvag)
     else:
-        index_bytes = _anropa_hamtare(
-            hamtare,
-            katalog_url,
-            TILLATNA_NV_VARDAR,
-            "Naturvårdsverket VMI",
-            timeout_s=timeout_s,
-        )
-        html = index_bytes.decode("utf-8", errors="replace")
-        lankar = _HREF_RE.findall(html)
-        zip_lankar = [
-            urllib.parse.urljoin(katalog_url, h)
-            for h in lankar
-            if h.lower().endswith(".zip") and not h.startswith("?")
-        ]
-        # Om katalogen pekar på undermappen `5_GIS_skikt/`, gå in ett steg.
-        if not zip_lankar:
-            gis_sub = next(
-                (h for h in lankar if "gis" in h.lower() and h.endswith("/") and not h.startswith("..")),
-                None,
+        zip_lankar: list[str] = []
+        try:
+            index_bytes = _anropa_hamtare(
+                hamtare,
+                katalog_url,
+                TILLATNA_NV_VARDAR,
+                "Naturvårdsverket VMI",
+                timeout_s=timeout_s,
             )
-            if gis_sub is not None:
-                sub_url = urllib.parse.urljoin(katalog_url, gis_sub)
-                sub_bytes = _anropa_hamtare(
+            html = index_bytes.decode("utf-8", errors="replace")
+            lankar = _HREF_RE.findall(html)
+            zip_lankar = [
+                urllib.parse.urljoin(katalog_url, h)
+                for h in lankar
+                if h.lower().endswith(".zip") and not h.startswith("?")
+            ]
+            # Om katalogen pekar på undermappen `5_GIS_skikt/`, gå in ett steg.
+            if not zip_lankar:
+                gis_sub = next(
+                    (
+                        h
+                        for h in lankar
+                        if "gis" in h.lower() and h.endswith("/") and not h.startswith("..")
+                    ),
+                    None,
+                )
+                if gis_sub is not None:
+                    sub_url = urllib.parse.urljoin(katalog_url, gis_sub)
+                    sub_bytes = _anropa_hamtare(
+                        hamtare,
+                        sub_url,
+                        TILLATNA_NV_VARDAR,
+                        "Naturvårdsverket VMI",
+                        timeout_s=timeout_s,
+                    )
+                    sub_html = sub_bytes.decode("utf-8", errors="replace")
+                    zip_lankar = [
+                        urllib.parse.urljoin(sub_url, h)
+                        for h in _HREF_RE.findall(sub_html)
+                        if h.lower().endswith(".zip") and not h.startswith("?")
+                    ]
+        except SkyddadNaturFel:
+            if lan == VMI_URSPRUNGLIG_SUBKATALOG:
+                raise
+            zip_lankar = []
+
+        # Naturvårdsverkets skarpa läns-ZIP-filer ligger under `ursprunglig_digitalisering/`
+        # när länskatalogen eller `5_GIS_skikt/` är tom.
+        if not zip_lankar and lan != VMI_URSPRUNGLIG_SUBKATALOG:
+            urspr_url = f"{bas_med_sned}{VMI_URSPRUNGLIG_SUBKATALOG}/"
+            try:
+                urspr_bytes = _anropa_hamtare(
                     hamtare,
-                    sub_url,
+                    urspr_url,
                     TILLATNA_NV_VARDAR,
                     "Naturvårdsverket VMI",
                     timeout_s=timeout_s,
                 )
-                sub_html = sub_bytes.decode("utf-8", errors="replace")
-                zip_lankar = [
-                    urllib.parse.urljoin(sub_url, h)
-                    for h in _HREF_RE.findall(sub_html)
+                urspr_html = urspr_bytes.decode("utf-8", errors="replace")
+                alla_urspr_zip = [
+                    urllib.parse.urljoin(urspr_url, h)
+                    for h in _HREF_RE.findall(urspr_html)
                     if h.lower().endswith(".zip") and not h.startswith("?")
                 ]
+                zip_lankar = _matcha_vmi_ursprunglig_zip(lan, alla_urspr_zip)
+            except SkyddadNaturFel:
+                zip_lankar = []
+
         if not zip_lankar:
-            raise SkyddadNaturFel(f"Hittade ingen VMI-ZIP i katalogen {katalog_url}.")
+            raise SkyddadNaturFel(
+                f"Hittade ingen VMI-ZIP i katalogen {katalog_url} eller "
+                f"{bas_med_sned}{VMI_URSPRUNGLIG_SUBKATALOG}/."
+            )
         # Deterministiskt val: föredra fil som nämner gis/skikt/vmi, annars alfabetiskt första.
         zip_lankar_unika = sorted(set(zip_lankar))
         zip_lankar_unika.sort(
@@ -1051,6 +1147,7 @@ __all__ = [
     "TILLATNA_NV_VARDAR",
     "TILLATNA_SKS_VARDAR",
     "VMI_NEDLADDNING_BAS_URL",
+    "VMI_URSPRUNGLIG_SUBKATALOG",
     "SkogligaVardenResultat",
     "SkogligtNaturvarde",
     "SkyddadNaturFel",

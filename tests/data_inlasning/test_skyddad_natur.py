@@ -361,3 +361,63 @@ def test_vmi_lan_zip_cache_verifiering_zip_slip_och_rastrera_vmi(tmp_path: Path)
     # Path traversal i länskatalog avvisas
     with pytest.raises(SkyddadNaturFel, match="länskatalog"):
         hamta_vmi_lan_zip("../etc", cache, hamtare=falsk_hamtare)
+
+    # Path traversal i filnamn avvisas
+    for ond_fil in ("../hemlig.zip", "/etc/passwd.zip", "ursprunglig_digitalisering/../../x.zip", "a/b/c.zip"):
+        with pytest.raises(SkyddadNaturFel, match="filnamn"):
+            hamta_vmi_lan_zip("O_VastraGotaland", tmp_path / "cache_ond", filnamn=ond_fil, hamtare=falsk_hamtare)
+
+
+def test_vmi_lan_zip_stoder_ursprunglig_digitalisering_fallback_och_explicit_filnamn(tmp_path: Path) -> None:
+    """Tom `O_Goteborg_Bohus/5_GIS_skikt/` faller tillbaka till `ursprunglig_digitalisering/O_VastraGotaland_VMI.zip`,
+    och explicit `filnamn="ursprunglig_digitalisering/O_VastraGotaland_VMI.zip"` hämtas direkt."""
+    gpkg_src = tmp_path / "vmi_vg.gpkg"
+    poly = Polygon(
+        [
+            (-209_900.0, 6_413_600.0),
+            (-209_700.0, 6_413_600.0),
+            (-209_700.0, 6_413_800.0),
+            (-209_900.0, 6_413_800.0),
+            (-209_900.0, 6_413_600.0),
+        ]
+    )
+    gpd.GeoDataFrame({"objekt": ["vg_1"]}, geometry=[poly], crs=3011).to_file(gpkg_src, driver="GPKG")
+    zip_fil = tmp_path / "O_VastraGotaland_VMI.zip"
+    with zipfile.ZipFile(zip_fil, "w") as zf:
+        zf.write(gpkg_src, arcname="O_VastraGotaland_VMI.gpkg")
+    zip_bytes = zip_fil.read_bytes()
+
+    anrop: list[str] = []
+
+    def falsk_nv_server(url: str) -> bytes:
+        anrop.append(url)
+        if url.endswith("/O_Goteborg_Bohus/"):
+            return b'<html><a href="5_GIS_skikt/">5_GIS_skikt/</a></html>'
+        if url.endswith("/O_Goteborg_Bohus/5_GIS_skikt/"):
+            # Exakt som på Naturvårdsverkets riktiga server: tom mapp utan .zip!
+            return b"<html><body>Index of /nedladdning/VMI/O_Goteborg_Bohus/5_GIS_skikt</body></html>"
+        if url.endswith("/ursprunglig_digitalisering/"):
+            return (
+                b'<html><a href="AB_Stockholm_VMI.zip">AB_Stockholm_VMI.zip</a>'
+                b'<a href="O_VastraGotaland_VMI.zip">O_VastraGotaland_VMI.zip</a></html>'
+            )
+        if url.endswith("/ursprunglig_digitalisering/O_VastraGotaland_VMI.zip"):
+            return zip_bytes
+        raise AssertionError(f"Oväntad VMI-URL: {url}")
+
+    # 1. Automatisk fallback från tom `O_Goteborg_Bohus/5_GIS_skikt/` -> `O_VastraGotaland_VMI.zip`
+    post_fb = hamta_vmi_lan_zip("O_Goteborg_Bohus", tmp_path / "cache_fb", hamtare=falsk_nv_server)
+    assert post_fb.url.endswith("/nedladdning/VMI/ursprunglig_digitalisering/O_VastraGotaland_VMI.zip")
+    assert post_fb.gis_fil is not None and post_fb.gis_fil.is_file()
+
+    # 2. Explicit relativ sökväg i `filnamn` hämtar direkt i ett anrop utan kataloglistning
+    anrop.clear()
+    post_dir = hamta_vmi_lan_zip(
+        "O_VastraGotaland",
+        tmp_path / "cache_dir",
+        filnamn="ursprunglig_digitalisering/O_VastraGotaland_VMI.zip",
+        hamtare=falsk_nv_server,
+    )
+    assert anrop == ["https://geodata.naturvardsverket.se/nedladdning/VMI/ursprunglig_digitalisering/O_VastraGotaland_VMI.zip"]
+    assert post_dir.sha256 == post_fb.sha256
+    assert post_dir.gis_fil is not None and post_dir.gis_fil.is_file()

@@ -11,7 +11,12 @@ from scipy import sparse
 from scipy.sparse.csgraph import dijkstra
 
 from ekologi.habitat import extrahera_habitatflackar
-from ekologi.krets import kontrollera_ekologi_celler, los_kretspar
+from ekologi.krets import (
+    STANDARD_CG_TROSKEL,
+    forbered_kretsgraf,
+    kontrollera_ekologi_celler,
+    los_kretspar_forberedd,
+)
 from ekologi.motstand import bygg_motstandsyta
 from ekologi.typer import (
     ArtProfil,
@@ -31,6 +36,13 @@ _STEG_8: tuple[tuple[int, int, float], ...] = (
     (1, 1, math.sqrt(2.0)),
     (1, -1, math.sqrt(2.0)),
 )
+
+STANDARD_MAX_EXAKTA_FLACKAR = 20
+STANDARD_MAX_KRETSPAR = 60
+STANDARD_KRETSPAR_VIKTMAL = 0.98
+STANDARD_ADAPTIV_KRETS_MAX_CELLER = 30_000
+_STOR_KRETS_CG_RTOL = 1e-7
+_STOR_KRETS_CG_TROSKEL = 10_000
 
 
 def berakna_kostnadsavstand(
@@ -185,6 +197,59 @@ def berakna_pc_eca(
     return pc, eca_m2, p_stjarna, tuple(betydelse)
 
 
+def _grovsampla_konduktans(
+    g: FloatRaster,
+    faktor: int,
+) -> FloatRaster:
+    """Deterministisk blockmedelkonduktans över `faktor × faktor`-block (bevarar barriärer)."""
+    ny, nx = g.shape
+    ny_c = math.ceil(ny / faktor)
+    nx_c = math.ceil(nx / faktor)
+    pad_y = ny_c * faktor - ny
+    pad_x = nx_c * faktor - nx
+    if pad_y == 0 and pad_x == 0:
+        return np.asarray(
+            g.reshape(ny_c, faktor, nx_c, faktor).mean(axis=(1, 3)),
+            dtype=np.float64,
+        )
+    g_pad = np.pad(g, ((0, pad_y), (0, pad_x)), mode="constant", constant_values=0.0)
+    giltig = np.ones((ny, nx), dtype=np.float64)
+    giltig_pad = np.pad(giltig, ((0, pad_y), (0, pad_x)), mode="constant", constant_values=0.0)
+    sum_g = g_pad.reshape(ny_c, faktor, nx_c, faktor).sum(axis=(1, 3))
+    antal = giltig_pad.reshape(ny_c, faktor, nx_c, faktor).sum(axis=(1, 3))
+    return np.asarray(sum_g / np.maximum(antal, 1.0), dtype=np.float64)
+
+
+def _grovsampla_mask(mask: NDArray[np.bool_], faktor: int) -> NDArray[np.bool_]:
+    """Returnerar grov boolesk mask: `faktor × faktor`-block är sant om någon cell är sann."""
+    ny, nx = mask.shape
+    ny_c = math.ceil(ny / faktor)
+    nx_c = math.ceil(nx / faktor)
+    pad_y = ny_c * faktor - ny
+    pad_x = nx_c * faktor - nx
+    m_pad = (
+        mask
+        if (pad_y == 0 and pad_x == 0)
+        else np.pad(mask, ((0, pad_y), (0, pad_x)), mode="constant", constant_values=False)
+    )
+    return np.asarray(
+        m_pad.reshape(ny_c, faktor, nx_c, faktor).any(axis=(1, 3)),
+        dtype=np.bool_,
+    )
+
+
+def _uppsampla_kretsraster(
+    grov: FloatRaster,
+    form: tuple[int, int],
+    faktor: int,
+    aktiv_fin: NDArray[np.bool_],
+) -> FloatRaster:
+    """Återställer grovt kretsraster till fin form med barriärceller (`g == 0`) exakt nollade."""
+    ny, nx = form
+    fin = np.repeat(np.repeat(grov, faktor, axis=0), faktor, axis=1)[:ny, :nx]
+    return np.asarray(np.where(aktiv_fin, fin, 0.0), dtype=np.float64)
+
+
 def berakna_konnektivitet(
     markslag: NDArray[np.uint8] | NDArray[np.integer[Any]],
     profil: ArtProfil,
@@ -202,10 +267,23 @@ def berakna_konnektivitet(
     berakna_flaskhalsar: bool = False,
     grannskap_kostnad: int = 8,
     grannskap_krets: int = 4,
+    max_kretspar: int | None = None,
+    kretspar_viktmal: float = STANDARD_KRETSPAR_VIKTMAL,
 ) -> KonnektivitetsResultat:
-    """Helhetsberäkning av ekologisk konnektivitet (PC, ECA, dPC och valfri flaskhalskarta)."""
+    """Helhetsberäkning av ekologisk konnektivitet (PC, ECA, dPC och valfri flaskhalskarta).
+
+    ECA, PC och dPC beräknas alltid exakt över samtliga habitatfläckar i full upplösning.
+    För små fläcknät (`<= 20` fläckar, utan explicit `max_kretspar`) beräknas samtliga fläckpar
+    i full upplösning (bitidentiskt med facit G1–G6). För stora tätortsfönster (`> 20` fläckar)
+    prioriteras de flödestyngsta paren (`A_i * A_j * p*_ij`, upp till 98 % ackumulerad flödesvikt
+    och högst `STANDARD_MAX_KRETSPAR = 60` par) på förberäknad Laplacian i adaptiv kretsupplösning.
+    """
     if not (math.isfinite(spridning_faktor) and spridning_faktor > 0.0):
         raise EkologiFel(f"spridning_faktor måste vara > 0, fick {spridning_faktor}.")
+    if max_kretspar is not None and (isinstance(max_kretspar, bool) or int(max_kretspar) < 1):
+        raise EkologiFel(f"max_kretspar måste vara >= 1, fick {max_kretspar!r}.")
+    if not (math.isfinite(kretspar_viktmal) and 0.0 < kretspar_viktmal <= 1.0):
+        raise EkologiFel(f"kretspar_viktmal måste ligga i (0, 1], fick {kretspar_viktmal!r}.")
     kontrollera_ekologi_celler(int(markslag.size))
 
     habitat = extrahera_habitatflackar(
@@ -241,32 +319,138 @@ def berakna_konnektivitet(
 
     strom_sam: FloatRaster | None = None
     kansl_sam: FloatRaster | None = None
+    antal_par_beraknade = 0
+    antal_par_totalt = 0
+    vikt_andel = 1.0
+    krets_faktor = 1
+
     if berakna_flaskhalsar and len(habitat.flackar) >= 2:
-        strom_acc = np.zeros(motstand.motstand.shape, dtype=np.float64)
-        kansl_acc = np.zeros(motstand.motstand.shape, dtype=np.float64)
-        vikt_sum = 0.0
         m = len(habitat.flackar)
+        alla_par: list[tuple[float, int, int]] = []
         for i in range(m):
-            mask_i = habitat.flack_raster == habitat.flackar[i].flack_id
             for j in range(i + 1, m):
                 vikt = float(areor[i] * areor[j] * p_stjarna[i, j])
-                if vikt <= 0.0:
-                    continue
-                mask_j = habitat.flack_raster == habitat.flackar[j].flack_id
-                par = los_kretspar(
-                    motstand,
-                    mask_i,
-                    mask_j,
-                    grannskap=grannskap_krets,
+                if vikt > 0.0:
+                    alla_par.append((vikt, i, j))
+        antal_par_totalt = len(alla_par)
+        stort_problem = m > STANDARD_MAX_EXAKTA_FLACKAR or max_kretspar is not None
+
+        if not alla_par:
+            strom_sam = np.zeros(motstand.motstand.shape, dtype=np.float64)
+            kansl_sam = np.zeros(motstand.motstand.shape, dtype=np.float64)
+        elif not stort_problem:
+            # Små problem (<= 20 fläckar): lös samtliga par i full upplösning på förberäknad graf.
+            graf = forbered_kretsgraf(motstand, grannskap=grannskap_krets)
+            flack_masker = [habitat.flack_raster == f.flack_id for f in habitat.flackar]
+            strom_acc = np.zeros(motstand.motstand.shape, dtype=np.float64)
+            kansl_acc = np.zeros(motstand.motstand.shape, dtype=np.float64)
+            vikt_sum = 0.0
+            for vikt, i, j in alla_par:
+                par = los_kretspar_forberedd(
+                    graf,
+                    flack_masker[i],
+                    flack_masker[j],
                     fran_flack_id=habitat.flackar[i].flack_id,
                     till_flack_id=habitat.flackar[j].flack_id,
+                    cg_troskel=STANDARD_CG_TROSKEL,
+                    cg_rtol=1e-10,
                 )
+                antal_par_beraknade += 1
                 if par.sammankopplad:
                     strom_acc += vikt * par.stromtathet
                     kansl_acc += vikt * par.kanslighet_cell
                     vikt_sum += vikt
-        strom_sam = strom_acc / vikt_sum if vikt_sum > 0.0 else strom_acc
-        kansl_sam = kansl_acc / vikt_sum if vikt_sum > 0.0 else kansl_acc
+            strom_sam = strom_acc / vikt_sum if vikt_sum > 0.0 else strom_acc
+            kansl_sam = kansl_acc / vikt_sum if vikt_sum > 0.0 else kansl_acc
+        else:
+            # Stora tätortsfönster: topp-parbudget + förberäknad Laplacian + adaptiv skala.
+            alla_par.sort(key=lambda rad: (-rad[0], rad[1], rad[2]))
+            total_vikt = float(sum(rad[0] for rad in alla_par))
+            tak = STANDARD_MAX_KRETSPAR if max_kretspar is None else int(max_kretspar)
+            valda_par: list[tuple[float, int, int]] = []
+            ack_vikt = 0.0
+            for rad in alla_par:
+                valda_par.append(rad)
+                ack_vikt += rad[0]
+                if len(valda_par) >= tak or (
+                    total_vikt > 0.0 and ack_vikt >= kretspar_viktmal * total_vikt
+                ):
+                    break
+            vikt_andel = min(1.0, ack_vikt / total_vikt) if total_vikt > 0.0 else 1.0
+
+            n_tot = int(motstand.konduktans.size)
+            if n_tot > STANDARD_ADAPTIV_KRETS_MAX_CELLER:
+                krets_faktor = max(
+                    2, math.ceil(math.sqrt(n_tot / STANDARD_ADAPTIV_KRETS_MAX_CELLER))
+                )
+                g_grov = _grovsampla_konduktans(motstand.konduktans, krets_faktor)
+                r_grov = np.where(g_grov > 0.0, 1.0 / np.where(g_grov > 0.0, g_grov, 1.0), math.inf)
+                motstand_krets = MotstandsYta(
+                    motstand=r_grov,
+                    konduktans=g_grov,
+                    cell_m=motstand.cell_m * krets_faktor,
+                    profil_id=motstand.profil_id,
+                )
+            else:
+                motstand_krets = motstand
+
+            graf = forbered_kretsgraf(motstand_krets, grannskap=grannskap_krets)
+            anvanda_idx = sorted({idx for _, i, j in valda_par for idx in (i, j)})
+            mask_per_idx: dict[int, NDArray[np.bool_]] = {}
+            for idx in anvanda_idx:
+                fin_mask = (habitat.flack_raster == habitat.flackar[idx].flack_id) & (
+                    motstand.konduktans > 0.0
+                )
+                mask_per_idx[idx] = (
+                    _grovsampla_mask(fin_mask, krets_faktor) if krets_faktor > 1 else fin_mask
+                )
+
+            strom_acc = np.zeros(motstand_krets.motstand.shape, dtype=np.float64)
+            kansl_acc = np.zeros(motstand_krets.motstand.shape, dtype=np.float64)
+            vikt_sum = 0.0
+            for vikt, i, j in valda_par:
+                mask_i = mask_per_idx[i]
+                mask_j = mask_per_idx[j]
+                if krets_faktor > 1 and np.any(mask_i & mask_j):
+                    overlapp = mask_i & mask_j
+                    mi_ren = mask_i & ~overlapp
+                    mj_ren = mask_j & ~overlapp
+                    if np.any(mi_ren) and np.any(mj_ren):
+                        mask_i, mask_j = mi_ren, mj_ren
+                    elif np.any(mi_ren):
+                        mask_i = mi_ren
+                    elif np.any(mj_ren):
+                        mask_j = mj_ren
+                    else:
+                        continue
+                par = los_kretspar_forberedd(
+                    graf,
+                    mask_i,
+                    mask_j,
+                    fran_flack_id=habitat.flackar[i].flack_id,
+                    till_flack_id=habitat.flackar[j].flack_id,
+                    cg_troskel=min(STANDARD_CG_TROSKEL, _STOR_KRETS_CG_TROSKEL),
+                    cg_rtol=_STOR_KRETS_CG_RTOL,
+                )
+                antal_par_beraknade += 1
+                if par.sammankopplad:
+                    strom_acc += vikt * par.stromtathet
+                    kansl_acc += vikt * par.kanslighet_cell
+                    vikt_sum += vikt
+
+            strom_grov = strom_acc / vikt_sum if vikt_sum > 0.0 else strom_acc
+            kansl_grov = kansl_acc / vikt_sum if vikt_sum > 0.0 else kansl_acc
+            if krets_faktor > 1:
+                aktiv_fin = motstand.konduktans > 0.0
+                strom_sam = _uppsampla_kretsraster(
+                    strom_grov, motstand.motstand.shape, krets_faktor, aktiv_fin
+                )
+                kansl_sam = _uppsampla_kretsraster(
+                    kansl_grov, motstand.motstand.shape, krets_faktor, aktiv_fin
+                )
+            else:
+                strom_sam = strom_grov
+                kansl_sam = kansl_grov
 
     return KonnektivitetsResultat(
         profil_id=profil.profil_id,
@@ -280,6 +464,10 @@ def berakna_konnektivitet(
         flack_betydelse=betydelse,
         stromtathet_sammanlagd=strom_sam,
         kanslighet_sammanlagd=kansl_sam,
+        antal_kretspar_beraknade=antal_par_beraknade,
+        antal_kretspar_totalt=antal_par_totalt,
+        kretspar_vikt_andel=vikt_andel,
+        krets_upplosningsfaktor=krets_faktor,
     )
 
 

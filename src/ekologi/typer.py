@@ -119,6 +119,10 @@ class KonnektivitetsResultat:
     stromtathet_sammanlagd: FloatRaster | None = None
     kanslighet_sammanlagd: FloatRaster | None = None
     """Viktat medel av dR_eff/dG (<= 0) per cell över fläckparen, samma vikter som strömtätheten."""
+    antal_kretspar_beraknade: int = 0
+    antal_kretspar_totalt: int = 0
+    kretspar_vikt_andel: float = 1.0
+    krets_upplosningsfaktor: int = 1
 
 
 @dataclass(frozen=True)

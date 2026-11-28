@@ -1054,6 +1054,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
   let ekologi: EkologiMedLager | null = null;
   let ekoLagerVal: "stromtathet" | "kansighet" = "stromtathet";
   let ekologiFel: string | null = null;
+  let ekologiLaddar = false;
+  let ekologiSeq = 0;
   let aktivtVarmelager: VarmestressLagerRef | null = null;
   let aktivtBullerlager: BullerLagerRef | null = null;
   let trafikLankar: TrafikLank[] = [];
@@ -2958,7 +2960,12 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         if (ekologiFel) {
           inne.innerHTML = `${natverkValDirekt}<h1 class="flode-h" id="ar-rubrik">Ekologi &amp; GYF</h1>
             <p class="flode-liten flode-fel" role="alert">Ekologikonnektivitet kunde inte hämtas: ${esc(ekologiFel)}</p>
-            <p class="flode-liten flode-dampad">Du kan ändå beräkna Grönytefaktor (GYF) nedan.</p>`;
+            <p class="flode-liten flode-dampad">Du kan ändå använda Skrivbordskontroll och Grönytefaktor (GYF) nedan.</p>`;
+          return;
+        }
+        if (ekologiLaddar) {
+          inne.innerHTML = `${natverkValDirekt}<div class="ar-doman-huvud"><h1 class="flode-h" id="ar-rubrik">Ekologi · Konnektivitet</h1><span class="ar-skiss-badge">SKISS</span></div>
+            <p class="flode-liten flode-dampad" id="ar-eko-laddar" role="status">Beräknar ekologisk konnektivitet (ECA, PC, dPC och strömtäthet) … Skrivbordskontroll och GYF nedan kan användas direkt.</p>`;
           return;
         }
       }
@@ -3085,6 +3092,8 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     ekologi = null;
     ekoLagerVal = "stromtathet";
     ekologiFel = null;
+    ekologiLaddar = false;
+    const ekoNr = ++ekologiSeq;
     if (ny) {
       try {
         const res = cache.get(ny.korning_id) ?? (await hamtaResultat(ny.korning_id));
@@ -3102,39 +3111,58 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         r = undefined;
       }
     }
-    // Ekologi: hämta direkt via skrivlös GET /api/analys/ekologi även när ingen K20-vy finns ännu (om NMD/demokvarteret).
-    if (amne === "ekologi" && harEkologiUnderlag(info)) {
-      let eko: EkologiMedLager | null = null;
-      let ekoFel: string | null = null;
-      if (natverkLista.length === 0) {
-        natverkLista = await lasJson<{ natverk: typeof natverkLista }>("/api/ekologi/natverk")
-          .then((s) => s.natverk.filter((n) => n.korbar && !n.lokalt))
-          .catch(() => []);
-      }
-      const ekoFraga: EkologiAnalysFraga = {
-        omrade_id: projekt,
-        ...(valtNatverk ? { natverk: valtNatverk } : {}),
-        ...(kalla === "ritat" && t.scenario ? { scenario: t.scenario.slug } : {}),
-      };
-      try {
-        eko = await hamtaEkologiAnalys<EkologiMedLager>(ekoFraga);
-      } catch (e) {
-        ekoFel = e instanceof Error ? e.message : String(e);
-      }
-      if (nr !== seq || avslutad) return;
-      ekologi = eko;
-      ekologiFel = ekoFel;
-    }
     if ((lage === "efter" || lage === "skillnad" || lage === "svep") && !harEfter()) {
       lage = "nulage";
     }
+    if (amne === "ekologi" && harEkologiUnderlag(info)) {
+      ekologiLaddar = true;
+    }
+    // Rendera Skrivbordskontroll, GYF och panelen omedelbart utan att blockera på konnektivitetsanropet.
     void laddaTidsserie();
     gyfUtciKontroller.uppdateraKontext();
+    if (amne === "ekologi") {
+      gyfUtciKontroller.sakerstallGyfLaddad?.();
+    }
     bullerKontroller?.uppdateraKontext();
     cadBimKontroller.uppdateraKontext();
     ritaAnalysPanel();
     ritaRegnOchKor();
     synkaKarta();
+
+    // Ekologi: hämta konnektivitet parallellt via skrivlös GET /api/analys/ekologi (blockerar aldrig Skrivbordskontroll eller GYF).
+    if (amne === "ekologi" && harEkologiUnderlag(info)) {
+      void (async () => {
+        let eko: EkologiMedLager | null = null;
+        let ekoFel: string | null = null;
+        if (natverkLista.length === 0) {
+          natverkLista = await lasJson<{ natverk: typeof natverkLista }>("/api/ekologi/natverk")
+            .then((s) => s.natverk.filter((n) => n.korbar && !n.lokalt))
+            .catch(() => []);
+          if (nr !== seq || ekoNr !== ekologiSeq || avslutad) return;
+          ritaAnalysPanel();
+        }
+        const ekoFraga: EkologiAnalysFraga = {
+          omrade_id: projekt,
+          ...(valtNatverk ? { natverk: valtNatverk } : {}),
+          ...(kalla === "ritat" && t.scenario ? { scenario: t.scenario.slug } : {}),
+        };
+        try {
+          eko = await hamtaEkologiAnalys<EkologiMedLager>(ekoFraga);
+        } catch (e) {
+          ekoFel = e instanceof Error ? e.message : String(e);
+        }
+        if (nr !== seq || ekoNr !== ekologiSeq || avslutad) return;
+        ekologiLaddar = false;
+        ekologi = eko;
+        ekologiFel = ekoFel;
+        if ((lage === "efter" || lage === "skillnad" || lage === "svep") && !harEfter()) {
+          lage = "nulage";
+        }
+        ritaAnalysPanel();
+        ritaRegnOchKor();
+        synkaKarta();
+      })();
+    }
   };
 
   const valjAmne = async (ny: ResultatAmne): Promise<void> => {

@@ -966,3 +966,236 @@ def test_asgi_semafor_skyddar_buller_post_utan_att_svalta_cad_export() -> None:
         is False
     )
     assert FlodenAsgiApp._ar_tung_berakning("POST", "/api/projekt/demokvarteret/cad/importera") is False
+
+
+def test_buller_skiss_tat_kvartersstad_under_20s_och_600mb(
+    tmp_path: Path, konto_miljo: Miljo
+) -> None:
+    """Tät kvartersstad (160+ hus + murar i 500×500 m K1-ruta): standard POST /api/analys/buller
+    med `karna='nord2000'` ska köra på < 20 s och < 600 MB RSS med fokusbeskärning, reflexordning=0
+    och bevarade skiss-invarianter."""
+    import os
+    import resource
+    import shutil
+    import sys
+    import time
+
+    rss_div = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
+    tidsfaktor = max(1.0, float(os.environ.get("FLODEN_TIDSFAKTOR", "1")))
+    max_tid_s = 25.0 if tidsfaktor <= 1.0 else 60.0 * tidsfaktor
+
+    sida_m = 500.0
+    pixel_m = 5.0
+    n = round(sida_m / pixel_m)
+    k1_tmp = tmp_path / "bygge_tat_k1"
+    ruta_tmp = k1_tmp / "mm_150000_6580000"
+    ruta_tmp.mkdir(parents=True)
+
+    terrang = np.full((n, n), 12.0, dtype=np.float32)
+    markslag = np.full((n, n), 4, dtype=np.uint8)
+    osak = np.full((n, n), 0.05, dtype=np.float32)
+
+    hus: list[ByggnadsPost] = []
+    n_x, n_y = 13, 14
+    dx = (sida_m - 40.0) / n_x
+    dy = (sida_m - 40.0) / n_y
+    w, h = min(14.0, dx * 0.65), min(14.0, dy * 0.65)
+    for ix in range(n_x):
+        for iy in range(n_y):
+            cx = E0 + 20.0 + ix * dx
+            cy = N0 + 20.0 + iy * dy
+            if abs((cx + w / 2.0) - (E0 + 250.0)) < 14.0:
+                continue
+            hus.append(
+                ByggnadsPost(
+                    byggnad_id=f"b_tat_{len(hus) + 1}",
+                    polygon=((cx, cy), (cx + w, cy), (cx + w, cy + h), (cx, cy + h)),
+                    hal=(),
+                    takhojd_rh2000=24.0,
+                    markhojd_rh2000=12.0,
+                    hojd_m=12.0,
+                    kalla="test",
+                )
+            )
+    assert len(hus) >= 150
+
+    geo_info = GeoTransformInfo(
+        bredd=n,
+        hojd=n,
+        x_min=E0,
+        y_max=N0 + sida_m,
+        pixelstorlek_x=pixel_m,
+        pixelstorlek_y=pixel_m,
+        epsg=3011,
+        dtype="float32",
+    )
+    mark, markslag = brann_in_byggnader(
+        terrang, markslag, ruta_fran_geo(geo_info), [b.till_byggnad() for b in hus]
+    )
+    skriv_geotiff(ruta_tmp / "terrang.tif", terrang, x_min=E0, y_max=N0 + sida_m, pixelstorlek=pixel_m)
+    skriv_geotiff(
+        ruta_tmp / "mark.tif",
+        np.asarray(mark, dtype=np.float32),
+        x_min=E0,
+        y_max=N0 + sida_m,
+        pixelstorlek=pixel_m,
+    )
+    skriv_geotiff(ruta_tmp / "markslag.tif", markslag, x_min=E0, y_max=N0 + sida_m, pixelstorlek=pixel_m)
+    skriv_geotiff(ruta_tmp / "osakerhet.tif", osak, x_min=E0, y_max=N0 + sida_m, pixelstorlek=pixel_m)
+    skriv_byggnader_gpkg(
+        ruta_tmp / "byggnader.gpkg",
+        tuple(hus),
+        bbox_fallback=(E0, N0, E0 + sida_m, N0 + sida_m),
+    )
+    murar = [
+        {
+            "typ": "mur",
+            "hojd_m": 2.5,
+            "geometry": LineString(
+                [(E0 + 238.0, N0 + 20.0 + i * 22.0), (E0 + 238.0, N0 + 36.0 + i * 22.0)]
+            ),
+        }
+        for i in range(20)
+    ]
+    gpd.GeoDataFrame(murar, crs="EPSG:3011").to_file(
+        ruta_tmp / "brytlinjer.gpkg", layer="brytlinjer", driver="GPKG"
+    )
+    (ruta_tmp / "recept.json").write_text(
+        json.dumps(
+            {
+                "kontrakt": "K1/v2",
+                "ruta_id": "mm_150000_6580000",
+                "epsg": 3011,
+                "hojdsystem": "RH 2000",
+                "installningar": {"k1_version": 2, "upplosning_m": pixel_m},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    proj_rot = tmp_path / "projekt_tat"
+    pmapp = proj_rot / "haga-tat"
+    pmapp.mkdir(parents=True)
+    shutil.copytree(k1_tmp, pmapp / "k1_vatten")
+
+    geo_rot = tmp_path / "geo_tat"
+    k1_lager = lagra(geo_rot, k1_tmp)
+    _, manifest_sha = skriv_manifest(
+        geo_rot,
+        {
+            "kontrakt": KONTRAKT_GEOGRAFI,
+            "id": "syntgeo-tat",
+            "version": "v1",
+            "kommun": "goteborg",
+            "karna_3011": [E0, N0, E0 + sida_m, N0 + sida_m],
+            "gransen_3011": [E0, N0, E0 + sida_m, N0 + sida_m],
+            "lager": {"k1_rutnat": {"sha256": k1_lager.sha256}},
+            "kallor": {
+                "hojd": {"licens": "CC0-1.0", "kalla": "Syntetisk"},
+                "byggnader": {"licens": "CC0-1.0", "kalla": "Syntetisk"},
+            },
+            "oppen_for_mcp": True,
+        },
+    )
+
+    org = konto_miljo.register.skapa_organisation("Göteborg Test")
+    anna = konto_miljo.register.forbered_konto("anna@example.test")
+    konto_miljo.register.gor_organisationsadmin(anna, org)
+    pid, _ = konto_miljo.register.registrera_projekt_for_konto(anna, org, "Haga Tät")
+
+    avgr = [E0 + 150.0, N0 + 150.0, E0 + 350.0, N0 + 350.0]
+    (pmapp / "oppenhet.toml").write_text(
+        'kontrakt = "floden-oppenhet/v1"\noppen = true\nlicens = "CC0-1.0"\n',
+        encoding="utf-8",
+    )
+    (pmapp / "projekt.json").write_text(
+        json.dumps(
+            {
+                "kontrakt": KONTRAKT_PROJEKT,
+                "projekt_id": "haga-tat",
+                "register_id": pid,
+                "namn": "Haga Tät",
+                "kommun": "goteborg",
+                "geografi": "syntgeo-tat@v1",
+                "geografi_manifest_sha256": manifest_sha,
+                "avgransning_3011": avgr,
+            }
+        ),
+        encoding="utf-8",
+    )
+    fdir = pmapp / "fragor"
+    fdir.mkdir()
+    (fdir / "skyfall.toml").write_text(
+        'kontrakt = "K20/v1"\nfraga_id = "haga-tat-skyfall"\nbeskrivning = "Skyfall"\n\n'
+        '[scenarier.bas]\nbas = "../k1_vatten"\n\n'
+        '[[analyser]]\nid = "skyfall"\nlosare = "vatten.statisk_fyllning"\n'
+        "parametrar = { regn_mm = 40.0 }\n",
+        encoding="utf-8",
+    )
+
+    konfig = tmp_path / "config_tat.toml"
+    konfig.write_text(
+        '[webb]\nfragemappar = ["fragor"]\ncachemapp = "cache"\nkorningsmapp = "korningar"\n',
+        encoding="utf-8",
+    )
+    tom_ts = tmp_path / "tom_ts_tat"
+    tom_ts.mkdir()
+    app = FlodenApiApp(
+        testsvit_rot=tom_ts,
+        konfig_fil=konfig,
+        konto=konto_miljo.adapter,
+        geomapp=geo_rot,
+        projektmapp=proj_rot,
+        kartverktygsmapp=tmp_path / "kv_tat",
+    )
+    w = konto_miljo.webblasare()
+    assert w.logga_in(konto_miljo.idp, ANNA)[0] == 302
+    rub = {
+        "Cookie": "; ".join(f"{k}={v}" for k, v in w.kakor.items()),
+        "Origin": ORIGIN,
+        **w.csrf_headers(),
+    }
+
+    # Standard Steg 2-anrop UTAN uttrycklig reflexordning, fasad_steg_m eller max_vaningar.
+    payload = {
+        "omrade_id": pid,
+        "mottagarhojd_m": 2.0,
+        "vagsegment": [
+            {
+                "id": f"vag_{k + 1}",
+                "koordinater": [
+                    [E0 + 250.0, avgr[1] + k * 50.0],
+                    [E0 + 250.0, avgr[1] + (k + 1) * 50.0],
+                ],
+                "adt_fordon_dygn": 12000.0,
+                "hastighet_km_h": 50.0,
+                "andel_tung_pct": 8.0,
+            }
+            for k in range(4)
+        ],
+    }
+    raw_body = json.dumps(payload).encode("utf-8")
+    rss_fore_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / rss_div
+    t0 = time.perf_counter()
+    status, _, body = app.hantera_http("POST", "/api/analys/buller", rub, lambda: raw_body)
+    dt = time.perf_counter() - t0
+    rss_efter_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / rss_div
+    delta_rss_mb = max(0.0, rss_efter_mb - rss_fore_mb)
+
+    assert status == 200, body.decode("utf-8", errors="replace")
+    svar = json.loads(body.decode("utf-8"))
+    assert dt < max_tid_s, f"Tät urban buller-skiss tog {dt:.2f} s (> {max_tid_s:g} s)"
+    assert delta_rss_mb < 600.0, f"RSS-ökning blev {delta_rss_mb:.1f} MB (> 600 MB)"
+    assert len(svar["fasad_buller"]["features"]) <= 60
+    assert NORD2000_KONFORM is False
+    assert svar["nord2000_konform"] is False
+    assert svar["metodstatus"] == "skiss"
+    assert svar["rapport_sparrad"] is True
+    assert svar["sammanfattning"]["karna"]["namn"] == "nord2000-referens"
+    assert svar["sammanfattning"]["reflexordning"] == 0
+    assert svar["sammanfattning"]["laeq_max_dba"] > 50.0
+    assert len(svar["fasad_buller"]["features"]) > 0
+    varn_text = "\n".join(svar["varningar"])
+    assert "reflexordning=0" in varn_text
+    assert "beskars till projektets fokusområde" in varn_text
+    assert svar["png"] and svar["png"].startswith(f"/api/kartverktyg/{pid}/buller/")

@@ -239,3 +239,23 @@ test("trafikTabellHtml och bullerPanelHtml visar klickbara väglänkar, källmä
   const p2 = tillampaBullerVagKlick({ ...STANDARD_BULLER_PARAM }, p1.ritadPunkt1, 150110, 6580020);
   assert.equal(p2.klar, true);
 });
+
+test("trafikTabellHtml undviker duplicerat 'ÅDT saknas · ÅDT saknas' och CSS har scroll + overflow-wrap", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const lankar = tolkaProjektTrafikGeoJson(EXEMPEL_GEOJSON);
+  const html = trafikTabellHtml({
+    tillgangliga: lankar,
+    valda: [lankar[0]!],
+    trafikLage: "nulage",
+  });
+  assert.doesNotMatch(html, /ÅDT saknas\s*·\s*ÅDT saknas/);
+  assert.match(html, /class="ar-bl-lank-meta">ÅDT saknas<\/span>/);
+  assert.match(html, /class="ar-bl-trafik-tabell-scroll"/);
+
+  const cssPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "arbetsyta.css");
+  const css = fs.readFileSync(cssPath, "utf-8");
+  assert.match(css, /\.ar-bl-trafik-tabell-scroll\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(css, /#ar-luft-bakgrund[^{]*\{[^}]*overflow-wrap:\s*anywhere/);
+});

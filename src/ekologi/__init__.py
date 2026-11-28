@@ -36,7 +36,13 @@ from ekologi.konnektivitet import (
     berakna_pc_eca,
     jamfor_fore_efter_ekologi,
 )
-from ekologi.krets import bygg_kantlista, los_kretspar
+from ekologi.krets import (
+    ForbereddKretsGraf,
+    bygg_kantlista,
+    forbered_kretsgraf,
+    los_kretspar,
+    los_kretspar_forberedd,
+)
 from ekologi.motstand import bygg_motstandsyta
 from ekologi.natverk import (
     Natverk,
@@ -87,6 +93,7 @@ __all__ = [
     "EkologiFel",
     "EkologiIntervallResultat",
     "FlackBetydelse",
+    "ForbereddKretsGraf",
     "ForeEfterEkologi",
     "HabitatFlack",
     "HabitatKarta",
@@ -107,9 +114,11 @@ __all__ = [
     "bygg_kantlista",
     "bygg_motstandsyta",
     "extrahera_habitatflackar",
+    "forbered_kretsgraf",
     "hamta_artprofil",
     "jamfor_fore_efter_ekologi",
     "kor_monoton_ekologi_intervall",
     "los_kretspar",
+    "los_kretspar_forberedd",
     "valj_basta_ekologi_atgarder_k",
 ]

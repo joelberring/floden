@@ -593,7 +593,8 @@ def test_e2e_k46_mappa_alla_fyra_nya_lager_osl_sparr_och_baskarta_fallback(
     # Verifiera produktionskonfig i data/kommuner/goteborg.toml
     gbg = las_kommun("goteborg")
     assert gbg.filpaket is not None and gbg.filpaket.vmi is not None
-    assert gbg.filpaket.vmi.vmi_lan == "O_Goteborg_Bohus"
+    assert gbg.filpaket.vmi.vmi_lan == "O_VastraGotaland"
+    assert gbg.filpaket.vmi.filnamn == "ursprunglig_digitalisering/O_VastraGotaland_VMI.zip"
     assert "geodata.naturvardsverket.se" in gbg.filpaket.tillatna_varddomaner
 
     v = bygg_varld(lm, tmp_path)
@@ -667,7 +668,7 @@ def test_e2e_k46_mappa_alla_fyra_nya_lager_osl_sparr_och_baskarta_fallback(
         }
     ).encode("utf-8")
     rader_t, rader_u, rader_d, rader_rh, rader_ned = [], [], [], [], []
-    strang_116, strang_117 = [], []
+    strang_117, strang_118 = [], []
     t0 = datetime(2024, 7, 10, 0, 0, tzinfo=UTC)
     for h in range(24):
         dt = t0 + timedelta(hours=h)
@@ -677,12 +678,17 @@ def test_e2e_k46_mappa_alla_fyra_nya_lager_osl_sparr_och_baskarta_fallback(
         rader_d.append((ds, ts, "270", "G"))
         rader_rh.append((ds, ts, "46", "G"))
         rader_ned.append((ds, ts, "0.0", "G"))
-        strang_116.append({"date_time": iso, "value": 720.0 if 8 <= h <= 16 else 10.0})
-        strang_117.append({"date_time": iso, "value": 780.0 if 8 <= h <= 16 else 0.0})
+        strang_117.append({"date_time": iso, "value": 760.0 if 8 <= h <= 16 else 10.0})
+        strang_118.append({"date_time": iso, "value": 810.0 if 8 <= h <= 16 else 0.0})
 
     def fake_smhi(url: str) -> bytes:
         if "strang1g" in url:
-            return json.dumps(strang_116 if "/parameter/116/" in url else strang_117).encode("utf-8")
+            assert "/parameter/116/" not in url, f"Får aldrig hämta STRÅNG 116 (CIE UV): {url}"
+            if "/parameter/117/" in url:
+                return json.dumps(strang_117).encode("utf-8")
+            if "/parameter/118/" in url:
+                return json.dumps(strang_118).encode("utf-8")
+            raise AssertionError(f"Oväntad STRÅNG-URL: {url}")
         if url.endswith(".json"):
             return stationer_bytes
         if "/parameter/1/" in url:
@@ -758,6 +764,8 @@ def test_e2e_k46_mappa_alla_fyra_nya_lager_osl_sparr_och_baskarta_fallback(
     vmi_zip_bytes = vmi_zip_fil.read_bytes()
 
     def fake_vmi_lan(url: str) -> bytes:
+        if url.endswith("/ursprunglig_digitalisering/O_VastraGotaland_VMI.zip"):
+            return vmi_zip_bytes
         if url.endswith("/O_Goteborg_Bohus/"):
             return b'<html><a href="5_GIS_skikt/">5_GIS_skikt/</a></html>'
         if url.endswith("/5_GIS_skikt/"):
