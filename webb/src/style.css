@@ -73,8 +73,8 @@ select {
 .falt-etikett,
 .under-rubrik {
   font-size: var(--f-etikett-storlek);
-  letter-spacing: var(--f-etikett-sparr);
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 600;
 }
 
@@ -103,8 +103,8 @@ select {
 
 .versal {
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .knapp {
@@ -228,8 +228,8 @@ form.knapp-par > button {
   font-family: var(--f-font-rubrik);
   font-weight: 700;
   font-size: 20px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   text-decoration: none;
 }
 .org-vaxlare {
@@ -247,8 +247,8 @@ form.knapp-par > button {
   align-items: center;
   gap: 0 28px;
   font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 .huvud-nav a {
   display: inline-flex;
@@ -327,12 +327,12 @@ form.knapp-par > button {
   font-family: var(--f-font-rubrik);
   font-weight: 600;
   font-size: clamp(30px, 4.2vw, 46px);
-  letter-spacing: -0.03em;
+  letter-spacing: -0.01em;
   line-height: 1.05;
 }
 .sidrubrik.stor {
   font-size: clamp(34px, 5vw, 54px);
-  letter-spacing: -0.035em;
+  letter-spacing: -0.01em;
   line-height: 0.98;
 }
 .sektionsrubrik {
@@ -340,7 +340,7 @@ form.knapp-par > button {
   font-family: var(--f-font-rubrik);
   font-size: 26px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 .tom {
   margin: 0;
@@ -440,8 +440,8 @@ form.knapp-par > button {
   flex-wrap: wrap;
   gap: 4px 16px;
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .statusrad {
@@ -485,7 +485,7 @@ form.knapp-par > button {
   font-weight: 600;
   font-size: clamp(42px, 6vw, 84px);
   line-height: 0.96;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.01em;
 }
 .hjalte-text {
   display: flex;
@@ -516,7 +516,7 @@ form.knapp-par > button {
   font-family: var(--f-font-rubrik);
   font-size: 26px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
 }
 .modul-kort p {
   margin: 0;
@@ -529,8 +529,8 @@ form.knapp-par > button {
 }
 .modul-status {
   font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text-dampad);
 }
 .modul-status.i-drift {
@@ -562,8 +562,8 @@ form.knapp-par > button {
   padding: 16px var(--f-marginal);
   border-top: 1px solid var(--f-linje-stark);
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text-dampad);
 }
 .sidfot-lankar {
@@ -593,9 +593,9 @@ form.knapp-par > button {
   text-decoration: none;
 }
 .modul-flik-status {
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text-dampad);
 }
 .modul-flik-namn {
@@ -658,9 +658,9 @@ form.knapp-par > button {
 .data-tabell thead th {
   padding: 14px 16px;
   text-align: left;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 500;
   color: var(--f-text-dampad);
 }
@@ -687,9 +687,9 @@ form.knapp-par > button {
   border-right: none;
 }
 .nyckeltal dt {
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text-dampad);
 }
 .nyckeltal dd {
@@ -798,8 +798,8 @@ form.knapp-par > button {
   border-bottom: 1px solid var(--f-linje);
   background: var(--f-bakgrund);
   font-size: 12px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   cursor: pointer;
 }
 .modul-knapp:nth-child(2n) {
@@ -855,7 +855,7 @@ details.panel-sektion > summary h2 {
   margin-top: 6px;
   color: var(--f-text-dampad);
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: 0;
 }
 .kontroll {
   width: 100%;
@@ -954,8 +954,8 @@ details.panel-sektion > summary h2 {
   min-height: 52px;
   background: var(--f-text);
   color: var(--f-bakgrund);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 .primar-knapp:disabled {
   background: var(--f-text-inaktiv);
@@ -1136,9 +1136,9 @@ details.panel-sektion > summary h2 {
   padding: 4px 10px;
   background: var(--f-bakgrund);
   border: 1px solid var(--f-linje-stark);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 .svep-etikett.vanster {
   left: 16px;
@@ -1163,9 +1163,9 @@ details.panel-sektion > summary h2 {
 }
 .sidavid-ruta figcaption {
   padding: 8px 12px;
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   border-bottom: 1px solid var(--f-linje);
 }
 .sidavid-ruta img {
@@ -1192,8 +1192,8 @@ details.panel-sektion > summary h2 {
   cursor: pointer;
   min-height: 28px;
   font-size: var(--f-etikett-storlek);
-  letter-spacing: var(--f-etikett-sparr);
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 600;
 }
 .karta-overlay .knapp-rad {
@@ -1388,8 +1388,8 @@ details.panel-sektion > summary h2 {
   color: var(--f-yta);
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   line-height: 1.4;
 }
 .ai-nyckel-status {
@@ -1489,8 +1489,8 @@ details.panel-sektion > summary h2 {
   min-height: 32px;
   font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text);
 }
 .nyckel-detaljer > summary::-webkit-details-marker {
@@ -1634,7 +1634,7 @@ body[data-sida="inloggning"] .sidhuvud {
   inset: 0;
   overflow: hidden;
   background: #1c1d12;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--f-font);
   color: #ffffff;
 }
 .inloggning-bild {
@@ -1666,7 +1666,7 @@ body[data-sida="inloggning"] .sidhuvud {
   font-weight: 600;
   font-size: clamp(72px, 9.2vw, 132px);
   line-height: 0.92;
-  letter-spacing: -0.035em;
+  letter-spacing: -0.01em;
   color: #ffffff;
 }
 .inloggning-namn:focus {

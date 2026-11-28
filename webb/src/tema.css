@@ -1,31 +1,55 @@
 /*
- * Flodens tema – designtoken som CSS-variabler.
- * Stramt svartvitt arkitektutseende: vitt (#ffffff), svart (#111111), neutrala gråtoner,
- * hårfina linjer och raka hörn (border-radius: 0). Färg används bara i kartdata samt diskret
- * varningsröd vid fel. Alla textkombinationer uppfyller WCAG AA (>= 4,5:1).
+ * Flodens tema – designtoken som CSS-variabler (grafisk riktlinje "C5", 2026-11-28).
+ * Platta färgblock, raka hörn, inga skuggor eller toningar. Varje ämne har en färg ur målningen
+ * på inloggningssidan; färgen bärs av flikar, block och små markörer, aldrig av text.
+ * Hierarkin byggs med storlek och vikt. Alla textkombinationer uppfyller WCAG AA (>= 4,5:1).
  * Inga externa typsnittsanrop (uppfyller löftet om att inget skickas till tredje part).
  */
 
 :root {
-  /* Grund (svartvitt UI-krom) */
-  --f-bakgrund: #ffffff;
+  /* Grund: kall grå bakgrund ur målningens mintpartier, vita ytor, mossgrön text */
+  --f-bakgrund: #eef1ee;
   --f-yta: #ffffff;
-  --f-yta-dampad: #f4f4f4;
-  --f-text: #111111;
-  --f-text-sekundar: #333333;
-  --f-text-dampad: #595959; /* 7,0:1 mot #ffffff, 6,3:1 mot #f4f4f4 */
-  --f-text-inaktiv: #707070; /* 5,0:1 mot #ffffff, 4,5:1 mot #f4f4f4 */
-  --f-linje: #d9d9d9;
-  --f-linje-stark: #111111;
-  --f-linje-svag: #ededed;
-  --f-karta-bas: #efefef;
+  --f-yta-dampad: #e2e7e3; /* ovalda knappar och dämpade ytor */
+  --f-text: #1f2414; /* mossa, 14,9:1 mot #eef1ee */
+  --f-text-sekundar: #33362a;
+  --f-text-dampad: #55574a; /* 6,6:1 mot #eef1ee, 6,0:1 mot #e2e7e3 */
+  --f-text-inaktiv: #626457; /* 5,2:1 mot #eef1ee, 4,7:1 mot #e2e7e3 */
+  --f-linje: #d3d9d4;
+  --f-linje-stark: #1f2414;
+  --f-linje-svag: #e4e9e5;
+  --f-karta-bas: #e3e8e4;
 
-  /* UI-accent (svart/grå – färg hör bara hemma i kartdata) */
-  --f-accent: #111111;
-  --f-accent-hover: #2b2b2b;
-  --f-accent-yta: #f2f2f2;
+  /* UI-accent: mossa. Valda knappar är mörka block med ljus text */
+  --f-accent: #1f2414;
+  --f-accent-hover: #2a311c;
+  --f-accent-yta: #e2e7e3;
+  --f-accent-text: #f7f9f7;
 
-  /* Kartdata (endast här finns färg) */
+  /* Ämnesfärger ur målningen (flikar, block och små markörer – aldrig text) */
+  --f-amne-vatten: #a9d6c0;
+  --f-amne-dagsljus: #d4b74f;
+  --f-amne-mikroklimat: #d9b39a;
+  --f-amne-ekologi: #8b9655;
+  --f-amne-luft: #b3a3b3;
+  --f-amne-buller: #a4654c;
+  --f-amne-buller-text: #fbf8f2; /* buller är mörk nog för ljus text */
+
+  /* Diagramtoner per ämne: nuläge alltid ljusgrått, alternativet ämnets mörka ton */
+  --f-diagram-nulage: #cfd1c9;
+  --f-diagram-rutnat: #e3e1d8;
+  --f-diagram-vatten: #00836c;
+  --f-diagram-vatten-mellan: #4cc0a8;
+  --f-diagram-dagsljus: #94700c;
+  --f-diagram-dagsljus-mellan: #c9a12a;
+  --f-diagram-buller: #9a4a2e;
+  --f-diagram-buller-mellan: #d0805f;
+  --f-diagram-luft: #67428f;
+  --f-diagram-luft-mellan: #a37fc6;
+  --f-diagram-ekologi: #5f6f24;
+  --f-diagram-ekologi-mellan: #9fb04c;
+
+  /* Kartdata (mörkare och mättade toner än ämnesblocken) */
   --f-vatten-1: #dcebe6; /* 0,1–0,2 m */
   --f-vatten-2: #8fb9ac; /* 0,2–0,3 m */
   --f-vatten-3: #4a7d8c; /* 0,3–0,5 m */
@@ -38,20 +62,23 @@
   --f-skugga: #bdbdbd;
   --f-djupare: #b86a4b;
   --f-grundare: #8fb9ac;
-  --f-varning: #b42318; /* 5,9:1 mot #ffffff, 5,3:1 mot #f4f4f4 */
+  --f-varning: #b42318; /* 5,9:1 mot #ffffff, 5,3:1 mot #eef1ee */
 
-  /* Typografi */
-  --f-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --f-font-rubrik: "Inter Tight", "Inter", system-ui, sans-serif;
-  --f-font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --f-etikett-storlek: 11px;
-  --f-etikett-sparr: 0.12em;
+  /* Typografi (design/grafisk-riktlinje.md): serif för det man läser, sans för det man gör,
+     mono för det man kan spåra. Typsnitten ligger i bygget (@fontsource, SIL OFL), inga externa anrop. */
+  --f-font: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-font-rubrik: "Newsreader", Georgia, "Times New Roman", serif;
+  --f-font-lasning: "Newsreader", Georgia, "Times New Roman", serif;
+  --f-font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --f-etikett-storlek: 12px;
+  --f-etikett-sparr: 0; /* inga spärrade versaler */
 
-  /* Mått (stramare marginaler och sidhuvud; 44 px klickytor behålls) */
+  /* Mått (44 px klickytor behålls) */
   --f-sidbredd: 1344px;
   --f-marginal: 32px;
   --f-huvud-hojd: 56px;
   --f-mal-yta: 44px; /* minsta klickyta */
+  --f-blockglapp: 4px; /* block skiljs åt med mellanrum, inte ramar */
 }
 
 @media (max-width: 720px) {

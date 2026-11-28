@@ -1,7 +1,7 @@
 /*
- * Sammanhållen arbetsyta ("2 Karta & analys"): stramt svartvitt UI-krom via --f-*-tokens.
- * All färg tillhör kartdata (vattendjup, sol, ekologi); knappar, kort, linjer, mätlinje och
- * skalstock är knivskarpt svarta, vita och grå.
+ * Sammanhållen arbetsyta ("2 Karta & analys") enligt grafisk riktlinje C5: platta block, raka hörn,
+ * mossgrönt krom via --f-*-tokens. Ämnesfärgerna bärs av flikar och block i skiktpanelen; text är
+ * alltid svart eller grå. Kartdata har egna, mörkare skalor.
  */
 
 /* ---------- Toppväxel & kartverktyg ---------- */
@@ -138,249 +138,196 @@
   display: none;
 }
 
-/* ---------- Vänsterställd 6-domäns skikt- & kartlagerpanel ---------- */
+/* ---------- Skiktpanel (C5): stående ämnesflikar på vänsterkanten + uppfällt block i ämnets färg ---------- */
+.ar-skikt-doman[data-amne="vatten"],
+.ar-skikt-kropp[data-skikt-amne="vatten"] { --ar-amne: var(--f-amne-vatten, #a9d6c0); }
+.ar-skikt-doman[data-amne="dagsljus"],
+.ar-skikt-kropp[data-skikt-amne="dagsljus"] { --ar-amne: var(--f-amne-dagsljus, #d4b74f); }
+.ar-skikt-doman[data-amne="mikroklimat"],
+.ar-skikt-kropp[data-skikt-amne="mikroklimat"] { --ar-amne: var(--f-amne-mikroklimat, #d9b39a); }
+.ar-skikt-doman[data-amne="ekologi"],
+.ar-skikt-kropp[data-skikt-amne="ekologi"] { --ar-amne: var(--f-amne-ekologi, #8b9655); }
+.ar-skikt-doman[data-amne="luft"],
+.ar-skikt-kropp[data-skikt-amne="luft"] { --ar-amne: var(--f-amne-luft, #b3a3b3); }
+.ar-skikt-doman[data-amne="buller"],
+.ar-skikt-kropp[data-skikt-amne="buller"] {
+  --ar-amne: var(--f-amne-buller, #a4654c);
+  --ar-amne-text: var(--f-amne-buller-text, #fbf8f2);
+  --ar-amne-linje: rgba(255, 255, 255, 0.35);
+}
+
 .ar-skikt-panel {
   position: absolute;
-  left: 12px;
-  top: 12px;
+  left: 0;
+  top: 0;
+  bottom: 0;
   z-index: 4;
-  width: 205px;
-  max-height: calc(100% - 24px);
-  overflow-y: auto;
   display: flex;
-  flex-direction: column;
-  background: var(--f-yta, #ffffff);
-  border: 1px solid var(--f-linje-stark, #111111);
-  color: var(--f-text, #111111);
+  flex-direction: row;
+  align-items: stretch;
+  background: transparent;
+  color: var(--f-text, #1f2414);
   box-sizing: border-box;
 }
 .ar-skikt-panel[hidden] {
   display: none;
 }
-.ar-skikt-panel.ar-skikt-hopfalld {
-  width: auto;
-  max-width: calc(100% - 24px);
-}
 .ar-karta.har-botten .ar-skikt-panel {
-  max-height: calc(100% - 260px);
+  bottom: 260px;
 }
-.ar-karta.har-skikt-panel .ar-tecken {
-  left: 229px !important;
-}
-.ar-skikt-huvud {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  padding: 5px 6px 5px 10px;
-  background: var(--f-yta-dampad, #f4f4f4);
-  border-bottom: 1px solid var(--f-linje, #d9d9d9);
-}
-.ar-skikt-panel.ar-skikt-hopfalld .ar-skikt-huvud {
-  padding: 0;
-  border-bottom: 0;
-  background: var(--f-yta, #ffffff);
-}
-.ar-skikt-titel {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--f-text, #111111);
-}
-.ar-skikt-oppna {
-  height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 0;
-  background: var(--f-yta, #ffffff);
-  color: var(--f-text, #111111);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ar-skikt-oppna:hover {
-  background: var(--f-yta-dampad, #f4f4f4);
-}
-.ar-skikt-oppna:focus-visible {
-  outline: 2px solid var(--f-accent, #111111);
-  outline-offset: -2px;
-}
-.ar-skikt-kropp {
+.ar-skikt-flikar {
+  width: 48px;
+  flex: none;
   display: flex;
   flex-direction: column;
-}
-.ar-skikt-kropp[hidden] {
-  display: none;
+  gap: var(--f-blockglapp, 4px);
+  background: var(--f-bakgrund, #eef1ee);
 }
 .ar-skikt-domaner {
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 4px;
-  gap: 2px;
+  gap: var(--f-blockglapp, 4px);
 }
 .ar-skikt-doman {
-  width: 100%;
-  min-height: 34px;
-  padding: 5px 8px;
+  flex: 1 1 0;
+  min-height: 64px;
+  margin-right: 8px;
+  padding: 12px 0;
   border: 0;
-  border-left: 3px solid transparent;
   border-radius: 0;
-  background: transparent;
-  color: var(--f-text, #111111);
+  background: var(--ar-amne);
+  color: var(--ar-amne-text, var(--f-text, #1f2414));
   font: inherit;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  text-align: left;
-  cursor: pointer;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
   box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
 }
 .ar-skikt-doman:hover {
-  background: var(--f-yta-dampad, #f4f4f4);
+  filter: brightness(1.04);
 }
 .ar-skikt-doman:focus-visible {
-  outline: 2px solid var(--f-accent, #111111);
-  outline-offset: -2px;
+  outline: 2px solid var(--f-accent, #1f2414);
+  outline-offset: -4px;
 }
 .ar-skikt-doman[aria-selected="true"] {
-  background: var(--f-accent, #111111);
-  border-left-color: var(--f-accent, #111111);
-  color: var(--f-bakgrund, #ffffff);
-  font-weight: 600;
+  margin-right: 0;
+  font-weight: 700;
 }
 .ar-skikt-doman-namn {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  gap: 6px;
 }
-.ar-skikt-prick {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  box-sizing: border-box;
-}
-.ar-skikt-prick.klar {
-  background: var(--f-text, #111111);
-}
-.ar-skikt-prick.kor {
-  background: var(--f-yta, #ffffff);
-  border: 2px solid var(--f-text, #111111);
-}
-.ar-skikt-prick.redo {
-  background: transparent;
-  border: 1.5px solid var(--f-text-dampad, #595959);
-}
-.ar-skikt-prick.skiss {
-  background: transparent;
-  border: 1.5px dashed var(--f-text-dampad, #595959);
-}
-.ar-skikt-prick.skiss-klar {
-  background: var(--f-text-dampad, #595959);
-  border: 1px solid var(--f-text, #111111);
-}
-.ar-skikt-doman[aria-selected="true"] .ar-skikt-prick.klar {
-  background: var(--f-bakgrund, #ffffff);
-}
-.ar-skikt-doman[aria-selected="true"] .ar-skikt-prick.kor {
-  background: var(--f-accent, #111111);
-  border-color: var(--f-bakgrund, #ffffff);
-}
-.ar-skikt-doman[aria-selected="true"] .ar-skikt-prick.redo,
-.ar-skikt-doman[aria-selected="true"] .ar-skikt-prick.skiss {
-  border-color: var(--f-bakgrund, #ffffff);
-}
-.ar-skikt-doman[aria-selected="true"] .ar-skikt-prick.skiss-klar {
-  background: var(--f-bakgrund, #ffffff);
-  border-color: var(--f-bakgrund, #ffffff);
+.ar-skikt-prick,
+.ar-skikt-doman-kort {
+  display: none;
 }
 .ar-skikt-status {
-  flex: 0 0 auto;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 1px 4px;
-  border: 1px solid var(--f-linje, #d9d9d9);
-  color: var(--f-text-dampad, #595959);
-  background: var(--f-yta, #ffffff);
-  line-height: 1.3;
+  font-family: var(--f-font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.8;
 }
-.ar-skikt-status.klar {
-  border-color: var(--f-text, #111111);
-  color: var(--f-text, #111111);
+.ar-skikt-vaxla {
+  flex: none;
+  height: var(--f-mal-yta, 44px);
+  margin-right: 8px;
+  border: 0;
+  border-radius: 0;
+  background: var(--f-accent, #1f2414);
+  color: var(--f-accent-text, #f7f9f7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
 }
-.ar-skikt-status.kor {
-  border-color: var(--f-text, #111111);
-  color: var(--f-text, #111111);
-  background: var(--f-yta-dampad, #f4f4f4);
+.ar-skikt-panel:not(.ar-skikt-hopfalld) .ar-skikt-vaxla {
+  margin-right: 0;
 }
-.ar-skikt-status.skiss,
-.ar-skikt-status.skiss-klar {
-  border-style: dashed;
-  border-color: var(--f-text-dampad, #595959);
-  color: var(--f-text-dampad, #595959);
+.ar-skikt-vaxla:hover {
+  background: var(--f-accent-hover, #2a311c);
 }
-.ar-skikt-doman[aria-selected="true"] .ar-skikt-status {
-  background: transparent;
-  border-color: rgba(255, 255, 255, 0.78);
-  color: var(--f-bakgrund, #ffffff);
+.ar-skikt-vaxla:focus-visible {
+  outline: 2px solid var(--f-accent, #1f2414);
+  outline-offset: 2px;
 }
-.ar-skikt-lager {
-  border-top: 1px solid var(--f-linje, #d9d9d9);
-  padding: 8px 10px 6px;
+.ar-skikt-kropp {
+  width: 232px;
+  flex: none;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  padding: 18px 14px 12px;
+  background: var(--ar-amne);
+  color: var(--ar-amne-text, var(--f-text, #1f2414));
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.ar-skikt-kropp[hidden] {
+  display: none;
+}
+.ar-skikt-huvud {
+  padding: 0 2px 12px;
+}
+.ar-skikt-titel {
+  font-family: var(--f-font);
+  font-size: 17px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: inherit;
+}
+.ar-skikt-lager,
+.ar-skikt-opacitet-block {
+  border-top: 1px solid var(--ar-amne-linje, rgba(31, 36, 20, 0.25));
+  padding: 10px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .ar-skikt-rubrik {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--f-text-dampad, #595959);
+  font-size: 12px;
+  font-weight: 600;
+  color: inherit;
 }
 .ar-skikt-krysslista {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 .ar-skikt-kryss {
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 12px;
+  gap: 8px;
+  min-height: 30px;
+  font-family: var(--f-font-lasning);
+  font-size: 15px;
   line-height: 1.3;
-  color: var(--f-text, #111111);
+  color: inherit;
   cursor: pointer;
 }
 .ar-skikt-kryss input[type="checkbox"] {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
   margin: 0;
-  accent-color: var(--f-accent, #111111);
+  accent-color: var(--f-accent, #1f2414);
   cursor: pointer;
-}
-.ar-skikt-opacitet-block {
-  border-top: 1px solid var(--f-linje, #d9d9d9);
-  padding: 7px 10px 9px;
 }
 .ar-skikt-opacitet {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--f-text-sekundar, #333333);
+  gap: 6px;
+  font-size: 12px;
+  color: inherit;
   font-variant-numeric: tabular-nums;
 }
 .ar-skikt-opacitet-rad {
@@ -389,10 +336,14 @@
   justify-content: space-between;
   font-weight: 600;
 }
+.ar-skikt-opacitet output {
+  font-family: var(--f-font-mono);
+  font-weight: 400;
+}
 .ar-skikt-opacitet input[type="range"] {
   width: 100%;
   margin: 0;
-  accent-color: var(--f-accent, #111111);
+  accent-color: var(--f-accent, #1f2414);
   cursor: pointer;
 }
 
@@ -516,7 +467,7 @@
   background: var(--f-yta, #ffffff);
   color: var(--f-text-sekundar, #333333);
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
   padding: 3px 8px;
   border: 1px solid var(--f-linje-stark, #111111);
@@ -593,7 +544,7 @@
   display: flex;
   justify-content: space-between;
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   color: var(--f-text, #111111);
   font-variant-numeric: tabular-nums;
@@ -654,10 +605,10 @@
   background: var(--f-yta-dampad, #f4f4f4);
 }
 .ar-tecken-titel {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text, #111111);
 }
 .ar-min-knapp {
@@ -690,7 +641,7 @@
   padding: 6px 8px;
   max-height: min(44vh, 320px);
   overflow-y: auto;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.3;
 }
 .ar-tecken-kropp .flode-klasser {
@@ -740,7 +691,7 @@
   padding-bottom: 4px;
   margin-bottom: 1px;
   border-bottom: 1px solid var(--f-linje, #d9d9d9);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--f-text, #111111);
   font-variant-numeric: tabular-nums;
@@ -804,7 +755,7 @@
   margin: 0 0 6px;
   padding-bottom: 5px;
   border-bottom: 1px solid var(--f-linje, #d9d9d9);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--f-text, #111111);
 }
@@ -860,10 +811,10 @@
   flex-wrap: wrap;
 }
 .ar-sektion-rubrik {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text-dampad, #595959);
 }
 .ar-regn {
@@ -1125,7 +1076,7 @@
   gap: 6px;
   padding: 2px 4px;
   border-top: 1px solid var(--f-linje, #d9d9d9);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--f-text-dampad, #595959);
   font-variant-numeric: tabular-nums;
 }
@@ -1173,10 +1124,10 @@
   background: transparent;
   color: var(--f-text-dampad, #595959);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   cursor: pointer;
 }
 .ar-dock-flikar button[aria-selected="true"] {
@@ -1219,7 +1170,7 @@
   background: var(--f-yta, #ffffff);
   color: var(--f-text, #111111);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1229,7 +1180,7 @@
 }
 .ar-sektion-avl {
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--f-text-sekundar, #333333);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1284,7 +1235,7 @@
 }
 .tid-status {
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--f-text-sekundar, #333333);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -1316,10 +1267,10 @@
   justify-content: space-between;
   padding: 4px 8px;
   border-bottom: 1px solid var(--f-linje, #d9d9d9);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  text-transform: none;
+  letter-spacing: 0;
 }
 .ar-redigera-3d-huvud button {
   width: 22px;
@@ -1356,7 +1307,7 @@
 .ar-friyta-roller button {
   height: 26px;
   padding: 0 3px;
-  font-size: 11px;
+  font-size: 12px;
   text-align: center;
 }
 .ar-hus-atgarder {
@@ -1386,7 +1337,7 @@
   background: var(--f-yta, #ffffff);
   color: var(--f-text, #111111);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -1440,7 +1391,7 @@
   border-top: 1px solid var(--f-linje, #d9d9d9);
 }
 .ar-dpc-tabell {
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .ar-dpc-tabell th,
@@ -1499,7 +1450,7 @@
 }
 .ar-avl-punkt {
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--f-text-sekundar, #222222);
   border-bottom: 1px solid var(--f-linje, #e5e5e5);
   padding-bottom: 3px;
@@ -1593,7 +1544,7 @@
 .ar-cad-ref {
   margin: 0;
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
   color: var(--f-text-sekundar, #222222);
   font-variant-numeric: tabular-nums;
@@ -1682,7 +1633,7 @@
   padding: 2px 6px;
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   border: 1px solid var(--f-text, #111111);
   background: var(--f-yta, #ffffff);
   color: var(--f-text, #111111);
@@ -1730,7 +1681,7 @@
 .ar-vs-paramrad {
   margin: 0;
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .ar-inline-legend {
@@ -1740,7 +1691,7 @@
   padding: 8px;
   background: var(--f-yta-dampad, #f4f4f4);
   border: 1px solid var(--f-linje, #d9d9d9);
-  font-size: 11px;
+  font-size: 12px;
 }
 .ar-inline-legend .flode-band,
 .ar-inline-legend .flode-bandtext {
@@ -1851,7 +1802,7 @@
 }
 .ar-buller-banner strong {
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0;
 }
 .ar-buller-atgarder {
   display: grid;
@@ -1907,7 +1858,7 @@
 }
 .ar-cadbim-export-lank span {
   font-family: var(--f-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: 12px;
   opacity: 0.75;
 }
 
@@ -1940,7 +1891,7 @@
   background: var(--f-yta, #ffffff);
   color: var(--f-text, #111111);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -1968,7 +1919,7 @@
   width: 100%;
   min-width: 420px;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .ar-bl-trafik-tabell th,
@@ -1987,7 +1938,7 @@
   width: 54px;
   min-height: 26px;
   padding: 2px 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .ar-bl-trafik-atgarder {
@@ -2075,7 +2026,7 @@
 }
 .ar-luft-resultat-tabell,
 .ar-luft-segment-tabell {
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -2159,7 +2110,7 @@
 }
 .ar-osl-varning {
   margin: 0 10px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .ar-skrivbord-checklista,
@@ -2184,7 +2135,7 @@
   flex-wrap: wrap;
 }
 .ar-faltlager-import input[type="file"] {
-  font-size: 11px;
+  font-size: 12px;
   max-width: 100%;
 }
 
@@ -2284,4 +2235,191 @@
   .ar-buller-atgarder {
     grid-template-columns: 1fr;
   }
+}
+
+/* ================= Grafisk riktlinje C5: placering runt flikarna och blockiga knapprader ================= */
+.ar-karta.har-skikt-flikar .ar-vaxel {
+  left: 60px;
+  max-width: calc(100% - 72px);
+}
+.ar-karta.har-skikt-panel .ar-vaxel {
+  left: 292px;
+  max-width: calc(100% - 304px);
+}
+.ar-karta.har-skikt-flikar .ar-tecken {
+  left: 60px !important;
+}
+.ar-karta.har-skikt-panel .ar-tecken {
+  left: 292px !important;
+}
+.ar-vaxel,
+.ar-zoomrad {
+  gap: 3px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+.ar-vaxel button,
+.ar-zoomrad button {
+  height: 36px;
+  padding: 0 12px;
+  background: var(--f-yta-dampad, #e2e7e3);
+  color: var(--f-text, #1f2414);
+  font-size: 13px;
+  font-weight: 600;
+}
+.ar-vaxel button:hover:not(:disabled),
+.ar-zoomrad button:hover {
+  background: #d5dcd7;
+  color: var(--f-text, #1f2414);
+}
+.ar-vaxel button[aria-pressed="true"],
+.ar-zoomrad button[aria-pressed="true"] {
+  background: var(--f-accent, #1f2414);
+  color: var(--f-accent-text, #f7f9f7);
+}
+.ar-zoom-skil {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  /* Mobil: flikarna ligger i en rad längst ner, blocket fälls upp ovanför kartans nederkant */
+  .ar-skikt-panel,
+  .ar-skikt-panel.ar-skikt-hopfalld {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-width: none;
+    max-height: 62%;
+    flex-direction: column;
+    z-index: 6;
+  }
+  .ar-skikt-flikar {
+    width: auto;
+    flex-direction: row;
+    align-items: flex-end;
+    padding: 6px 8px 0;
+    background: transparent;
+  }
+  .ar-skikt-domaner {
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 3px;
+  }
+  .ar-skikt-doman,
+  .ar-skikt-doman[aria-selected="true"] {
+    writing-mode: horizontal-tb;
+    transform: none;
+    margin-right: 0;
+    min-height: var(--f-mal-yta, 44px);
+    min-width: 0;
+    padding: 4px 3px;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 11.5px;
+    line-height: 1.1;
+    white-space: normal;
+    text-align: center;
+  }
+  .ar-skikt-doman[aria-selected="true"] {
+    min-height: 56px;
+  }
+  .ar-skikt-status {
+    display: none;
+  }
+  .ar-skikt-doman-kort {
+    display: inline;
+  }
+  .ar-skikt-doman-lang {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .ar-skikt-panel,
+  .ar-skikt-panel.ar-skikt-hopfalld {
+    max-height: 72%;
+  }
+  .ar-skikt-panel .ar-skikt-kropp {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+  .ar-karta {
+    min-height: 68vh;
+  }
+  .ar-skikt-vaxla,
+  .ar-skikt-panel:not(.ar-skikt-hopfalld) .ar-skikt-vaxla {
+    width: var(--f-mal-yta, 44px);
+    margin: 0 0 0 3px;
+  }
+  .ar-skikt-vaxla svg {
+    transform: rotate(-90deg);
+  }
+  .ar-skikt-kropp {
+    width: auto;
+    margin: 0 8px 8px;
+    max-height: 45vh;
+  }
+  .ar-karta.har-skikt-flikar .ar-vaxel,
+  .ar-karta.har-skikt-panel .ar-vaxel {
+    left: 8px;
+    max-width: calc(100% - 16px);
+  }
+  .ar-karta.har-skikt-flikar .ar-tecken,
+  .ar-karta.har-skikt-panel .ar-tecken {
+    left: 8px !important;
+    bottom: 66px !important;
+  }
+  .ar-karta.har-skikt-flikar .ar-hoger-botten {
+    bottom: 66px;
+  }
+}
+
+/* Högerpanelen (C5): lugn spalt på bakgrunden, svarsrubrik i serif, block i stället för ramar */
+.ar-panel .flode-h {
+  font-family: var(--f-font-rubrik);
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 400;
+}
+.ar-lagerblock {
+  padding: 12px 0 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--f-linje, #d3d9d4);
+}
+.ar-lagerknappar {
+  gap: 3px;
+}
+.ar-lagerknappar button {
+  border: 0;
+  background: var(--f-yta-dampad, #e2e7e3);
+  font-weight: 600;
+}
+.ar-lagerknappar button:hover {
+  background: #d5dcd7;
+}
+.ar-lagerknappar button[aria-pressed="true"] {
+  color: var(--f-accent-text, #f7f9f7);
+}
+.ar-lager-varning {
+  border-left: 0;
+  background: var(--f-yta-dampad, #e2e7e3);
+}
+.ar-tecken,
+.ar-skalstock,
+.ar-notis {
+  border: 0 !important;
+}
+.ar-panel-vaxla {
+  width: 28px;
+  height: 56px;
+  border: 0;
+  background: var(--f-accent, #1f2414);
+  color: var(--f-accent-text, #f7f9f7);
 }

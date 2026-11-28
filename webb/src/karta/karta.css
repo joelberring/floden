@@ -208,12 +208,12 @@
 
 /* Ritlagerpanelen (steg 2, K50) */
 .rl-lista { list-style: none; margin: 0 0 10px; padding: 0; }
-.rl-rad { padding: 6px; border: 1px solid var(--fl-line, #ddd); border-radius: 6px; margin-bottom: 6px; }
+.rl-rad { padding: 6px; border: 1px solid var(--fl-line, #ddd); border-radius: 0; margin-bottom: 6px; }
 .rl-rad.aktiv { border-color: var(--fl-ink, #111); }
 .rl-rad.last .rl-namn { font-style: italic; }
 .rl-topp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .rl-namn { flex: 1 1 auto; min-width: 6em; }
-.rl-prov { width: 14px; height: 14px; border: 2px solid; border-radius: 3px; display: inline-block; flex: none; }
+.rl-prov { width: 14px; height: 14px; border: 2px solid; border-radius: 0; display: inline-block; flex: none; }
 .rl-vaxla { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .rl-roll { margin: 4px 0 0; }
 .rl-stangt { color: var(--fl-fel, #a11); }
@@ -221,4 +221,4 @@
 .rl-ny input[type="text"] { flex: 1 1 8em; min-width: 6em; }
 
 /* Etikett med volym på en sänka (analyslager, steg 4) */
-.analys-etikett { padding: 1px 5px; border-radius: 4px; background: rgba(252, 251, 247, 0.9); color: var(--f-vatten-4, #234b66); border: 1px solid rgba(35, 75, 102, 0.25); font-size: 11px; font-weight: 600; white-space: nowrap; pointer-events: none; }
+.analys-etikett { padding: 1px 5px; border-radius: 0; background: rgba(252, 251, 247, 0.9); color: var(--f-vatten-4, #234b66); border: 1px solid rgba(35, 75, 102, 0.25); font-size: 12px; font-weight: 600; white-space: nowrap; pointer-events: none; }
