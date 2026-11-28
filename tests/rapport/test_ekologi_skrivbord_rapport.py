@@ -204,6 +204,63 @@ def test_ekoskrivbord_belagg_ek_fragor_nvi_checklista_och_9_av_9_kontroll(
         m.rt.exportera(r.rapport_id, "pdf")
 
 
+def test_ekologi_kansighet_bildtext_och_ingen_dubbelmening(tmp_path: Path) -> None:
+    """Verifierar P2-puts: känslighetskartor får rätt bildtext, ingen dubbel scenariomening och keepWithNext."""
+    from rapport import amnestext
+
+    assert "Känslighet för motstånd" in amnestext.kartrubrik(
+        "ekologi", "bas", "fore", "fore", "ritat", roll="kansighet"
+    )
+    assert "Strömtäthet" not in amnestext.kartrubrik(
+        "ekologi", "skillnad", "ritat", "fore", "ritat", roll="kansighet"
+    )
+    b_sbk = amnestext.bildtext_sbk(
+        "ekologi", "bas", "fore", "fore", "ritat", "k-1", "ekologi.konnektivitet", roll="kansighet"
+    )
+    assert "Känslighet för motstånd" in b_sbk
+    assert "Strömtäthet" not in b_sbk
+
+    b_lagrad = amnestext.bildtext_lagrad(
+        "ekologi",
+        "skillnad",
+        {"fore": "fore", "efter": "ritat", "utdata": "kansighet"},
+        {"enhet": "", "roll": "kansighet"},
+        "ekologi.konnektivitet",
+        "k-1",
+        roll="kansighet",
+    )
+    assert "Känslighet för motstånd" in b_lagrad
+
+    # Rubrik + kort inledningsstycke före Tabell får inte splittras över sidbrytning i PDF.
+    from rapport.skissmall import Stycke
+
+    rader_fyll = tuple((f"Rad {i}", "värde") for i in range(1, 29))
+    dok = Dokument(
+        titel="Test rubrik+tabell",
+        sidhuvud="Test",
+        sidfot="Sidfot.",
+        block=[
+            Rubrik(1, "Fyllnad"),
+            Tabell(("A", "B"), rader_fyll, (0.5, 0.5), liten=True),
+            Rubrik(2, "Skrivbordskontroll av skydd och naturvärden (skiss)"),
+            Stycke("Kort inledningsstycke som hör till tabellen nedan.", "liten"),
+            Tabell(
+                ("Datakälla", "Utfall"),
+                (("Skyddad natur", "2 objekt"), ("VMI", "1 polygon")),
+                (0.5, 0.5),
+                liten=True,
+            ),
+        ],
+    )
+    pdf_fil = skriv_pdf(dok, tmp_path / "kwn.pdf", tmp_path)
+    _, sidor = _text_pdf(pdf_fil)
+    # Rubrik + tabellens första rad måste hamna på samma sida!
+    sida_rubrik = next(
+        i for i, s in enumerate(sidor) if "Skrivbordskontroll av skydd och naturvärden" in _norm(s)
+    )
+    assert "Skyddad natur" in _norm(sidor[sida_rubrik])
+
+
 # ------------------------------------------------------------------ 2. PDF-putsfix #1: 0 tomma sidor
 
 

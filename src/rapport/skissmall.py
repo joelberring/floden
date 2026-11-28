@@ -357,6 +357,9 @@ def bildtext(k: Karta, r: Rapport) -> str:
     jfr = next(
         (j for kp in r.korningar for j in kp["jamforelser"] if j["namn"] == k.jamforelse), None
     )
+    eff_roll = str(
+        k.meta.get("roll") or (jfr.get("utdata") if isinstance(jfr, Mapping) else "") or ""
+    )
     return amnestext.bildtext_sbk(
         r.amne,
         k.typ,
@@ -365,6 +368,7 @@ def bildtext(k: Karta, r: Rapport) -> str:
         jfr["efter"] if jfr else "efter",
         k.korning_id,
         _losare(r, k.korning_id, k.analys),
+        roll=eff_roll or None,
     )
 
 
@@ -1123,16 +1127,18 @@ def bygg_dokument(
                     else (f"Underlaget gäller läget {lagen[0]} med en given timserie." if lagen else "")
                 )
             elif r.amne in ("dagsljus", "ekologi"):
+                unika_par = list(dict.fromkeys((j["fore"], j["efter"]) for j in k["jamforelser"]))
                 jfr = " ".join(
-                    f"Läget {amnestext.lage(r.amne, j['efter'])} jämförs med läget "
-                    f"{amnestext.lage(r.amne, j['fore'])}."
-                    for j in k["jamforelser"]
+                    f"Läget {amnestext.lage(r.amne, efter_s)} jämförs med läget "
+                    f"{amnestext.lage(r.amne, fore_s)}."
+                    for fore_s, efter_s in unika_par
                 )
             else:
+                unika_par = list(dict.fromkeys((j["fore"], j["efter"]) for j in k["jamforelser"]))
                 jfr = " ".join(
-                    f"Läget {scenarionamn(j['efter'])} förslaget jämförs med läget "
-                    f"{scenarionamn(j['fore'])} förslaget, med samma regn."
-                    for j in k["jamforelser"]
+                    f"Läget {scenarionamn(efter_s)} förslaget jämförs med läget "
+                    f"{scenarionamn(fore_s)} förslaget, med samma regn."
+                    for fore_s, efter_s in unika_par
                 )
             dok.stycke(f"{k['beskrivning']} {jfr}".strip())
             if k.get("antaganden"):

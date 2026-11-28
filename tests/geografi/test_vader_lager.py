@@ -220,3 +220,51 @@ def test_vader_lager_bakatkompatibelt_och_stangt_utan_villkor(tmp_path: Path) ->
     assert len(varn) >= 1
     vl_mapp = geo_rot / "_lager" / lager["vader_luft"]["sha256"]
     assert Oppenhet(tmp_path).bedom(vl_mapp).oppen is False
+
+
+def test_utci_forval_parar_dagtids_strang_for_positiv_sol_diffus(tmp_path: Path) -> None:
+    """Verifierar att dagtids-p95 DNI paras mot dagtids-p95 GHI (inte eftermiddagsmedian)."""
+    geo_rot = tmp_path / "geo"
+    karna = (-210_500.0, 6_413_500.0, -210_000.0, 6_414_000.0)
+    vindros, utci = _syntetisk_vindros_och_utci()
+    utci_d = utci.till_dict()
+    # Verklig Göteborgs-fördelning: median över heta timmar (543,4 W/m²) < DNI_p95*sin(50°) (658,8),
+    # medan dagtids-p95 globalstrålning är 765,55 W/m² -> sol_diffus blir ~106,7 W/m² (> 0).
+    utci_d["scenario_p95"]["globalstralning_w_m2"] = 543.4
+    utci_d["scenario_p99"]["globalstralning_w_m2"] = 596.9
+    strang_meta = {
+        "global_p95_dag_w_m2": 765.55,
+        "global_p99_dag_w_m2": 836.75,
+        "direkt_normal_p95_dag_w_m2": 860.03,
+        "direkt_normal_p99_dag_w_m2": 908.2,
+        "kalla": "SMHI Öppna data (STRÅNG v1, CC BY 4.0). © SMHI.",
+    }
+    lager, kallor, _ = bygg_vader_lager(
+        geo_rot,
+        tmp_path / "bygge_strang",
+        karna,
+        vindros=vindros,
+        utci_sommar=utci_d,
+        villkor_kontrollerade=True,
+        strang=strang_meta,
+    )
+    k1_sha = _skriv_k1_dummy_lager(geo_rot, tmp_path / "k1tmp")
+    mfil, _ = skriv_manifest(
+        geo_rot,
+        {
+            "kontrakt": KONTRAKT_GEOGRAFI,
+            "id": "goteborg-strang",
+            "version": "v1",
+            "kommun": "goteborg",
+            "karna_3011": list(karna),
+            "lager": {"k1_rutnat": {"sha256": k1_sha}, **lager},
+            "kallor": {**kallor},
+            "oppen_for_mcp": True,
+        },
+    )
+    last = las_vader_lager(mfil)
+    assert last is not None
+    forval = last.utci_forval()
+    assert forval["platsens_smhi_p95"]["globalstralning_w_m2"] == pytest.approx(765.55, abs=0.1)
+    assert forval["platsens_smhi_p95"]["sol_diffus_w_m2"] == pytest.approx(106.7, abs=0.2)
+    assert forval["platsens_smhi_p99"]["sol_diffus_w_m2"] == pytest.approx(141.0, abs=0.2)

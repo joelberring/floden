@@ -43,6 +43,7 @@ _TOMVARDE_SBK: Final[dict[str, str]] = {
     ),
 }
 EKOLOGI_ENHET: Final[str] = "normaliserad strömtäthet (0-1)"
+EKOLOGI_KANSLIGHET_ENHET: Final[str] = "relativ känslighet (0-1)"
 """Strömtätheten saknar fysikalisk enhet (normaliserad 0-1); kartor och bildtexter säger det."""
 EKOLOGI_ETIKETT: Final[str] = "potentiell livsmiljö, okänd kvalitet"
 TITEL: Final[dict[str, str]] = {
@@ -71,9 +72,24 @@ def lage(amne: str, scenario: str) -> str:
     return f"i alternativet {namn}"
 
 
-def kartrubrik(amne: str, typ: str, scenario: str | None, fore: str, efter: str) -> str:
+def kartrubrik(
+    amne: str,
+    typ: str,
+    scenario: str | None,
+    fore: str,
+    efter: str,
+    *,
+    roll: str | None = None,
+) -> str:
     """Kartans rubrik i bilden (ritas av Floden), i klarspråk."""
     if amne == "ekologi":
+        if roll == "kansighet":
+            if typ == "skillnad":
+                return (
+                    f"Skillnad i känslighet för motstånd, {scenarionamn(efter)} minus "
+                    f"{scenarionamn(fore)}"
+                )
+            return f"Känslighet för motstånd {lage(amne, scenario or '')}"
         if typ == "skillnad":
             return f"Skillnad i strömtäthet (flaskhalsar), {scenarionamn(efter)} minus {scenarionamn(fore)}"
         return f"Strömtäthet (flaskhalsar) {lage(amne, scenario or '')}"
@@ -87,7 +103,14 @@ def kartrubrik(amne: str, typ: str, scenario: str | None, fore: str, efter: str)
 
 
 def bildtext_lagrad(
-    amne: str, typ: str, j: Mapping[str, Any], meta: Mapping[str, Any], losare: str, korning: str
+    amne: str,
+    typ: str,
+    j: Mapping[str, Any],
+    meta: Mapping[str, Any],
+    losare: str,
+    korning: str,
+    *,
+    roll: str | None = None,
 ) -> str:
     """Flodens neutrala bildtext, lagrad i K33 (kontrollen läser den)."""
     vad = {
@@ -97,6 +120,13 @@ def bildtext_lagrad(
     }[typ]
     enhet = meta.get("enhet") or ""
     if amne == "ekologi":
+        eff_roll = roll or str(j.get("utdata") or meta.get("roll") or "")
+        if eff_roll == "kansighet":
+            return (
+                f"Känslighet för motstånd för {EKOLOGI_ETIKETT}, {vad}, i {EKOLOGI_KANSLIGHET_ENHET}. "
+                "Hög känslighet: ökat spridningsmotstånd i cellen påverkar landskapssambandet mest. "
+                f"Körning {korning}. Norr uppåt; skalstock i kartan. {tomvarde_lagrad(amne)}"
+            )
         return (
             f"Strömtäthet (flaskhalsar) för {EKOLOGI_ETIKETT}, {vad}, i {EKOLOGI_ENHET}. "
             "Hög strömtäthet: rörelsen genom sambandet är koncentrerad till få passager. "
@@ -180,11 +210,28 @@ def _syftesmening(syfte_ra: str, sbk: bool) -> str:
 
 
 def bildtext_sbk(
-    amne: str, typ: str, scenario: str, fore: str, efter: str, korning: str, losare: str
+    amne: str,
+    typ: str,
+    scenario: str,
+    fore: str,
+    efter: str,
+    korning: str,
+    losare: str,
+    *,
+    roll: str | None = None,
 ) -> str:
     """Bildtexten i språkprofilen sbk (utan figurnummer och utan råa körnings-slugs)."""
     del korning  # körnings-id hör hemma i teknisk spårbarhetsbilaga
     if amne == "ekologi":
+        if roll == "kansighet":
+            if typ == "skillnad":
+                vad = (
+                    f"Skillnad i känslighet för motstånd, {scenarionamn(efter)} minus "
+                    f"{scenarionamn(fore)}, i {EKOLOGI_KANSLIGHET_ENHET}. Rött: högre känslighet, blått: lägre."
+                )
+            else:
+                vad = f"Känslighet för motstånd {lage(amne, scenario)}, i {EKOLOGI_KANSLIGHET_ENHET}."
+            return f"{vad} Gäller {EKOLOGI_ETIKETT} för signalarten. Norr uppåt. {tomvarde_sbk(amne)}"
         if typ == "skillnad":
             vad = (
                 f"Skillnad i strömtäthet (flaskhalsar), {scenarionamn(efter)} minus "
@@ -462,6 +509,7 @@ def osakerhet(r: Rapport, sbk: bool, bilaga1: str) -> tuple[str, list[str]]:
 
 __all__ = [
     "EKOLOGI_ENHET",
+    "EKOLOGI_KANSLIGHET_ENHET",
     "EKOLOGI_ETIKETT",
     "TITEL",
     "amnesnamn",

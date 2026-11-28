@@ -32,7 +32,17 @@ from typing import Any, Final
 import numpy as np
 
 from data_inlasning.cache import DataInlasningFel, LokalDataCache
-from data_inlasning.goteborg import GoteborgDataFel, tolka_goteborg_luft_json
+from data_inlasning.goteborg import (
+    GOTEBORG_KALLA_LUFT,
+    GOTEBORG_LUFT_CSV_URL,
+    GOTEBORG_LUFT_LICENS_SPDX,
+    GOTEBORG_LUFT_STATION_FEMMAN_ID,
+    GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+    GOTEBORG_LUFT_STATION_FEMMAN_WGS84,
+    GoteborgDataFel,
+    hamta_goteborg_luft_csv,
+    tolka_goteborg_luft_json,
+)
 from data_inlasning.smhi import (
     PARAM_LUFTTRYCK,
     PARAM_NEDERBORD,
@@ -1604,6 +1614,236 @@ def las_bakgrund_luft_fil(
     )
 
 
+def las_goteborg_luft_csv_text(
+    text: str,
+    *,
+    station_prefix: str = GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+    ar: int | None = None,
+    station_id: str | None = GOTEBORG_LUFT_STATION_FEMMAN_ID,
+    station_namn: str | None = GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+    station_typ: str = "urban_bakgrund",
+    avstand_km: float | None = None,
+    kalla: str = GOTEBORG_KALLA_LUFT,
+    licens: str = GOTEBORG_LUFT_LICENS_SPDX,
+    sha256: str | None = None,
+) -> BakgrundLuftResultat:
+    """Tolkar Göteborgs Miljöförvaltnings breda timdata-CSV (`Date,Time,Femman_NO2,...`).
+
+    Filtrerar deterministiskt till angivet kalenderår `ar` (eller senaste kalenderår med >= 200
+    mätdygn i filen) så att flerårsfiler aldrig blandas i ett enda årsmedelvärde.
+    """
+    if not isinstance(text, str) or not text.strip():
+        raise SmhiLuftStrangFel("Göteborgs luftkvalitets-CSV är tom.")
+    eff_sha = sha256 or sha256_bytes(text.encode("utf-8"))
+    lasare = csv.reader(io.StringIO(text.lstrip("\ufeff")))
+    try:
+        rubrik = [c.strip() for c in next(lasare)]
+    except StopIteration as exc:
+        raise SmhiLuftStrangFel("Göteborgs luftkvalitets-CSV saknar rubrikrad.") from exc
+
+    rubrik_low = [c.lower() for c in rubrik]
+    idx_datum = next((i for i, k in enumerate(rubrik_low) if k in ("date", "datum")), None)
+    if idx_datum is None:
+        raise SmhiLuftStrangFel("Göteborgs luftkvalitets-CSV saknar Date/Datum-kolumn.")
+
+    pref_low = station_prefix.strip().lower() + "_"
+    amne_map = {
+        "no2": "NO2",
+        "pm10": "PM10",
+        "pm25": "PM2.5",
+        "pm2_5": "PM2.5",
+        "o3": "O3",
+    }
+    amne_kolumner: dict[int, str] = {}
+    for i, kol_low in enumerate(rubrik_low):
+        if kol_low.startswith(pref_low):
+            suffix = kol_low[len(pref_low) :]
+            amne = amne_map.get(suffix)
+            if amne is not None:
+                amne_kolumner[i] = amne
+
+    if not amne_kolumner:
+        raise SmhiLuftStrangFel(
+            f"Hittade inga luftkolumner (NO2/PM10/PM25/O3) för station '{station_prefix}' "
+            "i Göteborgs luftkvalitets-CSV."
+        )
+
+    # Läs alla rader uppdelade per kalenderår så att rätt år väljs deterministiskt.
+    per_ar_poster: dict[int, dict[str, list[tuple[str, float]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    per_ar_dagar: dict[int, set[str]] = defaultdict(set)
+    per_ar_bort: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for celler in lasare:
+        if not celler or idx_datum >= len(celler):
+            continue
+        dag = _tolka_datum_nyckel(celler[idx_datum])
+        if dag is None:
+            continue
+        rad_ar = int(dag[:4])
+        if ar is not None and rad_ar != ar:
+            continue
+        har_varde_pa_rad = False
+        for col_i, amne in amne_kolumner.items():
+            v_str = celler[col_i].strip() if col_i < len(celler) else ""
+            if not v_str:
+                continue
+            try:
+                val = float(v_str.replace(",", "."))
+            except ValueError:
+                per_ar_bort[rad_ar][amne] += 1
+                continue
+            if not math.isfinite(val) or val < 0.0:
+                per_ar_bort[rad_ar][amne] += 1
+                continue
+            per_ar_poster[rad_ar][amne].append((dag, val))
+            har_varde_pa_rad = True
+        if har_varde_pa_rad:
+            per_ar_dagar[rad_ar].add(dag)
+
+    varningar: list[str] = [
+        f"Göteborgs Stad Miljöförvaltningen ({station_namn or station_prefix}, {station_typ}): "
+        "ovaliderad timdata ur catalog.goteborg.se (används som tidigt skissunderlag)."
+    ]
+    if not per_ar_dagar:
+        return BakgrundLuftResultat(
+            tillganglig=False,
+            station_id=station_id,
+            station_namn=station_namn or station_prefix,
+            station_typ=station_typ,
+            avstand_km=round(float(avstand_km), 2) if avstand_km is not None else None,
+            kalla=kalla,
+            licens=licens,
+            period_start=None,
+            period_slut=None,
+            sha256=eff_sha,
+            amnen={},
+            varningar=(
+                f"Inga giltiga luftmätningar hittades för station '{station_prefix}'"
+                + (f" år {ar}" if ar is not None else "")
+                + " i Göteborgs luftkvalitets-CSV.",
+            ),
+        )
+
+    if ar is not None and ar in per_ar_dagar:
+        valt_ar = int(ar)
+    else:
+        kompletta = [y for y in sorted(per_ar_dagar, reverse=True) if len(per_ar_dagar[y]) >= 200]
+        valt_ar = kompletta[0] if kompletta else max(per_ar_dagar)
+        if not kompletta:
+            n_dygn = len(per_ar_dagar[valt_ar])
+            varningar.append(
+                f"Kalenderåret {valt_ar} har färre än 200 mätdygn ({n_dygn} dygn)."
+            )
+
+    return _sammanstall_bakgrund_resultat(
+        per_ar_poster[valt_ar],
+        per_ar_bort[valt_ar],
+        station_id=station_id,
+        station_namn=station_namn or station_prefix,
+        station_typ=station_typ,
+        avstand_km=avstand_km,
+        kalla=kalla,
+        licens=licens,
+        sha256=eff_sha,
+        varningar=varningar,
+    )
+
+
+def hamta_goteborg_luft_bakgrund(
+    karna_3011: tuple[float, float, float, float],
+    *,
+    ar: int | None = None,
+    max_avstand_km: float = 30.0,
+    url: str = GOTEBORG_LUFT_CSV_URL,
+    cache_mapp: str | Path | None = None,
+    hamtare: HamtareFn | None = None,
+    timeout_s: float = STANDARD_TIMEOUT_S,
+) -> BakgrundLuftResultat:
+    """Hämtar urban bakgrundsluft från Göteborgs Stads öppna CSV-API (Femman, 0 API-nycklar).
+
+    Returnerar alltid graciöst `tillganglig=False` om området ligger utanför `max_avstand_km`
+    eller om tjänsten inte svarar — aldrig påhittade halter.
+    """
+    lon, lat = karna_mittpunkt_wgs84(karna_3011)
+    femman_lat, femman_lon = GOTEBORG_LUFT_STATION_FEMMAN_WGS84
+    dist_km = _haversine_km(lat, lon, femman_lat, femman_lon)
+    if dist_km > max_avstand_km:
+        return BakgrundLuftResultat(
+            tillganglig=False,
+            station_id=None,
+            station_namn=None,
+            station_typ=None,
+            avstand_km=None,
+            kalla=GOTEBORG_KALLA_LUFT,
+            licens=GOTEBORG_LUFT_LICENS_SPDX,
+            period_start=None,
+            period_slut=None,
+            sha256=None,
+            amnen={},
+            varningar=(
+                f"Göteborgs bakgrundsstation Femman ligger {dist_km:.1f} km bort "
+                f"(> {max_avstand_km:g} km) och används inte för området.",
+            ),
+        )
+
+    try:
+        ra, sha = hamta_goteborg_luft_csv(
+            url=url,
+            cache_mapp=cache_mapp,
+            hamta_bytes=hamtare,
+            timeout_s=timeout_s,
+        )
+        text = ra.decode("utf-8-sig")
+    except Exception as exc:  # noqa: BLE001 - graciös icke-kraschande fallback
+        return BakgrundLuftResultat(
+            tillganglig=False,
+            station_id=None,
+            station_namn=None,
+            station_typ=None,
+            avstand_km=None,
+            kalla=GOTEBORG_KALLA_LUFT,
+            licens=GOTEBORG_LUFT_LICENS_SPDX,
+            period_start=None,
+            period_slut=None,
+            sha256=None,
+            amnen={},
+            varningar=(
+                f"Göteborgs öppna luftkvalitets-CSV kunde inte hämtas ({exc}). "
+                "Urban bakgrundshalt saknas.",
+            ),
+        )
+
+    res = las_goteborg_luft_csv_text(
+        text,
+        station_prefix=GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+        ar=ar,
+        station_id=GOTEBORG_LUFT_STATION_FEMMAN_ID,
+        station_namn=GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+        station_typ="urban_bakgrund",
+        avstand_km=dist_km,
+        kalla=GOTEBORG_KALLA_LUFT,
+        licens=GOTEBORG_LUFT_LICENS_SPDX,
+        sha256=sha,
+    )
+    if not res.tillganglig and ar is not None:
+        # Om önskat SMHI-år saknas i Göteborgs CSV, pröva senaste kompletta år i CSV:n.
+        return las_goteborg_luft_csv_text(
+            text,
+            station_prefix=GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+            ar=None,
+            station_id=GOTEBORG_LUFT_STATION_FEMMAN_ID,
+            station_namn=GOTEBORG_LUFT_STATION_FEMMAN_NAMN,
+            station_typ="urban_bakgrund",
+            avstand_km=dist_km,
+            kalla=GOTEBORG_KALLA_LUFT,
+            licens=GOTEBORG_LUFT_LICENS_SPDX,
+            sha256=sha,
+        )
+    return res
+
+
 __all__ = [
     "DATAVARDLUFT_TIMEOUT_S",
     "SMHI_DATAVARDLUFT_BAS_URL",
@@ -1625,6 +1865,7 @@ __all__ = [
     "bygg_strang_url",
     "filtrera_smhi_serie_ar",
     "hamta_datavardluft_bakgrund",
+    "hamta_goteborg_luft_bakgrund",
     "hamta_metobs_parameter_serie",
     "hamta_metobs_stationer",
     "hamta_smhi_vaderpaket",
@@ -1634,6 +1875,7 @@ __all__ = [
     "kontrollera_smhi_url",
     "las_bakgrund_luft_fil",
     "las_datavardluft_csv_text",
+    "las_goteborg_luft_csv_text",
     "las_goteborg_luft_json_data",
     "las_vaderserie_csv",
     "serialisera_vaderserie_csv",

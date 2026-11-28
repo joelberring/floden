@@ -39,7 +39,13 @@ from floden_mcp.dataklass import DataKlass, Policy
 from floden_mcp.karna_api import FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, hash_av
 from gemensamt.hash import sha256_bytes, sha256_fil
-from rapport.amnestext import EKOLOGI_ENHET, TITEL, bildtext_lagrad, tomvarde_lagrad
+from rapport.amnestext import (
+    EKOLOGI_ENHET,
+    EKOLOGI_KANSLIGHET_ENHET,
+    TITEL,
+    bildtext_lagrad,
+    tomvarde_lagrad,
+)
 from rapport.amnestext import kartrubrik as kartrubrik_text
 from rapport.belaggskalla import (
     SKYFALL_TROSKEL_M,
@@ -980,7 +986,9 @@ class RapportTjanst:
                             if nyckel in gjorda_bas:
                                 continue
                             gjorda_bas.add(nyckel)
-                        rubrik = kartrubrik_text(amne, typ, scen, j["fore"], j["efter"])
+                        rubrik = kartrubrik_text(
+                            amne, typ, scen, j["fore"], j["efter"], roll=str(j.get("utdata") or "")
+                        )
                         try:
                             png, meta = self.tjanst.karta(
                                 k["korning_id"],
@@ -1012,8 +1020,13 @@ class RapportTjanst:
                                 fil=fil,
                                 png_sha256=str(meta["png_sha256"]),
                                 bildtext=bildtext_lagrad(
-                                    amne, typ, j, meta, losare_per_analys.get(j["analys"], ""),
+                                    amne,
+                                    typ,
+                                    j,
+                                    meta,
+                                    losare_per_analys.get(j["analys"], ""),
                                     str(k["korning_id"]),
+                                    roll=str(j.get("utdata") or meta.get("roll") or ""),
                                 ),
                                 meta={
                                     key: meta[key]
@@ -1029,7 +1042,18 @@ class RapportTjanst:
                                     )
                                 }
                                 | {key: meta[key] for key in ("kartmotor", "figurstil") if key in meta}
-                                | ({"enhet": EKOLOGI_ENHET} if amne == "ekologi" else {})
+                                | (
+                                    {
+                                        "enhet": (
+                                            EKOLOGI_KANSLIGHET_ENHET
+                                            if str(j.get("utdata") or meta.get("roll") or "")
+                                            == "kansighet"
+                                            else EKOLOGI_ENHET
+                                        )
+                                    }
+                                    if amne == "ekologi"
+                                    else {}
+                                )
                                 | {
                                     "utsnitt": utsnitt,
                                     "rubrik": rubrik,
