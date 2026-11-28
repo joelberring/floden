@@ -1157,9 +1157,10 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                     stil_lista.append(("BACKGROUND", (0, ri), (-1, ri), zebra_bg_c))
             tab.setStyle(TableStyle(stil_lista))
             # Håll samman föregående kort inledningsstycke (under en Rubrik med keepWithNext)
-            # med tabellens rubrikrad och första rader så rubrik + ingress ej blir ensamma i sidfot.
+            # med kompakta tabeller (<= 8 rader) så rubrik + ingress aldrig blir ensamma i sidfot.
             if (
-                len(flode) >= 2
+                len(b.rader) <= 8
+                and len(flode) >= 2
                 and isinstance(flode[-1], Paragraph)
                 and isinstance(flode[-2], Paragraph)
                 and getattr(flode[-2].style, "keepWithNext", False)

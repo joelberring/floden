@@ -39,7 +39,13 @@ from floden_mcp.dataklass import DataKlass, Policy
 from floden_mcp.karna_api import FlodenFel, FlodenTjanst
 from floden_mcp.korlogg import Korlogg, hash_av
 from gemensamt.hash import sha256_bytes, sha256_fil
-from rapport.amnestext import EKOLOGI_ENHET, TITEL, bildtext_lagrad, tomvarde_lagrad
+from rapport.amnestext import (
+    EKOLOGI_ENHET,
+    EKOLOGI_KANSLIGHET_ENHET,
+    TITEL,
+    bildtext_lagrad,
+    tomvarde_lagrad,
+)
 from rapport.amnestext import kartrubrik as kartrubrik_text
 from rapport.belaggskalla import (
     SKYFALL_TROSKEL_M,
@@ -1036,7 +1042,18 @@ class RapportTjanst:
                                     )
                                 }
                                 | {key: meta[key] for key in ("kartmotor", "figurstil") if key in meta}
-                                | ({"enhet": EKOLOGI_ENHET} if amne == "ekologi" else {})
+                                | (
+                                    {
+                                        "enhet": (
+                                            EKOLOGI_KANSLIGHET_ENHET
+                                            if str(j.get("utdata") or meta.get("roll") or "")
+                                            == "kansighet"
+                                            else EKOLOGI_ENHET
+                                        )
+                                    }
+                                    if amne == "ekologi"
+                                    else {}
+                                )
                                 | {
                                     "utsnitt": utsnitt,
                                     "rubrik": rubrik,
