@@ -1038,6 +1038,7 @@ def mappa_geografi(
         from data_inlasning.smhi_luft_strang import (
             SmhiLuftStrangFel,
             hamta_datavardluft_bakgrund,
+            hamta_goteborg_luft_bakgrund,
             hamta_smhi_vaderpaket,
             las_bakgrund_luft_fil,
         )
@@ -1073,11 +1074,31 @@ def mappa_geografi(
                         f"Bakgrundsluftfilen kunde inte läsas ({exc}); urban bakgrund utelämnas."
                     )
             else:
+                eff_luft_hamtare = luft_hamtare if luft_hamtare is not None else vader_hamtare
                 bakgrund_res = hamta_datavardluft_bakgrund(
                     karna,
                     cache_mapp=smhi_cache,
-                    hamtare=luft_hamtare if luft_hamtare is not None else vader_hamtare,
+                    hamtare=eff_luft_hamtare,
                 )
+                if (bakgrund_res is None or not bakgrund_res.tillganglig) and kommun.id == "goteborg":
+                    gbg_bakgrund = hamta_goteborg_luft_bakgrund(
+                        karna,
+                        ar=vader_paket.ar,
+                        cache_mapp=geo_rot / "_filcache" / "goteborg",
+                        hamtare=eff_luft_hamtare,
+                    )
+                    if gbg_bakgrund.tillganglig:
+                        bakgrund_res = gbg_bakgrund
+                        amne_txt = ", ".join(
+                            f"{k} {v.arsmedel_ug_m3:.1f} µg/m³"
+                            for k, v in sorted(gbg_bakgrund.amnen.items())
+                            if v.arsmedel_ug_m3 is not None
+                        )
+                        skriv(
+                            f"Urban bakgrundsluft (Göteborg {gbg_bakgrund.station_namn}, "
+                            f"{(gbg_bakgrund.avstand_km or 0.0):.1f} km, "
+                            f"{gbg_bakgrund.period_start}–{gbg_bakgrund.period_slut}): {amne_txt}."
+                        )
             vl_lager, vl_kallor, vl_varn = bygg_vader_lager(
                 geo_rot,
                 bygge,

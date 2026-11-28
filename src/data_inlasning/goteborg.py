@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from data_inlasning.cache import DataInlasningFel, LokalDataCache
 from gemensamt.hash import sha256_bytes
 from gemensamt.koordinater import transformera
 
@@ -36,6 +37,16 @@ TILLATNA_GOTEBORG_VARDAR: tuple[str, ...] = (
 )
 
 STANDARD_WFS_BAS_URL = "https://opengeodata.goteborg.se/services/baskarta/wfs"
+# Göteborgs Stad Miljöförvaltningen: öppna timvisa luftmätdata (2021–nu, CSV utan nyckel).
+GOTEBORG_LUFT_CSV_URL = "https://catalog.goteborg.se/store/6/resource/14249"
+GOTEBORG_LUFT_STATION_FEMMAN_ID = "GM5"
+GOTEBORG_LUFT_STATION_FEMMAN_NAMN = "Femman"
+GOTEBORG_LUFT_STATION_FEMMAN_WGS84: tuple[float, float] = (57.70875572, 11.97050571)
+GOTEBORG_KALLA_LUFT = (
+    "Göteborgs Stad Miljöförvaltningen (Luftkvalitet, API, catalog.goteborg.se; "
+    "ovaliderad timdata)."
+)
+GOTEBORG_LUFT_LICENS_SPDX = "CC0-1.0"
 
 
 class GoteborgDataFel(Exception):
@@ -209,3 +220,38 @@ def tolka_goteborg_luft_json(
         pm25_ug_m3=np.asarray(pm25, dtype=np.float64),
         no2_ug_m3=np.asarray(no2, dtype=np.float64),
     )
+
+
+def hamta_goteborg_luft_csv(
+    *,
+    url: str = GOTEBORG_LUFT_CSV_URL,
+    cache_mapp: str | Path | None = None,
+    hamta_bytes: Callable[[str], bytes] | None = None,
+    timeout_s: float = 20.0,
+) -> tuple[bytes, str]:
+    """Hämtar Göteborgs Miljöförvaltnings öppna luftkvalitets-CSV (0 nycklar, SHA-256-cachad)."""
+    _kontrollera_goteborg_url(url)
+
+    def _adapter(req_url: str, _headers: Mapping[str, str] | None = None) -> bytes:
+        _kontrollera_goteborg_url(req_url)
+        if hamta_bytes is not None:
+            return hamta_bytes(req_url)
+        return _standard_hamta_bytes(req_url, timeout_s=timeout_s)
+
+    if cache_mapp is not None:
+        cache = LokalDataCache(cache_mapp, hamtare=_adapter)
+        try:
+            post = cache.hamta_eller_lasa(
+                url,
+                filnamn="goteborg_luftkvalitet_timdata.csv",
+                kalla=GOTEBORG_KALLA_LUFT,
+            )
+        except DataInlasningFel as exc:
+            raise GoteborgDataFel(str(exc)) from exc
+        return post.fil.read_bytes(), post.sha256
+
+    try:
+        ra = _adapter(url)
+    except Exception as exc:  # noqa: BLE001
+        raise GoteborgDataFel(f"Kunde inte hämta Göteborgs luft-CSV ({url}): {exc}") from exc
+    return ra, sha256_bytes(ra)

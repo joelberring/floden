@@ -1156,6 +1156,19 @@ def skriv_pdf(dok: Dokument, ut: str | Path, rapportmapp: str | Path) -> Path:
                 for ri in range(2, len(data), 2):
                     stil_lista.append(("BACKGROUND", (0, ri), (-1, ri), zebra_bg_c))
             tab.setStyle(TableStyle(stil_lista))
+            # Håll samman föregående kort inledningsstycke (under en Rubrik med keepWithNext)
+            # med tabellens rubrikrad och första rader så rubrik + ingress ej blir ensamma i sidfot.
+            if (
+                len(flode) >= 2
+                and isinstance(flode[-1], Paragraph)
+                and isinstance(flode[-2], Paragraph)
+                and getattr(flode[-2].style, "keepWithNext", False)
+                and not getattr(flode[-1].style, "keepWithNext", False)
+                and len(getattr(flode[-1], "text", "")) <= 450
+            ):
+                flode[-1].style = flode[-1].style.clone(
+                    f"{flode[-1].style.name}_kwn", keepWithNext=True
+                )
             flode.append(tab)
             flode.append(Spacer(1, 5.5 if b.liten else 7))
         elif isinstance(b, FigurPar):

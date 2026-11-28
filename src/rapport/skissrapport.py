@@ -980,7 +980,9 @@ class RapportTjanst:
                             if nyckel in gjorda_bas:
                                 continue
                             gjorda_bas.add(nyckel)
-                        rubrik = kartrubrik_text(amne, typ, scen, j["fore"], j["efter"])
+                        rubrik = kartrubrik_text(
+                            amne, typ, scen, j["fore"], j["efter"], roll=str(j.get("utdata") or "")
+                        )
                         try:
                             png, meta = self.tjanst.karta(
                                 k["korning_id"],
@@ -1012,8 +1014,13 @@ class RapportTjanst:
                                 fil=fil,
                                 png_sha256=str(meta["png_sha256"]),
                                 bildtext=bildtext_lagrad(
-                                    amne, typ, j, meta, losare_per_analys.get(j["analys"], ""),
+                                    amne,
+                                    typ,
+                                    j,
+                                    meta,
+                                    losare_per_analys.get(j["analys"], ""),
                                     str(k["korning_id"]),
+                                    roll=str(j.get("utdata") or meta.get("roll") or ""),
                                 ),
                                 meta={
                                     key: meta[key]

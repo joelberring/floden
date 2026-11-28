@@ -345,14 +345,20 @@ class GeografiVaderLuft:
             if not isinstance(t_luft, int | float) or not math.isfinite(float(t_luft)):
                 continue
 
-            glob_w = sc.get("globalstralning_w_m2")
-            if glob_w is None and strang_obj is not None:
-                glob_w = strang_obj.get(f"global_{p_label}_dag_w_m2")
+            glob_dag_w = (
+                strang_obj.get(f"global_{p_label}_dag_w_m2")
+                if strang_obj is not None
+                else None
+            )
             dir_norm_w = (
                 strang_obj.get(f"direkt_normal_{p_label}_dag_w_m2")
                 if strang_obj is not None
                 else None
             )
+            # Para alltid sammanhörande dagtidspercentiler från STRÅNG (global + direkt_normal)
+            # när båda finns, så att direkt horisontell strålning inte överstiger median-GHI från
+            # sena eftermiddagstimmar och klämmer sol_diffus_w_m2 till 0.
+            glob_w = glob_dag_w if glob_dag_w is not None else sc.get("globalstralning_w_m2")
 
             # Härled horisontell direkt + diffus strålning ur STRÅNG när globalstrålning finns.
             sol_direkt: float | None = None
@@ -368,12 +374,13 @@ class GeografiVaderLuft:
                     isinstance(dir_norm_w, int | float)
                     and math.isfinite(float(dir_norm_w))
                     and float(dir_norm_w) >= 0.0
+                    and float(dir_norm_w) * sin_h < g_val
                 ):
-                    dir_horiz = min(g_val, float(dir_norm_w) * sin_h)
+                    dir_horiz = float(dir_norm_w) * sin_h
                     sol_direkt = round(float(dir_norm_w), 1)
                     sol_diffus = round(max(0.0, g_val - dir_horiz), 1)
                 else:
-                    # Enkel uppdelning för klar sommartopptimme (82 % direkt / 18 % diffus).
+                    # Fysikalisk klarhimmelsuppdelning (82 % direkt horisontell / 18 % diffus).
                     sol_diffus = round(0.18 * g_val, 1)
                     sol_direkt = round(max(0.0, (g_val - sol_diffus) / max(sin_h, 0.1)), 1)
 
