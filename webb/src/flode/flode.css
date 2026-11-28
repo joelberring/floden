@@ -20,7 +20,7 @@ body[data-sida="flode"] {
   --fl-ny: var(--f-varning, #b42318);
   background: var(--fl-bg);
   color: var(--fl-ink);
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--f-font);
   font-size: 14px;
 }
 body[data-sida="flode"] .sidhuvud {
@@ -61,7 +61,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-konto-knapp:hover { background: var(--fl-yta-dampad); }
 .flode-meny {
   position: absolute; right: 0; top: 40px; z-index: 30; min-width: 220px; margin: 0; padding: 4px; list-style: none;
-  background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; box-shadow: none;
 }
 .flode-meny li:empty { display: none; }
 .flode-meny-vem { padding: 8px 10px; color: var(--fl-mute); font-size: 12px; }
@@ -190,7 +190,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-kartkort {
   position: absolute; left: 16px; bottom: 16px; z-index: 2; padding: 10px 14px; background: var(--fl-yta); border: 1px solid var(--fl-ink);
   border-radius: 0; font-size: 13px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; max-width: calc(100% - 32px);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
 }
 .flode-kartkort-hoger { left: auto; right: 16px; }
 
@@ -198,7 +198,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-verktyg {
   position: absolute; left: 16px; top: 16px; z-index: 2; display: flex; flex-direction: column; gap: 2px; padding: 4px;
   background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  box-shadow: none;
 }
 .flode-verktyg button {
   height: 32px; padding: 0 11px; border: 0; border-radius: 0; background: transparent; color: var(--fl-ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer;
@@ -211,7 +211,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-zoom {
   position: absolute; right: 16px; top: 16px; z-index: 2; display: flex; gap: 0; padding: 0;
   background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  box-shadow: none;
 }
 .flode-zoom button { min-width: 34px; height: 34px; padding: 0 8px; border: 0; border-right: 1px solid var(--fl-line-in); border-radius: 0; background: transparent; font: inherit; font-size: 13px; color: var(--fl-ink); cursor: pointer; }
 .flode-zoom button:last-child { border-right: 0; }
@@ -261,7 +261,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-fraga-text { flex: 1 1 auto; }
 .flode-fraga-text.dampad { color: var(--fl-mute); }
 .flode-fraga input { width: 16px; height: 16px; flex: 0 0 auto; }
-.flode-etikett { font-size: 11px; padding: 2px 8px; border-radius: 0; white-space: nowrap; letter-spacing: 0.04em; text-transform: uppercase; font-weight: 600; }
+.flode-etikett { font-size: 12px; padding: 2px 8px; border-radius: 0; white-space: nowrap; letter-spacing: 0; text-transform: none; font-weight: 600; }
 .flode-etikett.svarar { background: var(--fl-yta); color: var(--fl-ink); border: 1px solid var(--fl-ink); }
 .flode-etikett.delvis { background: var(--fl-yta-dampad); color: var(--fl-ink); border: 1px solid var(--fl-line-in); }
 .flode-etikett.saknas { background: var(--fl-yta); color: var(--fl-mute); border: 1px dashed var(--fl-line-in); }
@@ -273,7 +273,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-vaxel {
   position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 3; display: flex; gap: 0; padding: 0;
   background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; max-width: calc(100% - 24px);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
 }
 .flode-vaxel button { height: 34px; padding: 0 14px; border: 0; border-right: 1px solid var(--fl-line-in); border-radius: 0; background: transparent; font: inherit; font-size: 13px; color: var(--fl-mute); cursor: pointer; }
 .flode-vaxel button:last-child { border-right: 0; }
@@ -282,7 +282,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-svep {
   position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3; display: flex; align-items: center; gap: 10px;
   padding: 7px 14px; background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; font-size: 12px; color: var(--fl-mute);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  box-shadow: none;
 }
 .flode-svep input { width: 220px; }
 .flode-forklaring { flex-direction: column; align-items: stretch; gap: 6px; font-size: 12px; z-index: 3; min-width: 210px; }
@@ -291,8 +291,8 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-bandtext { display: flex; justify-content: space-between; width: 200px; color: var(--fl-mute); font-variant-numeric: tabular-nums; }
 .flode-klasser { display: flex; flex-direction: column; gap: 4px; color: var(--f-text-sekundar, #333333); font-variant-numeric: tabular-nums; }
 .flode-klasser i { display: inline-block; width: 14px; height: 12px; margin-right: 6px; vertical-align: -2px; border-radius: 0; border: 1px solid rgba(0, 0, 0, 0.25); }
-.flode-tecken-notis { margin: 2px 0 0; padding-top: 6px; border-top: 1px solid var(--fl-line); font-size: 11px; line-height: 1.4; color: var(--fl-mute); max-width: 240px; }
-.flode-skiss-marke { display: inline-block; padding: 2px 8px; border-radius: 0; background: var(--fl-yta-dampad); color: var(--fl-ink); border: 1px solid var(--fl-ink); font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.flode-tecken-notis { margin: 2px 0 0; padding-top: 6px; border-top: 1px solid var(--fl-line); font-size: 12px; line-height: 1.4; color: var(--fl-mute); max-width: 240px; }
+.flode-skiss-marke { display: inline-block; padding: 2px 8px; border-radius: 0; background: var(--fl-yta-dampad); color: var(--fl-ink); border: 1px solid var(--fl-ink); font-size: 12px; font-weight: 600; letter-spacing: 0; text-transform: none; }
 .flode-slutsats { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; }
 .flode-tal { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .flode-tal div { display: flex; flex-direction: column; gap: 3px; }
@@ -323,7 +323,7 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-statusmarkor {
   display: inline-flex; align-items: center; gap: 6px; padding: 1px 6px;
   border: 1px solid var(--fl-line-in); border-radius: 0; background: var(--fl-yta); color: var(--fl-ink);
-  font-size: 11px; font-weight: 600; line-height: 1.4; letter-spacing: 0.03em; white-space: nowrap; text-decoration: none;
+  font-size: 12px; font-weight: 600; line-height: 1.4; letter-spacing: 0; white-space: nowrap; text-decoration: none;
 }
 .flode-statusmarkor.gron { border-color: var(--fl-ink); color: var(--fl-ink); }
 .flode-statusmarkor.gul { background: var(--fl-yta-dampad); border-color: var(--fl-ink); color: var(--fl-ink); }
@@ -336,16 +336,16 @@ body[data-sida="flode"] a:hover { color: var(--fl-accent); }
 .flode-prick.fel { background: var(--f-varning, #b42318); }
 .flode-forhandsvisning { flex: 999 1 520px; min-width: 0; background: var(--fl-yta-dampad); padding: 20px; display: flex; justify-content: center; overflow: auto; }
 .flode-papper {
-  width: 100%; max-width: 620px; background: var(--fl-yta); border: 1px solid var(--fl-line-in); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06); padding: 32px 40px;
+  width: 100%; max-width: 620px; background: var(--fl-yta); border: 1px solid var(--fl-line-in); box-shadow: none; padding: 32px 40px;
   display: flex; flex-direction: column; gap: 14px; height: max-content;
 }
 .flode-papper h2 { margin: 8px 0 0; font-size: 14px; font-weight: 600; scroll-margin-top: 16px; }
-.flode-rapport-huvud { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--fl-mute); border-bottom: 1px solid var(--fl-ink); padding-bottom: 8px; }
+.flode-rapport-huvud { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--fl-mute); border-bottom: 1px solid var(--fl-ink); padding-bottom: 8px; }
 .flode-rapport-huvud strong { color: var(--fl-ink); }
 .flode-rapport-titel { margin: 8px 0 0; font-size: 22px; line-height: 1.2; font-weight: 600; }
-.flode-brodtext { margin: 0; font-family: Gelasio, Georgia, serif; font-size: 14px; line-height: 1.55; }
+.flode-brodtext { margin: 0; font-family: var(--f-font-lasning); font-size: 14px; line-height: 1.55; }
 .flode-brodtext mark { background: var(--fl-yta-dampad); border-bottom: 1px solid var(--fl-ink); padding: 0 2px; }
-.flode-rapport-meta { margin: 0; font-size: 11px; color: var(--fl-mute); }
+.flode-rapport-meta { margin: 0; font-size: 12px; color: var(--fl-mute); }
 .flode-kontrollista { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
 .flode-kontrollista li { display: flex; justify-content: space-between; gap: 12px; }
 .flode-kontrollista .ok { color: var(--fl-ink); font-weight: 600; }
@@ -484,7 +484,7 @@ a.flode-knapp { display: inline-flex; align-items: center; justify-content: cent
 .flode-handlingsrad {
   position: sticky; bottom: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
   padding: 10px 24px calc(10px + env(safe-area-inset-bottom)); background: var(--fl-yta); border-top: 1px solid var(--fl-ink);
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: none;
 }
 .flode-handlingsrad > p { margin: 0; flex: 1 1 280px; font-size: 13px; }
 .flode-handlingsrad .flode-handlingar { margin-top: 0; }
@@ -515,7 +515,7 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 }
 .skarv-nr { cursor: pointer; }
 .skarv-nr:focus-visible { outline: 2px solid var(--fl-ink); outline-offset: 2px; }
-.skarv-markor { cursor: pointer; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); }
+.skarv-markor { cursor: pointer; box-shadow: none; }
 .skarv-forslag { margin-top: 10px; padding: 10px; border-radius: 0; background: var(--fl-yta); border: 1px solid var(--fl-line-in); }
 .skarv-forslag .skarv-rubrik { margin: 0 0 6px; font-size: 13px; }
 @media (pointer: coarse) { .skarv-nr, .skarv-markor { width: 32px; height: 32px; line-height: 28px; font-size: 14px; } }
@@ -523,7 +523,7 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 /* ---------- 3D-förhandsvisning i steg 2 (R6) ---------- */
 .flode-3d {
   position: absolute; right: 24px; bottom: 24px; z-index: 3; width: min(48%, 600px); height: min(52%, 440px); display: flex; flex-direction: column;
-  background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; overflow: hidden; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  background: var(--fl-yta); border: 1px solid var(--fl-ink); border-radius: 0; overflow: hidden; box-shadow: none;
 }
 .flode-3d[hidden] { display: none; }
 .flode-3d-huvud { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--fl-line-in); font-size: 13px; flex-wrap: wrap; }
@@ -546,3 +546,85 @@ body[data-sida="flode"] { scroll-padding-bottom: 120px; }
 .flode-visa p { margin: 0; }
 .flode-vektortecken { display: grid; gap: 4px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--fl-line-in); }
 .flode-vektortecken i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 0; vertical-align: middle; }
+
+/* ================= Grafisk riktlinje C5 (design/grafisk-riktlinje.md) =================
+ * Platta block i stället för ramar: knappar och segment är block med 3 px mellanrum, valt läge är
+ * ett mörkt mossgrönt block. Rubriker i svaret och nyckeltal i Newsreader, etiketter i Public Sans,
+ * spårbara tal i IBM Plex Mono. Ingen färg på text. */
+body[data-sida="flode"] .sidhuvud {
+  border-bottom: 0;
+  background: var(--fl-bg);
+}
+.flode-ordmarke {
+  font-family: var(--f-font-rubrik);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 22px;
+}
+.flode-ordmarke-projekt {
+  font-family: var(--f-font);
+  font-style: normal;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fl-ink);
+}
+.flode-stegrad { gap: 3px; }
+.flode-steg {
+  padding: 9px 14px;
+  background: var(--fl-yta-dampad);
+  color: var(--fl-ink) !important;
+  font-weight: 600;
+}
+.flode-steg:hover { background: #d5dcd7; }
+.flode-steg.aktivt { background: var(--fl-accent); color: var(--f-accent-text, #f7f9f7) !important; font-weight: 600; }
+.flode-steg-nr { display: none; }
+.flode-konto-knapp {
+  width: 40px; height: 40px; border: 0; background: var(--fl-accent); color: var(--f-accent-text, #f7f9f7);
+}
+.flode-konto-knapp:hover { background: var(--fl-accent-hover); }
+.flode-panel { border-left: 0; border-right: 0; background: var(--fl-bg); }
+
+.flode-knapp {
+  border: 0;
+  background: var(--fl-yta-dampad);
+  font-weight: 600;
+}
+.flode-knapp:hover:not(:disabled) { background: #d5dcd7; }
+.flode-knapp.svart { color: var(--f-accent-text, #f7f9f7) !important; }
+.flode-knapp.diskret {
+  background: transparent;
+  border: 1px solid var(--fl-ink);
+  color: var(--fl-ink);
+  font-weight: 500;
+}
+.flode-knapp.diskret:hover:not(:disabled) { background: var(--fl-yta-dampad); }
+
+.flode-segment { gap: 3px; background: transparent; border: 0; }
+.flode-segment button {
+  border-right: 0;
+  background: var(--fl-yta-dampad);
+  color: var(--fl-ink);
+  font-weight: 600;
+}
+.flode-segment button:hover:not([aria-pressed="true"]) { background: #d5dcd7; }
+.flode-segment button[aria-pressed="true"] { color: var(--f-accent-text, #f7f9f7); font-weight: 600; }
+.flode-chips { gap: 3px; }
+.flode-chips button { border: 0; background: var(--fl-yta-dampad); font-weight: 600; }
+.flode-chips button[aria-pressed="true"] { color: var(--f-accent-text, #f7f9f7); }
+
+.flode-ruta { border: 0; background: var(--fl-yta-dampad); }
+.flode-ruta.ok { border-left: 0; background: var(--fl-accent-yta); }
+
+/* Nyckeltal: serif, ingen fetstil; etiketten ovanför i grå sans */
+.flode-tal dt { font-size: 12px; font-weight: 600; color: var(--fl-mute); }
+.flode-tal dd {
+  font-family: var(--f-font-rubrik);
+  font-size: 30px;
+  line-height: 1.05;
+  font-weight: 400;
+  font-variant-numeric: lining-nums tabular-nums;
+}
+.flode-tal dd.flode-tal-under { font-family: var(--f-font); }
+.flode-osakerhet .flode-tal dd { font-size: 22px; }
+.flode-slutsats { font-family: var(--f-font-lasning); font-size: 16px; font-weight: 400; line-height: 1.55; }
+.flode-sida code, .flode-sida kbd { font-family: var(--f-font-mono); }

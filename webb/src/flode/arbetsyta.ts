@@ -327,6 +327,16 @@ export const AMNESNAMN: Record<PlaneringsDoman, string> = {
   luft: "Vind & Luft",
   buller: "Buller",
 };
+/** Korta flik-namn för smala skärmar (flikarna ligger i en rad). Det fullständiga namnet läses upp. */
+export const AMNESNAMN_KORT: Record<PlaneringsDoman, string> = {
+  vatten: "Skyfall",
+  dagsljus: "Sol",
+  mikroklimat: "Klimat",
+  ekologi: "Ekologi",
+  luft: "Luft",
+  buller: "Buller",
+};
+
 const KOR_AMNESNAMN: Record<PlaneringsDoman, string> = {
   vatten: "skyfall",
   dagsljus: "dagsljus",
@@ -522,7 +532,7 @@ export function skiktDomanerHtml(aktivDoman: PlaneringsDoman, statusIndata: Doma
     const aktiv = id === aktivDoman;
     const st = domanStatus(id, statusIndata);
     return `<button type="button" role="tab" class="ar-skikt-doman" data-amne="${id}" aria-selected="${aktiv}" tabindex="${aktiv ? 0 : -1}" title="${esc(st.titel)}">
-      <span class="ar-skikt-doman-namn"><span class="ar-skikt-prick ${st.prickKlass}" aria-hidden="true"></span><span>${esc(AMNESNAMN[id])}</span></span>
+      <span class="ar-skikt-doman-namn"><span class="ar-skikt-prick ${st.prickKlass}" aria-hidden="true"></span><span class="ar-skikt-doman-lang">${esc(AMNESNAMN[id])}</span><span class="ar-skikt-doman-kort" aria-hidden="true">${esc(AMNESNAMN_KORT[id])}</span></span>
       <span class="ar-skikt-status ${st.prickKlass}">${esc(st.etikett)}</span>
     </button>`;
   }).join("");
@@ -548,15 +558,31 @@ export function skiktLagerHtml(indata: Pick<SkiktPanelIndata, "basSynlig" | "til
   return `<span class="ar-skikt-rubrik">Kartlager</span><div class="ar-skikt-krysslista">${rader.join("")}</div>`;
 }
 
-/** Renderar komplett HTML för den vänsterställda 6-domäns skiktpanelen (`#ar-skikt-panel`). */
+/** Chevron för skiktpanelens fäll-knapp: pekar inåt när blocket är utfällt, utåt när det är infällt. */
+export function skiktVaxlaIkon(hopfalld: boolean): string {
+  const d = hopfalld ? "M5 2 L10 7 L5 12" : "M9 2 L4 7 L9 12";
+  return `<svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d="${d}" fill="none" stroke="currentColor" stroke-width="2"/></svg>`;
+}
+
+/** Attribut för skiktpanelens fäll-knapp (`#ar-skikt-vaxla`) i båda lägena. */
+export function skiktVaxlaEtikett(hopfalld: boolean, aktivDoman: PlaneringsDoman): string {
+  return hopfalld ? `Fäll ut ${AMNESNAMN[aktivDoman]}` : "Fäll in skiktpanelen";
+}
+
+/**
+ * Renderar komplett HTML för den vänsterställda skiktpanelen (`#ar-skikt-panel`): stående ämnesflikar
+ * på vänsterkanten som alltid syns, och ett uppfällt block i det aktiva ämnets färg med kartlager och
+ * opacitet. Infälld panel visar bara flikarna (grafisk riktlinje C5).
+ */
 export function skiktPanelHtml(indata: SkiktPanelIndata): string {
   const opPct = Math.round(klammaRasterOpacitet(indata.rasterOpacitet) * 100);
-  const huvud = indata.hopfalld
-    ? `<button type="button" class="ar-skikt-oppna" id="ar-skikt-vaxla" aria-expanded="false" aria-controls="ar-skikt-kropp" aria-label="Visa skiktpanel">Skikt · ${esc(AMNESNAMN[indata.aktivDoman])} ▸</button>`
-    : `<span class="ar-skikt-titel">Planeringsskikt</span><button type="button" class="ar-min-knapp ar-skikt-vaxla" id="ar-skikt-vaxla" aria-expanded="true" aria-controls="ar-skikt-kropp" aria-label="Fäll ihop skiktpanel" title="Fäll ihop skiktpanel">−</button>`;
-  return `<div class="ar-skikt-huvud" id="ar-skikt-huvud">${huvud}</div>
-    <div class="ar-skikt-kropp" id="ar-skikt-kropp"${indata.hopfalld ? " hidden" : ""}>
+  const etikett = skiktVaxlaEtikett(indata.hopfalld, indata.aktivDoman);
+  return `<div class="ar-skikt-flikar">
       <div role="tablist" aria-label="Planeringsdomäner" aria-orientation="vertical" class="ar-skikt-domaner" id="ar-flikar">${skiktDomanerHtml(indata.aktivDoman, indata.statusIndata)}</div>
+      <button type="button" class="ar-skikt-vaxla" id="ar-skikt-vaxla" aria-expanded="${!indata.hopfalld}" aria-controls="ar-skikt-kropp" aria-label="${esc(etikett)}" title="${esc(etikett)}">${skiktVaxlaIkon(indata.hopfalld)}</button>
+    </div>
+    <div class="ar-skikt-kropp" id="ar-skikt-kropp"${indata.hopfalld ? " hidden" : ""} data-skikt-amne="${indata.aktivDoman}">
+      <div class="ar-skikt-huvud" id="ar-skikt-huvud"><span class="ar-skikt-titel" id="ar-skikt-titel">${esc(AMNESNAMN[indata.aktivDoman])}</span></div>
       <div class="ar-skikt-lager" id="ar-skikt-lager">${skiktLagerHtml(indata)}</div>
       <div class="ar-skikt-opacitet-block">
         <label class="ar-skikt-opacitet" for="ar-raster-opacitet">
@@ -1197,12 +1223,12 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
         </div>
 
         <nav class="ar-skikt-panel${skiktHopfalld ? " ar-skikt-hopfalld" : ""}" id="ar-skikt-panel" aria-label="Planeringsskikt och kartlager"${lage === "redigera" ? " hidden" : ""}>
-          <div class="ar-skikt-huvud" id="ar-skikt-huvud">
-            <span class="ar-skikt-titel">Planeringsskikt</span>
-            <button type="button" class="ar-min-knapp ar-skikt-vaxla" id="ar-skikt-vaxla" aria-expanded="${!skiktHopfalld}" aria-controls="ar-skikt-kropp" aria-label="Fäll ihop skiktpanel" title="Fäll ihop skiktpanel">−</button>
-          </div>
-          <div class="ar-skikt-kropp" id="ar-skikt-kropp"${skiktHopfalld ? " hidden" : ""}>
+          <div class="ar-skikt-flikar">
             <div role="tablist" aria-label="Planeringsdomäner" aria-orientation="vertical" class="ar-skikt-domaner" id="ar-flikar"></div>
+            <button type="button" class="ar-skikt-vaxla" id="ar-skikt-vaxla" aria-expanded="${!skiktHopfalld}" aria-controls="ar-skikt-kropp" aria-label="${esc(skiktVaxlaEtikett(skiktHopfalld, "vatten"))}" title="${esc(skiktVaxlaEtikett(skiktHopfalld, "vatten"))}">${skiktVaxlaIkon(skiktHopfalld)}</button>
+          </div>
+          <div class="ar-skikt-kropp" id="ar-skikt-kropp"${skiktHopfalld ? " hidden" : ""} data-skikt-amne="vatten">
+            <div class="ar-skikt-huvud" id="ar-skikt-huvud"><span class="ar-skikt-titel" id="ar-skikt-titel">${esc(AMNESNAMN.vatten)}</span></div>
             <div class="ar-skikt-lager" id="ar-skikt-lager"></div>
             <div class="ar-skikt-opacitet-block">
               <label class="ar-skikt-opacitet" for="ar-raster-opacitet">
@@ -2562,6 +2588,7 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     el("ar-verktyg").hidden = !redigera;
     el("ar-skikt-panel").hidden = redigera;
     rot.querySelector<HTMLElement>(".ar-karta")?.classList.toggle("har-skikt-panel", !redigera && !skiktHopfalld);
+    rot.querySelector<HTMLElement>(".ar-karta")?.classList.toggle("har-skikt-flikar", !redigera);
     el("ar-analys-del").hidden = redigera;
     el("ar-redigera-del").hidden = !redigera;
     el("ar-mat-knapp").setAttribute("aria-pressed", String(mat.aktiv));
@@ -2796,9 +2823,18 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
 
     panel.classList.toggle("ar-skikt-hopfalld", skiktHopfalld);
     kropp.hidden = skiktHopfalld;
-    huvud.innerHTML = skiktHopfalld
-      ? `<button type="button" class="ar-skikt-oppna" id="ar-skikt-vaxla" aria-expanded="false" aria-controls="ar-skikt-kropp" aria-label="Visa skiktpanel">Skikt · ${esc(AMNESNAMN[amne])} ▸</button>`
-      : `<span class="ar-skikt-titel">Planeringsskikt</span><button type="button" class="ar-min-knapp ar-skikt-vaxla" id="ar-skikt-vaxla" aria-expanded="true" aria-controls="ar-skikt-kropp" aria-label="Fäll ihop skiktpanel" title="Fäll ihop skiktpanel">−</button>`;
+    const aktivDoman = (AMNEN_ORDNING as readonly string[]).includes(amne) ? (amne as PlaneringsDoman) : "vatten";
+    kropp.dataset.skiktAmne = aktivDoman;
+    const titelEl = huvud.querySelector<HTMLElement>("#ar-skikt-titel");
+    if (titelEl) titelEl.textContent = AMNESNAMN[aktivDoman];
+    const vaxlaEl = rot.querySelector<HTMLButtonElement>("#ar-skikt-vaxla");
+    if (vaxlaEl) {
+      const etikett = skiktVaxlaEtikett(skiktHopfalld, aktivDoman);
+      vaxlaEl.setAttribute("aria-expanded", String(!skiktHopfalld));
+      vaxlaEl.setAttribute("aria-label", etikett);
+      vaxlaEl.title = etikett;
+      vaxlaEl.innerHTML = skiktVaxlaIkon(skiktHopfalld);
+    }
 
     const gyfVs = gyfUtciKontroller.status();
     const bl = bullerKontroller?.status() ?? { laddar: false, harSvar: false, ritarVag: false };
@@ -2833,7 +2869,9 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
     const opPct = Math.round(klammaRasterOpacitet(rasterOpacitetVal) * 100);
     if (opSlider && document.activeElement !== opSlider) opSlider.value = String(opPct);
     if (opUt) opUt.textContent = `${opPct}\u202F%`;
-    rot.querySelector<HTMLElement>(".ar-karta")?.classList.toggle("har-skikt-panel", lage !== "redigera" && !skiktHopfalld);
+    const kartEl = rot.querySelector<HTMLElement>(".ar-karta");
+    kartEl?.classList.toggle("har-skikt-panel", lage !== "redigera" && !skiktHopfalld);
+    kartEl?.classList.toggle("har-skikt-flikar", lage !== "redigera");
   };
 
   const ekoLagerVaxelHtml = (): string => {
@@ -4146,6 +4184,16 @@ export function visaArbetsyta(rot: HTMLElement, projekt: string, initialtLage: A
       return;
     }
     if (m.dataset.amne) {
+      // Ämnesflikarna fäller blocket: klick på aktiv flik fäller in/ut, klick på en annan flik fäller ut.
+      if (m.closest("#ar-flikar")) {
+        if (m.dataset.amne === amne) {
+          skiktHopfalld = !skiktHopfalld;
+          ritaSkiktPanel();
+          ritaVaxel();
+          return;
+        }
+        skiktHopfalld = false;
+      }
       void valjAmne(m.dataset.amne as ResultatAmne);
       return;
     }

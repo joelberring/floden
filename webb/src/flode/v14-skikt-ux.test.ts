@@ -198,7 +198,7 @@ test("Etapp 2: vänsterställd skiktpanel visar ALLA 6 planeringsdomäner, statu
   });
   assert.doesNotMatch(utanVektor, /Flödesvägar|Sänkor/);
 
-  // Hopfällt läge på smal skärm visar kompakt pill med aktiv domän och aria-expanded="false"
+  // Infällt läge (C5): flikarna syns kvar, blocket göms och fäll-knappen säger vilket ämne som fälls ut
   const hopfalldHtml = ar.skiktPanelHtml({
     aktivDoman: "mikroklimat",
     statusIndata: { ...statusBas, aktivDoman: "mikroklimat" },
@@ -208,8 +208,11 @@ test("Etapp 2: vänsterställd skiktpanel visar ALLA 6 planeringsdomäner, statu
     aktivaVektorer: new Set(),
     rasterOpacitet: 0.7,
   });
-  assert.match(hopfalldHtml, /id="ar-skikt-vaxla"[^>]*aria-expanded="false"[^>]*>Skikt · Mikroklimat ▸</);
+  assert.match(hopfalldHtml, /id="ar-skikt-vaxla"[^>]*aria-expanded="false"[^>]*aria-label="Fäll ut Mikroklimat"/);
   assert.match(hopfalldHtml, /id="ar-skikt-kropp" hidden/);
+  assert.match(hopfalldHtml, /role="tab"[^>]*data-amne="mikroklimat"[^>]*aria-selected="true"/);
+  assert.match(html, /id="ar-skikt-vaxla"[^>]*aria-expanded="true"[^>]*aria-label="Fäll in skiktpanelen"/);
+  assert.match(html, /id="ar-skikt-kropp" data-skikt-amne="vatten"/);
 
   // Opacitetsklämning [0,20; 1,00]
   assert.equal(ar.klammaRasterOpacitet(0.05), 0.2);
@@ -408,12 +411,15 @@ test("Etapp 2: Vind & Luft visar ärlig förklaring om väder- och trafikunderla
 
 // ------------------------------------------------------------------ 4. Rensat utvecklarbrus & CSS-kontrakt
 
-test("Etapp 2: extraAnalyserHtml och A1_enkel_sanka är helt borttagna ur arbetsytan och CSS följer stramt svartvitt + 390px-krav", () => {
+test("Etapp 2: extraAnalyserHtml och A1_enkel_sanka är helt borttagna ur arbetsytan och CSS följer grafisk riktlinje C5 + 390px-krav", () => {
   assert.doesNotMatch(ARBETSYTA_KALLTEXT, /extraAnalyserHtml/, "extraAnalyserHtml får inte monteras i arbetsytan");
   assert.doesNotMatch(ARBETSYTA_KALLTEXT, /kopplaExtraAnalyser/, "kopplaExtraAnalyser får inte köras i arbetsytan");
   assert.doesNotMatch(ARBETSYTA_KALLTEXT, /A1_enkel_sanka/, "Hårdkodat testområde får inte finnas i arbetsytan");
 
-  assert.match(ARBETSYTA_CSS, /\.ar-skikt-panel\s*\{[^}]*width:\s*205px/);
+  // C5: stående flikar (48 px) på vänsterkanten och ett uppfällt block (232 px) i ämnets färg
+  assert.match(ARBETSYTA_CSS, /\.ar-skikt-flikar\s*\{[^}]*width:\s*48px/);
+  assert.match(ARBETSYTA_CSS, /\.ar-skikt-kropp\s*\{[^}]*width:\s*232px/);
+  assert.match(ARBETSYTA_CSS, /\.ar-skikt-doman\[data-amne="vatten"\]/);
   assert.match(ARBETSYTA_CSS, /\.ar-karta\.har-skikt-panel\s+\.ar-tecken/);
   assert.match(ARBETSYTA_CSS, /@media\s*\(\s*max-width:\s*860px\s*\)[\s\S]*overflow-x:\s*clip/);
   assert.match(ARBETSYTA_CSS, /\.ar-skikt-doman\[aria-selected="true"\]/);

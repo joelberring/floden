@@ -14,8 +14,8 @@
 }
 .etikett-liten {
   font-size: var(--f-etikett-storlek);
-  letter-spacing: var(--f-etikett-sparr);
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
   font-weight: 600;
   margin: 0;
 }
@@ -91,7 +91,7 @@
 .stor-tal {
   font-size: 38px;
   line-height: 1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.01em;
 }
 .plan-karta {
   flex: 1 1 320px;
@@ -288,9 +288,9 @@ progress::-moz-progress-bar {
   font-weight: 600;
 }
 .lager-typ {
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
   color: var(--f-text-dampad);
 }
 .teckenforklaring {
@@ -537,7 +537,7 @@ input[type="radio"] {
     content: attr(data-etikett);
     font-size: var(--f-etikett-storlek, 11px);
     letter-spacing: var(--f-etikett-sparr, 0.12em);
-    text-transform: uppercase;
+    text-transform: none;
     font-weight: 600;
     color: var(--f-text-dampad, #595959);
   }

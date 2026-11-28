@@ -1,4 +1,11 @@
 import "maplibre-gl/dist/maplibre-gl.css";
+import "@fontsource/newsreader/latin-400.css";
+import "@fontsource/newsreader/latin-500-italic.css";
+import "@fontsource/newsreader/latin-600.css";
+import "@fontsource/public-sans/latin-400.css";
+import "@fontsource/public-sans/latin-600.css";
+import "@fontsource/public-sans/latin-700.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
 import "./tema.css";
 import "./style.css";
 
